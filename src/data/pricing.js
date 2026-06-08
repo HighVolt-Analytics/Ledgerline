@@ -1,0 +1,38 @@
+export const pricingPlans = [
+  {
+    name: 'Starter',
+    credits: '500',
+    price: 'Free',
+    per: '—',
+    best: 'Trying it on real invoices',
+    cta: 'Start free',
+    popular: false,
+  },
+  {
+    name: 'Professional',
+    credits: '5,000',
+    price: '$249',
+    per: '$0.05 / doc',
+    best: 'Growing finance teams',
+    cta: 'Choose Professional',
+    popular: true,
+  },
+  {
+    name: 'Business',
+    credits: '25,000',
+    price: '$999',
+    per: '$0.04 / doc',
+    best: 'Multi-entity operators',
+    cta: 'Choose Business',
+    popular: false,
+  },
+  {
+    name: 'Enterprise',
+    credits: 'Unlimited',
+    price: 'Custom',
+    per: 'Volume pricing',
+    best: 'Groups and franchises',
+    cta: 'Talk to sales',
+    popular: false,
+  },
+];
