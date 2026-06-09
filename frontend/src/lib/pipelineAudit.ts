@@ -1,0 +1,218 @@
+import type { AuditLogEntry, InvoiceDetails } from "@/api/types";
+import {
+  invoiceFailedValidations,
+  invoiceSourceKind,
+  invoiceSourceLabel,
+  invoiceValidationConfidence,
+} from "@/lib/invoice";
+import { invId } from "@/lib/format";
+
+export type PipelineAuditStep = {
+  stage: string;
+  when: string;
+  detail: string;
+  state: "done" | "pending" | "fail" | "skipped";
+};
+
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function latestLog(logs: AuditLogEntry[], ...events: string[]): AuditLogEntry | undefined {
+  for (const event of events) {
+    const hit = logs.find((l) => l.event === event);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function validationDetail(inv: InvoiceDetails): { text: string; state: "done" | "fail" | "pending" } {
+  const failed = invoiceFailedValidations(inv);
+  if (failed.length) {
+    return {
+      text: failed.map((r) => r.message).slice(0, 2).join("; ") || "Failed checks",
+      state: "fail",
+    };
+  }
+  if (inv.validation_results?.length) {
+    return { text: "Passed", state: "done" };
+  }
+  if (inv.status === "exception") {
+    return { text: "Routed to review", state: "fail" };
+  }
+  return { text: "Pending", state: "pending" };
+}
+
+function stageIndex(status: string): number {
+  switch (status) {
+    case "pending":
+      return 0;
+    case "parsing":
+      return 1;
+    case "validating":
+      return 2;
+    case "mapping":
+    case "journaling":
+    case "reconciling":
+      return 3;
+    case "processed":
+      return 5;
+    case "exception":
+      return 2;
+    case "rejected":
+    case "duplicate_skipped":
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+/** Six-step pipeline narrative aligned with Ledgerline v3. */
+export function buildPipelineAuditSteps(
+  inv: InvoiceDetails,
+  logs: AuditLogEntry[]
+): PipelineAuditStep[] {
+  const receivedLog = latestLog(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached");
+  const parsedLog = latestLog(logs, "parse_completed", "invoice_parsed", "parsing_failed");
+  const validatedLog = latestLog(logs, "validation_passed", "validation_failed");
+  const mappedLog = latestLog(logs, "mapping_applied");
+  const approvedLog = latestLog(logs, "invoice_approved", "approval_requested");
+  const publishedLog = latestLog(logs, "invoice_published_to_ledger", "invoice_processed");
+
+  const source = invoiceSourceKind(inv);
+  const sourceLabel = invoiceSourceLabel(source);
+  const receivedVia = inv.email_sender ?? sourceLabel;
+  const receivedWhen = relativeTime(receivedLog?.created_at ?? inv.created_at);
+
+  const parseConfidence =
+    (parsedLog?.detail?.confidence as number | undefined) ??
+    invoiceValidationConfidence(inv) ??
+    null;
+  const parsedWhen = parsedLog
+    ? relativeTime(parsedLog.created_at)
+    : stageIndex(inv.status) >= 1
+      ? relativeTime(inv.created_at)
+      : "—";
+  const parsedDetail =
+    parsedLog?.event === "parsing_failed"
+      ? "Could not read document"
+      : parseConfidence != null
+        ? `${parseConfidence}% confidence`
+        : stageIndex(inv.status) >= 1
+          ? "OCR complete"
+          : "Pending";
+
+  const validation = validationDetail(inv);
+  const validatedWhen = validatedLog
+    ? relativeTime(validatedLog.created_at)
+    : stageIndex(inv.status) >= 2
+      ? relativeTime(parsedLog?.created_at ?? inv.created_at)
+      : "—";
+
+  const account =
+    inv.account_name ??
+    (stageIndex(inv.status) >= 3 ? "Suspense Account" : "—");
+  const mappedSuspense = account.toLowerCase().includes("suspense");
+  const mappedWhen = mappedLog
+    ? relativeTime(mappedLog.created_at)
+    : stageIndex(inv.status) >= 3
+      ? relativeTime(validatedLog?.created_at ?? inv.created_at)
+      : "—";
+
+  let approvedDetail = "Pending policy";
+  let approvedState: PipelineAuditStep["state"] = "pending";
+  let approvedWhen = "—";
+  if (approvedLog) {
+    approvedWhen = relativeTime(approvedLog.created_at);
+    approvedDetail = "Approved for processing";
+    approvedState = "done";
+  } else if (inv.status === "processed") {
+    approvedWhen = relativeTime(publishedLog?.created_at ?? inv.created_at);
+    approvedDetail = "Within policy";
+    approvedState = "done";
+  } else if (inv.status === "exception") {
+    approvedDetail = "Awaiting review";
+    approvedState = "pending";
+  }
+
+  let publishedDetail = "Pending";
+  let publishedState: PipelineAuditStep["state"] = "pending";
+  let publishedWhen = "—";
+  if (publishedLog?.event === "invoice_published_to_ledger") {
+    publishedWhen = relativeTime(publishedLog.created_at);
+    publishedDetail = inv.invoice_no ?? invId(inv.id);
+    publishedState = "done";
+  } else if (inv.status === "processed") {
+    publishedWhen = relativeTime(publishedLog?.created_at ?? inv.created_at);
+    publishedDetail = `${invId(inv.id)} · ready to publish`;
+    publishedState = "pending";
+  }
+
+  if (inv.status === "rejected") {
+    return [
+      {
+        stage: "Received",
+        when: receivedWhen,
+        detail: `${sourceLabel} · ${receivedVia}`,
+        state: "done",
+      },
+      {
+        stage: "Rejected",
+        when: relativeTime(latestLog(logs, "invoice_rejected")?.created_at),
+        detail: "Document rejected",
+        state: "fail",
+      },
+    ];
+  }
+
+  return [
+    {
+      stage: "Received",
+      when: receivedWhen,
+      detail: `${sourceLabel} · ${receivedVia}`,
+      state: "done",
+    },
+    {
+      stage: "Parsed",
+      when: parsedWhen,
+      detail: parsedLog?.event === "parsing_failed" ? parsedDetail : `OCR complete · ${parsedDetail}`,
+      state:
+        parsedLog?.event === "parsing_failed"
+          ? "fail"
+          : stageIndex(inv.status) >= 1
+            ? "done"
+            : "pending",
+    },
+    {
+      stage: "Validated",
+      when: validatedWhen,
+      detail: `Tax & totals checked · ${validation.text}`,
+      state: validation.state,
+    },
+    {
+      stage: "Mapped",
+      when: mappedWhen,
+      detail: `Rule book applied · ${account}`,
+      state: mappedSuspense && inv.status === "exception" ? "fail" : stageIndex(inv.status) >= 3 ? "done" : "pending",
+    },
+    {
+      stage: "Approved",
+      when: approvedWhen,
+      detail: approvedDetail,
+      state: approvedState,
+    },
+    {
+      stage: "Published",
+      when: publishedWhen,
+      detail: `Ledger · ${publishedDetail}`,
+      state: publishedState,
+    },
+  ];
+}

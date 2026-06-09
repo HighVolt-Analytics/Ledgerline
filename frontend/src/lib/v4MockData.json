@@ -1,0 +1,1236 @@
+{
+  "expenses": [
+    {
+      "id": "EXP-001",
+      "submitter": "Arup",
+      "channel": "WhatsApp",
+      "category": "Travel",
+      "amount": 340,
+      "gst": 30.91,
+      "date": "2026-05-28",
+      "submittedTs": "4m ago",
+      "state": "New",
+      "purpose": "Uber to client site (CBD → Macquarie Park)",
+      "projectTag": "ACME-SALES",
+      "merchant": "Uber",
+      "budgetGroup": "Travel · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "EXP-002",
+      "submitter": "Sarah Chen",
+      "channel": "WhatsApp",
+      "category": "Meals",
+      "amount": 89,
+      "gst": 8.09,
+      "date": "2026-05-27",
+      "submittedTs": "22m ago",
+      "state": "In Review",
+      "purpose": "Client dinner — Northwind onboarding",
+      "projectTag": "ACME-CS",
+      "merchant": "Bistro Felix",
+      "budgetGroup": "Meals · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "EXP-003",
+      "submitter": "Marcus Lee",
+      "channel": "Viber",
+      "category": "Supplies",
+      "amount": 1240,
+      "gst": 112.73,
+      "date": "2026-05-26",
+      "submittedTs": "1h ago",
+      "state": "In Review",
+      "purpose": "4× ergonomic office chairs for new hires",
+      "projectTag": "ACME-OPS",
+      "merchant": "Officeworks",
+      "budgetGroup": "Supplies · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-26 14:02"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "EXP-004",
+      "submitter": "Priya Patel",
+      "channel": "Web",
+      "category": "Software",
+      "amount": 79,
+      "gst": 7.18,
+      "date": "2026-05-26",
+      "submittedTs": "2h ago",
+      "state": "Approved",
+      "purpose": "Notion — 1 additional editor seat",
+      "projectTag": "ACME-ENG",
+      "merchant": "Notion Labs",
+      "budgetGroup": "Software · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-26 09:40"
+        }
+      ]
+    },
+    {
+      "id": "EXP-005",
+      "submitter": "Daniel Kim",
+      "channel": "Viber",
+      "category": "Training",
+      "amount": 899,
+      "gst": 81.73,
+      "date": "2026-05-25",
+      "submittedTs": "3h ago",
+      "state": "Approved",
+      "purpose": "AWS re:Invent online conference pass",
+      "projectTag": "ACME-ENG",
+      "merchant": "Amazon Web Services",
+      "budgetGroup": "Training · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-25 16:15"
+        }
+      ]
+    },
+    {
+      "id": "EXP-006",
+      "submitter": "Arup",
+      "channel": "WhatsApp",
+      "category": "Travel",
+      "amount": 540,
+      "gst": 49.09,
+      "date": "2026-05-24",
+      "submittedTs": "5h ago",
+      "state": "Posted to Ledger",
+      "purpose": "Flights SYD→MEL return — sales kickoff",
+      "projectTag": "ACME-SALES",
+      "merchant": "Qantas",
+      "budgetGroup": "Travel · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-24 11:20"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "approved",
+          "ts": "2026-05-24 13:05"
+        }
+      ]
+    },
+    {
+      "id": "EXP-007",
+      "submitter": "Sarah Chen",
+      "channel": "WhatsApp",
+      "category": "Meals",
+      "amount": 64,
+      "gst": 5.82,
+      "date": "2026-05-24",
+      "submittedTs": "6h ago",
+      "state": "Posted to Ledger",
+      "purpose": "Team lunch — sprint retro",
+      "projectTag": "ACME-ENG",
+      "merchant": "Sushi Hub",
+      "budgetGroup": "Meals · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-24 12:50"
+        }
+      ]
+    },
+    {
+      "id": "EXP-008",
+      "submitter": "Marcus Lee",
+      "channel": "Web",
+      "category": "Supplies",
+      "amount": 215,
+      "gst": 19.55,
+      "date": "2026-05-23",
+      "submittedTs": "1d ago",
+      "state": "Rejected",
+      "purpose": "Standing desk converter — no manager pre-approval",
+      "projectTag": "ACME-OPS",
+      "merchant": "Officeworks",
+      "budgetGroup": "Supplies · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "rejected",
+          "ts": "2026-05-23 10:10"
+        }
+      ]
+    },
+    {
+      "id": "EXP-009",
+      "submitter": "Priya Patel",
+      "channel": "Viber",
+      "category": "Software",
+      "amount": 149,
+      "gst": 13.55,
+      "date": "2026-05-23",
+      "submittedTs": "1d ago",
+      "state": "New",
+      "purpose": "Figma — 1 dev seat upgrade",
+      "projectTag": "ACME-DESIGN",
+      "merchant": "Figma Inc",
+      "budgetGroup": "Software · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "EXP-010",
+      "submitter": "Daniel Kim",
+      "channel": "Mobile",
+      "category": "Travel",
+      "amount": 76,
+      "gst": 6.91,
+      "date": "2026-05-22",
+      "submittedTs": "2d ago",
+      "state": "In Review",
+      "purpose": "Airport parking — client visit",
+      "projectTag": "ACME-SALES",
+      "merchant": "Secure Parking",
+      "budgetGroup": "Travel · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "EXP-011",
+      "submitter": "Arup",
+      "channel": "WhatsApp",
+      "category": "Meals",
+      "amount": 132,
+      "gst": 12,
+      "date": "2026-05-22",
+      "submittedTs": "2d ago",
+      "state": "Approved",
+      "purpose": "Prospect coffee + lunch",
+      "projectTag": "ACME-SALES",
+      "merchant": "Single O",
+      "budgetGroup": "Meals · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-22 15:30"
+        }
+      ]
+    },
+    {
+      "id": "EXP-012",
+      "submitter": "Sarah Chen",
+      "channel": "Web",
+      "category": "Training",
+      "amount": 1290,
+      "gst": 117.27,
+      "date": "2026-05-21",
+      "submittedTs": "3d ago",
+      "state": "In Review",
+      "purpose": "Leadership workshop — 2 seats",
+      "projectTag": "ACME-PEOPLE",
+      "merchant": "AIM Training",
+      "budgetGroup": "Training · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-21 09:15"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "EXP-013",
+      "submitter": "Marcus Lee",
+      "channel": "Viber",
+      "category": "Supplies",
+      "amount": 58,
+      "gst": 5.27,
+      "date": "2026-05-21",
+      "submittedTs": "3d ago",
+      "state": "Posted to Ledger",
+      "purpose": "Whiteboard markers + sticky notes",
+      "projectTag": "ACME-OPS",
+      "merchant": "Officeworks",
+      "budgetGroup": "Supplies · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-21 11:00"
+        }
+      ]
+    },
+    {
+      "id": "EXP-014",
+      "submitter": "Priya Patel",
+      "channel": "Mobile",
+      "category": "Software",
+      "amount": 240,
+      "gst": 21.82,
+      "date": "2026-05-20",
+      "submittedTs": "4d ago",
+      "state": "Approved",
+      "purpose": "Linear — annual team plan top-up",
+      "projectTag": "ACME-ENG",
+      "merchant": "Linear Orbit",
+      "budgetGroup": "Software · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-20 14:45"
+        }
+      ]
+    },
+    {
+      "id": "EXP-015",
+      "submitter": "Daniel Kim",
+      "channel": "WhatsApp",
+      "category": "Travel",
+      "amount": 410,
+      "gst": 37.27,
+      "date": "2026-05-19",
+      "submittedTs": "5d ago",
+      "state": "New",
+      "purpose": "Hotel night — interstate vendor audit",
+      "projectTag": "ACME-FIN",
+      "merchant": "Mantra Hotels",
+      "budgetGroup": "Travel · Q2",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "pending"
+        }
+      ]
+    }
+  ],
+  "budgets": [
+    {
+      "category": "Travel",
+      "owner": "Team",
+      "period": "Q2",
+      "monthlyBudget": 6000,
+      "used": 1766
+    },
+    {
+      "category": "Meals",
+      "owner": "Team",
+      "period": "Q2",
+      "monthlyBudget": 2500,
+      "used": 285
+    },
+    {
+      "category": "Supplies",
+      "owner": "Team",
+      "period": "Q2",
+      "monthlyBudget": 8000,
+      "used": 4200
+    },
+    {
+      "category": "Software",
+      "owner": "Team",
+      "period": "Q2",
+      "monthlyBudget": 4000,
+      "used": 468
+    },
+    {
+      "category": "Training",
+      "owner": "Team",
+      "period": "Q2",
+      "monthlyBudget": 5000,
+      "used": 2189
+    },
+    {
+      "category": "Travel",
+      "owner": "Arup",
+      "period": "Q2",
+      "monthlyBudget": 1500,
+      "used": 880
+    },
+    {
+      "category": "Software",
+      "owner": "Priya Patel",
+      "period": "Q2",
+      "monthlyBudget": 1000,
+      "used": 389
+    }
+  ],
+  "categories": [
+    {
+      "category": "Travel",
+      "glAccount": "Travel Expense",
+      "requiresReceiptOver": 50,
+      "autoApproveUnder": 100,
+      "policyNote": "Economy fares only; pre-approval for interstate."
+    },
+    {
+      "category": "Meals",
+      "glAccount": "Entertainment Expense",
+      "requiresReceiptOver": 30,
+      "autoApproveUnder": 75,
+      "policyNote": "Max $80/head; itemised receipt required."
+    },
+    {
+      "category": "Supplies",
+      "glAccount": "Office Supplies Expense",
+      "requiresReceiptOver": 0,
+      "autoApproveUnder": 100,
+      "policyNote": "Manager pre-approval for items over $200."
+    },
+    {
+      "category": "Software",
+      "glAccount": "Software Subscription Expense",
+      "requiresReceiptOver": 0,
+      "autoApproveUnder": 100,
+      "policyNote": "Must use approved vendor list."
+    },
+    {
+      "category": "Training",
+      "glAccount": "Training & Development",
+      "requiresReceiptOver": 0,
+      "autoApproveUnder": 0,
+      "policyNote": "All training routes to Finance Manager."
+    }
+  ],
+  "channels": [
+    {
+      "id": "wa",
+      "name": "WhatsApp Business",
+      "detail": "+61 4XX XXX XXX",
+      "connected": true
+    },
+    {
+      "id": "vb",
+      "name": "Viber for Business",
+      "detail": "Verified business account",
+      "connected": true
+    },
+    {
+      "id": "em",
+      "name": "Email-to-claim",
+      "detail": "claims@acme.ledgerline.app",
+      "connected": true
+    },
+    {
+      "id": "mob",
+      "name": "Mobile app",
+      "detail": "iOS / Android",
+      "connected": true
+    }
+  ],
+  "purchases": [
+    {
+      "id": "PO-2026-101",
+      "vendor": "Officeworks",
+      "date": "2026-05-10",
+      "requestor": "Marcus Lee",
+      "item": "Ergonomic mesh chairs",
+      "poQty": 50,
+      "poUnitPrice": 189,
+      "grnQty": 50,
+      "grnDate": "2026-05-14",
+      "grnReceiver": "Warehouse — J. Ng",
+      "grnCondition": "All units sealed, no damage",
+      "invoiceNo": "OW-INV-55120",
+      "invoiceQty": 50,
+      "invoiceUnitPrice": 189,
+      "gstRate": 0.1
+    },
+    {
+      "id": "PO-2026-102",
+      "vendor": "Bunnings",
+      "date": "2026-05-09",
+      "requestor": "Facilities",
+      "item": "Storage shelving units",
+      "poQty": 20,
+      "poUnitPrice": 145,
+      "grnQty": 20,
+      "grnDate": "2026-05-12",
+      "grnReceiver": "Warehouse — J. Ng",
+      "grnCondition": "Received complete",
+      "invoiceNo": "BUN-INV-22841",
+      "invoiceQty": 20,
+      "invoiceUnitPrice": 145,
+      "gstRate": 0.1
+    },
+    {
+      "id": "PO-2026-103",
+      "vendor": "Officeworks",
+      "date": "2026-05-08",
+      "requestor": "Priya Patel",
+      "item": "27\" monitors",
+      "poQty": 12,
+      "poUnitPrice": 410,
+      "grnQty": 12,
+      "grnDate": "2026-05-11",
+      "grnReceiver": "IT — D. Kim",
+      "grnCondition": "Tested, all working",
+      "invoiceNo": "OW-INV-55061",
+      "invoiceQty": 12,
+      "invoiceUnitPrice": 410,
+      "gstRate": 0.1
+    },
+    {
+      "id": "PO-2026-105",
+      "vendor": "Catering Co",
+      "date": "2026-05-15",
+      "requestor": "People Team",
+      "item": "All-hands catering packs",
+      "poQty": 80,
+      "poUnitPrice": 24,
+      "grnQty": 80,
+      "grnDate": "2026-05-16",
+      "grnReceiver": "Reception — A. Lin",
+      "grnCondition": "Delivered on time",
+      "invoiceNo": "CC-INV-7781",
+      "invoiceQty": 80,
+      "invoiceUnitPrice": 24,
+      "gstRate": 0.1
+    },
+    {
+      "id": "PO-2026-106",
+      "vendor": "Bunnings",
+      "date": "2026-05-13",
+      "requestor": "Facilities",
+      "item": "Cleaning supplies bulk",
+      "poQty": 30,
+      "poUnitPrice": 38,
+      "grnQty": 30,
+      "grnDate": "2026-05-15",
+      "grnReceiver": "Warehouse — J. Ng",
+      "grnCondition": "Complete",
+      "invoiceNo": "BUN-INV-22910",
+      "invoiceQty": 30,
+      "invoiceUnitPrice": 38,
+      "gstRate": 0.1
+    },
+    {
+      "id": "PO-2026-107",
+      "vendor": "Officeworks",
+      "date": "2026-05-12",
+      "requestor": "Marcus Lee",
+      "item": "Desk risers",
+      "poQty": 25,
+      "poUnitPrice": 96,
+      "grnQty": 25,
+      "grnDate": "2026-05-14",
+      "grnReceiver": "Warehouse — J. Ng",
+      "grnCondition": "Complete",
+      "invoiceNo": "OW-INV-55190",
+      "invoiceQty": 25,
+      "invoiceUnitPrice": 96,
+      "gstRate": 0.1
+    },
+    {
+      "id": "PO-2026-110",
+      "vendor": "Catering Co",
+      "date": "2026-05-18",
+      "requestor": "People Team",
+      "item": "Quarterly town-hall lunch",
+      "poQty": 120,
+      "poUnitPrice": 19,
+      "grnQty": 120,
+      "grnDate": "2026-05-19",
+      "grnReceiver": "Reception — A. Lin",
+      "grnCondition": "Delivered complete",
+      "invoiceNo": "CC-INV-7820",
+      "invoiceQty": 120,
+      "invoiceUnitPrice": 19,
+      "gstRate": 0.1
+    },
+    {
+      "id": "PO-2026-104",
+      "vendor": "Telstra",
+      "date": "2026-05-11",
+      "requestor": "IT — D. Kim",
+      "item": "Mobile plan handsets",
+      "poQty": 30,
+      "poUnitPrice": 720,
+      "grnQty": 27,
+      "grnDate": "2026-05-15",
+      "grnReceiver": "IT — D. Kim",
+      "grnCondition": "Short delivery — 3 units backordered",
+      "invoiceNo": "TEL-INV-99120",
+      "invoiceQty": 30,
+      "invoiceUnitPrice": 720,
+      "gstRate": 0.1,
+      "routedForApproval": true,
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-16 09:30"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "PO-2026-112",
+      "vendor": "Bunnings",
+      "date": "2026-05-19",
+      "requestor": "Facilities",
+      "item": "Safety equipment kits",
+      "poQty": 40,
+      "poUnitPrice": 65,
+      "grnQty": 44,
+      "grnDate": "2026-05-22",
+      "grnReceiver": "Warehouse — J. Ng",
+      "grnCondition": "Over-delivery — 4 extra units received",
+      "invoiceNo": "BUN-INV-23055",
+      "invoiceQty": 44,
+      "invoiceUnitPrice": 65,
+      "gstRate": 0.1,
+      "routedForApproval": true,
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "PO-2026-108",
+      "vendor": "AWS Marketplace",
+      "date": "2026-05-16",
+      "requestor": "Daniel Kim",
+      "item": "Reserved instance bundle",
+      "poQty": 10,
+      "poUnitPrice": 480,
+      "grnQty": 10,
+      "grnDate": "2026-05-17",
+      "grnReceiver": "IT — D. Kim",
+      "grnCondition": "Licences provisioned",
+      "invoiceNo": "AWS-MP-31822",
+      "invoiceQty": 10,
+      "invoiceUnitPrice": 525,
+      "gstRate": 0.1,
+      "routedForApproval": true,
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "PO-2026-115",
+      "vendor": "Catering Co",
+      "date": "2026-05-21",
+      "requestor": "People Team",
+      "item": "Offsite dinner catering",
+      "poQty": 60,
+      "poUnitPrice": 42,
+      "grnQty": 60,
+      "grnDate": "2026-05-23",
+      "grnReceiver": "Reception — A. Lin",
+      "grnCondition": "Delivered complete",
+      "invoiceNo": "CC-INV-7901",
+      "invoiceQty": 60,
+      "invoiceUnitPrice": 49,
+      "gstRate": 0.1,
+      "routedForApproval": true,
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-24 10:05"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "PO-2026-114",
+      "vendor": "Telstra",
+      "date": "2026-05-20",
+      "requestor": "IT — D. Kim",
+      "item": "Network switch hardware",
+      "poQty": 8,
+      "poUnitPrice": 1150,
+      "grnQty": null,
+      "grnDate": null,
+      "grnReceiver": null,
+      "grnCondition": null,
+      "invoiceNo": "TEL-INV-99240",
+      "invoiceQty": 8,
+      "invoiceUnitPrice": 1150,
+      "gstRate": 0.1
+    }
+  ],
+  "payments": [
+    {
+      "id": "PAY-001",
+      "invoiceId": "INV-002",
+      "vendor": "Atlassian Pty Ltd",
+      "amount": 3179,
+      "dueDate": "2026-06-03",
+      "tab": "queue",
+      "invoiceApprovedBy": "u2",
+      "invoiceApprovedByName": "Marcus Webb",
+      "approvers": []
+    },
+    {
+      "id": "PAY-002",
+      "invoiceId": "INV-010",
+      "vendor": "Sydney Office Florals Pty Ltd",
+      "amount": 550,
+      "dueDate": "2026-06-24",
+      "tab": "queue",
+      "invoiceApprovedBy": "u1",
+      "invoiceApprovedByName": "Sarah Chen",
+      "approvers": []
+    },
+    {
+      "id": "PAY-003",
+      "invoiceId": "INV-004",
+      "vendor": "Meta Platforms Ireland",
+      "amount": 3080,
+      "dueDate": "2026-06-07",
+      "tab": "awaiting",
+      "invoiceApprovedBy": "u2",
+      "invoiceApprovedByName": "Marcus Webb",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-29 09:10"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "PAY-004",
+      "invoiceId": "PO-2026-104",
+      "vendor": "Telstra",
+      "amount": 23760,
+      "dueDate": "2026-06-15",
+      "tab": "awaiting",
+      "invoiceApprovedBy": "u3",
+      "invoiceApprovedByName": "Priya Nair",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-29 10:00"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "approved",
+          "ts": "2026-05-29 11:30"
+        },
+        {
+          "id": "u6",
+          "name": "Olivia Grant",
+          "role": "CFO",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "PAY-005",
+      "invoiceId": "BM-LARGE",
+      "vendor": "Tata Steel Ltd",
+      "amount": 67200,
+      "dueDate": "2026-06-20",
+      "tab": "awaiting",
+      "invoiceApprovedBy": "u2",
+      "invoiceApprovedByName": "Marcus Webb",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-29 08:40"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "approved",
+          "ts": "2026-05-29 09:50"
+        },
+        {
+          "id": "u6",
+          "name": "Olivia Grant",
+          "role": "CFO",
+          "state": "pending"
+        },
+        {
+          "id": "u7",
+          "name": "Daniel Brook",
+          "role": "Account Owner",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "PAY-006",
+      "invoiceId": "INV-005",
+      "vendor": "Deloitte Touche Tohmatsu",
+      "amount": 7821,
+      "dueDate": "2026-06-10",
+      "tab": "scheduled",
+      "scheduledDate": "2026-06-08",
+      "invoiceApprovedBy": "u3",
+      "invoiceApprovedByName": "Priya Nair",
+      "approvers": [
+        {
+          "id": "u2",
+          "name": "Marcus Webb",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-28 14:00"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "approved",
+          "ts": "2026-05-28 15:10"
+        }
+      ]
+    },
+    {
+      "id": "PAY-007",
+      "invoiceId": "PO-2026-115",
+      "vendor": "Catering Co",
+      "amount": 3234,
+      "dueDate": "2026-06-05",
+      "tab": "scheduled",
+      "scheduledDate": "2026-06-04",
+      "invoiceApprovedBy": "u2",
+      "invoiceApprovedByName": "Marcus Webb",
+      "approvers": [
+        {
+          "id": "u3",
+          "name": "Priya Nair",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-28 10:20"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "approved",
+          "ts": "2026-05-28 11:00"
+        }
+      ]
+    },
+    {
+      "id": "PAY-008",
+      "invoiceId": "INV-001",
+      "vendor": "Amazon Web Services",
+      "amount": 3113,
+      "dueDate": "2026-06-01",
+      "tab": "paid",
+      "paidDate": "2026-05-30 08:12",
+      "paymentIntent": "pi_3Qk8aZ2eXample01",
+      "invoiceApprovedBy": "u2",
+      "invoiceApprovedByName": "Marcus Webb",
+      "approvers": [
+        {
+          "id": "u3",
+          "name": "Priya Nair",
+          "role": "Finance Lead",
+          "state": "approved",
+          "ts": "2026-05-29 16:40"
+        },
+        {
+          "id": "u1",
+          "name": "Sarah Chen",
+          "role": "Finance Manager",
+          "state": "approved",
+          "ts": "2026-05-30 07:55"
+        }
+      ]
+    }
+  ],
+  "wallet": {
+    "balance": 24580,
+    "available": 13525,
+    "lastTopUp": "2026-05-27",
+    "txns": [
+      {
+        "id": "wt1",
+        "ts": "2026-05-30 08:12",
+        "label": "Payment · AWS (pi_3Qk8aZ2eXample01)",
+        "delta": -3113
+      },
+      {
+        "id": "wt2",
+        "ts": "2026-05-28 16:40",
+        "label": "Top-up · Bank transfer",
+        "delta": 10000
+      },
+      {
+        "id": "wt3",
+        "ts": "2026-05-27 09:05",
+        "label": "Payment · Officeworks (pi_3Qj1bP9eXample02)",
+        "delta": -1890
+      },
+      {
+        "id": "wt4",
+        "ts": "2026-05-26 11:22",
+        "label": "Stripe processing fee",
+        "delta": -42.35
+      }
+    ]
+  },
+  "ledgerInvoices": [
+    {
+      "id": "li1",
+      "doc": "INV-001",
+      "date": "2026-05-02",
+      "party": "Amazon Web Services",
+      "debit": "Cloud Hosting Expense",
+      "credit": "Accounts Payable",
+      "amount": 3113,
+      "status": "Pushed to Xero"
+    },
+    {
+      "id": "li2",
+      "doc": "INV-002",
+      "date": "2026-05-04",
+      "party": "Atlassian Pty Ltd",
+      "debit": "Software Subscription Expense",
+      "credit": "Accounts Payable",
+      "amount": 3179,
+      "status": "Exported"
+    },
+    {
+      "id": "li3",
+      "doc": "INV-004",
+      "date": "2026-05-08",
+      "party": "Meta Platforms Ireland",
+      "debit": "Marketing Expense",
+      "credit": "Accounts Payable",
+      "amount": 3080,
+      "status": "Pending Export"
+    },
+    {
+      "id": "li4",
+      "doc": "INV-005",
+      "date": "2026-05-11",
+      "party": "Deloitte Touche Tohmatsu",
+      "debit": "Professional Services Expense",
+      "credit": "Accounts Payable",
+      "amount": 7821,
+      "status": "Pending Export"
+    }
+  ],
+  "ledgerBills": [
+    {
+      "id": "lb1",
+      "doc": "BILL-2026-040",
+      "date": "2026-05-06",
+      "party": "Telstra (utilities)",
+      "debit": "Telephone & Internet",
+      "credit": "Accounts Payable",
+      "amount": 880,
+      "status": "Pushed to QBO"
+    },
+    {
+      "id": "lb2",
+      "doc": "BILL-2026-041",
+      "date": "2026-05-09",
+      "party": "Origin Energy",
+      "debit": "Electricity Expense",
+      "credit": "Accounts Payable",
+      "amount": 1240,
+      "status": "Exported"
+    },
+    {
+      "id": "lb3",
+      "doc": "BILL-2026-042",
+      "date": "2026-05-14",
+      "party": "Sydney Water",
+      "debit": "Water & Rates",
+      "credit": "Accounts Payable",
+      "amount": 410,
+      "status": "Pending Export"
+    }
+  ],
+  "ledgerExpenses": [
+    {
+      "id": "le1",
+      "doc": "EXP-006",
+      "date": "2026-05-24",
+      "party": "Arup",
+      "debit": "Travel Expense",
+      "credit": "Employee Reimbursements",
+      "amount": 540,
+      "status": "Exported"
+    },
+    {
+      "id": "le2",
+      "doc": "EXP-007",
+      "date": "2026-05-24",
+      "party": "Sarah Chen",
+      "debit": "Entertainment Expense",
+      "credit": "Employee Reimbursements",
+      "amount": 64,
+      "status": "Pushed to Xero"
+    },
+    {
+      "id": "le3",
+      "doc": "EXP-013",
+      "date": "2026-05-21",
+      "party": "Marcus Lee",
+      "debit": "Office Supplies Expense",
+      "credit": "Employee Reimbursements",
+      "amount": 58,
+      "status": "Pending Export"
+    }
+  ],
+  "ledgerPurchases": [
+    {
+      "id": "lp1",
+      "doc": "PO-2026-101",
+      "date": "2026-05-10",
+      "party": "Officeworks",
+      "debit": "Office Equipment",
+      "credit": "Accounts Payable",
+      "amount": 10395,
+      "status": "Pushed to MYOB"
+    },
+    {
+      "id": "lp2",
+      "doc": "PO-2026-102",
+      "date": "2026-05-09",
+      "party": "Bunnings",
+      "debit": "Office Equipment",
+      "credit": "Accounts Payable",
+      "amount": 3190,
+      "status": "Exported"
+    },
+    {
+      "id": "lp3",
+      "doc": "PO-2026-103",
+      "date": "2026-05-08",
+      "party": "Officeworks",
+      "debit": "IT Equipment",
+      "credit": "Accounts Payable",
+      "amount": 5412,
+      "status": "Pending Export"
+    },
+    {
+      "id": "lp4",
+      "doc": "PO-2026-105",
+      "date": "2026-05-15",
+      "party": "Catering Co",
+      "debit": "Staff Amenities",
+      "credit": "Accounts Payable",
+      "amount": 2112,
+      "status": "Pending Export"
+    }
+  ],
+  "ledgerPayments": [
+    {
+      "id": "lpay1",
+      "doc": "PAY-008",
+      "date": "2026-05-30",
+      "party": "Amazon Web Services",
+      "debit": "Accounts Payable",
+      "credit": "Stripe Wallet",
+      "amount": 3113,
+      "status": "Pushed to Xero"
+    },
+    {
+      "id": "lpay2",
+      "doc": "PAY-006",
+      "date": "2026-06-08",
+      "party": "Deloitte Touche Tohmatsu",
+      "debit": "Accounts Payable",
+      "credit": "Stripe Wallet",
+      "amount": 7821,
+      "status": "Pending Export"
+    },
+    {
+      "id": "lpay3",
+      "doc": "PAY-007",
+      "date": "2026-06-04",
+      "party": "Catering Co",
+      "debit": "Accounts Payable",
+      "credit": "Stripe Wallet",
+      "amount": 3234,
+      "status": "Pending Export"
+    }
+  ],
+  "exportHistory": [
+    {
+      "id": "ex1",
+      "ts": "2026-05-30 08:20",
+      "target": "Xero",
+      "count": 4,
+      "user": "Priya Nair",
+      "status": "Success"
+    },
+    {
+      "id": "ex2",
+      "ts": "2026-05-29 17:02",
+      "target": "QuickBooks Online",
+      "count": 3,
+      "user": "Sarah Chen",
+      "status": "Success"
+    },
+    {
+      "id": "ex3",
+      "ts": "2026-05-28 11:45",
+      "target": "MYOB",
+      "count": 6,
+      "user": "Priya Nair",
+      "status": "Partial"
+    },
+    {
+      "id": "ex4",
+      "ts": "2026-05-27 09:30",
+      "target": "Generic CSV",
+      "count": 12,
+      "user": "Marcus Webb",
+      "status": "Success"
+    }
+  ],
+  "auditEvents": [
+    {
+      "id": "a1",
+      "docId": "INV-008",
+      "ts": "2026-05-30 09:05",
+      "actor": "Anomaly Engine",
+      "action": "Flagged",
+      "detail": "Duplicate Suspected vs INV-001 (2/4 identity keys)"
+    },
+    {
+      "id": "a2",
+      "docId": "INV-003",
+      "ts": "2026-05-30 09:06",
+      "actor": "Anomaly Engine",
+      "action": "Flagged",
+      "detail": "Anomaly Detected — total +52% over 90-day median"
+    },
+    {
+      "id": "a3",
+      "docId": "INV-001",
+      "ts": "2026-05-30 08:12",
+      "actor": "Sarah Chen",
+      "action": "Paid",
+      "detail": "pi_3Qk8aZ2eXample01 · A$3,113.00 via Stripe Wallet"
+    },
+    {
+      "id": "a4",
+      "docId": "PO-2026-104",
+      "ts": "2026-05-16 09:30",
+      "actor": "Marcus Webb",
+      "action": "Approved",
+      "detail": "Qty variance approved (Finance Lead)"
+    },
+    {
+      "id": "a5",
+      "docId": "EXP-006",
+      "ts": "2026-05-24 13:05",
+      "actor": "Sarah Chen",
+      "action": "Posted",
+      "detail": "Posted to ledger — Travel Expense"
+    }
+  ]
+}

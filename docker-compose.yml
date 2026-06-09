@@ -1,0 +1,106 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: invoice
+      POSTGRES_PASSWORD: invoice
+      POSTGRES_DB: invoice_db
+    # Host 5433 avoids conflict with local Windows PostgreSQL on 5432
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invoice -d invoice_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8001:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://invoice:invoice@postgres:5432/invoice_db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      UPLOAD_DIR: /app/uploads
+      RULE_BOOK_CONFIG_PATH: /app/app/rule_book_config.json
+      CHART_OF_ACCOUNTS_PATH: /app/app/chart_of_accounts.json
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      ABN_VALIDATION_MODE: format
+      GRAPH_FOLDER_MOVES_ENABLED: "true"
+      GRAPH_PROCESSED_FOLDER: Processed
+      GRAPH_EXCEPTIONS_FOLDER: Exceptions
+    volumes:
+      - ./backend:/app
+      - upload_data:/app/uploads
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: ./backend
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    env_file:
+      - ./backend/.env
+    environment:
+      CELERY_WORKER: "1"
+      DATABASE_URL: postgresql+asyncpg://invoice:invoice@postgres:5432/invoice_db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      UPLOAD_DIR: /app/uploads
+      RULE_BOOK_CONFIG_PATH: /app/app/rule_book_config.json
+      CHART_OF_ACCOUNTS_PATH: /app/app/chart_of_accounts.json
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      ABN_VALIDATION_MODE: format
+      GRAPH_FOLDER_MOVES_ENABLED: "true"
+      GRAPH_PROCESSED_FOLDER: Processed
+      GRAPH_EXCEPTIONS_FOLDER: Exceptions
+    volumes:
+      - ./backend:/app
+      - upload_data:/app/uploads
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  beat:
+    build: ./backend
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    env_file:
+      - ./backend/.env
+    environment:
+      CELERY_WORKER: "1"
+      DATABASE_URL: postgresql+asyncpg://invoice:invoice@postgres:5432/invoice_db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis: { condition: service_healthy }
+
+volumes:
+  postgres_data:
+  upload_data:

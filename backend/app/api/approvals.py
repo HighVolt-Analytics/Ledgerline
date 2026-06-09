@@ -1,0 +1,147 @@
+"""Approval queue — invoices needing human review (exceptions)."""
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
+from app.api.invoices import _to_response
+from app.models.invoice import Invoice, InvoiceStatus
+from app.schemas.common import ApiEnvelope, ResponseMeta
+from app.schemas.invoice import InvoiceResponse
+from app.services.approval_service import (
+    approve_invoice_for_reprocess,
+    permanently_delete_invoice,
+    reject_invoice,
+    request_approval,
+)
+from app.services.file_storage import stored_file_available
+
+router = APIRouter(prefix="/approvals", tags=["approvals"])
+
+_QUEUE_STATUSES = (
+    InvoiceStatus.EXCEPTION,
+    InvoiceStatus.DUPLICATE_SKIPPED,
+    InvoiceStatus.REJECTED,
+)
+
+
+@router.get("", response_model=ApiEnvelope[list[InvoiceResponse]])
+async def list_approvals(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[InvoiceResponse]]:
+    """Invoices in the approval queue (exceptions, duplicates, rejected)."""
+    stmt = (
+        select(Invoice)
+        .where(
+            Invoice.org_id == ctx.org_id,
+            Invoice.status.in_(_QUEUE_STATUSES),
+        )
+        .order_by(Invoice.created_at.desc())
+    )
+    count_stmt = select(func.count(Invoice.id)).where(
+        Invoice.org_id == ctx.org_id,
+        Invoice.status.in_(_QUEUE_STATUSES),
+    )
+
+    total = (await db.execute(count_stmt)).scalar() or 0
+    pages = max(1, (total + page_size - 1) // page_size)
+    rows = (
+        await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
+    ).scalars().all()
+
+    return ApiEnvelope(
+        data=[_to_response(r) for r in rows],
+        meta=ResponseMeta(page=page, total=total, pages=pages),
+    )
+
+
+@router.post("/{invoice_id}/approve", response_model=ApiEnvelope[InvoiceResponse])
+async def approve_invoice(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """
+    Approve an exception/rejected invoice for reprocessing.
+
+    Restores rejected blobs to invoice/ layout when needed, then resets to pending.
+    Call POST /api/process/trigger to run the pipeline.
+    """
+    inv = await db.get(Invoice, invoice_id)
+    if not inv or inv.org_id != ctx.org_id:
+        raise HTTPException(404, "Invoice not found")
+    if not stored_file_available(inv.raw_file_path):
+        raise HTTPException(
+            400,
+            "Invoice has no stored file to process. "
+            f"Upload a PDF with POST /api/invoices/{invoice_id}/attach, then approve again.",
+        )
+    try:
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        await approve_invoice_for_reprocess(
+            db, inv, actor_name=actor_name, actor_email=actor_email
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return ApiEnvelope(data=_to_response(inv))
+
+
+@router.post("/{invoice_id}/reject", response_model=ApiEnvelope[InvoiceResponse])
+async def reject_invoice_route(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """
+    Reject an exception invoice.
+
+    Sets status to rejected and moves the stored file to
+    rejected/{org}/{vendor}/{year}/{month}/ in blob storage.
+    """
+    inv = await db.get(Invoice, invoice_id)
+    if not inv or inv.org_id != ctx.org_id:
+        raise HTTPException(404, "Invoice not found")
+    try:
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        await reject_invoice(db, inv, actor_name=actor_name, actor_email=actor_email)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return ApiEnvelope(data=_to_response(inv))
+
+
+@router.post("/{invoice_id}/request", response_model=ApiEnvelope[InvoiceResponse])
+async def request_approval_route(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """Route an invoice to the approval queue for human review."""
+    inv = await db.get(Invoice, invoice_id)
+    if not inv or inv.org_id != ctx.org_id:
+        raise HTTPException(404, "Invoice not found")
+    try:
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        await request_approval(db, inv, actor_name=actor_name, actor_email=actor_email)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return ApiEnvelope(data=_to_response(inv))
+
+
+@router.delete("/{invoice_id}", status_code=204)
+async def permanently_delete_invoice_route(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> None:
+    """Permanently delete a rejected or duplicate-skipped invoice and its stored file."""
+    inv = await db.get(Invoice, invoice_id)
+    if not inv or inv.org_id != ctx.org_id:
+        raise HTTPException(404, "Invoice not found")
+    try:
+        await permanently_delete_invoice(db, inv)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

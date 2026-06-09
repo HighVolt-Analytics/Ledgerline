@@ -1,0 +1,48 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+backend/.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Runtime data (PDFs, org configs, reports)
+backend/uploads/*
+!backend/uploads/.gitkeep
+**/uploads/reports/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# IDE and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs and exports
+*.log
+*.xlsx
+celerybeat-schedule*
+
+# One-off extraction outputs (regenerate with scripts/*.mjs)
+scripts/*-extract.txt
+scripts/*-dump.txt
+docs/_spec_extract.txt
