@@ -1,15 +1,15 @@
 # Ledgerline Frontend
 
-React UI aligned with **Ledgerline v2** (`Downloads/Ledgerline v2`) — same CSS bundle, shell layout (248px sidebar, search bar, Sandbox badge, theme toggle, user menu), KPI cards with sparklines, kanban approvals, and page structure. Wired to the FastAPI backend.
+React UI wired to the FastAPI backend. Dashboard, inbox, approvals, rule book, purchase/team/payments routes, vault, matrix, and reports use live `/api/*` data.
 
 ## Stack
 
 - React 18 + TypeScript
 - Vite
-- React Router
+- React Router + TanStack Query
 - Lucide icons
 - Recharts (dashboard)
-- Styles: copied from `Ledgerline v2` build (`src/styles/ledgerline.css` — Tailwind + shadcn tokens)
+- Styles: `src/styles/ledgerline.css` (Tailwind + shadcn tokens)
 
 ## Run
 
@@ -21,11 +21,28 @@ npm run dev
 
 Open http://localhost:5173
 
-**Requires backend** on http://localhost:8001:
+**Requires backend** on http://localhost:8001. See the root [README.md](../README.md) for Azure-backed setup. Typical flow:
 
 ```powershell
-cd ..
-docker compose up -d api worker postgres redis
+# From repo root — API (terminal 1)
+cd backend
+uvicorn app.main:app --reload --port 8001
+
+# Worker + beat in separate terminals (email poll + pipeline)
+celery -A app.workers.celery_app worker --loglevel=info
+celery -A app.workers.celery_app beat --loglevel=info
+```
+
+**Docker alternative** (Azure Postgres/Redis in `backend/.env`):
+
+```powershell
+docker compose -f docker-compose.azure.yml up -d --build
+```
+
+**Fully local alternative** (Postgres + Redis in Docker):
+
+```powershell
+docker compose up -d postgres redis mailhog api worker beat
 ```
 
 API calls are proxied to port 8001 (see `vite.config.ts`).
@@ -34,14 +51,19 @@ API calls are proxied to port 8001 (see `vite.config.ts`).
 
 | Route | Screen |
 |-------|--------|
-| `/` | Dashboard |
+| `/` | Dashboard (overview, badges, activity) |
 | `/inbox` | Inbox + upload |
 | `/approvals` | Approval queue |
 | `/vendors` | Vendor registry |
-| `/rules` | Rule book editor |
-| `/reconciliation` | Daily RC |
+| `/rules` | Rule book editor + live evaluation |
+| `/purchases` | Purchase management (routed invoices) |
+| `/team-expenses` | Team expense claims |
+| `/payments` | Payables queue |
+| `/vault` | Document vault |
+| `/matrix` | Document matrix |
+| `/reconciliation` | Daily reconciliation |
 | `/integrations` | Integration status |
-| `/reports` | Excel download |
+| `/reports` | Analytics + Excel download |
 | `/settings` | App settings |
 | `/invoices/:id` | Invoice detail + PDF |
 
@@ -52,3 +74,5 @@ npm run build
 ```
 
 Output: `frontend/dist/`
+
+API reference: [docs/frontend-api.md](../docs/frontend-api.md)

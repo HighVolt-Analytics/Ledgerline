@@ -101,13 +101,21 @@ Add these to `backend/.env` (Docker loads via `env_file` in `docker-compose.yml`
 ## Enable blob storage locally
 
 1. Paste connection string into `backend/.env`
-2. Rebuild and restart:
+2. Restart API and worker, then migrate:
 
 ```powershell
-docker compose build api worker
-docker compose up -d
-docker compose exec api alembic upgrade head
-docker compose exec api python -c "import asyncio; from seed import seed_vendors_only; asyncio.run(seed_vendors_only())"
+cd backend
+alembic upgrade head
+python -c "import asyncio; from seed import seed_vendors_only; asyncio.run(seed_vendors_only())"
+# restart uvicorn + celery worker after .env change
+```
+
+Docker equivalent:
+
+```powershell
+docker compose -f docker-compose.azure.yml build api worker
+docker compose -f docker-compose.azure.yml up -d
+docker compose -f docker-compose.azure.yml exec api alembic upgrade head
 ```
 
 3. Trigger ingest or upload a PDF — `raw_file_path` should start with `azureblob://`

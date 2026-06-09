@@ -30,7 +30,12 @@ Priority unchanged: PO → vendor → keyword. PO match uses `po_reference` and 
 
 Migration `003`: `invoices.po_reference`, `invoices.cost_centre`, `line_items.tax_amount`.
 
-Apply: `docker compose exec api alembic upgrade head`
+Apply migrations:
+
+```powershell
+cd backend && alembic upgrade head
+# or: docker compose exec api alembic upgrade head
+```
 
 ## Vendor registry
 

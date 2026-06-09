@@ -1,3 +1,5 @@
+# Fully local dev: Postgres + Redis + API in Docker.
+# For Azure Postgres/Redis, use docker-compose.azure.yml or venv — see README.md.
 services:
   postgres:
     image: postgres:16-alpine

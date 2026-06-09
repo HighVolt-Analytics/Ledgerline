@@ -28,11 +28,21 @@ GRAPH_POLL_INTERVAL_MINUTES=2
 
 **Poll interval:** Celery Beat runs automatically (no manual trigger needed). Default is **2 minutes** — a good balance for invoice AP (typically within 2 min of arrival) without hammering Graph. Use `1` for near-real-time; `5`–`10` for low-volume mailboxes.
 
-Rebuild containers after adding secrets:
+Restart after adding secrets:
+
+**Azure backends (venv — recommended):**
 
 ```powershell
-docker compose build api worker beat
-docker compose up -d
+cd backend
+# restart uvicorn, celery worker, and celery beat
+```
+
+**Docker:**
+
+```powershell
+docker compose -f docker-compose.azure.yml build api worker beat
+docker compose -f docker-compose.azure.yml up -d
+# or local stack: docker compose build api worker beat && docker compose up -d
 ```
 
 ## Automatic polling

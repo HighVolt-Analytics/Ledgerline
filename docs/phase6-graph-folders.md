@@ -27,7 +27,7 @@ Set `GRAPH_FOLDER_MOVES_ENABLED=false` to restore Phase 1 behaviour (mark as rea
 Migration `004` adds `invoices.email_message_id` to link rows to Graph `message_id`.
 
 ```powershell
-docker compose exec api alembic upgrade head
+cd backend && alembic upgrade head
 ```
 
 ## Flow

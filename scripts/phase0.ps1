@@ -1,3 +1,5 @@
+# Fully local stack (Postgres + Redis in Docker).
+# For Azure Postgres/Redis, use venv + backend/.env instead — see README.md.
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 

@@ -1,5 +1,7 @@
 # Azure resources → app environment variables
 
+Quick start: [README.md](../README.md) · template: [backend/.env.example](../backend/.env.example)
+
 Resource group: `rg-email-to-accounting-automation` (eastus2).
 
 ## Integrated services

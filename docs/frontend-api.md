@@ -1,49 +1,94 @@
-# Frontend API (Ledgerline UI prep)
+# Frontend API (Ledgerline UI)
 
-Endpoints added for React UI integration. All responses use `{ data, error, meta }`.
+Endpoints used by the React app. All responses use `{ data, error, meta }`. Authenticated routes require `Authorization: Bearer <token>` when `AUTH_REQUIRED=true`.
 
-## Settings (read-only)
+## Auth
 
-`GET /api/settings` — mailbox, Graph/Blob/DI flags, ABN mode, folder names (no secrets).
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/auth/login` | Email/password → JWT |
+| POST | `/api/auth/register` | New org + admin user |
+| GET | `/api/auth/me` | Current user |
+| POST | `/api/auth/switch-org` | Change active organisation |
+| POST | `/api/auth/refresh` | Refresh session |
+
+## Settings
+
+`GET /api/settings` — mailbox, Graph/Blob/DI/Postgres/Redis flags, ABN mode, folder names (no secrets).
 
 ## Rule book
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/rule-book` | Current `rule_book.json` |
-| PUT | `/api/rule-book` | Replace file + clear mapper cache |
+| GET | `/api/rule-book/config` | Org rule book JSON (v4 schema + masters) |
+| PUT | `/api/rule-book/config` | Save config (**admin**); writes audit `rule_book_updated` |
+| POST | `/api/rule-book/evaluate` | Live evaluation preview |
+| GET | `/api/rule-book/changelog` | Recent rule saves and remaps |
+| POST | `/api/invoices/remap` | Re-apply rules to invoices (**admin**) |
+
+Master data (also surfaced on Rule Book tabs):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET/POST/PATCH/DELETE | `/api/vendor-masters` | Vendor master CRUD (**writes: admin**) |
+| GET/POST/PATCH/DELETE | `/api/employee-masters` | Employee master CRUD (**writes: admin**) |
+| GET/POST | `/api/pending-vendors` | Pending vendor queue |
+| POST | `/api/pending-vendors/{id}/promote` | Promote → release held invoices |
 
 ## Invoices
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/invoices` | List; query: `status`, `vendor`, `invoice_date_from`, `invoice_date_to`, `page`, `page_size` |
-| GET | `/api/invoices/{id}/file` | Download PDF/image/DOCX |
-| POST | `/api/invoices/{id}/attach` | Upload PDF when `has_stored_file` is false (then approve/reprocess) |
+| GET | `/api/invoices` | List; query: `status`, `route_target`, `vendor`, dates, `page`, `page_size` |
+| GET | `/api/invoices/{id}` | Detail + line items + journals |
+| PATCH | `/api/invoices/{id}` | Edit fields / line items |
+| GET | `/api/invoices/{id}/file` | Download PDF/image |
+| GET | `/api/invoices/{id}/pipeline` | Pipeline audit steps |
+| POST | `/api/invoices/upload` | Upload new document |
+| POST | `/api/invoices/{id}/attach` | Attach file to existing row |
+| POST | `/api/invoices/{id}/reprocess` | Reset and re-run pipeline |
+| POST | `/api/invoices/{id}/publish` | Ledger publish hook |
 
-Invoice responses include `has_stored_file` (path set and file exists on disk or blob).
+Invoice fields include `route_target`, `evaluation_status`, `matched_rule_ids`, `vendor_confidence`, `has_stored_file`.
 
-## Vendors
+## Approvals
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| DELETE | `/api/vendors/{id}` | Remove registry row (204) |
-
-## Approvals queue
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/api/approvals` | Invoices with `exception` or `duplicate_skipped` |
-| POST | `/api/approvals/{id}/approve` | Reset to `pending` for reprocess; then `POST /api/process/trigger` |
+| GET | `/api/approvals` | Exception / duplicate / review queue |
+| POST | `/api/approvals/{id}/approve` | Approve → reprocess |
+| POST | `/api/approvals/{id}/reject` | Reject |
+| POST | `/api/approvals/{id}/request` | Request approval |
+| DELETE | `/api/approvals/{id}` | Permanent delete |
 
 ## Dashboard
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/dashboard/stats` | KPI counters (inbox, approvals, totals, integrations, reconciliation) |
-| GET | `/api/dashboard/overview?activity_limit=8` | **Preferred for UI** — stats + activity + top vendors + cash forecast + 7-day sparkline |
-| GET | `/api/dashboard/activity?limit=20` | Audit log feed only |
+| GET | `/api/dashboard/badges` | Nav badge counts (inbox, approvals, team expenses, payments) |
+| GET | `/api/dashboard/overview` | **Preferred** — stats + activity + vendors + forecast + sparkline |
+| GET | `/api/dashboard/stats` | KPI counters only |
+| GET | `/api/dashboard/activity` | Audit feed |
 
-`DashboardStats` fields: `invoices_this_month`, `inbox_count`, `pending_approval`, `total_value_aud`, `synced_percent`, `avg_processing_seconds`, `reconciliation_delta_dr_cr`, `integrations_connected`, plus legacy counts.
+## Processing
 
-Existing endpoints: audit, reports, processing, reconciliation, vendors CRUD, invoice upload/reprocess.
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/process/trigger` | Poll Graph inbox / process pending |
+| GET | `/api/process/status` | Worker state |
+
+## Other
+
+| Area | Base path |
+|------|-----------|
+| Vendors (registry) | `/api/vendors` |
+| Vault | `/api/vault/tree`, `/api/vault/migrate` |
+| Matrix | `/api/matrix` |
+| Reconciliation | `/api/reconciliation/overview`, `/api/reconciliation/daily` |
+| Reports | `/api/reports/analytics`, `/api/reports/documents`, `/api/reports/download` |
+| Approval policy | `/api/approval-policy` |
+| Audit log (org-scoped) | `/api/audit-log` |
+| Mailboxes | `/api/mailboxes` |
+| Organisations | `/api/organisations` |
+
+See also [docs/azure-env-mapping.md](azure-env-mapping.md) for integration env vars.

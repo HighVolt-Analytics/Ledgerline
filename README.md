@@ -19,15 +19,92 @@ Email_to_Acc_proj/
 │   └── package.json
 ├── docs/             # Phase notes and API reference
 ├── scripts/          # Local setup helpers (phase0.ps1, setup-venv.ps1)
-├── docker-compose.yml
-└── docker-compose.azure.yml
+├── docker-compose.yml          # Full local stack (Postgres + Redis in Docker)
+└── docker-compose.azure.yml    # API + Celery only; Postgres/Redis on Azure
 ```
 
 **Do not commit:** `backend/.env`, `backend/uploads/*`, `frontend/node_modules/`, `frontend/dist/`, caches.
 
-## Phase 0 — Quick start
+## Quick start — Azure backends (recommended)
 
-**Requires:** Docker Desktop running.
+The project is wired for **Azure PostgreSQL**, **Redis**, **Blob Storage**, **Document Intelligence**, and **Microsoft Graph**. Run the API and Celery on your machine (or in Docker) and point them at Azure via `backend/.env`.
+
+Full variable reference: **[docs/azure-env-mapping.md](docs/azure-env-mapping.md)**
+
+### 1. Configure environment
+
+```powershell
+copy backend\.env.example backend\.env
+# Fill in POSTGRES_*, REDIS_*, AZURE_* values from Azure Portal / Key Vault
+```
+
+Use **component variables** for Postgres and Redis (`POSTGRES_HOST`, `REDIS_HOST`, etc.) — the app builds `postgresql+asyncpg://` and `rediss://` URLs with SSL automatically (`backend/app/azure_env.py`).
+
+Allow your client IP on **Azure Postgres** and **Redis** firewalls before connecting.
+
+### 2. Migrate and run (venv)
+
+```powershell
+.\scripts\setup-venv.ps1
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+alembic upgrade head
+python seed.py
+```
+
+**Terminal 1 — API:**
+
+```powershell
+cd backend
+uvicorn app.main:app --reload --port 8001
+```
+
+**Terminal 2 — Celery worker:**
+
+```powershell
+cd backend
+celery -A app.workers.celery_app worker --loglevel=info
+```
+
+**Terminal 3 — Celery beat** (email poll):
+
+```powershell
+cd backend
+celery -A app.workers.celery_app beat --loglevel=info
+```
+
+### 3. Frontend
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+| URL | Purpose |
+|-----|---------|
+| http://localhost:5173 | Ledgerline UI (proxies `/api` → 8001) |
+| http://localhost:8001/health | Health check |
+| http://localhost:8001/docs | Swagger UI |
+| http://localhost:8001/api/settings | Integration flags (`azure_postgres_enabled`, `blob_enabled`, etc.) |
+
+### Docker with Azure backends
+
+Runs API, worker, and beat in containers — **no local Postgres/Redis**:
+
+```powershell
+docker compose -f docker-compose.azure.yml up -d --build
+docker compose -f docker-compose.azure.yml exec api alembic upgrade head
+```
+
+`backend/.env` is loaded via `env_file` in `docker-compose.azure.yml`.
+
+---
+
+## Alternative — fully local (Docker)
+
+For offline dev with Postgres and Redis in Docker (no Azure):
 
 ```powershell
 cd Email_to_Acc_proj
@@ -43,15 +120,16 @@ docker compose exec api python seed.py
 docker compose exec api pytest -v
 ```
 
-| URL | Purpose |
-|-----|---------|
-| http://localhost:8001/health | Health check |
-| http://localhost:8001/docs | Swagger UI |
-| http://localhost:8001/api/invoices | Invoice list |
-| http://localhost:8001/api/dashboard/stats | Dashboard |
-| http://localhost:8025 | Mailhog |
+| Container | Port | Role |
+|-----------|------|------|
+| api | 8001 | FastAPI |
+| worker | — | Celery worker |
+| beat | — | Inbox poll (`GRAPH_POLL_INTERVAL_MINUTES`, default 2) |
+| postgres | 5432 | Database |
+| redis | 6379 | Celery broker |
+| mailhog | 8025 | Dev SMTP UI |
 
-## Local venv (optional)
+Local venv against Docker DB only:
 
 ```powershell
 .\scripts\setup-venv.ps1
@@ -59,12 +137,10 @@ docker compose up -d postgres redis mailhog
 cd backend
 .\.venv\Scripts\Activate.ps1
 alembic upgrade head
-python seed.py
-uvicorn app.main:app --reload --port 8000
-pytest -v
+uvicorn app.main:app --reload --port 8001
 ```
 
-Copy `backend/.env.example` → `backend/.env` (used by venv only; Docker uses `docker-compose.yml`).
+---
 
 ## API envelope
 
@@ -84,85 +160,54 @@ Requests accept `X-Correlation-ID` for tracing.
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://...` |
-| `CELERY_BROKER_URL` | Redis URL for Celery |
-| `CELERY_RESULT_BACKEND` | Redis result backend |
-| `UPLOAD_DIR` | PDF storage path |
-| `RULE_BOOK_PATH` | Vendor/PO/keyword → expense category (`rule_book.json`) |
-| `CHART_OF_ACCOUNTS_PATH` | Expense category → GL code (`chart_of_accounts.json`) |
+| `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | **Azure Postgres** (preferred) — app builds `DATABASE_URL` |
+| `REDIS_HOST`, `REDIS_SSL_PORT`, `REDIS_PASSWORD` | **Azure Redis** (preferred) — app builds Celery broker URLs |
+| `DATABASE_URL` | Full Postgres URL (local Docker or Azure export) |
+| `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | Redis URLs (local) |
+| `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_CONTAINER` | Blob PDF storage |
+| `AZURE_DI_ENDPOINT`, `AZURE_DI_KEY` | Document Intelligence (parse fallback) |
+| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `GRAPH_MAILBOX` | Microsoft Graph email ingest |
+| `UPLOAD_DIR` | Local PDF fallback when Blob unset |
+| `RULE_BOOK_CONFIG_PATH` | Org rule book JSON template |
+| `CHART_OF_ACCOUNTS_PATH` | Expense category → GL code |
+| `AUTH_REQUIRED`, `JWT_SECRET` | Dashboard login |
 | `CORS_ORIGINS` | Comma-separated origins |
-| `LOG_LEVEL` | `INFO`, `DEBUG`, etc. |
-| `SMTP_HOST` / `SMTP_PORT` | Notification SMTP |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | App Insights (optional locally) |
 
 | Run mode | Where config lives |
 |----------|-------------------|
-| Docker `api` / `worker` / `beat` | `docker-compose.yml` `environment` block |
-| Local venv | `backend/.env` (from `.env.example`) |
-| Azure (later) | `backend/.env` or Key Vault references |
+| **Azure-backed venv** (recommended) | `backend/.env` |
+| Docker + Azure | `backend/.env` via `docker-compose.azure.yml` |
+| Docker local stack | `docker-compose.yml` `environment` block |
+| App Service | Azure Portal → Configuration → Application settings |
 
-## Services
-
-| Container | Port | Role |
-|-----------|------|------|
-| api | 8001 | FastAPI (host port; 8000 used by another app on your machine) |
-| worker | — | Celery worker |
-| beat | — | Poll inbox (default every 2 min, `GRAPH_POLL_INTERVAL_MINUTES`) |
-| postgres | 5432 | Database |
-| redis | 6379 | Celery broker |
-| mailhog | 8025 | Dev SMTP UI |
+See [docs/azure-env-mapping.md](docs/azure-env-mapping.md) for the complete Azure mapping.
 
 ## Tests
 
-```bash
-cd backend && pytest -v
+```powershell
+cd backend
+pytest -v
 ```
 
-## Phase 1 — Graph email (see [docs/phase1-graph.md](docs/phase1-graph.md))
+## Feature phases (pipeline)
 
-Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `GRAPH_MAILBOX` in `backend/.env`, then:
+| Phase | Topic | Doc |
+|-------|--------|-----|
+| 1 | Microsoft Graph email ingest | [docs/phase1-graph.md](docs/phase1-graph.md) |
+| 1b | PDF parsing (local + Azure DI) | [docs/phase1b-parsing.md](docs/phase1b-parsing.md) |
+| 2 | Blob storage + vendor registry | [docs/phase2-blob-storage.md](docs/phase2-blob-storage.md) |
+| 5 | Excel workbook export | [docs/phase5-workbook-export.md](docs/phase5-workbook-export.md) |
+| 6 | Graph folder moves (Processed / Exceptions) | [docs/phase6-graph-folders.md](docs/phase6-graph-folders.md) |
+| 7 | Rule book backend evaluator | [docs/phase7-rule-book.md](docs/phase7-rule-book.md) |
+
+Trigger email ingest after Graph is configured:
 
 ```powershell
-docker compose build api worker beat
-docker compose up -d
 Invoke-RestMethod -Method POST http://localhost:8001/api/process/trigger
 ```
 
-## Phase 1b — PDF parsing (see [docs/phase1b-parsing.md](docs/phase1b-parsing.md))
-
-Local `pdfplumber` / PyMuPDF + regex first; optional **Azure Document Intelligence** (`prebuilt-invoice`) when text is thin or fields are incomplete.
-
-```env
-AZURE_DI_ENDPOINT=https://<resource>.cognitiveservices.azure.com/
-AZURE_DI_KEY=<key>
-```
-
-Or use names from your Azure deploy export: `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` / `AZURE_DOCUMENT_INTELLIGENCE_KEY` (see [docs/azure-env-mapping.md](docs/azure-env-mapping.md)).
-
-Restart worker after changing `.env`, then upload a PDF or trigger processing.
-
-## Phase 5 — Excel workbook (see [docs/phase5-workbook-export.md](docs/phase5-workbook-export.md))
-
-Multi-sheet `output_workbook` export after processing; download via `/api/reports/download`.
-
-## Phase 2 — Blob storage (see [docs/phase2-blob-storage.md](docs/phase2-blob-storage.md))
-
-Optional Azure Blob for PDFs; vendor registry for email routing and approved ABN (VR05).
-
-```env
-AZURE_STORAGE_CONNECTION_STRING=<from Azure portal>
-AZURE_STORAGE_CONTAINER=invoices
-```
-
-Run migration and seed vendors:
-
-```powershell
-docker compose exec api alembic upgrade head
-docker compose exec api python -c "import asyncio; from seed import seed_vendors_only; asyncio.run(seed_vendors_only())"
-```
-
-## Phase 6 — Graph folders (see [docs/phase6-graph-folders.md](docs/phase6-graph-folders.md))
-
-Moves each processed email to **Processed** or **Exceptions** under Inbox. Requires `Mail.ReadWrite` and migration `004`.
+Graph folder moves (requires `Mail.ReadWrite`):
 
 ```env
 GRAPH_FOLDER_MOVES_ENABLED=true
@@ -170,25 +215,21 @@ GRAPH_PROCESSED_FOLDER=Processed
 GRAPH_EXCEPTIONS_FOLDER=Exceptions
 ```
 
+## Rule book architecture (Phases A–D)
+
+| Phase | Focus | Doc |
+|-------|--------|-----|
+| A | Email capture gate, legacy cascade, upload routing | [docs/phase-a-rule-book.md](docs/phase-a-rule-book.md) |
+| B | Pending vendor hold, employee validation, team policy | [docs/phase-b-rule-book.md](docs/phase-b-rule-book.md) |
+| C | UI wired to API (routed docs, payables, auto-remap) | [docs/phase-c-rule-book.md](docs/phase-c-rule-book.md) |
+| D | Rule-change audit + admin permissions | [docs/phase-d-rule-book.md](docs/phase-d-rule-book.md) |
+
 ## Assessment brief alignment
 
 See [docs/brief-compliance.md](docs/brief-compliance.md) for validation rules (VR01–VR08), line items, PO/cost centre, and multi-format attachments.
 
-## Frontend (Ledgerline UI)
+## Frontend
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+React UI wired to `/api/*`. See [frontend/README.md](frontend/README.md) and [docs/frontend-api.md](docs/frontend-api.md).
 
-Open http://localhost:5173 (proxies `/api` → http://localhost:8001). Design matches `Ledgerline v2` mock; see [frontend/README.md](frontend/README.md).
-
-API reference: [docs/frontend-api.md](docs/frontend-api.md)
-
-## Roadmap
-
-- **Phase 1b:** PDF parsing (local + Azure DI fallback)
-- **Phase 2:** Blob storage + vendor approval — see [docs/phase2-blob-storage.md](docs/phase2-blob-storage.md)
-- **Phase 3–7:** Full pipeline hardening
-- **Phase 8:** React frontend (wire to `/api/*` per frontend-api doc)
+Main routes: Dashboard, Inbox, Approvals, Rule Book, Purchase Management, Team Expenses, Payments, Vault, Matrix, Reports.
