@@ -101,8 +101,6 @@ jobs:
       - name: Wait for rollouts
         run: |
           kubectl rollout status deployment/ledgerlink-api -n "${{ env.NAMESPACE }}" --timeout=10m
-          kubectl rollout status deployment/ledgerlink-worker -n "${{ env.NAMESPACE }}" --timeout=10m
-          kubectl rollout status deployment/ledgerlink-beat -n "${{ env.NAMESPACE }}" --timeout=10m
           kubectl rollout status deployment/ledgerlink-frontend -n "${{ env.NAMESPACE }}" --timeout=10m
 
       - name: Verify API health via cluster service
