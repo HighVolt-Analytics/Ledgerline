@@ -1,6 +1,5 @@
 import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { BareBasenameRedirect } from "@/components/BareBasenameRedirect";
 import { Layout } from "@/components/Layout";
 import { PageLoader } from "@/components/PageLoader";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -72,11 +71,12 @@ const routerBasename = getRouterBasename();
 export default function App() {
   return (
     <BrowserRouter basename={routerBasename}>
-      <BareBasenameRedirect />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
-        <Route element={<ProtectedRoute />}>
+
+        {/* /ledgerlink and /ledgerlink/ -> dashboard (index route) */}
+        <Route path="/" element={<ProtectedRoute />}>
           <Route element={<Layout />}>
             <Route index element={<DashboardPage />} />
             <Route
@@ -217,6 +217,7 @@ export default function App() {
             />
           </Route>
         </Route>
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

@@ -2,15 +2,17 @@
 export const LEDGERLINK_BASENAME = "/ledgerlink";
 
 /**
- * React Router basename derived from VITE_BASE_PATH.
- * Production default: /ledgerlink. Local dev: undefined (app at /).
+ * React Router basename (no trailing slash). Production always uses /ledgerlink.
  */
 export function getRouterBasename(): string | undefined {
-  const raw =
-    import.meta.env.VITE_BASE_PATH ??
-    (import.meta.env.PROD ? `${LEDGERLINK_BASENAME}/` : "/");
-  const normalized = raw.replace(/\/+$/, "");
-  return normalized || undefined;
+  const fromEnv = import.meta.env.VITE_BASE_PATH;
+  if (typeof fromEnv === "string" && fromEnv.trim()) {
+    return fromEnv.trim().replace(/\/+$/, "");
+  }
+  if (import.meta.env.PROD) {
+    return LEDGERLINK_BASENAME;
+  }
+  return undefined;
 }
 
 /**
