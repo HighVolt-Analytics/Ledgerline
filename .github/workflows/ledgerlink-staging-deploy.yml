@@ -105,7 +105,11 @@ jobs:
           kubectl rollout status deployment/ledgerlink-beat -n "${{ env.NAMESPACE }}" --timeout=10m
           kubectl rollout status deployment/ledgerlink-frontend -n "${{ env.NAMESPACE }}" --timeout=10m
 
-      - name: Verify API health on container port
+      - name: Verify API health via cluster service
         run: |
-          kubectl exec -n "${{ env.NAMESPACE }}" deploy/ledgerlink-api -- \
-            wget -qO- "http://127.0.0.1:${{ env.API_CONTAINER_PORT }}/health"
+          kubectl run ledgerlink-health-check \
+            -n "${{ env.NAMESPACE }}" \
+            --rm -i \
+            --restart=Never \
+            --image=curlimages/curl \
+            -- curl -f "http://ledgerlink-api.${{ env.NAMESPACE }}.svc.cluster.local:${{ env.API_CONTAINER_PORT }}/health"

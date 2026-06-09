@@ -403,8 +403,13 @@ Use these IPs as Front Door origin hostnames (or point Front Door origin groups 
 ### Health validation
 
 ```powershell
-# Pod-level API health (FastAPI route is GET /health, not /api/health)
-kubectl exec -n quantum-ledgerlink deploy/ledgerlink-api -- wget -qO- http://127.0.0.1:8001/health
+# API health via in-cluster Service (API image has no wget/curl)
+kubectl run ledgerlink-health-check \
+  -n quantum-ledgerlink \
+  --rm -i \
+  --restart=Never \
+  --image=curlimages/curl \
+  -- curl -f http://ledgerlink-api.quantum-ledgerlink.svc.cluster.local:8001/health
 
 # LoadBalancer origins (replace with IPs from kubectl get svc above)
 $BACKEND_IP = kubectl get svc ledgerlink-backend-public -n quantum-ledgerlink -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
