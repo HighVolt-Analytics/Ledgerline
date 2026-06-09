@@ -1,8 +1,8 @@
-# Celery beat — no HTTP listener; exec probes only (not port 8000/8001).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ledgerlink-beat  namespace: quantum-ledgerlink
+  name: ledgerlink-beat
+  namespace: quantum-ledgerlink
   labels:
     app: ledgerlink-beat
     component: beat

@@ -17,8 +17,7 @@
 #   /ledgerlink/api/invoices    ->  /api/invoices
 #
 # Priority ensures /ledgerlink/api* wins over the broader /ledgerlink frontend prefix.
-#
-# Backend service port 8000 -> pod containerPort 8000 (not local dev host 8001).---
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -41,7 +40,7 @@ spec:
               service:
                 name: ledgerlink-api
                 port:
-                  number: 8000
+                  number: 8001
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -57,7 +56,6 @@ spec:
   rules:
     - http:
         paths:
-          # Prefix covers /ledgerlink, /ledgerlink/, and all SPA routes except /ledgerlink/api*
           - path: /ledgerlink
             pathType: Prefix
             backend:

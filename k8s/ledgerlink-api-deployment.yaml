@@ -1,5 +1,3 @@
-# API listens on container port 8000 (backend/Dockerfile: uvicorn --port 8000, EXPOSE 8000).
-# Port 8001 appears only in local dev/docker-compose host mappings (8001:8000).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,15 +23,21 @@ spec:
         - name: ledgerlink-api
           image: highvoltacr1778087855.azurecr.io/ledgerlink-api:placeholder
           imagePullPolicy: Always
-          # Image CMD: uvicorn app.main:app --host 0.0.0.0 --port 8000
+          command:
+            - uvicorn
+            - app.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8001"
           ports:
             - name: http
-              containerPort: 8000          envFrom:
+              containerPort: 8001
+          envFrom:
             - secretRef:
                 name: app-secrets
             - configMapRef:
                 name: ledgerlink-config
-          # FastAPI exposes GET /health at the app root (not under /api).
           readinessProbe:
             httpGet:
               path: /health

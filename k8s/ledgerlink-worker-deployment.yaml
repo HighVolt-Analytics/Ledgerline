@@ -1,8 +1,8 @@
-# Celery worker — no HTTP listener; exec probes only (not port 8000/8001).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ledgerlink-worker  namespace: quantum-ledgerlink
+  name: ledgerlink-worker
+  namespace: quantum-ledgerlink
   labels:
     app: ledgerlink-worker
     component: worker

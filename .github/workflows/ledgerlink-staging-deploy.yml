@@ -12,8 +12,7 @@ env:
   NAMESPACE: quantum-ledgerlink
   API_IMAGE: highvoltacr1778087855.azurecr.io/ledgerlink-api
   FRONTEND_IMAGE: highvoltacr1778087855.azurecr.io/ledgerlink-frontend
-  # Matches backend/Dockerfile (uvicorn --port 8000). Local dev uses host 8001 via docker-compose.
-  API_CONTAINER_PORT: "8000"
+  API_CONTAINER_PORT: "8001"
   FRONTEND_CONTAINER_PORT: "80"
 
 jobs:
