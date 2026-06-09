@@ -1,8 +1,10 @@
 import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BareBasenameRedirect } from "@/components/BareBasenameRedirect";
 import { Layout } from "@/components/Layout";
 import { PageLoader } from "@/components/PageLoader";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { getRouterBasename } from "@/lib/routerBasename";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SetupPage } from "@/pages/SetupPage";
@@ -65,13 +67,12 @@ function LazyPage({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
 }
 
-const routerBasename = (
-  import.meta.env.VITE_BASE_PATH ?? (import.meta.env.PROD ? "/ledgerlink/" : "/")
-).replace(/\/$/, "");
+const routerBasename = getRouterBasename();
 
 export default function App() {
   return (
-    <BrowserRouter basename={routerBasename || undefined}>
+    <BrowserRouter basename={routerBasename}>
+      <BareBasenameRedirect />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />

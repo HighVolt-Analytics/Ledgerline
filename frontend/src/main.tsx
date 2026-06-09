@@ -6,7 +6,10 @@ import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/context/ToastContext";
 import { queryClient } from "@/lib/queryClient";
+import { normalizeBareBasenameUrl } from "@/lib/routerBasename";
 import "./index.css";
+
+normalizeBareBasenameUrl();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
