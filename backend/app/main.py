@@ -28,11 +28,14 @@ from app.api import (
 from app.api.deps import CorrelationIdMiddleware, require_user
 from app.config import get_settings
 from app.database import async_session_factory
+from app.middleware.proxy_path import ProxyPathPrefixMiddleware
 from app.services.org_context import get_or_create_default_org, sync_env_mailbox
 from app.telemetry import setup_application_insights
 from app.utils.logger import configure_logging, get_logger
 
 logger = get_logger(__name__)
+
+_settings = get_settings()
 
 
 @asynccontextmanager
@@ -50,18 +53,24 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("app_stopped")
 
 
-app = FastAPI(title="Invoice Processing Pipeline", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="Invoice Processing Pipeline",
+    version="1.0.0",
+    lifespan=lifespan,
+    root_path=_settings.root_path,
+)
 
-settings = get_settings()
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
+    allow_origins=_settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-Correlation-ID"],
 )
+if _settings.root_path:
+    app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
 
 app.include_router(auth.router, prefix="/api")
 

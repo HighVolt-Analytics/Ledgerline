@@ -19,6 +19,7 @@ Email_to_Acc_proj/
 │   ├── Dockerfile    # Production image (nginx, /ledgerlink base path)
 │   └── package.json
 ├── k8s/              # AKS manifests (namespace: quantum-ledgerlink)
+│   └── ledgerlink-config.example.yaml  # ConfigMap template incl. BASE_PATH
 ├── docs/             # Phase notes and API reference
 ├── scripts/          # Local setup helpers (phase0.ps1, setup-venv.ps1)
 ├── docker-compose.yml          # Full local stack (Postgres + Redis in Docker)
@@ -174,6 +175,7 @@ Requests accept `X-Correlation-ID` for tracing.
 | `CHART_OF_ACCOUNTS_PATH` | Expense category → GL code |
 | `AUTH_REQUIRED`, `JWT_SECRET` | Dashboard login |
 | `CORS_ORIGINS` | Comma-separated origins |
+| `BASE_PATH` / `ROOT_PATH` | Reverse-proxy prefix for AKS/Front Door (e.g. `/ledgerlink`; empty locally) |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | App Insights (optional locally) |
 
 | Run mode | Where config lives |
@@ -244,7 +246,50 @@ Staging URL: **https://staging.highvolt.tech/ledgerlink**
 
 Manifests live in `k8s/`. Images are built and pushed to ACR by `.github/workflows/ledgerlink-staging-deploy.yml` on pushes to **`develop`** (or manual `workflow_dispatch`). The workflow targets the GitHub environment **`ledgerlink-staging`**.
 
-**Ports:** The API container listens on **8000** (`backend/Dockerfile` / `uvicorn app.main:app --port 8000`). Local README and Vite proxy use **8001** because `docker-compose` maps `8001:8000` and local venv often runs `uvicorn --port 8001`. AKS Service, Ingress, and probes all target **8000**.
+### Architecture
+
+Traffic enters through **Azure Front Door**, which routes path prefixes to AKS **LoadBalancer** origins. The cluster does **not** use NGINX Ingress.
+
+```
+Azure Front Door (staging.highvolt.tech/ledgerlink)
+        │
+        ├── /ledgerlink/api/*  ──►  ledgerlink-backend-public  (LoadBalancer :8001)
+        │                                    │
+        │                                    └── ledgerlink-api pods
+        │
+        └── /ledgerlink/*      ──►  ledgerlink-frontend-public (LoadBalancer :80)
+                                             │
+                                             └── ledgerlink-frontend pods (nginx SPA)
+```
+
+| Layer | Resource | Port |
+|-------|----------|------|
+| Public API origin | `ledgerlink-backend-public` (LoadBalancer) | 8001 |
+| Public frontend origin | `ledgerlink-frontend-public` (LoadBalancer) | 80 |
+| In-cluster API | `ledgerlink-api` (ClusterIP) | 8001 |
+| In-cluster frontend | `ledgerlink-frontend` (ClusterIP) | 80 |
+
+**Ports:** The API container listens on **8001** in AKS (`uvicorn --port 8001`). Local docker-compose maps host **8001** to container **8000**; venv dev also uses **8001**.
+
+### Reverse-proxy path prefix (`BASE_PATH`)
+
+Azure Front Door forwards the **full public path** to the backend LoadBalancer (e.g. `/ledgerlink/api/settings`). FastAPI routes remain at `/api/*` and `/health` on the app.
+
+Set **`BASE_PATH=/ledgerlink`** in the `ledgerlink-config` ConfigMap (or `ROOT_PATH`). The API then:
+
+1. Initializes FastAPI with `root_path="/ledgerlink"` so OpenAPI/Swagger URLs resolve under the public prefix.
+2. Strips `/ledgerlink` from incoming request paths before routing, so `/ledgerlink/api/settings` matches the existing `/api/settings` handler.
+
+| Request (via Front Door) | Routed internally as |
+|--------------------------|----------------------|
+| `/ledgerlink/api/settings` | `/api/settings` |
+| `/ledgerlink/health` | `/health` |
+| `/ledgerlink/docs` | `/docs` (Swagger UI) |
+| `/ledgerlink/openapi.json` | `/openapi.json` |
+
+Pod probes and direct in-cluster calls without the prefix (e.g. `GET /health`) continue to work. Leave `BASE_PATH` unset for local dev.
+
+Example: `k8s/ledgerlink-config.example.yaml`
 
 ### Required Azure resources
 
@@ -252,15 +297,15 @@ Manifests live in `k8s/`. Images are built and pushed to ACR by `.github/workflo
 |----------|---------|
 | **AKS cluster** | Runs `quantum-ledgerlink` namespace workloads |
 | **ACR** `highvoltacr1778087855.azurecr.io` | Container images `ledgerlink-api`, `ledgerlink-frontend` |
+| **Azure Front Door** | Public HTTPS entry; routes `/ledgerlink` and `/ledgerlink/api` to LoadBalancer origins |
 | **Azure PostgreSQL** | Application database |
 | **Azure Redis** | Celery broker and result backend |
 | **Azure Blob Storage** | PDF storage (recommended in staging) |
 | **Document Intelligence** | OCR fallback (optional) |
 | **Microsoft Graph** (Entra app) | Email ingest |
 | **Application Insights** | Telemetry (optional) |
-| **NGINX Ingress Controller** | Routes `/ledgerlink` and `/ledgerlink/api` on the cluster |
 
-Allow the AKS subnet (or node outbound IPs) on Postgres and Redis firewalls.
+Allow the AKS subnet (or node outbound IPs) on Postgres and Redis firewalls. Register LoadBalancer external IPs as Front Door origins after each deploy.
 
 ### Required Kubernetes secrets and config
 
@@ -280,6 +325,7 @@ Create in namespace **`quantum-ledgerlink`** before the first deploy:
 
 **`ledgerlink-config`** (ConfigMap) — non-secret app configuration:
 
+- **`BASE_PATH=/ledgerlink`** — required for AKS/Front Door API routing (see above)
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`
 - `REDIS_HOST`, `REDIS_SSL_PORT`
 - `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `GRAPH_MAILBOX`
@@ -321,26 +367,55 @@ docker push highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG
 docker push highvoltacr1778087855.azurecr.io/ledgerlink-frontend:TAG
 
 # Apply manifests and set images
-kubectl apply -f k8s/ -n quantum-ledgerlink
+kubectl apply -f k8s/ledgerlink-api-deployment.yaml -n quantum-ledgerlink
+kubectl apply -f k8s/ledgerlink-worker-deployment.yaml -n quantum-ledgerlink
+kubectl apply -f k8s/ledgerlink-beat-deployment.yaml -n quantum-ledgerlink
+kubectl apply -f k8s/ledgerlink-frontend-deployment.yaml -n quantum-ledgerlink
+kubectl apply -f k8s/ledgerlink-services.yaml -n quantum-ledgerlink
+kubectl apply -f k8s/ledgerlink-loadbalancers.yaml -n quantum-ledgerlink
 kubectl set image deployment/ledgerlink-api ledgerlink-api=highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG -n quantum-ledgerlink
 kubectl set image deployment/ledgerlink-worker ledgerlink-worker=highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG -n quantum-ledgerlink
 kubectl set image deployment/ledgerlink-beat ledgerlink-beat=highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG -n quantum-ledgerlink
 kubectl set image deployment/ledgerlink-frontend ledgerlink-frontend=highvoltacr1778087855.azurecr.io/ledgerlink-frontend:TAG -n quantum-ledgerlink
-kubectl rollout status deployment/ledgerlink-api -n quantum-ledgerlink
+kubectl rollout status deployment/ledgerlink-frontend -n quantum-ledgerlink
 ```
+
+### Retrieve LoadBalancer external IPs
+
+After apply, Azure provisions public IPs for the LoadBalancer services (may take 1–2 minutes):
+
+```powershell
+# All public services in the namespace
+kubectl get svc -n quantum-ledgerlink -l exposure=public
+
+# Backend origin IP (register in Azure Front Door for /ledgerlink/api/*)
+kubectl get svc ledgerlink-backend-public -n quantum-ledgerlink -o jsonpath='{.status.loadBalancer.ingress[0].ip}{"\n"}'
+
+# Frontend origin IP (register in Azure Front Door for /ledgerlink/*)
+kubectl get svc ledgerlink-frontend-public -n quantum-ledgerlink -o jsonpath='{.status.loadBalancer.ingress[0].ip}{"\n"}'
+
+# Watch until EXTERNAL-IP moves from <pending> to an address
+kubectl get svc ledgerlink-backend-public ledgerlink-frontend-public -n quantum-ledgerlink -w
+```
+
+Use these IPs as Front Door origin hostnames (or point Front Door origin groups at the LoadBalancer FQDN if configured).
 
 ### Health validation
 
 ```powershell
 # Pod-level API health (FastAPI route is GET /health, not /api/health)
-kubectl exec -n quantum-ledgerlink deploy/ledgerlink-api -- wget -qO- http://127.0.0.1:8000/health
+kubectl exec -n quantum-ledgerlink deploy/ledgerlink-api -- wget -qO- http://127.0.0.1:8001/health
 
-# Frontend SPA
+# LoadBalancer origins (replace with IPs from kubectl get svc above)
+$BACKEND_IP = kubectl get svc ledgerlink-backend-public -n quantum-ledgerlink -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+$FRONTEND_IP = kubectl get svc ledgerlink-frontend-public -n quantum-ledgerlink -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+curl -I "http://${BACKEND_IP}:8001/health"
+curl -I "http://${FRONTEND_IP}/ledgerlink/"
+
+# Public URL via Azure Front Door
 curl -I https://staging.highvolt.tech/ledgerlink/
-curl -I https://staging.highvolt.tech/ledgerlink
-
-# API through ingress (example public route; requires auth for most endpoints)
-curl -I https://staging.highvolt.tech/ledgerlink/api/auth/login
+curl https://staging.highvolt.tech/ledgerlink/api/settings
+curl https://staging.highvolt.tech/ledgerlink/docs
 
 # Rollout status
 kubectl get pods -n quantum-ledgerlink

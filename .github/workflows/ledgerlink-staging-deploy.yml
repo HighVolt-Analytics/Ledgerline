@@ -68,7 +68,17 @@ jobs:
           kubectl create namespace "${{ env.NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Apply Kubernetes manifests
-        run: kubectl apply -f k8s/ -n "${{ env.NAMESPACE }}"
+        run: |
+          for manifest in \
+            ledgerlink-api-deployment.yaml \
+            ledgerlink-worker-deployment.yaml \
+            ledgerlink-beat-deployment.yaml \
+            ledgerlink-frontend-deployment.yaml \
+            ledgerlink-services.yaml \
+            ledgerlink-loadbalancers.yaml
+          do
+            kubectl apply -f "k8s/${manifest}" -n "${{ env.NAMESPACE }}"
+          done
 
       - name: Update deployment images
         run: |

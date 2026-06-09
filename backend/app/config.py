@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 from typing import Self
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.azure_env import (
@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     )
     chart_of_accounts_path: str = "./app/chart_of_accounts.json"
     cors_origins: str = "http://localhost:5173"
+    root_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("BASE_PATH", "ROOT_PATH"),
+        description="Public URL path prefix when behind a reverse proxy (e.g. /ledgerlink)",
+    )
     log_level: str = "INFO"
     smtp_host: str = "localhost"
     smtp_port: int = 1025
@@ -122,6 +127,18 @@ class Settings(BaseSettings):
     default_org_slug: str = "hv-org"
     default_org_name: str = "High Volt Analytics"
     approval_policy_unlock_code: str = "000000"
+
+    @field_validator("root_path", mode="before")
+    @classmethod
+    def normalize_root_path(cls, value: object) -> str:
+        if value is None:
+            return ""
+        text = str(value).strip()
+        if not text:
+            return ""
+        if not text.startswith("/"):
+            text = f"/{text}"
+        return text.rstrip("/")
 
     @model_validator(mode="after")
     def normalize_azure_connection_strings(self) -> Self:
