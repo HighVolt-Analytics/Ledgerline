@@ -1,0 +1,66 @@
+# Celery beat — no HTTP listener; exec probes only (not port 8000/8001).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledgerlink-beat  namespace: quantum-ledgerlink
+  labels:
+    app: ledgerlink-beat
+    component: beat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledgerlink-beat
+  template:
+    metadata:
+      labels:
+        app: ledgerlink-beat
+        component: beat
+    spec:
+      imagePullSecrets:
+        - name: acr-auth
+      containers:
+        - name: ledgerlink-beat
+          image: highvoltacr1778087855.azurecr.io/ledgerlink-api:placeholder
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - app.workers.celery_app
+            - beat
+            - --loglevel=info
+          env:
+            - name: CELERY_WORKER
+              value: "1"
+          envFrom:
+            - secretRef:
+                name: app-secrets
+            - configMapRef:
+                name: ledgerlink-config
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - kill -0 1
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - kill -0 1
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

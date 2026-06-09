@@ -16,7 +16,9 @@ Email_to_Acc_proj/
 │   └── .env.example  # Copy to .env — never commit .env
 ├── frontend/         # React + TypeScript + Vite UI
 │   ├── src/          # Pages, components, API client
+│   ├── Dockerfile    # Production image (nginx, /ledgerlink base path)
 │   └── package.json
+├── k8s/              # AKS manifests (namespace: quantum-ledgerlink)
 ├── docs/             # Phase notes and API reference
 ├── scripts/          # Local setup helpers (phase0.ps1, setup-venv.ps1)
 ├── docker-compose.yml          # Full local stack (Postgres + Redis in Docker)
@@ -122,7 +124,7 @@ docker compose exec api pytest -v
 
 | Container | Port | Role |
 |-----------|------|------|
-| api | 8001 | FastAPI |
+| api | 8001 → 8000 | FastAPI (host 8001 maps to container 8000) |
 | worker | — | Celery worker |
 | beat | — | Inbox poll (`GRAPH_POLL_INTERVAL_MINUTES`, default 2) |
 | postgres | 5432 | Database |
@@ -233,3 +235,117 @@ See [docs/brief-compliance.md](docs/brief-compliance.md) for validation rules (V
 React UI wired to `/api/*`. See [frontend/README.md](frontend/README.md) and [docs/frontend-api.md](docs/frontend-api.md).
 
 Main routes: Dashboard, Inbox, Approvals, Rule Book, Purchase Management, Team Expenses, Payments, Vault, Matrix, Reports.
+
+---
+
+## AKS staging deployment (Quantum LedgerLink)
+
+Staging URL: **https://staging.highvolt.tech/ledgerlink**
+
+Manifests live in `k8s/`. Images are built and pushed to ACR by `.github/workflows/ledgerlink-staging-deploy.yml` on pushes to **`develop`** (or manual `workflow_dispatch`). The workflow targets the GitHub environment **`ledgerlink-staging`**.
+
+**Ports:** The API container listens on **8000** (`backend/Dockerfile` / `uvicorn app.main:app --port 8000`). Local README and Vite proxy use **8001** because `docker-compose` maps `8001:8000` and local venv often runs `uvicorn --port 8001`. AKS Service, Ingress, and probes all target **8000**.
+
+### Required Azure resources
+
+| Resource | Purpose |
+|----------|---------|
+| **AKS cluster** | Runs `quantum-ledgerlink` namespace workloads |
+| **ACR** `highvoltacr1778087855.azurecr.io` | Container images `ledgerlink-api`, `ledgerlink-frontend` |
+| **Azure PostgreSQL** | Application database |
+| **Azure Redis** | Celery broker and result backend |
+| **Azure Blob Storage** | PDF storage (recommended in staging) |
+| **Document Intelligence** | OCR fallback (optional) |
+| **Microsoft Graph** (Entra app) | Email ingest |
+| **Application Insights** | Telemetry (optional) |
+| **NGINX Ingress Controller** | Routes `/ledgerlink` and `/ledgerlink/api` on the cluster |
+
+Allow the AKS subnet (or node outbound IPs) on Postgres and Redis firewalls.
+
+### Required Kubernetes secrets and config
+
+Create in namespace **`quantum-ledgerlink`** before the first deploy:
+
+**`acr-auth`** (image pull secret) — credentials for `highvoltacr1778087855.azurecr.io`. Referenced by all LedgerLink Deployments via `imagePullSecrets`.
+
+**`app-secrets`** (Secret) — sensitive values only. Do not commit. Typical keys (see `backend/.env.example`):
+
+- `POSTGRES_PASSWORD`
+- `REDIS_PASSWORD`
+- `JWT_SECRET`
+- `AZURE_CLIENT_SECRET`
+- `AZURE_STORAGE_CONNECTION_STRING`
+- `AZURE_DI_KEY`
+- `APPLICATIONINSIGHTS_CONNECTION_STRING` (if used)
+
+**`ledgerlink-config`** (ConfigMap) — non-secret app configuration:
+
+- `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`
+- `REDIS_HOST`, `REDIS_SSL_PORT`
+- `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `GRAPH_MAILBOX`
+- `AZURE_STORAGE_CONTAINER`, `AZURE_DI_ENDPOINT`
+- `UPLOAD_DIR` (e.g. `/app/uploads`)
+- `RULE_BOOK_CONFIG_PATH`, `CHART_OF_ACCOUNTS_PATH`
+- `CORS_ORIGINS` (include `https://staging.highvolt.tech`)
+- `LOG_LEVEL`, `AUTH_REQUIRED`, `GRAPH_FOLDER_MOVES_ENABLED`, etc.
+
+All backend Deployments (`ledgerlink-api`, `ledgerlink-worker`, `ledgerlink-beat`) mount both via `envFrom`:
+
+```yaml
+envFrom:
+  - secretRef:
+      name: app-secrets
+  - configMapRef:
+      name: ledgerlink-config
+```
+
+### GitHub Actions secrets
+
+Configure in the **`ledgerlink-staging`** environment (or repository secrets):
+
+| Secret | Description |
+|--------|-------------|
+| `AZURE_CREDENTIALS` | Service principal JSON for `azure/login` |
+| `AKS_RESOURCE_GROUP` | Resource group containing the AKS cluster |
+| `AKS_CLUSTER_NAME` | AKS cluster name |
+
+### Deploy manually
+
+```powershell
+# Build and push (replace TAG with git SHA or version)
+az acr login --name highvoltacr1778087855
+docker build -t highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG ./backend
+docker build --build-arg VITE_BASE_PATH=/ledgerlink/ --build-arg VITE_API_BASE=/ledgerlink/api `
+  -t highvoltacr1778087855.azurecr.io/ledgerlink-frontend:TAG ./frontend
+docker push highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG
+docker push highvoltacr1778087855.azurecr.io/ledgerlink-frontend:TAG
+
+# Apply manifests and set images
+kubectl apply -f k8s/ -n quantum-ledgerlink
+kubectl set image deployment/ledgerlink-api ledgerlink-api=highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG -n quantum-ledgerlink
+kubectl set image deployment/ledgerlink-worker ledgerlink-worker=highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG -n quantum-ledgerlink
+kubectl set image deployment/ledgerlink-beat ledgerlink-beat=highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG -n quantum-ledgerlink
+kubectl set image deployment/ledgerlink-frontend ledgerlink-frontend=highvoltacr1778087855.azurecr.io/ledgerlink-frontend:TAG -n quantum-ledgerlink
+kubectl rollout status deployment/ledgerlink-api -n quantum-ledgerlink
+```
+
+### Health validation
+
+```powershell
+# Pod-level API health (FastAPI route is GET /health, not /api/health)
+kubectl exec -n quantum-ledgerlink deploy/ledgerlink-api -- wget -qO- http://127.0.0.1:8000/health
+
+# Frontend SPA
+curl -I https://staging.highvolt.tech/ledgerlink/
+curl -I https://staging.highvolt.tech/ledgerlink
+
+# API through ingress (example public route; requires auth for most endpoints)
+curl -I https://staging.highvolt.tech/ledgerlink/api/auth/login
+
+# Rollout status
+kubectl get pods -n quantum-ledgerlink
+kubectl rollout status deployment/ledgerlink-api -n quantum-ledgerlink
+kubectl rollout status deployment/ledgerlink-worker -n quantum-ledgerlink
+kubectl rollout status deployment/ledgerlink-beat -n quantum-ledgerlink
+kubectl rollout status deployment/ledgerlink-frontend -n quantum-ledgerlink
+```

@@ -65,9 +65,13 @@ function LazyPage({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
 }
 
+const routerBasename = (
+  import.meta.env.VITE_BASE_PATH ?? (import.meta.env.PROD ? "/ledgerlink/" : "/")
+).replace(/\/$/, "");
+
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename || undefined}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />

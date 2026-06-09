@@ -1,0 +1,70 @@
+# Celery worker — no HTTP listener; exec probes only (not port 8000/8001).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledgerlink-worker  namespace: quantum-ledgerlink
+  labels:
+    app: ledgerlink-worker
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledgerlink-worker
+  template:
+    metadata:
+      labels:
+        app: ledgerlink-worker
+        component: worker
+    spec:
+      imagePullSecrets:
+        - name: acr-auth
+      containers:
+        - name: ledgerlink-worker
+          image: highvoltacr1778087855.azurecr.io/ledgerlink-api:placeholder
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - app.workers.celery_app
+            - worker
+            - --loglevel=info
+          env:
+            - name: CELERY_WORKER
+              value: "1"
+          envFrom:
+            - secretRef:
+                name: app-secrets
+            - configMapRef:
+                name: ledgerlink-config
+          readinessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - app.workers.celery_app
+                - inspect
+                - ping
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - app.workers.celery_app
+                - inspect
+                - ping
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

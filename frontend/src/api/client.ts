@@ -31,7 +31,9 @@ import type {
   VaultMigrateResponse,
 } from "./types";
 
-const BASE = "";
+const BASE =
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.PROD ? "/ledgerlink/api" : "");
 
 /** Dedupe concurrent GETs and cache briefly to avoid StrictMode double-fetch. */
 const GET_CACHE_MS = 30_000;

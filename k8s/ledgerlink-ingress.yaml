@@ -1,0 +1,67 @@
+# LedgerLink ingress routing (staging: https://staging.highvolt.tech/ledgerlink)
+#
+# Split into two Ingress resources so API path rewriting does not affect the SPA.
+#
+# Public paths:
+#   /ledgerlink          -> frontend (nginx redirects to /ledgerlink/)
+#   /ledgerlink/         -> frontend SPA (static assets + index.html fallback)
+#   /ledgerlink/api      -> API (rewritten to FastAPI /api)
+#   /ledgerlink/api/*    -> API (rewritten to FastAPI /api/*)
+#
+# FastAPI registers routes under /api (see backend/app/main.py). Health is at /health
+# on the pod directly (probes use /health); it is not exposed under /ledgerlink/api.
+#
+# Rewrite rule: strip the /ledgerlink/api prefix and forward the remainder to /api/<path>.
+# Examples:
+#   /ledgerlink/api/auth/login  ->  /api/auth/login
+#   /ledgerlink/api/invoices    ->  /api/invoices
+#
+# Priority ensures /ledgerlink/api* wins over the broader /ledgerlink frontend prefix.
+#
+# Backend service port 8000 -> pod containerPort 8000 (not local dev host 8001).---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ledgerlink-api
+  namespace: quantum-ledgerlink
+  labels:
+    app: ledgerlink-api
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /api/$2
+    nginx.ingress.kubernetes.io/priority: "100"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /ledgerlink/api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ledgerlink-api
+                port:
+                  number: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ledgerlink-frontend
+  namespace: quantum-ledgerlink
+  labels:
+    app: ledgerlink-frontend
+  annotations:
+    nginx.ingress.kubernetes.io/priority: "10"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # Prefix covers /ledgerlink, /ledgerlink/, and all SPA routes except /ledgerlink/api*
+          - path: /ledgerlink
+            pathType: Prefix
+            backend:
+              service:
+                name: ledgerlink-frontend
+                port:
+                  number: 80
