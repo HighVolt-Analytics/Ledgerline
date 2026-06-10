@@ -31,9 +31,12 @@ import type {
   VaultMigrateResponse,
 } from "./types";
 
+import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
+
+/** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE =
   import.meta.env.VITE_API_BASE ??
-  (import.meta.env.PROD ? "/ledgerlink/api" : "");
+  (import.meta.env.PROD ? LEDGERLINK_BASENAME : "");
 
 /** Dedupe concurrent GETs and cache briefly to avoid StrictMode double-fetch. */
 const GET_CACHE_MS = 30_000;

@@ -10,7 +10,7 @@ RUN npm ci
 COPY . .
 
 ARG VITE_BASE_PATH=/ledgerlink/
-ARG VITE_API_BASE=/ledgerlink/api
+ARG VITE_API_BASE=/ledgerlink
 ENV VITE_BASE_PATH=${VITE_BASE_PATH} \
     VITE_API_BASE=${VITE_API_BASE}
 

@@ -361,7 +361,7 @@ Configure in the **`ledgerlink-staging`** environment (or repository secrets):
 # Build and push (replace TAG with git SHA or version)
 az acr login --name highvoltacr1778087855
 docker build -t highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG ./backend
-docker build --build-arg VITE_BASE_PATH=/ledgerlink/ --build-arg VITE_API_BASE=/ledgerlink/api `
+docker build --build-arg VITE_BASE_PATH=/ledgerlink/ --build-arg VITE_API_BASE=/ledgerlink `
   -t highvoltacr1778087855.azurecr.io/ledgerlink-frontend:TAG ./frontend
 docker push highvoltacr1778087855.azurecr.io/ledgerlink-api:TAG
 docker push highvoltacr1778087855.azurecr.io/ledgerlink-frontend:TAG
