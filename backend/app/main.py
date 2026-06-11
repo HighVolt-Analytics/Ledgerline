@@ -31,6 +31,7 @@ from app.api import (
     vault,
     vendor_masters,
     vendors,
+    whatsapp,
 )
 from app.api.deps import CorrelationIdMiddleware, require_user
 from app.config import get_settings
@@ -88,6 +89,9 @@ if _settings.root_path:
 app.include_router(auth.router, prefix="/api")
 # OAuth Microsoft redirect — no JWT (must be before authenticated mailboxes router).
 app.include_router(mailboxes.oauth_public_router, prefix="/api")
+# Meta / WhatsApp OAuth callback and webhooks — no JWT.
+app.include_router(whatsapp.public_router)
+app.include_router(whatsapp.webhook_router)
 
 _api_deps = [Depends(require_user)]
 app.include_router(invoices.router, prefix="/api", dependencies=_api_deps)
@@ -110,6 +114,7 @@ app.include_router(ledger_link.router, prefix="/api", dependencies=_api_deps)
 app.include_router(billing.router, prefix="/api", dependencies=_api_deps)
 app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
+app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
 app.include_router(organisations.router, prefix="/api", dependencies=_api_deps)
 app.include_router(vault.router, prefix="/api", dependencies=_api_deps)
 

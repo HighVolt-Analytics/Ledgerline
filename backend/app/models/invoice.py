@@ -44,6 +44,10 @@ class Invoice(Base):
         ForeignKey("connected_mailboxes.id"),
         nullable=True,
     )
+    whatsapp_connection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connected_whatsapp_accounts.id"),
+        nullable=True,
+    )
     vendor: Mapped[str | None] = mapped_column(String(255))
     abn: Mapped[str | None] = mapped_column(String(11))
     billing_address: Mapped[str | None] = mapped_column(Text)
@@ -73,6 +77,7 @@ class Invoice(Base):
     email_subject: Mapped[str | None] = mapped_column(String(500))
     email_attachment_name: Mapped[str | None] = mapped_column(String(255))
     email_message_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    capture_source: Mapped[str | None] = mapped_column(String(32))
     storage_vendor_slug: Mapped[str | None] = mapped_column(String(100))
     validation_results: Mapped[str | None] = mapped_column(Text)
     account_code: Mapped[str | None] = mapped_column(String(20))

@@ -37,6 +37,7 @@ import type {
   VaultTreeResponse,
   VaultMigrateResponse,
   WalletSummary,
+  WhatsappStatus,
 } from "./types";
 
 import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
@@ -380,6 +381,30 @@ export const api = {
   },
   toggleMailbox: (id: number) =>
     request<ConnectedMailbox>(`/api/mailboxes/${id}/toggle`, { method: "PATCH" }),
+
+  getWhatsappStatus: (options?: FreshRequestOptions) => {
+    const path = "/api/integrations/whatsapp/status";
+    if (options?.fresh) bustGetCache(path);
+    return request<WhatsappStatus>(path);
+  },
+  getWhatsappAuthorizeUrl: () =>
+    request<{ authorize_url: string }>("/api/integrations/whatsapp/authorize-url"),
+  disconnectWhatsapp: (id: number) => {
+    bustGetCache("/api/integrations/whatsapp/status");
+    return request<{ disconnected: boolean; id: number }>(
+      `/api/integrations/whatsapp/disconnect/${id}`,
+      { method: "DELETE" }
+    );
+  },
+  testWhatsappConnection: (id: number) => {
+    bustGetCache("/api/integrations/whatsapp/status");
+    return request<{
+      ok: boolean;
+      integration_health: string;
+      warnings: string[];
+      profile: Record<string, unknown>;
+    }>(`/api/integrations/whatsapp/test/${id}`, { method: "POST" });
+  },
 
   getNavBadges: () => request<NavBadges>("/api/dashboard/badges"),
   getStats: () => request<DashboardStats>("/api/dashboard/stats"),

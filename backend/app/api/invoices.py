@@ -102,6 +102,7 @@ def _to_response(inv: Invoice, *, has_stored_file: bool | None = None) -> Invoic
         file_hash=inv.file_hash,
         raw_file_path=inv.raw_file_path,
         email_sender=inv.email_sender,
+        capture_source=inv.capture_source,
         connected_mailbox_id=inv.connected_mailbox_id,
         storage_vendor_slug=inv.storage_vendor_slug,
         account_code=inv.account_code,

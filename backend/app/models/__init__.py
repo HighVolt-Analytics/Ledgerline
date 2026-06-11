@@ -1,5 +1,7 @@
 from app.models.audit import AuditLog
 from app.models.connected_mailbox import ConnectedMailbox
+from app.models.connected_whatsapp import ConnectedWhatsapp
+from app.models.meta_webhook_dedupe import MetaWebhookDedupe
 from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice
 from app.models.journal import JournalEntry
@@ -19,6 +21,8 @@ from app.models.vendor_master import VendorMasterRecord
 __all__ = [
     "AuditLog",
     "ConnectedMailbox",
+    "ConnectedWhatsapp",
+    "MetaWebhookDedupe",
     "DailyReconciliation",
     "EmployeeMasterRecord",
     "GoodsReceipt",

@@ -111,6 +111,7 @@ export interface Invoice {
   file_hash: string | null;
   raw_file_path: string | null;
   email_sender: string | null;
+  capture_source: string | null;
   connected_mailbox_id: number | null;
   storage_vendor_slug: string | null;
   account_code: string | null;
@@ -424,6 +425,30 @@ export interface AppSettings {
   abn_validation_mode: string;
   rule_book_config_path: string;
   cors_origins: string;
+  whatsapp_configured: boolean;
+}
+
+export interface WhatsappConnection {
+  id: number;
+  org_id: number;
+  phone_number_id: string;
+  phone_number: string | null;
+  display_name: string | null;
+  whatsapp_business_account_id: string | null;
+  connection_status: string;
+  integration_health: string;
+  last_error: string | null;
+  last_sync_at: string | null;
+  connected_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WhatsappStatus {
+  configured: boolean;
+  webhook_callback_url: string;
+  oauth_callback_url: string;
+  connections: WhatsappConnection[];
 }
 
 export interface DocumentSetRule {

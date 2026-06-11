@@ -151,6 +151,40 @@ class Settings(BaseSettings):
     default_org_name: str = "High Volt Analytics"
     approval_policy_unlock_code: str = "000000"
 
+    # Meta / WhatsApp Cloud API
+    meta_app_id: str = Field(default="", validation_alias="META_APP_ID")
+    meta_app_secret: str = Field(default="", validation_alias="META_APP_SECRET")
+    meta_webhook_verify_token: str = Field(
+        default="",
+        validation_alias="META_WEBHOOK_VERIFY_TOKEN",
+    )
+    whatsapp_app_id: str = Field(default="", validation_alias="WHATSAPP_APP_ID")
+    whatsapp_app_secret: str = Field(default="", validation_alias="WHATSAPP_APP_SECRET")
+    whatsapp_webhook_verify_token: str = Field(
+        default="",
+        validation_alias="WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+    )
+    whatsapp_graph_api_version: str = Field(
+        default="v21.0",
+        validation_alias="WHATSAPP_GRAPH_API_VERSION",
+    )
+    whatsapp_oauth_scopes: str = Field(
+        default=(
+            "whatsapp_business_management,"
+            "whatsapp_business_messaging,"
+            "business_management"
+        ),
+        validation_alias="WHATSAPP_OAUTH_SCOPES",
+    )
+    whatsapp_oauth_redirect_uri: str = Field(
+        default="http://localhost:8001/auth/whatsapp/callback",
+        validation_alias="WHATSAPP_OAUTH_REDIRECT_URI",
+    )
+    whatsapp_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="WHATSAPP_OAUTH_FRONTEND_RETURN_URL",
+    )
+
     @field_validator("root_path", mode="before")
     @classmethod
     def normalize_root_path(cls, value: object) -> str:
@@ -215,6 +249,10 @@ class Settings(BaseSettings):
             origins.append(tunnel)
         self.cors_origins = ",".join(origins)
 
+        wa_redirect = self.whatsapp_oauth_redirect_uri.strip()
+        if not wa_redirect or "localhost" in wa_redirect or "127.0.0.1" in wa_redirect:
+            self.whatsapp_oauth_redirect_uri = f"{tunnel}/auth/whatsapp/callback"
+
         return self
 
     @property
@@ -261,6 +299,35 @@ class Settings(BaseSettings):
     @property
     def appinsights_enabled(self) -> bool:
         return bool(self.applicationinsights_connection_string.strip())
+
+    @property
+    def whatsapp_effective_app_id(self) -> str:
+        return (self.whatsapp_app_id or self.meta_app_id).strip()
+
+    @property
+    def whatsapp_effective_app_secret(self) -> str:
+        return (self.whatsapp_app_secret or self.meta_app_secret).strip()
+
+    @property
+    def whatsapp_effective_verify_token(self) -> str:
+        return (
+            self.whatsapp_webhook_verify_token or self.meta_webhook_verify_token
+        ).strip()
+
+    @property
+    def whatsapp_configured(self) -> bool:
+        return bool(
+            self.whatsapp_effective_app_id
+            and self.whatsapp_effective_app_secret
+            and self.whatsapp_effective_verify_token
+        )
+
+    @property
+    def whatsapp_frontend_return_url(self) -> str:
+        explicit = self.whatsapp_oauth_frontend_return_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        return self.graph_oauth_frontend_return_url.rstrip("/")
 
     @property
     def application_insights_runtime_enabled(self) -> bool:

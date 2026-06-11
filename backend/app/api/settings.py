@@ -32,5 +32,6 @@ async def get_app_settings() -> ApiEnvelope[AppSettingsResponse]:
             abn_validation_mode=s.abn_validation_mode,
             rule_book_config_path=s.rule_book_config_path,
             cors_origins=s.cors_origins,
+            whatsapp_configured=s.whatsapp_configured,
         )
     )
