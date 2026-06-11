@@ -164,6 +164,15 @@ async def ingest_whatsapp_message(
     existing = await find_by_hash(session, file_hash, org_id=connection.org_id)
     if existing:
         if existing.status != InvoiceStatus.PROCESSED:
+            await send_text_message_with_retry(
+                connection.phone_number_id,
+                access_token=access_token,
+                to_wa_id=msg.sender_wa_id,
+                text=(
+                    "We already received this receipt and it is still being processed. "
+                    "Please wait a moment before sending it again."
+                ),
+            )
             result.skipped_reason = "duplicate_in_progress"
             return result
         existing.status = InvoiceStatus.DUPLICATE_SKIPPED
