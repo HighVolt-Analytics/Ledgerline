@@ -28,7 +28,39 @@ export interface ConnectedMailbox {
   email: string;
   display_name: string | null;
   is_active: boolean;
+  auth_type: "application" | "delegated" | string;
+  connection_status: "connected" | "disconnected" | "error" | string;
+  oauth_connected_at: string | null;
+  last_error: string | null;
   last_poll_at: string | null;
+}
+
+export interface MailboxConnectionRequest {
+  id: number;
+  org_id: number;
+  requested_email: string;
+  display_name: string | null;
+  message: string | null;
+  status: "pending" | "connected" | "expired" | "cancelled" | string;
+  invite_sent_at: string | null;
+  expires_at: string | null;
+  connected_at: string | null;
+  connected_mailbox_id: number | null;
+  created_at: string;
+}
+
+export interface MailboxConnectionRequestAction extends MailboxConnectionRequest {
+  connect_url: string;
+  email_sent: boolean;
+  email_error: string | null;
+}
+
+export interface MailboxInvitePreview {
+  org_name: string;
+  requested_email: string;
+  display_name: string | null;
+  message: string | null;
+  expires_at: string | null;
 }
 
 export interface ProcessingStatus {
@@ -86,8 +118,15 @@ export interface Invoice {
   route_target: string | null;
   matched_rule_ids: string[] | null;
   vendor_confidence: number | null;
-  evaluation_status: "auto_coded" | "needs_review" | "pending_vendor" | null;
+  evaluation_status:
+    | "auto_coded"
+    | "needs_review"
+    | "pending_vendor"
+    | "unmatched_expense_vendor"
+    | "awaiting_po"
+    | null;
   validation_results: ValidationResult[] | null;
+  purchase_document_type?: string | null;
   created_at: string;
   has_stored_file: boolean;
 }
@@ -148,8 +187,71 @@ export interface NavBadges {
   inbox_count: number;
   pending_approval: number;
   team_expenses_count: number;
+  business_expenses_count: number;
   payments_queue_count: number;
   integrations_connected: number;
+}
+
+export interface ThreeWayMatchApi {
+  status: string;
+  qty_variance_value: number;
+  price_variance_value: number;
+  total_deviation: number;
+  po_value: number;
+  invoice_value: number;
+  invoice_gst: number;
+  invoice_total: number;
+}
+
+export interface PurchaseOrderApi {
+  id: number;
+  po_number: string;
+  vendor: string | null;
+  po_date: string | null;
+  item: string | null;
+  requestor: string | null;
+  po_qty: number;
+  po_unit_price: number;
+  grn_qty: number | null;
+  grn_date: string | null;
+  grn_receiver: string | null;
+  grn_condition: string | null;
+  invoice_id: number | null;
+  po_document_id?: number | null;
+  grn_document_id?: number | null;
+  invoice_no: string | null;
+  invoice_qty: number;
+  invoice_unit_price: number;
+  gst_rate: number;
+  variance_approved: boolean;
+  status: string;
+  three_way_match_status?: "full_match" | "partial" | "mismatch" | null;
+  match: ThreeWayMatchApi;
+  route_target?: string | null;
+  evaluation_status?: string | null;
+  matched_rule_ids?: string[];
+  matched_rule_name?: string | null;
+  matched_gl?: string | null;
+  ledger?: string | null;
+  sub_ledger?: string | null;
+  purchase_rule_id?: string | null;
+}
+
+export interface PaymentApi {
+  id: number;
+  invoice_id: number;
+  vendor: string | null;
+  amount: number;
+  currency: string;
+  status: string;
+  tab: string;
+  due_date: string | null;
+  scheduled_date: string | null;
+  paid_date: string | null;
+  invoice_approved_by: number | null;
+  approvers: Array<Record<string, unknown>>;
+  payment_intent: string | null;
+  failure_reason: string | null;
 }
 
 export interface DashboardStats {
@@ -375,6 +477,7 @@ export interface RuleBookConfig {
     id: string;
     name: string;
     enabled: boolean;
+    priority?: number;
     match_on: Record<string, unknown>;
     post_to: {
       ledger: string;
@@ -388,6 +491,7 @@ export interface RuleBookConfig {
     id: string;
     name: string;
     enabled: boolean;
+    priority?: number;
     match_on: Record<string, unknown>;
     post_to: { ledger: string; sub_ledger: string };
     matched_count: number;
@@ -396,6 +500,7 @@ export interface RuleBookConfig {
     id: string;
     name: string;
     enabled: boolean;
+    priority?: number;
     match_on: Record<string, unknown>;
     post_to: { ledger: string; sub_ledger: string };
     policy: {
@@ -441,6 +546,7 @@ export interface RuleBookEvaluationRow {
   email_rule_disabled: { id: string; name: string } | null;
   vendor_match: { vendor_id: string; vendor_name: string; confidence: number } | null;
   category_rule: { label: string; kind: string } | null;
+  category_rule_disabled: { label: string; kind: string } | null;
   auto_coded: boolean;
 }
 
@@ -543,9 +649,12 @@ export interface VaultTreeNode {
 export interface VaultApiFile {
   invoice_id: number;
   org: string;
+  book: string;
   vendor: string;
   year: string;
   month: string;
+  po_folder?: string | null;
+  purchase_document_type?: string | null;
   file_name: string;
   virtual_path: string;
   blob_path: string | null;
@@ -597,11 +706,77 @@ export type MatrixCellState = "done" | "pending" | "fail";
 export interface MatrixStageCell {
   stage: string;
   state: MatrixCellState;
+  when?: string | null;
+  detail?: string | null;
+}
+
+export interface MatrixConflictRow {
+  field: string;
+  this_doc: string;
+  other_doc: string;
 }
 
 export interface MatrixRow {
   invoice: Invoice;
   stages: MatrixStageCell[];
+  flag: string;
+  flag_reason?: string | null;
+  payment_status: string;
+  conflict_with?: string | null;
+  conflict_detail?: MatrixConflictRow[] | null;
+}
+
+export interface LedgerExportRow {
+  id: string;
+  doc: string;
+  date: string;
+  party: string;
+  debit: string;
+  credit: string;
+  amount: number;
+  status: string;
+}
+
+export interface LedgerLinkExports {
+  invoices: LedgerExportRow[];
+  bills: LedgerExportRow[];
+  expenses: LedgerExportRow[];
+  purchases: LedgerExportRow[];
+  payments: LedgerExportRow[];
+}
+
+export interface LedgerLinkResponse {
+  overview: ReconciliationOverview;
+  exports: LedgerLinkExports;
+}
+
+export interface WalletTransaction {
+  id: string;
+  label: string;
+  delta: number;
+}
+
+export interface WalletSummary {
+  balance: number;
+  available: number;
+  last_top_up: string;
+  transactions: WalletTransaction[];
+}
+
+export interface CreditPack {
+  id: string;
+  name: string;
+  credits: number;
+  price_aud: number;
+  popular?: boolean;
+}
+
+export interface BillingState {
+  balance: number;
+  current_pack: string;
+  auto_recharge: boolean;
+  threshold: number;
+  packs: CreditPack[];
 }
 
 export interface PipelineAuditStep {

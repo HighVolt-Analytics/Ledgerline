@@ -1,0 +1,74 @@
+export const APPROVAL_ROLES = ["Admin", "Approver", "Bookkeeper", "Viewer", "Auditor"] as const;
+export const APPROVAL_ACTIONS = [
+  "View",
+  "Comment",
+  "Approve",
+  "Reject",
+  "Publish",
+  "Edit Policy",
+  "Manage Users",
+] as const;
+
+export type ApprovalRole = (typeof APPROVAL_ROLES)[number];
+export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
+
+export type PolicyRule = { id: string; condition: string; approver: string };
+
+export type LocalApprovalPolicy = {
+  locked: boolean;
+  rules: PolicyRule[];
+  matrix: Record<ApprovalRole, Record<ApprovalAction, boolean>>;
+};
+
+export const DEFAULT_APPROVAL_RULES: PolicyRule[] = [
+  { id: "ap1", condition: "Invoices > 5,000", approver: "CFO approval" },
+  { id: "ap2", condition: "Marketing Expense invoices", approver: "Marketing Lead" },
+  { id: "ap3", condition: "Suspense-routed invoices", approver: "Finance Controller" },
+  { id: "ap4", condition: "New vendor (first invoice)", approver: "Bookkeeper review" },
+];
+
+export const DEFAULT_APPROVAL_MATRIX: Record<
+  ApprovalRole,
+  Record<ApprovalAction, boolean>
+> = {
+  Admin: Object.fromEntries(APPROVAL_ACTIONS.map((a) => [a, true])) as Record<
+    ApprovalAction,
+    boolean
+  >,
+  Approver: {
+    View: true,
+    Comment: true,
+    Approve: true,
+    Reject: true,
+    Publish: true,
+    "Edit Policy": false,
+    "Manage Users": false,
+  },
+  Bookkeeper: {
+    View: true,
+    Comment: true,
+    Approve: false,
+    Reject: false,
+    Publish: false,
+    "Edit Policy": false,
+    "Manage Users": false,
+  },
+  Viewer: {
+    View: true,
+    Comment: false,
+    Approve: false,
+    Reject: false,
+    Publish: false,
+    "Edit Policy": false,
+    "Manage Users": false,
+  },
+  Auditor: {
+    View: true,
+    Comment: true,
+    Approve: false,
+    Reject: false,
+    Publish: false,
+    "Edit Policy": false,
+    "Manage Users": false,
+  },
+};

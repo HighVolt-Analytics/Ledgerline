@@ -40,11 +40,76 @@ def _relative_time(at: datetime | None) -> str:
 
 
 def _latest_log(logs: list[AuditLog], *events: str) -> AuditLog | None:
-    for event in events:
-        for entry in logs:
-            if entry.event == event:
-                return entry
-    return None
+    return _latest_event_log(logs, events)
+
+
+def _latest_event_log(logs: list[AuditLog], events: tuple[str, ...] | list[str]) -> AuditLog | None:
+    best: AuditLog | None = None
+    for entry in logs:
+        if entry.event not in events:
+            continue
+        if best is None or entry.created_at > best.created_at:
+            best = entry
+    return best
+
+
+def _is_after(entry: AuditLog | None, pivot: AuditLog | None) -> bool:
+    if entry is None:
+        return False
+    if pivot is None:
+        return True
+    return entry.created_at >= pivot.created_at
+
+
+def _validation_detail(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageState]:
+    failed = [
+        r for r in _validation_results(inv) if not r.get("skipped") and not r.get("passed")
+    ]
+    if failed:
+        msg = failed[0].get("message", "Failed checks")
+        return str(msg), "fail"
+    if _validation_results(inv):
+        return "Passed", "done"
+
+    latest_approve = _latest_event_log(logs, ["invoice_approved"])
+    latest_passed = _latest_event_log(logs, ["validation_passed"])
+    latest_failed = _latest_event_log(logs, ["validation_failed"])
+    latest_hold = _latest_event_log(logs, ["vendor_registration_hold"])
+
+    if (
+        latest_hold
+        and _is_after(latest_hold, latest_approve)
+        and inv.status == InvoiceStatus.EXCEPTION
+    ):
+        return "Vendor registration hold", "fail"
+
+    if latest_passed and latest_failed:
+        if latest_passed.created_at > latest_failed.created_at and _is_after(
+            latest_passed, latest_approve
+        ):
+            return "Passed", "done"
+        if latest_failed.created_at >= latest_passed.created_at and _is_after(
+            latest_failed, latest_approve
+        ):
+            return "Failed checks", "fail"
+    elif latest_passed and _is_after(latest_passed, latest_approve):
+        return "Passed", "done"
+    elif latest_failed and _is_after(latest_failed, latest_approve):
+        return "Failed checks", "fail"
+
+    if inv.status in (
+        InvoiceStatus.PENDING,
+        InvoiceStatus.PARSING,
+        InvoiceStatus.VALIDATING,
+        InvoiceStatus.MAPPING,
+        InvoiceStatus.JOURNALING,
+        InvoiceStatus.RECONCILING,
+    ):
+        return "In progress", "pending"
+
+    if inv.status == InvoiceStatus.EXCEPTION:
+        return "Routed to review", "fail"
+    return "Pending", "pending"
 
 
 def _validation_results(inv: Invoice) -> list[dict[str, Any]]:
@@ -57,20 +122,6 @@ def _validation_results(inv: Invoice) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             return []
     return raw if isinstance(raw, list) else []
-
-
-def _validation_detail(inv: Invoice) -> tuple[str, StageState]:
-    failed = [
-        r for r in _validation_results(inv) if not r.get("skipped") and not r.get("passed")
-    ]
-    if failed:
-        msg = failed[0].get("message", "Failed checks")
-        return str(msg), "fail"
-    if _validation_results(inv):
-        return "Passed", "done"
-    if inv.status == InvoiceStatus.EXCEPTION:
-        return "Routed to review", "fail"
-    return "Pending", "pending"
 
 
 def _stage_index(status: InvoiceStatus) -> int:
@@ -125,16 +176,27 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     if parsed_at is None and _stage_index(inv.status) >= 1:
         parsed_at = inv.created_at
 
-    validation_text, validation_state = _validation_detail(inv)
+    awaiting_reparse = (
+        inv.status == InvoiceStatus.PENDING
+        and not (inv.vendor or inv.invoice_no)
+        and parsed_log is not None
+        and parsed_log.event != "parsing_failed"
+    )
+
+    validation_text, validation_state = _validation_detail(inv, logs)
+    if awaiting_reparse:
+        validation_text, validation_state = "Pending", "pending"
     validated_at = validated_log.created_at if validated_log else None
-    if validated_at is None and _stage_index(inv.status) >= 2:
+    if validated_at is None and _stage_index(inv.status) >= 2 and not awaiting_reparse:
         validated_at = parsed_at or inv.created_at
 
-    account = inv.account_name or "Suspense Account"
+    account = inv.account_name or ("Pending" if awaiting_reparse else "Suspense Account")
     mapped_at = mapped_log.created_at if mapped_log else None
-    if mapped_at is None and _stage_index(inv.status) >= 3:
+    if mapped_at is None and _stage_index(inv.status) >= 3 and not awaiting_reparse:
         mapped_at = validated_at or inv.created_at
-    mapped_suspense = "suspense" in account.lower()
+    mapped_suspense = (
+        not awaiting_reparse and inv.account_name and "suspense" in inv.account_name.lower()
+    )
 
     approved_at: datetime | None = None
     approved_detail = "Pending policy"
@@ -142,8 +204,27 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     if approved_log:
         approved_at = approved_log.created_at
         actor = _actor_name(approved_log.detail)
-        approved_detail = f"{actor} · Approved" if actor else "Approved for processing"
-        approved_state = "done"
+        if inv.status == InvoiceStatus.PROCESSED:
+            approved_detail = f"{actor} · Approved" if actor else "Approved for processing"
+            approved_state = "done"
+        elif inv.status in (
+            InvoiceStatus.PENDING,
+            InvoiceStatus.PARSING,
+            InvoiceStatus.VALIDATING,
+            InvoiceStatus.MAPPING,
+            InvoiceStatus.JOURNALING,
+            InvoiceStatus.RECONCILING,
+        ):
+            approved_detail = f"{actor} · Processing" if actor else "Approved · processing"
+            approved_state = "pending"
+        elif inv.status == InvoiceStatus.EXCEPTION:
+            approved_detail = (
+                f"{actor} · Reprocess needed" if actor else "Approved · reprocess needed"
+            )
+            approved_state = "pending"
+        else:
+            approved_detail = f"{actor} · Approved" if actor else "Approved for processing"
+            approved_state = "done"
     elif inv.status == InvoiceStatus.PROCESSED:
         approved_at = published_log.created_at if published_log else inv.created_at
         approved_detail = "System · Within policy"
@@ -187,6 +268,8 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     parsed_state: StageState = (
         "fail"
         if parsed_log and parsed_log.event == "parsing_failed"
+        else "pending"
+        if awaiting_reparse
         else "done"
         if _stage_index(inv.status) >= 1
         else "pending"
@@ -194,6 +277,8 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     parsed_detail = (
         "Could not read document"
         if parsed_log and parsed_log.event == "parsing_failed"
+        else "Queued for re-parse"
+        if awaiting_reparse
         else f"OCR complete · {parse_conf}% confidence"
         if parse_conf is not None
         else "OCR complete"
@@ -258,7 +343,12 @@ def build_matrix_cells(inv: Invoice, logs: list[AuditLog]) -> list[dict[str, str
     if inv.status == InvoiceStatus.DUPLICATE_SKIPPED:
         for i, stage in enumerate(MATRIX_STAGES):
             cells.append(
-                {"stage": stage, "state": "fail" if i == 0 else "pending"}
+                {
+                    "stage": stage,
+                    "state": "fail" if i == 0 else "pending",
+                    "when": "—",
+                    "detail": "Duplicate skipped",
+                }
             )
         return cells
 
@@ -266,9 +356,18 @@ def build_matrix_cells(inv: Invoice, logs: list[AuditLog]) -> list[dict[str, str
         step = by_name.get(stage)
         if step:
             state: StageState = step.state if step.state != "skipped" else "pending"
-            cells.append({"stage": stage, "state": state})
+            cells.append(
+                {
+                    "stage": stage,
+                    "state": state,
+                    "when": _relative_time(step.at),
+                    "detail": step.detail,
+                }
+            )
             continue
-        cells.append({"stage": stage, "state": "pending"})
+        cells.append(
+            {"stage": stage, "state": "pending", "when": "—", "detail": "Pending"}
+        )
 
     return cells
 

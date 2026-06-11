@@ -27,7 +27,7 @@ def test_build_rejected_blob_name() -> None:
         invoice_date=date(2026, 5, 12),
         original_filename="scan.pdf",
     )
-    assert path == "rejected/HvOrg/Atlassian Pty Ltd/2026/May/INV-007_2026-05-12.pdf"
+    assert path == "rejected/HvOrg/Unrouted/Atlassian Pty Ltd/2026/May/INV-007_2026-05-12.pdf"
 
 
 @pytest.mark.asyncio
@@ -40,7 +40,7 @@ async def test_reject_moves_file_and_sets_status(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    vault_path = upload_dir / "invoice" / "HvOrg" / "Bad Co" / "2026" / "May"
+    vault_path = upload_dir / "invoice" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May"
     vault_path.mkdir(parents=True)
     pdf = vault_path / "INV-001_2026-05-04.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -67,10 +67,12 @@ async def test_reject_moves_file_and_sets_status(
     body = res.json()["data"]
     assert body["status"] == "rejected"
     assert "rejected" in body["raw_file_path"].replace("\\", "/")
-    assert "HvOrg/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
+    assert "HvOrg/Unrouted/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
     assert not pdf.is_file()
 
-    rejected_pdf = upload_dir / "rejected" / "HvOrg" / "Bad Co" / "2026" / "May" / "INV-001_2026-05-04.pdf"
+    rejected_pdf = (
+        upload_dir / "rejected" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May" / "INV-001_2026-05-04.pdf"
+    )
     assert rejected_pdf.is_file()
 
     listed = await client.get("/api/approvals")
@@ -232,10 +234,10 @@ async def test_approve_from_rejected_restores_vault_path(
     body = res.json()["data"]
     assert body["status"] == "pending"
     assert "invoice" in body["raw_file_path"].replace("\\", "/")
-    assert "HvOrg/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
+    assert "HvOrg/Unrouted/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
     assert not pdf.is_file()
 
-    vault_pdf = upload_dir / "invoice" / "HvOrg" / "Bad Co" / "2026" / "May" / "INV-002_2026-05-04.pdf"
+    vault_pdf = upload_dir / "invoice" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May" / "INV-002_2026-05-04.pdf"
     assert vault_pdf.is_file()
 
 

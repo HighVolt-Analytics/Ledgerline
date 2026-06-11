@@ -1,17 +1,24 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useState } from "react";
 import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
   Loader2,
+  Plus,
   Settings,
+  Trash2,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/context/ToastContext";
 import {
+  useCreateVendorMaster,
+  useDeleteVendorMaster,
+  useDismissPendingVendor,
   usePendingVendors,
   usePromotePendingVendor,
   useUpdateVendorMaster,
@@ -20,12 +27,11 @@ import {
 import { cn } from "@/lib/cn";
 import { fmtAud } from "@/lib/v4MockData";
 import type { VendorDetectionConfig, VendorMaster } from "@/lib/v4RuleBookTypes";
+import { FieldLabel } from "./FieldLabel";
 import { AccountBadge } from "./AccountBadge";
 import { ConfidenceBar } from "./ConfidenceBar";
 import { VendorDetailPanel } from "./VendorDetailPanel";
 import { VendorDetectionTest } from "./VendorDetectionTest";
-
-const SAVE_DEBOUNCE_MS = 600;
 
 function maskAccount(num: string) {
   if (!num) return "—";
@@ -44,6 +50,10 @@ function formatBankSummary(vendor: VendorMaster, showBank: boolean) {
       {account}
     </span>
   );
+}
+
+function normalizeAbn(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 11);
 }
 
 function StatusDot({ status }: { status: string }) {
@@ -73,51 +83,126 @@ export function VendorsTab({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [bankMasked, setBankMasked] = useState(true);
   const [focusBankId, setFocusBankId] = useState<string | null>(null);
-  const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [drafts, setDrafts] = useState<Record<string, VendorMaster>>({});
+  const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
+  const [quickName, setQuickName] = useState("");
+  const [quickAbn, setQuickAbn] = useState("");
 
   const { data: vendors = [], isLoading } = useVendorMasters();
   const { data: pendingQueue = [] } = usePendingVendors();
+  const createMutation = useCreateVendorMaster();
   const updateMutation = useUpdateVendorMaster();
+  const deleteMutation = useDeleteVendorMaster();
   const promoteMutation = usePromotePendingVendor();
+  const dismissMutation = useDismissPendingVendor();
 
   const weightSum =
     detection.weights.name + detection.weights.abn + detection.weights.bank + detection.weights.address;
 
   const registrationPending = vendors.filter((v) => v.status === "Pending registration");
 
-  useEffect(() => {
-    const timers = saveTimers.current;
-    return () => {
-      timers.forEach((timer) => clearTimeout(timer));
-      timers.clear();
-    };
-  }, []);
+  const vendorById = (id: string) => vendors.find((v) => v.id === id);
 
-  const updateVendor = (id: string, patch: Partial<VendorMaster>) => {
-    const existing = saveTimers.current.get(id);
-    if (existing) clearTimeout(existing);
-    saveTimers.current.set(
-      id,
-      setTimeout(() => {
-        updateMutation.mutate(
-          { id, patch },
-          {
-            onError: (err) =>
-              toast({
-                title: "Could not save vendor",
-                description: err instanceof Error ? err.message : "Save failed",
-                variant: "destructive",
-              }),
-          }
-        );
-        saveTimers.current.delete(id);
-      }, SAVE_DEBOUNCE_MS)
+  const getDraft = (vendor: VendorMaster) => drafts[vendor.id] ?? vendor;
+
+  const patchDraft = (id: string, patch: Partial<VendorMaster>) => {
+    const base = drafts[id] ?? vendorById(id);
+    if (!base) return;
+    setDrafts((prev) => ({ ...prev, [id]: { ...base, ...patch } }));
+    setDirtyIds((prev) => new Set(prev).add(id));
+  };
+
+  const clearDraft = (id: string) => {
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setDirtyIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const saveDraft = (id: string) => {
+    const draft = drafts[id];
+    if (!draft) return;
+    updateMutation.mutate(
+      { id, patch: { ...draft, abn: normalizeAbn(draft.abn) } },
+      {
+        onSuccess: () => {
+          clearDraft(id);
+          toast({ title: "Vendor saved" });
+        },
+        onError: (err) =>
+          toast({
+            title: "Could not save vendor",
+            description: err instanceof Error ? err.message : "Save failed",
+            variant: "destructive",
+          }),
+      }
     );
   };
 
   const openVendor = (id: string, focusBank = false) => {
+    const vendor = vendorById(id);
+    if (vendor && !drafts[id]) {
+      setDrafts((prev) => ({ ...prev, [id]: vendor }));
+    }
     setExpandedId(id);
     setFocusBankId(focusBank ? id : null);
+  };
+
+  const closeVendor = (id: string) => {
+    if (dirtyIds.has(id)) {
+      const keep = window.confirm("Discard unsaved vendor changes?");
+      if (!keep) return;
+    }
+    clearDraft(id);
+    setExpandedId(null);
+    setFocusBankId(null);
+  };
+
+  const quickAddVendor = () => {
+    const name = quickName.trim();
+    if (!name) {
+      toast({ title: "Enter a vendor name", variant: "destructive" });
+      return;
+    }
+    createMutation.mutate(
+      {
+        name,
+        aliases: [],
+        abn: normalizeAbn(quickAbn),
+        billingAddress: { street: "", suburb: "", postcode: "", country: "" },
+        bank: { accountNumber: "", accountName: "", bankName: "" },
+        defaultLedger: "Marketing Expense",
+        status: "Active",
+      },
+      {
+        onSuccess: (created) => {
+          setQuickName("");
+          setQuickAbn("");
+          openVendor(created.id);
+          toast({
+            title: "Vendor created",
+            description: "Add bank details if needed, then click Save vendor.",
+          });
+        },
+        onError: (err) =>
+          toast({
+            title: "Could not create vendor",
+            description: err instanceof Error ? err.message : "Create failed",
+            variant: "destructive",
+          }),
+      }
+    );
+  };
+
+  const addVendor = () => {
+    setQuickName("New vendor");
+    setQuickAbn("");
   };
 
   const completePendingRegistration = (pendingId: number, name: string) => {
@@ -136,6 +221,41 @@ export function VendorsTab({
           }),
       }
     );
+  };
+
+  const removeVendor = (vendor: VendorMaster) => {
+    if (
+      !window.confirm(
+        `Remove vendor "${vendor.name}" from the rule book? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    deleteMutation.mutate(vendor.id, {
+      onSuccess: () => {
+        clearDraft(vendor.id);
+        if (expandedId === vendor.id) setExpandedId(null);
+        toast({ title: "Vendor removed" });
+      },
+      onError: (err) =>
+        toast({
+          title: "Could not remove vendor",
+          description: err instanceof Error ? err.message : "Delete failed",
+          variant: "destructive",
+        }),
+    });
+  };
+
+  const dismissPending = (pendingId: number, name: string) => {
+    dismissMutation.mutate(pendingId, {
+      onSuccess: () => toast({ title: "Removed from queue", description: name }),
+      onError: (err) =>
+        toast({
+          title: "Could not dismiss",
+          description: err instanceof Error ? err.message : "Dismiss failed",
+          variant: "destructive",
+        }),
+    });
   };
 
   if (isLoading) {
@@ -232,16 +352,65 @@ export function VendorsTab({
       </Card>
 
       <Card className="p-0 overflow-hidden">
-        <div className="flex items-center justify-between gap-2 p-3 border-b border-border">
+        <div className="flex items-center justify-between gap-2 p-3 border-b border-border flex-wrap">
           <h3 className="text-sm font-semibold">Vendor master ({vendors.length})</h3>
-          <button
-            type="button"
-            onClick={() => setBankMasked((m) => !m)}
-            className="text-xs text-muted-foreground hover:text-foreground"
-            data-testid="toggle-bank-mask"
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBankMasked((m) => !m)}
+              className="text-xs text-muted-foreground hover:text-foreground"
+              data-testid="toggle-bank-mask"
+            >
+              {bankMasked ? "Show bank details" : "Hide bank details"}
+            </button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={addVendor}
+              disabled={createMutation.isPending}
+              data-testid="button-new-vendor"
+            >
+              <Plus className="h-4 w-4 mr-1" /> New Vendor
+            </Button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-2 p-3 border-b border-border bg-muted/10">
+          <div className="min-w-[200px] flex-1">
+            <FieldLabel label="Quick add — name">
+              <Input
+                value={quickName}
+                onChange={(e) => setQuickName(e.target.value)}
+                placeholder="Sysco Foods Australia Pty Ltd"
+                className="h-8 text-sm"
+                data-testid="quick-vendor-name"
+              />
+            </FieldLabel>
+          </div>
+          <div className="min-w-[160px]">
+            <FieldLabel label="ABN">
+              <Input
+                value={quickAbn}
+                onChange={(e) => setQuickAbn(e.target.value)}
+                placeholder="51824753556"
+                className="h-8 text-xs font-mono"
+                data-testid="quick-vendor-abn"
+              />
+            </FieldLabel>
+          </div>
+          <Button
+            size="sm"
+            onClick={quickAddVendor}
+            disabled={createMutation.isPending || !quickName.trim()}
+            data-testid="button-quick-add-vendor"
           >
-            {bankMasked ? "Show bank details" : "Hide bank details"}
-          </button>
+            {createMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                <Plus className="h-4 w-4 mr-1" /> Add vendor
+              </>
+            )}
+          </Button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -257,19 +426,26 @@ export function VendorsTab({
               </tr>
             </thead>
             <tbody>
+              {vendors.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No vendors yet. Click <span className="font-medium text-foreground">New Vendor</span>{" "}
+                    to register one before sending invoices, or complete registration from the queue
+                    below when a document is held.
+                  </td>
+                </tr>
+              )}
               {vendors.map((v) => {
                 const open = expandedId === v.id;
+                const draft = getDraft(v);
+                const dirty = dirtyIds.has(v.id);
                 return (
                   <Fragment key={v.id}>
                     <tr
                       className="row-band border-b border-border/60 cursor-pointer hover:bg-muted/40"
                       onClick={() => {
-                        if (open) {
-                          setExpandedId(null);
-                          setFocusBankId(null);
-                        } else {
-                          openVendor(v.id);
-                        }
+                        if (open) closeVendor(v.id);
+                        else openVendor(v.id);
                       }}
                       data-testid={`vendor-row-${v.id}`}
                     >
@@ -280,7 +456,14 @@ export function VendorsTab({
                           ) : (
                             <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                           )}
-                          <span className="font-medium">{v.name}</span>
+                          <span className="font-medium">
+                            {dirty ? draft.name : v.name}
+                            {dirty && (
+                              <span className="ml-2 text-[10px] text-amber-600 dark:text-amber-400">
+                                unsaved
+                              </span>
+                            )}
+                          </span>
                         </div>
                         <span className="text-[11px] text-muted-foreground font-mono ml-5">
                           ABN {v.abn}
@@ -307,12 +490,55 @@ export function VendorsTab({
                       <tr>
                         <td colSpan={7} className="p-0 border-b border-border">
                           <VendorDetailPanel
-                            vendor={v}
-                            onChange={(patch) => updateVendor(v.id, patch)}
+                            vendor={draft}
+                            onChange={(patch) => patchDraft(v.id, patch)}
                             masked={bankMasked}
                             onToggleMask={() => setBankMasked((m) => !m)}
                             focusBank={focusBankId === v.id}
                           />
+                          <div className="flex items-center justify-between gap-2 px-4 pb-4 bg-muted/20">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              disabled={deleteMutation.isPending}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeVendor(v);
+                              }}
+                              data-testid={`delete-vendor-${v.id}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-1" />
+                              Remove vendor
+                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  closeVendor(v.id);
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                disabled={!dirty || updateMutation.isPending}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  saveDraft(v.id);
+                                }}
+                                data-testid={`save-vendor-${v.id}`}
+                              >
+                                {updateMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  "Save vendor"
+                                )}
+                              </Button>
+                            </div>
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -357,6 +583,16 @@ export function VendorsTab({
                   <ClipboardCheck className="h-4 w-4 mr-1" />
                   Complete Registration
                 </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={dismissMutation.isPending}
+                  onClick={() => dismissPending(item.id, item.detectedName)}
+                  data-testid={`dismiss-pending-${item.id}`}
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  Dismiss
+                </Button>
               </div>
             ))}
             {registrationPending.map((v) => (
@@ -378,6 +614,16 @@ export function VendorsTab({
                 >
                   <ClipboardCheck className="h-4 w-4 mr-1" />
                   Complete Registration
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => removeVendor(v)}
+                  data-testid={`remove-registration-vendor-${v.id}`}
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Remove
                 </Button>
               </div>
             ))}

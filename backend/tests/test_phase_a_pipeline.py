@@ -21,7 +21,7 @@ from app.schemas.rule_book_config import validate_rule_book_config_payload
 
 @pytest.fixture
 def capture_config():
-    template = Path(__file__).resolve().parents[1] / "app" / "rule_book_config.json"
+    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
     return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
 
 
@@ -30,7 +30,7 @@ def clean_org_rule_book(tmp_path, monkeypatch: pytest.MonkeyPatch):
     upload = tmp_path / "uploads"
     rule_books = upload / "rule_books"
     rule_books.mkdir(parents=True)
-    template = Path(__file__).resolve().parents[1] / "app" / "rule_book_config.json"
+    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
     shutil.copy2(template, rule_books / "1_config.json")
     monkeypatch.setenv("UPLOAD_DIR", str(upload))
     monkeypatch.setenv("RULE_BOOK_CONFIG_PATH", str(template))
@@ -122,11 +122,8 @@ def test_legacy_cascade_maps_before_suspense(capture_config) -> None:
 
 
 def test_migrate_root_legacy_fields() -> None:
-    raw = json.loads(
-        (Path(__file__).resolve().parents[1] / "uploads" / "rule_books" / "1.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
+    raw = json.loads(template.read_text(encoding="utf-8"))
     payload = validate_rule_book_config_payload(raw)
     assert payload.legacy_cascade.po_codes["PO-MKT-2026-014"] == "Marketing Expense"
     assert "AWS" in payload.legacy_cascade.keywords
@@ -198,4 +195,4 @@ async def test_upload_routing_from_category_rules_after_parse(
     await apply_invoice_evaluation(db_session, loaded, config=capture_config)
 
     assert loaded.route_target == "Purchase Management"
-    assert loaded.evaluation_status in {"auto_coded", "needs_review", "pending_vendor"}
+    assert loaded.evaluation_status in {"auto_coded", "needs_review", "pending_vendor", "awaiting_po"}

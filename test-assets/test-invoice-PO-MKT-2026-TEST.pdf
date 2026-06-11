@@ -1,0 +1,71 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 721 >>
+stream
+BT
+/F1 11 Tf
+50 750 Td
+14 TL
+(TAX INVOICE) Tj
+T*
+(Sysco Foods Australia Pty Ltd) Tj
+T*
+(ABN 51 824 753 556) Tj
+T*
+(Invoice Number: INV-MKT-TEST-001) Tj
+T*
+(PO Reference: PO-MKT-2026-TEST) Tj
+T*
+(Invoice Date: 11 June 2026) Tj
+T*
+(Due Date: 11 July 2026) Tj
+T*
+() Tj
+T*
+(Description                    Qty   Unit Price    Amount) Tj
+T*
+(Fresh produce delivery          10      50.00     500.00) Tj
+T*
+() Tj
+T*
+(Subtotal AUD                                   500.00) Tj
+T*
+(GST 10%                                         50.00) Tj
+T*
+(TOTAL AUD                                      550.00) Tj
+T*
+() Tj
+T*
+(Payment terms Net 30 days.) Tj
+T*
+(Remit to BSB 062-000 Account 12345678) Tj
+T*
+(Thank you for your business.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001013 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1083
+%%EOF

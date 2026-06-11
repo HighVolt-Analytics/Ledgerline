@@ -36,7 +36,7 @@ type NavItem = {
   to: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  badge?: "inbox" | "approvals" | "expenses" | "payments";
+  badge?: "inbox" | "approvals" | "team_expenses" | "business_expenses" | "payments";
 };
 
 type NavGroup = {
@@ -50,7 +50,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard },
       { to: "/inbox", label: "Inbox", icon: Inbox, badge: "inbox" },
-      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "expenses" },
+      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses" },
+      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses" },
       { to: "/purchases", label: "Purchase Management", icon: ShoppingCart },
       { to: "/matrix", label: "Document Matrix", icon: Grid3x3 },
     ],
@@ -122,7 +123,8 @@ export function Layout() {
   const counts = {
     inbox: badges?.inbox_count ?? 0,
     approvals: badges?.pending_approval ?? 0,
-    expenses: badges?.team_expenses_count ?? 0,
+    team_expenses: badges?.team_expenses_count ?? 0,
+    business_expenses: badges?.business_expenses_count ?? 0,
     payments: badges?.payments_queue_count ?? 0,
   };
   const connected = badges?.integrations_connected ?? 0;
@@ -141,8 +143,11 @@ export function Layout() {
     if (badge === "approvals" && counts.approvals > 0) {
       badgeEl = <NavBadge>{counts.approvals}</NavBadge>;
     }
-    if (badge === "expenses" && counts.expenses > 0) {
-      badgeEl = <NavBadge>{counts.expenses}</NavBadge>;
+    if (badge === "team_expenses" && counts.team_expenses > 0) {
+      badgeEl = <NavBadge>{counts.team_expenses}</NavBadge>;
+    }
+    if (badge === "business_expenses" && counts.business_expenses > 0) {
+      badgeEl = <NavBadge>{counts.business_expenses}</NavBadge>;
     }
     if (badge === "payments" && counts.payments > 0) {
       badgeEl = <NavBadge>{counts.payments}</NavBadge>;

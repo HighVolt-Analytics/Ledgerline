@@ -1,19 +1,26 @@
 import type {
   ApprovalPolicy,
+  BillingState,
   AuditLogEntry,
   ActivityItem,
   ApiEnvelope,
   AppSettings,
   AuthUser,
   ConnectedMailbox,
+  MailboxConnectionRequest,
+  MailboxConnectionRequestAction,
+  MailboxInvitePreview,
   DailyReconciliation,
   NavBadges,
+  PaymentApi,
+  PurchaseOrderApi,
   DashboardOverview,
   DashboardStats,
   ReportsAnalytics,
   ReportDocumentRow,
   Invoice,
   InvoiceDetails,
+  LedgerLinkResponse,
   InvoiceUpdatePayload,
   Organisation,
   MatrixRow,
@@ -29,6 +36,7 @@ import type {
   Vendor,
   VaultTreeResponse,
   VaultMigrateResponse,
+  WalletSummary,
 } from "./types";
 
 import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
@@ -321,6 +329,45 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<ConnectedMailbox[]>(path);
   },
+  listMailboxConnectionRequests: (options?: FreshRequestOptions) => {
+    const path = "/api/mailboxes/requests";
+    if (options?.fresh) bustGetCache(path);
+    return request<MailboxConnectionRequest[]>(path);
+  },
+  createMailboxConnectionRequest: (body: {
+    email: string;
+    display_name?: string;
+    message?: string;
+  }) => {
+    bustGetCache("/api/mailboxes/requests");
+    return request<MailboxConnectionRequestAction>("/api/mailboxes/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  resendMailboxConnectionRequest: (id: number) => {
+    bustGetCache("/api/mailboxes/requests");
+    return request<MailboxConnectionRequestAction>(`/api/mailboxes/requests/${id}/resend`, {
+      method: "POST",
+    });
+  },
+  getMailboxConnectionInviteLink: (id: number) =>
+    request<{ connect_url: string }>(`/api/mailboxes/requests/${id}/link`),
+  previewMailboxInvite: (token: string) =>
+    request<MailboxInvitePreview>(
+      `/api/mailboxes/invites/preview?token=${encodeURIComponent(token)}`
+    ),
+  startMailboxInviteOAuth: (token: string) =>
+    request<{ authorize_url: string }>(
+      `/api/mailboxes/invites/authorize?token=${encodeURIComponent(token)}`
+    ),
+  getMailboxAdminConsentUrl: () =>
+    request<{ admin_consent_url: string; instructions: string }>(
+      "/api/mailboxes/oauth/admin-consent-url"
+    ),
+  startMailboxOAuth: () =>
+    request<{ authorize_url: string }>("/api/mailboxes/oauth/authorize"),
   addMailbox: (email: string, display_name?: string) =>
     request<ConnectedMailbox>("/api/mailboxes", {
       method: "POST",
@@ -375,10 +422,14 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return requestWithMeta<MatrixRow[]>(path);
   },
-  uploadInvoice: (file: File) => {
+  uploadInvoice: (file: File, purchaseDocumentType?: "po" | "grn" | "invoice") => {
     const fd = new FormData();
     fd.append("file", file);
-    return request<Invoice>("/api/invoices/upload", { method: "POST", body: fd });
+    const q =
+      purchaseDocumentType != null
+        ? `?purchase_document_type=${encodeURIComponent(purchaseDocumentType)}`
+        : "";
+    return request<Invoice>(`/api/invoices/upload${q}`, { method: "POST", body: fd });
   },
   reprocess: (id: number) =>
     request<Invoice>(`/api/invoices/${id}/reprocess`, { method: "POST" }),
@@ -565,6 +616,24 @@ export const api = {
   listReconciliation: () => request<DailyReconciliation[]>("/api/reconciliation/daily"),
   getReconciliationOverview: () =>
     request<ReconciliationOverview>("/api/reconciliation/overview"),
+  getLedgerLink: (options?: FreshRequestOptions) => {
+    const path = "/api/ledger-link";
+    if (options?.fresh) bustGetCache(path);
+    return request<LedgerLinkResponse>(path);
+  },
+  getBilling: () => request<BillingState>("/api/billing"),
+  patchBilling: (body: { auto_recharge?: boolean; threshold?: number }) =>
+    request<BillingState>("/api/billing", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  purchaseBillingPack: (packId: string) =>
+    request<BillingState>("/api/billing/purchase", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pack_id: packId }),
+    }),
   getReportsAnalytics: (month: string) =>
     request<ReportsAnalytics>(`/api/reports/analytics?month=${encodeURIComponent(month)}`),
   getReportDocuments: (filter?: ReportDateFilter) =>
@@ -583,6 +652,61 @@ export const api = {
     );
     saveBlobAsFile(blob, filename);
   },
+  downloadAuditLogCsv: async (month: string) => {
+    const params = new URLSearchParams({
+      month,
+      document_only: "true",
+      dedupe: "true",
+    });
+    const { blob, filename } = await requestBlob(
+      `/api/audit-log/export?${params.toString()}`,
+      undefined,
+      `audit_log_${month}.csv`
+    );
+    saveBlobAsFile(blob, filename);
+  },
+  listPurchases: (options?: FreshRequestOptions) => {
+    const path = "/api/purchases";
+    if (options?.fresh) bustGetCache(path);
+    return request<PurchaseOrderApi[]>(path);
+  },
+  approvePurchaseVariance: (purchaseOrderId: number) =>
+    request<PurchaseOrderApi>(`/api/purchases/${purchaseOrderId}/approve-variance`, {
+      method: "POST",
+    }),
+  recordGoodsReceipt: (
+    purchaseOrderId: number,
+    body: { grn_qty: number; grn_date?: string; receiver?: string; condition_note?: string }
+  ) =>
+    request<PurchaseOrderApi>(`/api/purchases/${purchaseOrderId}/grn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getWalletSummary: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/wallet-summary";
+    if (options?.fresh) bustGetCache(path);
+    return request<WalletSummary>(path);
+  },
+  listPayments: (status?: string, options?: FreshRequestOptions) => {
+    const path = status ? `/api/payments?status=${encodeURIComponent(status)}` : "/api/payments";
+    if (options?.fresh) bustGetCache(path);
+    return request<PaymentApi[]>(path);
+  },
+  updatePayment: (
+    paymentId: number,
+    body: {
+      status: string;
+      scheduled_date?: string;
+      payment_intent?: string;
+      failure_reason?: string;
+    }
+  ) =>
+    request<PaymentApi>(`/api/payments/${paymentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };
 
 /** Inclusive invoice-date range for workbook export; omit both for all invoices. */

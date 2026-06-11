@@ -44,19 +44,25 @@ def build_blob_name(
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
+    route_target: str | None = None,
+    po_reference: str | None = None,
+    purchase_document_type: str | None = None,
     day=None,
 ) -> str:
-    """Build vault blob path: invoice/{org}/{vendor}/{year}/{month}/{file}."""
+    """Build vault blob path: invoice/{org}/{book}/{vendor}/{year}/{month}/{file}."""
     _ = (file_hash, day)
     return vault_paths.build_vault_blob_name(
         org_slug,
         org_name=org_name,
+        route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=vendor_slug,
         invoice_id=invoice_id,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
         original_filename=filename,
+        po_reference=po_reference,
+        purchase_document_type=purchase_document_type,
     )
 
 

@@ -24,6 +24,7 @@ async def reset_invoice_for_reprocess(session: AsyncSession, inv: Invoice) -> No
     inv.validation_results = None
     inv.account_code = None
     inv.account_name = None
+    inv.purchase_document_type = None
 
     for entry in (
         await session.execute(

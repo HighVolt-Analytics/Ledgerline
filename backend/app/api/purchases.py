@@ -1,0 +1,95 @@
+"""Purchase orders and three-way match API."""
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
+from app.schemas.common import ApiEnvelope
+from app.schemas.purchase import GoodsReceiptCreate, PurchaseOrderResponse
+from app.services.audit_service import log_event
+from app.services.privilege_service import require_privilege
+from app.services.purchase_match_service import (
+    approve_purchase_variance,
+    list_purchase_orders,
+    record_goods_receipt,
+)
+
+router = APIRouter(prefix="/purchases", tags=["purchases"])
+
+
+@router.get("", response_model=ApiEnvelope[list[PurchaseOrderResponse]])
+async def get_purchase_orders(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[PurchaseOrderResponse]]:
+    rows = await list_purchase_orders(db, ctx.org_id)
+    return ApiEnvelope(data=rows)
+
+
+@router.post(
+    "/{purchase_order_id}/grn",
+    response_model=ApiEnvelope[PurchaseOrderResponse],
+)
+async def post_goods_receipt(
+    purchase_order_id: int,
+    body: GoodsReceiptCreate,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PurchaseOrderResponse]:
+    try:
+        row = await record_goods_receipt(db, ctx.org_id, purchase_order_id, body)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    if row.invoice_id is not None:
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        await log_event(
+            db,
+            "goods_receipt_recorded",
+            invoice_id=row.invoice_id,
+            org_id=ctx.org_id,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            detail={
+                "purchase_order_id": purchase_order_id,
+                "po_number": row.po_number,
+                "grn_qty": float(body.grn_qty),
+                "receiver": body.receiver,
+            },
+        )
+
+    return ApiEnvelope(data=row)
+
+
+@router.post(
+    "/{purchase_order_id}/approve-variance",
+    response_model=ApiEnvelope[PurchaseOrderResponse],
+)
+async def post_approve_variance(
+    purchase_order_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PurchaseOrderResponse]:
+    require_privilege(ctx, "Approve")
+    try:
+        row = await approve_purchase_variance(db, ctx.org_id, purchase_order_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    if row.invoice_id is not None:
+        actor_name, actor_email = await actor_from_context(db, ctx)
+        await log_event(
+            db,
+            "purchase_variance_approved",
+            invoice_id=row.invoice_id,
+            org_id=ctx.org_id,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            detail={
+                "purchase_order_id": purchase_order_id,
+                "po_number": row.po_number,
+                "match_status": row.match.status,
+            },
+        )
+
+    return ApiEnvelope(data=row)

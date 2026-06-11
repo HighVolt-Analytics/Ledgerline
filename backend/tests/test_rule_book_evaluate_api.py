@@ -12,11 +12,8 @@ async def test_evaluate_rule_book_sample(client: AsyncClient) -> None:
     res = await client.post("/api/rule-book/evaluate", json={})
     assert res.status_code == 200
     data = res.json()["data"]
-    assert data["source"] in ("invoices", "sample")
-    assert len(data["rows"]) >= 1
-    first = data["rows"][0]
-    assert "document" in first
-    assert "auto_coded" in first
+    assert data["source"] == "invoices"
+    assert data["rows"] == []
 
 
 @pytest.mark.asyncio

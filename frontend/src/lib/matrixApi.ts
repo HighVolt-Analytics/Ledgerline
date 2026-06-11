@@ -23,11 +23,21 @@ export async function fetchAllMatrixRows(
   return all;
 }
 
+function actorFromDetail(detail?: string | null): string {
+  if (!detail) return "—";
+  const parts = detail.split(" · ");
+  return parts.length > 1 ? parts[parts.length - 1].trim() : detail;
+}
+
 export function stagesToCells(stages: MatrixRow["stages"]): Record<MatrixStage, MatrixCell> {
   const cells = {} as Record<MatrixStage, MatrixCell>;
   for (const stage of MATRIX_STAGES) {
     const hit = stages.find((s) => s.stage === stage);
-    cells[stage] = { state: hit?.state ?? "pending", ts: "—", actor: "—" };
+    cells[stage] = {
+      state: (hit?.state ?? "pending") as MatrixCell["state"],
+      ts: hit?.when ?? "—",
+      actor: actorFromDetail(hit?.detail),
+    };
   }
   return cells;
 }

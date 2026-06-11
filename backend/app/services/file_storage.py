@@ -32,6 +32,9 @@ def store_invoice_pdf(
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
+    route_target: str | None = None,
+    po_reference: str | None = None,
+    purchase_document_type: str | None = None,
 ) -> str:
     blob_name = blob_storage.build_blob_name(
         org_slug,
@@ -43,6 +46,9 @@ def store_invoice_pdf(
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
+        route_target=route_target,
+        po_reference=po_reference,
+        purchase_document_type=purchase_document_type,
     )
 
     if blob_storage.is_blob_enabled():
@@ -86,10 +92,12 @@ def relocate_invoice_to_rejected(
     storage_vendor_slug: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
+    route_target: str | None = None,
 ) -> str:
     new_name = vault_paths.build_rejected_blob_name(
         org_slug,
         org_name=org_name,
+        route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,
         invoice_id=invoice_id,
@@ -112,6 +120,7 @@ def relocate_rejected_to_vault(
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
+    route_target: str | None = None,
 ) -> str:
     _ = file_hash
     new_name = blob_storage.build_blob_name(
@@ -124,6 +133,7 @@ def relocate_rejected_to_vault(
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
+        route_target=route_target,
     )
     return relocate_stored_pdf(stored_path, new_name)
 
@@ -140,6 +150,9 @@ def relocate_invoice_pdf(
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
+    route_target: str | None = None,
+    po_reference: str | None = None,
+    purchase_document_type: str | None = None,
 ) -> str:
     new_name = blob_storage.build_blob_name(
         org_slug,
@@ -151,6 +164,9 @@ def relocate_invoice_pdf(
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
+        route_target=route_target,
+        po_reference=po_reference,
+        purchase_document_type=purchase_document_type,
     )
     return relocate_stored_pdf(stored_path, new_name)
 

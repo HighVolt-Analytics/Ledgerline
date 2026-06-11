@@ -22,6 +22,8 @@ export function evaluationStatusLabel(
   if (status === "auto_coded") return "Auto coded";
   if (status === "needs_review") return "Needs review";
   if (status === "pending_vendor") return "Pending vendor";
+  if (status === "unmatched_expense_vendor") return "Unmatched vendor";
+  if (status === "awaiting_po") return "Awaiting PO";
   return "—";
 }
 
@@ -39,7 +41,7 @@ export function invoiceFailedValidations(inv: Invoice) {
 }
 
 export type InvoiceSource = "email" | "upload" | "onedrive" | "vault";
-export type InvoiceDocType = "invoice" | "credit_note";
+export type InvoiceDocType = "invoice" | "credit_note" | "po" | "grn";
 
 export function invoiceSourceKind(inv: Invoice): InvoiceSource {
   const sender = (inv.email_sender ?? "").toLowerCase();
@@ -63,6 +65,10 @@ export function invoiceSourceLabel(source: InvoiceSource): string {
 }
 
 export function invoiceDocumentType(inv: Invoice): InvoiceDocType {
+  const purchaseType = inv.purchase_document_type?.toLowerCase();
+  if (purchaseType === "po") return "po";
+  if (purchaseType === "grn") return "grn";
+
   const ref = (inv.invoice_no ?? inv.po_reference ?? "").toLowerCase();
   if (
     ref.includes("credit") ||
@@ -81,7 +87,10 @@ export function invoiceDocumentType(inv: Invoice): InvoiceDocType {
 }
 
 export function invoiceDocumentTypeLabel(type: InvoiceDocType): string {
-  return type === "credit_note" ? "Credit Note" : "Invoice";
+  if (type === "credit_note") return "Credit Note";
+  if (type === "po") return "Purchase Order";
+  if (type === "grn") return "GRN";
+  return "Invoice";
 }
 
 export function mailboxDisplayName(email: string, displayName: string | null): string {

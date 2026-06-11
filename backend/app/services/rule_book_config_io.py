@@ -21,15 +21,13 @@ def org_rule_book_config_path(org_id: int) -> Path:
 
 
 def _seed_org_rule_book_config(org_id: int) -> Path:
+    """Create org rule book from template once; never overwrite saved org config."""
     path = org_rule_book_config_path(org_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    template = global_rule_book_config_path()
-    if template.is_file():
-        if not path.is_file() or template.stat().st_mtime > path.stat().st_mtime:
-            shutil.copy2(template, path)
-            return path
     if path.is_file():
         return path
+
+    template = global_rule_book_config_path()
     if template.is_file():
         shutil.copy2(template, path)
     else:

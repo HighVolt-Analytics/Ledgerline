@@ -142,4 +142,4 @@ async def test_remap_updates_evaluation_fields(
 
     await db_session.refresh(inv)
     assert inv.route_target is not None
-    assert inv.evaluation_status in {EVAL_AUTO_CODED, "needs_review", EVAL_PENDING_VENDOR}
+    assert inv.evaluation_status in {EVAL_AUTO_CODED, "needs_review", EVAL_PENDING_VENDOR, "awaiting_po"}

@@ -13,7 +13,7 @@ from app.services.vendor_resolver import UNKNOWN_SLUG
 
 
 async def migrate_org_blobs_to_vault(session: AsyncSession, org_id: int) -> tuple[int, int]:
-    """Move stored files for an org into invoice/{org}/{vendor}/{year}/{month}/."""
+    """Move stored files for an org into invoice/{org}/{book}/{vendor}/{year}/{month}/."""
     moved = 0
     skipped = 0
     org = await session.get(Organisation, org_id)
@@ -47,6 +47,9 @@ async def migrate_org_blobs_to_vault(session: AsyncSession, org_id: int) -> tupl
             vendor_name=inv.vendor,
             invoice_no=inv.invoice_no,
             invoice_date=inv.invoice_date,
+            route_target=inv.route_target,
+            po_reference=inv.po_reference,
+            purchase_document_type=inv.purchase_document_type,
         )
         if new != old:
             inv.raw_file_path = new

@@ -12,8 +12,6 @@ from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_
 from app.models.audit import AuditLog
 from app.schemas.common import ApiEnvelope
 from app.schemas.rule_book_changelog import RuleBookChangelogEntry
-from app.services.audit_service import log_event
-from app.services.rule_book_audit import diff_rule_book_config, summarize_rule_book_config
 from app.schemas.rule_book_config import (
     RuleBookConfigPayload,
     RuleBookRulesPayload,
@@ -24,11 +22,12 @@ from app.schemas.rule_book_evaluate import (
     RuleBookEvaluateResponse,
 )
 from app.services.master_data_service import attach_masters_to_config_dict, sync_masters_to_config_file
-from app.services.rule_book_config_io import (
-    load_rule_book_config_dict,
-    save_rule_book_config,
-)
+from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.rule_book_evaluate_service import evaluate_rule_book
+from app.services.rule_book_save_buffer import (
+    get_buffered_rule_book_raw,
+    schedule_rule_book_save,
+)
 
 router = APIRouter(prefix="/rule-book", tags=["rule-book"])
 
@@ -39,26 +38,36 @@ def _validation_http_error(exc: Exception) -> HTTPException:
     return HTTPException(400, str(exc))
 
 
+async def _load_rule_book_response_dict(
+    db: AsyncSession,
+    org_id: int,
+) -> dict[str, Any]:
+    buffered = get_buffered_rule_book_raw(org_id)
+    if buffered is not None:
+        data = buffered
+    else:
+        try:
+            data = load_rule_book_config_dict(org_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, f"Invalid rule book config JSON: {exc}") from exc
+
+        try:
+            data = validate_rule_book_config_payload(data).model_dump()
+        except (ValidationError, ValueError):
+            pass
+
+    return await attach_masters_to_config_dict(db, org_id, data)
+
+
 @router.get("/config", response_model=ApiEnvelope[dict[str, Any]])
 async def get_rule_book_config(
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[dict[str, Any]]:
     """Return the rule book config for the current organisation."""
-    try:
-        data = load_rule_book_config_dict(ctx.org_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except json.JSONDecodeError as exc:
-        raise HTTPException(400, f"Invalid rule book config JSON: {exc}") from exc
-
-    try:
-        data = validate_rule_book_config_payload(data).model_dump()
-    except (ValidationError, ValueError):
-        pass
-
-    data = await attach_masters_to_config_dict(db, ctx.org_id, data)
-    return ApiEnvelope(data=data)
+    return ApiEnvelope(data=await _load_rule_book_response_dict(db, ctx.org_id))
 
 
 @router.put("/config", response_model=ApiEnvelope[dict[str, Any]])
@@ -68,9 +77,9 @@ async def put_rule_book_config(
     ctx: AuthContext = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[dict[str, Any]]:
-    """Replace the org rule book config (masters are managed via dedicated APIs)."""
+    """Buffer rule book changes; commit after server-side debounce (audit + remap once)."""
     try:
-        before_raw = load_rule_book_config_dict(ctx.org_id)
+        load_rule_book_config_dict(ctx.org_id)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -83,27 +92,20 @@ async def put_rule_book_config(
         raise _validation_http_error(exc) from exc
 
     after_raw = payload.model_dump()
-    changes = diff_rule_book_config(before_raw, after_raw)
-
-    save_rule_book_config(payload, ctx.org_id)
-    await sync_masters_to_config_file(db, ctx.org_id)
-    data = await attach_masters_to_config_dict(db, ctx.org_id, after_raw)
-
     actor_name, actor_email = await actor_from_context(db, ctx)
     client_ip = request.client.host if request.client else None
-    await log_event(
-        db,
-        "rule_book_updated",
+
+    await schedule_rule_book_save(
         org_id=ctx.org_id,
-        detail={
-            "before": summarize_rule_book_config(before_raw),
-            "after": summarize_rule_book_config(after_raw),
-            "changes": changes,
-        },
+        payload=payload,
+        after_raw=after_raw,
         actor_name=actor_name,
         actor_email=actor_email,
         client_ip=client_ip,
+        db=db,
     )
+
+    data = await attach_masters_to_config_dict(db, ctx.org_id, after_raw)
     return ApiEnvelope(data=data)
 
 
@@ -138,6 +140,7 @@ async def _draft_config_with_masters(
     raw = draft.model_dump()
     raw = await attach_masters_to_config_dict(db, org_id, raw)
     return validate_rule_book_config_payload(raw)
+
 
 @router.post("/evaluate", response_model=ApiEnvelope[RuleBookEvaluateResponse])
 async def evaluate_rule_book_config(

@@ -49,6 +49,7 @@ class RuleBookEvalRow(BaseModel):
     email_rule_disabled: RuleBookEvalEmailRule | None = None
     vendor_match: RuleBookEvalVendorMatch | None = None
     category_rule: RuleBookEvalCategoryRule | None = None
+    category_rule_disabled: RuleBookEvalCategoryRule | None = None
     auto_coded: bool
 
 

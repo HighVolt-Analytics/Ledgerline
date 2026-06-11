@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.organisation import Organisation
+from app.services.invoice_evaluation_service import ROUTE_PURCHASE
 
 
 @pytest.mark.asyncio
@@ -44,6 +45,7 @@ async def test_vault_tree_uses_hv_org_folder(
             status=InvoiceStatus.PROCESSED,
             raw_file_path=str(pdf_path),
             file_hash="abc123def456",
+            route_target=ROUTE_PURCHASE,
         )
     )
     await db_session.flush()
@@ -52,7 +54,7 @@ async def test_vault_tree_uses_hv_org_folder(
     assert res.status_code == 200
     data = res.json()["data"]
     assert data["tree"][0]["label"] == "HvOrg"
-    assert data["files"][0]["virtual_path"].startswith("invoice/HvOrg/")
+    assert data["files"][0]["virtual_path"].startswith("invoice/HvOrg/Purchase Management/")
 
 
 @pytest.mark.asyncio
@@ -73,6 +75,7 @@ async def test_vault_tree_with_stored_file(
             raw_file_path=str(pdf_path),
             file_hash="abc123def456",
             storage_vendor_slug="atlassian",
+            route_target=ROUTE_PURCHASE,
         )
     )
     await db_session.flush()
@@ -83,6 +86,7 @@ async def test_vault_tree_with_stored_file(
     assert len(data["files"]) == 1
     file_entry = data["files"][0]
     assert file_entry["invoice_id"] == 1
+    assert file_entry["book"] == "Purchase Management"
     assert file_entry["vendor"] == "Atlassian Pty Ltd"
     assert file_entry["year"] == "2026"
     assert file_entry["month"] == "May"
@@ -92,6 +96,7 @@ async def test_vault_tree_with_stored_file(
     assert data["tree"][0]["kind"] == "org"
     assert data["tree"][0]["label"] == "HvOrg"
     assert data["tree"][0]["count"] == 1
+    assert data["tree"][0]["children"][0]["kind"] == "book"
 
 
 @pytest.mark.asyncio

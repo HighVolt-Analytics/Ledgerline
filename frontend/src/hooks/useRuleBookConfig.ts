@@ -14,7 +14,6 @@ export function useRuleBookConfig(enabled = true) {
 
 export type SaveRuleBookResult = {
   config: RuleBookConfigState;
-  remapped: number;
 };
 
 export function useSaveRuleBookConfig() {
@@ -22,18 +21,12 @@ export function useSaveRuleBookConfig() {
   return useMutation({
     mutationFn: async (state: RuleBookConfigState): Promise<SaveRuleBookResult> => {
       const saved = await api.putRuleBookConfig(ruleBookConfigToApi(state));
-      let remapped = 0;
-      try {
-        const result = await api.remapInvoices();
-        remapped = result.updated;
-      } catch {
-        // Save succeeded; remap is best-effort so editors are not blocked.
-      }
-      return { config: ruleBookConfigFromApi(saved), remapped };
+      return { config: ruleBookConfigFromApi(saved) };
     },
     onSuccess: ({ config }) => {
       queryClient.setQueryData(queryKeys.ruleBookConfig, config);
       void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.purchases });
       void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboardOverview("", 10) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookChangelog });

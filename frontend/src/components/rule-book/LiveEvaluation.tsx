@@ -110,6 +110,18 @@ export function LiveEvaluation({ ruleBook }: { ruleBook: RuleBookConfigState }) 
                         </Badge>
                         <span className="text-xs">{row.category_rule.label}</span>
                       </div>
+                    ) : row.category_rule_disabled ? (
+                      <div className="flex items-center gap-1.5">
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] font-normal border-dashed text-[hsl(43_74%_49%)]"
+                        >
+                          {row.category_rule_disabled.kind}
+                        </Badge>
+                        <span className="text-xs text-[hsl(43_74%_49%)]">
+                          Would match: {row.category_rule_disabled.label}
+                        </span>
+                      </div>
                     ) : (
                       <span className="text-xs text-muted-foreground">No rule matched</span>
                     )}

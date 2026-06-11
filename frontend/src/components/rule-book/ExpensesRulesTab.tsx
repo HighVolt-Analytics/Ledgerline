@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
+import { nextRulePriority } from "@/lib/rulePriority";
 import type { ExpenseRule } from "@/lib/v4RuleBookTypes";
 import { LEDGER_ACCOUNTS } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
@@ -55,6 +56,7 @@ export function ExpensesRulesTab({
         id,
         name: "New expense rule",
         enabled: true,
+        priority: nextRulePriority(rules),
         matchOn: { descriptionContains: "" },
         postTo: { ledger: LEDGER_ACCOUNTS[0], subLedger: "" },
         matchedCount: 0,

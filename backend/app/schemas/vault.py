@@ -5,9 +5,11 @@ from pydantic import BaseModel, Field
 
 class VaultNodeKind(str, Enum):
     ORG = "org"
+    BOOK = "book"
     VENDOR = "vendor"
     YEAR = "year"
     MONTH = "month"
+    PO = "po"
 
 
 class VaultTreeNode(BaseModel):
@@ -21,9 +23,12 @@ class VaultTreeNode(BaseModel):
 class VaultFileEntry(BaseModel):
     invoice_id: int
     org: str
+    book: str
     vendor: str
     year: str
     month: str
+    po_folder: str | None = None
+    purchase_document_type: str | None = None
     file_name: str
     virtual_path: str
     blob_path: str | None = None

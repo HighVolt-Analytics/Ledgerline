@@ -38,7 +38,7 @@ async def trigger_processing(
             raise HTTPException(400, "Mailbox is paused")
 
     settings = get_settings()
-    poll_inbox = mailbox_id is not None
+    poll_inbox = True
     if settings.sync_processing:
         background_tasks.add_task(
             run_pipeline_background,

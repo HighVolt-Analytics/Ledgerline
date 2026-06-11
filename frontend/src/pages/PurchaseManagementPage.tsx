@@ -1,140 +1,163 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check } from "lucide-react";
+import { EmptyState } from "@/components/EmptyState";
+import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
 import { MatchStatusBadge } from "@/components/purchases/MatchStatusBadge";
+import { ThreeWayAuditBadge } from "@/components/purchases/ThreeWayAuditBadge";
+import { PurchaseCaptureStrip } from "@/components/purchases/PurchaseCaptureStrip";
 import {
   PurchaseDetailContent,
   PurchaseDetailSheet,
   VarianceFormulaHint,
 } from "@/components/purchases/PurchaseDetailPanel";
-import { RoutedInvoicesPanel } from "@/components/rule-book/RoutedInvoicesPanel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { cn } from "@/lib/cn";
+import { usePurchaseMutations } from "@/hooks/usePurchaseMutations";
+import { usePurchases } from "@/hooks/usePurchases";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
-import { purchaseKpisFromInvoices } from "@/lib/routePageAdapters";
-import {
-  computeThreeWayMatch,
-  fmtAud,
-  INITIAL_PURCHASES,
-  SANDBOX_APPROVER_ID,
-  SANDBOX_CURRENT_USER,
-} from "@/lib/v4MockData";
+import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
+import { cn } from "@/lib/cn";
+import { apiPurchaseToRow, purchaseKpisFromRegister } from "@/lib/routePageAdapters";
+import { fmtAud } from "@/lib/v4MockData";
+
+const ROUTE_TARGET = "Purchase Management";
+const POLL_MS = 15_000;
+
+function purchaseRowKey(purchaseId: number, invoiceId: number | null) {
+  return `${purchaseId}-${invoiceId ?? "none"}`;
+}
 
 export function PurchaseManagementPage() {
-  const { data: routed = [], isLoading: routedLoading } = useRoutedInvoices(
-    "Purchase Management"
+  const { data: routed = [], refetch: refetchRouted } = useRoutedInvoices(ROUTE_TARGET);
+  const { data: purchaseRows = [], isLoading: purchasesLoading, isError, refetch: refetchPurchases } =
+    usePurchases();
+  const { data: ruleBook } = useRuleBookConfig();
+  const mutations = usePurchaseMutations();
+
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
+
+  const rows = useMemo(() => purchaseRows.map(apiPurchaseToRow), [purchaseRows]);
+  const kpis = useMemo(
+    () => purchaseKpisFromRegister(purchaseRows, routed),
+    [purchaseRows, routed]
   );
-  const [purchases, setPurchases] = useState(INITIAL_PURCHASES);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showSandbox, setShowSandbox] = useState(false);
-
-  const sandboxRows = useMemo(
-    () => purchases.map((po) => ({ po, m: computeThreeWayMatch(po) })),
-    [purchases]
+  const selected =
+    rows.find((r) => purchaseRowKey(r.purchaseId, r.invoiceId) === selectedKey) ?? null;
+  const activeRuleCount = useMemo(
+    () => (ruleBook?.purchaseRules ?? []).filter((r) => r.enabled).length,
+    [ruleBook?.purchaseRules]
   );
 
-  const kpis = useMemo(() => purchaseKpisFromInvoices(routed), [routed]);
+  const refetchAll = async () => {
+    await Promise.all([refetchRouted(), refetchPurchases()]);
+  };
 
-  const selected = sandboxRows.find((r) => r.po.id === selectedId) ?? null;
+  useVisibilityPolling(() => {
+    void refetchAll();
+  }, POLL_MS);
 
-  const approveVariance = (poId: string) => {
-    setPurchases((list) =>
-      list.map((po) => {
-        if (po.id !== poId || !po.approvers) return po;
-        const next = po.approvers.map((a) =>
-          a.id === SANDBOX_APPROVER_ID && a.state === "pending"
-            ? { ...a, state: "approved" as const, ts: "2026-05-30 09:00" }
-            : a
-        );
-        const stillPending = next.some((a) => a.state === "pending");
-        return { ...po, approvers: next, routedForApproval: stillPending };
-      })
-    );
+  useEffect(() => {
+    if (selectedKey && !rows.some((r) => purchaseRowKey(r.purchaseId, r.invoiceId) === selectedKey)) {
+      setSelectedKey(null);
+    }
+  }, [selectedKey, rows]);
+
+  useEffect(() => {
+    if (!mutations.toast) return;
+    const t = setTimeout(() => mutations.setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [mutations.toast, mutations.setToast]);
+
+  const handleApproveVariance = async (purchaseId: number) => {
+    await mutations.approveVariance(purchaseId);
+  };
+
+  const handleRecordGrn = async (
+    purchaseId: number,
+    body: { grn_qty: number; receiver?: string; condition_note?: string }
+  ) => {
+    await mutations.recordGrn(purchaseId, body);
   };
 
   return (
     <div>
+      {mutations.toast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-md border border-border bg-popover px-4 py-2 text-sm shadow-md max-w-sm">
+          {mutations.toast}
+        </div>
+      )}
+
       <PageHeader
         title="Purchase Management"
-        subtitle="PO → GRN → Invoice three-way matching. Routed purchase documents come from the Rule Book pipeline."
+        subtitle="PO → GRN → Invoice three-way matching. Variances are routed for tiered approval before payment."
       />
 
-      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
+      <PurchaseCaptureStrip
+        activeRuleCount={activeRuleCount}
+        onUploaded={() => void refetchAll()}
+      />
+
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-3 mb-5">
         <KpiCard
-          label="Open documents"
-          value={routedLoading ? "…" : kpis.openPos}
+          label="Open POs"
+          value={purchasesLoading ? "…" : kpis.openPos}
           testid="kpi-po-open"
         />
         <KpiCard
-          label="Without PO ref"
-          value={routedLoading ? "…" : kpis.pendingGrn}
+          label="Pending GRN"
+          value={purchasesLoading ? "…" : kpis.missingGrn}
           testid="kpi-po-grn"
           delta={
-            !routedLoading && kpis.pendingGrn > 0
-              ? { dir: "flat", text: "missing PO link" }
+            !purchasesLoading && kpis.missingGrn > 0
+              ? { dir: "down", text: "awaiting receipt", good: false }
               : undefined
           }
         />
         <KpiCard
-          label="Processed"
-          value={routedLoading ? "…" : `${kpis.matchPct}%`}
+          label="3-Way match pass"
+          value={purchasesLoading ? "…" : `${kpis.matchPct}%`}
           testid="kpi-po-matchpct"
           delta={
-            !routedLoading && routed.length > 0
-              ? { dir: "up", text: "of routed docs", good: true }
-              : undefined
-          }
-        />
-        <KpiCard
-          label="Needs review"
-          value={routedLoading ? "…" : kpis.variancesAwaiting}
-          testid="kpi-po-variances"
-          delta={
-            !routedLoading && kpis.variancesAwaiting > 0
-              ? { dir: "down", text: "exceptions / review", good: false }
+            !purchasesLoading && purchaseRows.length > 0
+              ? { dir: "up", text: "of POs clean", good: true }
               : undefined
           }
         />
       </div>
 
-      <RoutedInvoicesPanel
-        routeTarget="Purchase Management"
-        title="Documents routed from Rule Book"
-        hint="Invoices whose email capture or purchase rules assigned Purchase Management. Run remap after rule changes."
-        testId="purchase-routed-invoices"
-        showPo
-      />
-
-      <Card className="overflow-hidden mt-5">
+      <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-border">
           <div>
-            <span className="text-sm font-medium">Three-way match sandbox</span>
+            <span className="text-sm font-medium">Three-way match register</span>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Demo PO/GRN register until purchase-order APIs are connected. Live documents are in
-              the table above.
+              Click a row to open the three-way match detail drawer.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <VarianceFormulaHint />
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              onClick={() => setShowSandbox((v) => !v)}
-              data-testid="toggle-po-sandbox"
-            >
-              {showSandbox ? "Hide demo" : "Show demo"}
-            </Button>
-          </div>
+          <VarianceFormulaHint />
         </div>
-        {showSandbox ? (
+
+        {purchasesLoading ? (
+          <div className="px-4 py-8 text-sm text-muted-foreground">Loading purchase orders…</div>
+        ) : isError ? (
+          <div className="px-4 py-8 text-sm text-destructive">Could not load purchase orders.</div>
+        ) : rows.length === 0 ? (
+          <div className="px-4 py-6">
+            <EmptyState
+              title="No purchase orders yet"
+              hint="Routed purchase invoices with a PO reference appear here after processing. Check Inbox for documents missing a PO link (see KPI above)."
+            />
+          </div>
+        ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-muted-foreground border-b border-border text-left">
                   <th className="px-4 py-2.5 font-medium">PO</th>
+                  <th className="px-3 py-2.5 font-medium">Invoice</th>
                   <th className="px-3 py-2.5 font-medium">Vendor</th>
                   <th className="px-3 py-2.5 font-medium">Date</th>
                   <th className="px-3 py-2.5 font-medium text-right">PO Qty · Value</th>
@@ -142,22 +165,26 @@ export function PurchaseManagementPage() {
                   <th className="px-3 py-2.5 font-medium text-right">Invoice Qty · Value</th>
                   <th className="px-3 py-2.5 font-medium text-right">Qty Var.</th>
                   <th className="px-3 py-2.5 font-medium text-right">Price Var.</th>
-                  <th className="px-3 py-2.5 font-medium">Match Status</th>
+                  <th className="px-3 py-2.5 font-medium">Match</th>
+                  <th className="px-3 py-2.5 font-medium">3-Way audit</th>
                   <th className="px-4 py-2.5 font-medium text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {sandboxRows.map(({ po, m }) => {
-                  const pending = po.approvers?.find((a) => a.state === "pending");
-                  const canRowApprove = pending?.id === SANDBOX_CURRENT_USER.id;
+                {rows.map(({ purchaseId, invoiceId, po, m, threeWayAuditStatus }) => {
+                  const rowKey = purchaseRowKey(purchaseId, invoiceId);
+                  const showApprove = po.routedForApproval;
                   return (
                     <tr
-                      key={po.id}
+                      key={rowKey}
                       className="row-band border-b border-border/60 hover-elevate cursor-pointer"
-                      data-testid={`po-row-${po.id}`}
-                      onClick={() => setSelectedId(po.id)}
+                      data-testid={`po-row-${po.id}-${invoiceId ?? "none"}`}
+                      onClick={() => setSelectedKey(rowKey)}
                     >
                       <td className="px-4 py-2.5 font-medium whitespace-nowrap">{po.id}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap font-mono text-xs">
+                        {po.invoiceNo !== "—" ? po.invoiceNo : "—"}
+                      </td>
                       <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">
                         {po.vendor}
                       </td>
@@ -200,37 +227,31 @@ export function PurchaseManagementPage() {
                       <td className="px-3 py-2.5">
                         <MatchStatusBadge status={m.status} />
                       </td>
+                      <td className="px-3 py-2.5">
+                        <ThreeWayAuditBadge status={threeWayAuditStatus} />
+                      </td>
                       <td
                         className="px-4 py-2.5 text-right whitespace-nowrap"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {canRowApprove ? (
+                        {showApprove ? (
                           <Button
                             size="sm"
                             className="h-7 text-xs"
-                            onClick={() => approveVariance(po.id)}
+                            disabled={mutations.busyId === purchaseId}
+                            onClick={() => void handleApproveVariance(purchaseId)}
                             data-testid={`button-approve-variance-${po.id}`}
                           >
-                            <Check className="h-3.5 w-3.5 mr-1" /> Approve
-                          </Button>
-                        ) : pending ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs"
-                            disabled
-                            title={`Next approver in chain: ${pending.name} (${pending.role}).`}
-                            data-testid={`button-approve-variance-${po.id}`}
-                          >
-                            Awaiting {pending.name.split(" ")[0]}
+                            <Check className="h-3.5 w-3.5 mr-1" />
+                            {mutations.busyId === purchaseId ? "…" : "Approve"}
                           </Button>
                         ) : (
                           <Button
                             size="sm"
                             variant="ghost"
                             className="h-7 text-xs text-muted-foreground"
-                            onClick={() => setSelectedId(po.id)}
-                            data-testid={`button-view-po-${po.id}`}
+                            onClick={() => setSelectedKey(rowKey)}
+                            data-testid={`button-view-po-${po.id}-${invoiceId ?? "none"}`}
                           >
                             View
                           </Button>
@@ -242,20 +263,28 @@ export function PurchaseManagementPage() {
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="px-4 py-6 text-sm text-muted-foreground">
-            Expand the sandbox to explore three-way match variance approval flows with sample PO
-            data.
-          </div>
+        )}
+        {!purchasesLoading && rows.length > 0 && (
+          <p className="px-4 py-3 text-xs text-muted-foreground border-t border-border">
+            A clean three-way match requires PO quantity = GRN quantity = Invoice quantity, and PO
+            unit price = Invoice unit price. Any deviation is routed for tiered approval before the
+            invoice can progress to payment.
+          </p>
         )}
       </Card>
 
       <PurchaseDetailSheet
         open={!!selected}
-        onClose={() => setSelectedId(null)}
+        onClose={() => setSelectedKey(null)}
         title={
           <span className="flex items-center gap-2">
-            {selected?.po.id} {selected && <MatchStatusBadge status={selected.m.status} />}
+            {selected?.po.id}
+            {selected && selected.po.invoiceNo !== "—" && (
+              <span className="text-muted-foreground font-normal font-mono text-sm">
+                {selected.po.invoiceNo}
+              </span>
+            )}
+            {selected && <MatchStatusBadge status={selected.m.status} />}
           </span>
         }
         subtitle={
@@ -268,13 +297,36 @@ export function PurchaseManagementPage() {
           <PurchaseDetailContent
             po={selected.po}
             match={selected.m}
-            onApprove={() => {
-              approveVariance(selected.po.id);
-              setSelectedId(null);
-            }}
+            invoiceId={selected.invoiceId}
+            busy={mutations.busyId === selected.purchaseId}
+            canApproveVariance={selected.po.routedForApproval ?? false}
+            onApprove={() => handleApproveVariance(selected.purchaseId)}
+            onRecordGrn={(body) => handleRecordGrn(selected.purchaseId, body)}
+            onOpenInvoice={
+              selected.invoiceId != null
+                ? () => setDrawerInvoiceId(selected.invoiceId)
+                : undefined
+            }
+            onOpenPoDocument={
+              selected.po.poDocumentId != null
+                ? () => setDrawerInvoiceId(selected.po.poDocumentId!)
+                : undefined
+            }
+            onOpenGrnDocument={
+              selected.po.grnDocumentId != null
+                ? () => setDrawerInvoiceId(selected.po.grnDocumentId!)
+                : undefined
+            }
           />
         )}
       </PurchaseDetailSheet>
+
+      <InvoiceDetailDrawer
+        invoiceId={drawerInvoiceId}
+        open={drawerInvoiceId != null}
+        onClose={() => setDrawerInvoiceId(null)}
+        onUpdated={() => void refetchAll()}
+      />
     </div>
   );
 }

@@ -12,6 +12,11 @@ _LINE_ROW = re.compile(
     r"^(.{4,80}?)\s+(\d+(?:\.\d+)?)\s+\$?\s*([\d,]+\.?\d*)\s+\$?\s*([\d,]+\.?\d*)\s*$",
     re.M,
 )
+_GRN_LINE_ROW = re.compile(
+    r"^(.{4,80}?)\s+(\d+(?:\.\d+)?)\s+(?:Good|Damaged|Partial|[A-Za-z]{3,})\s*$",
+    re.M,
+)
+_ABN_ROW = re.compile(r"\babn\b", re.I)
 
 
 def _money(raw: str) -> Decimal | None:
@@ -24,12 +29,20 @@ def _money(raw: str) -> Decimal | None:
         return None
 
 
+def _skip_line_row(desc: str) -> bool:
+    if re.search(r"sub\s*total|gst|total\s*due|amount\s*due", desc, re.I):
+        return True
+    if _ABN_ROW.search(desc):
+        return True
+    return False
+
+
 def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
-    """Heuristic table rows: description qty unit_price amount."""
+    """Heuristic table rows: description qty unit_price amount (and GRN qty rows)."""
     items: list[ParsedLineItem] = []
     for m in _LINE_ROW.finditer(text):
         desc, qty_s, unit_s, amt_s = m.groups()
-        if re.search(r"sub\s*total|gst|total\s*due|amount\s*due", desc, re.I):
+        if _skip_line_row(desc):
             continue
         items.append(
             ParsedLineItem(
@@ -37,6 +50,21 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
                 qty=Decimal(qty_s),
                 unit_price=_money(unit_s),
                 amount=_money(amt_s),
+            )
+        )
+    if items:
+        return items
+
+    for m in _GRN_LINE_ROW.finditer(text):
+        desc, qty_s = m.groups()
+        if _skip_line_row(desc) or re.search(r"qty\s*received|condition", desc, re.I):
+            continue
+        items.append(
+            ParsedLineItem(
+                description=desc.strip(),
+                qty=Decimal(qty_s),
+                unit_price=None,
+                amount=None,
             )
         )
     return items

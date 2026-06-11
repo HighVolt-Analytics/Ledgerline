@@ -43,6 +43,12 @@ def _new_master_id(prefix: str, name: str) -> str:
     return f"{base}-{uuid.uuid4().hex[:6]}"
 
 
+def _normalize_abn(abn: str | None) -> str:
+    if not abn:
+        return ""
+    return re.sub(r"\D", "", abn.strip())[:11]
+
+
 def vendor_record_to_schema(row: VendorMasterRecord) -> VendorMasterResponse:
     return VendorMasterResponse(
         db_id=row.id,
@@ -84,11 +90,15 @@ def employee_record_to_schema(row: EmployeeMasterRecord) -> EmployeeMasterRespon
 
 
 def vendor_master_to_dict(vendor: VendorMaster) -> dict[str, Any]:
-    return vendor.model_dump()
+    data = vendor.model_dump()
+    data.pop("db_id", None)
+    return data
 
 
 def employee_master_to_dict(employee: EmployeeMaster) -> dict[str, Any]:
-    return employee.model_dump()
+    data = employee.model_dump()
+    data.pop("db_id", None)
+    return data
 
 
 async def count_vendor_masters(db: AsyncSession, org_id: int) -> int:
@@ -256,9 +266,12 @@ async def sync_masters_to_config_file(db: AsyncSession, org_id: int) -> None:
         data = json.load(fh)
     data["vendor_masters"] = [vendor_master_to_dict(v) for v in vendors]
     data["employee_masters"] = [employee_master_to_dict(e) for e in employees]
-    with path.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
-        fh.write("\n")
+    try:
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        raise ValueError(f"Could not sync vendor masters to rule book file: {exc}") from exc
     clear_classification_config_cache()
 
 
@@ -278,7 +291,7 @@ async def create_vendor_master(
         master_id=master_id,
         name=body.name,
         aliases=body.aliases,
-        abn=body.abn,
+        abn=_normalize_abn(body.abn),
         billing_address=body.billing_address.model_dump(),
         bank=body.bank.model_dump(exclude_none=True),
         default_ledger=body.default_ledger,
@@ -307,6 +320,8 @@ async def update_vendor_master(
         raise LookupError("Vendor master not found")
 
     patch = body.model_dump(exclude_unset=True)
+    if "abn" in patch and patch["abn"] is not None:
+        patch["abn"] = _normalize_abn(patch["abn"])
     for key, value in patch.items():
         if key in {"billing_address", "bank"} and value is not None:
             if hasattr(value, "model_dump"):
@@ -391,6 +406,7 @@ async def delete_employee_master(db: AsyncSession, org_id: int, master_id: str) 
 
 
 async def list_pending_vendors(db: AsyncSession, org_id: int) -> list[PendingVendorResponse]:
+    await _dismiss_pending_matching_masters(db, org_id)
     rows = (
         await db.execute(
             select(PendingVendor)
@@ -404,11 +420,53 @@ async def list_pending_vendors(db: AsyncSession, org_id: int) -> list[PendingVen
     return [PendingVendorResponse.model_validate(row) for row in rows]
 
 
+async def _dismiss_pending_matching_masters(db: AsyncSession, org_id: int) -> None:
+    """Remove queue rows when the vendor is already registered in masters."""
+    from app.services.vendor_detection import find_matching_vendor_master
+
+    masters = await list_vendor_masters(db, org_id)
+    pending = (
+        await db.execute(
+            select(PendingVendor).where(
+                PendingVendor.org_id == org_id,
+                PendingVendor.status == "pending",
+            )
+        )
+    ).scalars().all()
+    changed = False
+    for row in pending:
+        if find_matching_vendor_master(row.detected_name, row.detected_abn, masters):
+            row.status = "dismissed"
+            row.resolved_at = datetime.now(UTC)
+            changed = True
+    if changed:
+        await db.flush()
+
+
 async def create_pending_vendor(
     db: AsyncSession,
     org_id: int,
     body: PendingVendorCreate,
 ) -> PendingVendorResponse:
+    from app.services.vendor_detection import find_matching_vendor_master
+
+    masters = await list_vendor_masters(db, org_id)
+    if find_matching_vendor_master(body.detected_name, body.detected_abn, masters):
+        raise ValueError("Vendor already registered in master data")
+
+    existing = (
+        await db.execute(
+            select(PendingVendor).where(
+                PendingVendor.org_id == org_id,
+                PendingVendor.status == "pending",
+            )
+        )
+    ).scalars().all()
+    name_key = body.detected_name.strip().lower()
+    for row in existing:
+        if row.detected_name.strip().lower() == name_key:
+            return PendingVendorResponse.model_validate(row)
+
     row = PendingVendor(
         org_id=org_id,
         detected_name=body.detected_name,
@@ -441,6 +499,25 @@ async def promote_pending_vendor(
     row = await db.get(PendingVendor, pending_id)
     if not row or row.org_id != org_id or row.status != "pending":
         raise LookupError("Pending vendor not found")
+
+    from app.services.vendor_detection import find_matching_vendor_master
+
+    masters = await list_vendor_masters(db, org_id)
+    existing = find_matching_vendor_master(row.detected_name, row.detected_abn, masters)
+    if existing is not None:
+        row.status = "promoted"
+        row.promoted_master_id = existing.id
+        row.resolved_at = datetime.now(UTC)
+        await db.flush()
+        from app.services.vendor_hold_service import release_invoices_after_vendor_promotion
+
+        await release_invoices_after_vendor_promotion(
+            db,
+            org_id,
+            vendor_name=existing.name,
+            source_invoice_id=row.source_invoice_id,
+        )
+        return existing
 
     name = body.name or row.detected_name
     master_id = body.master_id or _new_master_id("vm", name)

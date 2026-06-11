@@ -2,27 +2,37 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
-
-const PROVIDERS = ["Gmail", "Outlook", "IMAP", "Exchange"] as const;
 
 type ConnectMailboxDialogProps = {
   open: boolean;
   onClose: () => void;
-  onConnect: (data: { email: string; nickname: string; provider: string }) => Promise<void>;
+  onSendInvite: (body: {
+    email: string;
+    display_name?: string;
+    message?: string;
+  }) => Promise<void>;
 };
 
-export function ConnectMailboxDialog({ open, onClose, onConnect }: ConnectMailboxDialogProps) {
+export function ConnectMailboxDialog({
+  open,
+  onClose,
+  onSendInvite,
+}: ConnectMailboxDialogProps) {
   const [email, setEmail] = useState("");
-  const [nickname, setNickname] = useState("");
-  const [provider, setProvider] = useState<string>("Gmail");
+  const [displayName, setDisplayName] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setBusy(false);
+    setSent(false);
+    setEmail("");
+    setDisplayName("");
+    setMessage("");
   }, [open]);
 
   useEffect(() => {
@@ -36,26 +46,19 @@ export function ConnectMailboxDialog({ open, onClose, onConnect }: ConnectMailbo
 
   if (!open) return null;
 
-  async function handleConnect() {
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) {
-      setError("Email address is required.");
-      return;
-    }
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await onConnect({
-        email: trimmed,
-        nickname: nickname.trim() || "Primary AP",
-        provider,
+      await onSendInvite({
+        email: email.trim(),
+        display_name: displayName.trim() || undefined,
+        message: message.trim() || undefined,
       });
-      setEmail("");
-      setNickname("");
-      setProvider("Gmail");
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to connect mailbox");
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send invitation");
     } finally {
       setBusy(false);
     }
@@ -78,7 +81,7 @@ export function ConnectMailboxDialog({ open, onClose, onConnect }: ConnectMailbo
       >
         <div className="flex items-start justify-between gap-4 mb-4">
           <h2 id="connect-mailbox-title" className="text-lg font-semibold leading-none">
-            Connect a mailbox
+            Request mailbox connection
           </h2>
           <button
             type="button"
@@ -90,66 +93,66 @@ export function ConnectMailboxDialog({ open, onClose, onConnect }: ConnectMailbo
           </button>
         </div>
 
-        <div className="space-y-4 py-2">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium" htmlFor="mailbox-email">
-              Email address
-            </label>
-            <Input
-              id="mailbox-email"
-              type="email"
-              data-testid="input-mailbox-email"
-              placeholder="ap@yourcompany.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoFocus
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium" htmlFor="mailbox-nickname">
-              Nickname
-            </label>
-            <Input
-              id="mailbox-nickname"
-              data-testid="input-mailbox-nickname"
-              placeholder="Primary AP"
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium" htmlFor="mailbox-provider">
-              Provider
-            </label>
-            <Select
-              id="mailbox-provider"
-              data-testid="select-mailbox-provider"
-              value={provider}
-              onValueChange={setProvider}
-              size="md"
-              options={PROVIDERS.map((p) => ({ value: p, label: p }))}
-              className="w-full"
-            />
-          </div>
-
-          {error && (
-            <p className="text-sm text-destructive" role="alert">
-              {error}
+        {sent ? (
+          <div className="space-y-4 py-2 text-sm">
+            <p className="text-muted-foreground">
+              Invitation sent to <span className="font-medium text-foreground">{email}</span>.
+              They will receive an email with a link to connect with Microsoft.
             </p>
-          )}
-        </div>
-
-        <div className="flex justify-end mt-2">
-          <Button
-            data-testid="button-confirm-mailbox"
-            onClick={handleConnect}
-            disabled={busy || !email.trim()}
-          >
-            {busy ? "Connecting…" : "Connect mailbox"}
-          </Button>
-        </div>
+            <Button type="button" onClick={onClose}>
+              Done
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Enter the mailbox owner&apos;s email. They will receive a request to authorize
+              LedgerLink to read invoice attachments from that mailbox.
+            </p>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Mailbox email</label>
+              <Input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="finance@company.com"
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">
+                Display name (optional)
+              </label>
+              <Input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Finance inbox"
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">
+                Message to recipient (optional)
+              </label>
+              <Input
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Please connect our AP mailbox for invoice capture"
+                className="mt-1"
+              />
+            </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? "Sending…" : "Send invitation"}
+              </Button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

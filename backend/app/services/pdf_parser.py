@@ -20,6 +20,11 @@ from app.services.invoice_data import (
     ParseSource,
 )
 from app.services.line_items_parser import ensure_line_items, parse_line_items_from_text
+from app.services.vendor_name_utils import (
+    extract_header_vendor,
+    normalize_vendor_name,
+    pick_best_vendor_name,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -32,6 +37,11 @@ _REQUIRED_FOR_CONFIDENCE = (
     "subtotal",
     "gst",
     "total",
+)
+
+_DOC_TITLE_LINE = re.compile(
+    r"^(?:purchase\s+order|goods\s+receipt(?:\s+note)?|tax\s+invoice|invoice|credit\s+note)\s*$",
+    re.I,
 )
 
 _INVOICE_NO_STOPWORDS = frozenset(
@@ -98,6 +108,14 @@ def _normalize_abn(raw: str) -> str | None:
     return None
 
 
+def _clean_vendor_candidate(value: str) -> str:
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    for line in lines:
+        if not _DOC_TITLE_LINE.match(line):
+            return line
+    return lines[-1] if lines else value.strip()
+
+
 def _invoice_no_sane(value: str | None) -> bool:
     if not value or len(value) < 3:
         return False
@@ -134,23 +152,30 @@ def parse_text_fields(text: str) -> dict[str, Any]:
             break
 
     vendor_patterns = [
+        r"^([A-Za-z0-9][A-Za-z0-9\s&.,'\-]{2,50}?)\s+(?:TAX\s+INVOICE|INVOICE)\b",
         r"(?:From|Supplier|Vendor)[:\s]+([^\n]{3,80})",
         r"^([A-Za-z0-9][A-Za-z0-9\s&.,'\-]{2,60}(?:Pty\.?\s*Ltd\.?|Pty Ltd|Limited|Ltd\.?|Inc\.?))",
     ]
     for pattern in vendor_patterns:
         m = re.search(pattern, text, re.I | re.M)
         if m:
-            candidate = m.group(1).strip()
-            if len(candidate) >= 3 and "bill to" not in candidate.lower():
-                fields["vendor"] = candidate
+            candidate = _clean_vendor_candidate(m.group(1).strip())
+            normalized = normalize_vendor_name(candidate)
+            if normalized and "bill to" not in normalized.lower():
+                fields["vendor"] = normalized
                 break
 
+    if not fields.get("vendor"):
+        header_vendor = extract_header_vendor(text)
+        if header_vendor:
+            fields["vendor"] = header_vendor
+
     amount_patterns = [
-        (r"Sub\s*Total[:\s]*\$?\s*([\d,]+\.?\d*)", "subtotal"),
-        (r"GST(?:\s*\([^)]*\))?[:\s]*\$?\s*([\d,]+\.?\d*)", "gst"),
+        (r"Sub\s*Total(?:\s*AUD)?[:\s]*\$?\s*([\d,]+\.?\d*)", "subtotal"),
+        (r"GST(?:\s*\d+%)?[:\s]*\$?\s*([\d,]+\.?\d*)", "gst"),
         (r"Invoice\s*Total[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
         (r"Amount\s*Due[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
-        (r"(?<!Sub\s)Total(?:\s*Due)?[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
+        (r"(?<!Sub\s)TOTAL(?:\s*AUD)?(?:\s*Due)?[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
     ]
     for pattern, key in amount_patterns:
         if key in fields and fields[key] is not None:
@@ -160,16 +185,20 @@ def parse_text_fields(text: str) -> dict[str, Any]:
             fields[key] = _money(m.group(1))
 
     for pattern, key in (
+        (r"Invoice\s*Date[:\s]*(\d{1,2}\s+\w+\s+\d{4})", "invoice_date"),
         (r"(?:Invoice\s*)?Date[:\s]*(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})", "invoice_date"),
+        (r"(?:PO|Receipt)\s*Date[:\s]*(\d{1,2}\s+\w+\s+\d{4})", "invoice_date"),
+        (r"Due\s*Date[:\s]*(\d{1,2}\s+\w+\s+\d{4})", "due_date"),
         (r"Due\s*Date[:\s]*(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})", "due_date"),
     ):
         m = re.search(pattern, text, re.I)
-        if m:
+        if m and key not in fields:
             fields[key] = _date(m.group(1))
 
     for pattern in (
-        r"(?:PO|Purchase\s*Order|P\.?O\.?)[\s#:]*([A-Z0-9][A-Z0-9\-/_]{2,})",
-        r"Reference\s*(?:No\.?|#)?[:\s]*([A-Z0-9][A-Z0-9\-/_]{2,})",
+        r"Purchase\s*Order\s*(?:No\.?|Number)[:\s#]*([A-Z0-9][A-Z0-9\-/_]{2,})",
+        r"PO\s*Reference[:\s#]*([A-Z0-9][A-Z0-9\-/_]{2,})",
+        r"(?:^|\n)\s*P\.?O\.?\s*(?:No\.?|Number|#)?[:\s#]+([A-Z0-9][A-Z0-9\-/_]{2,})",
     ):
         m = re.search(pattern, text, re.I)
         if m:
@@ -185,6 +214,35 @@ def parse_text_fields(text: str) -> dict[str, Any]:
             fields["cost_centre"] = m.group(1).strip()
             break
 
+    for pattern in (
+        r"(?:Bill\s*From|Remit\s*To|Supplier\s*Address)[:\s]*\n?([^\n]+(?:\n[^\n]+){0,2})",
+        r"(?:Address)[:\s]*([^\n]+\n[^\n]+\d{4})",
+    ):
+        m = re.search(pattern, text, re.I | re.M)
+        if m:
+            candidate = " ".join(line.strip() for line in m.group(1).splitlines() if line.strip())
+            if len(candidate) >= 8:
+                fields["billing_address"] = candidate[:500]
+                break
+
+    for pattern in (
+        r"BSB[:\s]*(\d{3}[-\s]?\d{3})",
+        r"\b(\d{3}-\d{3})\b",
+    ):
+        m = re.search(pattern, text, re.I)
+        if m:
+            fields["bank_bsb"] = m.group(1).strip()
+            break
+
+    for pattern in (
+        r"(?:Account|Acc\.?)\s*(?:No\.?|Number)?[:\s]*(\d[\d\s]{5,12})",
+        r"BSB[:\s]*\d{3}[-\s]?\d{3}[^\d]{0,20}(\d[\d\s]{5,12})",
+    ):
+        m = re.search(pattern, text, re.I)
+        if m:
+            fields["bank_account"] = re.sub(r"\s+", "", m.group(1))
+            break
+
     fields["line_items"] = parse_line_items_from_text(text)
 
     return fields
@@ -196,6 +254,9 @@ def _fields_to_invoice_data(fields: dict[str, Any], *, source: str) -> InvoiceDa
     return InvoiceData(
         vendor=fields.get("vendor"),
         abn=fields.get("abn"),
+        billing_address=fields.get("billing_address"),
+        bank_bsb=fields.get("bank_bsb"),
+        bank_account=fields.get("bank_account"),
         invoice_no=fields.get("invoice_no"),
         invoice_date=fields.get("invoice_date"),
         due_date=fields.get("due_date"),
@@ -252,8 +313,11 @@ def _merge_prefer_complete(primary: InvoiceData, secondary: InvoiceData) -> Invo
     """Fill gaps in primary from secondary without overwriting set values."""
     line_items = primary.line_items or secondary.line_items
     merged = InvoiceData(
-        vendor=primary.vendor or secondary.vendor,
+        vendor=pick_best_vendor_name(primary.vendor, secondary.vendor),
         abn=primary.abn or secondary.abn,
+        billing_address=primary.billing_address or secondary.billing_address,
+        bank_bsb=primary.bank_bsb or secondary.bank_bsb,
+        bank_account=primary.bank_account or secondary.bank_account,
         invoice_no=primary.invoice_no or secondary.invoice_no,
         invoice_date=primary.invoice_date or secondary.invoice_date,
         due_date=primary.due_date or secondary.due_date,
@@ -270,6 +334,18 @@ def _merge_prefer_complete(primary: InvoiceData, secondary: InvoiceData) -> Invo
         },
     )
     return merged
+
+
+def _finalize_vendor(data: InvoiceData, text: str) -> InvoiceData:
+    from dataclasses import replace
+
+    vendor = pick_best_vendor_name(
+        data.vendor,
+        extract_header_vendor(text) if text.strip() else None,
+    )
+    if vendor == data.vendor:
+        return data
+    return replace(data, vendor=vendor)
 
 
 def _content_type_for_path(path: Path) -> str:
@@ -313,6 +389,7 @@ def parse_invoice(file_path: str | Path) -> ParseResult:
                 source = "azure_di"
                 confidence = "high" if local_parse_confident(final) else "low"
         ensure_line_items(final)
+        final = _finalize_vendor(final, text)
         final.raw_fields["parse_source"] = source
         final.raw_fields["parse_confidence"] = confidence
         final.raw_fields["text_length"] = len(text.strip())
@@ -333,6 +410,7 @@ def parse_invoice(file_path: str | Path) -> ParseResult:
             source = "azure_di"
             confidence = "high" if local_parse_confident(final) else "low"
         ensure_line_items(final)
+        final = _finalize_vendor(final, text)
         final.raw_fields["parse_source"] = source
         final.raw_fields["parse_confidence"] = confidence
         return ParseResult(data=final, source=source, confidence=confidence, text_length=0)
@@ -367,6 +445,7 @@ def parse_invoice(file_path: str | Path) -> ParseResult:
         confidence = "high" if local_parse_confident(local) else "low"
 
     ensure_line_items(final)
+    final = _finalize_vendor(final, text)
     final.raw_fields["parse_source"] = source
     final.raw_fields["parse_confidence"] = confidence
     final.raw_fields["text_length"] = len(text.strip())

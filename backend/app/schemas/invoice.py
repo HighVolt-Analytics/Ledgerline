@@ -25,6 +25,8 @@ class EvaluationStatus(str, Enum):
     AUTO_CODED = "auto_coded"
     NEEDS_REVIEW = "needs_review"
     PENDING_VENDOR = "pending_vendor"
+    UNMATCHED_EXPENSE_VENDOR = "unmatched_expense_vendor"
+    AWAITING_PO = "awaiting_po"
 
 
 class ValidationResultItem(BaseModel):
@@ -61,6 +63,7 @@ class InvoiceResponse(BaseModel):
     matched_rule_ids: list[str] | None = None
     vendor_confidence: float | None = None
     evaluation_status: EvaluationStatus | None = None
+    purchase_document_type: str | None = None
     validation_results: list[ValidationResultItem] | None = None
     created_at: datetime
     has_stored_file: bool = False

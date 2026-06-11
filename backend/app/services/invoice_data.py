@@ -22,6 +22,9 @@ class ParsedLineItem:
 class InvoiceData:
     vendor: str | None = None
     abn: str | None = None
+    billing_address: str | None = None
+    bank_bsb: str | None = None
+    bank_account: str | None = None
     invoice_no: str | None = None
     invoice_date: date | None = None
     due_date: date | None = None

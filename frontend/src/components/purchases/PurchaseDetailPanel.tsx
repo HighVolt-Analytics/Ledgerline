@@ -1,28 +1,26 @@
 import { useState, type ReactNode } from "react";
-import { Calculator, Check, ChevronRight, Package, Receipt, ShoppingCart } from "lucide-react";
+import { Calculator, Check, ExternalLink, Package, Receipt, ShoppingCart } from "lucide-react";
 import { ApprovalPolicyNote } from "@/components/ApprovalPolicyNote";
-import { ApproverChip } from "@/components/ApproverChip";
 import { DetailDrawer } from "@/components/DetailDrawer";
 import { DocumentAuditTrail } from "@/components/DocumentAuditTrail";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
-import {
-  fmtAud,
-  SANDBOX_CURRENT_USER,
-  type PurchaseOrder,
-  type ThreeWayMatch,
-} from "@/lib/v4MockData";
+import { fmtAud, type PurchaseOrder, type ThreeWayMatch } from "@/lib/v4MockData";
+
 function MatchDocCard({
   icon: Icon,
   title,
   tone,
   children,
+  onOpenDocument,
 }: {
   icon: typeof Package;
   title: string;
   tone: "muted" | "red";
   children: ReactNode;
+  onOpenDocument?: () => void;
 }) {
   return (
     <div
@@ -31,9 +29,20 @@ function MatchDocCard({
         tone === "red" ? "border-destructive/40 bg-destructive/5" : "border-border bg-card"
       )}
     >
-      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-2">
-        <Icon className="h-3.5 w-3.5" />
-        {title}
+      <div className="flex items-center justify-between gap-1 mb-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+          <Icon className="h-3.5 w-3.5" />
+          {title}
+        </div>
+        {onOpenDocument && (
+          <button
+            type="button"
+            onClick={onOpenDocument}
+            className="text-[10px] text-primary hover:underline shrink-0"
+          >
+            View PDF
+          </button>
+        )}
       </div>
       <div className="space-y-1">{children}</div>
     </div>
@@ -105,29 +114,142 @@ export function VarianceFormulaHint() {
   );
 }
 
+function RecordGrnForm({
+  defaultQty,
+  busy,
+  onSubmit,
+}: {
+  defaultQty: number;
+  busy: boolean;
+  onSubmit: (body: {
+    grn_qty: number;
+    receiver?: string;
+    condition_note?: string;
+  }) => void | Promise<void>;
+}) {
+  const [qty, setQty] = useState(String(defaultQty));
+  const [receiver, setReceiver] = useState("");
+  const [condition, setCondition] = useState("Good");
+
+  return (
+    <Card className="p-3 mt-3 border-dashed">
+      <div className="text-xs font-medium mb-2">Record goods receipt</div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div>
+          <label className="text-[11px] text-muted-foreground">GRN qty</label>
+          <Input
+            type="number"
+            min={0.01}
+            step="any"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            className="h-8 text-sm mt-0.5"
+            data-testid="input-grn-qty"
+          />
+        </div>
+        <div>
+          <label className="text-[11px] text-muted-foreground">Received by</label>
+          <Input
+            value={receiver}
+            onChange={(e) => setReceiver(e.target.value)}
+            className="h-8 text-sm mt-0.5"
+            placeholder="Name"
+            data-testid="input-grn-receiver"
+          />
+        </div>
+        <div>
+          <label className="text-[11px] text-muted-foreground">Condition</label>
+          <Input
+            value={condition}
+            onChange={(e) => setCondition(e.target.value)}
+            className="h-8 text-sm mt-0.5"
+            data-testid="input-grn-condition"
+          />
+        </div>
+      </div>
+      <Button
+        size="sm"
+        className="mt-2"
+        disabled={busy || !qty || Number(qty) <= 0}
+        onClick={() =>
+          void onSubmit({
+            grn_qty: Number(qty),
+            receiver: receiver.trim() || undefined,
+            condition_note: condition.trim() || undefined,
+          })
+        }
+        data-testid="button-record-grn"
+      >
+        Record GRN
+      </Button>
+    </Card>
+  );
+}
+
 export function PurchaseDetailContent({
   po,
   match,
+  invoiceId,
+  busy = false,
+  canApproveVariance,
   onApprove,
+  onRecordGrn,
+  onOpenInvoice,
+  onOpenPoDocument,
+  onOpenGrnDocument,
 }: {
   po: PurchaseOrder;
   match: ThreeWayMatch;
-  onApprove: () => void;
+  invoiceId: number | null;
+  busy?: boolean;
+  canApproveVariance: boolean;
+  onApprove: () => void | Promise<void>;
+  onRecordGrn?: (body: {
+    grn_qty: number;
+    receiver?: string;
+    condition_note?: string;
+  }) => void | Promise<void>;
+  onOpenInvoice?: () => void;
+  onOpenPoDocument?: () => void;
+  onOpenGrnDocument?: () => void;
 }) {
-  const pending = po.approvers?.find((a) => a.state === "pending");
-  const canApprove = Boolean(pending && pending.id === SANDBOX_CURRENT_USER.id);
-
   return (
     <>
+      <div className="flex items-center justify-end gap-2 mb-3">
+        {invoiceId != null && onOpenInvoice && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs"
+            onClick={onOpenInvoice}
+            data-testid="button-open-purchase-invoice"
+          >
+            <ExternalLink className="h-3.5 w-3.5 mr-1" />
+            Linked invoice
+          </Button>
+        )}
+      </div>
+
       <div className="grid grid-cols-3 gap-2">
-        <MatchDocCard icon={ShoppingCart} title="Purchase Order" tone="muted">
+        <MatchDocCard
+          icon={ShoppingCart}
+          title="Purchase Order"
+          tone="muted"
+          onOpenDocument={onOpenPoDocument}
+        >
           <MatchLineRow label="Qty" value={String(po.poQty)} />
           <MatchLineRow label="Unit price" value={fmtAud(po.poUnitPrice)} />
           <MatchLineRow label="Value" value={fmtAud(match.poValue)} strong />
           <MatchLineRow label="Date" value={po.date} />
         </MatchDocCard>
 
-        <MatchDocCard icon={Package} title="Goods Receipt" tone={po.grnQty === null ? "red" : "muted"}>
+        <MatchDocCard
+          icon={Package}
+          title="Goods Receipt"
+          tone={po.grnQty === null ? "red" : "muted"}
+          onOpenDocument={po.grnQty !== null ? onOpenGrnDocument : undefined}
+        >
           {po.grnQty === null ? (
             <div className="text-xs text-destructive py-2">
               No GRN received. Invoice cannot be matched until goods are receipted.
@@ -142,13 +264,26 @@ export function PurchaseDetailContent({
           )}
         </MatchDocCard>
 
-        <MatchDocCard icon={Receipt} title="Supplier Invoice" tone="muted">
+        <MatchDocCard
+          icon={Receipt}
+          title="Supplier Invoice"
+          tone="muted"
+          onOpenDocument={onOpenInvoice}
+        >
           <MatchLineRow label="No." value={po.invoiceNo} />
           <MatchLineRow label="Qty" value={String(po.invoiceQty)} />
           <MatchLineRow label="Unit price" value={fmtAud(po.invoiceUnitPrice)} />
           <MatchLineRow label="Value" value={fmtAud(match.invoiceValue)} strong />
         </MatchDocCard>
       </div>
+
+      {po.grnQty === null && onRecordGrn && (
+        <RecordGrnForm
+          defaultQty={po.invoiceQty || po.poQty}
+          busy={busy}
+          onSubmit={onRecordGrn}
+        />
+      )}
 
       <Card className="p-3 mt-3 bg-muted/30">
         <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">
@@ -187,40 +322,37 @@ export function PurchaseDetailContent({
         </div>
       </Card>
 
-      {po.routedForApproval && po.approvers && (
+      {po.routedForApproval && (
         <div className="mt-3">
           <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">
-            Approval chain
+            Variance approval
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {po.approvers.map((a) => (
-              <ApproverChip key={a.id} {...a} />
-            ))}
-          </div>
-          <div className="mt-1.5">
-            <ApprovalPolicyNote />
-          </div>
+          <ApprovalPolicyNote />
           <div className="mt-3">
-            {canApprove ? (
-              <Button size="sm" onClick={onApprove} data-testid="button-drawer-approve-variance">
-                <Check className="h-4 w-4 mr-1" /> Approve variance ({pending?.role})
-              </Button>
-            ) : pending ? (
-              <Button size="sm" disabled>
-                Awaiting {pending.name}
+            {canApproveVariance ? (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => void onApprove()}
+                data-testid="button-drawer-approve-variance"
+              >
+                <Check className="h-4 w-4 mr-1" /> Approve variance
               </Button>
             ) : (
-              <div className="inline-flex items-center gap-1.5 text-sm text-primary">
-                <Check className="h-4 w-4" />
-                Variance fully approved — ready to progress to payment
-                <ChevronRight className="h-3.5 w-3.5" />
-              </div>
+              <div className="text-xs text-muted-foreground">Variance already approved.</div>
             )}
           </div>
         </div>
       )}
 
-      <DocumentAuditTrail docId={po.id} />
+      {match.status === "3-Way Match" && !po.routedForApproval && (
+        <div className="mt-3 text-sm text-primary flex items-center gap-1.5">
+          <Check className="h-4 w-4" />
+          Three-way match complete — ready for payment workflow
+        </div>
+      )}
+
+      <DocumentAuditTrail docId={po.id} invoiceId={invoiceId ?? undefined} />
     </>
   );
 }
@@ -239,7 +371,14 @@ export function PurchaseDetailSheet({
   children: ReactNode;
 }) {
   return (
-    <DetailDrawer open={open} onClose={onClose} title={title} subtitle={subtitle} size="lg">
+    <DetailDrawer
+      open={open}
+      onClose={onClose}
+      title={title}
+      subtitle={subtitle}
+      size="purchase"
+      testId="drawer-purchase-detail"
+    >
       {children}
     </DetailDrawer>
   );

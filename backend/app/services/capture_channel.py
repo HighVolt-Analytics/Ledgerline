@@ -21,6 +21,31 @@ def infer_capture_channel(sender: str | None) -> str:
     return "unknown"
 
 
+def is_known_messaging_sender(
+    sender: str | None,
+    employees: list,
+) -> bool:
+    """True when sender matches an employee WhatsApp or Viber number."""
+    phone = normalize_phone(sender)
+    if not phone:
+        return False
+    for employee in employees:
+        for field in (
+            getattr(employee, "whatsapp_number", None),
+            getattr(employee, "viber_number", None),
+        ):
+            if field and normalize_phone(str(field)) == phone:
+                return True
+    return False
+
+
+def is_staff_claim_sender(sender: str | None, employees: list) -> bool:
+    """Mob channel or known employee messaging identity (expense book guard)."""
+    if infer_capture_channel(sender) == "mob":
+        return True
+    return is_known_messaging_sender(sender, employees)
+
+
 def channel_rule_matches(rule_channel: str | None, actual: str) -> bool:
     if not rule_channel or rule_channel.strip().lower() in {"", "any"}:
         return True

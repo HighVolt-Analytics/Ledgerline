@@ -1,33 +1,61 @@
+import { useMemo, useState } from "react";
 import { Shield } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
-import { PayableInvoiceRow } from "@/components/payments/PayableInvoiceRow";
+import { PageTabPanel, PageTabs } from "@/components/PageTabs";
+import { PaymentReceiptSheet } from "@/components/payments/PaymentReceiptSheet";
+import { PaymentRow } from "@/components/payments/PaymentRow";
 import { WalletCard } from "@/components/payments/WalletCard";
 import { Card } from "@/components/ui/card";
-import { usePayablesQueue } from "@/hooks/useRoutedInvoices";
+import { usePaymentMutations, usePayments } from "@/hooks/usePayments";
 import { money } from "@/lib/format";
-import { payablesKpis } from "@/lib/routePageAdapters";
-import { paymentTierLabel } from "@/lib/v4MockData";
+import { apiPaymentToRecord, paymentsKpis } from "@/lib/routePageAdapters";
+import { paymentTierLabel, type PaymentRecord, type PaymentTab } from "@/lib/v4MockData";
+
+const TABS: { value: PaymentTab; label: string; testid: string }[] = [
+  { value: "queue", label: "Queue", testid: "tab-pay-queue" },
+  { value: "awaiting", label: "Awaiting approval", testid: "tab-pay-awaiting" },
+  { value: "scheduled", label: "Scheduled", testid: "tab-pay-scheduled" },
+  { value: "paid", label: "Paid", testid: "tab-pay-paid" },
+  { value: "failed", label: "Failed", testid: "tab-pay-failed" },
+];
 
 export function PaymentsPage() {
-  const { data: payables = [], isLoading, isError } = usePayablesQueue();
+  const { data: paymentRows = [], isLoading, isError } = usePayments();
+  const { updateStatus } = usePaymentMutations();
+  const [tab, setTab] = useState<PaymentTab>("queue");
+  const [justPaidId, setJustPaidId] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<PaymentRecord | null>(null);
 
-  const kpis = payablesKpis(payables);
+  const payments = useMemo(() => paymentRows.map(apiPaymentToRecord), [paymentRows]);
+  const kpis = paymentsKpis(payments);
+  const tabPayments = useMemo(
+    () => payments.filter((p) => p.tab === tab),
+    [payments, tab]
+  );
+
+  const advance = async (payment: PaymentRecord, status: string) => {
+    await updateStatus(Number(payment.id), { status });
+    if (status === "paid") {
+      setJustPaidId(payment.id);
+      setTimeout(() => setJustPaidId(null), 2000);
+    }
+  };
 
   return (
     <div>
       <PageHeader
         title="Payments"
-        subtitle="Open payables from processed invoices with due dates. Disbursement approval tiers connect in a later phase."
+        subtitle="Disbursement workflow for processed payables — tiered approval by amount with Stripe-ready scheduling."
       />
 
       <div className="grid gap-3 grid-cols-1 lg:grid-cols-[1fr_1fr_1fr_1.4fr] mb-5">
         <KpiCard
-          label="Open Payables"
+          label="Open payables"
           value={isLoading ? "…" : kpis.count}
           testid="kpi-pay-ready"
-          delta={{ dir: "up", text: "processed + due", good: true }}
+          delta={{ dir: "up", text: "workflow queue", good: true }}
         />
         <KpiCard
           label="Due within 7 days"
@@ -49,39 +77,49 @@ export function PaymentsPage() {
         <div className="flex items-start gap-2.5">
           <Shield className="h-4 w-4 text-primary mt-0.5 shrink-0" />
           <div className="text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">Payment controls active.</span> Payables
-            appear when an invoice is <span className="text-foreground">processed</span> and has a{" "}
-            <span className="text-foreground">due date</span>. Multi-tier approval scales with amount
-            ({paymentTierLabel(500)}, {paymentTierLabel(5000)}, {paymentTierLabel(25000)},{" "}
-            {paymentTierLabel(60000)}). Stripe disbursement workflow is shown separately via the
-            wallet card.
+            <span className="font-medium text-foreground">Payment controls active.</span> Payments
+            are created when invoices reach <span className="text-foreground">processed</span> with
+            a due date. Multi-tier approval scales with amount (
+            {paymentTierLabel(500)}, {paymentTierLabel(5000)}, {paymentTierLabel(25000)},{" "}
+            {paymentTierLabel(60000)}).
           </div>
         </div>
       </Card>
 
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Payables queue</h2>
-        {!isLoading && kpis.overdue > 0 ? (
-          <span className="text-xs text-destructive tnum">{kpis.overdue} overdue</span>
-        ) : null}
-      </div>
+      <PageTabs value={tab} onChange={(v) => setTab(v as PaymentTab)} tabs={TABS} />
 
-      {isLoading ? (
-        <div className="text-sm text-muted-foreground py-8">Loading payables…</div>
-      ) : isError ? (
-        <div className="text-sm text-destructive py-8">Could not load payables queue.</div>
-      ) : payables.length === 0 ? (
-        <EmptyState
-          title="No open payables"
-          hint="Processed invoices with a due date appear here. Check the inbox for documents still in the pipeline."
-        />
-      ) : (
-        <div className="space-y-2.5">
-          {payables.map((invoice) => (
-            <PayableInvoiceRow key={invoice.id} invoice={invoice} />
-          ))}
-        </div>
-      )}
+      <PageTabPanel value={tab} active={tab} className="mt-4">
+        {isLoading ? (
+          <div className="text-sm text-muted-foreground py-8">Loading payments…</div>
+        ) : isError ? (
+          <div className="text-sm text-destructive py-8">Could not load payments.</div>
+        ) : tabPayments.length === 0 ? (
+          <EmptyState
+            title={`No ${tab} payments`}
+            hint="Processed invoices with due dates create payment rows automatically."
+          />
+        ) : (
+          <div className="space-y-2.5">
+            {tabPayments.map((payment) => (
+              <PaymentRow
+                key={payment.id}
+                payment={payment}
+                justPaid={justPaidId === payment.id}
+                onSubmit={() => void advance(payment, "awaiting")}
+                onApprove={() => void advance(payment, "scheduled")}
+                onPayNow={() => void advance(payment, "paid")}
+                onReceipt={() => setReceipt(payment)}
+              />
+            ))}
+          </div>
+        )}
+      </PageTabPanel>
+
+      <PaymentReceiptSheet
+        open={!!receipt}
+        onClose={() => setReceipt(null)}
+        payment={receipt}
+      />
     </div>
   );
 }

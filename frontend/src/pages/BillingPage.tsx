@@ -1,18 +1,13 @@
-import { useState } from "react";
 import { Coins } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
+import { PageLoader } from "@/components/PageLoader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { NumericInput } from "@/components/ui/numeric-input";
+import { useAuth } from "@/context/AuthContext";
+import { useBilling, useBillingMutations } from "@/hooks/useBilling";
 import { cn } from "@/lib/cn";
-
-const CREDIT_PACKS = [
-  { id: "starter", name: "Starter", credits: 500, priceAUD: 49 },
-  { id: "team", name: "Team", credits: 2500, priceAUD: 199, popular: true },
-  { id: "growth", name: "Growth", credits: 10000, priceAUD: 699 },
-  { id: "scale", name: "Scale", credits: 50000, priceAUD: 2999 },
-];
 
 const USAGE = [
   { action: "OCR Parse a document", credits: 3 },
@@ -22,15 +17,41 @@ const USAGE = [
 ];
 
 export function BillingPage() {
-  const [balance, setBalance] = useState(500);
-  const [autoRecharge, setAutoRecharge] = useState(false);
-  const [currentPack, setCurrentPack] = useState<string>("starter");
-  const [threshold, setThreshold] = useState<number>(100);
+  const { user } = useAuth();
+  const { data: billing, isLoading, error } = useBilling(Boolean(user));
+  const { updateSettings, purchasePack } = useBillingMutations();
 
-  const buyPack = (packId: string, credits: number) => {
-    setBalance((b) => b + credits);
-    setCurrentPack(packId);
-  };
+  if (!user) {
+    return (
+      <div>
+        <PageHeader title="Billing & Credits" subtitle="Pay-as-you-go processing credits for your organisation." />
+        <p className="text-sm text-muted-foreground">Sign in to manage billing.</p>
+      </div>
+    );
+  }
+
+  if (isLoading && !billing) {
+    return (
+      <div>
+        <PageHeader title="Billing & Credits" subtitle="Pay-as-you-go processing credits for your organisation." />
+        <PageLoader label="Loading billing…" />
+      </div>
+    );
+  }
+
+  if (error || !billing) {
+    return (
+      <div>
+        <PageHeader title="Billing & Credits" subtitle="Pay-as-you-go processing credits for your organisation." />
+        <p className="text-sm text-destructive">
+          {error instanceof Error ? error.message : "Failed to load billing"}
+        </p>
+      </div>
+    );
+  }
+
+  const currentPackName =
+    billing.packs.find((p) => p.id === billing.current_pack)?.name ?? "Starter";
 
   return (
     <div>
@@ -46,11 +67,9 @@ export function BillingPage() {
             Credit balance
           </div>
           <p className="text-3xl font-semibold tnum" data-testid="text-credit-balance">
-            {balance.toLocaleString()}
+            {billing.balance.toLocaleString()}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Current pack: {CREDIT_PACKS.find((p) => p.id === currentPack)?.name ?? "Starter"}
-          </p>
+          <p className="text-xs text-muted-foreground mt-1">Current pack: {currentPackName}</p>
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div className="space-y-1">
@@ -62,18 +81,18 @@ export function BillingPage() {
               <button
                 type="button"
                 role="switch"
-                aria-checked={autoRecharge}
+                aria-checked={billing.auto_recharge}
                 data-testid="toggle-auto-recharge"
-                onClick={() => setAutoRecharge((v) => !v)}
+                onClick={() => void updateSettings({ auto_recharge: !billing.auto_recharge })}
                 className={cn(
                   "relative inline-flex h-5 w-9 shrink-0 rounded-full border border-transparent transition-colors",
-                  autoRecharge ? "bg-primary" : "bg-input"
+                  billing.auto_recharge ? "bg-primary" : "bg-input"
                 )}
               >
                 <span
                   className={cn(
                     "pointer-events-none block h-4 w-4 rounded-full bg-background shadow-sm transition-transform mt-0.5",
-                    autoRecharge ? "translate-x-4" : "translate-x-0.5"
+                    billing.auto_recharge ? "translate-x-4" : "translate-x-0.5"
                   )}
                 />
               </button>
@@ -81,12 +100,14 @@ export function BillingPage() {
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
                 Recharge at
-                <span className="font-medium mx-1">{threshold.toLocaleString()} credits</span>
+                <span className="font-medium mx-1">{billing.threshold.toLocaleString()} credits</span>
                 when balance drops below threshold.
               </p>
               <NumericInput
-                value={threshold}
-                onValueChange={(n) => setThreshold(n ?? 0)}
+                value={billing.threshold}
+                onValueChange={(n) => {
+                  if (n != null) void updateSettings({ threshold: n });
+                }}
                 wrapperClassName="w-20 shrink-0"
                 className="h-7 text-xs"
                 data-testid="input-threshold"
@@ -113,7 +134,7 @@ export function BillingPage() {
 
       <h2 className="text-sm font-semibold mb-3">Credit packs</h2>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {CREDIT_PACKS.map((pack) => (
+        {billing.packs.map((pack) => (
           <Card
             key={pack.id}
             className={cn(
@@ -132,11 +153,11 @@ export function BillingPage() {
               {pack.credits.toLocaleString()}
               <span className="text-sm font-normal text-muted-foreground ml-1">credits</span>
             </p>
-            <p className="text-sm text-muted-foreground mt-1">A${pack.priceAUD}</p>
+            <p className="text-sm text-muted-foreground mt-1">A${pack.price_aud}</p>
             <Button
               className="mt-4 w-full"
               variant={pack.popular ? "default" : "outline"}
-              onClick={() => buyPack(pack.id, pack.credits)}
+              onClick={() => void purchasePack(pack.id)}
               data-testid={`button-buy-${pack.id}`}
             >
               Buy pack

@@ -45,11 +45,29 @@ export function usePendingVendors(enabled = true) {
   });
 }
 
-function invalidateMasterQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries({ queryKey: queryKeys.vendorMasters });
-  queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters });
-  queryClient.invalidateQueries({ queryKey: queryKeys.pendingVendors });
-  queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookConfig });
+function patchVendorInCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  updated: VendorMaster
+) {
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters, (rows) =>
+    rows?.map((row) => (row.id === updated.id ? updated : row)) ?? [updated]
+  );
+}
+
+function appendVendorInCache(queryClient: ReturnType<typeof useQueryClient>, created: VendorMaster) {
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters, (rows) =>
+    rows ? [...rows, created] : [created]
+  );
+}
+
+function removeVendorFromCache(queryClient: ReturnType<typeof useQueryClient>, id: string) {
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters, (rows) =>
+    rows?.filter((row) => row.id !== id)
+  );
+}
+
+function invalidatePendingVendors(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.pendingVendors });
 }
 
 export function useCreateVendorMaster() {
@@ -59,7 +77,10 @@ export function useCreateVendorMaster() {
       const raw = await api.createVendorMaster(vendorMasterToCreateBody(body));
       return vendorMasterFromApi(raw as Record<string, unknown>);
     },
-    onSuccess: () => invalidateMasterQueries(queryClient),
+    onSuccess: (created) => {
+      appendVendorInCache(queryClient, created);
+      invalidatePendingVendors(queryClient);
+    },
   });
 }
 
@@ -70,7 +91,9 @@ export function useUpdateVendorMaster() {
       const raw = await api.updateVendorMaster(id, vendorMasterToUpdateBody(patch));
       return vendorMasterFromApi(raw as Record<string, unknown>);
     },
-    onSuccess: () => invalidateMasterQueries(queryClient),
+    onSuccess: (updated) => {
+      patchVendorInCache(queryClient, updated);
+    },
   });
 }
 
@@ -78,7 +101,9 @@ export function useDeleteVendorMaster() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.deleteVendorMaster(id),
-    onSuccess: () => invalidateMasterQueries(queryClient),
+    onSuccess: (_data, id) => {
+      removeVendorFromCache(queryClient, id);
+    },
   });
 }
 
@@ -89,7 +114,11 @@ export function useCreateEmployeeMaster() {
       const raw = await api.createEmployeeMaster(employeeMasterToCreateBody(body));
       return employeeMasterFromApi(raw as Record<string, unknown>);
     },
-    onSuccess: () => invalidateMasterQueries(queryClient),
+    onSuccess: (created) => {
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters, (rows) =>
+        rows ? [...rows, created] : [created]
+      );
+    },
   });
 }
 
@@ -100,7 +129,11 @@ export function useUpdateEmployeeMaster() {
       const raw = await api.updateEmployeeMaster(id, employeeMasterToUpdateBody(patch));
       return employeeMasterFromApi(raw as Record<string, unknown>);
     },
-    onSuccess: () => invalidateMasterQueries(queryClient),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters, (rows) =>
+        rows?.map((row) => (row.id === updated.id ? updated : row))
+      );
+    },
   });
 }
 
@@ -108,7 +141,11 @@ export function useDeleteEmployeeMaster() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.deleteEmployeeMaster(id),
-    onSuccess: () => invalidateMasterQueries(queryClient),
+    onSuccess: (_data, id) => {
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters, (rows) =>
+        rows?.filter((row) => row.id !== id)
+      );
+    },
   });
 }
 
@@ -131,7 +168,10 @@ export function usePromotePendingVendor() {
       });
       return vendorMasterFromApi(raw as Record<string, unknown>);
     },
-    onSuccess: () => invalidateMasterQueries(queryClient),
+    onSuccess: (vendor) => {
+      appendVendorInCache(queryClient, vendor);
+      invalidatePendingVendors(queryClient);
+    },
   });
 }
 
@@ -139,6 +179,6 @@ export function useDismissPendingVendor() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (pendingId: number) => api.dismissPendingVendor(pendingId),
-    onSuccess: () => invalidateMasterQueries(queryClient),
+    onSuccess: () => invalidatePendingVendors(queryClient),
   });
 }

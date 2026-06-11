@@ -1,0 +1,116 @@
+"""Org-scoped API access (IDOR prevention)."""
+
+from datetime import date
+from decimal import Decimal
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.models.invoice import Invoice, InvoiceStatus
+from app.models.journal import EntryType, JournalEntry
+from app.models.line_item import LineItem
+from app.models.organisation import Organisation
+from app.models.user import User, UserRole
+from app.services.auth_service import create_access_token, hash_password
+
+
+@pytest.mark.asyncio
+async def test_line_items_cross_org_returns_404(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    get_settings.cache_clear()
+
+    db_session.add(Organisation(id=2, name="Other Org", slug="other-org"))
+    inv = Invoice(org_id=1, status=InvoiceStatus.PENDING, currency="AUD")
+    db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        LineItem(
+            invoice_id=inv.id,
+            description="Secret line",
+            qty=Decimal("1"),
+            unit_price=Decimal("100"),
+            amount=Decimal("100"),
+        )
+    )
+
+    outsider = User(
+        org_id=2,
+        email="outsider@other.com",
+        password_hash=hash_password("outsiderpass1"),
+        full_name="Outsider",
+        role=UserRole.MEMBER,
+    )
+    db_session.add(outsider)
+    await db_session.flush()
+
+    token = create_access_token(
+        user_id=outsider.id,
+        org_id=2,
+        org_slug="other-org",
+        email=outsider.email,
+        role=outsider.role.value,
+    )
+    res = await client.get(
+        f"/api/invoices/{inv.id}/line-items",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 404
+
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_journal_entries_cross_org_returns_404(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    get_settings.cache_clear()
+
+    db_session.add(Organisation(id=2, name="Other Org", slug="other-org"))
+    inv = Invoice(org_id=1, status=InvoiceStatus.PROCESSED, currency="AUD")
+    db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        JournalEntry(
+            invoice_id=inv.id,
+            date=date(2026, 6, 1),
+            account_code="5000",
+            account_name="Expenses",
+            debit=Decimal("100"),
+            credit=Decimal("0"),
+            entry_type=EntryType.DEBIT,
+        )
+    )
+
+    outsider = User(
+        org_id=2,
+        email="outsider2@other.com",
+        password_hash=hash_password("outsiderpass1"),
+        full_name="Outsider",
+        role=UserRole.MEMBER,
+    )
+    db_session.add(outsider)
+    await db_session.flush()
+
+    token = create_access_token(
+        user_id=outsider.id,
+        org_id=2,
+        org_slug="other-org",
+        email=outsider.email,
+        role=outsider.role.value,
+    )
+    res = await client.get(
+        f"/api/invoices/{inv.id}/journal-entries",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 404
+
+    get_settings.cache_clear()

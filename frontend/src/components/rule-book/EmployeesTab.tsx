@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -27,8 +27,6 @@ import { ChannelBadge } from "@/components/team-expenses/ExpenseBadges";
 import { BudgetProgressBar } from "./BudgetProgressBar";
 import { EmployeeDetailPanel } from "./EmployeeDetailPanel";
 
-const SAVE_DEBOUNCE_MS = 600;
-
 function StatusDot({ status }: { status: string }) {
   const tone: Record<string, string> = {
     Active: "bg-[hsl(var(--chart-1))]",
@@ -47,41 +45,73 @@ export function EmployeesTab() {
   const { toast } = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [bankMasked, setBankMasked] = useState(true);
-  const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [drafts, setDrafts] = useState<Record<string, EmployeeMaster>>({});
+  const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
 
   const { data: employees = [], isLoading } = useEmployeeMasters();
   const createMutation = useCreateEmployeeMaster();
   const updateMutation = useUpdateEmployeeMaster();
   const deleteMutation = useDeleteEmployeeMaster();
 
-  useEffect(() => {
-    const timers = saveTimers.current;
-    return () => {
-      timers.forEach((timer) => clearTimeout(timer));
-      timers.clear();
-    };
-  }, []);
+  const employeeById = (id: string) => employees.find((e) => e.id === id);
 
-  const update = (id: string, patch: Partial<EmployeeMaster>) => {
-    const existing = saveTimers.current.get(id);
-    if (existing) clearTimeout(existing);
-    saveTimers.current.set(
-      id,
-      setTimeout(() => {
-        updateMutation.mutate(
-          { id, patch },
-          {
-            onError: (err) =>
-              toast({
-                title: "Could not save employee",
-                description: err instanceof Error ? err.message : "Save failed",
-                variant: "destructive",
-              }),
-          }
-        );
-        saveTimers.current.delete(id);
-      }, SAVE_DEBOUNCE_MS)
+  const getDraft = (emp: EmployeeMaster) => drafts[emp.id] ?? emp;
+
+  const patchDraft = (id: string, patch: Partial<EmployeeMaster>) => {
+    const base = drafts[id] ?? employeeById(id);
+    if (!base) return;
+    setDrafts((prev) => ({ ...prev, [id]: { ...base, ...patch } }));
+    setDirtyIds((prev) => new Set(prev).add(id));
+  };
+
+  const clearDraft = (id: string) => {
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setDirtyIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const saveDraft = (id: string) => {
+    const draft = drafts[id];
+    if (!draft) return;
+    updateMutation.mutate(
+      { id, patch: draft },
+      {
+        onSuccess: () => {
+          clearDraft(id);
+          toast({ title: "Employee saved" });
+        },
+        onError: (err) =>
+          toast({
+            title: "Could not save employee",
+            description: err instanceof Error ? err.message : "Save failed",
+            variant: "destructive",
+          }),
+      }
     );
+  };
+
+  const closeEmployee = (id: string) => {
+    if (dirtyIds.has(id)) {
+      const keep = window.confirm("Discard unsaved employee changes?");
+      if (!keep) return;
+    }
+    clearDraft(id);
+    setExpandedId(null);
+  };
+
+  const openEmployee = (id: string) => {
+    const emp = employeeById(id);
+    if (emp && !drafts[id]) {
+      setDrafts((prev) => ({ ...prev, [id]: emp }));
+    }
+    setExpandedId(id);
   };
 
   const addEmployee = () => {
@@ -100,8 +130,9 @@ export function EmployeesTab() {
       },
       {
         onSuccess: (created) => {
+          setDrafts((prev) => ({ ...prev, [created.id]: created }));
           setExpandedId(created.id);
-          toast({ title: "Employee created" });
+          toast({ title: "Employee created", description: "Edit details, then click Save employee." });
         },
         onError: (err) =>
           toast({
@@ -114,8 +145,10 @@ export function EmployeesTab() {
   };
 
   const remove = (id: string) => {
+    if (!window.confirm("Remove this employee from the rule book?")) return;
     deleteMutation.mutate(id, {
       onSuccess: () => {
+        clearDraft(id);
         if (expandedId === id) setExpandedId(null);
         toast({ title: "Employee removed" });
       },
@@ -142,7 +175,7 @@ export function EmployeesTab() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
           Define employees who can submit claims via WhatsApp or email, with budgets and bank accounts
-          for reimbursement.
+          for reimbursement. Edit fields locally, then click Save employee.
         </p>
         <Button
           size="sm"
@@ -170,11 +203,16 @@ export function EmployeesTab() {
             <tbody>
               {employees.map((emp) => {
                 const open = expandedId === emp.id;
+                const draft = getDraft(emp);
+                const dirty = dirtyIds.has(emp.id);
                 return (
                   <Fragment key={emp.id}>
                     <tr
                       className="row-band border-b border-border/60 cursor-pointer hover:bg-muted/40"
-                      onClick={() => setExpandedId(open ? null : emp.id)}
+                      onClick={() => {
+                        if (open) closeEmployee(emp.id);
+                        else openEmployee(emp.id);
+                      }}
                       data-testid={`employee-row-${emp.id}`}
                     >
                       <td className="px-3 py-2">
@@ -185,27 +223,40 @@ export function EmployeesTab() {
                             <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                           )}
                           <UserCircle className="h-4 w-4 text-muted-foreground shrink-0" />
-                          <span className="font-medium">{emp.name}</span>
+                          <span className="font-medium">
+                            {dirty ? draft.name : emp.name}
+                            {dirty && (
+                              <span className="ml-2 text-[10px] text-amber-600 dark:text-amber-400">
+                                unsaved
+                              </span>
+                            )}
+                          </span>
                         </div>
-                        <span className="text-[11px] text-muted-foreground ml-9">{emp.role}</span>
+                        <span className="text-[11px] text-muted-foreground ml-9">
+                          {dirty ? draft.role : emp.role}
+                        </span>
                       </td>
                       <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                        {emp.whatsappNumber}
+                        {dirty ? draft.whatsappNumber : emp.whatsappNumber}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground max-w-[180px] truncate">
-                        {emp.email || "—"}
+                        {(dirty ? draft.email : emp.email) || "—"}
                       </td>
                       <td className="px-3 py-2">
-                        <StatusDot status={emp.status} />
+                        <StatusDot status={dirty ? draft.status : emp.status} />
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
                           <span className="text-xs whitespace-nowrap">
-                            {fmtAud(emp.mtdSpent)} / {fmtAud(emp.budget.monthly)}
+                            {fmtAud(emp.mtdSpent)} /{" "}
+                            {fmtAud(dirty ? draft.budget.monthly : emp.budget.monthly)}
                           </span>
                         </div>
                         <div className="mt-1">
-                          <BudgetProgressBar value={emp.mtdSpent} max={emp.budget.monthly} />
+                          <BudgetProgressBar
+                            value={emp.mtdSpent}
+                            max={dirty ? draft.budget.monthly : emp.budget.monthly}
+                          />
                         </div>
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
@@ -216,12 +267,53 @@ export function EmployeesTab() {
                       <tr>
                         <td colSpan={6} className="p-0 border-b border-border">
                           <EmployeeDetailPanel
-                            emp={emp}
-                            onChange={(patch) => update(emp.id, patch)}
-                            onRemove={() => remove(emp.id)}
+                            emp={draft}
+                            onChange={(patch) => patchDraft(emp.id, patch)}
                             masked={bankMasked}
                             onToggleMask={() => setBankMasked((m) => !m)}
                           />
+                          <div className="flex items-center justify-between gap-2 px-4 pb-4 bg-muted/20">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              disabled={deleteMutation.isPending}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                remove(emp.id);
+                              }}
+                              data-testid={`remove-employee-${emp.id}`}
+                            >
+                              Remove employee
+                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  closeEmployee(emp.id);
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                disabled={!dirty || updateMutation.isPending}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  saveDraft(emp.id);
+                                }}
+                                data-testid={`save-employee-${emp.id}`}
+                              >
+                                {updateMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  "Save employee"
+                                )}
+                              </Button>
+                            </div>
+                          </div>
                         </td>
                       </tr>
                     )}

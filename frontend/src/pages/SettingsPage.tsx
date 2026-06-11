@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import type { Organisation } from "@/api/types";
 import { AddOrganisationDialog } from "@/components/AddOrganisationDialog";
+import { ApprovalPolicyPrivileges } from "@/components/settings/ApprovalPolicyPrivileges";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ const TABS = [
   { id: "profile", label: "Profile", testid: "tab-profile" },
   { id: "orgs", label: "Organisations", testid: "tab-orgs" },
   { id: "team", label: "Team", testid: "tab-team" },
+  { id: "policy", label: "Policy & privileges", testid: "tab-policy" },
   { id: "coa", label: "Chart of accounts", testid: "tab-coa" },
 ] as const;
 
@@ -127,7 +129,7 @@ export function SettingsPage() {
 
       <PageHeader
         title="Settings"
-        subtitle="Organisation profile, team, chart of accounts and danger zone."
+        subtitle="Organisation profile, team, approval policy, and chart of accounts."
       />
 
       <div className="flex flex-wrap gap-1 border-b border-border mb-4">
@@ -327,6 +329,8 @@ export function SettingsPage() {
           </table>
         </Card>
       )}
+
+      {tab === "policy" && <ApprovalPolicyPrivileges />}
 
       {tab === "coa" && (
         <Card className="overflow-hidden max-w-2xl">

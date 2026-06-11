@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   ChevronDown,
   ChevronRight,
@@ -13,7 +13,6 @@ import type { DocumentSetRule, Invoice, VaultApiFile } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
-import { RoutedInvoicesPanel } from "@/components/rule-book/RoutedInvoicesPanel";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
@@ -31,10 +30,13 @@ import {
   accordionExpandedIds,
   fetchAllInvoices,
   filterVaultApiFiles,
+  findVaultFileByInvoiceId,
   selectionBreadcrumb,
   selectionFromNode,
+  selectionFromVaultFile,
   toTreeNodes,
   vaultAncestorIds,
+  vaultNodeIdFromFile,
   type VaultSelection,
   type VaultTreeNode,
 } from "@/lib/vault";
@@ -94,7 +96,7 @@ function VaultTreeItem({
   const isSelected = selectedId === node.id;
 
   return (
-    <div className="min-w-0" style={{ paddingLeft: depth > 0 ? `${depth * 12}px` : undefined }}>
+    <div className="min-w-0" style={{ paddingLeft: depth > 0 ? `${depth * 10}px` : undefined }}>
       <div
         className={cn(
           "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover-elevate min-w-0",
@@ -154,8 +156,11 @@ function VaultTreeItem({
   );
 }
 
+type DrawerTab = "fields" | "audit";
+
 export function VaultPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [vaultData, setVaultData] = useState<Awaited<ReturnType<typeof api.getVaultTree>> | null>(
     null
   );
@@ -170,6 +175,8 @@ export function VaultPage() {
   const [warning, setWarning] = useState<string | null>(null);
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerInitialTab, setDrawerInitialTab] = useState<DrawerTab>("fields");
+  const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
 
   const orgLabel = user?.org_name ?? "your organisation";
 
@@ -282,10 +289,66 @@ export function VaultPage() {
     setExpanded(new Set(vaultAncestorIds(node.id)));
   };
 
-  const openDrawer = (id: number) => {
+  const openDrawer = (id: number, options?: { tab?: DrawerTab }) => {
+    setDrawerInitialTab(options?.tab ?? "fields");
     setDrawerId(id);
     setDrawerOpen(true);
   };
+
+  const pendingInvoiceParam = searchParams.get("invoice");
+  const pendingTabParam = searchParams.get("tab");
+
+  useEffect(() => {
+    if (!pendingInvoiceParam || loading || !vaultData) return;
+
+    const clearDeepLinkParams = () => {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("invoice");
+      nextParams.delete("tab");
+      setSearchParams(nextParams, { replace: true });
+    };
+
+    const invoiceId = Number(pendingInvoiceParam);
+    if (!Number.isFinite(invoiceId) || invoiceId <= 0) {
+      setDeepLinkNotice(`Invalid invoice id: ${pendingInvoiceParam}`);
+      clearDeepLinkParams();
+      return;
+    }
+
+    const drawerTab: DrawerTab = pendingTabParam === "audit" ? "audit" : "fields";
+    const file = findVaultFileByInvoiceId(vaultFiles, invoiceId);
+
+    if (file) {
+      setTab("files");
+      const nodeId = vaultNodeIdFromFile(file);
+      setSelectedId(nodeId);
+      setSelection(selectionFromVaultFile(file));
+      setExpanded(new Set(vaultAncestorIds(nodeId)));
+      setDeepLinkNotice(null);
+      openDrawer(invoiceId, { tab: drawerTab });
+    } else if (invoiceById.has(invoiceId)) {
+      setDeepLinkNotice(
+        "Document is not filed in the vault tree (missing stored file or rejected). Opening record anyway."
+      );
+      openDrawer(invoiceId, { tab: drawerTab });
+    } else if (rows.length === 0) {
+      return;
+    } else {
+      setDeepLinkNotice(`Invoice #${invoiceId} was not found.`);
+    }
+
+    clearDeepLinkParams();
+  }, [
+    pendingInvoiceParam,
+    pendingTabParam,
+    loading,
+    vaultData,
+    vaultFiles,
+    invoiceById,
+    rows.length,
+    searchParams,
+    setSearchParams,
+  ]);
 
   if (loading && !vaultData) {
     return (
@@ -308,6 +371,12 @@ export function VaultPage() {
     <div>
       <PageHeader title="Vault" subtitle={`Document vault for ${orgLabel}.`} />
 
+      {deepLinkNotice && (
+        <Card className="mb-4 border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+          {deepLinkNotice}
+        </Card>
+      )}
+
       {error && (
         <Card className="p-3 mb-4 text-xs text-destructive border-destructive/30 bg-destructive/5">
           {error}
@@ -319,15 +388,6 @@ export function VaultPage() {
           {warning}
         </Card>
       )}
-
-      <div className="mb-5">
-        <RoutedInvoicesPanel
-          routeTarget="Vault"
-          title="Routed to Vault"
-          hint="Documents assigned Vault by email capture rules."
-          testId="routed-vault-invoices"
-        />
-      </div>
 
       <div className="flex gap-1 mb-4 border-b border-border">
         {(
@@ -421,8 +481,8 @@ export function VaultPage() {
           </div>
         )
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-          <Card className="p-3 h-fit min-w-0">
+        <div className="vault-explorer-grid">
+          <Card className="p-3 h-fit min-w-0 overflow-hidden">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1">
               Folders
             </div>
@@ -486,6 +546,10 @@ export function VaultPage() {
                             : file.vendor}
                         </div>
                         <div className="text-xs text-muted-foreground truncate tnum">
+                          {file.purchase_document_type
+                            ? `${file.purchase_document_type.toUpperCase()} · `
+                            : ""}
+                          {file.po_folder ? `${file.po_folder} · ` : ""}
                           {doc ? vaultDocSubtitle(doc) : file.file_name}
                         </div>
                       </div>
@@ -510,6 +574,7 @@ export function VaultPage() {
       <InvoiceDetailDrawer
         invoiceId={drawerId}
         open={drawerOpen}
+        initialTab={drawerInitialTab}
         onClose={() => setDrawerOpen(false)}
         onUpdated={() => load({ fresh: true })}
       />

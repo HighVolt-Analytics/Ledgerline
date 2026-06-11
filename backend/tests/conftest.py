@@ -1,6 +1,8 @@
 import os
+from pathlib import Path
 
-os.environ.setdefault("AUTH_REQUIRED", "false")
+# Force auth off for API tests (local .env often sets AUTH_REQUIRED=true).
+os.environ["AUTH_REQUIRED"] = "false"
 
 from collections.abc import AsyncGenerator
 from datetime import date
@@ -42,8 +44,41 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _disable_auth_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTH_REQUIRED", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _use_demo_rule_book_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> None:
+    """Tests use demo fixture; production template stays empty for real data."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / "rule_book_demo.json"
+    upload = tmp_path_factory.mktemp("uploads")
+    monkeypatch.setenv("RULE_BOOK_CONFIG_PATH", str(fixture))
+    monkeypatch.setenv("UPLOAD_DIR", str(upload))
+    monkeypatch.setenv("RULE_BOOK_SAVE_DEBOUNCE_MS", "0")
+    get_settings.cache_clear()
+    from app.services.account_mapper import clear_rule_book_cache
+    from app.services.rule_book_mapper import clear_classification_config_cache
+    from app.services.rule_book_save_buffer import clear_rule_book_save_buffers
+
+    clear_rule_book_cache()
+    clear_classification_config_cache()
+    clear_rule_book_save_buffers()
+    yield
+    clear_rule_book_save_buffers()
+    clear_classification_config_cache()
+    clear_rule_book_cache()
+    get_settings.cache_clear()
+
+
 @pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    get_settings.cache_clear()
+
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
         await db_session.commit()

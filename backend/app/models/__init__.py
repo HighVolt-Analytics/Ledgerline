@@ -1,9 +1,13 @@
 from app.models.audit import AuditLog
 from app.models.connected_mailbox import ConnectedMailbox
+from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
+from app.models.mailbox_connection_request import MailboxConnectionRequest
 from app.models.organisation import Organisation
+from app.models.payment import Payment
+from app.models.purchase_order import PurchaseOrder
 from app.models.reconciliation import DailyReconciliation
 from app.models.user import User, UserRole
 from app.models.user_org_membership import UserOrgMembership
@@ -17,11 +21,15 @@ __all__ = [
     "ConnectedMailbox",
     "DailyReconciliation",
     "EmployeeMasterRecord",
+    "GoodsReceipt",
     "Invoice",
     "JournalEntry",
     "LineItem",
+    "MailboxConnectionRequest",
     "Organisation",
+    "Payment",
     "PendingVendor",
+    "PurchaseOrder",
     "User",
     "UserOrgMembership",
     "UserRole",

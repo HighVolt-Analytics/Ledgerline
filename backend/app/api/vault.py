@@ -26,7 +26,7 @@ async def migrate_vault_blobs(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[VaultMigrateResponse]:
-    """Move this org's invoice blobs into invoice/{org}/{vendor}/{year}/{month}/."""
+    """Move this org's invoice blobs into invoice/{org}/{book}/{vendor}/{year}/{month}/."""
     data = await migrate_vault_for_org(db, ctx.org_id)
     await db.commit()
     return ApiEnvelope(data=data)

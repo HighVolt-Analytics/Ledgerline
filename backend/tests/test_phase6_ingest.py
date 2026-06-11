@@ -21,6 +21,7 @@ from app.services.ingest_capture_service import (
 )
 from app.services.invoice_data import InvoiceData, ParsedLineItem
 from app.services.invoice_evaluation_service import (
+    ROUTE_EXPENSES,
     ROUTE_TEAM,
     apply_invoice_evaluation,
     parse_matched_rule_ids,
@@ -34,7 +35,7 @@ from app.services.validator import run_all_validations
 
 @pytest.fixture
 def capture_config() -> RuleBookConfigPayload:
-    template = Path(__file__).resolve().parents[1] / "app" / "rule_book_config.json"
+    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
     return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
 
 
@@ -43,7 +44,7 @@ def clean_org_rule_book(tmp_path, monkeypatch: pytest.MonkeyPatch):
     upload = tmp_path / "uploads"
     rule_books = upload / "rule_books"
     rule_books.mkdir(parents=True)
-    template = Path(__file__).resolve().parents[1] / "app" / "rule_book_config.json"
+    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
     shutil.copy2(template, rule_books / "1_config.json")
     monkeypatch.setenv("UPLOAD_DIR", str(upload))
     monkeypatch.setenv("RULE_BOOK_CONFIG_PATH", str(template))
@@ -171,6 +172,36 @@ async def test_apply_invoice_evaluation_preserves_ingest_email_route(
 
 
 @pytest.mark.asyncio
+async def test_apply_invoice_evaluation_preserves_email_route_over_po_reference(
+    db_session: AsyncSession,
+    capture_config: RuleBookConfigPayload,
+) -> None:
+    """Junk po_reference must not override email capture route_to on re-evaluation."""
+    inv = Invoice(
+        org_id=1,
+        vendor="Qantas Airways Limited",
+        invoice_no="QF-BOOK-3318745",
+        po_reference="the",
+        status=InvoiceStatus.MAPPING,
+        route_target=ROUTE_EXPENSES,
+        matched_rule_ids='["email:ec-1781011773259"]',
+        evaluation_status="needs_review",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    loaded = (
+        await db_session.execute(
+            select(Invoice).where(Invoice.id == inv.id).options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+    await apply_invoice_evaluation(db_session, loaded, config=capture_config)
+
+    assert "email:ec-1781011773259" in parse_matched_rule_ids(inv.matched_rule_ids)
+    assert inv.route_target == ROUTE_EXPENSES
+
+
+@pytest.mark.asyncio
 async def test_team_expense_budget_validation_fails(
     db_session: AsyncSession,
     capture_config: RuleBookConfigPayload,
@@ -263,3 +294,4 @@ async def test_run_all_validations_includes_team_rules(
         "VR-TE05",
         "VR-TE06",
     ]
+    assert not any(result.rule.startswith("VR0") for result in results)

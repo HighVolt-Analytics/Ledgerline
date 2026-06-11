@@ -48,6 +48,18 @@ from app.workers.tasks import process_invoice_background
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+async def _read_upload_file(file: UploadFile, *, max_bytes: int = _MAX_UPLOAD_BYTES) -> bytes:
+    data = await file.read()
+    if len(data) > max_bytes:
+        raise HTTPException(
+            413,
+            f"File exceeds maximum size ({max_bytes // (1024 * 1024)} MB)",
+        )
+    return data
+
 
 async def _get_invoice_for_org(
     db: AsyncSession, invoice_id: int, org_id: int
@@ -102,6 +114,7 @@ def _to_response(inv: Invoice, *, has_stored_file: bool | None = None) -> Invoic
             if inv.evaluation_status
             else None
         ),
+        purchase_document_type=inv.purchase_document_type,
         validation_results=_validation(inv.validation_results),
         created_at=inv.created_at,
         has_stored_file=stored_ok,
@@ -271,7 +284,9 @@ async def download_invoice_file(
 async def get_line_items(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[LineItemResponse]]:
+    await _get_invoice_for_org(db, invoice_id, ctx.org_id)
     rows = (
         await db.execute(select(LineItem).where(LineItem.invoice_id == invoice_id))
     ).scalars().all()
@@ -285,7 +300,9 @@ async def get_line_items(
 async def get_journal_entries(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[JournalEntryResponse]]:
+    await _get_invoice_for_org(db, invoice_id, ctx.org_id)
     rows = (
         await db.execute(
             select(JournalEntry).where(JournalEntry.invoice_id == invoice_id)
@@ -298,6 +315,10 @@ async def get_journal_entries(
 async def upload_invoice(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    purchase_document_type: str | None = Query(
+        None,
+        description="Purchase document type when uploading PO/GRN/invoice: po, grn, invoice",
+    ),
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
@@ -305,7 +326,9 @@ async def upload_invoice(
     if not file.filename or not file.filename.lower().endswith(allowed):
         raise HTTPException(400, "Accepted: PDF, JPG, PNG, DOCX")
 
-    data = await file.read()
+    data = await _read_upload_file(file)
+    if not data:
+        raise HTTPException(400, "Empty file")
     file_hash = compute_sha256_bytes(data)
     dup = (
         await db.execute(
@@ -322,12 +345,17 @@ async def upload_invoice(
     org_slug = org.slug if org else "default"
     org_name = org.name if org else None
 
+    from app.services.purchase_document_service import normalize_purchase_document_type
+
+    doc_type = normalize_purchase_document_type(purchase_document_type)
+
     inv = Invoice(
         org_id=ctx.org_id,
         status=InvoiceStatus.PENDING,
         file_hash=file_hash,
         currency="AUD",
         storage_vendor_slug=UNKNOWN_SLUG,
+        purchase_document_type=doc_type,
     )
     db.add(inv)
     await db.flush()
@@ -340,6 +368,7 @@ async def upload_invoice(
         file_hash,
         Path(file.filename).name,
         org_name=org_name,
+        purchase_document_type=doc_type,
     )
     inv.raw_file_path = stored
 
@@ -377,7 +406,7 @@ async def attach_invoice_file(
     if not file.filename or not file.filename.lower().endswith(_ALLOWED_ATTACH):
         raise HTTPException(400, "Accepted: PDF, JPG, PNG, DOCX")
 
-    data = await file.read()
+    data = await _read_upload_file(file)
     if not data:
         raise HTTPException(400, "Empty file")
 
@@ -412,6 +441,9 @@ async def attach_invoice_file(
         vendor_name=inv.vendor,
         invoice_no=inv.invoice_no,
         invoice_date=inv.invoice_date,
+        route_target=inv.route_target,
+        po_reference=inv.po_reference,
+        purchase_document_type=inv.purchase_document_type,
     )
     inv.raw_file_path = stored
     inv.file_hash = file_hash
@@ -439,14 +471,14 @@ _REPROCESSABLE = frozenset(
 @router.post("/{invoice_id}/reprocess", response_model=ApiEnvelope[InvoiceResponse])
 async def reprocess_invoice(
     invoice_id: int,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
     """
     Queue an invoice for parsing again (e.g. after parser upgrades or blob relocate).
 
-    Resets status to pending and clears extracted fields. Requires a stored PDF.
-    Call POST /api/process/trigger afterward to run the worker.
+    Resets status to pending and clears extracted fields, then runs the pipeline.
     """
     inv = await _get_invoice_for_org(db, invoice_id, ctx.org_id)
     if not stored_file_available(inv.raw_file_path):
@@ -468,6 +500,7 @@ async def reprocess_invoice(
         invoice_id=inv.id,
         detail={"previous_status": previous_status},
     )
+    background_tasks.add_task(process_invoice_background, inv.id)
     return ApiEnvelope(data=_to_response(inv))
 
 
@@ -530,6 +563,9 @@ async def publish_invoice(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
     """Record ledger publish for a processed invoice (integration hook)."""
+    from app.services.privilege_service import require_privilege
+
+    require_privilege(ctx, "Publish")
     inv = await _get_invoice_for_org(db, invoice_id, ctx.org_id)
     if inv.status != InvoiceStatus.PROCESSED:
         raise HTTPException(

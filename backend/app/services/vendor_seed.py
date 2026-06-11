@@ -7,64 +7,7 @@ from app.models.vendor import VendorRegistry
 from app.services.vendor_resolver import slugify_vendor_name
 
 # Known billing senders for rule-book vendors (extend via API).
-DEFAULT_VENDORS: list[dict[str, str | bool | None]] = [
-    {
-        "vendor_slug": "amazon-web-services",
-        "vendor_name": "Amazon Web Services",
-        "sender_pattern": "@amazonaws.com",
-        "abn": "51824753556",
-        "approved": True,
-    },
-    {
-        "vendor_slug": "microsoft-azure",
-        "vendor_name": "Microsoft Azure",
-        "sender_pattern": "@microsoft.com",
-        "abn": None,
-        "approved": False,
-    },
-    {
-        "vendor_slug": "atlassian",
-        "vendor_name": "Atlassian Pty Ltd",
-        "sender_pattern": "@atlassian.com",
-        "abn": "53102443916",
-        "approved": True,
-    },
-    {
-        "vendor_slug": "google-australia",
-        "vendor_name": "Google Australia Pty Ltd",
-        "sender_pattern": "@google.com",
-        "abn": None,
-        "approved": False,
-    },
-    {
-        "vendor_slug": "meta-platforms",
-        "vendor_name": "Meta Platforms Ireland",
-        "sender_pattern": "@facebook.com",
-        "abn": "51824753556",
-        "approved": True,
-    },
-    {
-        "vendor_slug": "deloitte",
-        "vendor_name": "Deloitte Touche Tohmatsu",
-        "sender_pattern": "@deloitte.com",
-        "abn": None,
-        "approved": False,
-    },
-    {
-        "vendor_slug": "qantas",
-        "vendor_name": "Qantas Airways Limited",
-        "sender_pattern": "@qantas.com.au",
-        "abn": None,
-        "approved": False,
-    },
-    {
-        "vendor_slug": "hilton-sydney",
-        "vendor_name": "Hilton Sydney",
-        "sender_pattern": "@hilton.com",
-        "abn": None,
-        "approved": False,
-    },
-]
+DEFAULT_VENDORS: list[dict[str, str | bool | None]] = []
 
 
 async def seed_vendors(session: AsyncSession, *, org_id: int = 1) -> int:

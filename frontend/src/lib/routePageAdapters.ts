@@ -1,11 +1,21 @@
 import type { Invoice } from "@/api/types";
-import type { EmployeeMaster, TeamExpenseRule } from "@/lib/v4RuleBookTypes";
+import type {
+  EmployeeMaster,
+  ExpenseRule,
+  PurchaseRule,
+  TeamExpenseRule,
+} from "@/lib/v4RuleBookTypes";
 import type {
   ExpenseBudget,
   ExpenseCategoryPolicy,
   ExpenseClaim,
   ExpenseState,
+  MatchStatus,
+  PaymentRecord,
+  PurchaseOrder,
+  ThreeWayMatch,
 } from "@/lib/v4MockData";
+import type { PaymentApi, PurchaseOrderApi } from "@/api/types";
 
 function parseAmount(value: string | null | undefined): number {
   if (value == null || value === "") return 0;
@@ -28,9 +38,47 @@ function formatTs(iso: string | null | undefined): string {
 }
 
 function inferClaimChannel(sender: string | null): string {
-  if (!sender?.trim()) return "Web";
-  if (sender.includes("@")) return "Web";
-  return "Mobile";
+  if (!sender?.trim()) return "Upload";
+  if (sender.includes("@")) return "Email";
+  const digits = sender.replace(/\D/g, "");
+  if (digits.length >= 8) return "Mobile";
+  return "Upload";
+}
+
+export type TeamExpenseChannelChip = {
+  id: string;
+  name: string;
+  detail: string;
+};
+
+const CHANNEL_META: Record<string, TeamExpenseChannelChip> = {
+  email: { id: "em", name: "Email", detail: "Email capture rules" },
+  em: { id: "em", name: "Email", detail: "Email capture rules" },
+  mob: { id: "mob", name: "Mobile", detail: "SMS / messaging capture" },
+  mobile: { id: "mob", name: "Mobile", detail: "SMS / messaging capture" },
+  wa: { id: "wa", name: "WhatsApp", detail: "Mobile messaging channel" },
+  whatsapp: { id: "wa", name: "WhatsApp", detail: "Mobile messaging channel" },
+  viber: { id: "vb", name: "Viber", detail: "Mobile messaging channel" },
+  vb: { id: "vb", name: "Viber", detail: "Mobile messaging channel" },
+  any: { id: "any", name: "All channels", detail: "Any submission channel" },
+};
+
+export function teamExpenseChannelsFromRules(rules: TeamExpenseRule[]): TeamExpenseChannelChip[] {
+  const seen = new Set<string>();
+  const out: TeamExpenseChannelChip[] = [];
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+    const raw = (rule.matchOn.channelEquals ?? "any").trim().toLowerCase();
+    const key = raw === "" ? "any" : raw;
+    const meta = CHANNEL_META[key] ?? CHANNEL_META.any;
+    if (seen.has(meta.id)) continue;
+    seen.add(meta.id);
+    out.push(meta);
+  }
+  if (out.length === 0) {
+    out.push(CHANNEL_META.any);
+  }
+  return out;
 }
 
 function inferSubmitter(inv: Invoice): string {
@@ -43,20 +91,39 @@ function inferSubmitter(inv: Invoice): string {
   return inv.vendor?.trim() || "Unknown submitter";
 }
 
+const PIPELINE_IN_REVIEW = new Set([
+  "pending",
+  "parsing",
+  "validating",
+  "mapping",
+  "journaling",
+  "reconciling",
+]);
+
 export function invoiceToExpenseState(inv: Invoice): ExpenseState {
   if (inv.status === "rejected") return "Rejected";
   if (inv.status === "processed") return "Posted to Ledger";
+  if (PIPELINE_IN_REVIEW.has(inv.status)) return "In Review";
   if (
     inv.status === "exception" ||
     inv.evaluation_status === "needs_review" ||
-    inv.evaluation_status === "pending_vendor"
+    inv.evaluation_status === "pending_vendor" ||
+    inv.evaluation_status === "unmatched_expense_vendor"
   ) {
     return "In Review";
   }
-  if (inv.status === "validating" || inv.status === "mapping" || inv.status === "journaling") {
-    return "In Review";
-  }
   return "New";
+}
+
+export function invoiceToBusinessExpense(inv: Invoice): ExpenseClaim {
+  const claim = invoiceToTeamClaim(inv);
+  return {
+    ...claim,
+    submitter: inv.vendor?.trim() || claim.submitter,
+    purpose: inv.invoice_no ? `Expense ${inv.invoice_no}` : "Business expense",
+    budgetGroup: inv.account_name ?? "Operating",
+    channel: inferClaimChannel(inv.email_sender),
+  };
 }
 
 export function invoiceToTeamClaim(inv: Invoice): ExpenseClaim {
@@ -105,6 +172,18 @@ export function employeeBudgetRows(employees: EmployeeMaster[]): ExpenseBudget[]
   return rows;
 }
 
+export function expenseRulesToCategories(rules: ExpenseRule[]): ExpenseCategoryPolicy[] {
+  return rules
+    .filter((rule) => rule.enabled)
+    .map((rule) => ({
+      category: rule.name,
+      glAccount: rule.postTo.ledger,
+      requiresReceiptOver: 0,
+      autoApproveUnder: 0,
+      policyNote: "Matched by expense rule book criteria.",
+    }));
+}
+
 export function teamRulesToCategories(rules: TeamExpenseRule[]): ExpenseCategoryPolicy[] {
   return rules
     .filter((rule) => rule.enabled)
@@ -119,26 +198,144 @@ export function teamRulesToCategories(rules: TeamExpenseRule[]): ExpenseCategory
     }));
 }
 
-export function purchaseKpisFromInvoices(invoices: Invoice[]) {
-  const withPo = invoices.filter((inv) => Boolean(inv.po_reference?.trim()));
-  const pendingReview = invoices.filter(
-    (inv) =>
-      inv.evaluation_status === "needs_review" ||
-      inv.evaluation_status === "pending_vendor" ||
-      inv.status === "exception"
-  );
-  const processed = invoices.filter((inv) => inv.status === "processed");
-  const open = invoices.filter((inv) => inv.status !== "processed" && inv.status !== "rejected");
-  const matchPct =
-    invoices.length > 0 ? Math.round((processed.length / invoices.length) * 100) : 0;
+function formatPurchaseMatchCriteria(matchOn: PurchaseRule["matchOn"]): string {
+  const parts: string[] = [];
+  if (matchOn.poPrefix) parts.push(`PO prefix ${matchOn.poPrefix}`);
+  if (matchOn.poRegex) parts.push(`PO regex ${matchOn.poRegex}`);
+  if (matchOn.vendorContains) parts.push(`vendor contains "${matchOn.vendorContains}"`);
+  if (matchOn.grnLinkedToPo) parts.push("GRN linked to PO");
+  if (matchOn.invoiceReferencesPo) parts.push("invoice references PO");
+  return parts.length ? parts.join(" · ") : "Purchase rule criteria";
+}
+
+export function purchaseRulesToCategories(rules: PurchaseRule[]): ExpenseCategoryPolicy[] {
+  return rules
+    .filter((rule) => rule.enabled)
+    .map((rule) => ({
+      category: rule.name,
+      glAccount: rule.postTo.ledger,
+      requiresReceiptOver: 0,
+      autoApproveUnder: 0,
+      policyNote: formatPurchaseMatchCriteria(rule.matchOn),
+    }));
+}
+
+export function purchaseKpisFromRegister(rows: PurchaseOrderApi[], routed: Invoice[]) {
+  const openPos = rows.filter((r) => r.match.status !== "3-Way Match").length;
+  const missingGrn = rows.filter((r) => r.match.status === "No GRN").length;
+  const matched = rows.filter((r) => r.match.status === "3-Way Match").length;
+  const matchPct = rows.length > 0 ? Math.round((matched / rows.length) * 100) : 0;
+  const variancesAwaiting = rows.filter((r) =>
+    purchaseNeedsVarianceApproval(r.match.status, r.variance_approved)
+  ).length;
+  const withoutPoRef = routed.filter((inv) => !inv.po_reference?.trim()).length;
 
   return {
-    openPos: open.length,
-    pendingGrn: invoices.filter((inv) => !inv.po_reference?.trim()).length,
+    openPos,
+    missingGrn,
     matchPct,
-    variancesAwaiting: pendingReview.length,
-    withPoCount: withPo.length,
+    variancesAwaiting,
+    withoutPoRef,
   };
+}
+
+export function purchaseNeedsVarianceApproval(
+  matchStatus: string,
+  varianceApproved: boolean
+): boolean {
+  if (varianceApproved) return false;
+  return (
+    matchStatus === "Routed for Approval" ||
+    matchStatus === "Price Variance" ||
+    matchStatus === "Qty Variance"
+  );
+}
+
+export function apiPurchaseToRow(row: PurchaseOrderApi): {
+  purchaseId: number;
+  invoiceId: number | null;
+  po: PurchaseOrder;
+  m: ThreeWayMatch;
+  threeWayAuditStatus: PurchaseOrderApi["three_way_match_status"];
+} {
+  const po: PurchaseOrder = {
+    id: row.po_number,
+    vendor: row.vendor ?? "—",
+    date: row.po_date ?? "—",
+    requestor: row.requestor ?? "—",
+    item: row.item ?? "—",
+    poQty: row.po_qty,
+    poUnitPrice: row.po_unit_price,
+    grnQty: row.grn_qty,
+    grnDate: row.grn_date,
+    grnReceiver: row.grn_receiver,
+    grnCondition: row.grn_condition,
+    invoiceNo: row.invoice_no ?? "—",
+    invoiceQty: row.invoice_qty,
+    invoiceUnitPrice: row.invoice_unit_price,
+    gstRate: row.gst_rate,
+    routedForApproval: purchaseNeedsVarianceApproval(row.match.status, row.variance_approved),
+    matchedRuleName: row.matched_rule_name ?? null,
+    matchedGl: row.matched_gl ?? null,
+    evaluationStatus: row.evaluation_status ?? null,
+    matchedRuleIds: row.matched_rule_ids ?? [],
+    poDocumentId: row.po_document_id ?? null,
+    grnDocumentId: row.grn_document_id ?? null,
+  };
+  const m: ThreeWayMatch = {
+    status: row.match.status as MatchStatus,
+    qtyVarianceValue: row.match.qty_variance_value,
+    priceVarianceValue: row.match.price_variance_value,
+    totalDeviation: row.match.total_deviation,
+    poValue: row.match.po_value,
+    invoiceValue: row.match.invoice_value,
+    invoiceGst: row.match.invoice_gst,
+    invoiceTotal: row.match.invoice_total,
+  };
+  return {
+    purchaseId: row.id,
+    invoiceId: row.invoice_id,
+    po,
+    m,
+    threeWayAuditStatus: row.three_way_match_status ?? null,
+  };
+}
+
+export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
+  return {
+    id: String(row.id),
+    invoiceId: String(row.invoice_id),
+    vendor: row.vendor ?? "—",
+    amount: row.amount,
+    dueDate: row.due_date ?? "—",
+    tab: row.tab as PaymentRecord["tab"],
+    invoiceApprovedBy: row.invoice_approved_by ? String(row.invoice_approved_by) : "",
+    invoiceApprovedByName: "",
+    approvers: (row.approvers ?? []).map((a) => ({
+      id: String(a.id ?? ""),
+      name: String(a.name ?? ""),
+      role: String(a.role ?? ""),
+      state: (a.state as "pending" | "approved" | "rejected") ?? "pending",
+    })),
+    scheduledDate: row.scheduled_date ?? undefined,
+    paidDate: row.paid_date ?? undefined,
+    paymentIntent: row.payment_intent ?? undefined,
+    failureReason: row.failure_reason ?? undefined,
+  };
+}
+
+export function paymentsKpis(rows: PaymentRecord[]) {
+  const open = rows.filter((p) => p.tab === "queue" || p.tab === "awaiting" || p.tab === "scheduled");
+  const now = new Date();
+  const total = open.reduce((sum, p) => sum + p.amount, 0);
+  const overdue = open.filter((p) => p.dueDate && new Date(p.dueDate) < now).length;
+  const dueSoon = open.filter((p) => {
+    if (!p.dueDate) return false;
+    const due = new Date(p.dueDate);
+    const days = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+    return days >= 0 && days <= 7;
+  }).length;
+  return { count: open.length, total, overdue, dueSoon };
 }
 
 export function payablesKpis(invoices: Invoice[]) {

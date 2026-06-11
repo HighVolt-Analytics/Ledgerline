@@ -29,6 +29,7 @@ def test_atlassian_maps_to_software_subscription() -> None:
         org_id=1,
         vendor="Atlassian Pty Ltd",
         invoice_no="ATL-2026-55721",
+        route_target="Expenses Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
@@ -43,6 +44,7 @@ def test_aws_maps_to_cloud_hosting() -> None:
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",
+        route_target="Purchase Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
@@ -56,6 +58,8 @@ def test_po_code_in_invoice_no_uses_purchase_rule() -> None:
         org_id=1,
         vendor="Atlassian Pty Ltd",
         invoice_no="INV PO-MKT-2026-014",
+        po_reference="PO-MKT-2026-014",
+        route_target="Purchase Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
@@ -102,6 +106,7 @@ def test_marketing_po_detail_includes_rule_type() -> None:
         vendor="Google Australia Pty Ltd",
         invoice_no="GOOG-AU-99102",
         po_reference="PO-MKT-2026-014",
+        route_target="Purchase Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )

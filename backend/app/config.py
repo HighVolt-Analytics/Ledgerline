@@ -31,12 +31,27 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
     upload_dir: str = "./uploads"
+    rule_book_save_debounce_ms: int = Field(
+        default=2000,
+        ge=0,
+        validation_alias="RULE_BOOK_SAVE_DEBOUNCE_MS",
+    )
     rule_book_config_path: str = Field(
         default="./app/rule_book_config.json",
         validation_alias=AliasChoices("RULE_BOOK_CONFIG_PATH", "RULE_BOOK_PATH"),
     )
     chart_of_accounts_path: str = "./app/chart_of_accounts.json"
     cors_origins: str = "http://localhost:5173"
+    public_app_url: str = Field(
+        default="",
+        validation_alias="PUBLIC_APP_URL",
+        description="Public LedgerLink URL for audit CSV links (e.g. http://localhost:5173 or https://staging.highvolt.tech/ledgerlink)",
+    )
+    public_tunnel_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLIC_TUNNEL_URL", "NGROK_URL"),
+        description="Public HTTPS tunnel (e.g. ngrok) for invite links and OAuth callback during local testing",
+    )
     root_path: str = Field(
         default="",
         validation_alias=AliasChoices("BASE_PATH", "ROOT_PATH"),
@@ -68,6 +83,14 @@ class Settings(BaseSettings):
     azure_client_id: str = ""
     azure_client_secret: str = ""
     graph_mailbox: str = ""
+    graph_oauth_redirect_uri: str = Field(
+        default="http://localhost:8001/api/mailboxes/oauth/callback",
+        validation_alias="GRAPH_OAUTH_REDIRECT_URI",
+    )
+    graph_oauth_frontend_return_url: str = Field(
+        default="http://localhost:5173/integrations",
+        validation_alias="GRAPH_OAUTH_FRONTEND_RETURN_URL",
+    )
     graph_max_messages: int = 50
     graph_poll_interval_minutes: int = Field(default=2, ge=1, le=60)
     graph_folder_moves_enabled: bool = True
@@ -116,7 +139,7 @@ class Settings(BaseSettings):
         validation_alias="ENABLE_APPLICATION_INSIGHTS",
     )
 
-    auth_required: bool = True
+    auth_required: bool = Field(default=True, validation_alias="AUTH_REQUIRED")
     sync_processing: bool = Field(
         default=False,
         validation_alias="SYNC_PROCESSING",
@@ -174,6 +197,26 @@ class Settings(BaseSettings):
 
         return self
 
+    @model_validator(mode="after")
+    def apply_public_tunnel(self) -> Self:
+        """When ngrok (or similar) is set, use it for invite links and OAuth callback."""
+        tunnel = self.public_tunnel_url.strip().rstrip("/")
+        if not tunnel:
+            return self
+
+        self.public_app_url = tunnel
+
+        redirect = self.graph_oauth_redirect_uri.strip()
+        if not redirect or "localhost" in redirect or "127.0.0.1" in redirect:
+            self.graph_oauth_redirect_uri = f"{tunnel}/api/mailboxes/oauth/callback"
+
+        origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        if tunnel not in origins:
+            origins.append(tunnel)
+        self.cors_origins = ",".join(origins)
+
+        return self
+
     @property
     def blob_enabled(self) -> bool:
         return bool(self.azure_storage_connection_string.strip())
@@ -186,13 +229,19 @@ class Settings(BaseSettings):
         return origins
 
     @property
-    def graph_enabled(self) -> bool:
+    def graph_credentials_configured(self) -> bool:
         return bool(
-            self.azure_tenant_id
-            and self.azure_client_id
-            and self.azure_client_secret
-            and self.graph_mailbox
+            self.azure_tenant_id.strip()
+            and self.azure_client_id.strip()
+            and self.azure_client_secret.strip()
         )
+
+    @property
+    def graph_enabled(self) -> bool:
+        """Graph API usable when Azure app credentials are set (app-only and/or OAuth)."""
+        if not self.graph_credentials_configured:
+            return False
+        return bool(self.graph_mailbox.strip() or self.graph_oauth_redirect_uri.strip())
 
     @property
     def azure_di_enabled(self) -> bool:

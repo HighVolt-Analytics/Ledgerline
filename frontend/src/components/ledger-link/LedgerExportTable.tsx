@@ -1,8 +1,18 @@
+import type { LedgerExportRow } from "@/api/types";
 import { Card } from "@/components/ui/card";
-import { fmtAud, type LedgerExportRow } from "@/lib/v4MockData";
+import { money } from "@/lib/format";
 import { ExportStatusBadge } from "./ExportStatusBadge";
 
-export function LedgerExportTable({ title, rows }: { title: string; rows: LedgerExportRow[] }) {
+export function LedgerExportTable({
+  title,
+  rows,
+  currency = "AUD",
+}: {
+  title: string;
+  rows: LedgerExportRow[];
+  currency?: string;
+}) {
+  const fmt = (v: number) => money(v, currency);
   const total = rows.reduce((s, r) => s + r.amount, 0);
   return (
     <Card className="overflow-hidden">
@@ -10,7 +20,7 @@ export function LedgerExportTable({ title, rows }: { title: string; rows: Ledger
         <span className="text-sm font-medium">
           {title} · {rows.length} entries
         </span>
-        <span className="text-sm text-muted-foreground tnum">Total {fmtAud(total)}</span>
+        <span className="text-sm text-muted-foreground tnum">Total {fmt(total)}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -33,7 +43,7 @@ export function LedgerExportTable({ title, rows }: { title: string; rows: Ledger
                 <td className="px-3 py-2.5 text-muted-foreground">{row.party}</td>
                 <td className="px-3 py-2.5">{row.debit}</td>
                 <td className="px-3 py-2.5">{row.credit}</td>
-                <td className="px-3 py-2.5 text-right tnum whitespace-nowrap">{fmtAud(row.amount)}</td>
+                <td className="px-3 py-2.5 text-right tnum whitespace-nowrap">{fmt(row.amount)}</td>
                 <td className="px-4 py-2.5">
                   <ExportStatusBadge status={row.status} />
                 </td>

@@ -15,6 +15,12 @@ if TYPE_CHECKING:
     from app.models.line_item import LineItem
 
 
+class PurchaseDocumentType(str, enum.Enum):
+    PO = "po"
+    GRN = "grn"
+    INVOICE = "invoice"
+
+
 class InvoiceStatus(str, enum.Enum):
     PENDING = "pending"
     PARSING = "parsing"
@@ -40,6 +46,9 @@ class Invoice(Base):
     )
     vendor: Mapped[str | None] = mapped_column(String(255))
     abn: Mapped[str | None] = mapped_column(String(11))
+    billing_address: Mapped[str | None] = mapped_column(Text)
+    bank_bsb: Mapped[str | None] = mapped_column(String(16))
+    bank_account: Mapped[str | None] = mapped_column(String(32))
     invoice_no: Mapped[str | None] = mapped_column(String(100), index=True)
     po_reference: Mapped[str | None] = mapped_column(String(100))
     cost_centre: Mapped[str | None] = mapped_column(String(100))
@@ -61,6 +70,8 @@ class Invoice(Base):
     file_hash: Mapped[str | None] = mapped_column(String(64))
     raw_file_path: Mapped[str | None] = mapped_column(Text)
     email_sender: Mapped[str | None] = mapped_column(String(255))
+    email_subject: Mapped[str | None] = mapped_column(String(500))
+    email_attachment_name: Mapped[str | None] = mapped_column(String(255))
     email_message_id: Mapped[str | None] = mapped_column(String(255), index=True)
     storage_vendor_slug: Mapped[str | None] = mapped_column(String(100))
     validation_results: Mapped[str | None] = mapped_column(Text)
@@ -70,6 +81,7 @@ class Invoice(Base):
     matched_rule_ids: Mapped[str | None] = mapped_column(Text)
     vendor_confidence: Mapped[float | None] = mapped_column(Float)
     evaluation_status: Mapped[str | None] = mapped_column(String(32), index=True)
+    purchase_document_type: Mapped[str | None] = mapped_column(String(16), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

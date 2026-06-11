@@ -10,8 +10,18 @@ from app.services.capture_channel import infer_capture_channel, normalize_phone
 from app.services.invoice_data import InvoiceData
 from app.services.invoice_evaluation_service import ROUTE_TEAM, load_config_for_org
 from app.services.master_data_service import list_employee_masters
+from app.services.po_reference import effective_po_reference
 from app.services.rule_engine import EvalDocument, match_team_expense_rule
 from app.services.validator import ValidationResult
+
+
+async def resolve_employee_for_sender(
+    session: AsyncSession,
+    org_id: int,
+    sender: str | None,
+) -> EmployeeMasterResponse | None:
+    employees = await list_employee_masters(session, org_id)
+    return _find_employee_by_sender(employees, sender)
 
 
 def _find_employee_by_sender(
@@ -90,32 +100,45 @@ def vr_te02_budget(
     return ValidationResult("VR-TE02", True, "Within employee budget caps")
 
 
+_RECEIPT_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic")
+
+
+def has_receipt_attachment(raw_file_path: str | None) -> bool:
+    path = (raw_file_path or "").lower()
+    return any(path.endswith(ext) for ext in _RECEIPT_EXTENSIONS)
+
+
 def vr_te03_receipt(
     team_rule: TeamExpenseRule | None,
     amount: float | None,
+    *,
+    has_receipt_file: bool = False,
 ) -> ValidationResult:
     if team_rule is None or amount is None:
         return ValidationResult("VR-TE03", True, "Receipt policy check skipped")
 
     policy = team_rule.policy
-    if not policy.require_receipt:
-        threshold = policy.receipt_threshold
-        if threshold > 0 and amount >= threshold:
-            return ValidationResult(
-                "VR-TE03",
-                False,
-                f"Receipt required for amounts >= {threshold:.2f} (claim {amount:.2f})",
-            )
-        return ValidationResult("VR-TE03", True, "Receipt threshold not reached")
-
-    threshold = max(policy.receipt_threshold, 0)
-    if amount >= threshold:
+    auto_below = policy.auto_approve_below
+    if auto_below > 0 and amount < auto_below:
         return ValidationResult(
             "VR-TE03",
-            False,
-            f"Receipt required for amounts >= {threshold:.2f} (claim {amount:.2f})",
+            True,
+            f"Below auto-approve threshold ({auto_below:.2f}) — receipt optional",
         )
-    return ValidationResult("VR-TE03", True, "Below receipt threshold")
+
+    threshold = max(policy.receipt_threshold, 0)
+    requires_receipt = policy.require_receipt or (threshold > 0 and amount >= threshold)
+    if not requires_receipt:
+        return ValidationResult("VR-TE03", True, "Receipt not required for this amount")
+
+    if has_receipt_file:
+        return ValidationResult("VR-TE03", True, "Receipt attachment present")
+
+    return ValidationResult(
+        "VR-TE03",
+        False,
+        f"Receipt attachment required for amounts >= {threshold:.2f} (claim {amount:.2f})",
+    )
 
 
 def vr_te04_bank(employee: EmployeeMasterResponse | None) -> ValidationResult:
@@ -184,6 +207,7 @@ async def run_team_expense_validations(
     route_target: str | None,
     email_sender: str | None,
     config: RuleBookConfigPayload | None = None,
+    has_receipt_file: bool = False,
 ) -> list[ValidationResult]:
     if route_target != ROUTE_TEAM:
         return []
@@ -205,7 +229,7 @@ async def run_team_expense_validations(
     return [
         vr_te01_employee(employee, email_sender),
         vr_te02_budget(employee, amount),
-        vr_te03_receipt(team_rule, amount),
+        vr_te03_receipt(team_rule, amount, has_receipt_file=has_receipt_file),
         vr_te04_bank(employee),
         vr_te05_status(employee),
         vr_te06_category_cap(employee, amount, team_rule),
@@ -229,8 +253,12 @@ def invoice_to_eval_document_from_data(
         invoice_no=invoice_no,
         vendor=data.vendor or "",
         abn=data.abn,
-        po=data.po_reference,
+        po=effective_po_reference(data.po_reference),
         lines=lines,
         email_from=email_sender,
         capture_channel=infer_capture_channel(email_sender),
+        document_type="invoice",
+        address=data.billing_address,
+        bank_bsb=data.bank_bsb,
+        bank_account=data.bank_account,
     )

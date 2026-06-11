@@ -56,6 +56,7 @@ export type PurchaseRule = {
   id: string;
   name: string;
   enabled: boolean;
+  priority?: number;
   matchOn: {
     poPrefix?: string;
     poRegex?: string;
@@ -71,6 +72,7 @@ export type ExpenseRule = {
   id: string;
   name: string;
   enabled: boolean;
+  priority?: number;
   matchOn: {
     docNumberContains?: string;
     referenceContains?: string;
@@ -85,6 +87,7 @@ export type TeamExpenseRule = {
   id: string;
   name: string;
   enabled: boolean;
+  priority?: number;
   matchOn: {
     descriptionContains?: string;
     merchantContains?: string;
@@ -174,6 +177,8 @@ export type SampleEmail = {
   attachment_mime: string;
 };
 
+export type PurchaseDocumentType = "po" | "grn" | "invoice";
+
 export type EvalDocument = {
   id: string;
   docNumber: string;
@@ -181,9 +186,12 @@ export type EvalDocument = {
   vendor: string;
   abn?: string;
   address?: string;
+  bankBsb?: string;
+  bankAccount?: string;
   po?: string;
   primaryAccount: string;
   lines: Array<{ description: string }>;
+  documentType?: PurchaseDocumentType;
 };
 
 export type DocumentSetRule = {

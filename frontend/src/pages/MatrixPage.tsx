@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Ban, Check, Clock, RefreshCw } from "lucide-react";
 import type { Invoice, MatrixRow } from "@/api/types";
+import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
 import { MatrixFlagBadge } from "@/components/matrix/MatrixFlagBadge";
@@ -12,23 +13,15 @@ import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { invId, money } from "@/lib/format";
-import {
-  MATRIX_STAGES,
-  enrichMatrixCells,
-  type MatrixCell,
-  type MatrixStage,
-} from "@/lib/matrix";
+import { MATRIX_STAGES, type MatrixStage } from "@/lib/matrix";
 import { fetchAllMatrixRows, stagesToCells } from "@/lib/matrixApi";
-import {
-  defaultMatrixPayment,
-  lookupMatrixFlag,
-  type MatrixFlagType,
-  type MatrixPaymentStatus,
-} from "@/lib/v4MatrixMockData";
+import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 
 const MATRIX_POLL_MS = 15_000;
+
+const QUEUE_STATUSES = new Set(["exception", "duplicate_skipped", "rejected"]);
 
 type MatrixFilter = "all" | "anomalies" | "awaiting" | "paid";
 
@@ -41,7 +34,7 @@ const FILTER_PILLS: { key: MatrixFilter; label: string }[] = [
 
 type MatrixTableRow = {
   inv: Invoice;
-  cells: Record<MatrixStage, MatrixCell>;
+  cells: ReturnType<typeof stagesToCells>;
   flag: MatrixFlagType;
   payment: MatrixPaymentStatus;
   reason?: string;
@@ -49,28 +42,40 @@ type MatrixTableRow = {
   conflictDetail?: import("@/lib/v4MatrixMockData").MatrixConflictRow[];
 };
 
-function deriveFlag(
-  inv: Invoice,
-  docId: string,
-  override?: MatrixFlagType
-): MatrixFlagType {
-  if (override) return override;
-  if (inv.evaluation_status === "pending_vendor") return "Anomaly Detected";
-  if (inv.evaluation_status === "needs_review") return "Anomaly Detected";
-  if (inv.status === "duplicate_skipped") return "Duplicate Suspected";
-  if (inv.status === "exception") return "Anomaly Detected";
-  if (inv.evaluation_status === "auto_coded" && inv.status === "processed") return "Clean";
-  const mock = lookupMatrixFlag(docId);
-  if (mock) return mock.flag;
+function toFlagType(value: string): MatrixFlagType {
+  if (value === "Anomaly Detected") return "Anomaly Detected";
+  if (value === "Duplicate Suspected") return "Duplicate Suspected";
+  if (value === "Quarantined") return "Quarantined";
   return "Clean";
 }
 
-function derivePayment(
-  docId: string,
-  mockPayment?: MatrixPaymentStatus
-): MatrixPaymentStatus {
-  if (mockPayment) return mockPayment;
-  return defaultMatrixPayment(docId);
+function toPaymentStatus(value: string): MatrixPaymentStatus {
+  const allowed: MatrixPaymentStatus[] = [
+    "Paid",
+    "Awaiting Payment",
+    "Payment Approved",
+    "On Hold",
+    "Failed",
+    "—",
+  ];
+  return allowed.includes(value as MatrixPaymentStatus) ? (value as MatrixPaymentStatus) : "—";
+}
+
+function rowFromApi(row: MatrixRow): MatrixTableRow {
+  const flag = toFlagType(row.flag);
+  return {
+    inv: row.invoice,
+    cells: stagesToCells(row.stages),
+    flag,
+    payment: toPaymentStatus(row.payment_status),
+    reason: row.flag_reason ?? undefined,
+    conflictWith: row.conflict_with ?? undefined,
+    conflictDetail: row.conflict_detail?.map((line) => ({
+      field: line.field,
+      thisDoc: line.this_doc,
+      otherDoc: line.other_doc,
+    })),
+  };
 }
 
 export function MatrixPage() {
@@ -78,8 +83,9 @@ export function MatrixPage() {
   const [filter, setFilter] = useState<MatrixFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [flagDrawerId, setFlagDrawerId] = useState<number | null>(null);
-  const [flagOverrides, setFlagOverrides] = useState<Record<string, MatrixFlagType>>({});
+  const [resolveBusy, setResolveBusy] = useState(false);
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     if (!options?.silent) {
@@ -108,25 +114,15 @@ export function MatrixPage() {
     void load({ silent: true, fresh: true });
   }, MATRIX_POLL_MS);
 
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   const matrixRows = useMemo<MatrixTableRow[]>(
-    () =>
-      matrixData.map((row, index) => {
-        const docId = invId(row.invoice.id);
-        const mock = lookupMatrixFlag(docId);
-        const flag = deriveFlag(row.invoice, docId, flagOverrides[docId]);
-        const payment = derivePayment(docId, mock?.paymentStatus);
-        const cells = enrichMatrixCells(row.invoice, stagesToCells(row.stages), index);
-        return {
-          inv: row.invoice,
-          cells,
-          flag,
-          payment,
-          reason: mock?.reason,
-          conflictWith: mock?.conflictWith,
-          conflictDetail: mock?.conflictDetail,
-        };
-      }),
-    [matrixData, flagOverrides]
+    () => matrixData.map(rowFromApi),
+    [matrixData]
   );
 
   const filteredRows = useMemo(
@@ -165,17 +161,36 @@ export function MatrixPage() {
     [matrixRows, flagDrawerId]
   );
 
-  function resolveFlag(docId: string, action: "unique" | "duplicate" | "approval") {
-    setFlagOverrides((prev) => ({
-      ...prev,
-      [docId]:
-        action === "duplicate"
-          ? "Quarantined"
-          : action === "approval"
-            ? "Anomaly Detected"
-            : "Clean",
-    }));
-    setFlagDrawerId(null);
+  async function resolveFlag(inv: Invoice, action: "unique" | "duplicate" | "approval") {
+    setResolveBusy(true);
+    try {
+      if (action === "unique") {
+        if (QUEUE_STATUSES.has(inv.status)) {
+          await api.approve(inv.id);
+          await api.triggerProcess();
+          setToast(`${invId(inv.id)} approved for reprocessing`);
+        } else {
+          setToast(`${invId(inv.id)} marked as reviewed`);
+        }
+      } else if (action === "duplicate") {
+        if (inv.status === "duplicate_skipped" || inv.status === "rejected") {
+          await api.deleteApprovalPermanently(inv.id);
+          setToast(`${invId(inv.id)} permanently removed`);
+        } else {
+          await api.reject(inv.id);
+          setToast(`${invId(inv.id)} rejected as duplicate`);
+        }
+      } else {
+        await api.requestApproval(inv.id);
+        setToast(`${invId(inv.id)} sent to approvals`);
+      }
+      setFlagDrawerId(null);
+      await load({ silent: true, fresh: true });
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Could not update document");
+    } finally {
+      setResolveBusy(false);
+    }
   }
 
   if (error) {
@@ -188,6 +203,12 @@ export function MatrixPage() {
 
   return (
     <div>
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-md border border-border bg-popover px-4 py-2 text-sm shadow-md max-w-sm">
+          {toast}
+        </div>
+      )}
+
       <PageHeader
         title="Document Matrix"
         subtitle="Pipeline stage status, anomaly detection, and payment readiness. Flagged documents are blocked from progressing until cleared."
@@ -307,8 +328,8 @@ export function MatrixPage() {
                           return (
                             <td key={stage} className="px-3 py-2 text-center">
                               <MatrixStageCell
-                                stage={stage}
-                                cell={cells[stage]}
+                                stage={stage as MatrixStage}
+                                cell={cells[stage as MatrixStage]}
                                 blocked={blocked}
                                 flag={flag}
                               />
@@ -378,7 +399,11 @@ export function MatrixPage() {
         }
         open={flagDrawerId !== null}
         onClose={() => setFlagDrawerId(null)}
-        onResolve={resolveFlag}
+        busy={resolveBusy}
+        onResolve={(_docId, action) => {
+          const inv = flagDrawerRow?.inv;
+          if (inv) void resolveFlag(inv, action);
+        }}
       />
     </div>
   );

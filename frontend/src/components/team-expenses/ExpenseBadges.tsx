@@ -34,6 +34,8 @@ export function ChannelBadge({ channel }: { channel: string }) {
     WhatsApp: pillTones.whatsapp,
     Viber: pillTones.amber,
     Web: pillTones.blue,
+    Email: pillTones.blue,
+    Upload: pillTones.muted,
     Mobile: pillTones.muted,
   };
   return <StatusPill className={styles[channel] ?? pillTones.muted}>{channel}</StatusPill>;

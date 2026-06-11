@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Literal
 
 from sqlalchemy import select
@@ -27,48 +26,59 @@ def folder_moves_enabled() -> bool:
     return settings.graph_folder_moves_enabled and is_graph_enabled()
 
 
-@lru_cache
-def _folder_id_cache_key(mailbox_email: str) -> tuple[str, str, str]:
-    s = get_settings()
-    return (mailbox_email, s.graph_processed_folder, s.graph_exceptions_folder)
-
-
 def clear_folder_cache() -> None:
-    _resolve_folder_ids.cache_clear()
+    """No-op — folder IDs are resolved per request with delegated tokens."""
+    return None
 
 
-def _list_inbox_child_folders(mailbox_email: str) -> list[dict]:
+def _list_inbox_child_folders(
+    mailbox_email: str,
+    *,
+    access_token: str | None = None,
+) -> list[dict]:
     data = graph_request(
         "GET",
         mailbox_api_path(mailbox_email, "/mailFolders/inbox/childFolders"),
+        access_token=access_token,
     )
     return list(data.get("value") or [])
 
 
-def _get_or_create_child_folder(mailbox_email: str, display_name: str) -> str:
-    for folder in _list_inbox_child_folders(mailbox_email):
+def _get_or_create_child_folder(
+    mailbox_email: str,
+    display_name: str,
+    *,
+    access_token: str | None = None,
+) -> str:
+    for folder in _list_inbox_child_folders(mailbox_email, access_token=access_token):
         if folder.get("displayName") == display_name:
             return str(folder["id"])
     created = graph_request(
         "POST",
         mailbox_api_path(mailbox_email, "/mailFolders/inbox/childFolders"),
         json_body={"displayName": display_name, "isHidden": False},
+        access_token=access_token,
     )
     folder_id = str(created["id"])
     logger.info("graph_folder_created", display_name=display_name, folder_id=folder_id)
     return folder_id
 
 
-@lru_cache
-def _resolve_folder_ids(mailbox_email: str) -> dict[FolderOutcome, str]:
-    _folder_id_cache_key(mailbox_email)
+def _resolve_folder_ids(
+    mailbox_email: str,
+    access_token: str | None = None,
+) -> dict[FolderOutcome, str]:
     settings = get_settings()
     return {
         "processed": _get_or_create_child_folder(
-            mailbox_email, settings.graph_processed_folder
+            mailbox_email,
+            settings.graph_processed_folder,
+            access_token=access_token,
         ),
         "exception": _get_or_create_child_folder(
-            mailbox_email, settings.graph_exceptions_folder
+            mailbox_email,
+            settings.graph_exceptions_folder,
+            access_token=access_token,
         ),
     }
 
@@ -85,6 +95,7 @@ def move_message_to_folder(
     outcome: FolderOutcome,
     *,
     mailbox_email: str,
+    access_token: str | None = None,
 ) -> bool:
     """
     Move a message out of Inbox into Processed or Exceptions.
@@ -92,15 +103,16 @@ def move_message_to_folder(
     Returns False when Graph is disabled, folder moves off, or API fails.
     """
     if not folder_moves_enabled():
-        return mark_message_read(message_id, mailbox_email)
+        return mark_message_read(message_id, mailbox_email, access_token=access_token)
 
     try:
-        folder_ids = _resolve_folder_ids(mailbox_email)
+        folder_ids = _resolve_folder_ids(mailbox_email, access_token)
         destination_id = folder_ids[outcome]
         graph_request(
             "POST",
             mailbox_api_path(mailbox_email, f"/messages/{message_id}/move"),
             json_body={"destinationId": destination_id},
+            access_token=access_token,
         )
         settings = get_settings()
         folder_name = (
@@ -123,7 +135,7 @@ def move_message_to_folder(
             error=str(exc),
             hint="Requires Mail.ReadWrite and mailbox access",
         )
-        return mark_message_read(message_id, mailbox_email)
+        return mark_message_read(message_id, mailbox_email, access_token=access_token)
 
 
 async def finalize_graph_messages(
@@ -145,19 +157,24 @@ async def finalize_graph_messages(
     settings = get_settings()
 
     from app.models.connected_mailbox import ConnectedMailbox
+    from app.services.mailbox_oauth_service import resolve_mailbox_access_token
 
     for message_id in dict.fromkeys(message_ids):
+        access_token: str | None = None
+        rows: list[Invoice] = []
         if message_id in preskip:
             outcome: FolderOutcome = "exception"
             reason = preskip[message_id]
             invoice_ids: list[int] = []
             mailbox_email = get_settings().graph_mailbox.strip()
         else:
-            rows = (
-                await session.execute(
-                    select(Invoice).where(Invoice.email_message_id == message_id)
-                )
-            ).scalars().all()
+            rows = list(
+                (
+                    await session.execute(
+                        select(Invoice).where(Invoice.email_message_id == message_id)
+                    )
+                ).scalars().all()
+            )
             invoice_ids = [r.id for r in rows]
             statuses = [r.status for r in rows]
             outcome = classify_message_outcome(statuses)
@@ -168,10 +185,29 @@ async def finalize_graph_messages(
                 if mb:
                     mailbox_email = mb.email
 
+        mb_row: ConnectedMailbox | None = None
+        if rows and rows[0].connected_mailbox_id:
+            mb_row = await session.get(ConnectedMailbox, rows[0].connected_mailbox_id)
+        elif mailbox_email:
+            stmt = select(ConnectedMailbox).where(ConnectedMailbox.email == mailbox_email)
+            if rows:
+                stmt = stmt.where(ConnectedMailbox.org_id == rows[0].org_id)
+            mb_row = (await session.execute(stmt)).scalar_one_or_none()
+        if mb_row and mb_row.is_pollable:
+            try:
+                access_token = await resolve_mailbox_access_token(session, mb_row)
+            except Exception:
+                access_token = None
+
         if not mailbox_email:
             continue
 
-        if move_message_to_folder(message_id, outcome, mailbox_email=mailbox_email):
+        if move_message_to_folder(
+            message_id,
+            outcome,
+            mailbox_email=mailbox_email,
+            access_token=access_token,
+        ):
             moved += 1
             folder_name = (
                 settings.graph_processed_folder

@@ -42,8 +42,10 @@ def _clear_settings() -> None:
 @pytest.mark.asyncio
 async def test_map_with_details_po_match() -> None:
     inv = Invoice(org_id=1,
-        vendor="Atlassian Pty Ltd",
-        invoice_no="REF PO-MKT-2026-014",
+        vendor="Google Australia Pty Ltd",
+        invoice_no="GOOG-AU-99102",
+        po_reference="PO-MKT-2026-014",
+        route_target="Purchase Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )

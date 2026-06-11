@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Connect mailbox — LedgerLink</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f4f5; color: #18181b; }
+    .card { background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; padding: 2rem; max-width: 28rem; width: calc(100% - 2rem); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+    h1 { font-size: 1.125rem; margin: 0 0 .5rem; }
+    p { margin: .5rem 0; font-size: .875rem; color: #52525b; line-height: 1.5; }
+    .email { font-weight: 600; color: #18181b; }
+    .message { border-left: 3px solid #e4e4e7; padding-left: .75rem; font-style: italic; }
+    .error { color: #dc2626; }
+    .success { color: #16a34a; }
+    button { margin-top: 1rem; width: 100%; padding: .625rem 1rem; font-size: .875rem; border: 0; border-radius: 8px; background: #18181b; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #09090b; color: #fafafa; }
+      .card { background: #18181b; border-color: #3f3f46; }
+      p { color: #a1a1aa; }
+      .email { color: #fafafa; }
+      button { background: #fafafa; color: #18181b; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card" id="app">
+    <p>Loading invitation…</p>
+  </div>
+  <script>
+    const app = document.getElementById("app");
+    const params = new URLSearchParams(location.search);
+    const token = params.get("token") || "";
+    const oauth = params.get("mailbox_oauth");
+    const oauthEmail = params.get("email");
+    const oauthMessage = params.get("message");
+
+    const apiHeaders = { "ngrok-skip-browser-warning": "1" };
+
+    async function apiGet(path) {
+      const res = await fetch(path, { headers: apiHeaders });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = body.detail || body.message || res.statusText;
+        throw new Error(typeof detail === "string" ? detail : "Request failed");
+      }
+      return body.data;
+    }
+
+    function render(html) {
+      app.innerHTML = html;
+    }
+
+    async function connectWithMicrosoft() {
+      const btn = document.getElementById("connect-btn");
+      if (btn) btn.disabled = true;
+      try {
+        const data = await apiGet("/api/mailboxes/invites/authorize?token=" + encodeURIComponent(token));
+        location.assign(data.authorize_url);
+      } catch (err) {
+        render(
+          '<h1 class="error">Connection failed</h1>' +
+          '<p class="error">' + (err.message || "Failed to start Microsoft sign-in") + '</p>' +
+          '<button id="connect-btn" type="button">Try again</button>'
+        );
+        document.getElementById("connect-btn").onclick = connectWithMicrosoft;
+      }
+    }
+
+    if (oauth === "success") {
+      render(
+        "<h1>Mailbox connected</h1>" +
+        "<p class='success'>" +
+        (oauthEmail ? oauthEmail + " is authorized for invoice capture." : "Your mailbox is connected.") +
+        "</p>" +
+        "<p>You can close this window. Your organisation admin will see the mailbox as connected.</p>"
+      );
+    } else if (oauth === "error") {
+      render(
+        '<h1 class="error">Connection failed</h1>' +
+        '<p>' + (oauthMessage || "Microsoft sign-in was cancelled or failed.") + '</p>' +
+        (token ? '<button id="connect-btn" type="button">Try again</button>' : "")
+      );
+      if (token) document.getElementById("connect-btn").onclick = connectWithMicrosoft;
+    } else if (!token) {
+      render("<p>Missing invitation link.</p>");
+    } else {
+      apiGet("/api/mailboxes/invites/preview?token=" + encodeURIComponent(token))
+        .then((preview) => {
+          let html =
+            "<h1>Connect your mailbox</h1>" +
+            "<p><strong>" + preview.org_name + "</strong> has requested access to read invoice attachments from:</p>" +
+            "<p class='email'>" + preview.requested_email + "</p>";
+          if (preview.message) {
+            html += "<p class='message'>" + preview.message + "</p>";
+          }
+          html +=
+            "<p>You will sign in with Microsoft and grant LedgerLink permission to read mail for automated invoice processing.</p>" +
+            '<button id="connect-btn" type="button">Connect with Microsoft</button>';
+          render(html);
+          document.getElementById("connect-btn").onclick = connectWithMicrosoft;
+        })
+        .catch((err) => {
+          render('<p class="error">' + (err.message || "Invitation not found") + "</p>");
+        });
+    }
+  </script>
+</body>
+</html>

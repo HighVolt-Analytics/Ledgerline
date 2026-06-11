@@ -14,6 +14,9 @@ const ApprovalsPage = lazy(() =>
 const BillingPage = lazy(() =>
   import("@/pages/BillingPage").then((m) => ({ default: m.BillingPage }))
 );
+const ConnectMailboxPage = lazy(() =>
+  import("@/pages/ConnectMailboxPage").then((m) => ({ default: m.ConnectMailboxPage }))
+);
 const InboxPage = lazy(() =>
   import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage }))
 );
@@ -50,6 +53,11 @@ const VendorsPage = lazy(() =>
 const TeamExpensesPage = lazy(() =>
   import("@/pages/TeamExpensesPage").then((m) => ({ default: m.TeamExpensesPage }))
 );
+const ExpensesManagementPage = lazy(() =>
+  import("@/pages/ExpensesManagementPage").then((m) => ({
+    default: m.ExpensesManagementPage,
+  }))
+);
 const PurchaseManagementPage = lazy(() =>
   import("@/pages/PurchaseManagementPage").then((m) => ({
     default: m.PurchaseManagementPage,
@@ -74,6 +82,14 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
+        <Route
+          path="/connect-mailbox"
+          element={
+            <LazyPage>
+              <ConnectMailboxPage />
+            </LazyPage>
+          }
+        />
 
         {/* /ledgerlink and /ledgerlink/ -> dashboard (index route) */}
         <Route path="/" element={<ProtectedRoute />}>
@@ -92,6 +108,14 @@ export default function App() {
               element={
                 <LazyPage>
                   <TeamExpensesPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="expenses"
+              element={
+                <LazyPage>
+                  <ExpensesManagementPage />
                 </LazyPage>
               }
             />

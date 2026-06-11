@@ -9,16 +9,33 @@ from sqlalchemy.orm import selectinload
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.pending_vendor import PendingVendor
 from app.services.audit_service import log_event
-from app.services.invoice_evaluation_service import EVAL_PENDING_VENDOR
+from app.services.expense_vendor_policy import is_unmatched_expense_vendor_status
+from app.services.invoice_evaluation_service import EVAL_PENDING_VENDOR, ROUTE_TEAM
 from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.services.master_data_service import list_pending_vendors
 
 
+def _is_team_expense_route(invoice: Invoice) -> bool:
+    return (invoice.route_target or "").strip() == ROUTE_TEAM
+
+
 async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> bool:
-    if invoice.evaluation_status == EVAL_PENDING_VENDOR:
-        return True
+    if _is_team_expense_route(invoice):
+        return False
+    if is_unmatched_expense_vendor_status(invoice.evaluation_status):
+        return False
 
     name = (invoice.vendor or "").strip()
+    if name:
+        from app.services.invoice_evaluation_service import load_config_for_org
+        from app.services.vendor_detection import find_matching_vendor_master
+
+        config = load_config_for_org(invoice.org_id)
+        if find_matching_vendor_master(name, invoice.abn, config.vendor_masters):
+            return False
+
+    if invoice.evaluation_status == EVAL_PENDING_VENDOR:
+        return True
     if not name:
         pending_for_invoice = (
             await session.execute(
@@ -36,11 +53,51 @@ async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> boo
     return any(row.detected_name.strip().lower() == key for row in pending)
 
 
+def _is_purchase_supporting_document(invoice: Invoice) -> bool:
+    return invoice.purchase_document_type in ("po", "grn")
+
+
+async def _release_hold_when_po_vendor_matches(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    """Commercial invoice: trust PO register vendor over detection threshold."""
+    from app.services.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_PENDING_VENDOR
+    from app.services.purchase_match_service import load_purchase_order_for_invoice
+
+    if invoice.evaluation_status != EVAL_PENDING_VENDOR:
+        return False
+    if _is_purchase_supporting_document(invoice):
+        return False
+
+    po = await load_purchase_order_for_invoice(session, invoice)
+    if po is None or not (po.vendor or "").strip():
+        return False
+
+    inv_vendor = (invoice.vendor or "").strip()
+    if not inv_vendor:
+        invoice.vendor = po.vendor
+        inv_vendor = po.vendor.strip()
+
+    if inv_vendor.lower() != po.vendor.strip().lower():
+        return False
+
+    invoice.evaluation_status = EVAL_AUTO_CODED
+    await session.flush()
+    return True
+
+
 async def apply_vendor_hold_if_needed(
     session: AsyncSession,
     invoice: Invoice,
 ) -> bool:
     """Set exception + pending_vendor when registration is required. Returns True if held."""
+    if _is_purchase_supporting_document(invoice) or _is_team_expense_route(invoice):
+        return False
+
+    if await _release_hold_when_po_vendor_matches(session, invoice):
+        return False
+
     if not await invoice_is_vendor_held(session, invoice):
         return False
 
@@ -106,17 +163,34 @@ async def release_invoices_after_vendor_promotion(
 
     rows = (await session.execute(stmt)).scalars().all()
     released = 0
+    reprocess_ids: list[int] = []
     for inv in rows:
         await apply_invoice_evaluation(session, inv, enqueue_pending=False)
         if await invoice_is_vendor_held(session, inv):
             continue
         if inv.status == InvoiceStatus.EXCEPTION:
             await reset_invoice_for_reprocess(session, inv)
+            if inv.raw_file_path:
+                reprocess_ids.append(inv.id)
         await log_event(
             session,
             "vendor_registration_released",
             invoice_id=inv.id,
-            detail={"vendor": inv.vendor},
+            detail={"vendor": vendor_name},
         )
         released += 1
+
+    if reprocess_ids:
+        from app.services.pipeline import process_invoice
+
+        for invoice_id in reprocess_ids:
+            loaded = (
+                await session.execute(
+                    select(Invoice)
+                    .where(Invoice.id == invoice_id)
+                    .options(selectinload(Invoice.line_items))
+                )
+            ).scalar_one()
+            await process_invoice(session, loaded)
+
     return released

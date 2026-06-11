@@ -4,6 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.audit import AuditLog
+from app.schemas.rule_book_config import validate_rule_book_config_payload
+from app.services.audit_service import log_event
+from app.services.rule_book_config_io import load_rule_book_config_dict
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 _RULE_LIST_KEYS = (
     "email_capture_rules",
     "purchase_rules",
@@ -112,3 +123,197 @@ def diff_rule_book_config(
             }
 
     return changes
+
+
+def normalize_rule_book_for_diff(raw: dict[str, Any]) -> dict[str, Any]:
+    """Canonicalise config so pydantic defaults do not appear as rule edits."""
+    payload = dict(raw)
+    payload["vendor_masters"] = []
+    payload["employee_masters"] = []
+    return validate_rule_book_config_payload(payload).model_dump()
+
+
+_RULE_COMPARE_EXCLUDE = frozenset({"matched_count", "last_matched"})
+
+
+def _rule_config_for_compare(rule: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in rule.items() if key not in _RULE_COMPARE_EXCLUDE}
+
+
+def _deep_values_equal(left: Any, right: Any) -> bool:
+    if left is None and right is None:
+        return True
+    if isinstance(left, dict) and isinstance(right, dict):
+        keys = set(left) | set(right)
+        return all(_deep_values_equal(left.get(key), right.get(key)) for key in keys)
+    if isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            return False
+        return all(_deep_values_equal(a, b) for a, b in zip(left, right, strict=True))
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return float(left) == float(right)
+    return left == right
+
+
+def _rule_configs_differ(before_rule: dict[str, Any], after_rule: dict[str, Any]) -> bool:
+    before_fields = _rule_config_for_compare(before_rule)
+    after_fields = _rule_config_for_compare(after_rule)
+    keys = set(before_fields) | set(after_fields)
+    for key in keys:
+        if not _deep_values_equal(before_fields.get(key), after_fields.get(key)):
+            return True
+    return False
+
+
+def truly_modified_rule_ids(
+    section_key: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    candidate_ids: list[str],
+) -> list[str]:
+    """Rule IDs whose full config differs between before and after."""
+    before_idx = _rule_index(_rule_rows(before.get(section_key)))
+    after_idx = _rule_index(_rule_rows(after.get(section_key)))
+    modified: list[str] = []
+    for rule_id in candidate_ids:
+        before_rule = before_idx.get(rule_id)
+        after_rule = after_idx.get(rule_id)
+        if before_rule is None or after_rule is None:
+            modified.append(rule_id)
+            continue
+        if _rule_configs_differ(before_rule, after_rule):
+            modified.append(rule_id)
+    return modified
+
+
+def filter_auditable_rule_book_changes(
+    changes: dict[str, Any],
+    *,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> dict[str, Any]:
+    """Drop spurious modified rule IDs where before/after configs are identical."""
+    filtered: dict[str, Any] = {}
+    for section_key, section in changes.items():
+        if section_key in _RULE_LIST_KEYS and isinstance(section, dict):
+            added = list(section.get("added") or [])
+            removed = list(section.get("removed") or [])
+            modified = truly_modified_rule_ids(
+                section_key,
+                before,
+                after,
+                list(section.get("modified") or []),
+            )
+            if not added and not removed and not modified:
+                continue
+            filtered[section_key] = {
+                **section,
+                "added": added,
+                "removed": removed,
+                "modified": modified,
+            }
+        else:
+            filtered[section_key] = section
+    return filtered
+
+
+def rule_book_changes_are_auditable(
+    changes: dict[str, Any],
+    *,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> bool:
+    """True when rules were added/removed or a modified rule's config actually changed."""
+    auditable = filter_auditable_rule_book_changes(changes, before=before, after=after)
+    if not auditable:
+        return False
+    for section_key, section in auditable.items():
+        if section_key not in _RULE_LIST_KEYS or not isinstance(section, dict):
+            continue
+        if section.get("added") or section.get("removed") or section.get("modified"):
+            return True
+    return False
+
+
+def rule_book_content_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Deep-compare normalised rule book configs (rules + scalar sections)."""
+    return _deep_values_equal(
+        normalize_rule_book_for_diff(left),
+        normalize_rule_book_for_diff(right),
+    )
+
+
+def extract_rule_book_content_from_audit_detail(
+    detail: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(detail, dict):
+        return None
+    content = detail.get("content")
+    if isinstance(content, dict):
+        return content
+    return None
+
+
+async def fetch_last_rule_book_updated(
+    session: AsyncSession,
+    org_id: int,
+) -> AuditLog | None:
+    return (
+        await session.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.org_id == org_id,
+                AuditLog.event == "rule_book_updated",
+            )
+            .order_by(AuditLog.id.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+
+
+async def is_duplicate_rule_book_update(
+    session: AsyncSession,
+    org_id: int,
+    incoming_content: dict[str, Any],
+) -> bool:
+    """True when incoming config matches the last persisted rule_book_updated snapshot."""
+    last = await fetch_last_rule_book_updated(session, org_id)
+    if last is None:
+        return False
+
+    prior_content = extract_rule_book_content_from_audit_detail(
+        last.detail if isinstance(last.detail, dict) else None
+    )
+    if prior_content is None:
+        try:
+            prior_content = normalize_rule_book_for_diff(load_rule_book_config_dict(org_id))
+        except FileNotFoundError:
+            return False
+
+    return rule_book_content_equal(prior_content, incoming_content)
+
+
+async def log_rule_book_updated(
+    session: AsyncSession,
+    *,
+    org_id: int,
+    after_config: dict[str, Any],
+    detail: dict[str, Any],
+    actor_name: str | None = None,
+    actor_email: str | None = None,
+    client_ip: str | None = None,
+) -> AuditLog | None:
+    """Write rule_book_updated unless content is identical to the last audit row for this org."""
+    if await is_duplicate_rule_book_update(session, org_id, after_config):
+        logger.info("rule_book_updated_suppressed_duplicate", org_id=org_id)
+        return None
+
+    return await log_event(
+        session,
+        "rule_book_updated",
+        org_id=org_id,
+        detail={**detail, "content": after_config},
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+    )
