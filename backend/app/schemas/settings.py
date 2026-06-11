@@ -21,3 +21,4 @@ class AppSettingsResponse(BaseModel):
     abn_validation_mode: str
     rule_book_config_path: str
     cors_origins: str
+    whatsapp_configured: bool

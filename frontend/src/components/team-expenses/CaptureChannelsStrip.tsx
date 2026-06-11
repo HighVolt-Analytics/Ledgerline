@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ClaimChannel } from "@/lib/v4MockData";
 
+export type CaptureChannelItem = ClaimChannel & {
+  connectionId?: number;
+  healthLabel?: string;
+};
+
 function channelIcon(id: string) {
   if (id === "em" || id.startsWith("mb-") || id === "em-default") return Mail;
   if (id === "mob") return Smartphone;
@@ -14,9 +19,15 @@ function channelIcon(id: string) {
 export function CaptureChannelsStrip({
   channels,
   testIdPrefix = "channel",
+  onReconnect,
+  onTest,
+  actionBusyId,
 }: {
-  channels: ClaimChannel[];
+  channels: CaptureChannelItem[];
   testIdPrefix?: string;
+  onReconnect?: (channel: CaptureChannelItem) => void;
+  onTest?: (channel: CaptureChannelItem) => void;
+  actionBusyId?: string | null;
 }) {
   const [openChannel, setOpenChannel] = useState<string | null>(null);
 
@@ -24,6 +35,7 @@ export function CaptureChannelsStrip({
     <div className="flex flex-wrap gap-2 mb-5">
       {channels.map((ch) => {
         const Icon = channelIcon(ch.id);
+        const busy = actionBusyId === ch.id;
         return (
           <div key={ch.id} className="relative">
             <button
@@ -49,19 +61,37 @@ export function CaptureChannelsStrip({
                 {ch.connected ? (
                   <div className="flex items-center gap-1 text-[hsl(145_55%_38%)] dark:text-[hsl(145_55%_60%)]">
                     <CheckCircle2 className="h-4 w-4 -ml-1" />
-                    Connected · healthy
+                    Connected · {ch.healthLabel ?? "healthy"}
                   </div>
                 ) : (
                   <div className="text-muted-foreground">Not connected</div>
                 )}
-                <div className="flex gap-2 pt-1">
-                  <Button size="sm" variant="outline" className="h-7 text-xs flex-1">
-                    Reconnect
-                  </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-xs flex-1">
-                    Test
-                  </Button>
-                </div>
+                {(onReconnect || onTest) && (
+                  <div className="flex gap-2 pt-1">
+                    {onReconnect && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs flex-1"
+                        disabled={busy}
+                        onClick={() => onReconnect(ch)}
+                      >
+                        {busy ? "…" : "Reconnect"}
+                      </Button>
+                    )}
+                    {onTest && ch.connected && ch.connectionId != null && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs flex-1"
+                        disabled={busy}
+                        onClick={() => onTest(ch)}
+                      >
+                        {busy ? "…" : "Test"}
+                      </Button>
+                    )}
+                  </div>
+                )}
               </Card>
             )}
           </div>

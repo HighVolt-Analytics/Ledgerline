@@ -37,7 +37,10 @@ function formatTs(iso: string | null | undefined): string {
   }
 }
 
-function inferClaimChannel(sender: string | null): string {
+function inferClaimChannel(sender: string | null, captureSource?: string | null): string {
+  const source = captureSource?.trim().toLowerCase();
+  if (source === "whatsapp") return "WhatsApp";
+  if (source === "viber") return "Viber";
   if (!sender?.trim()) return "Upload";
   if (sender.includes("@")) return "Email";
   const digits = sender.replace(/\D/g, "");
@@ -122,7 +125,7 @@ export function invoiceToBusinessExpense(inv: Invoice): ExpenseClaim {
     submitter: inv.vendor?.trim() || claim.submitter,
     purpose: inv.invoice_no ? `Expense ${inv.invoice_no}` : "Business expense",
     budgetGroup: inv.account_name ?? "Operating",
-    channel: inferClaimChannel(inv.email_sender),
+    channel: inferClaimChannel(inv.email_sender, inv.capture_source),
   };
 }
 
@@ -132,7 +135,7 @@ export function invoiceToTeamClaim(inv: Invoice): ExpenseClaim {
   return {
     id: String(inv.id),
     submitter: inferSubmitter(inv),
-    channel: inferClaimChannel(inv.email_sender),
+    channel: inferClaimChannel(inv.email_sender, inv.capture_source),
     category: inv.account_name ?? "Uncategorised",
     amount,
     gst,

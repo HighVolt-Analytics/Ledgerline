@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Activity, ArrowLeftRight, Cloud, Copy, Database, FileSearch, Link2, Mail, Plus, Server, Trash2 } from "lucide-react";
+import { Activity, ArrowLeftRight, Cloud, Copy, Database, FileSearch, Link2, Mail, MessageCircle, Plus, Server, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
-import type { AppSettings, ConnectedMailbox, MailboxConnectionRequest } from "@/api/types";
+import type { AppSettings, ConnectedMailbox, MailboxConnectionRequest, WhatsappConnection } from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,11 @@ export function IntegrationsPage() {
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
   const [adminConsentUrl, setAdminConsentUrl] = useState<string | null>(null);
   const [adminConsentNote, setAdminConsentNote] = useState<string | null>(null);
+  const [waConnections, setWaConnections] = useState<WhatsappConnection[]>([]);
+  const [waWebhookUrl, setWaWebhookUrl] = useState<string>("");
+  const [waOAuthUrl, setWaOAuthUrl] = useState<string>("");
+  const [waError, setWaError] = useState<string | null>(null);
+  const [waBusy, setWaBusy] = useState(false);
 
   async function copyInviteLink(url: string) {
     try {
@@ -64,11 +69,27 @@ export function IntegrationsPage() {
       .catch(() => setRequests([]));
   }, []);
 
+  const loadWhatsapp = useCallback((fresh = false) => {
+    api
+      .getWhatsappStatus({ fresh })
+      .then((status) => {
+        setWaConnections(status.connections);
+        setWaWebhookUrl(status.webhook_callback_url);
+        setWaOAuthUrl(status.oauth_callback_url);
+        setWaError(null);
+      })
+      .catch(() => {
+        setWaConnections([]);
+        setWaWebhookUrl("");
+      });
+  }, []);
+
   useEffect(() => {
     api.getSettings().then(setS);
     loadMailboxes();
     loadRequests();
-  }, [loadMailboxes, loadRequests]);
+    loadWhatsapp();
+  }, [loadMailboxes, loadRequests, loadWhatsapp]);
 
   useEffect(() => {
     if (user?.role !== "admin") return;
@@ -104,6 +125,40 @@ export function IntegrationsPage() {
     searchParams.delete("message");
     setSearchParams(searchParams, { replace: true });
   }, [searchParams, setSearchParams, toast, loadMailboxes, loadRequests]);
+
+  useEffect(() => {
+    const wa = searchParams.get("wa");
+    if (!wa) return;
+    const phone = searchParams.get("phone");
+    const reason = searchParams.get("reason");
+    if (wa === "connected") {
+      toast({
+        title: "WhatsApp connected",
+        description: phone ? `${phone} is ready for expense capture.` : undefined,
+      });
+      loadWhatsapp(true);
+    } else if (wa === "error") {
+      const messages: Record<string, string> = {
+        no_waba: "No WhatsApp Business Account found on this Meta login.",
+        no_phone: "No phone numbers found on your WhatsApp Business Account.",
+        invalid_state: "Connection session expired or invalid — try Connect again.",
+        not_admin: "Only admins can connect WhatsApp.",
+        not_configured: "Meta app credentials are missing on the server.",
+        oauth_failed: "Facebook login failed or was cancelled.",
+      };
+      const msg = messages[reason ?? ""] ?? reason ?? "WhatsApp connection failed";
+      setWaError(msg);
+      toast({
+        title: "WhatsApp connection failed",
+        description: msg,
+        variant: "destructive",
+      });
+    }
+    searchParams.delete("wa");
+    searchParams.delete("phone");
+    searchParams.delete("reason");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, toast, loadWhatsapp]);
 
   async function sendInvitation(e: React.FormEvent) {
     e.preventDefault();
@@ -154,6 +209,13 @@ export function IntegrationsPage() {
       tagline: s.graph_mailbox || "Outlook capture",
       ok: s.graph_enabled,
       icon: Mail,
+    },
+    {
+      id: "whatsapp",
+      name: "WhatsApp Business",
+      tagline: waConnections[0]?.phone_number || "Team expense capture",
+      ok: s.whatsapp_configured && waConnections.some((c) => c.connection_status === "connected"),
+      icon: MessageCircle,
     },
     {
       id: "blob",
@@ -492,6 +554,164 @@ export function IntegrationsPage() {
                           setMbError(null);
                         } catch (e) {
                           setMbError(e instanceof Error ? e.message : "Failed to remove mailbox");
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card className="p-5 mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold">WhatsApp Business</h2>
+            <p className="text-xs text-muted-foreground">
+              Connect a business number so employees can submit expense receipts via WhatsApp.
+              Identity is matched by phone number in Rule Book → Employees.
+            </p>
+          </div>
+          <MessageCircle className="h-5 w-5 text-muted-foreground" />
+        </div>
+
+        {waError && <p className="text-sm text-destructive mb-2">{waError}</p>}
+
+        {waOAuthUrl && (
+          <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 space-y-2 max-w-2xl">
+            <p className="text-xs text-muted-foreground">
+              Facebook Login OAuth redirect URI (Meta app → Facebook Login → Valid OAuth Redirect
+              URIs):
+            </p>
+            <div className="flex gap-2">
+              <Input readOnly value={waOAuthUrl} className="text-xs font-mono" />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => void copyInviteLink(waOAuthUrl)}
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Copy
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {waWebhookUrl && (
+          <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 space-y-2 max-w-2xl">
+            <p className="text-xs text-muted-foreground">
+              Meta webhook callback URL (register in Meta Developer Console → WhatsApp →
+              Configuration):
+            </p>
+            <div className="flex gap-2">
+              <Input readOnly value={waWebhookUrl} className="text-xs font-mono" />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => void copyInviteLink(waWebhookUrl)}
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Copy
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {user?.role === "admin" && (
+          <div className="mb-4">
+            <Button
+              size="sm"
+              disabled={waBusy || !s.whatsapp_configured}
+              onClick={async () => {
+                setWaBusy(true);
+                setWaError(null);
+                try {
+                  const { authorize_url } = await api.getWhatsappAuthorizeUrl();
+                  window.location.href = authorize_url;
+                } catch (e) {
+                  setWaError(e instanceof Error ? e.message : "Could not start Facebook login");
+                  setWaBusy(false);
+                }
+              }}
+            >
+              {waBusy ? "Redirecting…" : "Connect WhatsApp Business"}
+            </Button>
+            {!s.whatsapp_configured && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Set META_APP_ID, META_APP_SECRET, and META_WEBHOOK_VERIFY_TOKEN in backend .env.
+              </p>
+            )}
+          </div>
+        )}
+
+        {waConnections.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No WhatsApp numbers connected yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {waConnections.map((conn) => (
+              <li
+                key={conn.id}
+                className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm gap-3"
+              >
+                <div className="min-w-0">
+                  <span className="font-medium">
+                    {conn.display_name || conn.phone_number || conn.phone_number_id}
+                  </span>
+                  {conn.phone_number && (
+                    <span className="text-muted-foreground ml-2">{conn.phone_number}</span>
+                  )}
+                  <Badge variant="outline" className="ml-2 text-[10px]">
+                    {conn.integration_health}
+                  </Badge>
+                  {conn.last_error && (
+                    <p className="text-xs text-destructive mt-1">{conn.last_error}</p>
+                  )}
+                </div>
+                {user?.role === "admin" && (
+                  <div className="flex gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={async () => {
+                        try {
+                          const result = await api.testWhatsappConnection(conn.id);
+                          if (result.ok) {
+                            toast({ title: "WhatsApp test passed" });
+                          } else {
+                            toast({
+                              title: "WhatsApp needs attention",
+                              description: result.warnings.join(" · ") || result.integration_health,
+                              variant: "destructive",
+                            });
+                          }
+                          loadWhatsapp(true);
+                        } catch (e) {
+                          setWaError(e instanceof Error ? e.message : "Test failed");
+                        }
+                      }}
+                    >
+                      Test
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive"
+                      onClick={async () => {
+                        try {
+                          await api.disconnectWhatsapp(conn.id);
+                          loadWhatsapp(true);
+                          toast({ title: "WhatsApp disconnected" });
+                        } catch (e) {
+                          setWaError(e instanceof Error ? e.message : "Disconnect failed");
                         }
                       }}
                     >
