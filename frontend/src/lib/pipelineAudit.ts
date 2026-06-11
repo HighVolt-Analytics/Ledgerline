@@ -26,14 +26,30 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 function latestLog(logs: AuditLogEntry[], ...events: string[]): AuditLogEntry | undefined {
-  for (const event of events) {
-    const hit = logs.find((l) => l.event === event);
-    if (hit) return hit;
-  }
-  return undefined;
+  return latestEventLog(logs, events);
 }
 
-function validationDetail(inv: InvoiceDetails): { text: string; state: "done" | "fail" | "pending" } {
+function latestEventLog(logs: AuditLogEntry[], events: string[]): AuditLogEntry | undefined {
+  let best: AuditLogEntry | undefined;
+  for (const entry of logs) {
+    if (!events.includes(entry.event)) continue;
+    if (!best || new Date(entry.created_at).getTime() > new Date(best.created_at).getTime()) {
+      best = entry;
+    }
+  }
+  return best;
+}
+
+function isAfter(entry: AuditLogEntry | undefined, pivot: AuditLogEntry | undefined): boolean {
+  if (!entry) return false;
+  if (!pivot) return true;
+  return new Date(entry.created_at).getTime() >= new Date(pivot.created_at).getTime();
+}
+
+function validationDetail(
+  inv: InvoiceDetails,
+  logs: AuditLogEntry[]
+): { text: string; state: "done" | "fail" | "pending" } {
   const failed = invoiceFailedValidations(inv);
   if (failed.length) {
     return {
@@ -44,6 +60,42 @@ function validationDetail(inv: InvoiceDetails): { text: string; state: "done" | 
   if (inv.validation_results?.length) {
     return { text: "Passed", state: "done" };
   }
+
+  const latestApprove = latestEventLog(logs, ["invoice_approved"]);
+  const latestPassed = latestEventLog(logs, ["validation_passed"]);
+  const latestFailed = latestEventLog(logs, ["validation_failed"]);
+  const latestHold = latestEventLog(logs, ["vendor_registration_hold"]);
+
+  if (latestHold && isAfter(latestHold, latestApprove) && inv.status === "exception") {
+    return { text: "Vendor registration hold", state: "fail" };
+  }
+
+  if (latestPassed && latestFailed) {
+    const passedNewer =
+      new Date(latestPassed.created_at).getTime() > new Date(latestFailed.created_at).getTime();
+    if (passedNewer && isAfter(latestPassed, latestApprove)) {
+      return { text: "Passed", state: "done" };
+    }
+    if (!passedNewer && isAfter(latestFailed, latestApprove)) {
+      return { text: "Failed checks", state: "fail" };
+    }
+  } else if (latestPassed && isAfter(latestPassed, latestApprove)) {
+    return { text: "Passed", state: "done" };
+  } else if (latestFailed && isAfter(latestFailed, latestApprove)) {
+    return { text: "Failed checks", state: "fail" };
+  }
+
+  if (
+    inv.status === "pending" ||
+    inv.status === "parsing" ||
+    inv.status === "validating" ||
+    inv.status === "mapping" ||
+    inv.status === "journaling" ||
+    inv.status === "reconciling"
+  ) {
+    return { text: "In progress", state: "pending" };
+  }
+
   if (inv.status === "exception") {
     return { text: "Routed to review", state: "fail" };
   }
@@ -109,7 +161,7 @@ export function buildPipelineAuditSteps(
           ? "OCR complete"
           : "Pending";
 
-  const validation = validationDetail(inv);
+  const validation = validationDetail(inv, logs);
   const validatedWhen = validatedLog
     ? relativeTime(validatedLog.created_at)
     : stageIndex(inv.status) >= 2
@@ -131,8 +183,30 @@ export function buildPipelineAuditSteps(
   let approvedWhen = "—";
   if (approvedLog) {
     approvedWhen = relativeTime(approvedLog.created_at);
-    approvedDetail = "Approved for processing";
-    approvedState = "done";
+    const actor =
+      typeof approvedLog.detail?.actor_name === "string"
+        ? approvedLog.detail.actor_name
+        : null;
+    if (inv.status === "processed") {
+      approvedDetail = actor ? `${actor} · Approved` : "Approved for processing";
+      approvedState = "done";
+    } else if (
+      inv.status === "pending" ||
+      inv.status === "parsing" ||
+      inv.status === "validating" ||
+      inv.status === "mapping" ||
+      inv.status === "journaling" ||
+      inv.status === "reconciling"
+    ) {
+      approvedDetail = actor ? `${actor} · Processing` : "Approved · processing";
+      approvedState = "pending";
+    } else if (inv.status === "exception") {
+      approvedDetail = actor ? `${actor} · Reprocess needed` : "Approved · reprocess needed";
+      approvedState = "pending";
+    } else {
+      approvedDetail = actor ? `${actor} · Approved` : "Approved for processing";
+      approvedState = "done";
+    }
   } else if (inv.status === "processed") {
     approvedWhen = relativeTime(publishedLog?.created_at ?? inv.created_at);
     approvedDetail = "Within policy";

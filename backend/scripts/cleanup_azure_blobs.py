@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+
+from sqlalchemy import select
 
 from app.config import get_settings
+from app.database import async_session_factory
+from app.models.invoice import Invoice
 from app.services import blob_storage
 
 # Only the `invoices` container is configured in the backend.
@@ -19,6 +24,96 @@ def _service_client():
 
     settings = get_settings()
     return BlobServiceClient.from_connection_string(settings.azure_storage_connection_string)
+
+
+def _blob_name_from_stored(stored: str | None) -> str | None:
+    if not stored:
+        return None
+    parsed = blob_storage.parse_stored_uri(stored.strip())
+    if parsed:
+        return parsed[1]
+    path = stored.strip().replace("\\", "/")
+    marker = "/invoice/"
+    idx = path.find(marker)
+    if idx >= 0:
+        return path[idx + 1 :]
+    if path.startswith("invoice/") or path.startswith("rejected/"):
+        return path
+    return None
+
+
+async def _referenced_blob_names() -> set[str]:
+    async with async_session_factory() as session:
+        rows = (
+            await session.execute(
+                select(Invoice.raw_file_path).where(Invoice.raw_file_path.isnot(None))
+            )
+        ).scalars().all()
+    keep: set[str] = set()
+    for stored in rows:
+        name = _blob_name_from_stored(stored)
+        if name:
+            keep.add(name)
+    return keep
+
+
+def clear_orphan_blobs(*, dry_run: bool = False, include_reports: bool = False) -> int:
+    """Delete blobs in the invoices container not referenced by any invoice row."""
+    if not blob_storage.is_blob_enabled():
+        print("blob storage disabled — nothing to clear")
+        return 0
+
+    keep = asyncio.run(_referenced_blob_names())
+    settings = get_settings()
+    client = _service_client()
+    container = client.get_container_client(settings.azure_storage_container)
+
+    to_delete: list[str] = []
+    for blob in container.list_blobs():
+        if blob.name in keep:
+            continue
+        if blob.name.startswith("reports/") and not include_reports:
+            continue
+        to_delete.append(blob.name)
+
+    if dry_run:
+        print(f"would delete {len(to_delete)} orphan blob(s); keeping {len(keep)}")
+        for name in to_delete:
+            print(f"  {name}")
+        return len(to_delete)
+
+    deleted = 0
+    for name in to_delete:
+        container.delete_blob(name)
+        deleted += 1
+        print(f"deleted blob: {name}")
+    print(f"removed {deleted} orphan blob(s); kept {len(keep)} linked to invoices")
+    return deleted
+
+
+def clear_reports_prefix(*, dry_run: bool = False) -> int:
+    """Delete generated workbook exports under reports/."""
+    if not blob_storage.is_blob_enabled():
+        print("blob storage disabled — nothing to clear")
+        return 0
+
+    settings = get_settings()
+    client = _service_client()
+    container = client.get_container_client(settings.azure_storage_container)
+    names = [b.name for b in container.list_blobs(name_starts_with="reports/")]
+    if dry_run:
+        print(f"would delete {len(names)} report blob(s)")
+        for name in names:
+            print(f"  {name}")
+        return len(names)
+
+    deleted = 0
+    for name in names:
+        container.delete_blob(name)
+        deleted += 1
+        print(f"deleted blob: {name}")
+    print(f"cleared {deleted} report blob(s)")
+    return deleted
 
 
 def clear_invoice_container(*, dry_run: bool = False) -> int:
@@ -87,13 +182,32 @@ if __name__ == "__main__":
         help="Delete every blob in the configured invoices container",
     )
     parser.add_argument(
+        "--orphans",
+        action="store_true",
+        help="Delete blobs not linked to any invoice.raw_file_path in the database",
+    )
+    parser.add_argument(
+        "--reports",
+        action="store_true",
+        help="With --orphans, also delete reports/ workbook exports",
+    )
+    parser.add_argument(
+        "--reports-only",
+        action="store_true",
+        help="Delete only reports/ workbook exports",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="List blobs that would be deleted (with --all)",
+        help="List blobs that would be deleted",
     )
     args = parser.parse_args()
     if args.all:
         clear_invoice_container(dry_run=args.dry_run)
+    elif args.orphans:
+        clear_orphan_blobs(dry_run=args.dry_run, include_reports=args.reports)
+    elif args.reports_only:
+        clear_reports_prefix(dry_run=args.dry_run)
     else:
         result = cleanup_unused_blobs()
         print("done", result)

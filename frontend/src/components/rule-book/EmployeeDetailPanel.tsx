@@ -37,13 +37,11 @@ const EXPENSE_LEDGER_OPTIONS = LEDGER_ACCOUNTS.filter(
 export function EmployeeDetailPanel({
   emp,
   onChange,
-  onRemove,
   masked,
   onToggleMask,
 }: {
   emp: EmployeeMaster;
   onChange: (patch: Partial<EmployeeMaster>) => void;
-  onRemove: () => void;
   masked: boolean;
   onToggleMask?: () => void;
 }) {
@@ -299,18 +297,10 @@ export function EmployeeDetailPanel({
         )}
       </Card>
 
-      <div className="flex justify-end">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
-          onClick={onRemove}
-          data-testid={`remove-employee-${emp.id}`}
-        >
-          <Trash2 className="h-3.5 w-3.5 mr-1" />
-          Remove employee
-        </Button>
-      </div>
+      <p className="text-[11px] text-muted-foreground px-1">
+        Use Save employee in the panel footer to persist changes. Removing an employee is available
+        there as well.
+      </p>
     </div>
   );
 }

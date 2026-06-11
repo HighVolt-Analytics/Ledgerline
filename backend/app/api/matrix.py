@@ -8,8 +8,14 @@ from app.api.deps import AuthContext, get_auth_context, get_db
 from app.api.invoices import _to_response
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
+from app.models.payment import Payment
 from app.schemas.common import ApiEnvelope, ResponseMeta
 from app.schemas.pipeline import MatrixRowResponse
+from app.services.matrix_service import (
+    derive_matrix_flag,
+    derive_matrix_payment_status,
+    duplicate_conflict_for_invoice,
+)
 from app.services.pipeline_stages import build_matrix_cells
 
 router = APIRouter(prefix="/matrix", tags=["matrix"])
@@ -34,6 +40,24 @@ async def _audit_logs_for_invoices(
     return grouped
 
 
+async def _payments_for_invoices(
+    db: AsyncSession,
+    org_id: int,
+    invoice_ids: list[int],
+) -> dict[int, Payment]:
+    if not invoice_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(Payment).where(
+                Payment.org_id == org_id,
+                Payment.invoice_id.in_(invoice_ids),
+            )
+        )
+    ).scalars().all()
+    return {row.invoice_id: row for row in rows}
+
+
 @router.get("", response_model=ApiEnvelope[list[MatrixRowResponse]])
 async def document_matrix(
     page: int = Query(1, ge=1),
@@ -44,17 +68,13 @@ async def document_matrix(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[MatrixRowResponse]]:
-    """Invoices with server-computed pipeline stage cells."""
+    """Invoices with server-computed pipeline stage cells, flags, and payment readiness."""
     stmt = (
         select(Invoice)
         .where(Invoice.org_id == ctx.org_id)
-        .where(Invoice.status != InvoiceStatus.DUPLICATE_SKIPPED)
         .order_by(Invoice.created_at.desc())
     )
-    count_stmt = select(func.count(Invoice.id)).where(
-        Invoice.org_id == ctx.org_id,
-        Invoice.status != InvoiceStatus.DUPLICATE_SKIPPED,
-    )
+    count_stmt = select(func.count(Invoice.id)).where(Invoice.org_id == ctx.org_id)
     if status:
         try:
             status_enum = InvoiceStatus(status)
@@ -75,12 +95,24 @@ async def document_matrix(
         await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
     ).scalars().all()
 
-    audit_by_id = await _audit_logs_for_invoices(db, [inv.id for inv in invoices])
-    data = [
-        MatrixRowResponse(
-            invoice=_to_response(inv),
-            stages=build_matrix_cells(inv, audit_by_id.get(inv.id, [])),
+    invoice_ids = [inv.id for inv in invoices]
+    audit_by_id = await _audit_logs_for_invoices(db, invoice_ids)
+    payments_by_id = await _payments_for_invoices(db, ctx.org_id, invoice_ids)
+
+    data: list[MatrixRowResponse] = []
+    for inv in invoices:
+        flag, flag_reason = derive_matrix_flag(inv)
+        payment = payments_by_id.get(inv.id)
+        conflict_with, conflict_detail = await duplicate_conflict_for_invoice(db, ctx.org_id, inv)
+        data.append(
+            MatrixRowResponse(
+                invoice=_to_response(inv),
+                stages=build_matrix_cells(inv, audit_by_id.get(inv.id, [])),
+                flag=flag,
+                flag_reason=flag_reason,
+                payment_status=derive_matrix_payment_status(inv, payment),
+                conflict_with=conflict_with,
+                conflict_detail=conflict_detail or None,
+            )
         )
-        for inv in invoices
-    ]
     return ApiEnvelope(data=data, meta=ResponseMeta(page=page, total=total, pages=pages))

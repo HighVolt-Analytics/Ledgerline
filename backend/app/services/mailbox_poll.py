@@ -8,8 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.organisation import Organisation
 from app.services.email_ingestion import poll_inbox
+from app.services.mailbox_oauth_service import resolve_mailbox_access_token
 from app.services.org_context import get_or_create_default_org, sync_env_mailbox
 from app.services.pipeline import EmailIngestResult, ingest_email_attachments
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 async def poll_all_and_ingest(session: AsyncSession) -> EmailIngestResult:
@@ -25,10 +29,26 @@ async def poll_all_and_ingest(session: AsyncSession) -> EmailIngestResult:
     ).scalars().all()
 
     for mb in mailboxes:
+        if not mb.is_pollable:
+            logger.info(
+                "poll_mailbox_skipped",
+                mailbox=mb.email,
+                auth_type=mb.auth_type,
+                connection_status=mb.connection_status,
+            )
+            continue
+
         org = await session.get(Organisation, mb.org_id)
         if not org:
             continue
-        emails = poll_inbox(mb.email)
+
+        try:
+            access_token = await resolve_mailbox_access_token(session, mb)
+        except Exception as exc:
+            logger.warning("poll_mailbox_token_failed", mailbox=mb.email, error=str(exc))
+            continue
+
+        emails = poll_inbox(mb.email, access_token=access_token)
         result = await ingest_email_attachments(
             session,
             emails,
@@ -54,12 +74,15 @@ async def poll_mailbox_and_ingest(
     mb = await session.get(ConnectedMailbox, mailbox_id)
     if not mb or mb.org_id != org_id or not mb.is_active:
         raise ValueError("Mailbox not found or inactive")
+    if not mb.is_pollable:
+        raise ValueError("Mailbox is not connected — sign in with Microsoft to authorize access")
 
     org = await session.get(Organisation, mb.org_id)
     if not org:
         raise ValueError("Organisation not found")
 
-    emails = poll_inbox(mb.email)
+    access_token = await resolve_mailbox_access_token(session, mb)
+    emails = poll_inbox(mb.email, access_token=access_token)
     result = await ingest_email_attachments(
         session,
         emails,

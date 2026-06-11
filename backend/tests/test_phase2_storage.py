@@ -130,16 +130,17 @@ def test_build_blob_name() -> None:
         vendor_name="Atlassian Pty Ltd",
         invoice_no="INV-042",
         invoice_date=date(2026, 5, 4),
+        route_target="Expenses Management",
     )
     assert (
         name
-        == "invoice/HvOrg/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04.pdf"
+        == "invoice/HvOrg/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04.pdf"
     )
 
 
 def test_stored_uri_roundtrip() -> None:
     uri = blob_storage.to_stored_uri(
-        "invoice/HvOrg/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04.pdf"
+        "invoice/HvOrg/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04.pdf"
     )
     parsed = blob_storage.parse_stored_uri(uri)
     assert parsed is not None

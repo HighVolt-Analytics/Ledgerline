@@ -2,8 +2,10 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.audit import AuditLog
 from app.services.rule_book_mapper import clear_classification_config_cache
 
 
@@ -49,6 +51,42 @@ async def test_vendor_master_crud(client: AsyncClient, db_session: AsyncSession)
 
     res = await client.delete(f"/api/vendor-masters/{master_id}")
     assert res.status_code == 204
+
+    events = (
+        await db_session.execute(
+            select(AuditLog.event).where(
+                AuditLog.event.in_(("vendor_master_created", "vendor_master_updated"))
+            )
+        )
+    ).scalars().all()
+    assert "vendor_master_created" in events
+    assert "vendor_master_updated" in events
+
+
+@pytest.mark.asyncio
+async def test_vendor_master_normalizes_formatted_abn(client: AsyncClient) -> None:
+    clear_classification_config_cache()
+
+    res = await client.post(
+        "/api/vendor-masters",
+        json={
+            "name": "Sysco Foods Australia Pty Ltd",
+            "abn": "51 824 753 556",
+            "status": "Active",
+        },
+    )
+    assert res.status_code == 201
+    master_id = res.json()["data"]["id"]
+    assert res.json()["data"]["abn"] == "51824753556"
+
+    res = await client.patch(
+        f"/api/vendor-masters/{master_id}",
+        json={"abn": "51 824 753 556"},
+    )
+    assert res.status_code == 200
+    assert res.json()["data"]["abn"] == "51824753556"
+
+    await client.delete(f"/api/vendor-masters/{master_id}")
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { nextRulePriority } from "@/lib/rulePriority";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -46,7 +47,7 @@ export function EmailCaptureTab({
       id,
       name: "New capture rule",
       enabled: true,
-      priority: rules.length + 1,
+      priority: nextRulePriority(rules),
       mailbox: DEFAULT_MAILBOX,
       root: { type: "group", operator: "AND", children: [{ type: "condition", field: "subject", operator: "contains", value: "" }] },
       action: { saveAttachment: true, routeTo: ROUTE_TARGETS[0], tags: [] },

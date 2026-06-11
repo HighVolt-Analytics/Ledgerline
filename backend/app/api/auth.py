@@ -21,11 +21,7 @@ from app.services.auth_service import (
     hash_password,
     verify_password,
 )
-from app.services.org_context import (
-    ensure_connected_mailbox,
-    get_or_create_default_org,
-    sync_env_mailbox,
-)
+from app.services.org_context import get_or_create_default_org, sync_env_mailbox
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -80,7 +76,6 @@ async def register(
     await db.flush()
     await ensure_membership(db, user_id=user.id, org_id=org.id)
     await sync_env_mailbox(db, org.id)
-    await ensure_connected_mailbox(db, org.id, user.email, display_name=user.full_name)
 
     token = create_access_token(
         user_id=user.id,
@@ -113,8 +108,6 @@ async def login(
     org = await db.get(Organisation, user.org_id)
     if not org:
         raise HTTPException(500, "User organisation missing")
-
-    await ensure_connected_mailbox(db, org.id, user.email, display_name=user.full_name)
 
     token = create_access_token(
         user_id=user.id,

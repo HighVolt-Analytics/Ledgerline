@@ -18,7 +18,7 @@ Phase 7 closes the remaining backend rule book gaps and maps all four route targ
 | Purchase Management | `/purchases` — `RoutedInvoicesPanel` |
 | Expenses Management | Inbox / API only (no dedicated page) |
 | Team Expenses | `/team-expenses` — `RoutedInvoicesPanel` |
-| Vault | `/vault` — `RoutedInvoicesPanel` + document sets |
+| Vault | `/vault` — folder tree, files, document sets |
 
 Matrix flags prefer live `evaluation_status` over mock data when available.
 

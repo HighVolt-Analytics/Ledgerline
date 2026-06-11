@@ -10,6 +10,7 @@ Poll a Microsoft 365 mailbox for unread emails with PDF attachments. No Azure re
 4. **API permissions** → Microsoft Graph → **Application** permissions (not Delegated):
    - `Mail.Read` — list and download mail
    - `Mail.ReadWrite` — **required** to mark messages read and move to folders (Phase 6)
+   - `Mail.Send` — send mailbox connection invitation emails (from `GRAPH_MAILBOX`)
 5. **Grant admin consent** for your tenant (green checkmarks)
 6. Use a mailbox UPN, e.g. `invoices@yourcompany.com`
 
@@ -66,3 +67,7 @@ Invoke-RestMethod -Method POST http://localhost:8001/api/process/trigger
 ## Without Graph
 
 Leave Graph env vars empty. `poll_inbox()` returns `[]` and manual `POST /api/invoices/upload` still works.
+
+## User mailbox connection (OAuth)
+
+For per-user Microsoft sign-in and consent (recommended for production), see [mailbox-oauth-setup.md](./mailbox-oauth-setup.md).

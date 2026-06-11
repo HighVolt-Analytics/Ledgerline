@@ -104,6 +104,29 @@ async def test_document_matrix(client: AsyncClient, db_session: AsyncSession) ->
     assert len(stages) == 6
     assert stages[0]["stage"] == "Received"
     assert stages[0]["state"] in ("done", "pending", "fail", "skipped")
+    assert rows[0]["flag"] == "Clean"
+    assert rows[0]["payment_status"] in ("—", "Awaiting Payment", "On Hold", "Paid")
+
+
+@pytest.mark.asyncio
+async def test_document_matrix_flags_exception(client: AsyncClient, db_session: AsyncSession) -> None:
+    db_session.add(
+        Invoice(
+            org_id=1,
+            vendor="Risky Vendor",
+            status=InvoiceStatus.EXCEPTION,
+            evaluation_status="needs_review",
+            currency="AUD",
+            file_hash="matrix-exc",
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/matrix?page=1&page_size=100")
+    assert res.status_code == 200
+    row = next(r for r in res.json()["data"] if r["invoice"]["vendor"] == "Risky Vendor")
+    assert row["flag"] == "Anomaly Detected"
+    assert row["payment_status"] == "On Hold"
 
 
 @pytest.mark.asyncio

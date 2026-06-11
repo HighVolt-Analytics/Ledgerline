@@ -1,16 +1,13 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { JournalExportTab } from "@/components/ledger-link/JournalExportTab";
 import { LedgerExportTable } from "@/components/ledger-link/LedgerExportTable";
 import { LedgerOverview } from "@/components/ledger-link/LedgerOverview";
-import {
-  LEDGER_BILLS,
-  LEDGER_EXPENSES,
-  LEDGER_INVOICES,
-  LEDGER_PAYMENTS,
-  LEDGER_PURCHASES,
-} from "@/lib/v4MockData";
+import { PageLoader } from "@/components/PageLoader";
+import { useAuth } from "@/context/AuthContext";
+import { useLedgerLink } from "@/hooks/useLedgerLink";
+import { mapReconciliationOverview } from "@/lib/reconciliation";
 
 const LL_TABS = [
   { value: "overview", label: "Overview", testid: "tab-ll-overview" },
@@ -24,6 +21,53 @@ const LL_TABS = [
 
 export function LedgerLinkPage() {
   const [tab, setTab] = useState("overview");
+  const { user } = useAuth();
+  const { data, isLoading, error } = useLedgerLink(Boolean(user));
+
+  const recon = useMemo(
+    () => (data?.overview ? mapReconciliationOverview(data.overview) : null),
+    [data?.overview]
+  );
+  const currency = data?.overview.base_currency ?? "AUD";
+  const exports = data?.exports;
+
+  if (!user) {
+    return (
+      <div>
+        <PageHeader
+          title="Ledger Link"
+          subtitle="Reconcile double-entry postings, then export or push to your accounting system."
+        />
+        <p className="text-sm text-muted-foreground">Sign in to view ledger link data.</p>
+      </div>
+    );
+  }
+
+  if (isLoading && !data) {
+    return (
+      <div>
+        <PageHeader
+          title="Ledger Link"
+          subtitle="Reconcile double-entry postings, then export or push to your accounting system."
+        />
+        <PageLoader label="Loading ledger link…" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <PageHeader
+          title="Ledger Link"
+          subtitle="Reconcile double-entry postings, then export or push to your accounting system."
+        />
+        <p className="text-sm text-destructive">
+          {error instanceof Error ? error.message : "Failed to load ledger link"}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -35,25 +79,25 @@ export function LedgerLinkPage() {
       <PageTabs value={tab} onChange={setTab} className="flex-wrap h-auto" tabs={LL_TABS} />
 
       <PageTabPanel value="overview" active={tab} className="mt-4">
-        <LedgerOverview />
+        <LedgerOverview recon={recon} loading={isLoading} currency={currency} />
       </PageTabPanel>
       <PageTabPanel value="invoices" active={tab} className="mt-4">
-        <LedgerExportTable title="Invoices" rows={LEDGER_INVOICES} />
+        <LedgerExportTable title="Invoices" rows={exports?.invoices ?? []} currency={currency} />
       </PageTabPanel>
       <PageTabPanel value="bills" active={tab} className="mt-4">
-        <LedgerExportTable title="Bills" rows={LEDGER_BILLS} />
+        <LedgerExportTable title="Bills" rows={exports?.bills ?? []} currency={currency} />
       </PageTabPanel>
       <PageTabPanel value="expenses" active={tab} className="mt-4">
-        <LedgerExportTable title="Expenses" rows={LEDGER_EXPENSES} />
+        <LedgerExportTable title="Expenses" rows={exports?.expenses ?? []} currency={currency} />
       </PageTabPanel>
       <PageTabPanel value="purchases" active={tab} className="mt-4">
-        <LedgerExportTable title="Purchases" rows={LEDGER_PURCHASES} />
+        <LedgerExportTable title="Purchases" rows={exports?.purchases ?? []} currency={currency} />
       </PageTabPanel>
       <PageTabPanel value="payments" active={tab} className="mt-4">
-        <LedgerExportTable title="Payments" rows={LEDGER_PAYMENTS} />
+        <LedgerExportTable title="Payments" rows={exports?.payments ?? []} currency={currency} />
       </PageTabPanel>
       <PageTabPanel value="export" active={tab} className="mt-4">
-        <JournalExportTab />
+        <JournalExportTab exports={exports} currency={currency} />
       </PageTabPanel>
     </div>
   );

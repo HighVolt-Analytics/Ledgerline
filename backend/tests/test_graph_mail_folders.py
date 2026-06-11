@@ -37,7 +37,13 @@ async def test_finalize_preskip_moves_exception(
 ) -> None:
     moves: list[tuple[str, str]] = []
 
-    def fake_move(message_id: str, outcome: str, *, mailbox_email: str) -> bool:
+    def fake_move(
+        message_id: str,
+        outcome: str,
+        *,
+        mailbox_email: str,
+        access_token: str | None = None,
+    ) -> bool:
         moves.append((message_id, outcome))
         return True
 
@@ -68,7 +74,7 @@ def test_move_falls_back_to_mark_read_when_disabled(monkeypatch: pytest.MonkeyPa
     )
     monkeypatch.setattr(
         "app.services.graph_mail_folders.mark_message_read",
-        lambda mid, mailbox_email: marked.append(mid) or True,
+        lambda mid, mailbox_email, access_token=None: marked.append(mid) or True,
     )
 
     assert move_message_to_folder(

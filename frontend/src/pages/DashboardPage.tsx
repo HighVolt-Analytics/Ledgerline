@@ -21,6 +21,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useDashboardOverview } from "@/hooks/useDashboardOverview";
 import { axisMoney, currencySymbol, formatDuration, money, toNumber } from "@/lib/format";
 import { toV3SparkSeries } from "@/lib/kpiSpark";
+import { vaultInvoiceLink } from "@/lib/vault";
 import {
   buildMonthsForYear,
   buildReconYears,
@@ -344,6 +345,7 @@ export function DashboardPage() {
 
   const activityFeed = activity.slice(0, 10).map((a) => ({
     id: String(a.id),
+    invoiceId: a.invoice_id,
     label: activityLabel(a.event, a.vendor, a.invoice_id),
     time: relativePollTime(a.created_at),
   }));
@@ -580,7 +582,17 @@ export function DashboardPage() {
             {activityFeed.map((item) => (
               <li key={item.id} className="flex items-center gap-2 text-sm">
                 <CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--chart-1))] shrink-0" />
-                <span className="truncate flex-1">{item.label}</span>
+                {item.invoiceId != null ? (
+                  <Link
+                    to={vaultInvoiceLink(item.invoiceId)}
+                    className="truncate flex-1 hover:text-primary hover:underline"
+                    title="Open document in Vault"
+                  >
+                    {item.label}
+                  </Link>
+                ) : (
+                  <span className="truncate flex-1">{item.label}</span>
+                )}
                 <span className="text-xs text-muted-foreground tnum shrink-0">{item.time}</span>
               </li>
             ))}

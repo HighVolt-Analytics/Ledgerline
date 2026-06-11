@@ -17,9 +17,11 @@ from app.services.vault_paths import (
     build_vault_tree,
     build_virtual_path,
     filename_from_stored,
+    vault_book_folder,
     vault_file_name,
     vault_month,
     vault_org_folder,
+    vault_po_reference_label,
     vault_vendor_folder,
     vault_year,
 )
@@ -30,7 +32,7 @@ async def get_vault_tree_for_org(
     *,
     org_id: int,
 ) -> VaultTreeResponse:
-    """Return org → vendor → year → month tree for stored invoice files."""
+    """Return org → book → vendor → year → month tree for stored invoice files."""
     org = await session.get(Organisation, org_id)
     org_slug = await get_org_slug(session, org_id)
     org_name = org.name if org else None
@@ -52,36 +54,51 @@ async def get_vault_tree_for_org(
 
     for inv in rows:
         original = filename_from_stored(inv.raw_file_path)
+        book = vault_book_folder(inv.route_target)
         vendor = vault_vendor_folder(inv.vendor, inv.storage_vendor_slug)
         year = vault_year(inv.invoice_date)
         month = vault_month(inv.invoice_date)
+        po_label = vault_po_reference_label(inv.po_reference)
         file_name = vault_file_name(
-            inv.invoice_no, inv.id, inv.invoice_date, original
+            inv.invoice_no,
+            inv.id,
+            inv.invoice_date,
+            original,
+            purchase_document_type=inv.purchase_document_type,
+            po_reference=inv.po_reference,
         )
         virtual_path = build_virtual_path(
             org_slug,
             org_name=org_name,
+            route_target=inv.route_target,
             vendor_name=inv.vendor,
             storage_vendor_slug=inv.storage_vendor_slug,
             invoice_id=inv.id,
             invoice_no=inv.invoice_no,
             invoice_date=inv.invoice_date,
             original_filename=original,
+            po_reference=inv.po_reference,
+            purchase_document_type=inv.purchase_document_type,
         )
         has_file = has_stored_path(inv.raw_file_path)
         entry = {
             "org": org_folder,
+            "book": book,
             "vendor": vendor,
             "year": year,
             "month": month,
+            "po_folder": po_label or "",
         }
         files.append(
             VaultFileEntry(
                 invoice_id=inv.id,
                 org=org_folder,
+                book=book,
                 vendor=vendor,
                 year=year,
                 month=month,
+                po_folder=po_label,
+                purchase_document_type=inv.purchase_document_type,
                 file_name=file_name,
                 virtual_path=virtual_path,
                 blob_path=inv.raw_file_path,

@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/cn";
 import { fmtAud } from "@/lib/v4MockData";
+import { nextRulePriority } from "@/lib/rulePriority";
 import type { TeamExpenseRule } from "@/lib/v4RuleBookTypes";
 import { LEDGER_ACCOUNTS, TEAM_CHANNELS } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
@@ -86,6 +87,7 @@ export function TeamExpensesRulesTab({
         id,
         name: "New team expense rule",
         enabled: true,
+        priority: nextRulePriority(rules),
         matchOn: { channelEquals: "Any" },
         postTo: { ledger: LEDGER_ACCOUNTS[0], subLedger: "" },
         policy: { requireReceipt: true, receiptThreshold: 25, autoApproveBelow: 30 },

@@ -1,6 +1,6 @@
 """Approval queue — invoices needing human review (exceptions)."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,8 @@ from app.services.approval_service import (
     request_approval,
 )
 from app.services.file_storage import stored_file_available
+from app.services.privilege_service import require_privilege
+from app.workers.tasks import process_invoice_background
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -62,15 +64,17 @@ async def list_approvals(
 @router.post("/{invoice_id}/approve", response_model=ApiEnvelope[InvoiceResponse])
 async def approve_invoice(
     invoice_id: int,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
     """
     Approve an exception/rejected invoice for reprocessing.
 
-    Restores rejected blobs to invoice/ layout when needed, then resets to pending.
-    Call POST /api/process/trigger to run the pipeline.
+    Restores rejected blobs to invoice/ layout when needed, resets to pending,
+    then queues the invoice pipeline for this row.
     """
+    require_privilege(ctx, "Approve")
     inv = await db.get(Invoice, invoice_id)
     if not inv or inv.org_id != ctx.org_id:
         raise HTTPException(404, "Invoice not found")
@@ -87,6 +91,7 @@ async def approve_invoice(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    background_tasks.add_task(process_invoice_background, invoice_id)
     return ApiEnvelope(data=_to_response(inv))
 
 
@@ -102,6 +107,7 @@ async def reject_invoice_route(
     Sets status to rejected and moves the stored file to
     rejected/{org}/{vendor}/{year}/{month}/ in blob storage.
     """
+    require_privilege(ctx, "Reject")
     inv = await db.get(Invoice, invoice_id)
     if not inv or inv.org_id != ctx.org_id:
         raise HTTPException(404, "Invoice not found")
@@ -138,6 +144,7 @@ async def permanently_delete_invoice_route(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
     """Permanently delete a rejected or duplicate-skipped invoice and its stored file."""
+    require_privilege(ctx, "Reject")
     inv = await db.get(Invoice, invoice_id)
     if not inv or inv.org_id != ctx.org_id:
         raise HTTPException(404, "Invoice not found")

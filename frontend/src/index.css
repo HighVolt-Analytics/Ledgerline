@@ -555,6 +555,10 @@ input.app-numeric-input {
   .invoice-drawer-panel.invoice-drawer-panel--sheet {
     max-width: 28rem;
   }
+
+  .invoice-drawer-panel.invoice-drawer-panel--purchase {
+    max-width: 42rem;
+  }
 }
 
 /* Wider on desktop: ~88% of main workspace, capped for readability */
@@ -821,5 +825,18 @@ input.app-numeric-input {
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
+  }
+}
+
+/* Vault files tab — folders left, file list right (precompiled Tailwind has no 300px grid token) */
+.vault-explorer-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 1024px) {
+  .vault-explorer-grid {
+    grid-template-columns: 300px minmax(0, 1fr);
   }
 }

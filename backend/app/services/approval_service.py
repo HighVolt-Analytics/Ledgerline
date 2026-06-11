@@ -88,6 +88,7 @@ async def reject_invoice(
             storage_vendor_slug=inv.storage_vendor_slug,
             invoice_no=inv.invoice_no,
             invoice_date=inv.invoice_date,
+            route_target=inv.route_target,
         )
         if new_path != inv.raw_file_path:
             inv.raw_file_path = new_path
@@ -151,6 +152,7 @@ async def approve_invoice_for_reprocess(
             vendor_name=inv.vendor,
             invoice_no=inv.invoice_no,
             invoice_date=inv.invoice_date,
+            route_target=inv.route_target,
         )
 
     await reset_invoice_for_reprocess(session, inv)

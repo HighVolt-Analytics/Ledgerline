@@ -32,12 +32,20 @@ def _config():
     return validate_rule_book_config_payload(load_rule_book_config_dict(1))
 
 
+def test_rule_match_reason_avoids_doubled_prefix() -> None:
+    from app.services.rule_book_mapper import _rule_match_reason
+
+    assert _rule_match_reason("Expense rule", "Expense rule: Telstra") == "Expense rule: Telstra"
+    assert _rule_match_reason("Expense rule", "Telstra") == "Expense rule: Telstra"
+
+
 def test_purchase_rule_maps_before_fallback() -> None:
     inv = Invoice(
         org_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",
+        route_target="Purchase Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
@@ -53,6 +61,7 @@ def test_expense_rule_maps_from_line_descriptions() -> None:
         org_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-999",
+        route_target="Expenses Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
@@ -83,6 +92,7 @@ def test_atlassian_maps_via_expense_rule() -> None:
         org_id=1,
         vendor="Atlassian Pty Ltd",
         invoice_no="ATL-2026-55721",
+        route_target="Expenses Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
@@ -97,6 +107,7 @@ def test_marketing_po_uses_purchase_rule() -> None:
         vendor="Google Australia Pty Ltd",
         invoice_no="GOOG-AU-99102",
         po_reference="PO-MKT-2026-014",
+        route_target="Purchase Management",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )

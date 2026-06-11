@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.organisation import Organisation
+from app.services.mailbox_oauth_service import mark_application_mailbox
 
 
 async def get_org_by_id(session: AsyncSession, org_id: int) -> Organisation | None:
@@ -55,15 +56,17 @@ async def ensure_connected_mailbox(
         )
     ).scalar_one_or_none()
     if existing:
+        if existing.auth_type != "delegated":
+            mark_application_mailbox(existing)
         return
-    session.add(
-        ConnectedMailbox(
-            org_id=org_id,
-            email=mailbox,
-            display_name=display_name or mailbox,
-            is_active=True,
-        )
+    row = ConnectedMailbox(
+        org_id=org_id,
+        email=mailbox,
+        display_name=display_name or mailbox,
+        is_active=True,
     )
+    mark_application_mailbox(row)
+    session.add(row)
     await session.flush()
 
 

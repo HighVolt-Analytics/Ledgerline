@@ -26,4 +26,9 @@ export const queryKeys = {
   pendingVendors: ["pending-vendors"] as const,
   routedInvoices: (routeTarget: string) => ["invoices", "routed", routeTarget] as const,
   payablesQueue: ["invoices", "payables"] as const,
+  purchases: ["purchases"] as const,
+  payments: ["payments"] as const,
+  walletSummary: ["payments", "wallet-summary"] as const,
+  ledgerLink: ["ledger-link"] as const,
+  billing: ["billing"] as const,
 };

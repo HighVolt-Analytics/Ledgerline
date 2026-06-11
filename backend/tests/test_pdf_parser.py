@@ -16,6 +16,7 @@ from app.services.pdf_parser import (
     parse_text_fields,
     should_use_document_intelligence,
 )
+from app.services.vendor_name_utils import is_plausible_vendor_name, pick_best_vendor_name
 
 
 SAMPLE_TEXT = """
@@ -94,6 +95,52 @@ def test_parse_invoice_local_only_without_di(
     assert local_parse_confident(result.data)
 
 
+PO_TEXT = """
+PURCHASE ORDER
+Sysco Foods Australia Pty Ltd
+ABN 51 824 753 556
+Purchase Order Number: PO-MKT-2026-TEST
+PO Date: 09 June 2026
+Description Qty Unit Price Amount
+Fresh produce delivery 10 50.00 500.00
+Subtotal AUD 500.00
+GST 10% 0.00
+TOTAL AUD 500.00
+"""
+
+GRN_TEXT = """
+GOODS RECEIPT NOTE
+Sysco Foods Australia Pty Ltd
+GRN Number: GRN-PO-MKT-2026-TEST
+PO Reference: PO-MKT-2026-TEST
+Receipt Date: 10 June 2026
+Description Qty Received Condition
+Fresh produce delivery 10 Good
+"""
+
+
+def test_parse_po_document_fields() -> None:
+    fields = parse_text_fields(PO_TEXT)
+    assert fields["vendor"] == "Sysco Foods Australia Pty Ltd"
+    assert fields["po_reference"] == "PO-MKT-2026-TEST"
+    assert fields["abn"] == "51824753556"
+    assert fields["gst"] == Decimal("0.00")
+    assert fields["subtotal"] == Decimal("500.00")
+    assert fields["total"] == Decimal("500.00")
+    assert fields["invoice_date"] == date(2026, 6, 9)
+    assert len(fields["line_items"]) == 1
+    assert fields["line_items"][0].description == "Fresh produce delivery"
+
+
+def test_parse_grn_document_fields() -> None:
+    fields = parse_text_fields(GRN_TEXT)
+    assert fields["vendor"] == "Sysco Foods Australia Pty Ltd"
+    assert fields["po_reference"] == "PO-MKT-2026-TEST"
+    assert fields["invoice_date"] == date(2026, 6, 10)
+    assert len(fields["line_items"]) == 1
+    assert fields["line_items"][0].qty == Decimal("10")
+
+
 def test_parse_invoice_uses_di_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -130,3 +177,83 @@ def test_parse_invoice_uses_di_fallback(
     assert result.source == "azure_di"
     assert result.data.invoice_no == "DI-9001"
     assert result.data.vendor == "Azure Vendor Pty Ltd"
+
+
+AZURE_INVOICE_TEXT = """
+Microsoft Azure TAX INVOICE
+1 Epping Road, North Ryde NSW 2113
+ABN: 31 002 882 614
+BILL TO Invoice No MSFT-AZ-AU-77192
+Highvolt Pty Ltd Invoice Date 2026-05-18
+Sydney NSW, Australia Due Date 2026-06-17
+ABN: 99 888 777 666
+Currency AUD
+Cost Centre ENG-PLATFORM
+DESCRIPTION QTY UNIT PRICE GST AMOUNT
+Azure Cloud Compute - May 2026 1 $1,820.00 $182.00 $2,002.00
+Azure Blob Storage - May 2026 1 $260.00 $26.00 $286.00
+Subtotal $2,080.00
+GST (10%) $208.00
+Total Due $2,288.00
+Payment Terms: Net 30 days from invoice date. Please reference the invoice number with payment. GST is charged at the prevailing
+Australian rate of 10%.
+"""
+
+
+def test_parse_azure_invoice_vendor_from_header() -> None:
+    fields = parse_text_fields(AZURE_INVOICE_TEXT)
+    assert fields["vendor"] == "Microsoft Azure"
+    assert fields["abn"] == "31002882614"
+
+
+def test_rejects_payment_footer_as_vendor_name() -> None:
+    footer = (
+        "invoice date. Please reference the invoice number with payment. "
+        "GST is charged at the prevailing Australian rate of 10%."
+    )
+    assert not is_plausible_vendor_name(footer)
+
+
+def test_pick_best_vendor_prefers_plausible_local_over_di_footer() -> None:
+    di_footer = (
+        "invoice date. Please reference the invoice number with payment. "
+        "GST is charged a"
+    )
+    assert pick_best_vendor_name(di_footer, "Microsoft Azure") == "Microsoft Azure"
+
+
+def test_parse_azure_invoice_merges_sane_vendor_over_di_footer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AZURE_DI_ENDPOINT", "https://test.cognitiveservices.azure.com")
+    monkeypatch.setenv("AZURE_DI_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    pdf_path = tmp_path / "azure.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+
+    monkeypatch.setattr(
+        "app.services.pdf_parser.extract_pdf_text",
+        lambda _path: AZURE_INVOICE_TEXT,
+    )
+
+    di_data = InvoiceData(
+        vendor=(
+            "invoice date. Please reference the invoice number with payment. "
+            "GST is charged a"
+        ),
+        abn="31002882614",
+        invoice_no="MSFT-AZ-AU-77192",
+        invoice_date=date(2026, 5, 18),
+        subtotal=Decimal("2080.00"),
+        gst=Decimal("208.00"),
+        total=Decimal("2288.00"),
+    )
+    monkeypatch.setattr(
+        "app.services.pdf_parser.parse_with_document_intelligence",
+        lambda _path: di_data,
+    )
+
+    result = parse_invoice(pdf_path)
+    assert result.data.vendor == "Microsoft Azure"

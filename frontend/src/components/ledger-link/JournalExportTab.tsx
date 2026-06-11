@@ -1,26 +1,60 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, Download, Upload } from "lucide-react";
+import type { LedgerLinkExports } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
-import {
-  allLedgerExportRows,
-  EXPORT_HISTORY,
-  EXPORT_TARGETS,
-  fmtAud,
-} from "@/lib/v4MockData";
+import { money } from "@/lib/format";
+import { EXPORT_TARGETS } from "@/lib/v4MockData";
 import { ExportStatusBadge } from "./ExportStatusBadge";
 
-export function JournalExportTab() {
+type ExportPreviewRow = {
+  id: string;
+  group: string;
+  doc: string;
+  date: string;
+  party: string;
+  debit: string;
+  credit: string;
+  amount: number;
+  status: string;
+};
+
+const GROUPS: { key: keyof LedgerLinkExports; label: string }[] = [
+  { key: "invoices", label: "Invoices" },
+  { key: "bills", label: "Bills" },
+  { key: "expenses", label: "Expenses" },
+  { key: "purchases", label: "Purchases" },
+  { key: "payments", label: "Payments" },
+];
+
+function flattenExports(exports?: LedgerLinkExports): ExportPreviewRow[] {
+  if (!exports) return [];
+  return GROUPS.flatMap(({ key, label }) =>
+    (exports[key] ?? []).map((row) => ({
+      ...row,
+      group: label,
+    }))
+  );
+}
+
+export function JournalExportTab({
+  exports,
+  currency = "AUD",
+}: {
+  exports?: LedgerLinkExports;
+  currency?: string;
+}) {
   const [target, setTarget] = useState<string>("Xero");
   const [pushing, setPushing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [history, setHistory] = useState(EXPORT_HISTORY);
-  const rows = useMemo(
-    () => allLedgerExportRows().flatMap((g) => g.rows.map((r) => ({ ...r, group: g.group }))),
-    []
-  );
+  const [history, setHistory] = useState<
+    { id: string; ts: string; target: string; count: number; user: string; status: string }[]
+  >([]);
+  const fmt = (v: number) => money(v, currency);
+
+  const rows = useMemo(() => flattenExports(exports), [exports]);
   const pending = rows.filter((r) => r.status === "Pending Export").length;
   const total = rows.reduce((s, r) => s + r.amount, 0);
 
@@ -53,10 +87,10 @@ export function JournalExportTab() {
           setHistory((h) => [
             {
               id: `ex-${Date.now()}`,
-              ts: "2026-05-30 08:30",
+              ts: new Date().toISOString().slice(0, 16).replace("T", " "),
               target,
               count: pending,
-              user: "Marcus Webb",
+              user: "Current user",
               status: "Success",
             },
             ...h,
@@ -99,7 +133,7 @@ export function JournalExportTab() {
             <div className="text-xs text-muted-foreground">
               {rows.length} journal lines · {pending} pending
             </div>
-            <div className="tnum font-semibold">Total {fmtAud(total)}</div>
+            <div className="tnum font-semibold">Total {fmt(total)}</div>
           </div>
         </div>
 
@@ -107,7 +141,7 @@ export function JournalExportTab() {
           <Button size="sm" variant="outline" onClick={downloadCsv} data-testid="button-download-csv">
             <Download className="h-4 w-4 mr-1.5" /> Download CSV
           </Button>
-          <Button size="sm" onClick={pushToTarget} disabled={pushing} data-testid="button-push">
+          <Button size="sm" onClick={pushToTarget} disabled={pushing || rows.length === 0} data-testid="button-push">
             <Upload className="h-4 w-4 mr-1.5" />
             {pushing ? "Pushing…" : `Push to ${target}`}
           </Button>
@@ -147,18 +181,26 @@ export function JournalExportTab() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className="row-band border-b border-border/60">
-                  <td className="px-4 py-2 text-muted-foreground">{row.group}</td>
-                  <td className="px-3 py-2 font-medium">{row.doc}</td>
-                  <td className="px-3 py-2">{row.debit}</td>
-                  <td className="px-3 py-2">{row.credit}</td>
-                  <td className="px-3 py-2 text-right tnum">{fmtAud(row.amount)}</td>
-                  <td className="px-4 py-2">
-                    <ExportStatusBadge status={row.status} />
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                    No journal lines ready for export yet.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                rows.map((row) => (
+                  <tr key={row.id} className="row-band border-b border-border/60">
+                    <td className="px-4 py-2 text-muted-foreground">{row.group}</td>
+                    <td className="px-3 py-2 font-medium">{row.doc}</td>
+                    <td className="px-3 py-2">{row.debit}</td>
+                    <td className="px-3 py-2">{row.credit}</td>
+                    <td className="px-3 py-2 text-right tnum">{fmt(row.amount)}</td>
+                    <td className="px-4 py-2">
+                      <ExportStatusBadge status={row.status} />
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

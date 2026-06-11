@@ -188,17 +188,13 @@ export function InboxPage() {
     setDrawerOpen(true);
   };
 
-  async function connectMailbox(data: {
+  async function sendMailboxInvite(body: {
     email: string;
-    nickname: string;
-    provider: string;
+    display_name?: string;
+    message?: string;
   }) {
-    const displayName =
-      data.provider === "Gmail"
-        ? data.nickname
-        : `${data.nickname} (${data.provider})`;
-    await api.addMailbox(data.email, displayName);
-    await load();
+    await api.createMailboxConnectionRequest(body);
+    setFetchNotice(`Invitation sent to ${body.email}`);
   }
 
   function applyMailboxUpdate(updated: ConnectedMailbox) {
@@ -294,17 +290,28 @@ export function InboxPage() {
         title="Inbox"
         subtitle="Documents captured from connected mailboxes, uploads and the vault."
         actions={
-          <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1" />
-            Add mailbox
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              disabled={uploading}
+              onClick={() => uploadInputRef.current?.click()}
+              data-testid="button-upload-doc"
+            >
+              <Upload className="h-4 w-4 mr-1" />
+              {uploading ? "Uploading…" : "Upload doc"}
+            </Button>
+            <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Add mailbox
+            </Button>
+          </>
         }
       />
 
       <ConnectMailboxDialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        onConnect={connectMailbox}
+        onSendInvite={sendMailboxInvite}
       />
 
       <input
@@ -337,12 +344,20 @@ export function InboxPage() {
                   <span
                     className={cn(
                       "inline-flex items-center rounded-md border px-2.5 py-0.5 text-[10px] font-semibold shrink-0",
-                      mb.is_active
+                      mb.connection_status === "connected" && mb.is_active
                         ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
-                        : "text-muted-foreground border-border"
+                        : mb.connection_status === "error"
+                          ? "text-destructive border-destructive/40"
+                          : "text-muted-foreground border-border"
                     )}
                   >
-                    {mb.is_active ? "Active" : "Paused"}
+                    {mb.connection_status === "connected"
+                      ? mb.is_active
+                        ? "Connected"
+                        : "Paused"
+                      : mb.connection_status === "error"
+                        ? "Error"
+                        : "Disconnected"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-3 text-xs text-muted-foreground">
@@ -435,12 +450,24 @@ export function InboxPage() {
         />
       ) : (
         <Card className="overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border flex-wrap">
             <h3 className="text-sm font-semibold flex items-center gap-2">
               <Mail className="h-4 w-4 text-primary" />
               Captured documents
               <span className="text-muted-foreground tnum font-normal">({filtered.length})</span>
             </h3>
+            <div className="flex items-center gap-2 ml-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={uploading}
+                onClick={() => uploadInputRef.current?.click()}
+                data-testid="button-upload-doc-toolbar"
+              >
+                <Upload className="h-3.5 w-3.5 mr-1" />
+                {uploading ? "Uploading…" : "Upload"}
+              </Button>
             <Select
               value={source}
               onValueChange={setSource}
@@ -454,6 +481,7 @@ export function InboxPage() {
                 })),
               ]}
             />
+            </div>
           </div>
 
           <div className="overflow-x-auto">

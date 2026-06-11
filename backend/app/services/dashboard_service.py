@@ -19,8 +19,11 @@ from app.services.currency import BASE_CURRENCY, convert_to_base, sum_amounts_by
 from app.services.invoice_evaluation_service import (
     EVAL_NEEDS_REVIEW,
     EVAL_PENDING_VENDOR,
+    EVAL_UNMATCHED_EXPENSE_VENDOR,
+    ROUTE_EXPENSES,
     ROUTE_TEAM,
 )
+from app.services.payment_service import payments_queue_count as _payments_table_count
 from app.schemas.dashboard import (
     ActivityItem,
     AnomalyRow,
@@ -212,8 +215,23 @@ async def _team_expenses_queue_count(db: AsyncSession, org_id: int) -> int:
     ).scalar() or 0
 
 
+async def _business_expenses_queue_count(db: AsyncSession, org_id: int) -> int:
+    return (
+        await db.execute(
+            select(func.count(Invoice.id)).where(
+                Invoice.org_id == org_id,
+                Invoice.route_target == ROUTE_EXPENSES,
+                Invoice.status.in_(_TEAM_EXPENSE_ACTIONABLE),
+            )
+        )
+    ).scalar() or 0
+
+
 async def _payments_queue_count(db: AsyncSession, org_id: int) -> int:
-    """Processed invoices with due dates — open payables for the payments queue."""
+    """Open payment workflow rows (queue, awaiting, scheduled)."""
+    count = await _payments_table_count(db, org_id)
+    if count > 0:
+        return count
     return (
         await db.execute(
             select(func.count(Invoice.id)).where(
@@ -457,6 +475,7 @@ async def build_nav_badges(db: AsyncSession, *, org_id: int) -> NavBadges:
         inbox_count=inbox_count,
         pending_approval=pending_approval,
         team_expenses_count=await _team_expenses_queue_count(db, org_id),
+        business_expenses_count=await _business_expenses_queue_count(db, org_id),
         payments_queue_count=await _payments_queue_count(db, org_id),
         integrations_connected=_integrations_count(mailboxes_mapped),
     )
@@ -962,7 +981,9 @@ async def _routing_anomaly_rows(
             select(Invoice)
             .where(
                 Invoice.org_id == org_id,
-                Invoice.evaluation_status.in_([EVAL_PENDING_VENDOR, EVAL_NEEDS_REVIEW]),
+                Invoice.evaluation_status.in_(
+                    [EVAL_PENDING_VENDOR, EVAL_NEEDS_REVIEW, EVAL_UNMATCHED_EXPENSE_VENDOR]
+                ),
                 Invoice.status.notin_(_TERMINAL_ANOMALY_STATUSES),
             )
             .order_by(Invoice.created_at.desc())
@@ -979,6 +1000,14 @@ async def _routing_anomaly_rows(
                 AnomalyRow(
                     tag="Pending vendor",
                     description=f"{label} · {vendor} — register vendor in Rule Book",
+                    invoice_id=inv.id,
+                )
+            )
+        elif inv.evaluation_status == EVAL_UNMATCHED_EXPENSE_VENDOR:
+            rows.append(
+                AnomalyRow(
+                    tag="Unmatched vendor",
+                    description=f"{label} · {vendor} — under hold threshold; register when convenient",
                     invoice_id=inv.id,
                 )
             )
@@ -1075,7 +1104,7 @@ async def fetch_anomalies(
             break
         if inv.id in seen_ids:
             continue
-        if not inv.po_reference:
+        if not inv.po_reference and (inv.route_target or "").strip() != ROUTE_TEAM:
             rows.append(
                 AnomalyRow(
                     tag="Missing PO",

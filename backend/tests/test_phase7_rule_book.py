@@ -26,16 +26,33 @@ from app.services.team_expense_service import record_team_expense_processed
 
 @pytest.fixture
 def capture_config() -> RuleBookConfigPayload:
-    template = Path(__file__).resolve().parents[1] / "app" / "rule_book_config.json"
+    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
     return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
 
 
-def test_team_expense_rule_maps_ledger(capture_config: RuleBookConfigPayload) -> None:
+def test_expense_rule_wins_over_team_for_shared_vendor(capture_config: RuleBookConfigPayload) -> None:
+    """Expenses route evaluates expense book only (team book is route-gated)."""
     inv = Invoice(
         org_id=1,
         vendor="Uber Australia",
         invoice_no="UBER-001",
         total=45.0,
+        route_target="Expenses Management",
+        status=InvoiceStatus.MAPPING,
+        currency="AUD",
+    )
+    hit = resolve_config_mapping(inv, capture_config)
+    assert hit.rule_type == "Expense rule"
+    assert hit.mapping.account_name == "Travel Expense"
+
+
+def test_team_expense_rule_maps_ledger(capture_config: RuleBookConfigPayload) -> None:
+    inv = Invoice(
+        org_id=1,
+        vendor="Ola Cabs",
+        invoice_no="OLA-001",
+        total=45.0,
+        route_target="Team Expenses",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )

@@ -10,6 +10,7 @@ from typing import Any
 from app.config import get_settings
 from app.services.invoice_data import InvoiceData, ParsedLineItem
 from app.services.line_items_parser import parse_line_items_from_di_items
+from app.services.vendor_name_utils import normalize_vendor_name
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -94,7 +95,7 @@ def _map_di_document(doc: Any) -> InvoiceData:
 
     vendor = get("VendorName") or get("VendorAddressRecipient")
     if isinstance(vendor, str):
-        vendor = vendor.strip() or None
+        vendor = normalize_vendor_name(vendor.strip()) or None
 
     invoice_no = get("InvoiceId")
     if isinstance(invoice_no, str):

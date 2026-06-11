@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Download } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -17,11 +16,11 @@ import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { ChartTooltip } from "@/components/ChartTooltip";
 import { ExportWorkbookDialog } from "@/components/ExportWorkbookDialog";
+import { ReportDownloadMenu } from "@/components/reports/ReportDownloadMenu";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { YearMonthPeriodPicker } from "@/components/YearMonthPeriodPicker";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useReportDocuments, useReportsAnalytics } from "@/hooks/useReportsAnalytics";
 import { axisMoney, currencySymbol, money, toNumber } from "@/lib/format";
@@ -30,6 +29,7 @@ import {
   buildReconYears,
   yearFromPeriod,
 } from "@/lib/reconciliation";
+import { monthToDateRange } from "@/lib/reportExports";
 import {
   REPORT_CHART_COLORS,
   defaultReportPeriod,
@@ -198,6 +198,23 @@ export function ReportsPage() {
     />
   );
 
+  const headerActions = (
+    <ReportDownloadMenu
+      month={month}
+      analytics={analytics}
+      periodSelector={periodSelector}
+      disabled={isLoading}
+      onCustomWorkbook={() => {
+        const range = monthToDateRange(month);
+        setDateFrom(range.dateFrom);
+        setDateTo(range.dateTo);
+        setExportMode("range");
+        setExportOpen(true);
+      }}
+      onToast={setToast}
+    />
+  );
+
   if (isLoading) {
     return (
       <div>
@@ -231,7 +248,7 @@ export function ReportsPage() {
         <PageHeader
           title="Reports"
           subtitle="Spend analytics, GL distribution and tax summary."
-          actions={periodSelector}
+          actions={headerActions}
         />
         <EmptyState
           title="No processed invoices for this period"
@@ -246,19 +263,7 @@ export function ReportsPage() {
       <PageHeader
         title="Reports"
         subtitle="Spend analytics, GL distribution and tax summary."
-        actions={
-          <div className="flex gap-2">
-            {periodSelector}
-            <Button
-              variant="outline"
-              onClick={() => setExportOpen(true)}
-              data-testid="button-export"
-            >
-              <Download className="h-4 w-4 mr-1" />
-              Export workbook
-            </Button>
-          </div>
-        }
+        actions={headerActions}
       />
 
       {toast && (

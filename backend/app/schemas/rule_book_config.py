@@ -66,6 +66,7 @@ class PurchaseRule(BaseModel):
     id: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     enabled: bool = True
+    priority: int = Field(default=100, ge=1)
     match_on: PurchaseMatchOn = Field(default_factory=PurchaseMatchOn)
     post_to: PostToAccounts
     matched_count: int = Field(default=0, ge=0)
@@ -82,6 +83,7 @@ class ExpenseRule(BaseModel):
     id: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     enabled: bool = True
+    priority: int = Field(default=100, ge=1)
     match_on: ExpenseMatchOn = Field(default_factory=ExpenseMatchOn)
     post_to: PostToAccounts
     matched_count: int = Field(default=0, ge=0)
@@ -105,6 +107,7 @@ class TeamExpenseRule(BaseModel):
     id: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     enabled: bool = True
+    priority: int = Field(default=100, ge=1)
     match_on: TeamExpenseMatchOn = Field(default_factory=TeamExpenseMatchOn)
     post_to: PostToAccounts
     policy: TeamExpensePolicy = Field(default_factory=TeamExpensePolicy)
@@ -154,6 +157,11 @@ class VendorDetectionWeights(BaseModel):
 class VendorDetectionConfig(BaseModel):
     weights: VendorDetectionWeights = Field(default_factory=VendorDetectionWeights)
     threshold: int = Field(default=70, ge=0, le=100)
+    expense_vendor_hold_above: float = Field(
+        default=500,
+        ge=0,
+        description="Expenses Management: hold unknown vendors only above this amount (AUD)",
+    )
 
 
 class BudgetCategoryCap(BaseModel):
@@ -281,7 +289,20 @@ class RuleBookRulesPayload(BaseModel):
     legacy_cascade: LegacyCascadeConfig = Field(default_factory=LegacyCascadeConfig)
 
 
+def _backfill_category_rule_priorities(data: dict[str, Any]) -> dict[str, Any]:
+    """Assign priority 100, 110, … when missing (architecture §2.2)."""
+    for key in ("purchase_rules", "expense_rules", "team_expense_rules"):
+        rules = data.get(key)
+        if not isinstance(rules, list):
+            continue
+        for index, rule in enumerate(rules):
+            if isinstance(rule, dict) and "priority" not in rule:
+                rule["priority"] = 100 + index * 10
+    return data
+
+
 def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPayload:
     if isinstance(data, dict):
         data = _migrate_root_legacy_fields(dict(data))
+        data = _backfill_category_rule_priorities(data)
     return RuleBookConfigPayload.model_validate(data)

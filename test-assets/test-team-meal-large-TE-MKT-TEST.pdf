@@ -1,0 +1,63 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 560 >>
+stream
+BT
+/F1 11 Tf
+50 750 Td
+14 TL
+(TAX INVOICE) Tj
+T*
+(Riverside Cafe Pty Ltd) Tj
+T*
+(ABN 83 147 562 901) Tj
+T*
+(Invoice Number: TE-MKT-TEST-002) Tj
+T*
+(Invoice Date: 09 June 2026) Tj
+T*
+() Tj
+T*
+(Description                    Qty   Unit Price    Amount) Tj
+T*
+(Site supervisor team lunch meal   1      50.00      50.00) Tj
+T*
+() Tj
+T*
+(Subtotal AUD                                    50.00) Tj
+T*
+(GST 10%                                          5.00) Tj
+T*
+(TOTAL AUD                                       55.00) Tj
+T*
+() Tj
+T*
+(Thank you for your visit.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000852 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+922
+%%EOF

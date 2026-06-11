@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import json
+
+from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
-from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
+from app.schemas.rule_book_config import EmailCaptureRule, RuleBookConfigPayload, validate_rule_book_config_payload
 from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.capture_channel import infer_capture_channel
+from app.services.po_reference import effective_po_reference
 from app.services.rule_engine import (
     EvalDocument,
     LiveEvalRow,
     build_live_evaluation,
     match_expense_rule,
     match_purchase_rule,
+    match_team_expense_rule,
 )
 
 _SKIP_STATUSES = frozenset(
@@ -40,30 +45,51 @@ def _resolve_config(
 
 
 def invoice_to_eval_document(inv: Invoice) -> EvalDocument:
-    lines = tuple(
-        (line.description or "").strip()
-        for line in inv.line_items
-        if (line.description or "").strip()
-    )
+    state = inspect(inv)
+    if "line_items" in state.unloaded:
+        lines: tuple[str, ...] = ()
+    else:
+        lines = tuple(
+            (line.description or "").strip()
+            for line in inv.line_items
+            if (line.description or "").strip()
+        )
     invoice_no = inv.invoice_no or ""
     doc_number = invoice_no or f"DOC-{inv.id:04d}"
     primary = inv.account_name or "Suspense Account"
+    doc_type = "invoice"
+    if inv.purchase_document_type == "po":
+        doc_type = "po"
+    elif inv.purchase_document_type == "grn":
+        doc_type = "grn"
+
     return EvalDocument(
         id=str(inv.id),
         doc_number=doc_number,
         invoice_no=invoice_no,
         vendor=inv.vendor or "",
         abn=inv.abn,
-        po=inv.po_reference,
+        po=effective_po_reference(inv.po_reference),
         primary_account=primary,
         lines=lines,
+        document_type=doc_type,
         email_from=inv.email_sender,
+        email_subject=inv.email_subject,
+        email_attachment_name=inv.email_attachment_name,
         capture_channel=infer_capture_channel(inv.email_sender),
+        address=inv.billing_address,
+        bank_bsb=inv.bank_bsb,
+        bank_account=inv.bank_account,
     )
 
 
 def sample_eval_documents() -> list[EvalDocument]:
-    """Fallback when the org has no invoices (demo parity with Rules UI samples)."""
+    """No synthetic samples — live eval uses real invoices only."""
+    return []
+
+
+def _legacy_sample_eval_documents() -> list[EvalDocument]:
+    """Retained for unit tests only (see tests/fixtures/rule_book_demo.json)."""
     return [
         EvalDocument(
             id="INV-001",
@@ -116,13 +142,70 @@ def sample_eval_documents() -> list[EvalDocument]:
     ]
 
 
+def _parse_matched_rule_ids(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        return [str(item) for item in data] if isinstance(data, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _email_capture_rule_from_ids(
+    matched_rule_ids: str | None,
+    rules: list[EmailCaptureRule],
+) -> EmailCaptureRule | None:
+    for token in _parse_matched_rule_ids(matched_rule_ids):
+        if not token.startswith("email:"):
+            continue
+        rule_id = token.split(":", 1)[1]
+        for rule in rules:
+            if rule.id == rule_id:
+                return rule
+    return None
+
+
+def _apply_stored_email_capture(
+    rows: list[LiveEvalRow],
+    invoices: list[Invoice],
+    config: RuleBookConfigPayload,
+) -> list[LiveEvalRow]:
+    """Live eval replays synthetic emails; show ingest-time capture from matched_rule_ids."""
+    if len(rows) != len(invoices):
+        return rows
+    out: list[LiveEvalRow] = []
+    for inv, row in zip(invoices, rows, strict=True):
+        if row.email_rule is not None:
+            out.append(row)
+            continue
+        stored = _email_capture_rule_from_ids(inv.matched_rule_ids, config.email_capture_rules)
+        if stored is None:
+            out.append(row)
+            continue
+        out.append(
+            LiveEvalRow(
+                doc=row.doc,
+                email_rule=stored,
+                email_rule_disabled=None,
+                vendor=row.vendor,
+                category_rule=row.category_rule,
+                category_rule_disabled=row.category_rule_disabled,
+                matched=row.matched,
+            )
+        )
+    return out
+
+
 def _resolve_ledger(row: LiveEvalRow, config: RuleBookConfigPayload) -> str | None:
     if not row.category_rule:
         return None
     if row.category_rule.kind == "Purchase":
         rule = match_purchase_rule(row.doc, config.purchase_rules)
-    else:
+    elif row.category_rule.kind == "Expense":
         rule = match_expense_rule(row.doc, config.expense_rules)
+    else:
+        rule = match_team_expense_rule(row.doc, config.team_expense_rules)
     return rule.post_to.ledger if rule else None
 
 
@@ -147,6 +230,7 @@ def serialize_eval_row(row: LiveEvalRow, config: RuleBookConfigPayload) -> dict:
         }
 
     category_rule = None
+    category_rule_disabled = None
     ledger = row.doc.primary_account
     if row.category_rule:
         category_rule = {
@@ -154,6 +238,11 @@ def serialize_eval_row(row: LiveEvalRow, config: RuleBookConfigPayload) -> dict:
             "kind": row.category_rule.kind,
         }
         ledger = _resolve_ledger(row, config) or ledger
+    elif row.category_rule_disabled:
+        category_rule_disabled = {
+            "label": row.category_rule_disabled.label,
+            "kind": row.category_rule_disabled.kind,
+        }
 
     return {
         "document": {
@@ -167,6 +256,7 @@ def serialize_eval_row(row: LiveEvalRow, config: RuleBookConfigPayload) -> dict:
         "email_rule_disabled": email_rule_disabled,
         "vendor_match": vendor_match,
         "category_rule": category_rule,
+        "category_rule_disabled": category_rule_disabled,
         "auto_coded": row.matched and row.category_rule is not None,
     }
 
@@ -194,14 +284,17 @@ async def evaluate_rule_book(
     stmt = stmt.limit(limit if not invoice_ids else max(len(invoice_ids), limit))
 
     invoices = (await session.execute(stmt)).scalars().all()
-    source = "invoices"
     if invoices:
+        source = "invoices"
         docs = [invoice_to_eval_document(inv) for inv in invoices]
     else:
-        source = "sample"
         docs = sample_eval_documents()
+        source = "sample" if docs else "invoices"
 
-    rows = build_live_evaluation(docs, config)
+    mailbox = get_settings().graph_mailbox.strip() or "accounts@acme-hospitality.com.au"
+    rows = build_live_evaluation(docs, config, default_mailbox=mailbox)
+    if invoices:
+        rows = _apply_stored_email_capture(rows, invoices, config)
     return {
         "source": source,
         "rows": [serialize_eval_row(row, config) for row in rows],

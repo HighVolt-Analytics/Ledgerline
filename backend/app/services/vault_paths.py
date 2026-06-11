@@ -1,4 +1,4 @@
-"""Vault folder paths — org → vendor → year → month → file (matches Vault UI)."""
+"""Vault folder paths — org → book → vendor → year → month → file (matches Vault UI)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,22 @@ from typing import Any
 
 from app.services import blob_storage
 from app.services.vendor_resolver import UNKNOWN_SLUG
+
+ROUTE_PURCHASE = "Purchase Management"
+ROUTE_EXPENSES = "Expenses Management"
+ROUTE_TEAM = "Team Expenses"
+ROUTE_VAULT = "Vault"
+ROUTE_UNROUTED = "Unrouted"
+
+_KNOWN_BOOKS = frozenset(
+    {
+        ROUTE_PURCHASE,
+        ROUTE_EXPENSES,
+        ROUTE_TEAM,
+        ROUTE_VAULT,
+        ROUTE_UNROUTED,
+    }
+)
 
 MONTH_NAMES = (
     "January",
@@ -43,6 +59,18 @@ def vault_org_folder(org_slug: str, org_name: str | None = None) -> str:
         return slug_to_pascal(org_slug)
     cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", org_name or "Organisation").strip("_")
     return cleaned or "Organisation"
+
+
+def vault_book_folder(route_target: str | None) -> str:
+    """Route-target book segment under org (architecture §2.1 destinations)."""
+    key = (route_target or "").strip()
+    if key in _KNOWN_BOOKS and key != ROUTE_UNROUTED:
+        return key
+    if key:
+        cleaned = re.sub(r'[/\\:*?"<>|]+', "", key).strip()
+        if cleaned:
+            return cleaned
+    return ROUTE_UNROUTED
 
 
 def vault_vendor_folder(
@@ -84,13 +112,43 @@ def vault_doc_number(invoice_no: str | None, invoice_id: int) -> str:
     return re.sub(r"[^a-zA-Z0-9-]+", "-", doc_no)
 
 
+def vault_po_reference_label(po_reference: str | None) -> str | None:
+    """Sanitised PO number for API metadata (not a storage folder)."""
+    ref = (po_reference or "").strip()
+    if not ref:
+        return None
+    cleaned = re.sub(r'[/\\:*?"<>|]+', "", ref).strip()
+    return cleaned or None
+
+
+# Backwards-compatible alias for callers that used folder naming.
+vault_po_folder = vault_po_reference_label
+
+
+def _purchase_doc_key(
+    po_reference: str | None,
+    invoice_no: str | None,
+    invoice_id: int,
+) -> str:
+    ref = (po_reference or "").strip()
+    if ref:
+        return vault_doc_number(ref, invoice_id)
+    return vault_doc_number(invoice_no, invoice_id)
+
+
 def vault_file_name(
     invoice_no: str | None,
     invoice_id: int,
     invoice_date: date | str | None,
     original_filename: str,
+    *,
+    purchase_document_type: str | None = None,
+    po_reference: str | None = None,
 ) -> str:
-    doc_no = vault_doc_number(invoice_no, invoice_id)
+    if purchase_document_type in ("po", "grn", "invoice"):
+        doc_no = _purchase_doc_key(po_reference, invoice_no, invoice_id)
+    else:
+        doc_no = vault_doc_number(invoice_no, invoice_id)
     if isinstance(invoice_date, date):
         date_part = invoice_date.isoformat()
     elif invoice_date:
@@ -100,31 +158,44 @@ def vault_file_name(
     suffix = Path(original_filename).suffix.lower()
     if suffix not in {".pdf", ".jpg", ".jpeg", ".png", ".docx"}:
         suffix = ".pdf"
-    return f"{doc_no}_{date_part}{suffix}"
+    prefix = ""
+    if purchase_document_type == "po":
+        prefix = "PO_"
+    elif purchase_document_type == "grn":
+        prefix = "GRN_"
+    elif purchase_document_type == "invoice":
+        prefix = "INV_"
+    return f"{prefix}{doc_no}_{date_part}{suffix}"
 
 
 def build_vault_blob_name(
     org_slug: str,
     *,
     org_name: str | None = None,
+    route_target: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
     invoice_id: int,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
     original_filename: str,
+    po_reference: str | None = None,
+    purchase_document_type: str | None = None,
 ) -> str:
-    """Azure blob path: invoice/{org}/{vendor}/{year}/{month}/{file}."""
+    """Azure blob path: invoice/{org}/{book}/{vendor}/{year}/{month}/{file}."""
     return _build_storage_blob_name(
         VAULT_ROOT,
         org_slug,
         org_name=org_name,
+        route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,
         invoice_id=invoice_id,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
         original_filename=original_filename,
+        po_reference=po_reference,
+        purchase_document_type=purchase_document_type,
     )
 
 
@@ -132,6 +203,7 @@ def build_rejected_blob_name(
     org_slug: str,
     *,
     org_name: str | None = None,
+    route_target: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
     invoice_id: int,
@@ -139,11 +211,12 @@ def build_rejected_blob_name(
     invoice_date: date | str | None = None,
     original_filename: str,
 ) -> str:
-    """Azure blob path: rejected/{org}/{vendor}/{year}/{month}/{file}."""
+    """Azure blob path: rejected/{org}/{book}/{vendor}/{year}/{month}/{file}."""
     return _build_storage_blob_name(
         REJECTED_ROOT,
         org_slug,
         org_name=org_name,
+        route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,
         invoice_id=invoice_id,
@@ -158,41 +231,58 @@ def _build_storage_blob_name(
     org_slug: str,
     *,
     org_name: str | None = None,
+    route_target: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
     invoice_id: int,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
     original_filename: str,
+    po_reference: str | None = None,
+    purchase_document_type: str | None = None,
 ) -> str:
     org = vault_org_folder(org_slug, org_name)
+    book = vault_book_folder(route_target)
     vendor = vault_vendor_folder(vendor_name, storage_vendor_slug)
     year = vault_year(invoice_date)
     month = vault_month(invoice_date)
-    file_name = vault_file_name(invoice_no, invoice_id, invoice_date, original_filename)
-    return f"{root}/{org}/{vendor}/{year}/{month}/{file_name}"
+    file_name = vault_file_name(
+        invoice_no,
+        invoice_id,
+        invoice_date,
+        original_filename,
+        purchase_document_type=purchase_document_type,
+        po_reference=po_reference,
+    )
+    return f"{root}/{org}/{book}/{vendor}/{year}/{month}/{file_name}"
 
 
 def build_virtual_path(
     org_slug: str,
     *,
     org_name: str | None = None,
+    route_target: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
     invoice_id: int,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
     original_filename: str,
+    po_reference: str | None = None,
+    purchase_document_type: str | None = None,
 ) -> str:
     return build_vault_blob_name(
         org_slug,
         org_name=org_name,
+        route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,
         invoice_id=invoice_id,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
         original_filename=original_filename,
+        po_reference=po_reference,
+        purchase_document_type=purchase_document_type,
     )
 
 
@@ -222,60 +312,84 @@ def _month_sort_index(name: str) -> int:
 def build_vault_tree(
     entries: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Build org → vendor → year → month tree from vault entry dicts."""
-    org_map: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
+    """Build org → book → vendor → year → month tree from vault entry dicts."""
+    org_map: dict[str, dict[str, dict[str, dict[str, dict[str, int]]]]] = {}
 
     for entry in entries:
         org = entry["org"]
+        book = entry["book"]
         vendor = entry["vendor"]
         year = entry["year"]
         month = entry["month"]
-        org_map.setdefault(org, {}).setdefault(vendor, {}).setdefault(year, {})
-        org_map[org][vendor][year][month] = org_map[org][vendor][year].get(month, 0) + 1
+        org_map.setdefault(org, {}).setdefault(book, {}).setdefault(vendor, {}).setdefault(
+            year, {}
+        )
+        bucket = org_map[org][book][vendor][year]
+        bucket[month] = bucket.get(month, 0) + 1
 
     tree: list[dict[str, Any]] = []
-    for org, vendors in org_map.items():
+    for org, books in org_map.items():
         org_count = sum(1 for e in entries if e["org"] == org)
-        vendor_nodes: list[dict[str, Any]] = []
-        for vendor, years in sorted(vendors.items()):
-            vendor_count = sum(
-                1 for e in entries if e["org"] == org and e["vendor"] == vendor
+        book_nodes: list[dict[str, Any]] = []
+        for book, vendors in sorted(books.items()):
+            book_count = sum(
+                1 for e in entries if e["org"] == org and e["book"] == book
             )
-            year_nodes: list[dict[str, Any]] = []
-            for year, months in sorted(years.items(), key=lambda item: item[0], reverse=True):
-                year_count = sum(
+            vendor_nodes: list[dict[str, Any]] = []
+            for vendor, years in sorted(vendors.items()):
+                vendor_count = sum(
                     1
                     for e in entries
-                    if e["org"] == org and e["vendor"] == vendor and e["year"] == year
+                    if e["org"] == org and e["book"] == book and e["vendor"] == vendor
                 )
-                month_nodes = [
-                    {
-                        "id": f"{org}/{vendor}/{year}/{month}",
-                        "label": month,
-                        "kind": "month",
-                        "count": count,
-                        "children": [],
-                    }
-                    for month, count in sorted(
-                        months.items(), key=lambda item: _month_sort_index(item[0])
+                year_nodes: list[dict[str, Any]] = []
+                for year, months in sorted(years.items(), key=lambda item: item[0], reverse=True):
+                    year_count = sum(
+                        1
+                        for e in entries
+                        if e["org"] == org
+                        and e["book"] == book
+                        and e["vendor"] == vendor
+                        and e["year"] == year
                     )
-                ]
-                year_nodes.append(
+                    month_nodes = []
+                    for month, month_count in sorted(
+                        months.items(), key=lambda item: _month_sort_index(item[0])
+                    ):
+                        month_nodes.append(
+                            {
+                                "id": f"{org}/{book}/{vendor}/{year}/{month}",
+                                "label": month,
+                                "kind": "month",
+                                "count": month_count,
+                                "children": [],
+                            }
+                        )
+                    year_nodes.append(
+                        {
+                            "id": f"{org}/{book}/{vendor}/{year}",
+                            "label": year,
+                            "kind": "year",
+                            "count": year_count,
+                            "children": month_nodes,
+                        }
+                    )
+                vendor_nodes.append(
                     {
-                        "id": f"{org}/{vendor}/{year}",
-                        "label": year,
-                        "kind": "year",
-                        "count": year_count,
-                        "children": month_nodes,
+                        "id": f"{org}/{book}/{vendor}",
+                        "label": vendor,
+                        "kind": "vendor",
+                        "count": vendor_count,
+                        "children": year_nodes,
                     }
                 )
-            vendor_nodes.append(
+            book_nodes.append(
                 {
-                    "id": f"{org}/{vendor}",
-                    "label": vendor,
-                    "kind": "vendor",
-                    "count": vendor_count,
-                    "children": year_nodes,
+                    "id": f"{org}/{book}",
+                    "label": book,
+                    "kind": "book",
+                    "count": book_count,
+                    "children": vendor_nodes,
                 }
             )
         tree.append(
@@ -284,7 +398,7 @@ def build_vault_tree(
                 "label": org,
                 "kind": "org",
                 "count": org_count,
-                "children": vendor_nodes,
+                "children": book_nodes,
             }
         )
     return tree

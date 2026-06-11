@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Check, HelpCircle, X } from "lucide-react";
+import { Check, ExternalLink, HelpCircle, X } from "lucide-react";
+import type { InvoiceStatus } from "@/api/types";
 import { ApprovalPolicyNote } from "@/components/ApprovalPolicyNote";
 import { ApproverChip } from "@/components/ApproverChip";
 import { DocumentAuditTrail } from "@/components/DocumentAuditTrail";
@@ -7,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { cn } from "@/lib/cn";
-import { fmtAud, type ExpenseBudget, type ExpenseClaim, type ExpenseState } from "@/lib/v4MockData";
+import { fmtAud, type ExpenseBudget, type ExpenseClaim } from "@/lib/v4MockData";
 import { BudgetUtilBar } from "./BudgetUtilBar";
 import { ExpenseStateBadge } from "./ExpenseBadges";
 import { ReceiptThumb } from "./ReceiptThumb";
@@ -46,15 +47,38 @@ function ClaimAmountInput({
 
 export function ClaimDetailPanel({
   claim,
+  invoiceId,
+  invoiceStatus,
+  hasStoredFile,
   budget,
-  onStateChange,
+  busy = false,
+  canApprove,
+  canReject,
+  canRequestInfo,
+  onApprove,
+  onReject,
+  onRequestInfo,
+  onOpenInvoice,
 }: {
   claim: ExpenseClaim;
+  invoiceId: number;
+  invoiceStatus: InvoiceStatus;
+  hasStoredFile: boolean;
   budget?: ExpenseBudget;
-  onStateChange: (id: string, state: ExpenseState) => void;
+  busy?: boolean;
+  canApprove: boolean;
+  canReject: boolean;
+  canRequestInfo: boolean;
+  onApprove: () => void | Promise<void>;
+  onReject: () => void | Promise<void>;
+  onRequestInfo: () => void | Promise<void>;
+  onOpenInvoice?: () => void;
 }) {
   const [amount, setAmount] = useState(claim.amount);
-  const editable = claim.state === "New" || claim.state === "In Review";
+  const editable =
+    (claim.state === "New" || claim.state === "In Review") &&
+    invoiceStatus !== "processed" &&
+    invoiceStatus !== "rejected";
 
   return (
     <div>
@@ -67,7 +91,22 @@ export function ClaimDetailPanel({
             via {claim.channel} · {claim.submittedTs}
           </div>
         </div>
-        <ExpenseStateBadge state={claim.state} />
+        <div className="flex items-center gap-2">
+          {onOpenInvoice && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={onOpenInvoice}
+              data-testid="button-open-claim-invoice"
+            >
+              <ExternalLink className="h-3.5 w-3.5 mr-1" />
+              Full document
+            </Button>
+          )}
+          <ExpenseStateBadge state={claim.state} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] gap-3">
@@ -88,6 +127,12 @@ export function ClaimDetailPanel({
         </div>
       </div>
 
+      {!hasStoredFile && canApprove && (
+        <p className="text-xs text-amber-600 dark:text-amber-400 mt-3">
+          Upload a receipt before this claim can be approved.
+        </p>
+      )}
+
       {budget && (
         <Card className="p-3 mt-3 bg-muted/30">
           <div className="text-xs font-medium mb-1.5">
@@ -104,9 +149,11 @@ export function ClaimDetailPanel({
           Approval chain
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {claim.approvers.map((a) => (
-            <ApproverChip key={a.id} {...a} />
-          ))}
+          {claim.approvers.length > 0 ? (
+            claim.approvers.map((a) => <ApproverChip key={a.id} {...a} />)
+          ) : (
+            <span className="text-xs text-muted-foreground">Awaiting approver assignment</span>
+          )}
         </div>
         <div className="mt-1.5">
           <ApprovalPolicyNote />
@@ -116,8 +163,8 @@ export function ClaimDetailPanel({
       <div className="flex flex-wrap gap-2 mt-4">
         <Button
           size="sm"
-          disabled={!editable}
-          onClick={() => onStateChange(claim.id, "Approved")}
+          disabled={busy || !canApprove || !hasStoredFile}
+          onClick={() => void onApprove()}
           data-testid="button-approve-claim"
         >
           <Check className="h-4 w-4 mr-1" /> Approve
@@ -126,8 +173,8 @@ export function ClaimDetailPanel({
           size="sm"
           variant="outline"
           className="border-destructive/40 text-destructive"
-          disabled={!editable}
-          onClick={() => onStateChange(claim.id, "Rejected")}
+          disabled={busy || !canReject}
+          onClick={() => void onReject()}
           data-testid="button-reject-claim"
         >
           <X className="h-4 w-4 mr-1" /> Reject with reason
@@ -135,15 +182,15 @@ export function ClaimDetailPanel({
         <Button
           size="sm"
           variant="outline"
-          disabled={!editable}
-          onClick={() => onStateChange(claim.id, "In Review")}
+          disabled={busy || !canRequestInfo}
+          onClick={() => void onRequestInfo()}
           data-testid="button-info-claim"
         >
           <HelpCircle className="h-4 w-4 mr-1" /> Request more info
         </Button>
       </div>
 
-      <DocumentAuditTrail docId={claim.id} />
+      <DocumentAuditTrail docId={claim.id} invoiceId={invoiceId} />
     </div>
   );
 }

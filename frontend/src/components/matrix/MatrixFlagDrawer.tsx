@@ -20,10 +20,11 @@ type MatrixFlagDrawerProps = {
   row: MatrixFlagRow | null;
   open: boolean;
   onClose: () => void;
+  busy?: boolean;
   onResolve: (docId: string, action: "unique" | "duplicate" | "approval") => void;
 };
 
-export function MatrixFlagDrawer({ row, open, onClose, onResolve }: MatrixFlagDrawerProps) {
+export function MatrixFlagDrawer({ row, open, onClose, busy = false, onResolve }: MatrixFlagDrawerProps) {
   if (!open || !row) return null;
 
   const docId = invId(row.inv.id);
@@ -33,7 +34,7 @@ export function MatrixFlagDrawer({ row, open, onClose, onResolve }: MatrixFlagDr
     <DetailDrawer
       open={open}
       onClose={onClose}
-      size="lg"
+      size="md"
       title={
         <span className="flex items-center gap-2 flex-wrap">
           Review: {docId}
@@ -113,23 +114,29 @@ export function MatrixFlagDrawer({ row, open, onClose, onResolve }: MatrixFlagDr
           <div className="grid grid-cols-1 gap-2">
             <Button
               variant="outline"
+              disabled={busy}
               onClick={() => onResolve(docId, "unique")}
               data-testid="button-confirm-unique"
             >
               <Check className="h-4 w-4 mr-1" />
-              Confirmed unique
+              {busy ? "…" : "Confirmed unique"}
             </Button>
             <Button
               variant="outline"
               className="border-destructive/40 text-destructive"
+              disabled={busy}
               onClick={() => onResolve(docId, "duplicate")}
               data-testid="button-confirm-duplicate"
             >
               <Ban className="h-4 w-4 mr-1" />
-              Confirmed duplicate (archive)
+              {busy ? "…" : "Confirmed duplicate (archive)"}
             </Button>
-            <Button onClick={() => onResolve(docId, "approval")} data-testid="button-send-approval">
-              Send for approval
+            <Button
+              disabled={busy}
+              onClick={() => onResolve(docId, "approval")}
+              data-testid="button-send-approval"
+            >
+              {busy ? "…" : "Send for approval"}
             </Button>
           </div>
         </div>

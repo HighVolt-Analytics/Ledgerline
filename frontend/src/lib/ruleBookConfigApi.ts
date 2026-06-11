@@ -249,18 +249,20 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       matchedCount: rule.matched_count,
       lastMatched: rule.last_matched,
     })),
-    purchaseRules: api.purchase_rules.map((rule) => ({
+    purchaseRules: api.purchase_rules.map((rule, index) => ({
       id: rule.id,
       name: rule.name,
       enabled: rule.enabled,
+      priority: rule.priority ?? 100 + index * 10,
       matchOn: mapPurchaseMatchOn(rule.match_on),
       postTo: mapPostTo(rule.post_to),
       matchedCount: rule.matched_count,
     })),
-    expenseRules: api.expense_rules.map((rule) => ({
+    expenseRules: api.expense_rules.map((rule, index) => ({
       id: rule.id,
       name: rule.name,
       enabled: rule.enabled,
+      priority: rule.priority ?? 100 + index * 10,
       matchOn: mapExpenseMatchOn(rule.match_on),
       postTo: {
         ledger: rule.post_to.ledger,
@@ -268,10 +270,11 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       },
       matchedCount: rule.matched_count,
     })),
-    teamExpenseRules: api.team_expense_rules.map((rule) => ({
+    teamExpenseRules: api.team_expense_rules.map((rule, index) => ({
       id: rule.id,
       name: rule.name,
       enabled: rule.enabled,
+      priority: rule.priority ?? 100 + index * 10,
       matchOn: mapTeamMatchOn(rule.match_on),
       postTo: {
         ledger: rule.post_to.ledger,
@@ -326,6 +329,7 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       id: rule.id,
       name: rule.name,
       enabled: rule.enabled,
+      priority: rule.priority ?? 100,
       match_on: purchaseMatchOnToApi(rule.matchOn),
       post_to: postToToApi(rule.postTo),
       matched_count: rule.matchedCount,
@@ -334,6 +338,7 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       id: rule.id,
       name: rule.name,
       enabled: rule.enabled,
+      priority: rule.priority ?? 100,
       match_on: expenseMatchOnToApi(rule.matchOn),
       post_to: {
         ledger: rule.postTo.ledger,
@@ -345,6 +350,7 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       id: rule.id,
       name: rule.name,
       enabled: rule.enabled,
+      priority: rule.priority ?? 100,
       match_on: teamMatchOnToApi(rule.matchOn),
       post_to: {
         ledger: rule.postTo.ledger,

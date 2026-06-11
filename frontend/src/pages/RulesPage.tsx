@@ -79,14 +79,8 @@ export function RulesPage() {
       const payload = pendingSaveRef.current;
       if (!payload) return;
       saveMutation.mutate(payload, {
-        onSuccess: ({ remapped }) => {
+        onSuccess: () => {
           setSaveState("saved");
-          if (remapped > 0) {
-            toast({
-              title: "Documents re-mapped",
-              description: `${remapped} document${remapped === 1 ? "" : "s"} updated after rule change.`,
-            });
-          }
         },
         onError: (err) => {
           setSaveState("error");

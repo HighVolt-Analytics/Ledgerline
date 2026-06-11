@@ -1,17 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Check,
-  ChevronRight,
-  Lock,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Send,
-  Trash2,
-  Unlock,
-  X,
-} from "lucide-react";
+import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
@@ -20,16 +9,13 @@ import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { invId, money } from "@/lib/format";
 import { fetchAllApprovals, fetchAllInvoices } from "@/lib/invoices";
+import { approveAndProcess, watchProcessingUntilIdle } from "@/lib/invoiceActions";
 import { cn } from "@/lib/cn";
 
 const APPROVAL_POLL_MS = 15_000;
-const PROCESSING_POLL_MS = 2_000;
-const PROCESSING_TIMEOUT_MS = 60_000;
 const API_HINT = " Ensure the API is running on port 8001.";
 
 const COLUMNS = [
@@ -40,75 +26,6 @@ const COLUMNS = [
 ] as const;
 
 type ColumnKey = (typeof COLUMNS)[number]["key"];
-
-const ROLES = ["Admin", "Approver", "Bookkeeper", "Viewer", "Auditor"] as const;
-const ACTIONS = [
-  "View",
-  "Comment",
-  "Approve",
-  "Reject",
-  "Publish",
-  "Edit Policy",
-  "Manage Users",
-] as const;
-
-type Role = (typeof ROLES)[number];
-type Action = (typeof ACTIONS)[number];
-
-type PolicyRule = { id: string; condition: string; approver: string };
-
-type LocalApprovalPolicy = {
-  locked: boolean;
-  rules: PolicyRule[];
-  matrix: Record<Role, Record<Action, boolean>>;
-};
-
-const DEFAULT_RULES: PolicyRule[] = [
-  { id: "ap1", condition: "Invoices > 5,000", approver: "CFO approval" },
-  { id: "ap2", condition: "Marketing Expense invoices", approver: "Marketing Lead" },
-  { id: "ap3", condition: "Suspense-routed invoices", approver: "Finance Controller" },
-  { id: "ap4", condition: "New vendor (first invoice)", approver: "Bookkeeper review" },
-];
-
-const DEFAULT_MATRIX: Record<Role, Record<Action, boolean>> = {
-  Admin: Object.fromEntries(ACTIONS.map((a) => [a, true])) as Record<Action, boolean>,
-  Approver: {
-    View: true,
-    Comment: true,
-    Approve: true,
-    Reject: true,
-    Publish: true,
-    "Edit Policy": false,
-    "Manage Users": false,
-  },
-  Bookkeeper: {
-    View: true,
-    Comment: true,
-    Approve: false,
-    Reject: false,
-    Publish: false,
-    "Edit Policy": false,
-    "Manage Users": false,
-  },
-  Viewer: {
-    View: true,
-    Comment: false,
-    Approve: false,
-    Reject: false,
-    Publish: false,
-    "Edit Policy": false,
-    "Manage Users": false,
-  },
-  Auditor: {
-    View: true,
-    Comment: true,
-    Approve: false,
-    Reject: false,
-    Publish: false,
-    "Edit Policy": false,
-    "Manage Users": false,
-  },
-};
 
 const PIPELINE_STATUSES = new Set([
   "pending",
@@ -154,121 +71,10 @@ function mergeBoardInvoices(approvals: Invoice[], pipeline: Invoice[]): Invoice[
   return [...byId.values()];
 }
 
-async function watchProcessingUntilIdle(
-  refresh: () => Promise<void>,
-  timeoutMs = PROCESSING_TIMEOUT_MS
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let sawRunning = false;
-  while (Date.now() < deadline) {
-    await refresh();
-    const status = await api.getProcessingStatus();
-    if (status.state === "running" || status.active_tasks > 0) {
-      sawRunning = true;
-    }
-    if (sawRunning && status.state === "idle" && status.active_tasks === 0) {
-      await refresh();
-      return;
-    }
-    if (!sawRunning && status.state === "idle" && status.active_tasks === 0) {
-      // Give a fast worker one poll cycle; otherwise keep invoice in awaiting.
-      await new Promise((r) => setTimeout(r, PROCESSING_POLL_MS));
-      await refresh();
-      return;
-    }
-    await new Promise((r) => setTimeout(r, PROCESSING_POLL_MS));
-  }
-  await refresh();
-}
-
-function UnlockPolicyDialog({
-  open,
-  onClose,
-  onConfirm,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onConfirm: (code: string) => void;
-}) {
-  const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      setCode("");
-      setError(null);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/80"
-        aria-label="Close dialog"
-        onClick={onClose}
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="relative z-10 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-lg"
-      >
-        <h4 className="text-sm font-semibold mb-2">Unlock privilege matrix</h4>
-        <p className="text-sm text-muted-foreground mb-3">
-          Enter the 6-digit administrator code to edit role privileges.
-        </p>
-        <Input
-          value={code}
-          onChange={(e) => {
-            setCode(e.target.value.replace(/\D/g, "").slice(0, 6));
-            setError(null);
-          }}
-          placeholder="000000"
-          className="tnum text-center text-lg tracking-[0.4em] mb-2"
-          maxLength={6}
-          data-testid="input-unlock-code"
-        />
-        {error && <p className="text-xs text-destructive mb-2">{error}</p>}
-        <Button
-          className="w-full"
-          data-testid="button-confirm-unlock"
-          onClick={() => {
-            if (code.length === 6 && /^\d{6}$/.test(code)) {
-              onConfirm(code);
-              return;
-            }
-            setError("Enter the 6-digit unlock code.");
-          }}
-        >
-          Unlock
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 export function ApprovalsPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"board" | "policy">("board");
-  const [policy, setPolicy] = useState<LocalApprovalPolicy>({
-    locked: false,
-    rules: DEFAULT_RULES,
-    matrix: DEFAULT_MATRIX,
-  });
-  const [unlockOpen, setUnlockOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [drawerInvoice, setDrawerInvoice] = useState<Invoice | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -329,7 +135,6 @@ export function ApprovalsPage() {
 
   useEffect(() => {
     void load();
-    void api.getApprovalPolicy().then((p) => setPolicy(p as LocalApprovalPolicy)).catch(() => {});
   }, [load]);
 
   useVisibilityPolling(() => {
@@ -369,16 +174,8 @@ export function ApprovalsPage() {
     }
     setBusyId(id);
     try {
-      const approved = await api.approve(id);
-      setInvoices((prev) => {
-        const byId = new Map(prev.map((i) => [i.id, i]));
-        byId.set(approved.id, approved);
-        return [...byId.values()];
-      });
       setToast("Invoice queued for processing…");
-      await load({ silent: true, fresh: true });
-      await api.triggerProcess();
-      await watchProcessingUntilIdle(() => load({ silent: true, fresh: true }));
+      await approveAndProcess(id, () => load({ silent: true, fresh: true }));
       setToast("Invoice approved — processing complete");
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Approve failed");
@@ -431,15 +228,6 @@ export function ApprovalsPage() {
     }
   };
 
-  const persistPolicy = async (next: LocalApprovalPolicy) => {
-    try {
-      const saved = await api.putApprovalPolicy(next);
-      setPolicy(saved as LocalApprovalPolicy);
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : "Failed to save policy");
-    }
-  };
-
   const publish = async (inv: Invoice) => {
     if (inv.status !== "processed") {
       setToast("Publish is available for processed invoices only.");
@@ -454,43 +242,6 @@ export function ApprovalsPage() {
       setToast(e instanceof Error ? e.message : "Publish failed");
     } finally {
       setBusyId(null);
-    }
-  };
-
-  const togglePrivilege = (role: Role, action: Action) => {
-    if (policy.locked) return;
-    const next: LocalApprovalPolicy = {
-      ...policy,
-      matrix: {
-        ...policy.matrix,
-        [role]: { ...policy.matrix[role], [action]: !policy.matrix[role][action] },
-      },
-    };
-    setPolicy(next);
-    void persistPolicy(next);
-  };
-
-  const addRule = () => {
-    if (policy.locked) return;
-    const next: LocalApprovalPolicy = {
-      ...policy,
-      rules: [
-        ...policy.rules,
-        { id: `ap-${Date.now()}`, condition: "New condition", approver: "Reviewer" },
-      ],
-    };
-    setPolicy(next);
-    void persistPolicy(next);
-  };
-
-  const confirmUnlock = async (code: string) => {
-    try {
-      const updated = await api.unlockApprovalPolicy(code);
-      setPolicy(updated as LocalApprovalPolicy);
-      setUnlockOpen(false);
-      setToast("Policy unlocked — privilege matrix is now editable.");
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : "Invalid unlock code");
     }
   };
 
@@ -545,11 +296,7 @@ export function ApprovalsPage() {
 
       <PageHeader
         title="Approvals"
-        subtitle={
-          tab === "board"
-            ? `${queueCount} in approval queue · reject moves files to rejected/org/vendor/year/month`
-            : "Policy rules and privilege matrix — persisted per organisation."
-        }
+        subtitle={`${queueCount} in approval queue · reject moves files to rejected/org/vendor/year/month`}
         actions={
           <Button
             variant="outline"
@@ -588,37 +335,7 @@ export function ApprovalsPage() {
         </Card>
       )}
 
-      <div className="flex flex-wrap gap-1 border-b border-border mb-4">
-        <button
-          type="button"
-          data-testid="tab-board"
-          onClick={() => setTab("board")}
-          className={cn(
-            "px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-            tab === "board"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          Board
-        </button>
-        <button
-          type="button"
-          data-testid="tab-policy"
-          onClick={() => setTab("policy")}
-          className={cn(
-            "px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-            tab === "policy"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          Policy & privileges
-        </button>
-      </div>
-
-      {tab === "board" ? (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {COLUMNS.map((col) => {
             const cards = board[col.key];
             return (
@@ -744,132 +461,6 @@ export function ApprovalsPage() {
             );
           })}
         </div>
-      ) : (
-        <div className="space-y-6">
-          <Card className="p-3 border-dashed text-xs text-muted-foreground">
-            Policy & privileges are not connected to the backend yet. Changes here are
-            local preview only and will not be saved. The Board tab uses live approval data.
-          </Card>
-
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold">Approval rules</h3>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={addRule}
-                disabled={policy.locked}
-                data-testid="button-add-rule"
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                Add rule
-              </Button>
-            </div>
-            <div className="space-y-2">
-              {policy.rules.map((rule) => (
-                <div
-                  key={rule.id}
-                  className="flex items-center gap-3 text-sm border-b border-border/60 pb-2 last:border-0"
-                  data-testid={`rule-${rule.id}`}
-                >
-                  <Badge variant="outline" className="shrink-0">
-                    IF
-                  </Badge>
-                  <span className="flex-1">{rule.condition}</span>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <Badge className="bg-primary/15 text-primary border-0 shrink-0 hover:bg-primary/15">
-                    {rule.approver}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card className="p-4">
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div>
-                <h3 className="text-sm font-semibold flex items-center gap-2 flex-wrap">
-                  Privilege matrix
-                  {policy.locked && (
-                    <Badge variant="outline" className="border-destructive/40 text-destructive">
-                      <Lock className="h-3 w-3 mr-1" />
-                      Locked
-                    </Badge>
-                  )}
-                </h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Role-based permissions across the approval workflow.
-                </p>
-              </div>
-              {policy.locked ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => setUnlockOpen(true)}
-                  data-testid="button-unlock-policy"
-                >
-                  <Unlock className="h-4 w-4 mr-1" />
-                  Unlock
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => setPolicy((p) => ({ ...p, locked: true }))}
-                  data-testid="button-lock-policy"
-                >
-                  <Lock className="h-4 w-4 mr-1" />
-                  Lock policy
-                </Button>
-              )}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-muted-foreground border-b border-border">
-                    <th className="px-3 py-2.5 text-left font-medium w-[120px]">Role</th>
-                    {ACTIONS.map((action) => (
-                      <th
-                        key={action}
-                        className="px-2 py-2.5 text-center font-medium whitespace-nowrap min-w-[72px]"
-                      >
-                        {action}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ROLES.map((role) => (
-                    <tr key={role} className="border-b border-border/60 last:border-0">
-                      <td className="px-3 py-2.5 font-medium">{role}</td>
-                      {ACTIONS.map((action) => (
-                        <td key={action} className="px-2 py-2.5">
-                          <div className="flex justify-center">
-                            <Switch
-                              checked={policy.matrix[role][action]}
-                              disabled={policy.locked}
-                              onCheckedChange={() => togglePrivilege(role, action)}
-                              data-testid={`priv-${role}-${action.replace(/\s+/g, "-")}`}
-                            />
-                          </div>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      <UnlockPolicyDialog
-        open={unlockOpen}
-        onClose={() => setUnlockOpen(false)}
-        onConfirm={confirmUnlock}
-      />
 
       <InvoiceDetailDrawer
         invoiceId={drawerInvoice?.id ?? null}

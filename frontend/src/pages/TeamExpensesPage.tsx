@@ -1,18 +1,20 @@
-import { useMemo, useState } from "react";
-import { CheckCircle2, Mail, MessageCircle, Smartphone } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
+import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { BudgetUtilBar } from "@/components/team-expenses/BudgetUtilBar";
 import { ClaimDetailPanel } from "@/components/team-expenses/ClaimDetailPanel";
 import { ChannelBadge, ExpenseStateBadge } from "@/components/team-expenses/ExpenseBadges";
+import { TeamExpenseChannelsStrip } from "@/components/team-expenses/TeamExpenseChannelsStrip";
 import { RoutedInvoicesPanel } from "@/components/rule-book/RoutedInvoicesPanel";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useEmployeeMasters } from "@/hooks/useMasterData";
+import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
+import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
 import { money } from "@/lib/format";
 import {
@@ -20,7 +22,10 @@ import {
   invoiceToTeamClaim,
   teamRulesToCategories,
 } from "@/lib/routePageAdapters";
-import { CLAIM_CHANNELS, fmtAud, type ExpenseState } from "@/lib/v4MockData";
+import { fmtAud } from "@/lib/v4MockData";
+
+const ROUTE_TARGET = "Team Expenses";
+const CLAIM_POLL_MS = 15_000;
 
 function initials(name: string) {
   return name
@@ -31,109 +36,65 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-function channelIcon(id: string) {
-  if (id === "em") return Mail;
-  if (id === "mob") return Smartphone;
-  return MessageCircle;
-}
-
 export function TeamExpensesPage() {
-  const { data: routed = [], isLoading } = useRoutedInvoices("Team Expenses");
+  const { data: routed = [], isLoading, refetch } = useRoutedInvoices(ROUTE_TARGET);
   const { data: employees = [] } = useEmployeeMasters();
   const { data: ruleBook } = useRuleBookConfig();
+  const actions = useExpenseClaimActions(ROUTE_TARGET);
 
   const claims = useMemo(() => routed.map(invoiceToTeamClaim), [routed]);
+  const invoiceById = useMemo(() => new Map(routed.map((inv) => [inv.id, inv])), [routed]);
   const budgets = useMemo(() => employeeBudgetRows(employees), [employees]);
   const categories = useMemo(
     () => teamRulesToCategories(ruleBook?.teamExpenseRules ?? []),
     [ruleBook?.teamExpenseRules]
   );
-
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [claimOverrides, setClaimOverrides] = useState<Record<string, ExpenseState>>({});
-  const [openChannel, setOpenChannel] = useState<string | null>(null);
+  const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [tab, setTab] = useState("claims");
 
-  const expenses = useMemo(
-    () =>
-      claims.map((claim) => ({
-        ...claim,
-        state: claimOverrides[claim.id] ?? claim.state,
-      })),
-    [claims, claimOverrides]
-  );
+  useVisibilityPolling(() => {
+    void refetch();
+  }, CLAIM_POLL_MS);
+
+  useEffect(() => {
+    if (!actions.toast) return;
+    const t = setTimeout(() => actions.setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [actions.toast, actions.setToast]);
 
   const kpis = useMemo(() => {
-    const open = expenses.filter((e) => e.state === "New" || e.state === "In Review").length;
-    const approvedRows = expenses.filter(
-      (e) => e.state === "Approved" || e.state === "Posted to Ledger"
-    );
-    const approvedTotal = approvedRows.reduce((s, e) => s + e.amount, 0);
-    const pending = expenses.filter((e) => e.state === "In Review").length;
+    const open = claims.filter((e) => e.state === "New" || e.state === "In Review").length;
+    const postedRows = claims.filter((e) => e.state === "Posted to Ledger");
+    const postedTotal = postedRows.reduce((s, e) => s + e.amount, 0);
+    const pending = claims.filter((e) => e.state === "In Review").length;
     const teamBudgets = budgets.filter((b) => b.period === "Monthly" && b.category === "All categories");
     const totalBudget = teamBudgets.reduce((s, b) => s + b.monthlyBudget, 0);
     const totalUsed = teamBudgets.reduce((s, b) => s + b.used, 0);
     const util = totalBudget > 0 ? Math.round((totalUsed / totalBudget) * 100) : 0;
-    return { open, approvedCount: approvedRows.length, approvedTotal, pending, util };
-  }, [expenses, budgets]);
+    return { open, postedCount: postedRows.length, postedTotal, pending, util };
+  }, [claims, budgets]);
 
-  const selected = expenses.find((e) => e.id === selectedId) ?? expenses[0] ?? null;
+  const selected = claims.find((e) => e.id === selectedId) ?? claims[0] ?? null;
+  const selectedInvoice = selected ? invoiceById.get(Number(selected.id)) : undefined;
   const budget = selected
     ? budgets.find((b) => b.owner !== "Team" && b.category === selected.category)
     : undefined;
 
-  const setExpenseState = (id: string, state: ExpenseState) => {
-    setClaimOverrides((prev) => ({ ...prev, [id]: state }));
-  };
-
   return (
     <div>
+      {actions.toast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-md border border-border bg-popover px-4 py-2 text-sm shadow-md max-w-sm">
+          {actions.toast}
+        </div>
+      )}
+
       <PageHeader
         title="Team Expenses"
         subtitle="Employee claims captured from messaging channels, approved against per-category budgets, posted to the ledger."
       />
 
-      <div className="flex flex-wrap gap-2 mb-5">
-        {CLAIM_CHANNELS.map((ch) => {
-          const Icon = channelIcon(ch.id);
-          return (
-            <div key={ch.id} className="relative">
-              <button
-                type="button"
-                onClick={() => setOpenChannel(openChannel === ch.id ? null : ch.id)}
-                data-testid={`channel-${ch.id}`}
-                className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs hover-elevate"
-              >
-                <Icon className="h-3.5 w-3.5 text-primary" />
-                <span className="font-medium">{ch.name}</span>
-                <span className="text-muted-foreground hidden md:inline">· {ch.detail}</span>
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full rounded-full bg-[hsl(145_63%_42%)] opacity-60 animate-ping" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[hsl(145_63%_42%)]" />
-                </span>
-              </button>
-              {openChannel === ch.id && (
-                <Card className="absolute z-20 mt-1 p-3 w-56 text-xs space-y-2 shadow-md">
-                  <div className="font-medium">{ch.name}</div>
-                  <div className="text-muted-foreground">{ch.detail}</div>
-                  <div className="flex items-center gap-1 text-[hsl(145_55%_38%)] dark:text-[hsl(145_55%_60%)]">
-                    <CheckCircle2 className="h-4 w-4 -ml-1" />
-                    Connected · healthy
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <Button size="sm" variant="outline" className="h-7 text-xs flex-1">
-                      Reconnect
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs flex-1">
-                      Test
-                    </Button>
-                  </div>
-                </Card>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <TeamExpenseChannelsStrip />
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
         <KpiCard
@@ -142,12 +103,12 @@ export function TeamExpensesPage() {
           testid="kpi-exp-open"
         />
         <KpiCard
-          label="Approved This Month"
-          value={isLoading ? "…" : fmtAud(kpis.approvedTotal)}
+          label="Posted This Month"
+          value={isLoading ? "…" : fmtAud(kpis.postedTotal)}
           testid="kpi-exp-approved"
           delta={
-            !isLoading && kpis.approvedCount > 0
-              ? { dir: "up", text: `${kpis.approvedCount} claims`, good: true }
+            !isLoading && kpis.postedCount > 0
+              ? { dir: "up", text: `${kpis.postedCount} claims`, good: true }
               : undefined
           }
         />
@@ -164,7 +125,7 @@ export function TeamExpensesPage() {
       </div>
 
       <RoutedInvoicesPanel
-        routeTarget="Team Expenses"
+        routeTarget={ROUTE_TARGET}
         title="Documents routed from Rule Book"
         hint="Employee channel claims routed here by email capture or team expense rules."
         testId="team-routed-invoices"
@@ -183,7 +144,7 @@ export function TeamExpensesPage() {
       <PageTabPanel value="claims" active={tab} className="mt-4">
         {isLoading ? (
           <div className="text-sm text-muted-foreground py-8">Loading team expense claims…</div>
-        ) : expenses.length === 0 ? (
+        ) : claims.length === 0 ? (
           <EmptyState
             title="No team expense claims yet"
             hint="Documents routed to Team Expenses appear here after email capture or rule-book remap."
@@ -191,7 +152,7 @@ export function TeamExpensesPage() {
         ) : (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
             <div className="space-y-2 lg:max-h-[calc(100dvh-360px)] lg:overflow-y-auto lg:pr-1">
-              {expenses.map((claim) => (
+              {claims.map((claim) => (
                 <button
                   key={claim.id}
                   type="button"
@@ -230,12 +191,28 @@ export function TeamExpensesPage() {
             </div>
 
             <div>
-              {selected ? (
+              {selected && selectedInvoice ? (
                 <Card className="p-4">
                   <ClaimDetailPanel
                     claim={selected}
+                    invoiceId={selectedInvoice.id}
+                    invoiceStatus={selectedInvoice.status}
+                    hasStoredFile={selectedInvoice.has_stored_file}
                     budget={budget}
-                    onStateChange={setExpenseState}
+                    busy={actions.busyId === selectedInvoice.id}
+                    canApprove={actions.canApproveClaim(selectedInvoice.status)}
+                    canReject={actions.canRejectClaim(selectedInvoice.status)}
+                    canRequestInfo={actions.canRequestInfo(selectedInvoice.status)}
+                    onApprove={async () => {
+                      await actions.approve(selectedInvoice);
+                    }}
+                    onReject={async () => {
+                      await actions.reject(selectedInvoice);
+                    }}
+                    onRequestInfo={async () => {
+                      await actions.requestInfo(selectedInvoice);
+                    }}
+                    onOpenInvoice={() => setDrawerInvoiceId(selectedInvoice.id)}
                   />
                 </Card>
               ) : (
@@ -343,6 +320,13 @@ export function TeamExpensesPage() {
           </div>
         )}
       </PageTabPanel>
+
+      <InvoiceDetailDrawer
+        invoiceId={drawerInvoiceId}
+        open={drawerInvoiceId != null}
+        onClose={() => setDrawerInvoiceId(null)}
+        onUpdated={() => void refetch()}
+      />
     </div>
   );
 }

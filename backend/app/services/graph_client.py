@@ -1,6 +1,5 @@
-"""Microsoft Graph API client (application permissions)."""
+"""Microsoft Graph API client (application + delegated permissions)."""
 
-import base64
 import time
 from typing import Any
 
@@ -15,22 +14,25 @@ logger = get_logger(__name__)
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 SCOPE = ["https://graph.microsoft.com/.default"]
 
-_token_cache: dict[str, Any] = {"expires_at": 0.0, "token": ""}
+_app_token_cache: dict[str, Any] = {"expires_at": 0.0, "token": ""}
 
 
-def _is_configured() -> bool:
-    s = get_settings()
-    return bool(s.azure_tenant_id and s.azure_client_id and s.azure_client_secret and s.graph_mailbox)
+def graph_credentials_configured() -> bool:
+    return get_settings().graph_credentials_configured
 
 
-def get_access_token() -> str:
+def is_graph_enabled() -> bool:
+    return get_settings().graph_enabled
+
+
+def get_application_access_token() -> str:
     """Acquire app-only token with in-memory cache."""
-    if not _is_configured():
+    if not graph_credentials_configured():
         raise RuntimeError("Microsoft Graph is not configured")
 
     now = time.time()
-    if _token_cache["token"] and now < _token_cache["expires_at"] - 60:
-        return _token_cache["token"]
+    if _app_token_cache["token"] and now < _app_token_cache["expires_at"] - 60:
+        return _app_token_cache["token"]
 
     settings = get_settings()
     app = msal.ConfidentialClientApplication(
@@ -43,9 +45,14 @@ def get_access_token() -> str:
         error = result.get("error_description") or result.get("error") or "unknown"
         raise RuntimeError(f"Graph token failed: {error}")
 
-    _token_cache["token"] = result["access_token"]
-    _token_cache["expires_at"] = now + int(result.get("expires_in", 3600))
-    return _token_cache["token"]
+    _app_token_cache["token"] = result["access_token"]
+    _app_token_cache["expires_at"] = now + int(result.get("expires_in", 3600))
+    return _app_token_cache["token"]
+
+
+def get_access_token() -> str:
+    """Backward-compatible alias for application token."""
+    return get_application_access_token()
 
 
 def graph_request(
@@ -54,9 +61,10 @@ def graph_request(
     *,
     params: dict[str, str] | None = None,
     json_body: dict[str, Any] | None = None,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     """Call Graph REST API and return JSON body."""
-    token = get_access_token()
+    token = access_token or get_application_access_token()
     url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -70,10 +78,6 @@ def graph_request(
                 body=response.text[:500],
             )
         response.raise_for_status()
-        if response.status_code == 204:
+        if response.status_code in (202, 204) or not response.content.strip():
             return {}
         return response.json()
-
-
-def is_graph_enabled() -> bool:
-    return _is_configured()

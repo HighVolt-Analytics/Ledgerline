@@ -74,6 +74,12 @@ export type PurchaseOrder = {
   gstRate: number;
   routedForApproval?: boolean;
   approvers?: ApproverStep[];
+  matchedRuleName?: string | null;
+  matchedGl?: string | null;
+  evaluationStatus?: string | null;
+  matchedRuleIds?: string[];
+  poDocumentId?: number | null;
+  grnDocumentId?: number | null;
 };
 
 export type MatchStatus =

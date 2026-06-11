@@ -15,7 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
-import { INITIAL_PURCHASES } from "@/lib/v4MockData";
+import { usePurchases } from "@/hooks/usePurchases";
+import { nextRulePriority } from "@/lib/rulePriority";
 import type { PurchaseRule } from "@/lib/v4RuleBookTypes";
 import { LEDGER_ACCOUNTS } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
@@ -37,6 +38,7 @@ export function PurchaseRulesTab({
   onChange: (rules: PurchaseRule[]) => void;
 }) {
   const { toast } = useToast();
+  const { data: purchases = [] } = usePurchases();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const update = (id: string, patch: Partial<PurchaseRule>) =>
@@ -60,6 +62,7 @@ export function PurchaseRulesTab({
         id,
         name: "New PO rule",
         enabled: true,
+        priority: nextRulePriority(rules),
         matchOn: { poPrefix: "PO-" },
         postTo: {
           ledger: LEDGER_ACCOUNTS[0],
@@ -73,16 +76,18 @@ export function PurchaseRulesTab({
 
   const testRule = (rule: PurchaseRule) => {
     const m = rule.matchOn;
-    const hits = INITIAL_PURCHASES.filter((po) => {
-      if (m.poPrefix && !po.id.startsWith(m.poPrefix)) return false;
+    const hits = purchases.filter((po) => {
+      const poNumber = po.po_number;
+      const vendor = po.vendor ?? "";
+      if (m.poPrefix && !poNumber.startsWith(m.poPrefix)) return false;
       if (m.poRegex) {
         try {
-          if (!new RegExp(m.poRegex).test(po.id)) return false;
+          if (!new RegExp(m.poRegex).test(poNumber)) return false;
         } catch {
           return false;
         }
       }
-      if (m.vendorContains && !po.vendor.toLowerCase().includes(m.vendorContains.toLowerCase())) {
+      if (m.vendorContains && !vendor.toLowerCase().includes(m.vendorContains.toLowerCase())) {
         return false;
       }
       return !!(m.poPrefix || m.poRegex || m.vendorContains);
@@ -90,7 +95,7 @@ export function PurchaseRulesTab({
     toast({
       title: `Tested “${rule.name}”`,
       description: hits.length
-        ? `Catches ${hits.length} current PO(s): ${hits.map((p) => p.id).join(", ")}`
+        ? `Catches ${hits.length} current PO(s): ${hits.map((p) => p.po_number).join(", ")}`
         : "No current POs match this rule's prefix/regex.",
     });
   };

@@ -1,10 +1,32 @@
 import { Download, Shield, Upload, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { PageLoader } from "@/components/PageLoader";
+import { useWalletSummary } from "@/hooks/useWalletSummary";
 import { cn } from "@/lib/cn";
-import { fmtAud, MOCK_WALLET } from "@/lib/v4MockData";
+import { money } from "@/lib/format";
 
 export function WalletCard() {
+  const { data: wallet, isLoading, error } = useWalletSummary();
+
+  if (isLoading && !wallet) {
+    return (
+      <Card className="p-4" data-testid="card-wallet">
+        <PageLoader label="Loading wallet…" />
+      </Card>
+    );
+  }
+
+  if (error || !wallet) {
+    return (
+      <Card className="p-4 border-destructive/30" data-testid="card-wallet">
+        <p className="text-xs text-destructive">Wallet summary unavailable</p>
+      </Card>
+    );
+  }
+
+  const fmt = (v: number) => money(v, "AUD");
+
   return (
     <Card
       className="p-4 bg-gradient-to-br from-primary/10 to-transparent border-primary/30"
@@ -18,35 +40,39 @@ export function WalletCard() {
       </div>
       <div className="flex items-end justify-between gap-3">
         <div>
-          <div className="text-lg font-semibold tnum">{fmtAud(MOCK_WALLET.balance)}</div>
+          <div className="text-lg font-semibold tnum">{fmt(wallet.balance)}</div>
           <div className="text-[11px] text-muted-foreground tnum">
-            Available {fmtAud(MOCK_WALLET.available)} · last top-up {MOCK_WALLET.lastTopUp}
+            Available {fmt(wallet.available)} · last payment {wallet.last_top_up}
           </div>
         </div>
         <div className="flex gap-1.5">
-          <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-topup">
+          <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-topup" disabled>
             <Download className="h-3.5 w-3.5 mr-1" /> Top Up
           </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-withdraw">
+          <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-withdraw" disabled>
             <Upload className="h-3.5 w-3.5 mr-1" /> Withdraw
           </Button>
         </div>
       </div>
       <div className="border-t border-border/60 mt-2.5 pt-2 space-y-1 max-h-24 overflow-y-auto">
-        {MOCK_WALLET.txns.slice(0, 4).map((txn) => (
-          <div key={txn.id} className="flex items-center justify-between text-[11px]">
-            <span className="text-muted-foreground truncate pr-2">{txn.label}</span>
-            <span
-              className={cn(
-                "tnum whitespace-nowrap",
-                txn.delta < 0 ? "text-muted-foreground" : "text-primary"
-              )}
-            >
-              {txn.delta < 0 ? "" : "+"}
-              {fmtAud(txn.delta)}
-            </span>
-          </div>
-        ))}
+        {wallet.transactions.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground">No payment activity yet.</p>
+        ) : (
+          wallet.transactions.slice(0, 4).map((txn) => (
+            <div key={txn.id} className="flex items-center justify-between text-[11px]">
+              <span className="text-muted-foreground truncate pr-2">{txn.label}</span>
+              <span
+                className={cn(
+                  "tnum whitespace-nowrap",
+                  txn.delta < 0 ? "text-muted-foreground" : txn.delta > 0 ? "text-primary" : "text-muted-foreground"
+                )}
+              >
+                {txn.delta < 0 ? "" : txn.delta > 0 ? "+" : ""}
+                {txn.delta === 0 ? "pending" : fmt(txn.delta)}
+              </span>
+            </div>
+          ))
+        )}
       </div>
     </Card>
   );

@@ -1,8 +1,10 @@
 """Rule engine unit tests (parity with frontend eval fixtures)."""
 
+import json
+from pathlib import Path
+
 from app.schemas.rule_book_config import validate_rule_book_config_payload
-from app.services.rule_book_config_io import load_rule_book_config_dict
-from app.services.rule_book_evaluate_service import sample_eval_documents
+from app.services.rule_book_evaluate_service import _legacy_sample_eval_documents
 from app.services.rule_engine import (
     SampleEmail,
     build_live_evaluation,
@@ -11,9 +13,14 @@ from app.services.rule_engine import (
 )
 
 
+def _template_config():
+    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
+    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
+
+
 def test_sample_eval_aws_purchase_rule() -> None:
-    config = validate_rule_book_config_payload(load_rule_book_config_dict(1))
-    docs = sample_eval_documents()
+    config = _template_config()
+    docs = _legacy_sample_eval_documents()
     aws = docs[0]
     hit = match_purchase_rule(aws, config.purchase_rules)
     assert hit is not None
@@ -21,8 +28,8 @@ def test_sample_eval_aws_purchase_rule() -> None:
 
 
 def test_build_live_evaluation_sample_rows() -> None:
-    config = validate_rule_book_config_payload(load_rule_book_config_dict(1))
-    rows = build_live_evaluation(sample_eval_documents(), config)
+    config = _template_config()
+    rows = build_live_evaluation(_legacy_sample_eval_documents(), config)
     assert len(rows) == 5
     aws_row = next(row for row in rows if row.doc.invoice_no == "AWS-AU-204815")
     assert aws_row.category_rule is not None
@@ -76,3 +83,106 @@ def test_match_disabled_email_capture_rule() -> None:
     hit = match_disabled_email_capture_rule(email, [rule])
     assert hit is not None
     assert hit.name == "AWS billing"
+
+
+def test_microsoft_azure_invoice_test6_capture_rule() -> None:
+    """Regression: attachment_name must end_with .pdf, not start_with."""
+    from app.schemas.rule_book_config import (
+        EmailCaptureAction,
+        EmailCaptureRule,
+        RuleCondition,
+        RuleConditionGroup,
+    )
+    from app.services.rule_engine import match_email_capture_rule
+
+    rule = EmailCaptureRule(
+        id="ec-azure",
+        name="Microsoft Azure invoices",
+        enabled=True,
+        priority=130,
+        mailbox="vishnu@highvolt.tech",
+        root=RuleConditionGroup(
+            operator="AND",
+            children=[
+                RuleCondition(field="attachment_name", operator="ends_with", value=".pdf"),
+                RuleCondition(field="from", operator="contains", value="22je1038@iitism.ac.in"),
+                RuleConditionGroup(
+                    operator="OR",
+                    children=[
+                        RuleCondition(
+                            field="attachment_name",
+                            operator="contains",
+                            value="invoice-test",
+                        ),
+                        RuleCondition(
+                            field="attachment_name",
+                            operator="contains",
+                            value="azure",
+                        ),
+                        RuleCondition(field="subject", operator="contains", value="azure"),
+                    ],
+                ),
+            ],
+        ),
+        action=EmailCaptureAction(
+            save_attachment=True,
+            route_to="Expenses Management",
+            tags=[],
+        ),
+        matched_count=0,
+        last_matched="",
+    )
+    email = SampleEmail(
+        id="msg-azure-1",
+        from_addr="22je1038@iitism.ac.in",
+        to="vishnu@highvolt.tech",
+        subject="azure invoice test",
+        body="",
+        attachment_name="invoice-test6.pdf",
+        attachment_mime="application/pdf",
+    )
+    hit = match_email_capture_rule(email, [rule], mailbox="vishnu@highvolt.tech")
+    assert hit is not None
+    assert hit.action.route_to == "Expenses Management"
+
+
+def test_starts_with_pdf_never_matches_real_filenames() -> None:
+    from app.schemas.rule_book_config import (
+        EmailCaptureAction,
+        EmailCaptureRule,
+        RuleCondition,
+        RuleConditionGroup,
+    )
+    from app.services.rule_engine import match_email_capture_rule
+
+    broken = EmailCaptureRule(
+        id="ec-broken",
+        name="Broken pdf rule",
+        enabled=True,
+        priority=1,
+        mailbox="vishnu@highvolt.tech",
+        root=RuleConditionGroup(
+            operator="AND",
+            children=[
+                RuleCondition(field="attachment_name", operator="starts_with", value=".pdf"),
+                RuleCondition(field="from", operator="contains", value="22je1038@iitism.ac.in"),
+            ],
+        ),
+        action=EmailCaptureAction(
+            save_attachment=True,
+            route_to="Expenses Management",
+            tags=[],
+        ),
+        matched_count=0,
+        last_matched="",
+    )
+    email = SampleEmail(
+        id="msg-1",
+        from_addr="22je1038@iitism.ac.in",
+        to="vishnu@highvolt.tech",
+        subject="test",
+        body="",
+        attachment_name="invoice-test6.pdf",
+        attachment_mime="application/pdf",
+    )
+    assert match_email_capture_rule(email, [broken], mailbox="vishnu@highvolt.tech") is None

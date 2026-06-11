@@ -27,6 +27,12 @@ import {
   invoiceVendorConfidence,
   routeTargetShortLabel,
 } from "@/lib/invoice";
+import {
+  approveAndProcess,
+  canRejectClaim,
+  canRequestInfo,
+  reprocessAndWatch,
+} from "@/lib/invoiceActions";
 
 const TABS = ["fields", "lines", "po", "tax", "audit"] as const;
 type Tab = (typeof TABS)[number];
@@ -293,14 +299,6 @@ function canEdit(status: string): boolean {
   return ["exception", "duplicate_skipped", "rejected"].includes(status);
 }
 
-function canReject(status: string): boolean {
-  return status === "exception" || status === "processed";
-}
-
-function canRequestApproval(status: string): boolean {
-  return !["exception", "duplicate_skipped", "rejected"].includes(status);
-}
-
 function pipelineDotClass(state: "done" | "pending" | "fail" | "skipped"): string {
   if (state === "done") return "bg-[hsl(var(--chart-1))]";
   if (state === "fail") return "bg-destructive";
@@ -422,6 +420,7 @@ type InvoiceDetailDrawerProps = {
   onClose: () => void;
   onUpdated?: () => void;
   startInEditMode?: boolean;
+  initialTab?: Tab;
 };
 
 export function InvoiceDetailDrawer({
@@ -430,8 +429,9 @@ export function InvoiceDetailDrawer({
   onClose,
   onUpdated,
   startInEditMode = false,
+  initialTab = "fields",
 }: InvoiceDetailDrawerProps) {
-  const [tab, setTab] = useState<Tab>("fields");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [inv, setInv] = useState<InvoiceDetails | null>(null);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -446,6 +446,7 @@ export function InvoiceDetailDrawer({
 
   useEffect(() => {
     if (open) {
+      setTab(initialTab);
       setMounted(true);
       setSheetState("closed");
       const frame = requestAnimationFrame(() => {
@@ -457,7 +458,7 @@ export function InvoiceDetailDrawer({
     setSheetState("closed");
     const timer = window.setTimeout(() => setMounted(false), 300);
     return () => window.clearTimeout(timer);
-  }, [open]);
+  }, [open, invoiceId, initialTab]);
 
   useEffect(() => {
     setPreviewMode("summary");
@@ -525,6 +526,16 @@ export function InvoiceDetailDrawer({
   const sourceKind = inv?.email_sender ? "email" : "upload";
   const docNumber = inv?.invoice_no ?? (inv ? `DOC-${inv.id}` : "—");
 
+  async function reloadInvoice() {
+    if (!inv) return;
+    const updated = await api.getInvoice(inv.id);
+    setInv(updated);
+    if (tab === "audit") {
+      const steps = await api.getInvoicePipeline(inv.id, { fresh: true });
+      setPipelineSteps(steps);
+    }
+  }
+
   async function handleSaveEdits() {
     if (!inv || !draft) return;
     setActionBusy(true);
@@ -572,7 +583,7 @@ export function InvoiceDetailDrawer({
   }
 
   async function handleReject() {
-    if (!inv || !canReject(inv.status)) return;
+    if (!inv || !canRejectClaim(inv.status)) return;
     if (!window.confirm(`Reject ${inv.vendor ?? invId(inv.id)}?`)) return;
     setActionBusy(true);
     try {
@@ -587,7 +598,7 @@ export function InvoiceDetailDrawer({
   }
 
   async function handleRequestApproval() {
-    if (!inv || !canRequestApproval(inv.status)) return;
+    if (!inv || !canRequestInfo(inv.status)) return;
     setActionBusy(true);
     try {
       await api.requestApproval(inv.id);
@@ -595,6 +606,25 @@ export function InvoiceDetailDrawer({
       onClose();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleReprocess() {
+    if (!inv?.has_stored_file) {
+      alert("Upload a PDF before reprocessing this invoice.");
+      return;
+    }
+    setActionBusy(true);
+    try {
+      await reprocessAndWatch(inv.id, async () => {
+        onUpdated?.();
+        await reloadInvoice();
+      });
+      onUpdated?.();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Reprocess failed");
     } finally {
       setActionBusy(false);
     }
@@ -609,12 +639,12 @@ export function InvoiceDetailDrawer({
           alert("Upload a PDF before approving this invoice.");
           return;
         }
-        await api.approve(inv.id);
-        await api.triggerProcess();
+        await approveAndProcess(inv.id, async () => {
+          onUpdated?.();
+          await reloadInvoice();
+        });
       } else if (inv.status === "processed") {
         await api.publishInvoice(inv.id);
-      } else {
-        await api.triggerProcess();
       }
       onUpdated?.();
       onClose();
@@ -1136,13 +1166,25 @@ export function InvoiceDetailDrawer({
                     size="sm"
                     className="text-destructive"
                     data-testid="button-reject"
-                    disabled={actionBusy || !canReject(inv.status)}
+                    disabled={actionBusy || !canRejectClaim(inv.status)}
                     onClick={() => void handleReject()}
                   >
                     <X className="h-4 w-4 mr-1" />
                     Reject
                   </Button>
                   <div className="flex gap-2">
+                    {["exception", "duplicate_skipped", "processed"].includes(inv.status) &&
+                      inv.has_stored_file && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          data-testid="button-reprocess"
+                          disabled={actionBusy}
+                          onClick={() => void handleReprocess()}
+                        >
+                          Reprocess
+                        </Button>
+                      )}
                     {canEdit(inv.status) && (
                       <Button
                         variant="outline"
@@ -1159,7 +1201,7 @@ export function InvoiceDetailDrawer({
                       variant="outline"
                       size="sm"
                       data-testid="button-request-approval"
-                      disabled={actionBusy || !canRequestApproval(inv.status)}
+                      disabled={actionBusy || !canRequestInfo(inv.status)}
                       onClick={() => void handleRequestApproval()}
                     >
                       <Clock className="h-4 w-4 mr-1" />

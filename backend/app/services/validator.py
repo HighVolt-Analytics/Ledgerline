@@ -309,37 +309,74 @@ async def vr02_unique(
 
 
 
+def vr03_po_document(data: InvoiceData) -> ValidationResult:
+    missing: list[str] = []
+    if not (data.vendor or "").strip():
+        missing.append("vendor")
+    if not (data.po_reference or "").strip():
+        missing.append("po_reference")
+    if not data.line_items:
+        missing.append("line_items")
+    elif data.total is None and data.subtotal is None:
+        missing.append("total")
+    if missing:
+        return ValidationResult("VR03", False, f"Missing: {', '.join(missing)}")
+    return ValidationResult("VR03", True, "PO document fields present")
+
+
+def vr03_grn_document(data: InvoiceData) -> ValidationResult:
+    missing: list[str] = []
+    if not (data.po_reference or "").strip():
+        missing.append("po_reference")
+    if not data.line_items:
+        missing.append("line_items")
+    if missing:
+        return ValidationResult("VR03", False, f"Missing: {', '.join(missing)}")
+    return ValidationResult("VR03", True, "GRN document fields present")
+
+
 _SYNC_RULES = [vr03_required, vr06_dates, vr07_currency, vr08_gst, vr01_total]
 
 
-
-
-
 async def run_all_validations(
-
     data: InvoiceData,
-
     session: AsyncSession,
-
     exclude_id: int | None = None,
-
     *,
-
     org_id: int,
-
     sender: str | None = None,
-
     route_target: str | None = None,
-
+    purchase_document_type: str | None = None,
+    has_receipt_file: bool = False,
 ) -> list[ValidationResult]:
+    if purchase_document_type == "po":
+        return [
+            vr03_po_document(data),
+            await vr05_abn(data, session, org_id=org_id, sender=sender),
+            vr07_currency(data),
+        ]
+    if purchase_document_type == "grn":
+        return [
+            vr03_grn_document(data),
+            vr07_currency(data),
+        ]
+
+    from app.services.invoice_evaluation_service import ROUTE_TEAM
+    from app.services.team_expense_validator import run_team_expense_validations
+
+    if route_target == ROUTE_TEAM:
+        return await run_team_expense_validations(
+            data,
+            session,
+            org_id=org_id,
+            route_target=route_target,
+            email_sender=sender,
+            has_receipt_file=has_receipt_file,
+        )
 
     results = [fn(data) for fn in _SYNC_RULES]
-
     results.insert(1, await vr05_abn(data, session, org_id=org_id, sender=sender))
-
     results.append(await vr02_unique(data, session, exclude_id, org_id=org_id))
-
-    from app.services.team_expense_validator import run_team_expense_validations
 
     results.extend(
         await run_team_expense_validations(
@@ -348,6 +385,7 @@ async def run_all_validations(
             org_id=org_id,
             route_target=route_target,
             email_sender=sender,
+            has_receipt_file=has_receipt_file,
         )
     )
 
