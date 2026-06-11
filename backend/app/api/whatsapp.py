@@ -76,12 +76,6 @@ async def whatsapp_status(
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[WhatsappStatusResponse]:
     connections = await list_connections(db, org_id=ctx.org_id)
-    for conn in connections:
-        if conn.is_connected and conn.whatsapp_business_account_id:
-            try:
-                await resubscribe_connection_webhooks(conn)
-            except Exception as exc:
-                logger.debug("whatsapp_resubscribe_skipped", id=conn.id, error=str(exc))
     return ApiEnvelope(
         data=WhatsappStatusResponse(
             configured=oauth_configured(),
@@ -214,61 +208,77 @@ async def whatsapp_oauth_callback(
 
 
 async def process_whatsapp_payload(payload: dict) -> None:
-    messages = parse_whatsapp_messages(payload)
-    if not messages:
-        return
+    try:
+        messages = parse_whatsapp_messages(payload)
+        if not messages:
+            return
 
-    async with async_session_factory() as session:
-        for msg in messages:
-            if not msg.message_id:
-                continue
-            if not await try_claim_message_mid(session, msg.message_id):
-                logger.info("whatsapp_dedupe_skip", message_id=msg.message_id)
-                continue
+        async with async_session_factory() as session:
+            for msg in messages:
+                if not msg.message_id:
+                    continue
+                if not await try_claim_message_mid(session, msg.message_id):
+                    logger.info("whatsapp_dedupe_skip", message_id=msg.message_id)
+                    continue
 
-            connection = await find_connection_by_phone_or_waba(
-                session,
-                phone_number_id=msg.phone_number_id or None,
-                waba_id=msg.waba_id or None,
-            )
-            if not connection:
-                logger.warning(
-                    "whatsapp_unknown_connection",
-                    phone_number_id=msg.phone_number_id,
-                    waba_id=msg.waba_id,
+                connection = await find_connection_by_phone_or_waba(
+                    session,
+                    phone_number_id=msg.phone_number_id or None,
+                    waba_id=msg.waba_id or None,
                 )
-                continue
+                if not connection:
+                    logger.warning(
+                        "whatsapp_unknown_connection",
+                        phone_number_id=msg.phone_number_id,
+                        waba_id=msg.waba_id,
+                    )
+                    continue
 
-            from app.services.whatsapp_connection_service import resolve_access_token
+                from app.services.whatsapp_connection_service import resolve_access_token
 
-            try:
-                token = resolve_access_token(connection)
-            except Exception as exc:
-                logger.error("whatsapp_token_missing", connection_id=connection.id, error=str(exc))
-                continue
+                try:
+                    token = resolve_access_token(connection)
+                except Exception as exc:
+                    logger.error(
+                        "whatsapp_token_missing",
+                        connection_id=connection.id,
+                        error=str(exc),
+                    )
+                    continue
 
-            result = await ingest_whatsapp_message(
-                session,
-                connection=connection,
-                msg=msg,
-                access_token=token,
-            )
-            await session.commit()
+                result = await ingest_whatsapp_message(
+                    session,
+                    connection=connection,
+                    msg=msg,
+                    access_token=token,
+                )
+                await session.commit()
 
-            for invoice_id in result.invoice_ids or []:
-                asyncio.create_task(process_invoice_background(invoice_id))
+                for invoice_id in result.invoice_ids or []:
+                    asyncio.create_task(process_invoice_background(invoice_id))
 
-            logger.info(
-                "whatsapp_message_processed",
-                message_id=msg.message_id,
-                ingested=result.ingested_count,
-                skipped=result.skipped_reason,
-                tenant_id=connection.org_id,
-            )
+                logger.info(
+                    "whatsapp_message_processed",
+                    message_id=msg.message_id,
+                    ingested=result.ingested_count,
+                    skipped=result.skipped_reason,
+                    tenant_id=connection.org_id,
+                )
+    except Exception as exc:
+        logger.exception("whatsapp_webhook_processing_failed", error=str(exc))
 
 
 def schedule_whatsapp_webhook_processing(payload: dict) -> None:
-    asyncio.create_task(process_whatsapp_payload(payload))
+    task = asyncio.create_task(process_whatsapp_payload(payload))
+
+    def _log_task_result(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error("whatsapp_webhook_task_failed", error=str(exc))
+
+    task.add_done_callback(_log_task_result)
 
 
 @webhook_router.get("/webhook/meta")
@@ -285,6 +295,7 @@ async def meta_webhook_verify(
 
 @webhook_router.post("/webhook/meta")
 async def meta_webhook_receive(request: Request) -> dict[str, bool]:
+    logger.info("meta_webhook_post_received", path=str(request.url.path))
     try:
         raw = await request.body()
     except ClientDisconnect:
