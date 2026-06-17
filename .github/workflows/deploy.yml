@@ -1,0 +1,94 @@
+name: Deploy to Hostinger
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build and Deploy Quantum Ledgerline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Build project
+        run: npm run build
+
+      - name: Add deployment marker
+        run: |
+          echo "Deployed from GitHub Actions" > dist/deploy-info.txt
+          echo "Website: quantumledgerlink.com" >> dist/deploy-info.txt
+          echo "Commit: $GITHUB_SHA" >> dist/deploy-info.txt
+          echo "Time: $(date -u)" >> dist/deploy-info.txt
+
+      - name: Validate Hostinger secrets
+        run: |
+          if [ -z "${{ secrets.HOSTINGER_HOST }}" ]; then
+            echo "Missing secret: HOSTINGER_HOST"
+            exit 1
+          fi
+
+          if [ -z "${{ secrets.HOSTINGER_PORT }}" ]; then
+            echo "Missing secret: HOSTINGER_PORT"
+            exit 1
+          fi
+
+          if [ -z "${{ secrets.HOSTINGER_USERNAME }}" ]; then
+            echo "Missing secret: HOSTINGER_USERNAME"
+            exit 1
+          fi
+
+          if [ -z "${{ secrets.HOSTINGER_TARGET_PATH }}" ]; then
+            echo "Missing secret: HOSTINGER_TARGET_PATH"
+            exit 1
+          fi
+
+          if [ -z "${{ secrets.HOSTINGER_SSH_KEY }}" ]; then
+            echo "Missing secret: HOSTINGER_SSH_KEY"
+            exit 1
+          fi
+
+          echo "All required Hostinger secrets are present"
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.HOSTINGER_SSH_KEY }}" > ~/.ssh/hostinger_key
+          chmod 600 ~/.ssh/hostinger_key
+          ssh-keyscan -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Backup existing public_html
+        run: |
+          ssh -i ~/.ssh/hostinger_key -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "mkdir -p ~/deployment_backups/quantumledgerlink.com && tar -czf ~/deployment_backups/quantumledgerlink.com/backup-$(date +%Y%m%d-%H%M%S).tar.gz -C '${{ secrets.HOSTINGER_TARGET_PATH }}' . || true"
+
+      - name: Clean old website files safely
+        run: |
+          ssh -i ~/.ssh/hostinger_key -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "find '${{ secrets.HOSTINGER_TARGET_PATH }}' -mindepth 1 -maxdepth 1 ! -name '.htaccess' ! -name 'api' -exec rm -rf {} +"
+
+      - name: Upload dist to Hostinger
+        run: |
+          scp -i ~/.ssh/hostinger_key -P "${{ secrets.HOSTINGER_PORT }}" -r dist/* "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}:${{ secrets.HOSTINGER_TARGET_PATH }}/"
+
+      - name: Verify remote deployment
+        run: |
+          ssh -i ~/.ssh/hostinger_key -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "cd '${{ secrets.HOSTINGER_TARGET_PATH }}' && pwd && ls -lah && echo '--- deploy marker ---' && cat deploy-info.txt"
+
+      - name: Deployment completed
+        run: echo "Quantum Ledgerline deployed successfully"
