@@ -1,7 +1,22 @@
 name: Deploy to Hostinger
 
+run-name: Deploy Quantum Ledgerline by ${{ inputs.deployer_email || github.actor }}
+
 on:
   workflow_dispatch:
+    inputs:
+      deployer_email:
+        description: "Email of the user who triggered deployment"
+        required: false
+        default: "unknown"
+      deployer_name:
+        description: "Name of the user who triggered deployment"
+        required: false
+        default: "unknown"
+      triggered_from:
+        description: "Source system"
+        required: false
+        default: "GitHub"
   push:
     branches:
       - main
@@ -36,11 +51,19 @@ jobs:
         run: npm run build
 
       - name: Add deployment marker
+        env:
+          DEPLOYER_EMAIL: ${{ inputs.deployer_email || github.actor }}
+          DEPLOYER_NAME: ${{ inputs.deployer_name || github.actor }}
+          TRIGGERED_FROM: ${{ inputs.triggered_from || 'GitHub' }}
         run: |
           echo "Deployed from GitHub Actions" > dist/deploy-info.txt
-          echo "Website: quantumledgerlink.com" >> dist/deploy-info.txt
+          echo "Website: Quantum Ledgerline" >> dist/deploy-info.txt
+          echo "Domain: quantumledgerlink.com" >> dist/deploy-info.txt
           echo "Commit: $GITHUB_SHA" >> dist/deploy-info.txt
-          echo "Time: $(date -u)" >> dist/deploy-info.txt
+          echo "Time UTC: $(date -u)" >> dist/deploy-info.txt
+          echo "Deployed by: $DEPLOYER_EMAIL" >> dist/deploy-info.txt
+          echo "Deployer name: $DEPLOYER_NAME" >> dist/deploy-info.txt
+          echo "Triggered from: $TRIGGERED_FROM" >> dist/deploy-info.txt
 
       - name: Validate Hostinger secrets
         run: |
@@ -176,3 +199,50 @@ jobs:
 
       - name: Deployment completed
         run: echo "Quantum Ledgerline deployed successfully"
+
+      - name: Send deployment success email
+        uses: dawidd6/action-send-mail@v3
+        if: success()
+        continue-on-error: true
+        with:
+          server_address: ${{ secrets.MAIL_HOST }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: ${{ secrets.MAIL_FROM }}
+          to: ${{ secrets.MAIL_TO }}
+          subject: 'Deployment Success: Quantum Ledgerline'
+          body: |
+            Website: Quantum Ledgerline
+            Domain: quantumledgerlink.com
+            Status: Success
+            Deployed by: ${{ inputs.deployer_email || github.actor }}
+            Deployer name: ${{ inputs.deployer_name || github.actor }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Triggered from: ${{ inputs.triggered_from || 'GitHub' }}
+            GitHub run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Send deployment failure email
+        uses: dawidd6/action-send-mail@v3
+        if: failure()
+        continue-on-error: true
+        with:
+          server_address: ${{ secrets.MAIL_HOST }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: ${{ secrets.MAIL_FROM }}
+          to: ${{ secrets.MAIL_TO }}
+          subject: 'Deployment Failed: Quantum Ledgerline'
+          body: |
+            Website: Quantum Ledgerline
+            Domain: quantumledgerlink.com
+            Status: Failed
+            Deployed by: ${{ inputs.deployer_email || github.actor }}
+            Deployer name: ${{ inputs.deployer_name || github.actor }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Triggered from: ${{ inputs.triggered_from || 'GitHub' }}
+            GitHub run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Message: Open the GitHub run URL for full logs.
