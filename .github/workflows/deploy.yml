@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: deploy-quantum-ledgerline-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Build and Deploy Quantum Ledgerline
@@ -72,23 +76,103 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.HOSTINGER_SSH_KEY }}" > ~/.ssh/hostinger_key
           chmod 600 ~/.ssh/hostinger_key
-          ssh-keyscan -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -T 20 -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_HOST }}" >> ~/.ssh/known_hosts || true
+
+      - name: Test SSH connection with retry
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+
+          for attempt in 1 2 3 4 5; do
+            echo "SSH connection attempt $attempt of 5"
+
+            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "echo SSH connection successful"; then
+              echo "SSH connection verified"
+              exit 0
+            fi
+
+            echo "SSH connection failed. Waiting before retry..."
+            sleep 30
+          done
+
+          echo "SSH connection failed after 5 attempts"
+          exit 1
 
       - name: Backup existing public_html
+        continue-on-error: true
         run: |
-          ssh -i ~/.ssh/hostinger_key -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "mkdir -p ~/deployment_backups/quantumledgerlink.com && tar -czf ~/deployment_backups/quantumledgerlink.com/backup-$(date +%Y%m%d-%H%M%S).tar.gz -C '${{ secrets.HOSTINGER_TARGET_PATH }}' . || true"
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+
+          for attempt in 1 2 3; do
+            echo "Backup attempt $attempt of 3"
+
+            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "mkdir -p ~/deployment_backups/quantumledgerlink.com && tar -czf ~/deployment_backups/quantumledgerlink.com/backup-$(date +%Y%m%d-%H%M%S).tar.gz -C '${{ secrets.HOSTINGER_TARGET_PATH }}' . || true"; then
+              echo "Backup completed"
+              exit 0
+            fi
+
+            echo "Backup failed. Waiting before retry..."
+            sleep 20
+          done
+
+          echo "Backup skipped after retry attempts"
+          exit 0
 
       - name: Clean old website files safely
         run: |
-          ssh -i ~/.ssh/hostinger_key -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "find '${{ secrets.HOSTINGER_TARGET_PATH }}' -mindepth 1 -maxdepth 1 ! -name '.htaccess' ! -name 'api' -exec rm -rf {} +"
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+
+          for attempt in 1 2 3 4 5; do
+            echo "Clean attempt $attempt of 5"
+
+            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "find '${{ secrets.HOSTINGER_TARGET_PATH }}' -mindepth 1 -maxdepth 1 ! -name '.htaccess' ! -name 'api' -exec rm -rf {} +"; then
+              echo "Remote clean completed"
+              exit 0
+            fi
+
+            echo "Remote clean failed. Waiting before retry..."
+            sleep 30
+          done
+
+          echo "Remote clean failed after 5 attempts"
+          exit 1
 
       - name: Upload dist to Hostinger
         run: |
-          scp -i ~/.ssh/hostinger_key -P "${{ secrets.HOSTINGER_PORT }}" -r dist/* "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}:${{ secrets.HOSTINGER_TARGET_PATH }}/"
+          SCP_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -P ${{ secrets.HOSTINGER_PORT }}"
+
+          for attempt in 1 2 3 4 5; do
+            echo "Upload attempt $attempt of 5"
+
+            if scp $SCP_OPTS -r dist/* "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}:${{ secrets.HOSTINGER_TARGET_PATH }}/"; then
+              echo "Upload completed"
+              exit 0
+            fi
+
+            echo "Upload failed. Waiting before retry..."
+            sleep 30
+          done
+
+          echo "Upload failed after 5 attempts"
+          exit 1
 
       - name: Verify remote deployment
         run: |
-          ssh -i ~/.ssh/hostinger_key -p "${{ secrets.HOSTINGER_PORT }}" "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "cd '${{ secrets.HOSTINGER_TARGET_PATH }}' && pwd && ls -lah && echo '--- deploy marker ---' && cat deploy-info.txt"
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=45 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/hostinger_key -p ${{ secrets.HOSTINGER_PORT }}"
+
+          for attempt in 1 2 3 4 5; do
+            echo "Verify attempt $attempt of 5"
+
+            if ssh $SSH_OPTS "${{ secrets.HOSTINGER_USERNAME }}@${{ secrets.HOSTINGER_HOST }}" "cd '${{ secrets.HOSTINGER_TARGET_PATH }}' && pwd && ls -lah && echo '--- deploy marker ---' && cat deploy-info.txt"; then
+              echo "Verification completed"
+              exit 0
+            fi
+
+            echo "Verification failed. Waiting before retry..."
+            sleep 30
+          done
+
+          echo "Verification failed after 5 attempts"
+          exit 1
 
       - name: Deployment completed
         run: echo "Quantum Ledgerline deployed successfully"
