@@ -69,8 +69,8 @@ export function ExpensesRulesTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Code non-PO business expenses — utility bills, subscriptions, professional services — by
-          document number, reference, or description.
+          GL coding for documents routed to Expenses Management — utilities, subscriptions, and
+          non-PO vendor invoices. Does not control workspace routing.
         </p>
         <Button size="sm" onClick={addRule} data-testid="button-new-expense-rule">
           <Plus className="h-4 w-4 mr-1" /> New Rule

@@ -7,6 +7,7 @@ from app.models.invoice import Invoice
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.mailbox_connection_request import MailboxConnectionRequest
+from app.models.mailbox_sync_job import MailboxSyncJob
 from app.models.organisation import Organisation
 from app.models.payment import Payment
 from app.models.purchase_order import PurchaseOrder
@@ -30,6 +31,7 @@ __all__ = [
     "JournalEntry",
     "LineItem",
     "MailboxConnectionRequest",
+    "MailboxSyncJob",
     "Organisation",
     "Payment",
     "PendingVendor",

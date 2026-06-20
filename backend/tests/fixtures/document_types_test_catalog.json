@@ -1,0 +1,1332 @@
+[
+  {
+    "code": "DT-01",
+    "title": "PO-based goods invoice",
+    "shortTitle": "PO goods invoice",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Standard 3-way match goods invoice against an approved PO and GRN.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 180,
+      "confidence": 0.88,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": [
+          {
+            "type": "condition",
+            "field": "has_po_reference",
+            "operator": "equals",
+            "value": "true"
+          },
+          {
+            "type": "condition",
+            "field": "has_invoice_no",
+            "operator": "equals",
+            "value": "true"
+          },
+          {
+            "type": "condition",
+            "field": "has_total",
+            "operator": "equals",
+            "value": "true"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "po_reference"
+    ],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "po_reference"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [
+      "DT-02",
+      "DT-03"
+    ],
+    "bundleConditional": [
+      "Quality certificate",
+      "Packing list (if PO flags inspection)"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-02",
+    "title": "Purchase order (copy)",
+    "shortTitle": "PO (supporting)",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Supporting bundle member \u2014 PO PDF that anchors the 3-way match dossier.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 25,
+      "confidence": 0.9,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": [
+          {
+            "type": "group",
+            "operator": "OR",
+            "children": [
+              {
+                "type": "condition",
+                "field": "attachment_name",
+                "operator": "regex",
+                "value": "(^|[-_/])po([-_.]|$)|purchase[_-]?order|PO-"
+              },
+              {
+                "type": "condition",
+                "field": "document_text",
+                "operator": "regex",
+                "value": "(?i)purchase order"
+              },
+              {
+                "type": "condition",
+                "field": "has_heading_po",
+                "operator": "equals",
+                "value": "true"
+              }
+            ]
+          },
+          {
+            "type": "condition",
+            "field": "has_invoice_no",
+            "operator": "equals",
+            "value": "false"
+          },
+          {
+            "type": "condition",
+            "field": "is_commercial_invoice",
+            "operator": "equals",
+            "value": "false"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "po_reference"
+    ],
+    "absentFields": [
+      "invoice_no"
+    ],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "po_reference"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": "po"
+  },
+  {
+    "code": "DT-03",
+    "title": "Goods receipt note (GRN) / delivery docket",
+    "shortTitle": "GRN (supporting)",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Supporting bundle member \u2014 GRN PDF that completes the 3-way match.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 18,
+      "confidence": 0.93,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": [
+          {
+            "type": "group",
+            "operator": "OR",
+            "children": [
+              {
+                "type": "condition",
+                "field": "attachment_name",
+                "operator": "regex",
+                "value": "(grn|goods[\\s_-]?receipt|delivery[\\s_-]?note)"
+              },
+              {
+                "type": "condition",
+                "field": "document_text",
+                "operator": "regex",
+                "value": "(?i)(goods[\\s_-]?receipt|delivery[\\s_-]?note|\\bGRN\\b)"
+              },
+              {
+                "type": "condition",
+                "field": "has_heading_grn",
+                "operator": "equals",
+                "value": "true"
+              }
+            ]
+          },
+          {
+            "type": "condition",
+            "field": "has_invoice_no",
+            "operator": "equals",
+            "value": "false"
+          },
+          {
+            "type": "condition",
+            "field": "is_commercial_invoice",
+            "operator": "equals",
+            "value": "false"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "attachment_name"
+    ],
+    "absentFields": [
+      "invoice_no"
+    ],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "attachment_name"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": "grn"
+  },
+  {
+    "code": "DT-04",
+    "title": "Credit note / adjustment note",
+    "shortTitle": "Credit note",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Negative-amount note that mirrors and reduces an original invoice \u2014 never auto-nets against unrelated invoices.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 17,
+      "confidence": 0.9,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(credit[\\s_-]?note|creditmemo|credit_memo)"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)(credit[\\s_-]?note|creditmemo|credit_memo)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "vendor",
+      "invoice_no",
+      "total"
+    ],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "vendor",
+      "invoice_no",
+      "total"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "Return delivery note (goods returns)",
+      "Price-difference approval"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-05",
+    "title": "Debit note (vendor- or buyer-issued)",
+    "shortTitle": "Debit note",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Buyer-issued (charges vendor) or vendor-issued (additional charge) \u2014 never posts touchlessly.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "vendor",
+      "invoice_no",
+      "total"
+    ],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "vendor",
+      "invoice_no",
+      "total"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "Cause document (clause / demurrage record)"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-06",
+    "title": "Proforma invoice / advance (down-payment) request",
+    "shortTitle": "Proforma / advance",
+    "klass": "Pre-transactional",
+    "posting": "Down-payment",
+    "fraudRisk": "high",
+    "oneLine": "A proforma is NEVER posted as a payable/expense and NEVER creates an input tax credit (not a tax invoice).",
+    "routeTarget": "Vault",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 16,
+      "confidence": 0.9,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(pro[\\s_-]?forma|advance[\\s_-]?request)"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)(pro[\\s_-]?forma|advance[\\s_-]?request)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "vendor",
+      "invoice_no",
+      "total"
+    ],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "vendor",
+      "invoice_no",
+      "total"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "Bank guarantee (advances > threshold)"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-07",
+    "title": "Recurring / contract invoice (rent, lease, subscription, retainer)",
+    "shortTitle": "Recurring / contract",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Matched to the contract register; lease invoices post to lease liability under AASB 16, not rent expense.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [
+      "DT-16"
+    ],
+    "bundleConditional": [
+      "CPI / escalation calculation sheet on rate change"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-08",
+    "title": "Utility invoice (power, water, gas, telecom)",
+    "shortTitle": "Utility invoice",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Matched to site/meter register with consumption analytics; > \u00b140% deviation flags facilities review.",
+    "routeTarget": "Expenses Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "True-up reconciliation"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-09",
+    "title": "Freight, logistics & customs broker invoice",
+    "shortTitle": "Freight / broker",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Matched to shipment; broker disbursements split duty/GST pass-through from taxable service fee.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "POD for delivery-linked charges"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-10",
+    "title": "Import dossier (commercial invoice + customs entry + duty)",
+    "shortTitle": "Import dossier",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Landed-cost dossier \u2014 mandatory and blocking bundle of commercial invoice, customs entry, transport doc, packing list.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "Insurance certificate",
+      "Origin certificate (FTA duty claims)"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-11",
+    "title": "Intercompany invoice",
+    "shortTitle": "Intercompany",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Symmetry rule \u2014 both entities book the same period, amount and FX reference rate; mirror entry validated.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "Cost allocation worksheet"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-12",
+    "title": "Employee expense claim / reimbursement",
+    "shortTitle": "Expense claim",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "high",
+    "oneLine": "Per-line policy & receipt checks with fraud analytics; FBT-flagged lines tagged for the FBT register.",
+    "routeTarget": "Team Expenses",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 21,
+      "confidence": 0.78,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(expense[\\s_-]?claim|claim[\\s_-]?receipt|team[\\s_-]?meal|reimburse)"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)(expense[\\s_-]?claim|reimburse)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "vendor",
+      "total"
+    ],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "vendor",
+      "total"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "Travel approval",
+      "Mileage log"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-13",
+    "title": "Vendor statement of account",
+    "shortTitle": "Vendor statement",
+    "klass": "Reconciliation",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "NEVER posted as an invoice \u2014 auto-reconciled vs the AP subledger to detect missing invoices and duplicates.",
+    "routeTarget": "Vault",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 14,
+      "confidence": 0.88,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(statement|acct[\\s_-]?summary|account[\\s_-]?summary)"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)(vendor statement|account summary)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-16",
+    "title": "Contract / rate card / SOW / lease agreement",
+    "shortTitle": "Contract / SOW",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Supporting bundle member \u2014 the contract register entry that validates recurring & services rates.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 20,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "group",
+            "operator": "AND",
+            "children": [
+              {
+                "type": "condition",
+                "field": "document_text",
+                "operator": "contains",
+                "value": "signed for and on behalf"
+              },
+              {
+                "type": "condition",
+                "field": "document_text",
+                "operator": "contains",
+                "value": "governing law"
+              }
+            ]
+          },
+          {
+            "type": "group",
+            "operator": "AND",
+            "children": [
+              {
+                "type": "condition",
+                "field": "document_text",
+                "operator": "contains",
+                "value": "terms and conditions"
+              },
+              {
+                "type": "condition",
+                "field": "has_invoice_no",
+                "operator": "equals",
+                "value": "false"
+              }
+            ]
+          },
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(contract|sow|statement[\\s_-]?of[\\s_-]?work)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-17",
+    "title": "Service entry sheet / timesheet / completion certificate",
+    "shortTitle": "SES / timesheet",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Supporting bundle member \u2014 the service-receipt evidence for DT-02 services matching.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 19,
+      "confidence": 0.88,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(timesheet|time[\\s_-]?sheet|service[\\s_-]?entry|ses[\\s_-])"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)(timesheet|time[\\s_-]?sheet|service[\\s_-]?entry)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-18",
+    "title": "Remittance advice (inbound or outbound copy)",
+    "shortTitle": "Remittance advice",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Supporting document \u2014 confirms which invoices a payment settles; not posted itself.",
+    "routeTarget": "Vault",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 15,
+      "confidence": 0.9,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(remittance|payment[\\s_-]?advice)"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)(remittance|payment[\\s_-]?advice)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-19",
+    "title": "Self-billed invoice / RCTI (Recipient-Created Tax Invoice)",
+    "shortTitle": "RCTI / self-billing",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "We generate the invoice from receipt/consumption data; a vendor invoice for an RCTI vendor is blocked as duplicate-risk.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-20",
+    "title": "Consignment / ERS (Evaluated Receipt Settlement) settlement",
+    "shortTitle": "Consignment / ERS",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Consignment receipt creates no liability; ERS GRN auto-generates the invoice \u2014 vendor invoices are blocked.",
+    "routeTarget": "Purchase Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-21",
+    "title": "One-time vendor invoice / refund request",
+    "shortTitle": "One-time vendor",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "critical",
+    "oneLine": "Highest fraud-risk class \u2014 independent call-back bank verification, sanctions screen and collusion check mandatory.",
+    "routeTarget": "Expenses Management",
+    "enabled": true,
+    "classifier": {
+      "enabled": false,
+      "priority": 100,
+      "confidence": 0.85,
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": []
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [
+      "vendor",
+      "invoice_no",
+      "total"
+    ],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "direct_expense",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [
+      "vendor",
+      "invoice_no",
+      "total"
+    ],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-22",
+    "title": "Dunning / payment reminder letter",
+    "shortTitle": "Dunning letter",
+    "klass": "Informational",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Informational only \u2014 links to the referenced invoice's status; disconnection notices flagged urgent.",
+    "routeTarget": "Vault",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 13,
+      "confidence": 0.88,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(dunning|overdue|final[\\s_-]?demand)"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)(dunning|overdue|final[\\s_-]?demand)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.85,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-23",
+    "title": "Bank / vendor detail change request",
+    "shortTitle": "Bank-detail change",
+    "klass": "Master-data",
+    "posting": "No",
+    "fraudRisk": "critical",
+    "oneLine": "Critical fraud control \u2014 never update bank details from an email/letter alone; independent call-back + 4-eyes required.",
+    "routeTarget": "Vault",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 12,
+      "confidence": 0.9,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(bank[\\s_-]?detail|change[\\s_-]?of[\\s_-]?bank)"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)(bank[\\s_-]?detail|change[\\s_-]?of[\\s_-]?bank)"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.65,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "Penny-test confirmation"
+    ],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-24",
+    "title": "Quote / order acknowledgement / sales brochure / spam",
+    "shortTitle": "Quote / spam",
+    "klass": "Non-actionable",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Non-actionable \u2014 auto-archived with 30-day recoverability; never hard-deleted, never posted as a payable.",
+    "routeTarget": "Vault",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 10,
+      "confidence": 0.92,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "group",
+            "operator": "AND",
+            "children": [
+              {
+                "type": "condition",
+                "field": "attachment_name",
+                "operator": "regex",
+                "value": "(quote|quotation|estimate|proposal)"
+              },
+              {
+                "type": "condition",
+                "field": "document_text",
+                "operator": "not_contains",
+                "value": "terms and conditions"
+              }
+            ]
+          },
+          {
+            "type": "group",
+            "operator": "AND",
+            "children": [
+              {
+                "type": "condition",
+                "field": "document_text",
+                "operator": "regex",
+                "value": "(?i)\\b(quote|quotation|estimate|proposal)\\b"
+              },
+              {
+                "type": "condition",
+                "field": "document_text",
+                "operator": "not_contains",
+                "value": "terms and conditions"
+              },
+              {
+                "type": "condition",
+                "field": "has_invoice_no",
+                "operator": "equals",
+                "value": "false"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.85,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  },
+  {
+    "code": "DT-25",
+    "title": "Tax authority documents (assessments, GST notices)",
+    "shortTitle": "Tax authority notice",
+    "klass": "Compliance",
+    "posting": "Route",
+    "fraudRisk": "low",
+    "oneLine": "Compliance class \u2014 routed to the Tax team, not the AP posting flow.",
+    "routeTarget": "Vault",
+    "enabled": true,
+    "classifier": {
+      "enabled": true,
+      "priority": 11,
+      "confidence": 0.9,
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "regex",
+            "value": "(ato|tax[\\s_-]?office|tax[\\s_-]?notice|compliance[\\s_-]?notice)"
+          },
+          {
+            "type": "condition",
+            "field": "document_text",
+            "operator": "regex",
+            "value": "(?i)\\b(ato|tax[\\s_-]?office|tax[\\s_-]?notice|compliance[\\s_-]?notice)\\b"
+          }
+        ]
+      }
+    },
+    "classifierCustomized": false,
+    "requiredFields": [],
+    "absentFields": [],
+    "minRouteConfidence": 0.85,
+    "validationProfile": "non_actionable",
+    "playbookProfile": "",
+    "matchPolicy": null,
+    "approvalPolicy": null,
+    "validationRules": [],
+    "customValidationRules": [],
+    "extractionFields": [],
+    "extraction": [],
+    "checks": [],
+    "match": [],
+    "approval": [],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": [],
+    "purchaseBundleRole": ""
+  }
+]

@@ -25,7 +25,7 @@ from app.schemas.master_data import (
     VendorMasterResponse,
     VendorMasterUpdate,
 )
-from app.schemas.rule_book_config import BillingAddress, EmployeeMaster, VendorMaster
+from app.schemas.rule_book_config import BillingAddress, EmployeeMaster, RuleBookConfigPayload, VendorMaster
 from app.services.rule_book_config_io import (
     load_rule_book_config_dict,
     org_rule_book_config_path,
@@ -213,6 +213,24 @@ async def list_vendor_masters(db: AsyncSession, org_id: int) -> list[VendorMaste
     return [vendor_record_to_schema(row) for row in rows]
 
 
+async def classification_config_with_db_masters(
+    db: AsyncSession,
+    org_id: int,
+    config: RuleBookConfigPayload,
+) -> RuleBookConfigPayload:
+    """Merge DB masters into rule book config for pipeline evaluation."""
+    vendors = await list_vendor_masters(db, org_id)
+    employees = await list_employee_masters(db, org_id)
+    updates: dict[str, list] = {}
+    if vendors:
+        updates["vendor_masters"] = vendors
+    if employees:
+        updates["employee_masters"] = employees
+    if not updates:
+        return config
+    return config.model_copy(update=updates)
+
+
 async def list_employee_masters(db: AsyncSession, org_id: int) -> list[EmployeeMasterResponse]:
     await ensure_masters_imported(db, org_id)
     rows = (
@@ -250,6 +268,26 @@ async def get_employee_master_by_id(
             select(EmployeeMasterRecord).where(
                 EmployeeMasterRecord.org_id == org_id,
                 EmployeeMasterRecord.master_id == master_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def get_employee_master_by_email(
+    db: AsyncSession,
+    org_id: int,
+    email: str,
+) -> EmployeeMasterRecord | None:
+    key = (email or "").strip().lower()
+    if not key:
+        return None
+    from sqlalchemy import func
+
+    return (
+        await db.execute(
+            select(EmployeeMasterRecord).where(
+                EmployeeMasterRecord.org_id == org_id,
+                func.lower(EmployeeMasterRecord.email) == key,
             )
         )
     ).scalar_one_or_none()

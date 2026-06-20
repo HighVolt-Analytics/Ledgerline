@@ -12,14 +12,17 @@ Upload order (Purchase Management capture strip):
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
-PO_NUMBER = "PO-MKT-2026-TEST"
-VENDOR = "Sysco Foods Australia Pty Ltd"
+PO_NUMBER = "PO-MKT-2026-JUN17"
+# Align with rule_book_demo vendor master vm-2 (Sysco Australia / ABN 11223344556).
+VENDOR = "Sysco Australia"
+VENDOR_ABN = "11223344556"
 
 PO_TEXT = f"""PURCHASE ORDER
 {VENDOR}
-ABN 51 824 753 556
+ABN {VENDOR_ABN[:2]} {VENDOR_ABN[2:5]} {VENDOR_ABN[5:8]} {VENDOR_ABN[8:]}
 Purchase Order Number: {PO_NUMBER}
 PO Date: 09 June 2026
 Delivery Date: 10 June 2026
@@ -28,7 +31,7 @@ Ship To: High Volt Analytics
 Bill To: High Volt Analytics
 
 Description                    Qty   Unit Price    Amount
-Fresh produce delivery          10      50.00     500.00
+Fresh seasonal produce          10      50.00     500.00
 
 Subtotal AUD                                   500.00
 GST 10%                                          0.00
@@ -45,7 +48,7 @@ Receipt Date: 10 June 2026
 Receiver: Warehouse Team
 
 Description                    Qty Received   Condition
-Fresh produce delivery                  10   Good
+Fresh seasonal produce                  10   Good
 
 All items received in good condition.
 Signed: J. Smith
@@ -53,14 +56,14 @@ Signed: J. Smith
 
 INVOICE_TEXT = f"""TAX INVOICE
 {VENDOR}
-ABN 51 824 753 556
-Invoice Number: INV-MKT-TEST-001
+ABN {VENDOR_ABN[:2]} {VENDOR_ABN[2:5]} {VENDOR_ABN[5:8]} {VENDOR_ABN[8:]}
+Invoice Number: INV-MKT-JUN17-001
 PO Reference: {PO_NUMBER}
 Invoice Date: 11 June 2026
 Due Date: 11 July 2026
 
 Description                    Qty   Unit Price    Amount
-Fresh produce delivery          10      50.00     500.00
+Fresh seasonal produce          10      50.00     500.00
 
 Subtotal AUD                                   500.00
 GST 10%                                         50.00
@@ -126,10 +129,19 @@ def main() -> None:
         (f"test-grn-{PO_NUMBER}.pdf", GRN_TEXT),
         (f"test-invoice-{PO_NUMBER}.pdf", INVOICE_TEXT),
     ]
+    created: list[Path] = []
     for filename, text in docs:
         path = out_dir / filename
         path.write_bytes(build_pdf(text))
+        created.append(path)
         print(f"Created {path} ({path.stat().st_size} bytes)")
+
+    downloads = Path.home() / "Downloads"
+    if downloads.is_dir():
+        for path in created:
+            dest = downloads / path.name
+            shutil.copy2(path, dest)
+            print(f"Copied  {dest}")
 
     print()
     print(f"Shared PO number: {PO_NUMBER}")

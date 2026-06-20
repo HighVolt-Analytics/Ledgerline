@@ -296,9 +296,14 @@ async def test_vr02_duplicate_same_vendor(
 
 async def test_vr02_disabled_allows_duplicate(
 
-    db_session: AsyncSession, sample_invoice_data: InvoiceData
+    db_session: AsyncSession,
+    sample_invoice_data: InvoiceData,
+    monkeypatch: pytest.MonkeyPatch,
 
 ) -> None:
+
+    monkeypatch.setenv("DUPLICATE_INVOICE_CHECK_ENABLED", "false")
+    get_settings.cache_clear()
 
     db_session.add(
 
@@ -329,6 +334,8 @@ async def test_vr02_disabled_allows_duplicate(
     assert result.passed
 
     assert "disabled" in result.message.lower()
+
+    get_settings.cache_clear()
 
 
 
@@ -425,18 +432,19 @@ async def test_all_pass(db_session: AsyncSession, sample_invoice_data: InvoiceDa
 
     results = await run_all_validations(sample_invoice_data, db_session, org_id=1)
 
-    assert all(r.passed for r in results)
-
-    assert len(results) == 7
-
-    assert [r.rule for r in results] == [
+    blocking = [r for r in results if not r.skipped and r.severity == "block"]
+    assert all(r.passed for r in blocking)
+    assert {r.rule for r in blocking} >= {
+        "VR02",
         "VR03",
         "VR05",
         "VR06",
         "VR07",
         "VR08",
         "VR01",
-        "VR02",
-    ]
+        "VR09",
+        "VR10",
+        "VR11",
+    }
 
 

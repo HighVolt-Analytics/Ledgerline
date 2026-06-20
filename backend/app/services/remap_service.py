@@ -10,7 +10,10 @@ from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.invoice_evaluation_service import apply_invoice_evaluation
+from app.services.document_type_reclassify_service import reclassify_invoice_document_type
 from app.services.rule_book_mapper import map_invoice_to_account
+from app.schemas.rule_book_config import validate_rule_book_config_payload
+from app.services.rule_book_config_io import load_rule_book_config_dict
 
 _REMAP_SKIP = frozenset(
     {
@@ -41,9 +44,12 @@ async def remap_invoices_for_org(session: AsyncSession, *, org_id: int) -> Remap
 
     updated = 0
     changed_ids: list[int] = []
+    config = validate_rule_book_config_payload(load_rule_book_config_dict(org_id))
     for inv in rows:
         mapping = map_invoice_to_account(inv)
         changed = False
+        if await reclassify_invoice_document_type(session, inv, config=config):
+            changed = True
         if (
             inv.account_code != mapping.account_code
             or inv.account_name != mapping.account_name
@@ -58,7 +64,7 @@ async def remap_invoices_for_org(session: AsyncSession, *, org_id: int) -> Remap
             inv.vendor_confidence,
             inv.evaluation_status,
         )
-        await apply_invoice_evaluation(session, inv, enqueue_pending=False)
+        await apply_invoice_evaluation(session, inv, config=config, enqueue_pending=False)
         after = (
             inv.route_target,
             inv.matched_rule_ids,

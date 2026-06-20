@@ -36,6 +36,8 @@ class InvoiceData:
     cost_centre: str | None = None
     line_items: list[ParsedLineItem] = field(default_factory=list)
     raw_fields: dict[str, Any] = field(default_factory=dict)
+    document_text: str | None = None
+    document_heading: str | None = None
 
 
 @dataclass
@@ -44,3 +46,78 @@ class ParseResult:
     source: ParseSource
     confidence: ParseConfidence
     text_length: int = 0
+
+
+def _line_items_from_invoice(invoice: object) -> list[ParsedLineItem]:
+    """Read line items only when the relationship is already loaded (async-safe)."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        if "line_items" in sa_inspect(invoice).unloaded:
+            return []
+    except Exception:
+        pass
+
+    items = getattr(invoice, "line_items", None)
+    if items is None:
+        return []
+
+    line_items: list[ParsedLineItem] = []
+    for line in items:
+        line_items.append(
+            ParsedLineItem(
+                description=getattr(line, "description", None),
+                qty=getattr(line, "qty", None),
+                unit_price=getattr(line, "unit_price", None),
+                amount=getattr(line, "amount", None),
+                tax_amount=getattr(line, "tax_amount", None),
+            )
+        )
+    return line_items
+
+
+def invoice_data_from_invoice(invoice: object) -> InvoiceData:
+    """Rebuild parsed field snapshot from a persisted invoice row."""
+    return InvoiceData(
+        vendor=getattr(invoice, "vendor", None),
+        abn=getattr(invoice, "abn", None),
+        billing_address=getattr(invoice, "billing_address", None),
+        bank_bsb=getattr(invoice, "bank_bsb", None),
+        bank_account=getattr(invoice, "bank_account", None),
+        invoice_no=getattr(invoice, "invoice_no", None),
+        invoice_date=getattr(invoice, "invoice_date", None),
+        due_date=getattr(invoice, "due_date", None),
+        currency=getattr(invoice, "currency", None) or "AUD",
+        subtotal=getattr(invoice, "subtotal", None),
+        gst=getattr(invoice, "gst", None),
+        total=getattr(invoice, "total", None),
+        po_reference=getattr(invoice, "po_reference", None),
+        cost_centre=getattr(invoice, "cost_centre", None),
+        line_items=_line_items_from_invoice(invoice),
+        document_text=getattr(invoice, "document_text", None),
+        document_heading=_resolved_document_heading(invoice=invoice, parsed=None),
+    )
+
+
+def _resolved_document_heading(
+    *,
+    invoice: object | None,
+    parsed: InvoiceData | None,
+) -> str | None:
+    if parsed is not None and parsed.document_heading:
+        return parsed.document_heading
+    if invoice is not None:
+        heading = getattr(invoice, "document_heading", None)
+        if heading:
+            return str(heading).strip() or None
+    text = None
+    if parsed is not None and parsed.document_text:
+        text = parsed.document_text
+    elif invoice is not None:
+        text = getattr(invoice, "document_text", None)
+    if text:
+        from app.services.document_heading_utils import extract_document_heading_signals
+
+        signals = extract_document_heading_signals(text)
+        return signals.primary_label
+    return None

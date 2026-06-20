@@ -8,12 +8,14 @@ import pytest
 
 from app.config import get_settings
 from app.services.invoice_data import InvoiceData
+from app.services.line_items_parser import parse_line_items_from_text
 from app.services.pdf_parser import (
     count_present_fields,
     local_parse_confident,
     parse_invoice,
     parse_local_text,
     parse_text_fields,
+    post_process_parsed_data,
     should_use_document_intelligence,
 )
 from app.services.vendor_name_utils import is_plausible_vendor_name, pick_best_vendor_name
@@ -220,6 +222,126 @@ def test_pick_best_vendor_prefers_plausible_local_over_di_footer() -> None:
         "GST is charged a"
     )
     assert pick_best_vendor_name(di_footer, "Microsoft Azure") == "Microsoft Azure"
+
+
+def test_dedupe_repeated_vendor_name() -> None:
+    from app.services.vendor_name_utils import dedupe_repeated_vendor_phrase, normalize_vendor_name
+
+    assert (
+        normalize_vendor_name("Acme Corp Pvt Ltd Acme Corp Pvt Ltd")
+        == "Acme Corp Pvt Ltd"
+    )
+    assert dedupe_repeated_vendor_phrase("Foo Bar Foo Bar") == "Foo Bar"
+
+
+ACME_PO_TEXT = """
+Acme Corp Pvt Ltd PURCHASE ORDER
+123 Business Park, Hyderabad 500081, India No: PO-2025-00142
+GSTIN: 36AABCA1234F1Z5 | CIN: U74999TG2020PTC140000 Date: 15 Jun 2025
+Due: 30 Jun 2025
+Vendor / Supplier Ship To
+Global Supplies Ltd Acme Corp Pvt Ltd
+Subtotal AUD 261370.00
+TOTAL AUD 261370.00
+"""
+
+ACME_GRN_TEXT = """
+Acme Corp Pvt Ltd GOODS RECEIPT NOTE
+No: GRN-2025-00089
+PO Reference: PO-2025-00142
+Receipt Date: 22 Jun 2025
+Supplier Details Received At
+Global Supplies Ltd Acme Corp Central Warehouse
+"""
+
+ACME_INV_TEXT = """
+Acme Corp Pvt Ltd TAX INVOICE
+No: INV-2025-00389
+Bill To Ship To
+Meridian Technologies Pvt Ltd Meridian Technologies Pvt Ltd
+PO Reference: MPL-PO-4456
+Due Date: 25 Jul 2025
+Subtotal 650000
+GST 10% 65000
+TOTAL 715000
+"""
+
+ACME_INV_GSTIN_LINE_TEXT = """
+Acme Corp Pvt Ltd TAX INVOICE
+123 Business Park | GSTIN: 36AABCA1234F1Z5 No: INV-GS-0101
+Date: 18 Jun 2025
+Supplier (Bill From)
+Global Supplies Ltd
+GSTIN: 36AABCG5678H1Z3
+PO Ref: PO-2025-0101
+1 Steel Rods 12mm TMT 500 Kg 500 Kg 500 Kg 0 Full batch accepted
+INVOICE TOTAL 242608.00
+"""
+
+ACME_GRN_TABLE_TEXT = """
+Acme Corp Pvt Ltd GOODS RECEIPT NOTE
+No: GRN-2025-0101
+PO Ref: PO-2025-0101
+1 Steel Rods 12mm TMT 500 Kg 500 Kg 500 Kg 0 Full batch accepted
+2 Hydraulic Hose 3/4" 150 Nos 150 Nos 147 Nos 3 Nos thread damage
+"""
+
+
+def test_godaddy_receipt_abn_not_captured_as_gst() -> None:
+    text = """
+GoDaddy Singapore Web Services Pte Ltd
+ABN 52500944661
+GST Registration
+Total $13.96 AUD
+"""
+    fields = parse_text_fields(text)
+    assert fields.get("gst") is None
+    assert fields.get("total") == Decimal("13.96")
+
+
+def test_plausible_money_rejects_abn_sized_values() -> None:
+    from app.services.amount_sanity import plausible_money
+
+    assert plausible_money(Decimal("52500944661")) is None
+    assert plausible_money(Decimal("13.96")) == Decimal("13.96")
+
+
+def test_parse_acme_po_supplier_and_gstin() -> None:
+    fields = parse_text_fields(ACME_PO_TEXT)
+    assert fields["vendor"] == "Global Supplies Ltd"
+    assert fields["po_reference"] == "PO-2025-00142"
+    assert fields.get("gstin") == "36AABCA1234F1Z5"
+    assert fields.get("abn") is None
+    assert fields.get("invoice_no") is None
+    assert fields.get("due_date") is None
+
+
+def test_parse_acme_grn_supplier_not_label_junk() -> None:
+    fields = parse_text_fields(ACME_GRN_TEXT)
+    assert fields["vendor"] == "Global Supplies Ltd"
+    assert fields["po_reference"] == "PO-2025-00142"
+    assert fields.get("invoice_no") is None
+
+
+def test_parse_acme_invoice_dedupes_bill_to_vendor() -> None:
+    data = parse_local_text(ACME_INV_TEXT)
+    data = post_process_parsed_data(data, ACME_INV_TEXT)
+    assert data.invoice_no == "INV-2025-00389"
+    assert data.po_reference == "MPL-PO-4456"
+    assert data.vendor == "Acme Corp Pvt Ltd"
+
+
+def test_parse_acme_invoice_no_on_gstin_line() -> None:
+    fields = parse_text_fields(ACME_INV_GSTIN_LINE_TEXT)
+    assert fields.get("invoice_no") == "INV-GS-0101"
+    assert fields.get("gstin") == "36AABCG5678H1Z3"
+
+
+def test_parse_acme_grn_qty_table_rows() -> None:
+    items = parse_line_items_from_text(ACME_GRN_TABLE_TEXT)
+    assert len(items) >= 2
+    assert items[0].description.startswith("Steel Rods")
+    assert items[0].qty == Decimal("500")
 
 
 def test_parse_azure_invoice_merges_sane_vendor_over_di_footer(

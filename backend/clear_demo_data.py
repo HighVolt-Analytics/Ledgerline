@@ -31,6 +31,7 @@ from app.models.reconciliation import DailyReconciliation
 from app.models.vendor import VendorRegistry
 from app.models.vendor_master import VendorMasterRecord
 from app.schemas.rule_book_config import RuleBookConfigPayload
+from app.services.blob_storage import BLOB_URI_PREFIX, delete_blob, is_blob_enabled
 from app.services.org_context import get_or_create_default_org
 from app.services.rule_book_config_io import (
     global_rule_book_config_path,
@@ -54,37 +55,81 @@ def _empty_rule_book_payload() -> RuleBookConfigPayload:
         return RuleBookConfigPayload.model_validate(json.load(fh))
 
 
-async def clear_demo_data(*, all_invoices: bool, reset_rules: bool) -> None:
+def _delete_all_container_blobs(*, prefix: str = "invoice/") -> int:
+    """Delete every blob under prefix in the configured container."""
+    if not is_blob_enabled():
+        return 0
+    from app.services.blob_storage import _service_client
+
+    settings = get_settings()
+    client = _service_client()
+    container = client.get_container_client(settings.azure_storage_container)
+    removed = 0
+    for item in container.list_blobs(name_starts_with=prefix):
+        container.delete_blob(item.name)
+        removed += 1
+    if removed:
+        print(f"Deleted {removed} blob(s) under {prefix!r} in {settings.azure_storage_container}")
+    return removed
+
+
+def _clear_local_upload_tree(upload_root: Path) -> None:
+    if not upload_root.is_dir():
+        return
+    for name in ("invoice", "invoices", "hv-org", "rejected"):
+        target = upload_root / name
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+            print(f"Removed local files: {target}")
+
+
+async def clear_demo_data(
+    *,
+    all_invoices: bool,
+    reset_rules: bool,
+    org_id: int | None = None,
+) -> None:
     settings = get_settings()
     org = None
     removed_invoices = 0
 
     async with async_session_factory() as session:
-        org = await get_or_create_default_org(session)
+        if org_id is not None:
+            from app.models.organisation import Organisation
+
+            org = await session.get(Organisation, org_id)
+            if org is None:
+                raise SystemExit(f"Organisation {org_id} not found")
+        else:
+            org = await get_or_create_default_org(session)
 
         if all_invoices:
-            invoice_ids = (
+            invoice_rows = (
                 await session.execute(
-                    select(Invoice.id).where(Invoice.org_id == org.id)
+                    select(Invoice.id, Invoice.raw_file_path).where(Invoice.org_id == org.id)
                 )
-            ).scalars().all()
+            ).all()
         else:
-            invoice_ids = (
+            invoice_rows = (
                 await session.execute(
-                    select(Invoice.id).where(
+                    select(Invoice.id, Invoice.raw_file_path).where(
                         Invoice.org_id == org.id,
                         or_(*[Invoice.file_hash.like(p) for p in _DEMO_HASH_PATTERNS]),
                     )
                 )
-            ).scalars().all()
+            ).all()
+
+        invoice_ids = [row[0] for row in invoice_rows]
+        blob_paths = [row[1] for row in invoice_rows if row[1]]
 
         if invoice_ids:
             await session.execute(delete(JournalEntry).where(JournalEntry.invoice_id.in_(invoice_ids)))
             await session.execute(delete(LineItem).where(LineItem.invoice_id.in_(invoice_ids)))
-            await session.execute(delete(AuditLog).where(AuditLog.invoice_id.in_(invoice_ids)))
             await session.execute(delete(Payment).where(Payment.invoice_id.in_(invoice_ids)))
+            await session.execute(delete(AuditLog).where(AuditLog.invoice_id.in_(invoice_ids)))
+            await session.execute(delete(GoodsReceipt))
             await session.execute(
-                delete(PurchaseOrder).where(PurchaseOrder.invoice_id.in_(invoice_ids))
+                delete(PurchaseOrder).where(PurchaseOrder.org_id == org.id)
             )
             result = await session.execute(
                 delete(Invoice).where(Invoice.id.in_(invoice_ids))
@@ -92,8 +137,6 @@ async def clear_demo_data(*, all_invoices: bool, reset_rules: bool) -> None:
             removed_invoices = result.rowcount or 0
 
         if all_invoices:
-            await session.execute(delete(GoodsReceipt))
-            await session.execute(delete(PurchaseOrder).where(PurchaseOrder.org_id == org.id))
             await session.execute(delete(Payment).where(Payment.org_id == org.id))
             await session.execute(delete(PendingVendor).where(PendingVendor.org_id == org.id))
             await session.execute(delete(DailyReconciliation))
@@ -110,6 +153,16 @@ async def clear_demo_data(*, all_invoices: bool, reset_rules: bool) -> None:
 
         await session.commit()
 
+    blobs_removed = 0
+    if all_invoices:
+        blobs_removed = _delete_all_container_blobs(prefix="invoice/")
+    else:
+        for stored in blob_paths:
+            if stored and stored.startswith(BLOB_URI_PREFIX) and delete_blob(stored):
+                blobs_removed += 1
+        if blobs_removed:
+            print(f"Deleted {blobs_removed} invoice blob(s)")
+
     if reset_rules and org is not None:
         payload = _empty_rule_book_payload()
         save_rule_book_config(payload, org.id)
@@ -119,11 +172,7 @@ async def clear_demo_data(*, all_invoices: bool, reset_rules: bool) -> None:
 
     upload_root = Path(settings.upload_dir)
     if upload_root.is_dir() and all_invoices:
-        for sub in ("invoices", "hv-org"):
-            target = upload_root / sub
-            if target.is_dir():
-                shutil.rmtree(target, ignore_errors=True)
-                print(f"Removed uploaded files: {target}")
+        _clear_local_upload_tree(upload_root)
 
     print(
         f"Cleared {removed_invoices} invoice(s) for org {org.id if org else '?'}"
@@ -143,12 +192,28 @@ def main() -> None:
         action="store_true",
         help="Reset org rule book JSON to the empty template (no demo capture/category rules).",
     )
+    parser.add_argument(
+        "--keep-rules",
+        action="store_true",
+        help="Keep the org rule book when clearing data (default with --all).",
+    )
+    parser.add_argument(
+        "--org-id",
+        type=int,
+        default=None,
+        help="Organisation id to clear (default: default org from settings).",
+    )
     args = parser.parse_args()
     if not args.all and not args.reset_rules:
         args.all = True
-        args.reset_rules = True
+    if args.all and not args.reset_rules:
+        args.keep_rules = True
     asyncio.run(
-        clear_demo_data(all_invoices=args.all, reset_rules=args.reset_rules)
+        clear_demo_data(
+            all_invoices=args.all,
+            reset_rules=args.reset_rules and not args.keep_rules,
+            org_id=args.org_id,
+        )
     )
 
 

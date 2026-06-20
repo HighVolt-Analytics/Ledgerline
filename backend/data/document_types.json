@@ -1,0 +1,901 @@
+[
+  {
+    "code": "DT-01",
+    "title": "PO-based goods invoice",
+    "shortTitle": "PO goods invoice",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Standard 3-way match goods invoice against an approved PO and GRN.",
+    "extraction": [
+      "Vendor name & tax ID / ABN",
+      "Vendor invoice number, invoice date",
+      "PO number(s)",
+      "Line items: description, qty, UoM, unit price, line value",
+      "Subtotal, tax rate & amount per rate, total, currency",
+      "Payment terms",
+      "Bank details (capture only — never auto-update master)",
+      "Bill-to entity, ship-to"
+    ],
+    "checks": [
+      "Vendor master: exists, active, not blocked, tax ID on invoice = master (else exception — fraud/wrong vendor)",
+      "Duplicate check (multi-layer): exact, normalised invoice no., fuzzy ±0.5% / ±7 days, cross-entity scan",
+      "Arithmetic: Σ lines = subtotal; subtotal + tax = total; qty × price = line value (rounding ≤ 0.05/line)",
+      "Tax validity (AU): \"Tax Invoice\" stated, ABN valid (live Lookup), GST 10% on taxable lines, buyer identity ≥ AUD 1,000",
+      "3-way match (line level): qty ≤ (PO open AND GRN unbilled); price within §9 tolerance; UoM conversion applied",
+      "PO status: approved, not closed/cancelled; invoice currency = PO currency (no silent conversion)",
+      "Date sanity: not future; > 12 months → controller approval; posting date per open-period rules",
+      "Freight/surcharges not on PO: allowed to tolerance as unplanned delivery cost; above → buyer approval"
+    ],
+    "match": [
+      "3-way (PO ↔ GRN ↔ Invoice) at line level",
+      "Price ±2% capped AUD 100/line → PPV or inventory",
+      "Qty over-billing 0% — never auto-accept qty > GRN (block, request credit/new GRN)",
+      "Qty under-billing allowed (partial invoice, consume PO progressively)"
+    ],
+    "approval": [
+      "Fully matched within tolerance → touchless auto-post (the PO approval was the approval)",
+      "Exceptions route per §10 DOA matrix"
+    ],
+    "accounting": [
+      "At GRN: Dr Inventory / Expense  /  Cr GR/IR clearing",
+      "At invoice: Dr GR/IR clearing + Dr GST receivable  /  Cr Accounts Payable (vendor)",
+      "Price variance in tolerance: Dr/Cr Purchase Price Variance (or load to inventory)",
+      "Unplanned freight: Dr Freight-in / Inventory"
+    ],
+    "special": [
+      "Consignment stock → no AP at receipt (see DT-20)",
+      "Returns after invoicing → expect DT-04 credit note",
+      "Invoice for cancelled PO → auto reject-to-vendor with reason",
+      "Drop-shipments → GRN = customer POD"
+    ],
+    "bundleMandatory": [
+      "DT-02",
+      "DT-03"
+    ],
+    "bundleConditional": [
+      "Quality certificate",
+      "Packing list (if PO flags inspection)"
+    ]
+  },
+  {
+    "code": "DT-02",
+    "title": "Purchase order (copy)",
+    "shortTitle": "PO (supporting)",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "purchaseBundleRole": "po",
+    "oneLine": "Supporting bundle member — PO PDF that anchors the 3-way match dossier.",
+    "extraction": [
+      "PO number",
+      "Vendor, lines, prices, currency, terms"
+    ],
+    "checks": [
+      "Reference role — supplies PO price/qty baseline for the 3-way match"
+    ],
+    "match": [
+      "Anchors PO-number linkage (priority 1)"
+    ],
+    "approval": [
+      "N/A — supporting document"
+    ],
+    "accounting": [
+      "N/A — supporting document"
+    ],
+    "special": [
+      "Strongest dossier linkage key — PO register / upload only"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-03",
+    "title": "Goods receipt note (GRN) / delivery docket",
+    "shortTitle": "GRN (supporting)",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "purchaseBundleRole": "grn",
+    "oneLine": "Supporting bundle member — GRN PDF that completes the 3-way match.",
+    "extraction": [
+      "GRN / delivery docket number",
+      "Received qty per line",
+      "Receipt date"
+    ],
+    "checks": [
+      "Reference role — supplies received qty baseline; new GRN triggers event-driven re-match"
+    ],
+    "match": [
+      "GRN/delivery docket linkage"
+    ],
+    "approval": [
+      "N/A — supporting document"
+    ],
+    "accounting": [
+      "At GRN: Dr Inventory / Expense  /  Cr GR/IR clearing"
+    ],
+    "special": [
+      "GRN register / upload only"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-04",
+    "title": "Credit note / adjustment note",
+    "shortTitle": "Credit note",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Negative-amount note that mirrors and reduces an original invoice — never auto-nets against unrelated invoices.",
+    "extraction": [
+      "Original invoice reference",
+      "Credit reason",
+      "Credited qty / value",
+      "Tax credited at original rate"
+    ],
+    "checks": [
+      "Must reference original invoice; locate it. If not found → vendor-level open credit, flag AP supervisor",
+      "Credit reason classification: return, price correction, rebate, duplicate-invoice reversal, damaged goods",
+      "Goods returns: bundle return delivery note; qty credited ≤ qty returned",
+      "Credit note amount ≤ original invoice residual value (cannot over-credit)",
+      "Tax: GST credited at same rate as original",
+      "Duplicate-direction check: ensure not an invoice misclassified as a credit (sign errors)"
+    ],
+    "match": [
+      "Match to original invoice / return / price approval"
+    ],
+    "approval": [
+      "Touchless if matched to return/price approval; else AP supervisor"
+    ],
+    "accounting": [
+      "Dr AP  /  Cr GR/IR / Expense / Inventory / PPV (mirror of original)  /  Cr GST receivable (reduce input tax)",
+      "Apply against original for payment netting; if paid → open credit nets next run or refund-collection workflow"
+    ],
+    "special": [
+      "Orphan credit (original not found) → AP-supervisor open credit",
+      "Credit > remaining payable → refund claim"
+    ],
+    "bundleMandatory": [
+      "Original invoice reference"
+    ],
+    "bundleConditional": [
+      "Return delivery note (goods returns)",
+      "Price-difference approval"
+    ]
+  },
+  {
+    "code": "DT-05",
+    "title": "Debit note (vendor- or buyer-issued)",
+    "shortTitle": "Debit note",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Buyer-issued (charges vendor) or vendor-issued (additional charge) — never posts touchlessly.",
+    "extraction": [
+      "Debit note number, date",
+      "Cause reference (claim / clause)",
+      "Amount, tax adjustment"
+    ],
+    "checks": [
+      "Buyer-issued: requires claim approval evidence (shortages, quality claims)",
+      "Vendor-issued: treat with full invoice rigor — match to cause (price escalation, FX clause, demurrage)",
+      "Never auto-post vendor debit notes touchlessly; minimum AP-analyst review"
+    ],
+    "match": [
+      "Match to claim / cause document"
+    ],
+    "approval": [
+      "Buyer-issued: claim approval",
+      "Vendor-issued: minimum AP-analyst review"
+    ],
+    "accounting": [
+      "Buyer-issued: Dr AP / Other receivable  /  Cr Inventory/Expense recovery  /  Cr GST adjustment",
+      "Vendor-issued: full invoice posting (increases payable)"
+    ],
+    "special": [
+      "Sign-error double-damage prevention",
+      "Vendor debit notes never touchless"
+    ],
+    "bundleMandatory": [
+      "Claim approval evidence"
+    ],
+    "bundleConditional": [
+      "Cause document (clause / demurrage record)"
+    ]
+  },
+  {
+    "code": "DT-06",
+    "title": "Proforma invoice / advance (down-payment) request",
+    "shortTitle": "Proforma / advance",
+    "klass": "Pre-transactional",
+    "posting": "Down-payment",
+    "fraudRisk": "high",
+    "oneLine": "A proforma is NEVER posted as a payable/expense and NEVER creates an input tax credit (not a tax invoice).",
+    "extraction": [
+      "PO with down-payment terms / signed contract",
+      "Advance % and amount",
+      "Bank guarantee requirement"
+    ],
+    "checks": [
+      "HARD RULE: a proforma is never posted as a payable/expense and never creates an input tax credit (not a tax invoice)",
+      "Verify PO/contract permits advance; verify advance % and amount vs terms",
+      "Check bank guarantee requirement",
+      "System must block paying the final invoice gross when an open advance exists against the PO (auto-net rule)"
+    ],
+    "match": [
+      "Match to PO down-payment terms / contract"
+    ],
+    "approval": [
+      "Treasury + DOA approval for the payment (advances are higher fraud risk)"
+    ],
+    "accounting": [
+      "Payment posts: Dr Vendor advance (prepayment asset)  /  Cr Bank",
+      "When final tax invoice (DT-01/02) arrives: post normally then clear Dr AP  /  Cr Vendor advance"
+    ],
+    "special": [
+      "Ageing report on open advances > 60 days → chase final invoice",
+      "Final invoice < advance → refund-collection workflow"
+    ],
+    "bundleMandatory": [
+      "PO with down-payment terms, or signed contract"
+    ],
+    "bundleConditional": [
+      "Bank guarantee (advances > threshold)"
+    ]
+  },
+  {
+    "code": "DT-07",
+    "title": "Recurring / contract invoice (rent, lease, subscription, retainer)",
+    "shortTitle": "Recurring / contract",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Matched to the contract register; lease invoices post to lease liability under AASB 16, not rent expense.",
+    "extraction": [
+      "Contract/lease ID",
+      "Service period",
+      "Contracted amount ± escalation",
+      "Variable lease components"
+    ],
+    "checks": [
+      "Match to contract register: amount = contracted ± escalation; period not already billed (vendor + contract + period unique)",
+      "Contract active and not expired",
+      "Escalation changes (CPI / fixed %) → validate calculation; route variance to contract owner once, then update expected",
+      "Lease under AASB 16 / IFRS 16: rent invoice does NOT post to rent expense"
+    ],
+    "match": [
+      "Match to contract register",
+      "Duplicate-period check",
+      "Escalation calculation validation"
+    ],
+    "approval": [
+      "Touchless within contract",
+      "First invoice of new contract + any post-escalation invoice → one-time contract-owner confirmation"
+    ],
+    "accounting": [
+      "Lease: Dr Lease liability + Dr/Cr per lease schedule  /  Cr AP (interest & ROU depreciation from lease subledger)",
+      "Variable lease components (outgoings, usage) → expense",
+      "Auto-accrue if expected recurring invoice not received by period close"
+    ],
+    "special": [
+      "AASB 16 lease liability (not rent expense)",
+      "SaaS subscription",
+      "CPI escalation true-up"
+    ],
+    "bundleMandatory": [
+      "DT-16"
+    ],
+    "bundleConditional": [
+      "CPI / escalation calculation sheet on rate change"
+    ]
+  },
+  {
+    "code": "DT-08",
+    "title": "Utility invoice (power, water, gas, telecom)",
+    "shortTitle": "Utility invoice",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Matched to site/meter register with consumption analytics; > ±40% deviation flags facilities review.",
+    "extraction": [
+      "Account number → site → cost centre",
+      "Meter reads (estimated vs actual)",
+      "Consumption, penalties"
+    ],
+    "checks": [
+      "Match to site/meter register (account number → site → cost centre). Unknown account → facilities exception",
+      "Consumption analytics: usage vs same-month-last-year and trailing 12-month band; > ±40% → facilities review before payment",
+      "Estimated vs actual reads: flag estimates; reconcile on true-up invoice",
+      "Late-payment penalties → strip into separate GL (penalties), root-cause if our delay"
+    ],
+    "match": [
+      "Match to meter register",
+      "Consumption band check"
+    ],
+    "approval": [
+      "Touchless within band",
+      "Disconnection notices route as priority (DT-22 informational + urgent flag)"
+    ],
+    "accounting": [
+      "Dr Utility expense (by site CC) + Dr GST  /  Cr AP",
+      "Accrue unbilled consumption at period end from meter data"
+    ],
+    "special": [
+      "Consumption variance > 40% → facilities review",
+      "Estimated-read true-up",
+      "Penalties stripped to separate GL"
+    ],
+    "bundleMandatory": [
+      "Site / meter register entry"
+    ],
+    "bundleConditional": [
+      "True-up reconciliation"
+    ]
+  },
+  {
+    "code": "DT-09",
+    "title": "Freight, logistics & customs broker invoice",
+    "shortTitle": "Freight / broker",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Matched to shipment; broker disbursements split duty/GST pass-through from taxable service fee.",
+    "extraction": [
+      "AWB / BL / container number",
+      "Base freight, fuel surcharge %, terminal fees",
+      "Disbursement breakdown"
+    ],
+    "checks": [
+      "Match to shipment: AWB/BL/container must exist in logistics data; charges vs rate card",
+      "Detention/demurrage requires ops confirmation of cause and days",
+      "Broker disbursement: split duty/GST pass-through (no markup, match to customs entry) from broker service fee (taxable service)",
+      "Never allow GST on top of pass-through duty amounts incorrectly"
+    ],
+    "match": [
+      "Match to AWB/BL/container",
+      "Charges vs rate card",
+      "Disbursement vs customs entry"
+    ],
+    "approval": [
+      "Touchless within rate card",
+      "Detention/demurrage → ops confirmation"
+    ],
+    "accounting": [
+      "Inbound freight on inventory → Dr Inventory / landed cost",
+      "Outbound freight → Dr Distribution expense",
+      "Duty pass-through → landed cost; import GST → Dr GST receivable (on customs entry; deferred GST scheme = no cash GST)"
+    ],
+    "special": [
+      "Broker disbursement split (pass-through vs service fee)",
+      "Deferred GST scheme",
+      "Detention/demurrage ops confirm"
+    ],
+    "bundleMandatory": [
+      "Shipment docs (AWB/BL)",
+      "Rate card"
+    ],
+    "bundleConditional": [
+      "POD for delivery-linked charges"
+    ]
+  },
+  {
+    "code": "DT-10",
+    "title": "Import dossier (commercial invoice + customs entry + duty)",
+    "shortTitle": "Import dossier",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Landed-cost dossier — mandatory and blocking bundle of commercial invoice, customs entry, transport doc, packing list.",
+    "extraction": [
+      "Commercial invoice",
+      "Customs entry / import declaration",
+      "Duty receipt",
+      "BL / AWB",
+      "Packing list"
+    ],
+    "checks": [
+      "Bundle is mandatory and blocking: commercial invoice + customs entry + transport doc + packing list (+ origin cert for preferential duty)",
+      "Customs value vs commercial invoice (Incoterms-adjusted)",
+      "Duty rate vs tariff code; FX rate per customs vs accounting policy",
+      "Quantity reconciliation: packing list ↔ GRN ↔ invoice"
+    ],
+    "match": [
+      "Customs value vs commercial invoice",
+      "Duty rate vs tariff code",
+      "Qty reconciliation packing list ↔ GRN ↔ invoice"
+    ],
+    "approval": [
+      "Blocking bundle — cannot post until all mandatory members present"
+    ],
+    "accounting": [
+      "Goods Dr Inventory at PO/commercial value",
+      "Duty + non-recoverable charges capitalised via landed-cost allocation (value/weight/qty)",
+      "Import GST recoverable Dr GST receivable; FX differences → FX gain/loss or inventory per policy"
+    ],
+    "special": [
+      "Under/over-shipment → claims workflow + insurance dossier if damaged",
+      "FTA preferential duty origin certificate"
+    ],
+    "bundleMandatory": [
+      "Commercial invoice",
+      "Customs entry / import declaration",
+      "Duty receipt",
+      "BL / AWB",
+      "Packing list"
+    ],
+    "bundleConditional": [
+      "Insurance certificate",
+      "Origin certificate (FTA duty claims)"
+    ]
+  },
+  {
+    "code": "DT-11",
+    "title": "Intercompany invoice",
+    "shortTitle": "Intercompany",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Symmetry rule — both entities book the same period, amount and FX reference rate; mirror entry validated.",
+    "extraction": [
+      "IC partner",
+      "IC agreement reference",
+      "Transfer-pricing basis",
+      "Markup %"
+    ],
+    "checks": [
+      "Counterparty must be a registered IC partner; IC agreement and transfer-pricing basis on file; markup % per TP policy",
+      "Symmetry rule: both entities book same period, same amount, same FX reference rate",
+      "System creates/validates the mirror entry (AP one side, AR other); feeds IC reconciliation",
+      "Out-of-balance at close blocks consolidation sign-off",
+      "Tax: cross-border IC → WHT, GST/VAT reverse charge as applicable"
+    ],
+    "match": [
+      "Mirror-entry symmetry validation",
+      "Markup % per TP policy"
+    ],
+    "approval": [
+      "Per IC policy (often controller-level, not operational DOA)",
+      "Entity controller"
+    ],
+    "accounting": [
+      "Dr IC expense / asset  /  Cr IC payable (partner-coded)"
+    ],
+    "special": [
+      "Symmetry & mirror-entry validation",
+      "Out-of-balance blocks consolidation"
+    ],
+    "bundleMandatory": [
+      "IC agreement",
+      "Transfer-pricing basis reference"
+    ],
+    "bundleConditional": [
+      "Cost allocation worksheet"
+    ]
+  },
+  {
+    "code": "DT-12",
+    "title": "Employee expense claim / reimbursement",
+    "shortTitle": "Expense claim",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "high",
+    "oneLine": "Per-line policy & receipt checks with fraud analytics; FBT-flagged lines tagged for the FBT register.",
+    "extraction": [
+      "Employee ID + claim ID",
+      "Itemised receipts per line",
+      "Category, date, amount, GST"
+    ],
+    "checks": [
+      "Per-line: receipt attached (tax invoice over threshold), policy limits by category, date within claim window (e.g. 90 days)",
+      "No weekend/leave-day anomalies unless travel-approved; mileage vs distance table; per-diem vs actuals (never both)",
+      "Fraud analytics: duplicate receipt image hash, sequential receipt numbers, round-number clustering, split claims under thresholds",
+      "Corporate-card lines reconcile to card feed (no cash reimbursement of card spend)",
+      "FBT flagging (AU): entertainment, employee benefits lines tagged for FBT register"
+    ],
+    "match": [
+      "Receipt-to-line match",
+      "Card-feed reconciliation"
+    ],
+    "approval": [
+      "Line manager + policy-exception approver where breached",
+      "Finance audits a risk-based sample"
+    ],
+    "accounting": [
+      "Dr Expense by category/CC + Dr GST (only where valid tax invoice held)  /  Cr Employee payable / Cr Bank (card)"
+    ],
+    "special": [
+      "FBT flag on entertainment lines",
+      "Duplicate-receipt hash detection",
+      "Split-claim threshold gaming"
+    ],
+    "bundleMandatory": [
+      "Itemised receipts per line (tax invoices over threshold)"
+    ],
+    "bundleConditional": [
+      "Travel approval",
+      "Mileage log"
+    ]
+  },
+  {
+    "code": "DT-13",
+    "title": "Vendor statement of account",
+    "shortTitle": "Vendor statement",
+    "klass": "Reconciliation",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "NEVER posted as an invoice — auto-reconciled vs the AP subledger to detect missing invoices and duplicates.",
+    "extraction": [
+      "Vendor",
+      "Statement period",
+      "Open invoice references",
+      "Ageing buckets, balance brought forward"
+    ],
+    "checks": [
+      "NEVER posted as an invoice (second most common duplicate-payment cause)",
+      "Auto-reconcile statement lines vs AP subledger",
+      "Items on statement not in AP → request copy invoice (missing-invoice detection — key completeness control)",
+      "Items in AP not on statement → possible duplicate or mis-posting; balance differences → ageing dispute workflow"
+    ],
+    "match": [
+      "Reconcile statement ↔ AP subledger"
+    ],
+    "approval": [
+      "No posting — reconciliation control only"
+    ],
+    "accounting": [
+      "No journal — reconciliation output only"
+    ],
+    "special": [
+      "Monthly statement-reconciliation exception report for top-20 spend vendors (mandatory control)"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-16",
+    "title": "Contract / rate card / SOW / lease agreement",
+    "shortTitle": "Contract / SOW",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Supporting bundle member — the contract register entry that validates recurring & services rates.",
+    "extraction": [
+      "Contract / lease ID",
+      "Rate card, milestones, escalation terms"
+    ],
+    "checks": [
+      "Reference role — supplies contracted amounts, rate cards and escalation basis"
+    ],
+    "match": [
+      "Contract/lease ID linkage (priority 3)"
+    ],
+    "approval": [
+      "N/A — supporting document"
+    ],
+    "accounting": [
+      "N/A — supporting document"
+    ],
+    "special": [
+      "Lease agreements feed the AASB 16 lease subledger"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-17",
+    "title": "Service entry sheet / timesheet / completion certificate",
+    "shortTitle": "SES / timesheet",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Supporting bundle member — the service-receipt evidence for DT-02 services matching.",
+    "extraction": [
+      "SES / timesheet number",
+      "Approved hours / milestone",
+      "Sign-off"
+    ],
+    "checks": [
+      "Reference role — the receipt document for services; stored in dossier"
+    ],
+    "match": [
+      "Service-entry linkage for DT-02"
+    ],
+    "approval": [
+      "N/A — supporting document"
+    ],
+    "accounting": [
+      "N/A — supporting document"
+    ],
+    "special": [
+      "Where no SES exists, requester confirmation becomes the receipt document"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-18",
+    "title": "Remittance advice (inbound or outbound copy)",
+    "shortTitle": "Remittance advice",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Supporting document — confirms which invoices a payment settles; not posted itself.",
+    "extraction": [
+      "Payment reference",
+      "Settled invoice references",
+      "Amount"
+    ],
+    "checks": [
+      "Reference role — links payment to settled invoices"
+    ],
+    "match": [
+      "Vendor + invoice number linkage"
+    ],
+    "approval": [
+      "N/A — supporting document"
+    ],
+    "accounting": [
+      "N/A — supporting document"
+    ],
+    "special": [
+      "Outbound copy generated automatically at payment"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-19",
+    "title": "Self-billed invoice / RCTI (Recipient-Created Tax Invoice)",
+    "shortTitle": "RCTI / self-billing",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "We generate the invoice from receipt/consumption data; a vendor invoice for an RCTI vendor is blocked as duplicate-risk.",
+    "extraction": [
+      "RCTI agreement reference",
+      "Receipt / consumption data",
+      "Computed line values, GST"
+    ],
+    "checks": [
+      "Valid RCTI agreement must exist (dated, current)",
+      "We generate the invoice from receipt/consumption data",
+      "Vendor must not also send an invoice — vendor invoice for RCTI-flagged vendor/PO → BLOCK as duplicate-risk, route to AP supervisor"
+    ],
+    "match": [
+      "Receipt/consumption data → computed invoice"
+    ],
+    "approval": [
+      "RCTI agreement governs; duplicate vendor invoice → AP supervisor"
+    ],
+    "accounting": [
+      "Accounting as DT-01; we also issue the tax document and report GST accordingly"
+    ],
+    "special": [
+      "Vendor-sent invoice for RCTI vendor blocked as duplicate-risk"
+    ],
+    "bundleMandatory": [
+      "RCTI agreement on file",
+      "Receipt / consumption data"
+    ],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-20",
+    "title": "Consignment / ERS (Evaluated Receipt Settlement) settlement",
+    "shortTitle": "Consignment / ERS",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "medium",
+    "oneLine": "Consignment receipt creates no liability; ERS GRN auto-generates the invoice — vendor invoices are blocked.",
+    "extraction": [
+      "Agreement reference",
+      "Consumption / withdrawal qty",
+      "ERS PO price"
+    ],
+    "checks": [
+      "Consignment: receipt creates no liability; consumption/withdrawal triggers self-billed settlement",
+      "ERS: GRN auto-generates the invoice at PO price — price master accuracy is the control",
+      "Vendor invoices for ERS POs are blocked (duplicate prevention) and returned referencing the ERS agreement"
+    ],
+    "match": [
+      "Consumption → self-billed settlement",
+      "GRN → auto-generated ERS invoice at PO price"
+    ],
+    "approval": [
+      "Governed by agreement; vendor invoice blocked"
+    ],
+    "accounting": [
+      "Consignment: Dr Inventory→COGS / Expense  /  Cr AP at agreement price"
+    ],
+    "special": [
+      "Price master accuracy is the ERS control",
+      "Vendor ERS invoices blocked & returned"
+    ],
+    "bundleMandatory": [
+      "Consignment / ERS agreement",
+      "Consumption / GRN data"
+    ],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-21",
+    "title": "One-time vendor invoice / refund request",
+    "shortTitle": "One-time vendor",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "critical",
+    "oneLine": "Highest fraud-risk class — independent call-back bank verification, sanctions screen and collusion check mandatory.",
+    "extraction": [
+      "Vendor verification evidence (bank confirmation)",
+      "W-form / ABN check",
+      "Bank details"
+    ],
+    "checks": [
+      "HIGHEST fraud-risk class",
+      "Mandatory: independent bank-detail verification (call-back to a number sourced independently, NOT from the invoice)",
+      "Tax-ID validation, sanctions / denied-party screening",
+      "Duplicate-person check vs employee bank accounts (collusion control)",
+      "Cap: one-time vendor payments above threshold (e.g. AUD 10k) prohibited — force full vendor onboarding",
+      "Customer refunds via AP: match to credit balance in AR before payment"
+    ],
+    "match": [
+      "Independent verification + sanctions screen"
+    ],
+    "approval": [
+      "AP supervisor (vendor-onboarding verified)",
+      "Payment blocked until call-back verification completes"
+    ],
+    "accounting": [
+      "Standard invoice posting only after verification — payment blocked until verified"
+    ],
+    "special": [
+      "Call-back verification (independent number)",
+      "AUD 10k cap forces full onboarding",
+      "Collusion check vs employee accounts"
+    ],
+    "bundleMandatory": [
+      "Vendor verification evidence (bank confirmation)",
+      "W-form / ABN check"
+    ],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-22",
+    "title": "Dunning / payment reminder letter",
+    "shortTitle": "Dunning letter",
+    "klass": "Informational",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Informational only — links to the referenced invoice's status; disconnection notices flagged urgent.",
+    "extraction": [
+      "Referenced invoice(s)",
+      "Demanded amount",
+      "Due/penalty date"
+    ],
+    "checks": [
+      "Informational — never posted",
+      "Link to the referenced invoice's current status in the system",
+      "Disconnection notices route as priority (urgent flag)"
+    ],
+    "match": [
+      "Link to referenced invoice"
+    ],
+    "approval": [
+      "No posting — informational"
+    ],
+    "accounting": [
+      "No journal"
+    ],
+    "special": [
+      "Disconnection / urgent flag",
+      "Surfaces a payment that may already be in flight"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-23",
+    "title": "Bank / vendor detail change request",
+    "shortTitle": "Bank-detail change",
+    "klass": "Master-data",
+    "posting": "No",
+    "fraudRisk": "critical",
+    "oneLine": "Critical fraud control — never update bank details from an email/letter alone; independent call-back + 4-eyes required.",
+    "extraction": [
+      "Vendor",
+      "Proposed new bank details",
+      "Requesting party"
+    ],
+    "checks": [
+      "NEVER update vendor bank details from an emailed invoice or letter alone, even on genuine letterhead",
+      "Workflow: independent call-back verification to known contact + second-person approval in vendor master + penny-test (micro-deposit) + 100% audit log",
+      "Any in-flight payments to that vendor are held until verification completes",
+      "Invoices arriving with bank details ≠ master → pay to master details, flag mismatch; do not silently adopt invoice details"
+    ],
+    "match": [
+      "Independent call-back + second-person approval"
+    ],
+    "approval": [
+      "Vendor master team (4-eyes) — payments held until verified"
+    ],
+    "accounting": [
+      "No journal — master-data control"
+    ],
+    "special": [
+      "Returned payment + \"new bank details\" email = classic fraud pattern",
+      "Penny-test micro-deposit"
+    ],
+    "bundleMandatory": [
+      "Independent call-back verification",
+      "Second-person approval"
+    ],
+    "bundleConditional": [
+      "Penny-test confirmation"
+    ]
+  },
+  {
+    "code": "DT-24",
+    "title": "Quote / order acknowledgement / sales brochure / spam",
+    "shortTitle": "Quote / spam",
+    "klass": "Non-actionable",
+    "posting": "No",
+    "fraudRisk": "low",
+    "oneLine": "Non-actionable — auto-archived with 30-day recoverability; never hard-deleted, never posted as a payable.",
+    "extraction": [
+      "Sender",
+      "Subject / type"
+    ],
+    "checks": [
+      "Must NEVER be classified as a payable tax invoice (highest-frequency real-world posting error)",
+      "Auto-archive with 30-day recoverability; never hard-delete"
+    ],
+    "match": [
+      "N/A"
+    ],
+    "approval": [
+      "No posting — auto-archived"
+    ],
+    "accounting": [
+      "No journal"
+    ],
+    "special": [
+      "\"Proforma / Quotation / This is not a tax invoice\" wording prevents payable classification"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-25",
+    "title": "Tax authority documents (assessments, GST notices)",
+    "shortTitle": "Tax authority notice",
+    "klass": "Compliance",
+    "posting": "Route",
+    "fraudRisk": "low",
+    "oneLine": "Compliance class — routed to the Tax team, not the AP posting flow.",
+    "extraction": [
+      "Issuing authority",
+      "Notice / assessment reference",
+      "Amount, due date"
+    ],
+    "checks": [
+      "Routed to Tax team",
+      "Not processed as a payable invoice"
+    ],
+    "match": [
+      "N/A — routed to Tax team"
+    ],
+    "approval": [
+      "Tax team handling"
+    ],
+    "accounting": [
+      "Posted by Tax team per assessment, outside AP flow"
+    ],
+    "special": [
+      "GST assessments, ATO notices → Tax team workflow"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  }
+]

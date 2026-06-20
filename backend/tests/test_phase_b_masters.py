@@ -41,12 +41,6 @@ from app.schemas.master_data import EmployeeMasterResponse
 from app.schemas.rule_book_config import BankDetails, EmployeeBudget
 
 
-@pytest.fixture
-def capture_config() -> RuleBookConfigPayload:
-    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
-    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
-
-
 def test_infer_capture_channel() -> None:
     assert infer_capture_channel("ops@acme.com") == "email"
     assert infer_capture_channel("+61 412 345 678") == "mob"

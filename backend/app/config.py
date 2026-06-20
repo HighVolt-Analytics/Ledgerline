@@ -41,6 +41,18 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RULE_BOOK_CONFIG_PATH", "RULE_BOOK_PATH"),
     )
     chart_of_accounts_path: str = "./app/chart_of_accounts.json"
+    document_types_catalog_path: str = Field(
+        default="./data/document_types.json",
+        validation_alias="DOCUMENT_TYPES_CATALOG_PATH",
+    )
+    document_type_classifiers_path: str = Field(
+        default="./data/document_type_classifiers.json",
+        validation_alias="DOCUMENT_TYPE_CLASSIFIERS_PATH",
+    )
+    document_type_defaults_path: str = Field(
+        default="./data/document_type_defaults.json",
+        validation_alias="DOCUMENT_TYPE_DEFAULTS_PATH",
+    )
     cors_origins: str = "http://localhost:5173"
     public_app_url: str = Field(
         default="",
@@ -92,6 +104,18 @@ class Settings(BaseSettings):
         validation_alias="GRAPH_OAUTH_FRONTEND_RETURN_URL",
     )
     graph_max_messages: int = 50
+    graph_backfill_max_messages: int = Field(
+        default=500,
+        ge=1,
+        le=5000,
+        validation_alias="GRAPH_BACKFILL_MAX_MESSAGES",
+    )
+    graph_backfill_max_days: int = Field(
+        default=90,
+        ge=1,
+        le=365,
+        validation_alias="GRAPH_BACKFILL_MAX_DAYS",
+    )
     graph_poll_interval_minutes: int = Field(default=2, ge=1, le=60)
     graph_folder_moves_enabled: bool = True
     graph_processed_folder: str = "Processed"
@@ -114,7 +138,10 @@ class Settings(BaseSettings):
     azure_di_model_id: str = "prebuilt-invoice"
     parse_min_text_chars: int = 200
     abn_validation_mode: str = Field(default="format")
-    duplicate_invoice_check_enabled: bool = False
+    duplicate_invoice_check_enabled: bool = Field(
+        default=True,
+        validation_alias="DUPLICATE_INVOICE_CHECK_ENABLED",
+    )
 
     azure_storage_connection_string: str = Field(
         default="",
@@ -252,6 +279,27 @@ class Settings(BaseSettings):
         wa_redirect = self.whatsapp_oauth_redirect_uri.strip()
         if not wa_redirect or "localhost" in wa_redirect or "127.0.0.1" in wa_redirect:
             self.whatsapp_oauth_redirect_uri = f"{tunnel}/auth/whatsapp/callback"
+
+        return self
+
+    @model_validator(mode="after")
+    def apply_azure_webapp_public_url(self) -> Self:
+        """Use AZURE_WEBAPP_URL for invite/OAuth links when env still has localhost defaults."""
+        webapp = self.azure_webapp_url.strip().rstrip("/")
+        if not webapp:
+            return self
+
+        public = self.public_app_url.strip().rstrip("/")
+        if not public or "localhost" in public or "127.0.0.1" in public:
+            self.public_app_url = webapp
+
+        frontend = self.graph_oauth_frontend_return_url.strip()
+        if not frontend or "localhost" in frontend or "127.0.0.1" in frontend:
+            self.graph_oauth_frontend_return_url = f"{webapp}/integrations"
+
+        redirect = self.graph_oauth_redirect_uri.strip()
+        if not redirect or "localhost" in redirect or "127.0.0.1" in redirect:
+            self.graph_oauth_redirect_uri = f"{webapp}/api/mailboxes/oauth/callback"
 
         return self
 

@@ -3,6 +3,16 @@ import type { Invoice } from "@/api/types";
 
 const DEFAULT_PAGE_SIZE = "100";
 
+/** Newest ingested first; ties broken by higher invoice id. */
+export function sortInvoicesNewestFirst(rows: Invoice[]): Invoice[] {
+  return [...rows].sort((a, b) => {
+    const byCreated =
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    if (byCreated !== 0) return byCreated;
+    return b.id - a.id;
+  });
+}
+
 /** Fetch every invoice page for the current org (newest first per API order). */
 export async function fetchAllInvoices(
   fresh = false,

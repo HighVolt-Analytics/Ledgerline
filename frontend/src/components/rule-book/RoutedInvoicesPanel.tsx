@@ -50,7 +50,7 @@ function InvoiceTable({
             <tr key={inv.id} className="row-band border-b border-border/60 last:border-0">
               <td className="px-4 py-2.5">
                 <Link
-                  to={`/inbox?doc=${inv.id}`}
+                  to={`/upload?doc=${inv.id}`}
                   className="font-medium hover:text-primary"
                   data-testid={`routed-doc-${inv.id}`}
                 >

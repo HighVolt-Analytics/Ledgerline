@@ -16,13 +16,13 @@ import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
+import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
 import { invoiceMatchesDocSet } from "@/lib/documentSets";
 import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import type { DocumentSetRule as ConfigDocumentSet } from "@/lib/v4RuleBookTypes";
 import {
-  invoiceDocumentType,
-  invoiceDocumentTypeLabel,
   invoiceSourceKind,
   invoiceSourceLabel,
 } from "@/lib/invoice";
@@ -57,10 +57,10 @@ function SourceBadge({ source }: { source: ReturnType<typeof invoiceSourceKind> 
   );
 }
 
-function DocTypeBadge({ type }: { type: ReturnType<typeof invoiceDocumentType> }) {
+function DocTypeBadge({ label }: { label: string }) {
   return (
     <Badge className="bg-accent text-accent-foreground border-0 text-[10px] shrink-0 font-normal">
-      {invoiceDocumentTypeLabel(type)}
+      {label}
     </Badge>
   );
 }
@@ -160,6 +160,7 @@ type DrawerTab = "fields" | "audit";
 
 export function VaultPage() {
   const { user } = useAuth();
+  const { data: ruleBook } = useRuleBookConfig();
   const [searchParams, setSearchParams] = useSearchParams();
   const [vaultData, setVaultData] = useState<Awaited<ReturnType<typeof api.getVaultTree>> | null>(
     null
@@ -421,11 +422,11 @@ export function VaultPage() {
           hint="Documents appear here once captured and stored — filed under org → vendor → year → month."
           action={
             <Link
-              to="/inbox"
+              to="/upload"
               className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               data-testid="button-load-samples"
             >
-              Go to Inbox
+              Go to Upload
             </Link>
           }
         />
@@ -468,7 +469,9 @@ export function VaultPage() {
                           </div>
                         </div>
                         <SourceBadge source={invoiceSourceKind(doc)} />
-                        <DocTypeBadge type={invoiceDocumentType(doc)} />
+                        <DocTypeBadge
+                          label={invoiceDocumentTypeDisplayLabel(doc, ruleBook?.documentTypes)}
+                        />
                         <span className="tnum text-sm font-medium shrink-0">
                           {money(doc.total, doc.currency)}
                         </span>
@@ -556,7 +559,9 @@ export function VaultPage() {
                       {doc && (
                         <>
                           <SourceBadge source={invoiceSourceKind(doc)} />
-                          <DocTypeBadge type={invoiceDocumentType(doc)} />
+                          <DocTypeBadge
+                          label={invoiceDocumentTypeDisplayLabel(doc, ruleBook?.documentTypes)}
+                        />
                           <span className="tnum text-sm font-medium shrink-0">
                             {money(doc.total, doc.currency)}
                           </span>

@@ -85,6 +85,51 @@ async def test_dashboard_overview(
 
 
 @pytest.mark.asyncio
+async def test_dashboard_activity_includes_duplicate(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    original = Invoice(
+        org_id=1,
+        vendor="Dup Vendor",
+        invoice_no="INV-DUP-1",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="dash-dup-original",
+    )
+    shadow = Invoice(
+        org_id=1,
+        vendor="Dup Vendor",
+        invoice_no="INV-DUP-1",
+        status=InvoiceStatus.DUPLICATE_SKIPPED,
+        currency="AUD",
+        file_hash=None,
+    )
+    db_session.add_all([original, shadow])
+    await db_session.flush()
+    db_session.add(
+        AuditLog(
+            event="duplicate_skipped",
+            invoice_id=shadow.id,
+            detail={
+                "original_invoice_id": original.id,
+                "filename": "invoice.pdf",
+                "source": "email",
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/dashboard/overview?activity_limit=10")
+    assert res.status_code == 200
+    activity = res.json()["data"]["activity"]
+    dup_rows = [row for row in activity if row["event"] == "duplicate_skipped"]
+    assert len(dup_rows) >= 1
+    assert dup_rows[0]["summary"] is not None
+    assert "Duplicate file skipped" in dup_rows[0]["summary"]
+
+
+@pytest.mark.asyncio
 async def test_pending_approval_count(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

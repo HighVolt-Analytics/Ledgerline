@@ -1,0 +1,327 @@
+"""Run per-DT validation rules from the catalogue."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.invoice import Invoice
+from app.schemas.custom_validation_rule import CustomValidationRule
+from app.schemas.validation_rule import ValidationRuleConfig
+from app.services.custom_validation_service import run_custom_validation_rules
+from app.services.document_type_catalog import get_document_type_definition
+from app.services.document_type_validation_service import PROFILE_NON_ACTIONABLE
+from app.services.extended_validations import run_extended_validations
+from app.services.invoice_evaluation_service import ROUTE_TEAM
+from app.services.team_expense_validator import run_team_expense_validations
+from app.services.validation_rule_catalog import (
+    PROFILE_DIRECT_EXPENSE_RULES,
+    PROFILE_NON_ACTIONABLE_RULES,
+    default_validation_rules_for_profile,
+    resolve_validation_rules,
+)
+from app.services.validator import (
+    ValidationResult,
+    _skipped,
+    vr01_total,
+    vr03_direct_expense,
+    vr03_grn_document,
+    vr03_po_document,
+    vr03_required,
+    vr05_abn,
+    vr06_dates,
+    vr07_currency,
+    vr08_gst,
+    vr02_unique,
+)
+
+
+@dataclass
+class ValidationRunContext:
+    data: object
+    session: AsyncSession
+    org_id: int
+    exclude_id: int | None = None
+    sender: str | None = None
+    route_target: str | None = None
+    purchase_document_type: str | None = None
+    has_receipt_file: bool = False
+    document_type_code: str | None = None
+    validation_profile: str | None = None
+    document_types: list | None = None
+    playbook_gates: object | None = None
+    invoice: Invoice | None = None
+
+
+def _with_severity(result: ValidationResult, severity: str) -> ValidationResult:
+    return ValidationResult(
+        result.rule,
+        result.passed,
+        result.message,
+        skipped=result.skipped,
+        severity=severity,
+    )
+
+
+def _playbook_results_for_rules(
+    playbook_gates: object | None,
+    rules: list[ValidationRuleConfig],
+    *,
+    document_type_code: str | None = None,
+    document_types: list | None = None,
+    org_id: int | None = None,
+) -> list[ValidationResult]:
+    if playbook_gates is None:
+        return []
+    from app.services.document_type_playbook_profile_service import should_enforce_bundle_mandatory
+    from app.services.document_type_playbook_service import playbook_validation_results
+
+    definition = None
+    code = (document_type_code or "").strip().upper()
+    if code:
+        definition = get_document_type_definition(
+            code,
+            document_types=document_types,
+            org_id=org_id,
+        )
+    enforce_bundle = should_enforce_bundle_mandatory(definition) if definition else True
+
+    severity_by_code = {row.code: row.severity for row in rules if row.enabled}
+    rows: list[ValidationResult] = []
+    for raw in playbook_validation_results(playbook_gates):
+        if raw.rule == "VR-PB02" and not enforce_bundle:
+            continue
+        severity = severity_by_code.get(raw.rule)
+        if severity is None:
+            continue
+        rows.append(
+            ValidationResult(
+                raw.rule,
+                raw.passed,
+                raw.message,
+                severity=severity,
+            )
+        )
+    return rows
+
+
+async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResult:
+    data = ctx.data
+    if code == "VR03":
+        doc_type = ctx.purchase_document_type
+        if doc_type == "po":
+            return vr03_po_document(data)
+        if doc_type == "grn":
+            return vr03_grn_document(data)
+        from app.services.document_type_validation_service import (
+            PROFILE_DIRECT_EXPENSE,
+            resolve_validation_profile,
+        )
+
+        profile = ctx.validation_profile or resolve_validation_profile(
+            ctx.document_type_code,
+            document_types=ctx.document_types,
+            org_id=ctx.org_id,
+        )
+        if profile == PROFILE_DIRECT_EXPENSE:
+            return vr03_direct_expense(data)
+        return vr03_required(data)
+    if code == "VR05":
+        return await vr05_abn(
+            data,
+            ctx.session,
+            org_id=ctx.org_id,
+            sender=ctx.sender,
+        )
+    if code == "VR06":
+        return vr06_dates(data)
+    if code == "VR07":
+        return vr07_currency(data)
+    if code == "VR08":
+        return vr08_gst(data)
+    if code == "VR01":
+        return vr01_total(data)
+    if code == "VR02":
+        return await vr02_unique(
+            data,
+            ctx.session,
+            ctx.exclude_id,
+            org_id=ctx.org_id,
+        )
+
+    extended = await run_extended_validations(
+        code,
+        data,
+        ctx.session,
+        org_id=ctx.org_id,
+        invoice=ctx.invoice,
+    )
+    if extended is not None:
+        return extended
+    return _skipped(code, f"Unknown validation rule {code}")
+
+
+def _rules_for_context(ctx: ValidationRunContext) -> list[ValidationRuleConfig]:
+    if ctx.purchase_document_type == "po":
+        return [
+            ValidationRuleConfig(code="VR03", enabled=True, severity="block"),
+            ValidationRuleConfig(code="VR07", enabled=True, severity="block"),
+        ]
+    if ctx.purchase_document_type == "grn":
+        return [
+            ValidationRuleConfig(code="VR03", enabled=True, severity="block"),
+            ValidationRuleConfig(code="VR07", enabled=True, severity="block"),
+        ]
+
+    profile = ctx.validation_profile
+    if profile == PROFILE_NON_ACTIONABLE:
+        return list(PROFILE_NON_ACTIONABLE_RULES)
+
+    resolved = resolve_validation_rules(
+        ctx.document_type_code,
+        document_types=ctx.document_types,
+        org_id=ctx.org_id,
+        validation_profile=profile,
+    )
+    if resolved:
+        return resolved
+
+    return default_validation_rules_for_profile(
+        profile or "standard",
+        document_type_code=ctx.document_type_code or "",
+    )
+
+
+def _custom_rules_for_context(ctx: ValidationRunContext) -> list[CustomValidationRule]:
+    code = (ctx.document_type_code or "").strip().upper()
+    if not code:
+        return []
+    definition = get_document_type_definition(
+        code,
+        document_types=ctx.document_types,
+        org_id=ctx.org_id,
+    )
+    if definition is None:
+        return []
+    return list(definition.custom_validation_rules)
+
+
+async def _run_universal_duplicate(ctx: ValidationRunContext) -> ValidationResult | None:
+    from app.services.document_type_validation_service import resolve_validation_profile
+
+    doc_type = (ctx.purchase_document_type or "").strip().lower()
+    if doc_type in {"po", "grn"}:
+        return None
+
+    profile = ctx.validation_profile or resolve_validation_profile(
+        ctx.document_type_code,
+        document_types=ctx.document_types,
+        org_id=ctx.org_id,
+    )
+    if profile == PROFILE_NON_ACTIONABLE:
+        return None
+    raw = await vr02_unique(
+        ctx.data,
+        ctx.session,
+        ctx.exclude_id,
+        org_id=ctx.org_id,
+    )
+    return _with_severity(raw, "block")
+
+
+async def run_configured_validations(ctx: ValidationRunContext) -> list[ValidationResult]:
+    if ctx.route_target == ROUTE_TEAM:
+        team_results = await run_team_expense_validations(
+            ctx.data,
+            ctx.session,
+            org_id=ctx.org_id,
+            route_target=ctx.route_target,
+            email_sender=ctx.sender,
+            has_receipt_file=ctx.has_receipt_file,
+        )
+        rules = _rules_for_context(ctx)
+        results: list[ValidationResult] = list(team_results)
+        duplicate = await _run_universal_duplicate(ctx)
+        if duplicate is not None:
+            results.insert(0, duplicate)
+        results.extend(
+            _playbook_results_for_rules(
+                ctx.playbook_gates,
+                rules,
+                document_type_code=ctx.document_type_code,
+                document_types=ctx.document_types,
+                org_id=ctx.org_id,
+            )
+        )
+        return results
+
+    rules = _rules_for_context(ctx)
+    results: list[ValidationResult] = []
+
+    duplicate = await _run_universal_duplicate(ctx)
+    if duplicate is not None:
+        results.append(duplicate)
+
+    if rules:
+        for row in rules:
+            if not row.enabled or row.code.startswith("VR-PB"):
+                continue
+            raw = await _run_core_rule(row.code, ctx)
+            results.append(_with_severity(raw, row.severity))
+
+        results.extend(
+            _playbook_results_for_rules(
+                ctx.playbook_gates,
+                rules,
+                document_type_code=ctx.document_type_code,
+                document_types=ctx.document_types,
+                org_id=ctx.org_id,
+            )
+        )
+    else:
+        results.extend(
+            _playbook_results_for_rules(
+                ctx.playbook_gates,
+                rules,
+                document_type_code=ctx.document_type_code,
+                document_types=ctx.document_types,
+                org_id=ctx.org_id,
+            )
+        )
+
+    if ctx.invoice is not None:
+        custom_rules = _custom_rules_for_context(ctx)
+        if custom_rules:
+            results.extend(
+                run_custom_validation_rules(
+                    custom_rules,
+                    invoice=ctx.invoice,
+                    parsed=ctx.data,
+                )
+            )
+
+    if ctx.route_target != ROUTE_TEAM and ctx.purchase_document_type not in ("po", "grn"):
+        from app.services.document_type_validation_service import (
+            PROFILE_DIRECT_EXPENSE,
+            PROFILE_NON_ACTIONABLE,
+            resolve_validation_profile,
+        )
+
+        profile = ctx.validation_profile or resolve_validation_profile(
+            ctx.document_type_code,
+            document_types=ctx.document_types,
+            org_id=ctx.org_id,
+        )
+        if profile not in (PROFILE_NON_ACTIONABLE, PROFILE_DIRECT_EXPENSE):
+            team_extra = await run_team_expense_validations(
+                ctx.data,
+                ctx.session,
+                org_id=ctx.org_id,
+                route_target=ctx.route_target,
+                email_sender=ctx.sender,
+                has_receipt_file=ctx.has_receipt_file,
+            )
+            results.extend(team_extra)
+
+    return results

@@ -8,6 +8,22 @@ import type {
   TeamExpenseRule,
   VendorMaster,
 } from "@/lib/v4RuleBookTypes";
+import { INGEST_ACTION_ROUTE_PLACEHOLDER, ROUTE_TARGETS } from "@/lib/v4RuleBookTypes";
+import { emptyDocumentClassifier, type DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import type { ApprovalMode, MatchMode, PlaybookProfile } from "@/lib/documentPlaybookConfig";
+import {
+  inferPlaybookProfileFromDefinition,
+  playbookPresetForProfile,
+} from "@/lib/documentPlaybookConfig";
+import { normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
+import type { PurchaseBundleRole } from "@/lib/documentBundleConfig";
+import { normalizeDtCodeList } from "@/lib/documentBundleConfig";
+import {
+  normalizeValidationRules,
+  normalizeCustomValidationRules,
+  type CustomValidationRule,
+  type ValidationRuleConfig,
+} from "@/lib/documentValidationChecks";
 
 function mapConditionGroup(root: Record<string, unknown>): RuleConditionGroup {
   return root as unknown as RuleConditionGroup;
@@ -232,8 +248,157 @@ export function employeeToApi(employee: EmployeeMaster): Record<string, unknown>
   };
 }
 
+function mapClassifier(raw: Record<string, unknown> | undefined) {
+  if (!raw) return emptyDocumentClassifier();
+  return {
+    enabled: raw.enabled === true,
+    priority: Number(raw.priority ?? 100),
+    confidence: Number(raw.confidence ?? 0.85),
+    root: mapConditionGroup((raw.root ?? emptyDocumentClassifier().root) as Record<string, unknown>),
+  };
+}
+
+function mapPurchaseBundleRole(raw: Record<string, unknown>): PurchaseBundleRole {
+  const token = String(raw.purchase_bundle_role ?? raw.purchaseBundleRole ?? "")
+    .trim()
+    .toLowerCase();
+  return (token === "po" || token === "grn" ? token : "") as PurchaseBundleRole;
+}
+
+function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProfile {
+  const explicit = String(raw.playbook_profile ?? raw.playbookProfile ?? "").trim().toLowerCase();
+  if (explicit) return explicit as PlaybookProfile;
+  return inferPlaybookProfileFromDefinition({
+    klass: raw.klass as DocumentTypeDefinition["klass"],
+    posting: String(raw.posting ?? "No"),
+    purchaseBundleRole: mapPurchaseBundleRole(raw),
+    playbookProfile: "",
+  });
+}
+
+function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
+  const extractionFields = normalizeExtractionFieldKeys(
+    (raw.extraction_fields ?? raw.extractionFields ?? []) as string[]
+  );
+  const playbookProfile = inferPlaybookProfileFromRaw(raw);
+  const preset = playbookPresetForProfile(playbookProfile);
+  const rawMatchMode = (raw.match_policy as { mode?: string } | undefined)?.mode;
+  const rawApprovalMode = (raw.approval_policy as { mode?: string } | undefined)?.mode;
+  return {
+    code: String(raw.code),
+    title: String(raw.title),
+    shortTitle: String(raw.short_title ?? raw.shortTitle ?? ""),
+    klass: raw.klass as DocumentTypeDefinition["klass"],
+    posting: String(raw.posting ?? "No"),
+    fraudRisk: (raw.fraud_risk ?? raw.fraudRisk ?? "low") as DocumentTypeDefinition["fraudRisk"],
+    oneLine: String(raw.one_line ?? raw.oneLine ?? ""),
+    routeTarget: String(raw.route_target ?? raw.routeTarget ?? ROUTE_TARGETS[3]),
+    enabled: raw.enabled !== false,
+    classifier: mapClassifier(raw.classifier as Record<string, unknown> | undefined),
+    classifierCustomized: Boolean(raw.classifier_customized ?? raw.classifierCustomized),
+    requiredFields: extractionFields,
+    absentFields: (raw.absent_fields ?? raw.absentFields ?? []) as string[],
+    minRouteConfidence: Number(raw.min_route_confidence ?? raw.minRouteConfidence ?? 0.65),
+    validationProfile: String(raw.validation_profile ?? raw.validationProfile ?? ""),
+    playbookProfile: String(raw.playbook_profile ?? raw.playbookProfile ?? "") || playbookProfile,
+    matchPolicy: {
+      mode: (rawMatchMode ? String(rawMatchMode) : preset.matchMode) as MatchMode,
+    },
+    approvalPolicy: {
+      mode: (rawApprovalMode ? String(rawApprovalMode) : preset.approvalMode) as ApprovalMode,
+    },
+    validationRules: normalizeValidationRules(
+      (raw.validation_rules ?? raw.validationRules ?? []) as ValidationRuleConfig[]
+    ),
+    customValidationRules: normalizeCustomValidationRules(
+      (raw.custom_validation_rules ?? raw.customValidationRules ?? []) as CustomValidationRule[]
+    ),
+    extractionFields,
+    extraction: [],
+    checks: [],
+    match: [],
+    approval: [],
+    accounting: [],
+    special: [],
+    bundleMandatory: normalizeDtCodeList(
+      (raw.bundle_mandatory ?? raw.bundleMandatory ?? []) as string[]
+    ),
+    bundleConditional: (raw.bundle_conditional ?? raw.bundleConditional ?? []) as string[],
+    purchaseBundleRole: mapPurchaseBundleRole(raw),
+  };
+}
+
+function documentTypeToApi(
+  docType: DocumentTypeDefinition
+): RuleBookRulesPayload["document_types"][number] {
+  return {
+    code: docType.code,
+    title: docType.title,
+    short_title: docType.shortTitle,
+    klass: docType.klass,
+    posting: docType.posting,
+    fraud_risk: docType.fraudRisk,
+    one_line: docType.oneLine,
+    route_target: docType.routeTarget,
+    enabled: docType.enabled,
+    classifier: {
+      enabled: docType.classifier.enabled,
+      priority: docType.classifier.priority,
+      confidence: docType.classifier.confidence,
+      root: conditionGroupToApi(
+        docType.classifier.root as unknown as RuleConditionGroup
+      ),
+    },
+    ...(docType.classifierCustomized ? { classifier_customized: true } : {}),
+    required_fields: docType.extractionFields,
+    absent_fields: docType.absentFields,
+    ...(docType.minRouteConfidence != null
+      ? { min_route_confidence: docType.minRouteConfidence }
+      : {}),
+    validation_profile: docType.validationProfile || undefined,
+    playbook_profile: docType.playbookProfile || undefined,
+    match_policy: { mode: docType.matchPolicy.mode },
+    approval_policy: { mode: docType.approvalPolicy.mode },
+    validation_rules: docType.validationRules.map((row) => ({
+      code: row.code,
+      enabled: row.enabled,
+      severity: row.severity,
+    })),
+    custom_validation_rules: docType.customValidationRules.map((row) => ({
+      id: row.id,
+      name: row.name,
+      field: row.field,
+      operator: row.operator,
+      value: row.value,
+      enabled: row.enabled,
+      severity: row.severity,
+    })),
+    extraction_fields: docType.extractionFields,
+    extraction: [],
+    checks: [],
+    match: [],
+    approval: [],
+    accounting: [],
+    special: [],
+    bundle_mandatory: normalizeDtCodeList(docType.bundleMandatory),
+    bundle_conditional: docType.bundleConditional,
+    ...(docType.purchaseBundleRole
+      ? { purchase_bundle_role: docType.purchaseBundleRole }
+      : {}),
+  };
+}
+
 export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState {
   return {
+    documentTypes: (api.document_types ?? []).map((row) =>
+      mapDocumentType(row as unknown as Record<string, unknown>)
+    ),
+    documentClassification: {
+      unclassifiedDocumentTypeCode:
+        api.document_classification?.unclassified_document_type_code ?? "",
+      unclassifiedMinConfidence:
+        api.document_classification?.unclassified_min_confidence ?? 0.45,
+    },
     emailCaptureRules: api.email_capture_rules.map((rule) => ({
       id: rule.id,
       name: rule.name,
@@ -310,6 +475,13 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
 export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPayload {
   return {
     schema_version: 1,
+    document_classification: {
+      unclassified_document_type_code:
+        state.documentClassification?.unclassifiedDocumentTypeCode ?? "",
+      unclassified_min_confidence:
+        state.documentClassification?.unclassifiedMinConfidence ?? 0.45,
+    },
+    document_types: state.documentTypes.map(documentTypeToApi),
     email_capture_rules: state.emailCaptureRules.map((rule) => ({
       id: rule.id,
       name: rule.name,
@@ -319,7 +491,7 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       root: conditionGroupToApi(rule.root),
       action: {
         save_attachment: rule.action.saveAttachment,
-        route_to: rule.action.routeTo,
+        route_to: rule.action.routeTo || INGEST_ACTION_ROUTE_PLACEHOLDER,
         tags: rule.action.tags,
       },
       matched_count: rule.matchedCount,

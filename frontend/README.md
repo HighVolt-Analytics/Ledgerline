@@ -52,7 +52,7 @@ API calls are proxied to port 8001 (see `vite.config.ts`).
 | Route | Screen |
 |-------|--------|
 | `/` | Dashboard (overview, badges, activity) |
-| `/inbox` | Inbox + upload |
+| `/upload` | Upload + mailbox capture |
 | `/approvals` | Approval queue |
 | `/vendors` | Vendor registry |
 | `/rules` | Rule book editor + live evaluation |

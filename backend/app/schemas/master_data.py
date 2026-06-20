@@ -91,6 +91,30 @@ class EmployeeMasterResponse(EmployeeMaster):
     db_id: int
 
 
+class EmployeeImportRowErrorResponse(BaseModel):
+    row_number: int
+    email: str | None = None
+    message: str
+
+
+class EmployeeImportRowPreviewResponse(BaseModel):
+    row_number: int
+    email: str
+    name: str | None = None
+    action: str
+    detail: str
+
+
+class EmployeeImportResultResponse(BaseModel):
+    mode: str
+    dry_run: bool
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    errors: list[EmployeeImportRowErrorResponse] = Field(default_factory=list)
+    previews: list[EmployeeImportRowPreviewResponse] = Field(default_factory=list)
+
+
 class PendingVendorCreate(BaseModel):
     detected_name: str = Field(..., min_length=1, max_length=255)
     detected_abn: str | None = Field(None, max_length=11)

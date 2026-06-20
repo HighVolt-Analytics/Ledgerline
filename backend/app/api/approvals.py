@@ -15,7 +15,7 @@ from app.services.approval_service import (
     reject_invoice,
     request_approval,
 )
-from app.services.file_storage import stored_file_available
+from app.services.file_storage import repair_invoice_stored_path, stored_file_available
 from app.services.privilege_service import require_privilege
 from app.workers.tasks import process_invoice_background
 
@@ -78,6 +78,7 @@ async def approve_invoice(
     inv = await db.get(Invoice, invoice_id)
     if not inv or inv.org_id != ctx.org_id:
         raise HTTPException(404, "Invoice not found")
+    await repair_invoice_stored_path(db, inv)
     if not stored_file_available(inv.raw_file_path):
         raise HTTPException(
             400,

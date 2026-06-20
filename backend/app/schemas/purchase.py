@@ -58,3 +58,22 @@ class GoodsReceiptCreate(BaseModel):
     grn_date: date | None = None
     receiver: str | None = None
     condition_note: str | None = None
+
+
+class PurchaseDossierMember(BaseModel):
+    role: str
+    label: str
+    invoice_id: int | None = None
+    document_ref: str | None = None
+    present: bool = False
+    has_stored_file: bool = False
+    is_current: bool = False
+
+
+class PurchaseDossierResponse(BaseModel):
+    po_reference: str | None = None
+    current_role: str | None = None
+    members: list[PurchaseDossierMember] = Field(default_factory=list)
+    purchase_order_id: int | None = None
+    match: ThreeWayMatchResult | None = None
+    match_status: str | None = None

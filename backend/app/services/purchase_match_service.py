@@ -105,11 +105,9 @@ def compute_three_way_match(
 
     if po.variance_approved:
         status = "3-Way Match"
-    elif po.status == PurchaseOrderStatus.VARIANCE_PENDING and not po.variance_approved:
-        status = "Routed for Approval"
     elif price_variance != 0:
         status = "Price Variance"
-    elif grn_qty != inv_qty_f:
+    elif inv_qty_f > grn_qty:
         status = "Qty Variance"
     else:
         status = "3-Way Match"
@@ -346,10 +344,12 @@ async def load_purchase_order_for_invoice(
         return None
     return (
         await db.execute(
-            select(PurchaseOrder).where(
+            select(PurchaseOrder)
+            .where(
                 PurchaseOrder.org_id == invoice.org_id,
                 PurchaseOrder.po_number == po_number,
             )
+            .options(selectinload(PurchaseOrder.goods_receipts))
         )
     ).scalar_one_or_none()
 

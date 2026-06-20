@@ -100,6 +100,41 @@ async def test_vault_tree_with_stored_file(
 
 
 @pytest.mark.asyncio
+async def test_vault_tree_vault_document_type_folder(
+    client: AsyncClient, db_session: AsyncSession, tmp_path
+) -> None:
+    pdf_path = tmp_path / "statement.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+
+    db_session.add(
+        Invoice(
+            org_id=1,
+            vendor="Sysco Australia",
+            invoice_no="STMT-001",
+            invoice_date=date(2026, 5, 4),
+            total=Decimal("100.00"),
+            status=InvoiceStatus.PROCESSED,
+            raw_file_path=str(pdf_path),
+            file_hash="vaultdt123456",
+            route_target="Vault",
+            document_type_code="DT-13",
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/vault/tree")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    file_entry = data["files"][0]
+    assert file_entry["book"] == "Vault"
+    assert file_entry["document_type"] is not None
+    assert file_entry["document_type"].startswith("DT-13")
+    assert "Vault/DT-13" in file_entry["virtual_path"]
+    vault_book = data["tree"][0]["children"][0]
+    assert vault_book["children"][0]["kind"] == "document_type"
+
+
+@pytest.mark.asyncio
 async def test_vault_tree_excludes_no_file_path(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

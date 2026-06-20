@@ -1,5 +1,6 @@
 import type { Invoice } from "@/api/types";
 import { invId } from "@/lib/format";
+import { invoiceFailedValidations } from "@/lib/invoice";
 import { invoiceRoutedToSuspense } from "@/lib/matrix";
 import { cn } from "@/lib/cn";
 
@@ -24,6 +25,7 @@ const styles: Record<string, string> = {
   Mapped: "bg-accent text-accent-foreground",
   "Awaiting Approval": "bg-[hsl(43_74%_49%/0.18)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]",
   Approved: "bg-primary/15 text-primary",
+  Processed: "bg-primary/15 text-primary",
   Published: "bg-primary text-primary-foreground",
   Rejected: "bg-destructive/15 text-destructive",
   Suspense: "bg-destructive/15 text-destructive",
@@ -43,10 +45,13 @@ export function StageBadge({ stage }: { stage: string }) {
   );
 }
 
-export function invoiceStage(status: string): string {
+export function invoiceStage(status: string, inv?: Pick<Invoice, "account_name" | "status" | "published_to_ledger">): string {
   const s = status.toLowerCase();
-  if (s === "processed") return "Published";
-  if (s === "exception") return "Suspense";
+  if (s === "processed") return inv?.published_to_ledger ? "Published" : "Processed";
+  if (s === "exception") {
+    if (inv && invoiceRoutedToSuspense(inv as Invoice)) return "Suspense";
+    return "Exception";
+  }
   if (s === "duplicate_skipped") return "Rejected";
   if (s === "rejected") return "Rejected";
   if (["parsing", "validating"].includes(s)) return "Parsed";
@@ -57,14 +62,19 @@ export function invoiceStage(status: string): string {
 
 /** Inbox table stage — matches v4 `M()` / `pde`. */
 export function inboxStage(inv: Invoice): string {
-  if (inv.status === "processed") return "Published";
+  if (inv.status === "processed") return inv.published_to_ledger ? "Published" : "Processed";
 
   const kanban = V4_INBOX_KANBAN[invId(inv.id)];
   if (kanban === "approved") return "Approved";
   if (kanban === "rejected") return "Rejected";
   if (kanban === "awaiting") return "Awaiting Approval";
 
-  if (invoiceRoutedToSuspense(inv) || inv.status === "exception") return "Suspense";
+  if (invoiceRoutedToSuspense(inv)) return "Suspense";
+  if (inv.status === "exception") {
+    if (inv.evaluation_status === "needs_review") return "Awaiting Approval";
+    if (invoiceFailedValidations(inv).length > 0) return "Exception";
+    return "Exception";
+  }
   if (inv.status === "duplicate_skipped" || inv.status === "rejected") return "Rejected";
   if (inv.status === "journaling" || inv.status === "reconciling") return "Awaiting Approval";
 

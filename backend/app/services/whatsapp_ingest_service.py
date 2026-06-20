@@ -14,8 +14,14 @@ from app.services.audit_service import log_event
 from app.services.capture_channel import normalize_phone
 from app.services.file_storage import store_invoice_pdf
 from app.utils.hashing import compute_sha256_bytes
-from app.services.invoice_evaluation_service import EVAL_NEEDS_REVIEW, ROUTE_TEAM
-from app.services.pipeline import find_by_hash
+from app.services.document_duplicate_service import (
+    create_duplicate_shadow_invoice,
+    evaluate_file_hash_duplicate,
+    find_invoice_by_file_hash,
+    log_duplicate_in_progress,
+)
+from app.services.document_ref_service import assign_document_ref
+from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.services.team_expense_validator import resolve_employee_for_sender
 from app.services.vendor_resolver import resolve_vendor_slug
 from app.services.whatsapp_connection_service import resolve_access_token
@@ -160,29 +166,66 @@ async def ingest_whatsapp_message(
     ext = extension_for_mime(mime_type, msg.filename)
     filename = _filename_for_message(msg, ext)
     file_hash = compute_sha256_bytes(data)
+    caption = (msg.caption or msg.text or "").strip()
 
-    existing = await find_by_hash(session, file_hash, org_id=connection.org_id)
-    if existing:
-        if existing.status != InvoiceStatus.PROCESSED:
-            await send_text_message_with_retry(
-                connection.phone_number_id,
-                access_token=access_token,
-                to_wa_id=msg.sender_wa_id,
-                text=(
-                    "We already received this receipt and it is still being processed. "
-                    "Please wait a moment before sending it again."
-                ),
-            )
-            result.skipped_reason = "duplicate_in_progress"
-            return result
-        existing.status = InvoiceStatus.DUPLICATE_SKIPPED
-        existing.email_message_id = msg.message_id
-        await log_event(
-            session,
-            "duplicate_skipped",
-            invoice_id=existing.id,
-            detail={"filename": filename, "message_id": msg.message_id, "source": "whatsapp"},
+    existing = await find_invoice_by_file_hash(session, file_hash, org_id=connection.org_id)
+    duplicate_decision = evaluate_file_hash_duplicate(existing)
+    if duplicate_decision.action == "skip_in_progress":
+        await send_text_message_with_retry(
+            connection.phone_number_id,
+            access_token=access_token,
+            to_wa_id=msg.sender_wa_id,
+            text=(
+                "We already received this receipt and it is still being processed. "
+                "Please wait a moment before sending it again."
+            ),
         )
+        assert existing is not None
+        existing.email_message_id = msg.message_id
+        await log_duplicate_in_progress(
+            session,
+            existing,
+            detail={
+                "filename": filename,
+                "message_id": msg.message_id,
+                "source": "whatsapp",
+            },
+        )
+        result.skipped_reason = "duplicate_in_progress"
+        return result
+    if duplicate_decision.action in {"skip_logged", "shadow_duplicate"}:
+        assert existing is not None
+        if duplicate_decision.action == "shadow_duplicate":
+            await create_duplicate_shadow_invoice(
+                session,
+                org_id=connection.org_id,
+                original=existing,
+                whatsapp_connection_id=connection.id,
+                email_sender=sender,
+                email_subject=caption or None,
+                email_attachment_name=filename,
+                email_message_id=msg.message_id,
+                capture_source="whatsapp",
+                file_hash=file_hash,
+                extra_detail={
+                    "filename": filename,
+                    "message_id": msg.message_id,
+                    "source": "whatsapp",
+                },
+            )
+        else:
+            existing.email_message_id = msg.message_id
+            await log_event(
+                session,
+                "duplicate_skipped",
+                invoice_id=existing.id,
+                detail={
+                    "filename": filename,
+                    "message_id": msg.message_id,
+                    "source": "whatsapp",
+                    "note": "repeat submission ignored",
+                },
+            )
         await send_text_message_with_retry(
             connection.phone_number_id,
             access_token=access_token,
@@ -191,9 +234,39 @@ async def ingest_whatsapp_message(
         )
         result.skipped_reason = "duplicate"
         return result
+    if duplicate_decision.action == "reingest_rejected":
+        assert existing is not None
+        existing.email_sender = sender
+        existing.email_subject = caption or None
+        existing.email_attachment_name = filename
+        existing.email_message_id = msg.message_id
+        await reset_invoice_for_reprocess(session, existing)
+        await log_event(
+            session,
+            "duplicate_reingest_rejected",
+            invoice_id=existing.id,
+            detail={
+                "filename": filename,
+                "message_id": msg.message_id,
+                "source": "whatsapp",
+            },
+        )
+        await mark_message_read(
+            connection.phone_number_id,
+            access_token=access_token,
+            message_id=msg.message_id,
+        )
+        result.ingested_count = 1
+        result.invoice_ids.append(existing.id)
+        await send_text_message_with_retry(
+            connection.phone_number_id,
+            access_token=access_token,
+            to_wa_id=msg.sender_wa_id,
+            text="Your receipt was resubmitted and is being processed again.",
+        )
+        return result
 
     vendor_slug = await resolve_vendor_slug(session, sender, org_id=connection.org_id)
-    caption = (msg.caption or msg.text or "").strip()
     inv = Invoice(
         org_id=connection.org_id,
         whatsapp_connection_id=connection.id,
@@ -205,13 +278,12 @@ async def ingest_whatsapp_message(
         email_attachment_name=filename,
         email_message_id=msg.message_id,
         storage_vendor_slug=vendor_slug,
-        route_target=ROUTE_TEAM,
         capture_source="whatsapp",
-        evaluation_status=EVAL_NEEDS_REVIEW,
-        matched_rule_ids=json.dumps(["whatsapp:team_expense"]),
+        matched_rule_ids=json.dumps(["ingest:whatsapp"]),
     )
     session.add(inv)
     await session.flush()
+    await assign_document_ref(session, inv)
 
     stored = store_invoice_pdf(
         data,
@@ -221,7 +293,6 @@ async def ingest_whatsapp_message(
         file_hash,
         filename,
         org_name=org.name,
-        route_target=ROUTE_TEAM,
     )
     inv.raw_file_path = stored
 

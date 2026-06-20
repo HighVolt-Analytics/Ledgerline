@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/api/client";
+import { api, type EmployeeImportMode, type EmployeeImportResult } from "@/api/client";
 import { queryKeys } from "@/lib/queryClient";
 import {
   employeeMasterFromApi,
@@ -145,6 +145,26 @@ export function useDeleteEmployeeMaster() {
       queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters, (rows) =>
         rows?.filter((row) => row.id !== id)
       );
+    },
+  });
+}
+
+export function useImportEmployeeMasters() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      mode,
+      file,
+      dryRun,
+    }: {
+      mode: EmployeeImportMode;
+      file: File;
+      dryRun: boolean;
+    }) => api.importEmployeeMasters(mode, file, dryRun),
+    onSuccess: (result: EmployeeImportResult) => {
+      if (!result.dry_run) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters });
+      }
     },
   });
 }

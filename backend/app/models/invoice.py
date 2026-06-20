@@ -53,6 +53,7 @@ class Invoice(Base):
     billing_address: Mapped[str | None] = mapped_column(Text)
     bank_bsb: Mapped[str | None] = mapped_column(String(16))
     bank_account: Mapped[str | None] = mapped_column(String(32))
+    document_ref: Mapped[str | None] = mapped_column(String(32), index=True)
     invoice_no: Mapped[str | None] = mapped_column(String(100), index=True)
     po_reference: Mapped[str | None] = mapped_column(String(100))
     cost_centre: Mapped[str | None] = mapped_column(String(100))
@@ -87,6 +88,9 @@ class Invoice(Base):
     vendor_confidence: Mapped[float | None] = mapped_column(Float)
     evaluation_status: Mapped[str | None] = mapped_column(String(32), index=True)
     purchase_document_type: Mapped[str | None] = mapped_column(String(16), index=True)
+    document_type_code: Mapped[str | None] = mapped_column(String(16), index=True)
+    document_type_confidence: Mapped[float | None] = mapped_column(Float)
+    document_text: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
