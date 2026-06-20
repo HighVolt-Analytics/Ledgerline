@@ -176,7 +176,7 @@ function isEditableExtractionField(key: string): boolean {
 }
 
 function invoiceScalarValue(inv: InvoiceDetails, key: string): string | null {
-  const record = inv as Record<string, unknown>;
+  const record = inv as unknown as Record<string, unknown>;
   const val = record[key];
   if (val == null) return null;
   const text = String(val).trim();
