@@ -7,16 +7,19 @@ import {
   Loader2,
   MessageCircle,
   Plus,
+  Upload,
   UserCircle,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/context/ToastContext";
+import { api } from "@/api/client";
 import {
   useCreateEmployeeMaster,
   useDeleteEmployeeMaster,
   useEmployeeMasters,
+  useImportEmployeeMasters,
   useUpdateEmployeeMaster,
 } from "@/hooks/useMasterData";
 import { cn } from "@/lib/cn";
@@ -26,6 +29,7 @@ import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { ChannelBadge } from "@/components/team-expenses/ExpenseBadges";
 import { BudgetProgressBar } from "./BudgetProgressBar";
 import { EmployeeDetailPanel } from "./EmployeeDetailPanel";
+import { EmployeeImportDialog } from "./EmployeeImportDialog";
 
 function StatusDot({ status }: { status: string }) {
   const tone: Record<string, string> = {
@@ -44,6 +48,7 @@ function StatusDot({ status }: { status: string }) {
 export function EmployeesTab() {
   const { toast } = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [bankMasked, setBankMasked] = useState(true);
   const [drafts, setDrafts] = useState<Record<string, EmployeeMaster>>({});
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
@@ -52,6 +57,7 @@ export function EmployeesTab() {
   const createMutation = useCreateEmployeeMaster();
   const updateMutation = useUpdateEmployeeMaster();
   const deleteMutation = useDeleteEmployeeMaster();
+  const importMutation = useImportEmployeeMasters();
 
   const employeeById = (id: string) => employees.find((e) => e.id === id);
 
@@ -177,15 +183,41 @@ export function EmployeesTab() {
           Define employees who can submit claims via WhatsApp or email, with budgets and bank accounts
           for reimbursement. Edit fields locally, then click Save employee.
         </p>
-        <Button
-          size="sm"
-          onClick={addEmployee}
-          disabled={createMutation.isPending}
-          data-testid="button-new-employee"
-        >
-          <Plus className="h-4 w-4 mr-1" /> New Employee
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setImportOpen(true)}
+            data-testid="button-import-employees"
+          >
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
+          <Button
+            size="sm"
+            onClick={addEmployee}
+            disabled={createMutation.isPending}
+            data-testid="button-new-employee"
+          >
+            <Plus className="h-4 w-4 mr-1" /> New Employee
+          </Button>
+        </div>
       </div>
+
+      <EmployeeImportDialog
+        open={importOpen}
+        busy={importMutation.isPending}
+        onClose={() => setImportOpen(false)}
+        onDownloadTemplate={(mode) => api.downloadEmployeeImportTemplate(mode)}
+        onPreview={(mode, file) => importMutation.mutateAsync({ mode, file, dryRun: true })}
+        onImport={async (mode, file) => {
+          const result = await importMutation.mutateAsync({ mode, file, dryRun: false });
+          toast({
+            title: "Import complete",
+            description: `${result.created} created, ${result.updated} updated`,
+          });
+          return result;
+        }}
+      />
 
       <Card className="p-0 overflow-hidden">
         <div className="overflow-x-auto">

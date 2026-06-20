@@ -16,6 +16,7 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _RULE_LIST_KEYS = (
+    "document_types",
     "email_capture_rules",
     "purchase_rules",
     "expense_rules",
@@ -39,7 +40,7 @@ def _rule_rows(section: Any) -> list[dict[str, Any]]:
 def _rule_index(rules: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     indexed: dict[str, dict[str, Any]] = {}
     for rule in rules:
-        rule_id = str(rule.get("id") or "").strip()
+        rule_id = str(rule.get("id") or rule.get("code") or "").strip()
         if rule_id:
             indexed[rule_id] = rule
     return indexed
@@ -58,6 +59,11 @@ def _rule_signature(rule: dict[str, Any]) -> dict[str, Any]:
         "root": rule.get("root"),
         "pattern": rule.get("pattern"),
         "set_name": rule.get("setName") or rule.get("set_name"),
+        "route_target": rule.get("route_target"),
+        "classifier": rule.get("classifier"),
+        "title": rule.get("title"),
+        "klass": rule.get("klass"),
+        "posting": rule.get("posting"),
     }
 
 

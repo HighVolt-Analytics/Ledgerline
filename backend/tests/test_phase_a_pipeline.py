@@ -20,12 +20,6 @@ from app.schemas.rule_book_config import validate_rule_book_config_payload
 
 
 @pytest.fixture
-def capture_config():
-    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
-    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
-
-
-@pytest.fixture
 def clean_org_rule_book(tmp_path, monkeypatch: pytest.MonkeyPatch):
     upload = tmp_path / "uploads"
     rule_books = upload / "rule_books"
@@ -135,7 +129,10 @@ async def test_ingest_skips_email_without_capture_rule(
     monkeypatch: pytest.MonkeyPatch,
     clean_org_rule_book,
 ) -> None:
-    monkeypatch.setattr("app.services.pipeline._finish_email_message", lambda *args: None)
+    monkeypatch.setattr(
+        "app.services.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
 
     result = await ingest_email_attachments(
         db_session,
@@ -158,7 +155,10 @@ async def test_ingest_creates_invoice_when_capture_rule_matches(
         "app.services.pipeline.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/test.pdf",
     )
-    monkeypatch.setattr("app.services.pipeline._finish_email_message", lambda *args: None)
+    monkeypatch.setattr(
+        "app.services.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
 
     result = await ingest_email_attachments(
         db_session,

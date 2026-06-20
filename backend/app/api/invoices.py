@@ -22,12 +22,14 @@ from app.schemas.invoice import (
     InvoiceStatus as InvoiceStatusSchema,
     InvoiceUpdateRequest,
     InvoiceWithDetails,
+    ProcessInvoicesBatchRequest,
     ValidationResultItem,
 )
 from app.services.invoice_edit_service import update_invoice_fields
 from app.services.invoice_evaluation_service import parse_matched_rule_ids
 from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
+from app.schemas.purchase import PurchaseDossierResponse
 from app.services.audit_service import log_event
 from app.services.file_storage import (
     has_stored_path,
@@ -44,11 +46,28 @@ from app.services.pipeline_stages import (
 from app.services.remap_service import remap_invoices_for_org
 from app.services.vendor_resolver import UNKNOWN_SLUG
 from app.utils.hashing import compute_sha256_bytes
-from app.workers.tasks import process_invoice_background
+from app.services.document_type_playbook_service import (
+    effective_document_type_code,
+    extraction_fields_for_invoice_code,
+)
+from app.services.field_extraction_confidence import compute_extraction_field_confidence
+from app.services.document_ref_service import allocate_next_document_ref
+from app.services.purchase_dossier_service import build_purchase_dossier
+from app.services.rule_book_config_io import load_rule_book_config_dict
+from app.schemas.rule_book_config import validate_rule_book_config_payload
+from app.workers.tasks import process_invoice_background, process_invoices_batch_background
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+def _document_type_extraction_fields(org_id: int, inv: Invoice) -> list[str]:
+    config = validate_rule_book_config_payload(load_rule_book_config_dict(org_id))
+    code = effective_document_type_code(inv, list(config.document_types))
+    if not code:
+        return []
+    return extraction_fields_for_invoice_code(code, list(config.document_types))
 
 
 async def _read_upload_file(file: UploadFile, *, max_bytes: int = _MAX_UPLOAD_BYTES) -> bytes:
@@ -79,7 +98,14 @@ def _validation(raw: str | None) -> list[ValidationResultItem] | None:
         return None
 
 
-def _to_response(inv: Invoice, *, has_stored_file: bool | None = None) -> InvoiceResponse:
+def _to_response(
+    inv: Invoice,
+    *,
+    has_stored_file: bool | None = None,
+    document_type_extraction_fields: list[str] | None = None,
+    include_extraction_field_confidence: bool = False,
+    published_to_ledger: bool = False,
+) -> InvoiceResponse:
     stored_ok = (
         has_stored_file
         if has_stored_file is not None
@@ -87,6 +113,7 @@ def _to_response(inv: Invoice, *, has_stored_file: bool | None = None) -> Invoic
     )
     return InvoiceResponse(
         id=inv.id,
+        document_ref=inv.document_ref,
         vendor=inv.vendor,
         abn=inv.abn,
         invoice_no=inv.invoice_no,
@@ -116,9 +143,24 @@ def _to_response(inv: Invoice, *, has_stored_file: bool | None = None) -> Invoic
             else None
         ),
         purchase_document_type=inv.purchase_document_type,
+        document_type_code=inv.document_type_code,
+        document_type_confidence=inv.document_type_confidence,
+        document_type_extraction_fields=document_type_extraction_fields,
+        bank_bsb=inv.bank_bsb,
+        bank_account=inv.bank_account,
+        email_attachment_name=inv.email_attachment_name,
+        billing_address=inv.billing_address,
+        email_subject=inv.email_subject,
+        document_text=inv.document_text,
         validation_results=_validation(inv.validation_results),
+        extraction_field_confidence=(
+            compute_extraction_field_confidence(inv)
+            if include_extraction_field_confidence
+            else None
+        ),
         created_at=inv.created_at,
         has_stored_file=stored_ok,
+        published_to_ledger=published_to_ledger,
     )
 
 
@@ -141,7 +183,7 @@ async def list_invoices(
     stmt = (
         select(Invoice)
         .where(Invoice.org_id == ctx.org_id)
-        .order_by(Invoice.created_at.desc())
+        .order_by(Invoice.created_at.desc(), Invoice.id.desc())
     )
     count_stmt = select(func.count(Invoice.id)).where(Invoice.org_id == ctx.org_id)
 
@@ -171,8 +213,14 @@ async def list_invoices(
         await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
     ).scalars().all()
 
+    from app.services.publish_service import published_invoice_ids
+
+    published_ids = await published_invoice_ids(db, [r.id for r in rows])
+
     return ApiEnvelope(
-        data=[_to_response(r) for r in rows],
+        data=[
+            _to_response(r, published_to_ledger=r.id in published_ids) for r in rows
+        ],
         meta=ResponseMeta(page=page, total=total, pages=pages),
     )
 
@@ -195,7 +243,15 @@ async def get_invoice(
     if not inv:
         raise HTTPException(404, "Invoice not found")
 
-    base = _to_response(inv)
+    from app.services.publish_service import is_published_to_ledger
+
+    published = await is_published_to_ledger(db, inv.id)
+    base = _to_response(
+        inv,
+        document_type_extraction_fields=_document_type_extraction_fields(ctx.org_id, inv),
+        include_extraction_field_confidence=True,
+        published_to_ledger=published,
+    )
     return ApiEnvelope(
         data=InvoiceWithDetails(
             **base.model_dump(),
@@ -243,7 +299,11 @@ async def patch_invoice(
     inv = (
         await db.execute(stmt.execution_options(populate_existing=True))
     ).scalar_one()
-    base = _to_response(inv)
+    base = _to_response(
+        inv,
+        document_type_extraction_fields=_document_type_extraction_fields(ctx.org_id, inv),
+        include_extraction_field_confidence=True,
+    )
     return ApiEnvelope(
         data=InvoiceWithDetails(
             **base.model_dump(),
@@ -312,6 +372,40 @@ async def get_journal_entries(
     return ApiEnvelope(data=[JournalEntryResponse.model_validate(r) for r in rows])
 
 
+@router.post("/process-batch", response_model=ApiEnvelope[dict])
+async def process_invoices_batch(
+    background_tasks: BackgroundTasks,
+    body: ProcessInvoicesBatchRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[dict]:
+    """Run the pipeline sequentially for invoices uploaded with defer_processing."""
+    unique_ids = list(dict.fromkeys(body.invoice_ids))
+    rows = (
+        await db.execute(
+            select(Invoice.id).where(
+                Invoice.id.in_(unique_ids),
+                Invoice.org_id == ctx.org_id,
+            )
+        )
+    ).scalars().all()
+    found = set(rows)
+    if len(found) != len(unique_ids):
+        raise HTTPException(404, "One or more invoices not found")
+    ordered = [invoice_id for invoice_id in unique_ids if invoice_id in found]
+    settings = get_settings()
+    if settings.sync_processing:
+        background_tasks.add_task(process_invoices_batch_background, ordered)
+    else:
+        try:
+            from app.workers.tasks import process_inbox_task
+
+            process_inbox_task.delay(org_id=ctx.org_id)
+        except Exception:
+            background_tasks.add_task(process_invoices_batch_background, ordered)
+    return ApiEnvelope(data={"queued": len(ordered), "status": "running"})
+
+
 @router.post("/upload", response_model=ApiEnvelope[InvoiceResponse])
 async def upload_invoice(
     background_tasks: BackgroundTasks,
@@ -319,6 +413,10 @@ async def upload_invoice(
     purchase_document_type: str | None = Query(
         None,
         description="Purchase document type when uploading PO/GRN/invoice: po, grn, invoice",
+    ),
+    defer_processing: bool = Query(
+        False,
+        description="Skip immediate pipeline run (use with POST /process-batch)",
     ),
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
@@ -331,15 +429,9 @@ async def upload_invoice(
     if not data:
         raise HTTPException(400, "Empty file")
     file_hash = compute_sha256_bytes(data)
-    dup = (
-        await db.execute(
-            select(Invoice).where(
-                Invoice.org_id == ctx.org_id,
-                Invoice.file_hash == file_hash,
-            )
-        )
-    ).scalar_one_or_none()
-    if dup:
+    from app.services.document_duplicate_service import find_invoice_by_file_hash
+
+    if await find_invoice_by_file_hash(db, file_hash, org_id=ctx.org_id):
         raise HTTPException(409, "Duplicate file already uploaded")
 
     org = await db.get(Organisation, ctx.org_id)
@@ -349,6 +441,7 @@ async def upload_invoice(
     from app.services.purchase_document_service import normalize_purchase_document_type
 
     doc_type = normalize_purchase_document_type(purchase_document_type)
+    document_ref = await allocate_next_document_ref(db, ctx.org_id)
 
     inv = Invoice(
         org_id=ctx.org_id,
@@ -357,6 +450,8 @@ async def upload_invoice(
         currency="AUD",
         storage_vendor_slug=UNKNOWN_SLUG,
         purchase_document_type=doc_type,
+        email_attachment_name=Path(file.filename).name,
+        document_ref=document_ref,
     )
     db.add(inv)
     await db.flush()
@@ -381,8 +476,17 @@ async def upload_invoice(
     )
     await db.flush()
 
-    if get_settings().sync_processing:
-        background_tasks.add_task(process_invoice_background, inv.id)
+    if not defer_processing:
+        settings = get_settings()
+        if settings.sync_processing:
+            background_tasks.add_task(process_invoice_background, inv.id)
+        else:
+            try:
+                from app.workers.tasks import process_inbox_task
+
+                process_inbox_task.delay(org_id=ctx.org_id)
+            except Exception:
+                background_tasks.add_task(process_invoice_background, inv.id)
 
     return ApiEnvelope(data=_to_response(inv, has_stored_file=True))
 
@@ -412,16 +516,10 @@ async def attach_invoice_file(
         raise HTTPException(400, "Empty file")
 
     file_hash = compute_sha256_bytes(data)
-    other = (
-        await db.execute(
-            select(Invoice).where(
-                Invoice.org_id == ctx.org_id,
-                Invoice.file_hash == file_hash,
-                Invoice.id != invoice_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if other:
+    from app.services.document_duplicate_service import find_invoice_by_file_hash
+
+    other = await find_invoice_by_file_hash(db, file_hash, org_id=ctx.org_id)
+    if other and other.id != invoice_id:
         raise HTTPException(
             409,
             f"Duplicate of invoice {other.id}; that file is already in the system",
@@ -524,6 +622,17 @@ async def invoice_pipeline(
     return ApiEnvelope(data=PipelineStepsResponse(steps=pipeline_steps_for_api(steps)))
 
 
+@router.get("/{invoice_id}/purchase-dossier", response_model=ApiEnvelope[PurchaseDossierResponse])
+async def invoice_purchase_dossier(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PurchaseDossierResponse]:
+    """PO / GRN / commercial invoice members for the drawer PO Match tab."""
+    inv = await _get_invoice_for_org(db, invoice_id, ctx.org_id)
+    return ApiEnvelope(data=await build_purchase_dossier(db, inv))
+
+
 @router.post("/remap", response_model=ApiEnvelope[dict[str, object]])
 async def remap_invoices(
     request: Request,
@@ -563,8 +672,12 @@ async def publish_invoice(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
-    """Record ledger publish for a processed invoice (integration hook)."""
+    """Export processed invoice journals to the workbook and record ledger publish."""
     from app.services.privilege_service import require_privilege
+    from app.services.publish_service import (
+        InsufficientCreditsError,
+        publish_invoice_to_ledger,
+    )
 
     require_privilege(ctx, "Publish")
     inv = await _get_invoice_for_org(db, invoice_id, ctx.org_id)
@@ -574,12 +687,23 @@ async def publish_invoice(
             f"Only processed invoices can be published (current: {inv.status.value})",
         )
     actor_name, actor_email = await actor_from_context(db, ctx)
-    await log_event(
-        db,
-        "invoice_published_to_ledger",
-        invoice_id=inv.id,
-        detail={"vendor": inv.vendor, "invoice_no": inv.invoice_no},
-        actor_name=actor_name,
-        actor_email=actor_email,
+    try:
+        await publish_invoice_to_ledger(
+            db,
+            inv,
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
+    except InsufficientCreditsError as exc:
+        raise HTTPException(
+            402,
+            f"Insufficient credits to publish (need {exc.required}, balance {exc.balance})",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    from app.services.publish_service import is_published_to_ledger
+
+    return ApiEnvelope(
+        data=_to_response(inv, published_to_ledger=await is_published_to_ledger(db, inv.id))
     )
-    return ApiEnvelope(data=_to_response(inv))

@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,9 @@ from app.schemas.common import ApiEnvelope
 from app.schemas.mailbox import (
     MailboxAdminConsentResponse,
     MailboxAuthorizeResponse,
+    MailboxBackfillCreate,
+    MailboxBackfillQueuedResponse,
+    MailboxBackfillResponse,
     MailboxConnectionRequestCreate,
     MailboxConnectionRequestActionResponse,
     MailboxConnectionRequestResponse,
@@ -24,6 +27,10 @@ from app.schemas.mailbox import (
     MailboxInviteLinkResponse,
     MailboxInvitePreviewResponse,
     MailboxResponse,
+)
+from app.services.mailbox_backfill_service import (
+    create_mailbox_backfill_job,
+    get_mailbox_backfill_job,
 )
 from app.services.mailbox_invite_service import (
     build_connect_url_for_request,
@@ -430,6 +437,87 @@ async def remove_mailbox(
     )
     await db.delete(row)
     await db.flush()
+
+
+def _to_backfill_response(row) -> MailboxBackfillResponse:
+    return MailboxBackfillResponse.model_validate(row)
+
+
+@router.post(
+    "/{mailbox_id}/backfill",
+    response_model=ApiEnvelope[MailboxBackfillQueuedResponse],
+    status_code=202,
+)
+async def start_mailbox_backfill(
+    mailbox_id: int,
+    body: MailboxBackfillCreate,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[MailboxBackfillQueuedResponse]:
+    """Queue historical import for messages with attachments in a date range."""
+    from datetime import date as date_type
+
+    settings = get_settings()
+    to_day = body.to_date or date_type.today()
+    try:
+        job = await create_mailbox_backfill_job(
+            db,
+            org_id=ctx.org_id,
+            mailbox_id=mailbox_id,
+            from_day=body.from_date,
+            to_day=to_day,
+            mark_processed=body.mark_processed,
+            requested_by_user_id=ctx.user_id,
+        )
+        await db.commit()
+        await db.refresh(job)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    task_id = "inline"
+    if settings.sync_processing:
+        from app.workers.tasks import run_mailbox_backfill_background
+
+        background_tasks.add_task(run_mailbox_backfill_background, job.id)
+    else:
+        try:
+            from app.workers.tasks import mailbox_backfill_task
+
+            async_result = mailbox_backfill_task.delay(job.id)
+            task_id = async_result.id
+            job.celery_task_id = task_id
+            await db.commit()
+        except Exception:
+            from app.workers.tasks import run_mailbox_backfill_background
+
+            background_tasks.add_task(run_mailbox_backfill_background, job.id)
+
+    return ApiEnvelope(
+        data=MailboxBackfillQueuedResponse(
+            job=_to_backfill_response(job),
+            task_id=task_id,
+        )
+    )
+
+
+@router.get(
+    "/{mailbox_id}/backfill/{job_id}",
+    response_model=ApiEnvelope[MailboxBackfillResponse],
+)
+async def get_mailbox_backfill_status(
+    mailbox_id: int,
+    job_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[MailboxBackfillResponse]:
+    try:
+        job = await get_mailbox_backfill_job(db, job_id=job_id, org_id=ctx.org_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if job.mailbox_id != mailbox_id:
+        raise HTTPException(404, "Import job not found")
+    return ApiEnvelope(data=_to_backfill_response(job))
 
 
 @router.patch("/{mailbox_id}/toggle", response_model=ApiEnvelope[MailboxResponse])

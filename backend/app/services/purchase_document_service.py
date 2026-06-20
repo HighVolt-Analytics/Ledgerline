@@ -14,8 +14,14 @@ from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.models.purchase_order import PurchaseOrder
 from app.services.audit_service import log_event
+from app.services.bundle_vendor_service import reconcile_dossier_vendor
 from app.services.invoice_evaluation_service import ROUTE_PURCHASE
-from app.services.po_reference import is_plausible_po_reference
+from app.services.document_heading_utils import extract_document_heading_signals
+from app.services.po_reference import (
+    effective_po_reference,
+    extract_po_reference_from_text,
+    is_plausible_po_reference,
+)
 from app.services.purchase_coding_service import code_po_from_invoice, inherit_po_coding_to_invoice
 from app.services.purchase_match_service import (
     _invoice_qty_and_price,
@@ -88,8 +94,9 @@ def _parsed_fields_suggest_po(invoice: Invoice) -> bool:
 
 
 def infer_purchase_document_type(invoice: Invoice) -> str | None:
-    """Classify PO / GRN / invoice from attachment name and parsed PDF fields (not email subject)."""
+    """Classify PO / GRN / invoice from attachment name, page heading, and parsed fields."""
     attach = (invoice.email_attachment_name or "").strip()
+    document_text = (invoice.document_text or "").strip()
 
     if attach:
         if _attachment_suggests_grn(attach):
@@ -98,6 +105,15 @@ def infer_purchase_document_type(invoice: Invoice) -> str | None:
             return PurchaseDocumentType.INVOICE.value
         if _attachment_suggests_po(attach):
             return PurchaseDocumentType.PO.value
+
+    if document_text:
+        heading = extract_document_heading_signals(document_text)
+        if heading.has_heading_grn:
+            return PurchaseDocumentType.GRN.value
+        if heading.has_heading_po:
+            return PurchaseDocumentType.PO.value
+        if heading.has_heading_invoice:
+            return PurchaseDocumentType.INVOICE.value
 
     if _parsed_fields_suggest_commercial_invoice(invoice):
         return PurchaseDocumentType.INVOICE.value
@@ -228,6 +244,9 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
             "match_status": match.status,
         },
     )
+    await reconcile_dossier_vendor(
+        db, invoice, po, document_type=PurchaseDocumentType.PO.value
+    )
     return po
 
 
@@ -246,8 +265,6 @@ async def _sync_grn_document(db: AsyncSession, invoice: Invoice, po_number: str)
         return None
 
     invoice = await _load_invoice_with_lines(db, invoice)
-    if not (invoice.vendor or "").strip() and (po.vendor or "").strip():
-        invoice.vendor = po.vendor
     qty, _, _ = _invoice_qty_and_price(invoice)
     grn = GoodsReceipt(
         purchase_order_id=po.id,
@@ -288,6 +305,9 @@ async def _sync_grn_document(db: AsyncSession, invoice: Invoice, po_number: str)
             "match_status": match.status,
         },
     )
+    await reconcile_dossier_vendor(
+        db, invoice, po, document_type=PurchaseDocumentType.GRN.value
+    )
     return po
 
 
@@ -307,8 +327,6 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
 
     invoice = await _load_invoice_with_lines(db, invoice)
     po.invoice_id = invoice.id
-    if not po.vendor:
-        po.vendor = invoice.vendor
     inherit_po_coding_to_invoice(po, invoice)
 
     new_status, match = await persist_three_way_match_audit(
@@ -329,6 +347,9 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
             "three_way_status": new_status,
             "match_status": match.status,
         },
+    )
+    await reconcile_dossier_vendor(
+        db, invoice, po, document_type=PurchaseDocumentType.INVOICE.value
     )
     return po
 
@@ -366,9 +387,7 @@ async def apply_purchase_document_type_after_eval(
     db: AsyncSession,
     invoice: Invoice,
 ) -> None:
-    """Set purchase_document_type after routing evaluation when not already set."""
-    if invoice.route_target != ROUTE_PURCHASE:
-        return
+    """Set purchase_document_type from attachment/heading/parsed signals when not already set."""
     if normalize_purchase_document_type(invoice.purchase_document_type):
         return
     inferred = infer_purchase_document_type(invoice)

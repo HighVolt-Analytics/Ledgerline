@@ -82,13 +82,36 @@ def test_ingest_capture_summary() -> None:
     summary = summarize_audit_change(
         "ingest_capture_matched",
         {
-            "route_to": "Expenses Management",
             "rule_name": "Expense test PDF",
             "attachment": "test-expense-telstra.pdf",
+            "ingest_only": True,
         },
     )
-    assert "Expenses Management" in summary
+    assert "Ingestion rule matched" in summary
     assert "Expense test PDF" in summary
+
+
+def test_duplicate_skipped_summary() -> None:
+    summary = summarize_audit_change(
+        "duplicate_skipped",
+        {
+            "original_invoice_id": 42,
+            "filename": "invoice.pdf",
+            "source": "email",
+        },
+    )
+    assert "Duplicate file skipped" in summary
+    assert "42" in summary
+    assert "invoice.pdf" in summary
+
+
+def test_duplicate_in_progress_summary() -> None:
+    summary = summarize_audit_change(
+        "duplicate_in_progress",
+        {"filename": "receipt.pdf", "source": "whatsapp"},
+    )
+    assert "Duplicate blocked" in summary
+    assert "receipt.pdf" in summary
 
 
 def test_validation_failed_from_invoice_results() -> None:

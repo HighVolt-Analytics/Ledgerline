@@ -83,12 +83,22 @@ VR_TE_CHECK_NAMES: dict[str, str] = {
 
 VR_CHECK_NAMES: dict[str, str] = {
     "VR01": "Total = subtotal + GST",
-    "VR02": "Unique invoice per vendor",
+    "VR02": "Duplicate check (multi-layer)",
     "VR03": "Required fields and line items",
     "VR05": "ABN / tax ID",
     "VR06": "Invoice and due dates",
     "VR07": "Currency AUD",
     "VR08": "GST 10%",
+    "VR09": "Line arithmetic",
+    "VR10": "Tax invoice (AU)",
+    "VR11": "Date sanity",
+    "VR12": "Vendor master",
+    "VR14": "PO status & currency",
+    "VR15": "3-way match",
+    "VR16": "Freight / surcharges",
+    "VR-PB01": "Extraction completeness",
+    "VR-PB02": "Mandatory bundle",
+    "VR-PB04": "Conditional bundle advisories",
 }
 
 

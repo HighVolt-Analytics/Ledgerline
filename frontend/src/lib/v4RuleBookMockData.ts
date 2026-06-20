@@ -12,7 +12,6 @@ import type {
   RuleBookConfigState,
   VendorMaster,
 } from "./v4RuleBookTypes";
-
 export function ruleGroup(
   operator: "AND" | "OR",
   children: RuleConditionGroup["children"]
@@ -694,6 +693,11 @@ export const DEFAULT_DOCUMENT_SETS = [
 
 export function createDefaultRuleBookConfig(): RuleBookConfigState {
   return {
+    documentTypes: [],
+    documentClassification: {
+      unclassifiedDocumentTypeCode: "",
+      unclassifiedMinConfidence: 0.45,
+    },
     emailCaptureRules: EMAIL_CAPTURE_RULES,
     purchaseRules: PURCHASE_RULES,
     expenseRules: EXPENSE_RULES,

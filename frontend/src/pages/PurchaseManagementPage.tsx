@@ -96,10 +96,7 @@ export function PurchaseManagementPage() {
         subtitle="PO → GRN → Invoice three-way matching. Variances are routed for tiered approval before payment."
       />
 
-      <PurchaseCaptureStrip
-        activeRuleCount={activeRuleCount}
-        onUploaded={() => void refetchAll()}
-      />
+      <PurchaseCaptureStrip activeRuleCount={activeRuleCount} />
 
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-3 mb-5">
         <KpiCard
@@ -148,7 +145,7 @@ export function PurchaseManagementPage() {
           <div className="px-4 py-6">
             <EmptyState
               title="No purchase orders yet"
-              hint="Routed purchase invoices with a PO reference appear here after processing. Check Inbox for documents missing a PO link (see KPI above)."
+              hint="Routed purchase invoices with a PO reference appear here after processing. Check Upload for documents missing a PO link (see KPI above)."
             />
           </div>
         ) : (

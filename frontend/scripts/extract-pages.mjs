@@ -4,7 +4,7 @@ const s = fs.readFileSync(
   "utf8"
 );
 const keys = [
-  'title:"Inbox"',
+  'title:"Upload"',
   'title:"Approvals"',
   'title:"Vendors"',
   'title:"Rule Book"',

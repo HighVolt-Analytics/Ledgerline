@@ -7,8 +7,9 @@ import {
   ChevronDown,
   Coins,
   CreditCard,
+  FolderKanban,
   Grid3x3,
-  Inbox,
+  Upload,
   LayoutDashboard,
   Link2,
   Moon,
@@ -36,7 +37,7 @@ type NavItem = {
   to: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  badge?: "inbox" | "approvals" | "team_expenses" | "business_expenses" | "payments";
+  badge?: "upload" | "approvals" | "team_expenses" | "business_expenses" | "payments";
 };
 
 type NavGroup = {
@@ -49,7 +50,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Workspace",
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard },
-      { to: "/inbox", label: "Inbox", icon: Inbox, badge: "inbox" },
+      { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
       { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses" },
       { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses" },
       { to: "/purchases", label: "Purchase Management", icon: ShoppingCart },
@@ -60,6 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Operations",
     items: [
       { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
+      { to: "/dossiers", label: "Dossiers", icon: FolderKanban },
       { to: "/vendors", label: "Vendors", icon: Users },
       { to: "/rules", label: "Rule Book", icon: BookOpen },
     ],
@@ -85,7 +87,7 @@ const NAV_GROUPS: NavGroup[] = [
 
 const MOBILE_NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/inbox", label: "Inbox", icon: Inbox, badge: "inbox" },
+  { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
   { to: "/matrix", label: "Matrix", icon: Grid3x3 },
   { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
   { to: "/settings", label: "Settings", icon: Settings },
@@ -121,7 +123,7 @@ export function Layout() {
   const { theme, toggleTheme } = useTheme();
   const { data: badges } = useNavBadges();
   const counts = {
-    inbox: badges?.inbox_count ?? 0,
+    upload: badges?.inbox_count ?? 0,
     approvals: badges?.pending_approval ?? 0,
     team_expenses: badges?.team_expenses_count ?? 0,
     business_expenses: badges?.business_expenses_count ?? 0,
@@ -137,8 +139,8 @@ export function Layout() {
   const renderNavLink = (to: string, label: string, Icon: NavItem["icon"], badge?: NavItem["badge"]) => {
     const active = pathname === to || (to !== "/" && pathname.startsWith(to));
     let badgeEl = null;
-    if (badge === "inbox" && counts.inbox > 0) {
-      badgeEl = <NavBadge>{counts.inbox}</NavBadge>;
+    if (badge === "upload" && counts.upload > 0) {
+      badgeEl = <NavBadge>{counts.upload}</NavBadge>;
     }
     if (badge === "approvals" && counts.approvals > 0) {
       badgeEl = <NavBadge>{counts.approvals}</NavBadge>;
@@ -347,8 +349,8 @@ export function Layout() {
               >
                 <Icon className="h-4 w-4" />
                 {label}
-                {badge === "inbox" && counts.inbox > 0 && (
-                  <span className="sr-only">{counts.inbox} inbox</span>
+                {badge === "upload" && counts.upload > 0 && (
+                  <span className="sr-only">{counts.upload} upload</span>
                 )}
               </NavLink>
             );

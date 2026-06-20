@@ -4,11 +4,13 @@ from datetime import date
 
 from app.services.vault_paths import (
     ROUTE_PURCHASE,
+    ROUTE_VAULT,
     ROUTE_UNROUTED,
     build_vault_blob_name,
     build_vault_tree,
     filename_from_stored,
     vault_book_folder,
+    vault_document_type_folder,
     vault_file_name,
     vault_month,
     vault_org_folder,
@@ -50,6 +52,30 @@ def test_build_vault_blob_name() -> None:
     assert (
         path
         == "invoice/HvOrg/Purchase Management/James Patel Consulting/2026/May/INV-007_2026-05-12.pdf"
+    )
+
+
+def test_build_vault_blob_name_with_document_type() -> None:
+    path = build_vault_blob_name(
+        "hv-org",
+        route_target=ROUTE_VAULT,
+        vendor_name="ATO",
+        invoice_id=9,
+        invoice_no="GST-001",
+        invoice_date=date(2026, 4, 1),
+        original_filename="notice.pdf",
+        document_type_code="DT-25",
+        document_type_short_title="Tax authority notice",
+    )
+    assert (
+        path
+        == "invoice/HvOrg/Vault/DT-25 · Tax authority notice/ATO/2026/April/GST-001_2026-04-01.pdf"
+    )
+
+
+def test_vault_document_type_folder_label() -> None:
+    assert vault_document_type_folder("DT-13", short_title="Vendor statement") == (
+        "DT-13 · Vendor statement"
     )
 
 
@@ -109,6 +135,7 @@ def test_build_vault_tree() -> None:
             {
                 "org": "HvOrg",
                 "book": "Purchase Management",
+                "document_type": "",
                 "vendor": "Atlassian Pty Ltd",
                 "year": "2026",
                 "month": "May",
@@ -116,6 +143,7 @@ def test_build_vault_tree() -> None:
             {
                 "org": "HvOrg",
                 "book": "Expenses Management",
+                "document_type": "",
                 "vendor": "James Patel Consulting",
                 "year": "2026",
                 "month": "May",
@@ -126,3 +154,23 @@ def test_build_vault_tree() -> None:
     assert len(tree[0]["children"]) == 2
     assert tree[0]["children"][0]["kind"] == "book"
     assert tree[0]["children"][0]["children"][0]["kind"] == "vendor"
+
+
+def test_build_vault_tree_with_document_type() -> None:
+    tree = build_vault_tree(
+        [
+            {
+                "org": "HvOrg",
+                "book": ROUTE_VAULT,
+                "document_type": "DT-13 · Vendor statement",
+                "vendor": "Sysco",
+                "year": "2026",
+                "month": "May",
+            },
+        ]
+    )
+    vault_book = tree[0]["children"][0]
+    assert vault_book["label"] == ROUTE_VAULT
+    assert vault_book["children"][0]["kind"] == "document_type"
+    assert vault_book["children"][0]["label"] == "DT-13 · Vendor statement"
+    assert vault_book["children"][0]["children"][0]["kind"] == "vendor"

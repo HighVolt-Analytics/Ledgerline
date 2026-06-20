@@ -40,6 +40,7 @@ class InvoiceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    document_ref: str | None = None
     vendor: str | None
     abn: str | None
     invoice_no: str | None
@@ -65,9 +66,20 @@ class InvoiceResponse(BaseModel):
     vendor_confidence: float | None = None
     evaluation_status: EvaluationStatus | None = None
     purchase_document_type: str | None = None
+    document_type_code: str | None = None
+    document_type_confidence: float | None = None
+    document_type_extraction_fields: list[str] | None = None
+    bank_bsb: str | None = None
+    bank_account: str | None = None
+    email_attachment_name: str | None = None
+    billing_address: str | None = None
+    email_subject: str | None = None
+    document_text: str | None = None
     validation_results: list[ValidationResultItem] | None = None
+    extraction_field_confidence: dict[str, float] | None = None
     created_at: datetime
     has_stored_file: bool = False
+    published_to_ledger: bool = False
 
 
 class InvoiceWithDetails(InvoiceResponse):
@@ -99,3 +111,7 @@ class InvoiceUpdateRequest(BaseModel):
     account_code: str | None = None
     account_name: str | None = None
     line_items: list[LineItemUpdateRequest] | None = None
+
+
+class ProcessInvoicesBatchRequest(BaseModel):
+    invoice_ids: list[int] = Field(min_length=1, max_length=50)

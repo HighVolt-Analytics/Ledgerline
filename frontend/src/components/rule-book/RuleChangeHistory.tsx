@@ -48,9 +48,11 @@ function describeEntry(entry: RuleBookChangelogEntry) {
 }
 
 export function RuleChangeHistory() {
+  const CHANGELOG_LIMIT = 10;
+
   const { data = [], isLoading, isError } = useQuery({
-    queryKey: queryKeys.ruleBookChangelog,
-    queryFn: () => api.getRuleBookChangelog(),
+    queryKey: [...queryKeys.ruleBookChangelog, CHANGELOG_LIMIT],
+    queryFn: () => api.getRuleBookChangelog(CHANGELOG_LIMIT),
   });
 
   return (

@@ -104,7 +104,7 @@ export function ExpensesManagementPage() {
       <RoutedInvoicesPanel
         routeTarget={ROUTE_TARGET}
         title="Documents routed from Rule Book"
-        hint="Invoices assigned Expenses Management by email capture or expense rules."
+        hint="Invoices routed to Expenses Management after OCR and document classification."
         testId="expenses-routed-invoices"
       />
 

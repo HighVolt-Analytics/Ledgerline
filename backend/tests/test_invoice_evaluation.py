@@ -8,6 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
+from app.models.vendor_master import VendorMasterRecord
+from app.schemas.rule_book_config import validate_rule_book_config_payload
 from app.services.invoice_evaluation_service import (
     EVAL_AUTO_CODED,
     EVAL_PENDING_VENDOR,
@@ -83,6 +85,48 @@ async def test_apply_invoice_evaluation_persists_fields(db_session: AsyncSession
     assert inv.evaluation_status == EVAL_PENDING_VENDOR
     assert inv.vendor_confidence is not None
     assert parse_matched_rule_ids(inv.matched_rule_ids) == result.matched_rule_ids
+
+
+@pytest.mark.asyncio
+async def test_apply_invoice_evaluation_uses_db_vendor_master(db_session: AsyncSession) -> None:
+    """Pipeline must not crash or hold when vendor exists in DB but not rule book JSON."""
+    db_session.add(
+        VendorMasterRecord(
+            org_id=1,
+            master_id="vm-msft",
+            name="Microsoft Pty Ltd",
+            abn="29002588189",
+            default_ledger="Cloud Hosting Expense",
+            status="Active",
+        )
+    )
+    inv = Invoice(
+        org_id=1,
+        vendor="Microsoft Pty Ltd",
+        abn="29002588189",
+        invoice_no="MSFT-1",
+        status=InvoiceStatus.MAPPING,
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    loaded = (
+        await db_session.execute(
+            select(Invoice).where(Invoice.id == inv.id).options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+    config = validate_rule_book_config_payload(
+        {
+            "vendor_masters": [],
+            "vendor_detection_config": {
+                "threshold": 80,
+                "weights": {"name": 30, "abn": 40, "bank": 20, "address": 10},
+            },
+        }
+    )
+    result = await apply_invoice_evaluation(db_session, loaded, config=config)
+    assert result.evaluation_status != EVAL_PENDING_VENDOR
+    assert inv.evaluation_status != EVAL_PENDING_VENDOR
 
 
 @pytest.mark.asyncio

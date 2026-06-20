@@ -55,6 +55,24 @@ def test_infer_po_from_parsed_fields_when_filename_generic() -> None:
     assert infer_purchase_document_type(inv) == PurchaseDocumentType.PO.value
 
 
+def test_infer_po_from_document_heading_when_due_date_present() -> None:
+    inv = Invoice(
+        email_attachment_name="document.pdf",
+        document_text="Acme Corp PURCHASE ORDER\nNo: PO-2025-00142\nDue: 30 Jun 2025",
+        due_date=__import__("datetime").date(2025, 6, 30),
+        total=Decimal("261370.00"),
+    )
+    assert infer_purchase_document_type(inv) == PurchaseDocumentType.PO.value
+
+
+def test_infer_grn_from_document_heading() -> None:
+    inv = Invoice(
+        email_attachment_name="scan.pdf",
+        document_text="GOODS RECEIPT NOTE\nGRN-2025-00089",
+    )
+    assert infer_purchase_document_type(inv) == PurchaseDocumentType.GRN.value
+
+
 def test_infer_invoice_from_parsed_invoice_number() -> None:
     inv = Invoice(
         email_attachment_name="scan.pdf",

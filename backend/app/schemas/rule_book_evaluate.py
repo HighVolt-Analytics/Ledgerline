@@ -25,6 +25,7 @@ class RuleBookEvalDocument(BaseModel):
     invoice_no: str
     vendor: str
     primary_account: str
+    document_type_code: str | None = None
 
 
 class RuleBookEvalEmailRule(BaseModel):

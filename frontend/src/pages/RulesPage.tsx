@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  BookOpen,
   Building2,
   CircleUser,
+  Inbox,
+  Layers,
   Loader2,
-  Mail,
   Package,
   Receipt,
   Scale,
@@ -14,7 +14,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Card } from "@/components/ui/card";
-import { EmailCaptureTab } from "@/components/rule-book/EmailCaptureTab";
+import { DocumentTypesTab } from "@/components/rule-book/DocumentTypesTab";
+import { IngestionTab } from "@/components/rule-book/IngestionTab";
 import { EmployeesTab } from "@/components/rule-book/EmployeesTab";
 import { ExpensesRulesTab } from "@/components/rule-book/ExpensesRulesTab";
 import { LiveEvaluation } from "@/components/rule-book/LiveEvaluation";
@@ -22,7 +23,6 @@ import { RuleChangeHistory } from "@/components/rule-book/RuleChangeHistory";
 import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
 import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
 import { PurchaseRulesTab } from "@/components/rule-book/PurchaseRulesTab";
-import { RoutingDiagram } from "@/components/rule-book/RoutingDiagram";
 import { TeamExpensesRulesTab } from "@/components/rule-book/TeamExpensesRulesTab";
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
@@ -32,10 +32,11 @@ import { useEmployeeMasters, useVendorMasters } from "@/hooks/useMasterData";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 
 const RULEBOOK_TABS = [
-  { value: "email", label: "Email Capture", testid: "tab-email", icon: Mail },
-  { value: "purchase", label: "Purchase Mgmt", testid: "tab-purchase", icon: Package },
-  { value: "expenses", label: "Expenses", testid: "tab-expenses", icon: Receipt },
-  { value: "team", label: "Team Expenses", testid: "tab-team", icon: Users },
+  { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
+  { value: "document-types", label: "Document types", testid: "tab-document-types", icon: Layers },
+  { value: "purchase", label: "Purchase GL", testid: "tab-purchase", icon: Package },
+  { value: "expenses", label: "Expenses GL", testid: "tab-expenses", icon: Receipt },
+  { value: "team", label: "Team GL", testid: "tab-team", icon: Users },
   { value: "vendors", label: "Vendors", testid: "tab-vendors", icon: Building2 },
   { value: "employees", label: "Employees", testid: "tab-employees", icon: CircleUser },
   { value: "posting", label: "Posting", testid: "tab-posting", icon: Scale },
@@ -46,7 +47,7 @@ const SAVE_DEBOUNCE_MS = 800;
 export function RulesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [tab, setTab] = useState<string>("email");
+  const [tab, setTab] = useState<string>("ingestion");
   const [ruleBook, setRuleBook] = useState<RuleBookConfigState | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "pending" | "saved" | "error">("idle");
   const hydratedRef = useRef(false);
@@ -143,38 +144,25 @@ export function RulesPage() {
           ? "Save failed"
           : null;
 
+  const saveStatus = saveLabel ? (
+    <span
+      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+      data-testid="rulebook-save-status"
+    >
+      {(saveState === "pending" || saveMutation.isPending) && (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      )}
+      {saveLabel}
+    </span>
+  ) : undefined;
+
   return (
     <div>
       <PageHeader
         title="Rule Book"
-        subtitle="Coordinated rule books that capture, classify, and code every document from inbox to ledger."
-        actions={
-          saveLabel ? (
-            <span
-              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-              data-testid="rulebook-save-status"
-            >
-              {(saveState === "pending" || saveMutation.isPending) && (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              )}
-              {saveLabel}
-            </span>
-          ) : undefined
-        }
+        subtitle="Configure ingestion, document types, GL rules, and posting."
+        actions={saveStatus}
       />
-
-      <RoutingDiagram />
-
-      <Card
-        className="p-3 mb-5 bg-primary/5 border-primary/20 text-sm flex items-start gap-2"
-        data-testid="rulebook-note"
-      >
-        <BookOpen className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-        <span>
-          Email capture routes documents to the right workflow. Purchase, expense, and vendor rules
-          classify GL accounts. Use the Posting tab for tax, payable, fallback, and vault document sets.
-        </span>
-      </Card>
 
       {!canEdit ? (
         <Card
@@ -185,7 +173,6 @@ export function RulesPage() {
         </Card>
       ) : null}
 
-      <div className={!canEdit ? "pointer-events-none opacity-90" : undefined}>
       <PageTabs
         value={tab}
         onChange={setTab}
@@ -207,8 +194,17 @@ export function RulesPage() {
         })}
       />
 
-      <PageTabPanel value="email" active={tab} className="mt-0">
-        <EmailCaptureTab
+      <div className={!canEdit ? "pointer-events-none opacity-90" : undefined}>
+      <PageTabPanel value="document-types" active={tab} className="mt-0">
+        <DocumentTypesTab
+          documentTypes={ruleBook.documentTypes}
+          onChange={(documentTypes) => patch({ documentTypes })}
+          canEdit={canEdit}
+        />
+      </PageTabPanel>
+
+      <PageTabPanel value="ingestion" active={tab} className="mt-0">
+        <IngestionTab
           rules={ruleBook.emailCaptureRules}
           onChange={(emailCaptureRules) => patch({ emailCaptureRules })}
         />

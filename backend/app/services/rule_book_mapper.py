@@ -45,7 +45,10 @@ def load_classification_config(org_id: int) -> RuleBookConfigPayload:
 
 
 def clear_classification_config_cache() -> None:
+    from app.services.document_type_catalog import clear_document_type_catalog_cache
+
     load_classification_config.cache_clear()
+    clear_document_type_catalog_cache()
 
 
 def _ledger_to_mapping(ledger: str) -> AccountMapping:

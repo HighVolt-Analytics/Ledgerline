@@ -55,8 +55,8 @@ export type TeamExpenseChannelChip = {
 };
 
 const CHANNEL_META: Record<string, TeamExpenseChannelChip> = {
-  email: { id: "em", name: "Email", detail: "Email capture rules" },
-  em: { id: "em", name: "Email", detail: "Email capture rules" },
+  email: { id: "em", name: "Email", detail: "Ingestion rules (accept/skip only)" },
+  em: { id: "em", name: "Email", detail: "Ingestion rules (accept/skip only)" },
   mob: { id: "mob", name: "Mobile", detail: "SMS / messaging capture" },
   mobile: { id: "mob", name: "Mobile", detail: "SMS / messaging capture" },
   wa: { id: "wa", name: "WhatsApp", detail: "Mobile messaging channel" },

@@ -104,8 +104,8 @@ export function PurchaseRulesTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Code POs, GRNs, and commercial invoices that reference a PO to the right ledger and
-          sub-ledger.
+          GL coding for documents routed to Purchase Management (PO-based invoices, GRNs, and
+          commercial invoices). Does not control workspace routing.
         </p>
         <Button size="sm" onClick={addRule} data-testid="button-new-purchase-rule">
           <Plus className="h-4 w-4 mr-1" /> New Rule

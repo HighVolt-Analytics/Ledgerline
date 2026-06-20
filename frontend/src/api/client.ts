@@ -7,6 +7,8 @@ import type {
   AppSettings,
   AuthUser,
   ConnectedMailbox,
+  MailboxBackfillJob,
+  MailboxBackfillQueued,
   MailboxConnectionRequest,
   MailboxConnectionRequestAction,
   MailboxInvitePreview,
@@ -14,6 +16,7 @@ import type {
   NavBadges,
   PaymentApi,
   PurchaseOrderApi,
+  PurchaseDossier,
   DashboardOverview,
   DashboardStats,
   ReportsAnalytics,
@@ -64,6 +67,32 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
   }
+}
+
+export type EmployeeImportMode = "register" | "payment";
+
+export interface EmployeeImportRowError {
+  row_number: number;
+  email: string | null;
+  message: string;
+}
+
+export interface EmployeeImportRowPreview {
+  row_number: number;
+  email: string;
+  name: string | null;
+  action: string;
+  detail: string;
+}
+
+export interface EmployeeImportResult {
+  mode: EmployeeImportMode;
+  dry_run: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: EmployeeImportRowError[];
+  previews: EmployeeImportRowPreview[];
 }
 
 export function setUnauthorizedHandler(handler: (() => void | Promise<void>) | null) {
@@ -381,6 +410,20 @@ export const api = {
   },
   toggleMailbox: (id: number) =>
     request<ConnectedMailbox>(`/api/mailboxes/${id}/toggle`, { method: "PATCH" }),
+  startMailboxBackfill: (
+    mailboxId: number,
+    body: { from_date: string; to_date: string; mark_processed?: boolean }
+  ) =>
+    request<MailboxBackfillQueued>(`/api/mailboxes/${mailboxId}/backfill`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getMailboxBackfillStatus: (mailboxId: number, jobId: number, options?: FreshRequestOptions) => {
+    const path = `/api/mailboxes/${mailboxId}/backfill/${jobId}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<MailboxBackfillJob>(path);
+  },
 
   getWhatsappStatus: (options?: FreshRequestOptions) => {
     const path = "/api/integrations/whatsapp/status";
@@ -441,21 +484,51 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<{ steps: PipelineAuditStep[] }>(path).then((r) => r.steps);
   },
+  getPurchaseDossier: (id: number, options?: FreshRequestOptions) => {
+    const path = `/api/invoices/${id}/purchase-dossier`;
+    if (options?.fresh) bustGetCache(path);
+    return request<PurchaseDossier>(path);
+  },
   getMatrixWithMeta: (params?: Record<string, string>, options?: FreshRequestOptions) => {
     const q = new URLSearchParams(params).toString();
     const path = `/api/matrix${q ? `?${q}` : ""}`;
     if (options?.fresh) bustGetCache(path);
     return requestWithMeta<MatrixRow[]>(path);
   },
-  uploadInvoice: (file: File, purchaseDocumentType?: "po" | "grn" | "invoice") => {
+  listDossiersWithMeta: (params?: Record<string, string>, options?: FreshRequestOptions) => {
+    const q = new URLSearchParams(params).toString();
+    const path = `/api/dossiers${q ? `?${q}` : ""}`;
+    if (options?.fresh) bustGetCache(path);
+    return requestWithMeta<import("@/lib/dossierApi").DossierSummaryApi[]>(path);
+  },
+  getDossier: (dossierId: string, options?: FreshRequestOptions) => {
+    const path = `/api/dossiers/${encodeURIComponent(dossierId)}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<import("@/lib/dossierApi").DossierSummaryApi>(path);
+  },
+  uploadInvoice: (
+    file: File,
+    purchaseDocumentType?: "po" | "grn" | "invoice",
+    options?: { deferProcessing?: boolean }
+  ) => {
     const fd = new FormData();
     fd.append("file", file);
-    const q =
-      purchaseDocumentType != null
-        ? `?purchase_document_type=${encodeURIComponent(purchaseDocumentType)}`
-        : "";
+    const params = new URLSearchParams();
+    if (purchaseDocumentType != null) {
+      params.set("purchase_document_type", purchaseDocumentType);
+    }
+    if (options?.deferProcessing) {
+      params.set("defer_processing", "true");
+    }
+    const q = params.toString() ? `?${params.toString()}` : "";
     return request<Invoice>(`/api/invoices/upload${q}`, { method: "POST", body: fd });
   },
+  processInvoicesBatch: (invoiceIds: number[]) =>
+    request<{ queued: number; status: string }>("/api/invoices/process-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invoice_ids: invoiceIds }),
+    }),
   reprocess: (id: number) =>
     request<Invoice>(`/api/invoices/${id}/reprocess`, { method: "POST" }),
   attachInvoiceFile: (id: number, file: File) => {
@@ -596,6 +669,22 @@ export const api = {
     }),
   deleteEmployeeMaster: (masterId: string) =>
     request<void>(`/api/employee-masters/${encodeURIComponent(masterId)}`, { method: "DELETE" }),
+  downloadEmployeeImportTemplate: async (mode: EmployeeImportMode) => {
+    const { blob, filename } = await requestBlob(
+      `/api/employee-masters/import/templates/${mode}`,
+      undefined,
+      `employee-${mode}-template.xlsx`
+    );
+    saveBlobAsFile(blob, filename);
+  },
+  importEmployeeMasters: (mode: EmployeeImportMode, file: File, dryRun: boolean) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return request<EmployeeImportResult>(
+      `/api/employee-masters/import?mode=${encodeURIComponent(mode)}&dry_run=${dryRun ? "true" : "false"}`,
+      { method: "POST", body: fd }
+    );
+  },
   listPendingVendors: (options?: FreshRequestOptions) => {
     const path = "/api/pending-vendors";
     if (options?.fresh) bustGetCache(path);

@@ -252,7 +252,7 @@ export function ReportsPage() {
         />
         <EmptyState
           title="No processed invoices for this period"
-          hint="Reports include processed invoices only. Process documents in Inbox or Approvals, then return here."
+          hint="Reports include processed invoices only. Process documents in Upload or Approvals, then return here."
         />
       </div>
     );

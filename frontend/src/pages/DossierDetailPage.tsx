@@ -1,0 +1,119 @@
+import { Link, useParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  DossierApprovalPanel,
+  DossierLinkedDocumentsPanel,
+  DossierPipelinePanel,
+} from "@/components/dossiers/DossierDetailSections";
+import { DossierOutcomeBadge, DossierTypeBadge } from "@/components/dossiers/DossierOutcomeBadge";
+import {
+  DossierOutcomeBanner,
+  DossierSummaryStrip,
+} from "@/components/dossiers/DossierSummaryStrip";
+import { PageEyebrowHeader } from "@/components/PageEyebrowHeader";
+import { fetchDossierById } from "@/lib/dossierApi";
+import { isLegacyMockDossierId, type DossierSummary } from "@/lib/dossiers";
+
+function captureLabel(channel: string): string {
+  const base = channel.replace(/\s+capture$/i, "").trim();
+  return `${base.toUpperCase()} capture`;
+}
+
+export function DossierDetailPage() {
+  const { dossierId } = useParams<{ dossierId: string }>();
+  const [dossier, setDossier] = useState<DossierSummary | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!dossierId) {
+      setDossier(null);
+      return;
+    }
+    if (isLegacyMockDossierId(dossierId)) {
+      setDossier(null);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setDossier(undefined);
+    setError(null);
+    fetchDossierById(dossierId)
+      .then((row) => {
+        if (!cancelled) setDossier(row);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load dossier");
+          setDossier(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dossierId]);
+
+  if (dossier === undefined) {
+    return (
+      <div className="space-y-4" data-testid="page-dossier-detail-loading">
+        <Link to="/dossiers" className="dossier-back-link" data-testid="link-back-dossiers">
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to dossiers
+        </Link>
+        <p className="text-sm text-muted-foreground">Loading dossier…</p>
+      </div>
+    );
+  }
+
+  if (!dossier || error) {
+    const legacyMock = dossierId && isLegacyMockDossierId(dossierId);
+    return (
+      <div className="space-y-4" data-testid="page-dossier-detail-missing">
+        <Link to="/dossiers" className="dossier-back-link" data-testid="link-back-dossiers">
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to dossiers
+        </Link>
+        <p className="text-sm text-muted-foreground">
+          {legacyMock
+            ? `${dossierId} was a UI demo dossier. Open a live dossier from the list — IDs look like DOC-1, DOC-2, etc.`
+            : (error ?? "Dossier not found.")}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid={`page-dossier-detail-${dossier.id}`}>
+      <Link to="/dossiers" className="dossier-back-link" data-testid="link-back">
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Dossiers
+      </Link>
+
+      <PageEyebrowHeader
+        eyebrow={`${dossier.id} · ${dossier.documentTypeTitle}`}
+        title={dossier.vendor}
+        description={`${dossier.invoiceRef} · ${dossier.invoiceDate} · ${captureLabel(dossier.captureChannel)} · ${dossier.buyer}`}
+        actions={
+          <>
+            <DossierTypeBadge code={dossier.documentTypeCode} title={dossier.documentTypeTitle} />
+            <DossierOutcomeBadge outcome={dossier.outcome} />
+          </>
+        }
+      />
+
+      <DossierSummaryStrip dossier={dossier} />
+      <DossierOutcomeBanner message={dossier.outcomeBanner} />
+
+      <div className="dossier-detail-grid">
+        <DossierPipelinePanel pipeline={dossier.pipeline} />
+        <div className="dossier-detail-rail">
+          <DossierLinkedDocumentsPanel
+            dossierId={dossier.id}
+            linked={dossier.linkedDocuments}
+          />
+          <DossierApprovalPanel chain={dossier.approvalChain} />
+        </div>
+      </div>
+    </div>
+  );
+}

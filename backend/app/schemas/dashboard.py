@@ -64,6 +64,7 @@ class ActivityItem(BaseModel):
     created_at: datetime
     vendor: str | None = None
     status: InvoiceStatus | None = None
+    summary: str | None = None
 
 
 class TopVendorRow(BaseModel):

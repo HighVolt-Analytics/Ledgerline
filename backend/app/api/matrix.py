@@ -72,7 +72,7 @@ async def document_matrix(
     stmt = (
         select(Invoice)
         .where(Invoice.org_id == ctx.org_id)
-        .order_by(Invoice.created_at.desc())
+        .order_by(Invoice.created_at.desc(), Invoice.id.desc())
     )
     count_stmt = select(func.count(Invoice.id)).where(Invoice.org_id == ctx.org_id)
     if status:
@@ -98,6 +98,11 @@ async def document_matrix(
     invoice_ids = [inv.id for inv in invoices]
     audit_by_id = await _audit_logs_for_invoices(db, invoice_ids)
     payments_by_id = await _payments_for_invoices(db, ctx.org_id, invoice_ids)
+    published_ids = {
+        inv_id
+        for inv_id, logs in audit_by_id.items()
+        if any(log.event == "invoice_published_to_ledger" for log in logs)
+    }
 
     data: list[MatrixRowResponse] = []
     for inv in invoices:
@@ -106,7 +111,9 @@ async def document_matrix(
         conflict_with, conflict_detail = await duplicate_conflict_for_invoice(db, ctx.org_id, inv)
         data.append(
             MatrixRowResponse(
-                invoice=_to_response(inv),
+                invoice=_to_response(
+                    inv, published_to_ledger=inv.id in published_ids
+                ),
                 stages=build_matrix_cells(inv, audit_by_id.get(inv.id, [])),
                 flag=flag,
                 flag_reason=flag_reason,

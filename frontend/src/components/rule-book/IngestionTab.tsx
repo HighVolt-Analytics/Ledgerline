@@ -7,7 +7,7 @@ import {
   ChevronRight,
   FlaskConical,
   GripVertical,
-  Mail,
+  Inbox,
   Paperclip,
   Plus,
   Trash2,
@@ -18,23 +18,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, toSelectOptions } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
 import { evalConditionGroup } from "@/lib/v4RuleBookLogic";
 import { DEFAULT_MAILBOX, SAMPLE_EMAILS } from "@/lib/v4RuleBookMockData";
 import type { EmailCaptureRule } from "@/lib/v4RuleBookTypes";
-import { ROUTE_TARGETS } from "@/lib/v4RuleBookTypes";
+import { INGEST_ACTION_ROUTE_PLACEHOLDER } from "@/lib/v4RuleBookTypes";
 import { ConditionBuilder } from "./ConditionBuilder";
 
-export function EmailCaptureTab({
+export function IngestionTab({
   rules,
   onChange,
 }: {
   rules: EmailCaptureRule[];
   onChange: (rules: EmailCaptureRule[]) => void;
 }) {
-  const [expandedId, setExpandedId] = useState<string | null>(rules[0]?.id ?? null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [testRule, setTestRule] = useState<EmailCaptureRule | null>(null);
 
   const updateRule = (id: string, patch: Partial<EmailCaptureRule>) => {
@@ -45,12 +44,20 @@ export function EmailCaptureTab({
     const id = `ec-${Date.now()}`;
     const next: EmailCaptureRule = {
       id,
-      name: "New capture rule",
+      name: "New ingestion rule",
       enabled: true,
       priority: nextRulePriority(rules),
       mailbox: DEFAULT_MAILBOX,
-      root: { type: "group", operator: "AND", children: [{ type: "condition", field: "subject", operator: "contains", value: "" }] },
-      action: { saveAttachment: true, routeTo: ROUTE_TARGETS[0], tags: [] },
+      root: {
+        type: "group",
+        operator: "AND",
+        children: [{ type: "condition", field: "subject", operator: "contains", value: "" }],
+      },
+      action: {
+        saveAttachment: true,
+        routeTo: INGEST_ACTION_ROUTE_PLACEHOLDER,
+        tags: [],
+      },
       matchedCount: 0,
       lastMatched: "—",
     };
@@ -66,8 +73,9 @@ export function EmailCaptureTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Decide which inbound emails get their attachments saved into the document pipeline. Rules
-          evaluate by priority (lower number first).
+          Gate which email attachments enter the document pipeline. Matching rules accept
+          attachments for OCR only — they do not route to Purchase, Expenses, or Team workspaces.
+          Upload and WhatsApp use separate channel gates.
         </p>
         <Button size="sm" onClick={addRule} data-testid="button-new-email-rule">
           <Plus className="h-4 w-4 mr-1" /> New Rule
@@ -98,7 +106,7 @@ export function EmailCaptureTab({
                     ) : (
                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     )}
-                    <Mail className="h-4 w-4 text-primary shrink-0" />
+                    <Inbox className="h-4 w-4 text-primary shrink-0" />
                     <span className="text-sm font-semibold">{rule.name}</span>
                     {rule.action.tags.map((tag) => (
                       <Badge key={tag} variant="outline" className="text-[10px] font-normal">
@@ -109,8 +117,10 @@ export function EmailCaptureTab({
                   <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground pl-6">
                     <span className="font-mono">{rule.mailbox}</span>
                     <span>
-                      → Save & route to{" "}
-                      <span className="font-medium text-foreground">{rule.action.routeTo}</span>
+                      →{" "}
+                      {rule.action.saveAttachment
+                        ? "Accept attachment into pipeline"
+                        : "Match only (do not save)"}
                     </span>
                   </div>
                 </button>
@@ -175,45 +185,28 @@ export function EmailCaptureTab({
                       onChange={(root) => updateRule(rule.id, { root })}
                     />
                   </div>
-                  <div className="grid sm:grid-cols-2 gap-3 items-end">
-                    <label className="block">
-                      <span className="block text-[11px] font-medium text-muted-foreground mb-1">
-                        Route attachment to
-                      </span>
-                      <Select
-                        value={rule.action.routeTo}
-                        onValueChange={(routeTo) =>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <label className="inline-flex items-center gap-2 text-xs">
+                      <Switch
+                        checked={rule.action.saveAttachment}
+                        onCheckedChange={(v) =>
                           updateRule(rule.id, {
-                            action: { ...rule.action, routeTo },
+                            action: { ...rule.action, saveAttachment: v },
                           })
                         }
-                        options={toSelectOptions(ROUTE_TARGETS)}
-                        className="w-full"
+                        className="scale-90"
                       />
+                      Save attachment when rule matches
                     </label>
-                    <div className="flex items-center justify-between gap-3">
-                      <label className="inline-flex items-center gap-2 text-xs">
-                        <Switch
-                          checked={rule.action.saveAttachment}
-                          onCheckedChange={(v) =>
-                            updateRule(rule.id, {
-                              action: { ...rule.action, saveAttachment: v },
-                            })
-                          }
-                          className="scale-90"
-                        />
-                        Save attachment
-                      </label>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
-                        onClick={() => removeRule(rule.id)}
-                        data-testid={`delete-email-${rule.id}`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete rule
-                      </Button>
-                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
+                      onClick={() => removeRule(rule.id)}
+                      data-testid={`delete-email-${rule.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete rule
+                    </Button>
                   </div>
                 </div>
               )}
@@ -222,7 +215,7 @@ export function EmailCaptureTab({
         })}
         {sorted.length === 0 && (
           <Card className="p-6 text-center text-sm text-muted-foreground">
-            No email capture rules yet.
+            No ingestion rules yet. Add a rule to accept matching email attachments into the pipeline.
           </Card>
         )}
       </div>
@@ -248,7 +241,8 @@ export function EmailCaptureTab({
                     Test &ldquo;{testRule.name}&rdquo;
                   </h3>
                   <p className="text-xs text-muted-foreground mt-2">
-                    Each sample email is evaluated against this rule&apos;s condition tree.
+                    Each sample email is evaluated against this rule&apos;s condition tree. A match
+                    means the attachment would be ingested — not routed to a workspace.
                   </p>
                 </div>
                 <button
@@ -268,9 +262,7 @@ export function EmailCaptureTab({
                       key={email.id}
                       className={cn(
                         "rounded-lg border p-3",
-                        fires
-                          ? "border-primary/30 bg-primary/10"
-                          : "border-border bg-card"
+                        fires ? "border-primary/30 bg-primary/10" : "border-border bg-card"
                       )}
                       data-testid={`test-result-${email.id}`}
                     >
@@ -306,11 +298,11 @@ export function EmailCaptureTab({
                         >
                           {fires ? (
                             <>
-                              <Check className="h-3 w-3 mr-1" /> Fires
+                              <Check className="h-3 w-3 mr-1" /> Would ingest
                             </>
                           ) : (
                             <>
-                              <X className="h-3 w-3 mr-1" /> No match
+                              <X className="h-3 w-3 mr-1" /> Skip
                             </>
                           )}
                         </Badge>

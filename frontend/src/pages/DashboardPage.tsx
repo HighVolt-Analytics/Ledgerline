@@ -77,11 +77,28 @@ function mailboxNickname(email: string, displayName: string | null): string {
   return local.charAt(0).toUpperCase() + local.slice(1);
 }
 
-function activityLabel(event: string, vendor: string | null, invoiceId: number | null): string {
+function activityLabel(
+  event: string,
+  vendor: string | null,
+  invoiceId: number | null,
+  summary?: string | null
+): string {
   const id = invoiceId != null ? `INV-${String(invoiceId).padStart(3, "0")}` : "System";
   const who = vendor ?? "Unknown vendor";
   let label = `${id} · ${who}`;
 
+  if (summary?.trim()) {
+    return `${label} — ${summary.trim()}`;
+  }
+  if (event === "duplicate_skipped") {
+    return `${label} duplicate skipped`;
+  }
+  if (event === "duplicate_in_progress") {
+    return `${label} duplicate blocked (still processing)`;
+  }
+  if (event === "duplicate_reingest_rejected") {
+    return `${label} resubmitted after rejection`;
+  }
   if (event.includes("validation_failed") || event.includes("parsing_failed")) {
     return `${label} validation failed`;
   }
@@ -226,11 +243,11 @@ export function DashboardPage() {
             Connect a mailbox or upload invoices to populate your dashboard.
           </p>
           <Link
-            to="/inbox"
+            to="/upload"
             data-testid="button-load-samples"
             className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
           >
-            Go to Inbox
+            Go to Upload
           </Link>
         </Card>
       </div>
@@ -346,7 +363,7 @@ export function DashboardPage() {
   const activityFeed = activity.slice(0, 10).map((a) => ({
     id: String(a.id),
     invoiceId: a.invoice_id,
-    label: activityLabel(a.event, a.vendor, a.invoice_id),
+    label: activityLabel(a.event, a.vendor, a.invoice_id, a.summary),
     time: relativePollTime(a.created_at),
   }));
 
@@ -376,7 +393,7 @@ export function DashboardPage() {
         <Card className="p-4 mb-4 border-dashed border-border bg-muted/30 text-sm text-muted-foreground">
           No documents were received in {periodLabel}. KPIs below show zeros for this period.
           Select another month or{" "}
-          <Link to="/inbox" className="text-primary hover:underline">
+          <Link to="/upload" className="text-primary hover:underline">
             capture new documents
           </Link>
           .
@@ -403,7 +420,7 @@ export function DashboardPage() {
           {mailbox_breakdown.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No mailboxes connected.{" "}
-              <Link to="/inbox" className="text-primary hover:underline">
+              <Link to="/upload" className="text-primary hover:underline">
                 Add a mailbox
               </Link>
             </p>

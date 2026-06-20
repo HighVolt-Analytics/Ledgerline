@@ -1,4 +1,100 @@
-import type { Invoice } from "@/api/types";
+import type { Invoice, InvoiceDetails } from "@/api/types";
+
+const VALIDATION_RULE_FIELDS: Record<string, readonly string[]> = {
+  VR01: ["subtotal", "gst", "total"],
+  VR02: ["invoice_no"],
+  VR05: ["abn"],
+  VR06: ["invoice_date", "due_date"],
+  VR07: ["currency"],
+  VR08: ["subtotal", "gst", "total"],
+  VR09: ["line_items"],
+  VR11: ["invoice_date"],
+  VR12: ["vendor"],
+  VR14: ["po_reference"],
+  VR15: ["po_reference"],
+};
+
+const OPTIONAL_EXTRACTION_FIELDS = new Set([
+  "po_reference",
+  "cost_centre",
+  "bank_details",
+  "attachment_name",
+  "document_text",
+]);
+
+function vr03MissingFields(message: string): string[] {
+  const marker = "Missing:";
+  const idx = message.indexOf(marker);
+  if (idx < 0) return [];
+  return message
+    .slice(idx + marker.length)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function vr03AppliesToField(token: string, fieldKey: string): boolean {
+  if (token === fieldKey) return true;
+  if (fieldKey === "line_items" && token.startsWith("line_items")) return true;
+  return false;
+}
+
+function extractionFieldPopulated(inv: InvoiceDetails, fieldKey: string): boolean {
+  if (fieldKey === "line_items") return inv.line_items.length > 0;
+  if (fieldKey === "bank_details") {
+    return Boolean(inv.bank_bsb?.trim() || inv.bank_account?.trim());
+  }
+  if (fieldKey === "attachment_name") {
+    return Boolean(inv.email_attachment_name?.trim());
+  }
+  if (fieldKey === "document_text") {
+    return Boolean(inv.document_text?.trim());
+  }
+  const record = inv as unknown as Record<string, unknown>;
+  const value = record[fieldKey];
+  if (value == null) return false;
+  return String(value).trim().length > 0;
+}
+
+function validationFailedForField(inv: Invoice, fieldKey: string): boolean {
+  for (const result of invoiceFailedValidations(inv)) {
+    if (result.rule === "VR03") {
+      if (vr03MissingFields(result.message).some((token) => vr03AppliesToField(token, fieldKey))) {
+        return true;
+      }
+      continue;
+    }
+    const fields = VALIDATION_RULE_FIELDS[result.rule];
+    if (fields?.includes(fieldKey)) return true;
+  }
+  return false;
+}
+
+function fallbackFieldConfidence(inv: InvoiceDetails, fieldKey: string): number {
+  if (fieldKey === "attachment_name" && inv.email_attachment_name?.trim()) {
+    return 97;
+  }
+
+  const populated = extractionFieldPopulated(inv, fieldKey);
+  const failed = validationFailedForField(inv, fieldKey);
+
+  if (!populated) {
+    if (OPTIONAL_EXTRACTION_FIELDS.has(fieldKey)) return 52;
+    return failed ? 16 : 18;
+  }
+
+  if (failed) return 48;
+  return 86;
+}
+
+/** Per-field extraction confidence for invoice drawers (from API when available). */
+export function invoiceFieldConfidence(inv: InvoiceDetails, fieldKey: string): number {
+  const fromApi = inv.extraction_field_confidence?.[fieldKey];
+  if (fromApi != null && Number.isFinite(fromApi)) {
+    return Math.round(fromApi);
+  }
+  return fallbackFieldConfidence(inv, fieldKey);
+}
 
 /** Validation pass rate from API rules — null when not yet validated. */
 export function invoiceValidationConfidence(inv: Invoice): number | null {

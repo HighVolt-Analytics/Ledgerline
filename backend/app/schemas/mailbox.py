@@ -1,6 +1,6 @@
 """Connected mailbox schemas."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -72,3 +72,34 @@ class MailboxResponse(BaseModel):
     last_poll_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class MailboxBackfillCreate(BaseModel):
+    from_date: date
+    to_date: date | None = None
+    mark_processed: bool = False
+
+
+class MailboxBackfillResponse(BaseModel):
+    id: int
+    org_id: int
+    mailbox_id: int
+    from_date: date
+    to_date: date
+    mark_processed: bool
+    status: str
+    messages_scanned: int
+    attachments_ingested: int
+    messages_skipped: int
+    invoices_processed: int
+    error_message: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MailboxBackfillQueuedResponse(BaseModel):
+    job: MailboxBackfillResponse
+    task_id: str

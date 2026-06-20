@@ -38,10 +38,11 @@ def _period_label(month_start: date) -> str:
     return month_start.strftime("%B %Y")
 
 
+from app.services.document_ref_service import display_document_ref
+
+
 def _document_ref(invoice: Invoice) -> str:
-    if invoice.invoice_no and invoice.invoice_no.strip():
-        return invoice.invoice_no.strip()
-    return f"INV-{invoice.id:04d}"
+    return display_document_ref(invoice)
 
 
 def _account_name(invoice: Invoice) -> str:

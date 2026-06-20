@@ -2,9 +2,14 @@ import { Activity, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useRuleBookEvaluation } from "@/hooks/useRuleBookEvaluation";
+import type { RuleBookEvaluationRow } from "@/api/types";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
 import { ConfidenceBar } from "./ConfidenceBar";
+
+function evalDocumentLabel(row: RuleBookEvaluationRow): string {
+  return row.document.doc_number;
+}
 
 export function LiveEvaluation({ ruleBook }: { ruleBook: RuleBookConfigState }) {
   const { result, isLoading, error } = useRuleBookEvaluation(ruleBook);
@@ -27,7 +32,7 @@ export function LiveEvaluation({ ruleBook }: { ruleBook: RuleBookConfigState }) 
         </div>
         {result && (
           <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-            {result.source === "invoices" ? "Inbox data" : "Sample data"}
+            {result.source === "invoices" ? "Upload data" : "Sample data"}
           </span>
         )}
       </div>
@@ -41,7 +46,7 @@ export function LiveEvaluation({ ruleBook }: { ruleBook: RuleBookConfigState }) 
 
       {!error && rows.length === 0 && !isLoading ? (
         <p className="text-sm text-muted-foreground py-6 text-center">
-          No documents to evaluate. Load documents from the Inbox to see live rule evaluation.
+          No documents to evaluate. Load documents from Upload to see live rule evaluation.
         </p>
       ) : (
         <div className="overflow-x-auto">
@@ -49,8 +54,9 @@ export function LiveEvaluation({ ruleBook }: { ruleBook: RuleBookConfigState }) 
             <thead>
               <tr className="text-xs text-muted-foreground border-b border-border">
                 <th className="px-3 py-2 text-left font-medium">Document</th>
-                <th className="px-3 py-2 text-left font-medium">Email Capture rule</th>
-                <th className="px-3 py-2 text-left font-medium">Vendor match</th>
+                <th className="px-3 py-2 text-left font-medium">Doc type</th>
+                <th className="px-3 py-2 text-left font-medium">Capture rule</th>
+                <th className="px-3 py-2 text-left font-medium">Vendor resolution</th>
                 <th className="px-3 py-2 text-left font-medium">Category rule</th>
                 <th className="px-3 py-2 text-left font-medium">Ledger</th>
                 <th className="px-3 py-2 text-left font-medium">Status</th>
@@ -64,12 +70,24 @@ export function LiveEvaluation({ ruleBook }: { ruleBook: RuleBookConfigState }) 
                   data-testid={`eval-row-${row.document.id}`}
                 >
                   <td className="px-3 py-2.5">
-                    <div className="font-medium tnum">
-                      {row.document.invoice_no || row.document.doc_number}
-                    </div>
+                    <div className="font-medium tnum">{evalDocumentLabel(row)}</div>
+                    {row.document.invoice_no ? (
+                      <div className="text-[11px] text-muted-foreground tnum truncate max-w-[180px]">
+                        {row.document.invoice_no}
+                      </div>
+                    ) : null}
                     <div className="text-xs text-muted-foreground truncate max-w-[180px]">
                       {row.document.vendor}
                     </div>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {row.document.document_type_code ? (
+                      <Badge variant="outline" className="text-[11px] font-medium tnum">
+                        {row.document.document_type_code}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5">
                     {row.email_rule ? (
@@ -96,7 +114,10 @@ export function LiveEvaluation({ ruleBook }: { ruleBook: RuleBookConfigState }) 
                         <ConfidenceBar value={row.vendor_match.confidence} />
                       </div>
                     ) : (
-                      <span className="text-xs text-muted-foreground">Unmatched</span>
+                      <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]">
+                        <span className="h-2 w-2 rounded-full bg-[hsl(43_74%_49%)] shrink-0" />
+                        Pending vendor
+                      </span>
                     )}
                   </td>
                   <td className="px-3 py-2.5">
@@ -131,12 +152,12 @@ export function LiveEvaluation({ ruleBook }: { ruleBook: RuleBookConfigState }) 
                   </td>
                   <td className="px-3 py-2.5">
                     {row.auto_coded ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap rounded-full border border-[hsl(var(--chart-1)/0.4)] px-2 py-0.5 text-[hsl(var(--chart-1))]">
                         <span className="h-2 w-2 rounded-full bg-[hsl(var(--chart-1))] shrink-0" />
-                        Auto-coded
+                        Auto coded
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap rounded-full border border-[hsl(43_74%_49%/0.5)] px-2 py-0.5 text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]">
                         <span className="h-2 w-2 rounded-full bg-[hsl(43_74%_49%)] shrink-0" />
                         Needs review
                       </span>

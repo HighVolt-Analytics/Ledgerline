@@ -34,12 +34,6 @@ from app.services.validator import run_all_validations
 
 
 @pytest.fixture
-def capture_config() -> RuleBookConfigPayload:
-    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
-    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
-
-
-@pytest.fixture
 def clean_org_rule_book(tmp_path, monkeypatch: pytest.MonkeyPatch):
     upload = tmp_path / "uploads"
     rule_books = upload / "rule_books"
@@ -95,7 +89,7 @@ def test_evaluate_ingest_capture_matches_aws_rule(capture_config: RuleBookConfig
 
 
 @pytest.mark.asyncio
-async def test_apply_ingest_capture_persists_route(
+async def test_apply_ingest_capture_records_ingest_rule_without_route(
     db_session: AsyncSession,
     capture_config: RuleBookConfigPayload,
 ) -> None:
@@ -112,13 +106,13 @@ async def test_apply_ingest_capture_persists_route(
         config=capture_config,
     )
     assert rule is not None
-    assert inv.route_target == "Purchase Management"
-    assert parse_matched_rule_ids(inv.matched_rule_ids) == ["email:ec-1"]
-    assert inv.evaluation_status == "needs_review"
+    assert inv.route_target is None
+    assert parse_matched_rule_ids(inv.matched_rule_ids) == ["ingest:ec-1"]
+    assert inv.evaluation_status is None
 
 
 @pytest.mark.asyncio
-async def test_ingest_email_attachments_sets_early_route(
+async def test_ingest_email_attachments_does_not_set_early_route(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     clean_org_rule_book,
@@ -127,7 +121,10 @@ async def test_ingest_email_attachments_sets_early_route(
         "app.services.pipeline.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/test.pdf",
     )
-    monkeypatch.setattr("app.services.pipeline._finish_email_message", lambda *args: None)
+    monkeypatch.setattr(
+        "app.services.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
 
     result = await ingest_email_attachments(
         db_session,
@@ -138,8 +135,8 @@ async def test_ingest_email_attachments_sets_early_route(
     assert result.ingested_count == 1
 
     inv = (await db_session.execute(select(Invoice))).scalar_one()
-    assert inv.route_target == "Purchase Management"
-    assert "email:ec-1" in (inv.matched_rule_ids or "")
+    assert inv.route_target is None
+    assert "ingest:ec-1" in (inv.matched_rule_ids or "")
 
 
 @pytest.mark.asyncio

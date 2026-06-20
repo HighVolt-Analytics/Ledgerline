@@ -3,7 +3,7 @@ import { DetailDrawer } from "@/components/DetailDrawer";
 import { MatrixFlagBadge } from "@/components/matrix/MatrixFlagBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { invId, money } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
 import type { Invoice } from "@/api/types";
 import type { MatrixConflictRow, MatrixFlagType } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
@@ -27,7 +27,7 @@ type MatrixFlagDrawerProps = {
 export function MatrixFlagDrawer({ row, open, onClose, busy = false, onResolve }: MatrixFlagDrawerProps) {
   if (!open || !row) return null;
 
-  const docId = invId(row.inv.id);
+  const docId = documentDisplayRef(row.inv);
   const total = money(row.inv.total, row.inv.currency);
 
   return (
