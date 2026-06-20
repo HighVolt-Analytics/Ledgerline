@@ -35,6 +35,29 @@ export interface ConnectedMailbox {
   last_poll_at: string | null;
 }
 
+export interface MailboxBackfillJob {
+  id: number;
+  org_id: number;
+  mailbox_id: number;
+  from_date: string;
+  to_date: string;
+  mark_processed: boolean;
+  status: "queued" | "running" | "completed" | "failed" | string;
+  messages_scanned: number;
+  attachments_ingested: number;
+  messages_skipped: number;
+  invoices_processed: number;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface MailboxBackfillQueued {
+  job: MailboxBackfillJob;
+  task_id: string;
+}
+
 export interface MailboxConnectionRequest {
   id: number;
   org_id: number;
@@ -96,6 +119,7 @@ export interface ValidationResult {
 
 export interface Invoice {
   id: number;
+  document_ref?: string | null;
   vendor: string | null;
   abn: string | null;
   invoice_no: string | null;
@@ -128,8 +152,19 @@ export interface Invoice {
     | null;
   validation_results: ValidationResult[] | null;
   purchase_document_type?: string | null;
+  document_type_code?: string | null;
+  document_type_confidence?: number | null;
+  document_type_extraction_fields?: string[] | null;
+  bank_bsb?: string | null;
+  bank_account?: string | null;
+  email_attachment_name?: string | null;
+  billing_address?: string | null;
+  email_subject?: string | null;
+  document_text?: string | null;
+  extraction_field_confidence?: Record<string, number> | null;
   created_at: string;
   has_stored_file: boolean;
+  published_to_ledger?: boolean;
 }
 
 export interface LineItem {
@@ -202,6 +237,25 @@ export interface ThreeWayMatchApi {
   invoice_value: number;
   invoice_gst: number;
   invoice_total: number;
+}
+
+export interface PurchaseDossierMember {
+  role: string;
+  label: string;
+  invoice_id: number | null;
+  document_ref: string | null;
+  present: boolean;
+  has_stored_file: boolean;
+  is_current: boolean;
+}
+
+export interface PurchaseDossier {
+  po_reference: string | null;
+  current_role: string | null;
+  members: PurchaseDossierMember[];
+  purchase_order_id: number | null;
+  match: ThreeWayMatchApi | null;
+  match_status: string | null;
 }
 
 export interface PurchaseOrderApi {
@@ -289,6 +343,7 @@ export interface ActivityItem {
   created_at: string;
   vendor: string | null;
   status: InvoiceStatus | null;
+  summary?: string | null;
 }
 
 export interface TopVendorRow {
@@ -552,6 +607,58 @@ export interface RuleBookConfig {
     set_name: string;
     isolated?: boolean;
   }>;
+  document_classification?: {
+    unclassified_document_type_code: string;
+    unclassified_min_confidence: number;
+  };
+  document_types: Array<{
+    code: string;
+    title: string;
+    short_title: string;
+    klass: string;
+    posting: string;
+    fraud_risk: string;
+    one_line: string;
+    route_target: string;
+    enabled: boolean;
+    classifier: {
+      enabled: boolean;
+      priority: number;
+      confidence: number;
+      root: Record<string, unknown>;
+    };
+    validation_profile?: string;
+    playbook_profile?: string;
+    match_policy?: { mode: string };
+    approval_policy?: { mode: string };
+    validation_rules?: Array<{
+      code: string;
+      enabled: boolean;
+      severity: "block" | "warn";
+    }>;
+    custom_validation_rules?: Array<{
+      id: string;
+      name: string;
+      field: string;
+      operator: "present" | "absent" | "contains" | "not_contains" | "gte" | "lte";
+      value: string;
+      enabled: boolean;
+      severity: "block" | "warn";
+    }>;
+    required_fields?: string[];
+    absent_fields?: string[];
+    min_route_confidence?: number;
+    extraction_fields?: string[];
+    extraction: string[];
+    checks: string[];
+    match: string[];
+    approval: string[];
+    accounting: string[];
+    special: string[];
+    bundle_mandatory: string[];
+    bundle_conditional: string[];
+    purchase_bundle_role?: string;
+  }>;
 }
 
 export type RuleBookRulesPayload = Omit<
@@ -566,6 +673,7 @@ export interface RuleBookEvaluationRow {
     invoice_no: string;
     vendor: string;
     primary_account: string;
+    document_type_code?: string | null;
   };
   email_rule: { id: string; name: string } | null;
   email_rule_disabled: { id: string; name: string } | null;
@@ -675,6 +783,7 @@ export interface VaultApiFile {
   invoice_id: number;
   org: string;
   book: string;
+  document_type?: string | null;
   vendor: string;
   year: string;
   month: string;

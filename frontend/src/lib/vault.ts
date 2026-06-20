@@ -1,8 +1,11 @@
 import type { VaultApiFile, VaultTreeNode as ApiVaultTreeNode } from "@/api/types";
 
+export const VAULT_BOOK_LABEL = "Vault";
+
 export type VaultSelection = {
   org: string;
   book?: string;
+  documentType?: string;
   vendor?: string;
   year?: string;
   month?: string;
@@ -12,7 +15,7 @@ export type VaultSelection = {
 export type VaultTreeNode = {
   id: string;
   label: string;
-  kind: "org" | "book" | "vendor" | "year" | "month" | "po";
+  kind: "org" | "book" | "document_type" | "vendor" | "year" | "month" | "po";
   count: number;
   children: VaultTreeNode[];
 };
@@ -22,7 +25,7 @@ export function vaultAncestorIds(nodeId: string): string[] {
   return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
 }
 
-/** Keep only one open branch — org → one book → one vendor → one year. */
+/** Keep only one open branch — org → one book → [one dt →] one vendor → one year. */
 export function accordionExpandedIds(
   node: VaultTreeNode,
   currentlyExpanded: Set<string>
@@ -38,6 +41,9 @@ export function accordionExpandedIds(
       return new Set(vaultAncestorIds(node.id).slice(0, -1));
     }
     if (node.kind === "vendor") {
+      return new Set(vaultAncestorIds(node.id).slice(0, -2));
+    }
+    if (node.kind === "document_type") {
       return new Set(vaultAncestorIds(node.id).slice(0, -2));
     }
     if (node.kind === "book") {
@@ -57,6 +63,7 @@ export function selectionBreadcrumb(selection: VaultSelection | null): string[] 
   if (!selection) return [];
   const crumbs = [selection.org];
   if (selection.book) crumbs.push(selection.book);
+  if (selection.documentType) crumbs.push(selection.documentType);
   if (selection.vendor) crumbs.push(selection.vendor);
   if (selection.year) crumbs.push(selection.year);
   if (selection.month) crumbs.push(selection.month);
@@ -68,6 +75,7 @@ export function filterVaultApiFiles<
   T extends {
     org: string;
     book: string;
+    document_type?: string | null;
     vendor: string;
     year: string;
     month: string;
@@ -78,6 +86,7 @@ export function filterVaultApiFiles<
   return files.filter((f) => {
     if (f.org !== selection.org) return false;
     if (selection.book && f.book !== selection.book) return false;
+    if (selection.documentType && (f.document_type ?? "") !== selection.documentType) return false;
     if (selection.vendor && f.vendor !== selection.vendor) return false;
     if (selection.year && f.year !== selection.year) return false;
     if (selection.month && f.month !== selection.month) return false;
@@ -88,14 +97,26 @@ export function filterVaultApiFiles<
 
 export function selectionFromNode(node: VaultTreeNode): VaultSelection {
   const parts = node.id.split("/");
-  return {
-    org: parts[0] ?? node.label,
-    book: parts[1],
-    vendor: parts[2],
-    year: parts[3],
-    month: parts[4],
-    poFolder: parts[5],
-  };
+  const sel: VaultSelection = { org: parts[0] ?? node.label };
+  if (parts.length > 1) sel.book = parts[1];
+  if (node.kind === "document_type") {
+    sel.documentType = parts[2];
+    return sel;
+  }
+  const vaultDt = parts[1] === VAULT_BOOK_LABEL && parts.length >= 4;
+  if (vaultDt) {
+    if (parts.length >= 3) sel.documentType = parts[2];
+    if (parts.length >= 4) sel.vendor = parts[3];
+    if (parts.length >= 5) sel.year = parts[4];
+    if (parts.length >= 6) sel.month = parts[5];
+    if (parts.length >= 7) sel.poFolder = parts[6];
+    return sel;
+  }
+  if (parts.length >= 3) sel.vendor = parts[2];
+  if (parts.length >= 4) sel.year = parts[3];
+  if (parts.length >= 5) sel.month = parts[4];
+  if (parts.length >= 6) sel.poFolder = parts[5];
+  return sel;
 }
 
 export function toTreeNodes(nodes: ApiVaultTreeNode[]): VaultTreeNode[] {
@@ -113,11 +134,15 @@ export function findVaultFileByInvoiceId(
   return files.find((f) => f.invoice_id === invoiceId);
 }
 
-/** Folder node id for vault tree selection (org/book/vendor/year/month[/po]). */
+/** Folder node id for vault tree selection (org/book/[dt]/vendor/year/month[/po]). */
 export function vaultNodeIdFromFile(
-  file: Pick<VaultApiFile, "org" | "book" | "vendor" | "year" | "month" | "po_folder">
+  file: Pick<VaultApiFile, "org" | "book" | "document_type" | "vendor" | "year" | "month" | "po_folder">
 ): string {
-  const parts = [file.org, file.book, file.vendor, file.year, file.month];
+  const parts = [file.org, file.book];
+  if (file.document_type) {
+    parts.push(file.document_type);
+  }
+  parts.push(file.vendor, file.year, file.month);
   if (file.po_folder) {
     parts.push(file.po_folder);
   }
@@ -125,11 +150,12 @@ export function vaultNodeIdFromFile(
 }
 
 export function selectionFromVaultFile(
-  file: Pick<VaultApiFile, "org" | "book" | "vendor" | "year" | "month" | "po_folder">
+  file: Pick<VaultApiFile, "org" | "book" | "document_type" | "vendor" | "year" | "month" | "po_folder">
 ): VaultSelection {
   return {
     org: file.org,
     book: file.book,
+    documentType: file.document_type ?? undefined,
     vendor: file.vendor,
     year: file.year,
     month: file.month,

@@ -46,6 +46,7 @@ def load_rule_book_config_dict(org_id: int) -> dict[str, Any]:
 
 
 def save_rule_book_config(payload: RuleBookConfigPayload, org_id: int) -> Path:
+    from app.services.document_type_catalog import clear_document_type_catalog_cache
     from app.services.rule_book_mapper import clear_classification_config_cache
 
     path = org_rule_book_config_path(org_id)
@@ -55,4 +56,5 @@ def save_rule_book_config(payload: RuleBookConfigPayload, org_id: int) -> Path:
         json.dump(data, fh, indent=2)
         fh.write("\n")
     clear_classification_config_cache()
+    clear_document_type_catalog_cache()
     return path

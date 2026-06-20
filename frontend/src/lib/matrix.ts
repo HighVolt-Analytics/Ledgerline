@@ -28,7 +28,6 @@ const STAGE_ACTORS: Record<MatrixStage, string> = {
 };
 
 export function invoiceRoutedToSuspense(inv: Invoice): boolean {
-  if (inv.status === "exception") return true;
   const account = inv.account_name?.toLowerCase() ?? "";
   return account.includes("suspense");
 }

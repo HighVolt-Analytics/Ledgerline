@@ -1,3 +1,5 @@
+import type { DocumentTypeDefinition } from "./v5DocumentTypes";
+
 export type EmailField =
   | "from"
   | "to"
@@ -207,8 +209,17 @@ export type PostingDefaults = {
   fallbackAccount: string;
 };
 
+export type { DocumentTypeDefinition } from "./v5DocumentTypes";
+
+export type DocumentClassificationConfig = {
+  unclassifiedDocumentTypeCode: string;
+  unclassifiedMinConfidence: number;
+};
+
 /** In-app rule book state (camelCase). Persisted via /api/rule-book/config. */
 export type RuleBookConfigState = {
+  documentTypes: DocumentTypeDefinition[];
+  documentClassification: DocumentClassificationConfig;
   emailCaptureRules: EmailCaptureRule[];
   purchaseRules: PurchaseRule[];
   expenseRules: ExpenseRule[];
@@ -258,30 +269,4 @@ export const LEDGER_ACCOUNTS = [
   "Suspense Account",
 ] as const;
 
-export const ROUTING_STEPS = [
-  {
-    n: 1,
-    title: "Email Capture Rule Book",
-    desc: "Routes to Purchase / Expenses / Team Expenses / Vault",
-  },
-  {
-    n: 2,
-    title: "Vendor Master detection",
-    desc: "Known vendor? defaults applied. Unknown? flag for registration.",
-  },
-  {
-    n: 3,
-    title: "Category-specific Rule Book",
-    desc: "Purchase Mgmt (PO) · Expenses (no PO) · Team Expenses (employee channel)",
-  },
-  {
-    n: 4,
-    title: "Employee Master validation",
-    desc: "Team Expenses only — budget check, sender verify.",
-  },
-  {
-    n: 5,
-    title: "Posting",
-    desc: "Dr Expense · Cr A/P — already wired in logic.ts",
-  },
-] as const;
+export const INGEST_ACTION_ROUTE_PLACEHOLDER = "Purchase Management";

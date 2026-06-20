@@ -9,10 +9,6 @@ import pytest
 from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
 
 
-@pytest.fixture
-def capture_config() -> RuleBookConfigPayload:
-    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
-    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus

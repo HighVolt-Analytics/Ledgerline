@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
+from app.services.document_ref_service import display_document_ref
 
 MATRIX_STAGES = ("Received", "Parsed", "Validated", "Mapped", "Approved", "Published")
 StageState = Literal["done", "pending", "fail", "skipped"]
@@ -235,7 +236,7 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     published_at: datetime | None = None
     published_detail = "Pending"
     published_state: StageState = "pending"
-    doc_ref = inv.invoice_no or f"DOC-{inv.id:04d}"
+    doc_ref = display_document_ref(inv)
     if published_log and published_log.event == "invoice_published_to_ledger":
         published_at = published_log.created_at
         actor = _actor_name(published_log.detail)
@@ -262,6 +263,36 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
                 at=rejected_log.created_at if rejected_log else None,
                 detail=reject_detail,
                 state="fail",
+            ),
+        ]
+
+    if inv.status == InvoiceStatus.DUPLICATE_SKIPPED:
+        from app.services.audit_change_summary import summarize_audit_change
+
+        dup_log = _latest_log(
+            logs,
+            "duplicate_skipped",
+            "duplicate_in_progress",
+            "duplicate_reingest_rejected",
+        )
+        dup_detail = "Duplicate file skipped"
+        if dup_log:
+            dup_detail = summarize_audit_change(
+                dup_log.event,
+                dup_log.detail if isinstance(dup_log.detail, dict) else {},
+            )
+        return [
+            PipelineStage(
+                stage="Received",
+                at=received_at,
+                detail=f"{source} · {received_via}",
+                state="done",
+            ),
+            PipelineStage(
+                stage="Duplicate skipped",
+                at=dup_log.created_at if dup_log else inv.created_at,
+                detail=dup_detail,
+                state="skipped",
             ),
         ]
 
@@ -294,7 +325,7 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         else "pending"
     )
 
-    return [
+    stages = [
         PipelineStage(
             stage="Received",
             at=received_at,
@@ -332,6 +363,24 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
             state=published_state,
         ),
     ]
+
+    dup_log = _latest_log(logs, "duplicate_in_progress", "duplicate_skipped")
+    if dup_log is not None:
+        from app.services.audit_change_summary import summarize_audit_change
+
+        stages.append(
+            PipelineStage(
+                stage="Duplicate detected",
+                at=dup_log.created_at,
+                detail=summarize_audit_change(
+                    dup_log.event,
+                    dup_log.detail if isinstance(dup_log.detail, dict) else {},
+                ),
+                state="skipped",
+            )
+        )
+
+    return stages
 
 
 def build_matrix_cells(inv: Invoice, logs: list[AuditLog]) -> list[dict[str, str]]:

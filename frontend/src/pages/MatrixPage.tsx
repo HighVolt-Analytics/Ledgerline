@@ -12,14 +12,15 @@ import { MatrixStageCell } from "@/components/matrix/MatrixStageCell";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { invId, money } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
 import { MATRIX_STAGES, type MatrixStage } from "@/lib/matrix";
-import { fetchAllMatrixRows, stagesToCells } from "@/lib/matrixApi";
+import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 
 const MATRIX_POLL_MS = 15_000;
+const PAGE_SIZE = 10;
 
 const QUEUE_STATUSES = new Set(["exception", "duplicate_skipped", "rejected"]);
 
@@ -81,6 +82,7 @@ function rowFromApi(row: MatrixRow): MatrixTableRow {
 export function MatrixPage() {
   const [matrixData, setMatrixData] = useState<MatrixRow[]>([]);
   const [filter, setFilter] = useState<MatrixFilter>("all");
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -121,7 +123,7 @@ export function MatrixPage() {
   }, [toast]);
 
   const matrixRows = useMemo<MatrixTableRow[]>(
-    () => matrixData.map(rowFromApi),
+    () => sortMatrixRowsNewestFirst(matrixData).map(rowFromApi),
     [matrixData]
   );
 
@@ -143,6 +145,21 @@ export function MatrixPage() {
       }),
     [matrixRows, filter]
   );
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+
+  const pagedRows = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredRows.slice(start, start + PAGE_SIZE);
+  }, [filteredRows, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const kpis = useMemo(
     () => ({
@@ -168,21 +185,21 @@ export function MatrixPage() {
         if (QUEUE_STATUSES.has(inv.status)) {
           await api.approve(inv.id);
           await api.triggerProcess();
-          setToast(`${invId(inv.id)} approved for reprocessing`);
+          setToast(`${documentDisplayRef(inv)} approved for reprocessing`);
         } else {
-          setToast(`${invId(inv.id)} marked as reviewed`);
+          setToast(`${documentDisplayRef(inv)} marked as reviewed`);
         }
       } else if (action === "duplicate") {
         if (inv.status === "duplicate_skipped" || inv.status === "rejected") {
           await api.deleteApprovalPermanently(inv.id);
-          setToast(`${invId(inv.id)} permanently removed`);
+          setToast(`${documentDisplayRef(inv)} permanently removed`);
         } else {
           await api.reject(inv.id);
-          setToast(`${invId(inv.id)} rejected as duplicate`);
+          setToast(`${documentDisplayRef(inv)} rejected as duplicate`);
         }
       } else {
         await api.requestApproval(inv.id);
-        setToast(`${invId(inv.id)} sent to approvals`);
+        setToast(`${documentDisplayRef(inv)} sent to approvals`);
       }
       setFlagDrawerId(null);
       await load({ silent: true, fresh: true });
@@ -230,13 +247,13 @@ export function MatrixPage() {
       ) : matrixData.length === 0 ? (
         <EmptyState
           title="No documents in the matrix"
-          hint="Connect a mailbox and fetch from Inbox, or upload an invoice from Integrations."
+          hint="Connect a mailbox and fetch documents, or upload an invoice from Integrations."
           action={
             <Link
-              to="/inbox"
+              to="/upload"
               className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             >
-              Go to Inbox
+              Go to Upload
             </Link>
           }
         />
@@ -281,6 +298,9 @@ export function MatrixPage() {
             ))}
             <span className="ml-auto text-xs text-muted-foreground">
               {filteredRows.length} of {matrixRows.length} documents
+              {filteredRows.length > PAGE_SIZE
+                ? ` · page ${page} of ${totalPages}`
+                : ""}
             </span>
           </div>
 
@@ -306,8 +326,8 @@ export function MatrixPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map(({ inv, cells, flag, payment }) => {
-                    const docId = invId(inv.id);
+                  {pagedRows.map(({ inv, cells, flag, payment }) => {
+                    const docRef = documentDisplayRef(inv);
                     const flagged = flag !== "Clean";
                     return (
                       <tr
@@ -315,9 +335,9 @@ export function MatrixPage() {
                         className="row-band border-b border-border/60 last:border-0"
                       >
                         <td className="px-4 py-2 sticky left-0 bg-card z-10">
-                          <div className="font-medium">{docId}</div>
+                          <div className="font-medium tnum">{docRef}</div>
                           <div className="text-xs text-muted-foreground tnum">
-                            {inv.invoice_no ?? `DOC-${inv.id}`}
+                            {inv.invoice_no ?? "—"}
                           </div>
                         </td>
                         <td className="px-3 py-2 max-w-[150px] truncate text-muted-foreground">
@@ -341,7 +361,7 @@ export function MatrixPage() {
                             <button
                               type="button"
                               onClick={() => setFlagDrawerId(inv.id)}
-                              data-testid={`matrix-flag-${docId}`}
+                              data-testid={`matrix-flag-${docRef}`}
                               className="text-left"
                             >
                               <MatrixFlagBadge flag={flag} />
@@ -362,6 +382,44 @@ export function MatrixPage() {
                 </tbody>
               </table>
             </div>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-border">
+                <p className="text-xs text-muted-foreground">
+                  Page {page} of {totalPages}
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2 text-xs"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                  >
+                    Prev
+                  </Button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                    <Button
+                      key={p}
+                      variant={p === page ? "default" : "outline"}
+                      size="sm"
+                      className="h-8 min-w-8 px-2 text-xs tnum"
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2 text-xs"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </Card>
 
           <p className="text-xs text-muted-foreground mt-3 flex items-center gap-4 flex-wrap">

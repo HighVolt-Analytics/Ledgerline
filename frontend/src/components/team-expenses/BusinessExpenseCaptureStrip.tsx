@@ -27,13 +27,6 @@ export function BusinessExpenseCaptureStrip({ activeRuleCount = 0 }: { activeRul
       });
     }
 
-    rows.push({
-      id: "upload",
-      name: "Upload",
-      detail: "Inbox & vault",
-      connected: true,
-    });
-
     if (activeRuleCount > 0) {
       rows.push({
         id: "rules",

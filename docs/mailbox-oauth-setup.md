@@ -61,6 +61,12 @@ GRAPH_OAUTH_FRONTEND_RETURN_URL=http://localhost:5173/integrations
 # Public frontend URL — used in invite emails and audit CSV links
 PUBLIC_APP_URL=http://localhost:5173
 
+# Staging (AKS): set all three to your public /ledgerlink URL, or rely on AZURE_WEBAPP_URL
+# PUBLIC_APP_URL=https://staging.highvolt.tech/ledgerlink
+# GRAPH_OAUTH_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/mailboxes/oauth/callback
+# GRAPH_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
+# AZURE_WEBAPP_URL=https://staging.highvolt.tech/ledgerlink
+
 # Service mailbox — also used as the sender for connection invitation emails
 GRAPH_MAILBOX=you@company.com
 ```

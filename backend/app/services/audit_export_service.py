@@ -12,13 +12,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import get_settings
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice
 from app.models.purchase_order import PurchaseOrder
 from app.services.audit_change_summary import summarize_audit_change
 from app.services.audit_detail_helpers import _latest_grn, truncate_audit_error
-from app.services.public_app_url import resolve_public_app_base_url
+from app.services.public_app_url import build_public_app_path
 
 _EXPORT_LIMIT = 10_000
 
@@ -265,16 +264,7 @@ def vault_view_path(invoice_id: int | None) -> str:
     """Clickable URL to open the document in Vault (Excel-friendly https://… link)."""
     if invoice_id is None:
         return ""
-    settings = get_settings()
-    path_suffix = f"/vault?invoice={invoice_id}"
-    prefix = settings.root_path.rstrip("/")
-    base = resolve_public_app_base_url()
-    if base:
-        base = base.rstrip("/")
-        if prefix and not base.endswith(prefix):
-            return f"{base}{prefix}{path_suffix}"
-        return f"{base}{path_suffix}"
-    return f"{prefix}{path_suffix}" if prefix else path_suffix
+    return build_public_app_path(f"/vault?invoice={invoice_id}")
 
 
 def _invoice_amount_label(invoice: Invoice) -> str:
@@ -331,14 +321,9 @@ def flatten_audit_detail(
     }
 
     if event == "ingest_capture_matched":
-        route = _first_str(d, "route_to")
         rule_name = _first_str(d, "rule_name")
-        if route and rule_name:
-            flat["rule_matched"] = f"{route} · {rule_name}"
-        elif rule_name:
-            flat["rule_matched"] = rule_name
-        elif route:
-            flat["rule_matched"] = route
+        if rule_name:
+            flat["rule_matched"] = f"Ingestion · {rule_name}"
 
     if event not in ("reconciliation_skipped", "email_moved"):
         raw_hold = _first_str(d, "hold_reason", "reason", "error")

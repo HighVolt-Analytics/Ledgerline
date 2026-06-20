@@ -79,7 +79,7 @@ def main() -> int:
     if inv.get("po_reference"):
         print(f"  po_reference={inv['po_reference']}")
     print("\nNext:")
-    print(f"  Inbox:      http://localhost:5173/inbox")
+    print(f"  Upload:     http://localhost:5173/upload")
     print(f"  Matrix:     http://localhost:5173/matrix")
     print(f"  Purchases:  http://localhost:5173/purchases  (if PO ref set)")
     return 0

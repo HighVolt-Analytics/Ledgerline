@@ -604,37 +604,96 @@ async def _avg_processing_seconds(
     return float(result)
 
 
+_DUPLICATE_ACTIVITY_EVENTS = frozenset(
+    {
+        "duplicate_skipped",
+        "duplicate_in_progress",
+        "duplicate_reingest_rejected",
+    }
+)
+
+_ACTIVITY_NOISE_EVENTS = frozenset(
+    {
+        "parse_completed",
+        "mapping_applied",
+        "validation_passed",
+        "blob_relocated",
+        "vendor_sender_learned",
+        "reconciliation_skipped",
+        "three_way_match_evaluated",
+        "purchase_po_document_synced",
+        "purchase_grn_document_synced",
+        "purchase_invoice_document_synced",
+        "invoices_remapped",
+        "vault_migrated",
+    }
+)
+
+
+def _activity_item_from_row(
+    log: AuditLog,
+    vendor: str | None,
+    status: InvoiceStatus | None,
+) -> ActivityItem:
+    from app.services.audit_change_summary import summarize_audit_change
+
+    status_schema = (
+        InvoiceStatusSchema(status.value) if status is not None else None
+    )
+    detail = log.detail if isinstance(log.detail, dict) else {}
+    return ActivityItem(
+        id=log.id,
+        invoice_id=log.invoice_id,
+        event=log.event,
+        detail=log.detail,
+        created_at=log.created_at,
+        vendor=vendor,
+        status=status_schema,
+        summary=summarize_audit_change(log.event, detail),
+    )
+
+
 async def fetch_activity(
     db: AsyncSession, limit: int, *, org_id: int
 ) -> list[ActivityItem]:
-    stmt = (
+    """Recent org activity for dashboard — always surfaces duplicate detections."""
+    base = (
         select(AuditLog, Invoice.vendor, Invoice.status)
         .join(Invoice, Invoice.id == AuditLog.invoice_id)
         .where(
             AuditLog.invoice_id.isnot(None),
             Invoice.org_id == org_id,
         )
-        .order_by(AuditLog.created_at.desc())
-        .limit(limit)
     )
-    rows = (await db.execute(stmt)).all()
-    items: list[ActivityItem] = []
-    for log, vendor, status in rows:
-        status_schema = (
-            InvoiceStatusSchema(status.value) if status is not None else None
+
+    duplicate_rows = (
+        await db.execute(
+            base.where(AuditLog.event.in_(_DUPLICATE_ACTIVITY_EVENTS))
+            .order_by(AuditLog.created_at.desc())
+            .limit(min(limit, 8))
         )
-        items.append(
-            ActivityItem(
-                id=log.id,
-                invoice_id=log.invoice_id,
-                event=log.event,
-                detail=log.detail,
-                created_at=log.created_at,
-                vendor=vendor,
-                status=status_schema,
-            )
+    ).all()
+
+    general_rows = (
+        await db.execute(
+            base.where(AuditLog.event.notin_(_ACTIVITY_NOISE_EVENTS))
+            .order_by(AuditLog.created_at.desc())
+            .limit(limit * 2)
         )
-    return items
+    ).all()
+
+    merged: list[ActivityItem] = []
+    seen_ids: set[int] = set()
+    for log, vendor, status in (*duplicate_rows, *general_rows):
+        if log.id in seen_ids:
+            continue
+        seen_ids.add(log.id)
+        merged.append(_activity_item_from_row(log, vendor, status))
+        if len(merged) >= limit:
+            break
+
+    merged.sort(key=lambda item: item.created_at, reverse=True)
+    return merged[:limit]
 
 
 async def fetch_top_vendors(

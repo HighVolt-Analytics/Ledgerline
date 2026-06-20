@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.database import async_session_factory, dispose_engine
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.audit_service import log_event
+from app.services.document_ref_service import audit_document_detail, invoice_log_fields
 from app.services.graph_mail_folders import finalize_graph_messages, folder_moves_enabled
 from app.services.mailbox_poll import poll_all_and_ingest, poll_mailbox_and_ingest
 from app.services.pipeline import EmailIngestResult, process_invoice
@@ -67,7 +68,7 @@ async def process_invoice_by_id(invoice_id: int) -> bool:
             return True
         except Exception as exc:
             await session.rollback()
-            logger.error("pipeline_error", invoice_id=invoice_id, error=str(exc))
+            logger.error("pipeline_error", error=str(exc), invoice_id=invoice_id)
             async with async_session_factory() as err_session:
                 inv = await err_session.get(Invoice, invoice_id)
                 if inv and inv.status in _PENDING_STATUSES:
@@ -76,7 +77,7 @@ async def process_invoice_by_id(invoice_id: int) -> bool:
                         err_session,
                         "pipeline_error",
                         invoice_id=invoice_id,
-                        detail={"error": str(exc)},
+                        detail=audit_document_detail(inv, error=str(exc)),
                     )
                     await err_session.commit()
             return False
@@ -86,14 +87,52 @@ async def process_invoice_background(invoice_id: int) -> None:
     """FastAPI background task — must be async (uvicorn already has a running loop)."""
     global _last_run, _inline_active
 
+    lock = await _invoice_pipeline_lock(invoice_id)
+    async with lock:
+        _inline_active = True
+        try:
+            await _run_invoice_pipeline(invoice_id)
+        finally:
+            _inline_active = False
+            _last_run = datetime.now(timezone.utc).isoformat()
+
+
+async def process_invoices_batch_background(invoice_ids: list[int]) -> None:
+    """Process uploaded invoices one at a time (bulk upload)."""
+    global _last_run, _inline_active
+
     _inline_active = True
     try:
-        logger.info("invoice_pipeline_started", invoice_id=invoice_id)
-        await process_invoice_by_id(invoice_id)
+        for invoice_id in invoice_ids:
+            lock = await _invoice_pipeline_lock(invoice_id)
+            async with lock:
+                await _run_invoice_pipeline(invoice_id)
     finally:
         _inline_active = False
         _last_run = datetime.now(timezone.utc).isoformat()
-        logger.info("invoice_pipeline_finished", invoice_id=invoice_id)
+
+
+_invoice_locks: dict[int, asyncio.Lock] = {}
+_locks_guard = asyncio.Lock()
+
+
+async def _invoice_pipeline_lock(invoice_id: int) -> asyncio.Lock:
+    async with _locks_guard:
+        lock = _invoice_locks.get(invoice_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _invoice_locks[invoice_id] = lock
+        return lock
+
+
+async def _run_invoice_pipeline(invoice_id: int) -> None:
+    async with async_session_factory() as session:
+        inv = await session.get(Invoice, invoice_id)
+    logger.info("invoice_pipeline_started", **invoice_log_fields(inv))
+    await process_invoice_by_id(invoice_id)
+    async with async_session_factory() as session:
+        inv = await session.get(Invoice, invoice_id)
+    logger.info("invoice_pipeline_finished", **invoice_log_fields(inv))
 
 
 def process_invoice_by_id_sync(invoice_id: int) -> None:
@@ -109,28 +148,10 @@ def process_invoice_by_id_sync(invoice_id: int) -> None:
 async def _process_pending(invoice_ids: list[int]) -> int:
     processed = 0
     for invoice_id in invoice_ids:
-        async with async_session_factory() as session:
-            try:
-                inv = await session.get(Invoice, invoice_id)
-                if inv is None:
-                    continue
-                await process_invoice(session, inv)
-                await session.commit()
+        lock = await _invoice_pipeline_lock(invoice_id)
+        async with lock:
+            if await process_invoice_by_id(invoice_id):
                 processed += 1
-            except Exception as exc:
-                await session.rollback()
-                logger.error("pipeline_error", invoice_id=invoice_id, error=str(exc))
-                async with async_session_factory() as err_session:
-                    inv = await err_session.get(Invoice, invoice_id)
-                    if inv and inv.status in _PENDING_STATUSES:
-                        inv.status = InvoiceStatus.EXCEPTION
-                        await log_event(
-                            err_session,
-                            "pipeline_error",
-                            invoice_id=invoice_id,
-                            detail={"error": str(exc)},
-                        )
-                        await err_session.commit()
     return processed
 
 
@@ -259,4 +280,62 @@ def process_inbox_task(self, mailbox_id: int | None = None, org_id: int | None =
     result = asyncio.run(run_with_cleanup())
     _last_run = datetime.now(timezone.utc).isoformat()
     logger.info("task_done", **result)
+    return result
+
+
+async def run_mailbox_backfill_background(job_id: int) -> None:
+    """FastAPI background task entry for historical mailbox import."""
+    global _last_run, _inline_active
+
+    _inline_active = True
+    try:
+        from app.services.mailbox_backfill_service import run_mailbox_backfill_job
+
+        logger.info("mailbox_backfill_started", job_id=job_id)
+        await run_mailbox_backfill_job(job_id)
+    finally:
+        _inline_active = False
+        _last_run = datetime.now(timezone.utc).isoformat()
+
+
+def run_mailbox_backfill_sync(job_id: int) -> None:
+    configure_logging(get_settings().log_level)
+
+    async def _run() -> None:
+        try:
+            await run_mailbox_backfill_background(job_id)
+        finally:
+            await dispose_engine()
+
+    asyncio.run(_run())
+
+
+@celery_app.task(
+    bind=True,
+    name="app.workers.tasks.mailbox_backfill_task",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=2,
+)
+def mailbox_backfill_task(self, job_id: int) -> dict[str, object]:
+    global _last_run
+    configure_logging(get_settings().log_level)
+    logger.info("mailbox_backfill_task_started", task_id=self.request.id, job_id=job_id)
+
+    async def run_with_cleanup() -> dict[str, object]:
+        try:
+            from app.services.mailbox_backfill_service import run_mailbox_backfill_job
+
+            job = await run_mailbox_backfill_job(job_id)
+            return {
+                "job_id": job.id,
+                "status": job.status,
+                "attachments_ingested": job.attachments_ingested,
+            }
+        finally:
+            await dispose_engine()
+
+    result = asyncio.run(run_with_cleanup())
+    _last_run = datetime.now(timezone.utc).isoformat()
+    logger.info("mailbox_backfill_task_done", **result)
     return result

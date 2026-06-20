@@ -1,0 +1,863 @@
+{
+  "schema_version": 1,
+  "email_capture_rules": [
+    {
+      "id": "ec-1",
+      "name": "AWS billing",
+      "enabled": true,
+      "priority": 1,
+      "mailbox": "accounts@acme-hospitality.com.au",
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": [
+          {
+            "type": "condition",
+            "field": "from",
+            "operator": "contains",
+            "value": "billing@amazon"
+          },
+          {
+            "type": "condition",
+            "field": "subject",
+            "operator": "contains",
+            "value": "invoice"
+          },
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "ends_with",
+            "value": ".pdf"
+          }
+        ]
+      },
+      "action": {
+        "save_attachment": true,
+        "route_to": "Purchase Management",
+        "tags": [
+          "AWS",
+          "Cloud"
+        ]
+      },
+      "matched_count": 24,
+      "last_matched": "2h ago"
+    },
+    {
+      "id": "ec-2",
+      "name": "Supplier invoices (Sysco / Bidfood / PFD)",
+      "enabled": true,
+      "priority": 2,
+      "mailbox": "accounts@acme-hospitality.com.au",
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "group",
+            "operator": "AND",
+            "children": [
+              {
+                "type": "condition",
+                "field": "from",
+                "operator": "contains",
+                "value": "sysco"
+              },
+              {
+                "type": "condition",
+                "field": "attachment_name",
+                "operator": "contains",
+                "value": "INV"
+              }
+            ]
+          },
+          {
+            "type": "group",
+            "operator": "AND",
+            "children": [
+              {
+                "type": "condition",
+                "field": "from",
+                "operator": "contains",
+                "value": "bidfood"
+              },
+              {
+                "type": "condition",
+                "field": "attachment_name",
+                "operator": "contains",
+                "value": "invoice"
+              }
+            ]
+          },
+          {
+            "type": "group",
+            "operator": "AND",
+            "children": [
+              {
+                "type": "condition",
+                "field": "from",
+                "operator": "contains",
+                "value": "pfd"
+              },
+              {
+                "type": "condition",
+                "field": "subject",
+                "operator": "contains",
+                "value": "Tax Invoice"
+              }
+            ]
+          }
+        ]
+      },
+      "action": {
+        "save_attachment": true,
+        "route_to": "Purchase Management",
+        "tags": [
+          "Supplier",
+          "F&B"
+        ]
+      },
+      "matched_count": 87,
+      "last_matched": "14m ago"
+    },
+    {
+      "id": "ec-3",
+      "name": "Team expense receipts via email",
+      "enabled": true,
+      "priority": 3,
+      "mailbox": "expenses@acme-hospitality.com.au",
+      "root": {
+        "type": "group",
+        "operator": "AND",
+        "children": [
+          {
+            "type": "group",
+            "operator": "OR",
+            "children": [
+              {
+                "type": "condition",
+                "field": "subject",
+                "operator": "contains",
+                "value": "receipt"
+              },
+              {
+                "type": "condition",
+                "field": "subject",
+                "operator": "contains",
+                "value": "expense claim"
+              },
+              {
+                "type": "condition",
+                "field": "subject",
+                "operator": "regex",
+                "value": "^Fwd:"
+              }
+            ]
+          },
+          {
+            "type": "condition",
+            "field": "attachment_mime",
+            "operator": "contains",
+            "value": "image/"
+          }
+        ]
+      },
+      "action": {
+        "save_attachment": true,
+        "route_to": "Team Expenses",
+        "tags": [
+          "receipt"
+        ]
+      },
+      "matched_count": 15,
+      "last_matched": "44m ago"
+    }
+  ],
+  "purchase_rules": [
+    {
+      "id": "pr-1",
+      "name": "Cloud & Hosting POs",
+      "enabled": true,
+      "match_on": {
+        "po_prefix": "PO-CLOUD-",
+        "grn_linked_to_po": true,
+        "invoice_references_po": true
+      },
+      "post_to": {
+        "ledger": "Cloud Hosting Expense",
+        "sub_ledger": "AWS Production",
+        "tax_account": "GST Paid",
+        "payable_account": "Accounts Payable"
+      },
+      "matched_count": 12
+    },
+    {
+      "id": "pr-2",
+      "name": "Beverage supplier POs",
+      "enabled": true,
+      "match_on": {
+        "po_prefix": "PO-BEV-",
+        "vendor_contains": "Beverage",
+        "invoice_references_po": true
+      },
+      "post_to": {
+        "ledger": "Raw Materials",
+        "sub_ledger": "Beverages — Bar",
+        "tax_account": "GST Paid",
+        "payable_account": "Accounts Payable"
+      },
+      "matched_count": 23
+    },
+    {
+      "id": "pr-3",
+      "name": "Marketing campaign POs",
+      "enabled": true,
+      "match_on": {
+        "po_regex": "PO-MKT-2026",
+        "invoice_references_po": true
+      },
+      "post_to": {
+        "ledger": "Marketing Expense",
+        "sub_ledger": "Q2 Campaign",
+        "tax_account": "GST Paid",
+        "payable_account": "Accounts Payable"
+      },
+      "matched_count": 6
+    },
+    {
+      "id": "pr-4",
+      "name": "Capex equipment POs",
+      "enabled": true,
+      "match_on": {
+        "po_prefix": "PO-CAPEX-"
+      },
+      "post_to": {
+        "ledger": "Plant & Equipment",
+        "sub_ledger": "Kitchen Refurbishment",
+        "tax_account": "GST Paid",
+        "payable_account": "Accounts Payable"
+      },
+      "matched_count": 3
+    }
+  ],
+  "expense_rules": [
+    {
+      "id": "er-1",
+      "name": "AWS subscription",
+      "enabled": true,
+      "match_on": {
+        "description_contains": "AWS"
+      },
+      "post_to": {
+        "ledger": "Cloud Hosting Expense",
+        "sub_ledger": "Production"
+      },
+      "matched_count": 12
+    },
+    {
+      "id": "er-2",
+      "name": "Microsoft 365",
+      "enabled": true,
+      "match_on": {
+        "description_contains": "Microsoft 365",
+        "vendor_contains": "Microsoft"
+      },
+      "post_to": {
+        "ledger": "Software Subscription Expense",
+        "sub_ledger": "Office Suite"
+      },
+      "matched_count": 8
+    },
+    {
+      "id": "er-3",
+      "name": "Telstra phones",
+      "enabled": true,
+      "match_on": {
+        "vendor_contains": "Telstra"
+      },
+      "post_to": {
+        "ledger": "Software Subscription Expense",
+        "sub_ledger": "Telephony"
+      },
+      "matched_count": 6
+    },
+    {
+      "id": "er-4",
+      "name": "Legal — Smith & Co",
+      "enabled": true,
+      "match_on": {
+        "vendor_contains": "Smith & Co"
+      },
+      "post_to": {
+        "ledger": "Professional Services Expense",
+        "sub_ledger": "Legal"
+      },
+      "matched_count": 4
+    },
+    {
+      "id": "er-5",
+      "name": "Uber business travel",
+      "enabled": true,
+      "match_on": {
+        "vendor_contains": "Uber"
+      },
+      "post_to": {
+        "ledger": "Travel Expense",
+        "sub_ledger": "Ground Transport"
+      },
+      "matched_count": 9
+    },
+    {
+      "id": "er-6",
+      "name": "Atlassian subscriptions",
+      "enabled": true,
+      "match_on": {
+        "vendor_contains": "Atlassian"
+      },
+      "post_to": {
+        "ledger": "Software Subscription Expense",
+        "sub_ledger": "Dev Tools"
+      },
+      "matched_count": 5
+    },
+    {
+      "id": "er-7",
+      "name": "Internal document series",
+      "enabled": true,
+      "match_on": {
+        "doc_number_contains": "DOC-2026"
+      },
+      "post_to": {
+        "ledger": "Operating Expenses",
+        "sub_ledger": "General"
+      },
+      "matched_count": 18
+    }
+  ],
+  "team_expense_rules": [
+    {
+      "id": "tr-1",
+      "name": "Site supervisor meals",
+      "enabled": true,
+      "match_on": {
+        "description_contains": "meal / lunch / dinner",
+        "channel_equals": "Any",
+        "amount_max": 80
+      },
+      "post_to": {
+        "ledger": "Travel Expense",
+        "sub_ledger": "Meals"
+      },
+      "policy": {
+        "require_receipt": true,
+        "receipt_threshold": 25,
+        "auto_approve_below": 30
+      },
+      "matched_count": 31
+    },
+    {
+      "id": "tr-2",
+      "name": "Taxi & rideshare",
+      "enabled": true,
+      "match_on": {
+        "merchant_contains": "Uber / Ola / Didi",
+        "channel_equals": "Any"
+      },
+      "post_to": {
+        "ledger": "Travel Expense",
+        "sub_ledger": "Ground Transport"
+      },
+      "policy": {
+        "require_receipt": true,
+        "receipt_threshold": 50,
+        "auto_approve_below": 50
+      },
+      "matched_count": 24
+    },
+    {
+      "id": "tr-3",
+      "name": "Office consumables",
+      "enabled": true,
+      "match_on": {
+        "description_contains": "stationery / milk / coffee",
+        "channel_equals": "Any"
+      },
+      "post_to": {
+        "ledger": "Office",
+        "sub_ledger": "Pantry"
+      },
+      "policy": {
+        "require_receipt": true,
+        "receipt_threshold": 40,
+        "auto_approve_below": 40
+      },
+      "matched_count": 17
+    },
+    {
+      "id": "tr-4",
+      "name": "Client entertainment",
+      "enabled": true,
+      "match_on": {
+        "description_contains": "client",
+        "channel_equals": "Any"
+      },
+      "post_to": {
+        "ledger": "Marketing Expense",
+        "sub_ledger": "Client Entertainment"
+      },
+      "policy": {
+        "require_receipt": true,
+        "receipt_threshold": 0,
+        "auto_approve_below": 0
+      },
+      "matched_count": 5
+    }
+  ],
+  "vendor_masters": [
+    {
+      "id": "vm-1",
+      "name": "Amazon Web Services",
+      "aliases": [
+        "AWS",
+        "Amazon Web Services Inc",
+        "AMZ Cloud"
+      ],
+      "abn": "98765432101",
+      "billing_address": {
+        "street": "Level 37, 2-26 Park Street",
+        "suburb": "Sydney NSW",
+        "postcode": "2000",
+        "country": "Australia"
+      },
+      "bank": {
+        "bsb": "062-001",
+        "account_number": "12345678",
+        "account_name": "AWS Australia Pty Ltd",
+        "bank_name": "Commonwealth Bank"
+      },
+      "default_ledger": "Cloud Hosting Expense",
+      "default_sub_ledger": "Production",
+      "payment_terms": "Net 30",
+      "status": "Active",
+      "registered_on": "2024-08-12",
+      "total_spend_y_t_d": 18420,
+      "invoice_count": 12,
+      "match_confidence": 99
+    },
+    {
+      "id": "vm-2",
+      "name": "Sysco Australia",
+      "aliases": [
+        "Sysco",
+        "SYSCO AU"
+      ],
+      "abn": "11223344556",
+      "billing_address": {
+        "street": "100 Salmon Street",
+        "suburb": "Port Melbourne VIC",
+        "postcode": "3207",
+        "country": "Australia"
+      },
+      "bank": {
+        "bsb": "033-099",
+        "account_number": "98765432",
+        "account_name": "Sysco Australia Pty Ltd",
+        "bank_name": "Westpac"
+      },
+      "default_ledger": "Raw Materials",
+      "default_sub_ledger": "F&B",
+      "payment_terms": "Net 14",
+      "status": "Active",
+      "registered_on": "2023-11-03",
+      "total_spend_y_t_d": 42180,
+      "invoice_count": 23,
+      "match_confidence": 97
+    },
+    {
+      "id": "vm-3",
+      "name": "Telstra Corporation",
+      "aliases": [
+        "Telstra"
+      ],
+      "abn": "33051775556",
+      "billing_address": {
+        "street": "242 Exhibition Street",
+        "suburb": "Melbourne VIC",
+        "postcode": "3000",
+        "country": "Australia"
+      },
+      "bank": {
+        "bsb": "084-004",
+        "account_number": "11220033",
+        "account_name": "Telstra Corporation Ltd",
+        "bank_name": "NAB"
+      },
+      "default_ledger": "Software Subscription Expense",
+      "default_sub_ledger": "Telephony",
+      "payment_terms": "Net 30",
+      "status": "Active",
+      "registered_on": "2023-06-21",
+      "total_spend_y_t_d": 6840,
+      "invoice_count": 6,
+      "match_confidence": 99
+    },
+    {
+      "id": "vm-4",
+      "name": "Smith & Co Legal",
+      "aliases": [
+        "Smith and Co",
+        "Smith & Co Lawyers"
+      ],
+      "abn": "55667788990",
+      "billing_address": {
+        "street": "Suite 12, 88 Phillip Street",
+        "suburb": "Sydney NSW",
+        "postcode": "2000",
+        "country": "Australia"
+      },
+      "bank": {
+        "bsb": "062-440",
+        "account_number": "33445566",
+        "account_name": "Smith & Co Legal Pty Ltd",
+        "bank_name": "Commonwealth Bank"
+      },
+      "default_ledger": "Professional Services Expense",
+      "default_sub_ledger": "Legal",
+      "payment_terms": "Net 14",
+      "status": "Active",
+      "registered_on": "2024-02-14",
+      "total_spend_y_t_d": 12500,
+      "invoice_count": 4,
+      "match_confidence": 96
+    },
+    {
+      "id": "vm-5",
+      "name": "Bidfood Australia",
+      "aliases": [
+        "Bidfood",
+        "BID FOOD"
+      ],
+      "abn": "77889900112",
+      "billing_address": {
+        "street": "6 Eden Park Drive",
+        "suburb": "Macquarie Park NSW",
+        "postcode": "2113",
+        "country": "Australia"
+      },
+      "bank": {
+        "bsb": "062-191",
+        "account_number": "77889911",
+        "account_name": "Bidfood Australia Ltd",
+        "bank_name": "Commonwealth Bank"
+      },
+      "default_ledger": "Raw Materials",
+      "default_sub_ledger": "F&B Wholesale",
+      "payment_terms": "Net 21",
+      "status": "Active",
+      "registered_on": "2023-09-30",
+      "total_spend_y_t_d": 28940,
+      "invoice_count": 18,
+      "match_confidence": 98
+    },
+    {
+      "id": "vm-6",
+      "name": "Sydney Office Florals",
+      "aliases": [
+        "SOF",
+        "Sydney Florals"
+      ],
+      "abn": "PENDING",
+      "billing_address": {
+        "street": "12 Crown Street",
+        "suburb": "Surry Hills NSW",
+        "postcode": "2010",
+        "country": "Australia"
+      },
+      "bank": {
+        "account_number": "",
+        "account_name": "",
+        "bank_name": ""
+      },
+      "default_ledger": "—",
+      "default_sub_ledger": "",
+      "payment_terms": "—",
+      "status": "Pending registration",
+      "registered_on": "—",
+      "total_spend_y_t_d": 220,
+      "invoice_count": 1,
+      "match_confidence": 42
+    }
+  ],
+  "vendor_detection_config": {
+    "weights": {
+      "name": 30,
+      "abn": 40,
+      "bank": 20,
+      "address": 10
+    },
+    "threshold": 70
+  },
+  "employee_masters": [
+    {
+      "id": "em-1",
+      "name": "Marcus Webb",
+      "role": "Operations Manager",
+      "email": "marcus.webb@acme-hospitality.com.au",
+      "whatsapp_number": "+61 412 345 678",
+      "bank": {
+        "bsb": "062-001",
+        "account_number": "11223344",
+        "account_name": "Marcus Webb",
+        "bank_name": "Commonwealth Bank"
+      },
+      "budget": {
+        "monthly": 2000,
+        "quarterly": 5500,
+        "annual": 20000,
+        "categories": [
+          {
+            "ledger": "Travel Expense",
+            "cap": 800
+          },
+          {
+            "ledger": "Travel Expense",
+            "cap": 400
+          },
+          {
+            "ledger": "Office",
+            "cap": 300
+          }
+        ]
+      },
+      "ytd_spent": 9840,
+      "mtd_spent": 1420,
+      "qtd_spent": 4180,
+      "claim_count": 23,
+      "last_claim": "2h ago",
+      "status": "Active"
+    },
+    {
+      "id": "em-2",
+      "name": "Priya Sharma",
+      "role": "Site Supervisor",
+      "email": "priya@acme-hospitality.com.au",
+      "whatsapp_number": "+61 423 567 890",
+      "bank": {
+        "bsb": "032-002",
+        "account_number": "22334455",
+        "account_name": "Priya Sharma",
+        "bank_name": "Westpac"
+      },
+      "budget": {
+        "monthly": 1500,
+        "quarterly": 4000,
+        "annual": 14000,
+        "categories": [
+          {
+            "ledger": "Travel Expense",
+            "cap": 600
+          },
+          {
+            "ledger": "Travel Expense",
+            "cap": 300
+          }
+        ]
+      },
+      "ytd_spent": 7210,
+      "mtd_spent": 980,
+      "qtd_spent": 2840,
+      "claim_count": 18,
+      "last_claim": "44m ago",
+      "status": "Active"
+    },
+    {
+      "id": "em-3",
+      "name": "James Chen",
+      "role": "Marketing Lead",
+      "email": "james@acme-hospitality.com.au",
+      "whatsapp_number": "+61 434 678 901",
+      "bank": {
+        "bsb": "013-003",
+        "account_number": "33445566",
+        "account_name": "James Chen",
+        "bank_name": "ANZ"
+      },
+      "budget": {
+        "monthly": 3000,
+        "quarterly": 8000,
+        "annual": 30000,
+        "categories": [
+          {
+            "ledger": "Marketing Expense",
+            "cap": 2000
+          },
+          {
+            "ledger": "Travel Expense",
+            "cap": 800
+          }
+        ]
+      },
+      "ytd_spent": 14520,
+      "mtd_spent": 2180,
+      "qtd_spent": 6420,
+      "claim_count": 31,
+      "last_claim": "1d ago",
+      "status": "Active"
+    },
+    {
+      "id": "em-4",
+      "name": "Sofia Lopez",
+      "role": "Bookkeeper",
+      "email": "sofia@acme-hospitality.com.au",
+      "whatsapp_number": "+61 445 789 012",
+      "bank": {
+        "bsb": "082-004",
+        "account_number": "44556677",
+        "account_name": "Sofia Lopez",
+        "bank_name": "NAB"
+      },
+      "budget": {
+        "monthly": 800,
+        "quarterly": 2200,
+        "annual": 8000,
+        "categories": [
+          {
+            "ledger": "Office",
+            "cap": 400
+          },
+          {
+            "ledger": "Travel Expense",
+            "cap": 200
+          }
+        ]
+      },
+      "ytd_spent": 3840,
+      "mtd_spent": 620,
+      "qtd_spent": 1840,
+      "claim_count": 12,
+      "last_claim": "3d ago",
+      "status": "Active"
+    },
+    {
+      "id": "em-5",
+      "name": "Alex Tan",
+      "role": "Junior Developer",
+      "email": "alex@acme-hospitality.com.au",
+      "whatsapp_number": "+61 456 890 123",
+      "bank": {
+        "account_number": "",
+        "account_name": "",
+        "bank_name": ""
+      },
+      "budget": {
+        "monthly": 500,
+        "quarterly": 1200,
+        "annual": 4500,
+        "categories": []
+      },
+      "ytd_spent": 0,
+      "mtd_spent": 0,
+      "qtd_spent": 0,
+      "claim_count": 0,
+      "last_claim": "—",
+      "status": "Pending verification"
+    }
+  ],
+  "posting_defaults": {
+    "tax_account": "GST Paid",
+    "payable_account": "Accounts Payable",
+    "fallback_account": "Suspense Account"
+  },
+  "legacy_cascade": {
+    "enabled": true,
+    "priority_order": [
+      "po_code",
+      "doc_code",
+      "vendor",
+      "keyword"
+    ],
+    "po_codes": {
+      "PO-MKT-2026-014": "Marketing Expense",
+      "PO-RND-2026-007": "R&D Expense"
+    },
+    "po_code_isolated": {
+      "PO-RND-2026-007": false,
+      "PO-MKT-2026-014": false
+    },
+    "doc_codes": [
+      {
+        "id": "dc1",
+        "pattern": "DOC-2026-000*",
+        "account": "Operating Expenses",
+        "isolated": false
+      }
+    ],
+    "vendors": {
+      "Amazon Web Services": "Cloud Hosting Expense",
+      "Microsoft Azure": "Cloud Hosting Expense",
+      "Atlassian Pty Ltd": "Software Subscription Expense",
+      "Google Australia Pty Ltd": "Marketing Expense",
+      "Meta Platforms Ireland": "Marketing Expense",
+      "Deloitte Touche Tohmatsu": "Professional Services Expense",
+      "Qantas Airways Limited": "Travel Expense",
+      "Hilton Sydney": "Travel Expense"
+    },
+    "vendor_isolated": {
+      "Amazon Web Services": false,
+      "Google Australia Pty Ltd": false,
+      "Qantas Airways Limited": false,
+      "Deloitte Touche Tohmatsu": false,
+      "Meta Platforms Ireland": false,
+      "Atlassian Pty Ltd": false,
+      "Microsoft Azure": false,
+      "Hilton Sydney": false
+    },
+    "keywords": {
+      "AWS": "Cloud Hosting Expense",
+      "Azure": "Cloud Hosting Expense",
+      "Cloud": "Cloud Hosting Expense",
+      "Hosting": "Cloud Hosting Expense",
+      "SaaS": "Software Subscription Expense",
+      "Subscription": "Software Subscription Expense",
+      "Software": "Software Subscription Expense",
+      "Google Ads": "Marketing Expense",
+      "Meta Ads": "Marketing Expense",
+      "Facebook Ads": "Marketing Expense",
+      "Marketing": "Marketing Expense",
+      "Consulting": "Professional Services Expense",
+      "Freelance": "Professional Services Expense",
+      "Advisory": "Professional Services Expense",
+      "Flights": "Travel Expense",
+      "Hotels": "Travel Expense",
+      "Accommodation": "Travel Expense",
+      "Travel": "Travel Expense"
+    },
+    "keyword_isolated": {
+      "Azure": false,
+      "AWS": false,
+      "Cloud": false,
+      "Hosting": false,
+      "SaaS": false,
+      "Software": false,
+      "Subscription": false,
+      "Google Ads": false,
+      "Meta Ads": false,
+      "Marketing": false,
+      "Facebook Ads": false,
+      "Consulting": false,
+      "Freelance": false,
+      "Advisory": false,
+      "Flights": false,
+      "Hotels": false,
+      "Accommodation": false,
+      "Travel": false
+    }
+  },
+  "document_sets": [
+    {
+      "id": "ds1",
+      "pattern": "PO-MKT-2026-014",
+      "set_name": "PO-MKT-2026-014 bundle",
+      "isolated": false
+    }
+  ]
+}

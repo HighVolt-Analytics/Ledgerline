@@ -150,18 +150,51 @@ def _summarize_parse_completed(detail: dict[str, Any]) -> str:
     return ", ".join(parts) if parts else "Parse completed"
 
 
+def _summarize_duplicate_skipped(detail: dict[str, Any]) -> str:
+    filename = str(detail.get("filename") or detail.get("attachment") or "").strip()
+    source = str(detail.get("source") or "").strip()
+    original_id = detail.get("original_invoice_id")
+    parts = ["Duplicate file skipped"]
+    if isinstance(original_id, int):
+        parts.append(f"matches invoice {original_id}")
+    if filename:
+        parts.append(f"file: {filename}")
+    if source:
+        parts.append(f"via {source}")
+    return " · ".join(parts)
+
+
+def _summarize_duplicate_in_progress(detail: dict[str, Any]) -> str:
+    filename = str(detail.get("filename") or detail.get("attachment") or "").strip()
+    source = str(detail.get("source") or "").strip()
+    parts = ["Duplicate blocked — original still processing"]
+    if filename:
+        parts.append(f"file: {filename}")
+    if source:
+        parts.append(f"via {source}")
+    return " · ".join(parts)
+
+
+def _summarize_duplicate_reingest_rejected(detail: dict[str, Any]) -> str:
+    filename = str(detail.get("filename") or "").strip()
+    source = str(detail.get("source") or "").strip()
+    parts = ["Rejected document resubmitted"]
+    if filename:
+        parts.append(f"file: {filename}")
+    if source:
+        parts.append(f"via {source}")
+    return " · ".join(parts)
+
+
 def _summarize_ingest_capture(detail: dict[str, Any]) -> str:
-    route = str(detail.get("route_to") or "").strip()
     rule_name = str(detail.get("rule_name") or "").strip()
     attachment = str(detail.get("attachment") or "").strip()
-    parts: list[str] = []
-    if route:
-        parts.append(f"Routed to {route}")
+    parts: list[str] = ["Ingestion rule matched"]
     if rule_name:
         parts.append(f"rule: {rule_name}")
     if attachment:
         parts.append(f"file: {attachment}")
-    return " · ".join(parts) if parts else "Email capture rule matched"
+    return " · ".join(parts)
 
 
 def _format_vr_rows(rows: object) -> str:
@@ -203,6 +236,12 @@ def summarize_audit_change(
         return _summarize_rule_book_updated(d)
     if event == "parse_completed":
         return _summarize_parse_completed(d)
+    if event == "duplicate_skipped":
+        return _summarize_duplicate_skipped(d)
+    if event == "duplicate_in_progress":
+        return _summarize_duplicate_in_progress(d)
+    if event == "duplicate_reingest_rejected":
+        return _summarize_duplicate_reingest_rejected(d)
     if event == "ingest_capture_matched":
         return _summarize_ingest_capture(d)
     if event in ("validation_passed", "validation_failed"):
@@ -309,7 +348,12 @@ def summarize_audit_change(
             return f"File stored at {to_path}"
         return "Blob relocated"
     if event == "pipeline_error":
+        ref = str(d.get("document_ref") or "").strip()
         err = truncate_audit_error(str(d.get("error") or d.get("reason") or ""))
+        if ref and err:
+            return f"Pipeline error ({ref}): {err}"
+        if ref:
+            return f"Pipeline error ({ref})"
         return f"Pipeline error: {err}" if err else "Pipeline error"
     if event == "payment_status_updated":
         prev = str(d.get("previous_status") or "").strip()

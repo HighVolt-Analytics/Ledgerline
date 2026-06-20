@@ -17,8 +17,8 @@ const BillingPage = lazy(() =>
 const ConnectMailboxPage = lazy(() =>
   import("@/pages/ConnectMailboxPage").then((m) => ({ default: m.ConnectMailboxPage }))
 );
-const InboxPage = lazy(() =>
-  import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage }))
+const UploadPage = lazy(() =>
+  import("@/pages/UploadPage").then((m) => ({ default: m.UploadPage }))
 );
 const IntegrationsPage = lazy(() =>
   import("@/pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage }))
@@ -63,6 +63,12 @@ const PurchaseManagementPage = lazy(() =>
     default: m.PurchaseManagementPage,
   }))
 );
+const DossiersPage = lazy(() =>
+  import("@/pages/DossiersPage").then((m) => ({ default: m.DossiersPage }))
+);
+const DossierDetailPage = lazy(() =>
+  import("@/pages/DossierDetailPage").then((m) => ({ default: m.DossierDetailPage }))
+);
 const PaymentsPage = lazy(() =>
   import("@/pages/PaymentsPage").then((m) => ({ default: m.PaymentsPage }))
 );
@@ -95,11 +101,12 @@ export default function App() {
         <Route path="/" element={<ProtectedRoute />}>
           <Route element={<Layout />}>
             <Route index element={<DashboardPage />} />
+            <Route path="inbox" element={<Navigate to="/upload" replace />} />
             <Route
-              path="inbox"
+              path="upload"
               element={
                 <LazyPage>
-                  <InboxPage />
+                  <UploadPage />
                 </LazyPage>
               }
             />
@@ -140,6 +147,22 @@ export default function App() {
               element={
                 <LazyPage>
                   <ApprovalsPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="dossiers"
+              element={
+                <LazyPage>
+                  <DossiersPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="dossiers/:dossierId"
+              element={
+                <LazyPage>
+                  <DossierDetailPage />
                 </LazyPage>
               }
             />

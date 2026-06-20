@@ -8,12 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.organisation import Organisation
 from app.services.file_storage import relocate_invoice_pdf
+from app.services.invoice_evaluation_service import load_config_for_org
+from app.services.vault_invoice_paths import vault_document_type_titles_for_invoice
 from app.services.vault_paths import filename_from_stored
 from app.services.vendor_resolver import UNKNOWN_SLUG
 
 
 async def migrate_org_blobs_to_vault(session: AsyncSession, org_id: int) -> tuple[int, int]:
-    """Move stored files for an org into invoice/{org}/{book}/{vendor}/{year}/{month}/."""
+    """Move stored files for an org into invoice/{org}/{book}/[{dt}/]{vendor}/{year}/{month}/."""
     moved = 0
     skipped = 0
     org = await session.get(Organisation, org_id)
@@ -30,12 +32,16 @@ async def migrate_org_blobs_to_vault(session: AsyncSession, org_id: int) -> tupl
         )
     ).scalars().all()
 
+    config = load_config_for_org(org_id)
+    document_types = list(config.document_types)
+
     for inv in rows:
         old = inv.raw_file_path
         if not old or not inv.file_hash:
             skipped += 1
             continue
         filename = filename_from_stored(old)
+        short_title, title = vault_document_type_titles_for_invoice(inv, document_types)
         new = relocate_invoice_pdf(
             old,
             org.slug,
@@ -50,6 +56,9 @@ async def migrate_org_blobs_to_vault(session: AsyncSession, org_id: int) -> tupl
             route_target=inv.route_target,
             po_reference=inv.po_reference,
             purchase_document_type=inv.purchase_document_type,
+            document_type_code=inv.document_type_code,
+            document_type_short_title=short_title,
+            document_type_title=title,
         )
         if new != old:
             inv.raw_file_path = new

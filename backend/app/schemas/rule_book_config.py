@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.document_type import DocumentTypeDefinition
 
 
 class RuleCondition(BaseModel):
@@ -255,10 +257,21 @@ def _migrate_root_legacy_fields(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+class DocumentClassificationConfig(BaseModel):
+    """Org-level fallback when no DT classifier matches."""
+
+    unclassified_document_type_code: str = Field(default="", max_length=16)
+    unclassified_min_confidence: float = Field(default=0.45, ge=0.0, le=1.0)
+
+
 class RuleBookConfigPayload(BaseModel):
     """Org-scoped rule book — single source of truth for classification and posting."""
 
     schema_version: int = Field(default=1, ge=1)
+    document_types: list[DocumentTypeDefinition] = Field(default_factory=list)
+    document_classification: DocumentClassificationConfig = Field(
+        default_factory=DocumentClassificationConfig
+    )
     email_capture_rules: list[EmailCaptureRule] = Field(default_factory=list)
     purchase_rules: list[PurchaseRule] = Field(default_factory=list)
     expense_rules: list[ExpenseRule] = Field(default_factory=list)
@@ -272,11 +285,35 @@ class RuleBookConfigPayload(BaseModel):
     document_sets: list[DocumentSetRule] = Field(default_factory=list)
     legacy_cascade: LegacyCascadeConfig = Field(default_factory=LegacyCascadeConfig)
 
+    @model_validator(mode="after")
+    def _unique_document_type_codes(self) -> RuleBookConfigPayload:
+        codes = [item.code.strip().upper() for item in self.document_types]
+        if len(codes) != len(set(codes)):
+            raise ValueError("document type codes must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _sanitize_unclassified_document_type(self) -> RuleBookConfigPayload:
+        configured = self.document_classification.unclassified_document_type_code.strip().upper()
+        if not configured:
+            return self
+        catalogue = {item.code.strip().upper() for item in self.document_types}
+        if configured in catalogue:
+            return self
+        self.document_classification = self.document_classification.model_copy(
+            update={"unclassified_document_type_code": ""}
+        )
+        return self
+
 
 class RuleBookRulesPayload(BaseModel):
     """Rule book rules for PUT/evaluate — masters are managed via dedicated APIs."""
 
     schema_version: int = Field(default=1, ge=1)
+    document_types: list[DocumentTypeDefinition] = Field(default_factory=list)
+    document_classification: DocumentClassificationConfig = Field(
+        default_factory=DocumentClassificationConfig
+    )
     email_capture_rules: list[EmailCaptureRule] = Field(default_factory=list)
     purchase_rules: list[PurchaseRule] = Field(default_factory=list)
     expense_rules: list[ExpenseRule] = Field(default_factory=list)
@@ -287,6 +324,26 @@ class RuleBookRulesPayload(BaseModel):
     posting_defaults: PostingDefaults = Field(default_factory=PostingDefaults)
     document_sets: list[DocumentSetRule] = Field(default_factory=list)
     legacy_cascade: LegacyCascadeConfig = Field(default_factory=LegacyCascadeConfig)
+
+    @model_validator(mode="after")
+    def _unique_document_type_codes(self) -> RuleBookRulesPayload:
+        codes = [item.code.strip().upper() for item in self.document_types]
+        if len(codes) != len(set(codes)):
+            raise ValueError("document type codes must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _sanitize_unclassified_document_type(self) -> RuleBookRulesPayload:
+        configured = self.document_classification.unclassified_document_type_code.strip().upper()
+        if not configured:
+            return self
+        catalogue = {item.code.strip().upper() for item in self.document_types}
+        if configured in catalogue:
+            return self
+        self.document_classification = self.document_classification.model_copy(
+            update={"unclassified_document_type_code": ""}
+        )
+        return self
 
 
 def _backfill_category_rule_priorities(data: dict[str, Any]) -> dict[str, Any]:
@@ -301,8 +358,93 @@ def _backfill_category_rule_priorities(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _backfill_document_types(data: dict[str, Any]) -> dict[str, Any]:
+    """Ensure document_types exists; orgs start empty until users define cards."""
+    existing = data.get("document_types")
+    if isinstance(existing, list):
+        return data
+    data["document_types"] = []
+    return data
+
+
+def _count_classifier_conditions(node: dict[str, Any]) -> int:
+    if node.get("type") == "condition":
+        return 1
+    if node.get("type") == "group":
+        return sum(
+            _count_classifier_conditions(child)
+            for child in node.get("children") or []
+            if isinstance(child, dict)
+        )
+    return 0
+
+
+def _collect_document_text_signatures(node: dict[str, Any]) -> tuple[str, ...]:
+    if node.get("type") == "condition" and node.get("field") == "document_text":
+        operator = str(node.get("operator") or "")
+        value = str(node.get("value") or "")
+        return (f"{operator}:{value}",)
+    if node.get("type") == "group":
+        parts: list[str] = []
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                parts.extend(_collect_document_text_signatures(child))
+        return tuple(parts)
+    return ()
+
+
+def _merge_document_type_classifiers(data: dict[str, Any]) -> dict[str, Any]:
+    """Ensure each org document type has a classifier object — never inject shipped templates."""
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+    empty_classifier = {
+        "enabled": False,
+        "priority": 100,
+        "confidence": 0.85,
+        "root": {"type": "group", "operator": "AND", "children": []},
+    }
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        if not isinstance(row.get("classifier"), dict):
+            row = {**row, "classifier": empty_classifier}
+        merged.append(row)
+    data["document_types"] = merged
+    return data
+
+
+def _merge_document_type_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize org document type rows without injecting shipped per-code defaults."""
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        updates: dict[str, Any] = {}
+        if row.get("min_route_confidence") is None and row.get("minRouteConfidence") is None:
+            updates["min_route_confidence"] = 0.65
+        for legacy_key in ("extraction", "checks", "match", "approval", "accounting", "special"):
+            if row.get(legacy_key):
+                updates[legacy_key] = []
+        if updates:
+            row = {**row, **updates}
+        merged.append(row)
+    data["document_types"] = merged
+    return data
+
+
 def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPayload:
     if isinstance(data, dict):
         data = _migrate_root_legacy_fields(dict(data))
         data = _backfill_category_rule_priorities(data)
+        data = _backfill_document_types(data)
+        data = _merge_document_type_classifiers(data)
+        data = _merge_document_type_fields(data)
     return RuleBookConfigPayload.model_validate(data)

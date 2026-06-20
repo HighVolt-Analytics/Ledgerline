@@ -27,6 +27,13 @@ from app.services.invoice_data import InvoiceData, ParsedLineItem
 TEST_DB = "sqlite+aiosqlite:///:memory:"
 
 
+@pytest.fixture
+def capture_config():
+    from tests.rule_book_fixtures import load_capture_config
+
+    return load_capture_config()
+
+
 @pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     AuditLog.__table__.c.detail.type = JSON()
@@ -62,15 +69,18 @@ def _use_demo_rule_book_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path_factor
     monkeypatch.setenv("RULE_BOOK_SAVE_DEBOUNCE_MS", "0")
     get_settings.cache_clear()
     from app.services.account_mapper import clear_rule_book_cache
+    from app.services.document_type_catalog import clear_document_type_catalog_cache
     from app.services.rule_book_mapper import clear_classification_config_cache
     from app.services.rule_book_save_buffer import clear_rule_book_save_buffers
 
     clear_rule_book_cache()
+    clear_document_type_catalog_cache()
     clear_classification_config_cache()
     clear_rule_book_save_buffers()
     yield
     clear_rule_book_save_buffers()
     clear_classification_config_cache()
+    clear_document_type_catalog_cache()
     clear_rule_book_cache()
     get_settings.cache_clear()
 
@@ -112,6 +122,7 @@ def sample_invoice_data() -> InvoiceData:
                 amount=Decimal("1000.00"),
             )
         ],
+        document_text="Tax Invoice for consulting services",
     )
 
 

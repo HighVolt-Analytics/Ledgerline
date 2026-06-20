@@ -16,6 +16,7 @@ from app.api import (
     audit,
     auth,
     dashboard,
+    dossiers,
     employee_masters,
     invoices,
     mailboxes,
@@ -113,6 +114,7 @@ app.include_router(payments.router, prefix="/api", dependencies=_api_deps)
 app.include_router(ledger_link.router, prefix="/api", dependencies=_api_deps)
 app.include_router(billing.router, prefix="/api", dependencies=_api_deps)
 app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
+app.include_router(dossiers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
 app.include_router(organisations.router, prefix="/api", dependencies=_api_deps)

@@ -11,7 +11,9 @@ from app.schemas.vault import VaultFileEntry, VaultMigrateResponse, VaultTreeNod
 from app.services import blob_storage
 from app.services.audit_service import log_event
 from app.services.file_storage import has_stored_path
+from app.services.invoice_evaluation_service import load_config_for_org
 from app.services.org_context import get_org_slug
+from app.services.vault_invoice_paths import vault_document_type_folder_for_invoice
 from app.services.vault_migrate import migrate_org_blobs_to_vault
 from app.services.vault_paths import (
     build_vault_tree,
@@ -32,11 +34,13 @@ async def get_vault_tree_for_org(
     *,
     org_id: int,
 ) -> VaultTreeResponse:
-    """Return org → book → vendor → year → month tree for stored invoice files."""
+    """Return org → book → [document_type →] vendor → year → month tree for stored invoice files."""
     org = await session.get(Organisation, org_id)
     org_slug = await get_org_slug(session, org_id)
     org_name = org.name if org else None
     org_folder = vault_org_folder(org_slug, org_name)
+    config = load_config_for_org(org_id)
+    document_types = list(config.document_types)
 
     rows = (
         await session.execute(
@@ -55,6 +59,7 @@ async def get_vault_tree_for_org(
     for inv in rows:
         original = filename_from_stored(inv.raw_file_path)
         book = vault_book_folder(inv.route_target)
+        document_type = vault_document_type_folder_for_invoice(inv, document_types)
         vendor = vault_vendor_folder(inv.vendor, inv.storage_vendor_slug)
         year = vault_year(inv.invoice_date)
         month = vault_month(inv.invoice_date)
@@ -79,11 +84,14 @@ async def get_vault_tree_for_org(
             original_filename=original,
             po_reference=inv.po_reference,
             purchase_document_type=inv.purchase_document_type,
+            document_type_code=inv.document_type_code,
+            document_type_folder=document_type,
         )
         has_file = has_stored_path(inv.raw_file_path)
         entry = {
             "org": org_folder,
             "book": book,
+            "document_type": document_type or "",
             "vendor": vendor,
             "year": year,
             "month": month,
@@ -94,6 +102,7 @@ async def get_vault_tree_for_org(
                 invoice_id=inv.id,
                 org=org_folder,
                 book=book,
+                document_type=document_type,
                 vendor=vendor,
                 year=year,
                 month=month,

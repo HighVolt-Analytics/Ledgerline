@@ -21,7 +21,7 @@ export function PayableInvoiceRow({ invoice }: { invoice: Invoice }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <Link
-              to={`/inbox?doc=${invoice.id}`}
+              to={`/upload?doc=${invoice.id}`}
               className="font-medium text-sm hover:text-primary"
             >
               {invId(invoice.id)}

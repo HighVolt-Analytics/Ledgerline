@@ -127,7 +127,7 @@ export function TeamExpensesPage() {
       <RoutedInvoicesPanel
         routeTarget={ROUTE_TARGET}
         title="Documents routed from Rule Book"
-        hint="Employee channel claims routed here by email capture or team expense rules."
+        hint="Employee expense claims routed here after OCR and document classification."
         testId="team-routed-invoices"
       />
 
@@ -147,7 +147,7 @@ export function TeamExpensesPage() {
         ) : claims.length === 0 ? (
           <EmptyState
             title="No team expense claims yet"
-            hint="Documents routed to Team Expenses appear here after email capture or rule-book remap."
+            hint="Documents routed to Team Expenses appear here after OCR and rule-book evaluation."
           />
         ) : (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">

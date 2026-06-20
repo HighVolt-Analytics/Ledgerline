@@ -119,30 +119,68 @@ def _email_field(email: SampleEmail, field: str) -> str:
     return mapping.get(field, "")
 
 
-def _eval_condition(email: SampleEmail, cond: dict[str, Any]) -> bool:
-    value = _email_field(email, str(cond.get("field", "")))
-    return _match_value(
-        value,
-        str(cond.get("operator", "")),
-        str(cond.get("value", "")),
-        case_sensitive=cond.get("case_sensitive"),
+def eval_condition_group(email: SampleEmail, group: dict[str, Any]) -> bool:
+    return eval_condition_group_generic(
+        group,
+        field_resolver=lambda field, _email=email: _email_field(_email, field),
     )
 
 
-def eval_condition_group(email: SampleEmail, group: dict[str, Any]) -> bool:
+def sanitize_condition_group(group: dict[str, Any]) -> dict[str, Any]:
+    """Drop empty nested groups so classifiers cannot match on blank branches."""
+    children = group.get("children") or []
+    cleaned: list[dict[str, Any]] = []
+    for child in children:
+        if child.get("type") == "group":
+            sanitized = sanitize_condition_group(child)
+            if sanitized.get("children"):
+                cleaned.append(sanitized)
+        else:
+            cleaned.append(child)
+    return {
+        "type": "group",
+        "operator": group.get("operator", "AND"),
+        "children": cleaned,
+    }
+
+
+def classifier_has_actionable_conditions(root: dict[str, Any]) -> bool:
+    children = root.get("children") or []
+    if not children:
+        return False
+    for child in children:
+        if child.get("type") == "group":
+            if classifier_has_actionable_conditions(child):
+                return True
+        else:
+            return True
+    return False
+
+
+def eval_condition_group_generic(
+    group: dict[str, Any],
+    *,
+    field_resolver: Any,
+) -> bool:
     children = group.get("children") or []
     if not children:
         return False
     results: list[bool] = []
     for child in children:
         if child.get("type") == "group":
-            sub_children = child.get("children") or []
-            if not sub_children:
-                # Empty groups saved by the UI should not block AND rules.
-                continue
-            results.append(eval_condition_group(email, child))
+            results.append(
+                eval_condition_group_generic(child, field_resolver=field_resolver)
+            )
         else:
-            results.append(_eval_condition(email, child))
+            value = field_resolver(str(child.get("field", "")))
+            results.append(
+                _match_value(
+                    value,
+                    str(child.get("operator", "")),
+                    str(child.get("value", "")),
+                    case_sensitive=child.get("case_sensitive"),
+                )
+            )
     if not results:
         return False
     operator = group.get("operator", "AND")

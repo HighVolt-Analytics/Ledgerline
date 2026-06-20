@@ -177,7 +177,9 @@ def test_vault_view_path_full_url_from_public_app_url(monkeypatch: pytest.Monkey
     from app.config import get_settings
 
     monkeypatch.setenv("PUBLIC_APP_URL", "http://localhost:5173")
+    monkeypatch.setenv("AZURE_WEBAPP_URL", "")
     monkeypatch.setenv("PUBLIC_TUNNEL_URL", "")
+    monkeypatch.setenv("NGROK_URL", "")
     monkeypatch.delenv("BASE_PATH", raising=False)
     get_settings.cache_clear()
     assert vault_view_path(40) == "http://localhost:5173/vault?invoice=40"
@@ -200,7 +202,9 @@ def test_resolve_public_app_base_from_oauth_return_url(monkeypatch: pytest.Monke
     from app.config import get_settings
 
     monkeypatch.delenv("PUBLIC_APP_URL", raising=False)
+    monkeypatch.setenv("AZURE_WEBAPP_URL", "")
     monkeypatch.setenv("PUBLIC_TUNNEL_URL", "")
+    monkeypatch.setenv("NGROK_URL", "")
     monkeypatch.setenv(
         "GRAPH_OAUTH_FRONTEND_RETURN_URL",
         "http://localhost:5173/integrations",

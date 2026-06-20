@@ -1,4 +1,5 @@
 @import "./styles/ledgerline.css";
+@import "./styles/dossiers.css"; /* dossier page layout + cards */
 
 #root {
   min-height: 100vh;
@@ -808,6 +809,127 @@ input.app-numeric-input {
   max-width: 26rem;
 }
 
+.document-type-dialog {
+  max-width: 42rem;
+}
+
+.document-type-detail-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: 40rem;
+  max-height: 90vh;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.document-type-detail-dialog .detail-dialog-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 1.25rem 1.5rem 1rem;
+}
+
+.document-type-detail-dialog .detail-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-y: auto;
+  padding: 1rem 1.5rem 1.25rem;
+}
+
+.document-type-edit-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: 52rem;
+  max-height: 90vh;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.document-type-edit-dialog .detail-dialog-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 1.25rem 1.5rem 1rem;
+}
+
+.document-type-edit-dialog .detail-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-y: auto;
+  padding: 1rem 1.5rem;
+}
+
+.document-type-edit-dialog .detail-dialog-footer {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  padding: 1rem 1.5rem;
+}
+
+.v5-dialog-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+
+.v5-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: default;
+  background: rgb(0 0 0 / 0.8);
+  animation: v5-dialog-overlay-in 200ms ease-out;
+}
+
+.v5-dialog-content {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 201;
+  display: grid;
+  width: calc(100% - 2rem);
+  max-width: 42rem;
+  max-height: 85vh;
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+  gap: 1rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--background));
+  padding: 1.5rem;
+  box-shadow:
+    0 10px 15px -3px rgb(0 0 0 / 0.1),
+    0 4px 6px -4px rgb(0 0 0 / 0.1);
+  animation: v5-dialog-content-in 200ms ease-out;
+}
+
+@keyframes v5-dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes v5-dialog-content-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
 @keyframes app-modal-fade-in {
   from {
     opacity: 0;
@@ -839,4 +961,19 @@ input.app-numeric-input {
   .vault-explorer-grid {
     grid-template-columns: 300px minmax(0, 1fr);
   }
+}
+
+.upload-drop-zone {
+  border-color: hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.upload-drop-zone--active {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.04);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.12);
+}
+
+.upload-drop-zone--compact {
+  min-height: 0;
 }

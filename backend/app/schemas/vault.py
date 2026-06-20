@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class VaultNodeKind(str, Enum):
     ORG = "org"
     BOOK = "book"
+    DOCUMENT_TYPE = "document_type"
     VENDOR = "vendor"
     YEAR = "year"
     MONTH = "month"
@@ -24,6 +25,7 @@ class VaultFileEntry(BaseModel):
     invoice_id: int
     org: str
     book: str
+    document_type: str | None = None
     vendor: str
     year: str
     month: str

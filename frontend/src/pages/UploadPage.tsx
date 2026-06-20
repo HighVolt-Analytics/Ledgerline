@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-react";
 import { api } from "@/api/client";
-import type { ConnectedMailbox, Invoice } from "@/api/types";
+import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
+import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
 import {
@@ -17,31 +18,39 @@ import { inboxStage, StageBadge } from "@/components/StageBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
-import { invId, money } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
+import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
 import {
-  invoiceDocumentType,
-  invoiceDocumentTypeLabel,
-  invoiceMatchesMailbox,
   invoiceSourceKind,
   invoiceValidationConfidence,
   invoiceVendorConfidence,
   mailboxDisplayName,
 } from "@/lib/invoice";
-import { fetchAllInvoices } from "@/lib/invoices";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { sortInvoicesNewestFirst } from "@/lib/invoices";
 import { cn } from "@/lib/cn";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
+import { UploadDropZone } from "@/components/upload/UploadDropZone";
+import {
+  BULK_UPLOAD_MAX_FILES,
+  filterUploadFiles,
+  formatBulkUploadNotice,
+  UPLOAD_ACCEPT,
+  uploadFilesInBatch,
+} from "@/lib/bulkUpload";
 
 const INBOX_POLL_MS = 15_000;
-const UPLOAD_ACCEPT = ".pdf,.jpg,.jpeg,.png,.docx";
-const PIPELINE_STATUSES = new Set([
-  "pending",
-  "parsing",
-  "validating",
-  "mapping",
-  "journaling",
-  "reconciling",
-]);
 const PROCESSING_WAIT_MS = 120_000;
+const PAGE_SIZE = 10;
+const NOTICE_AUTO_DISMISS_MS = 5000; // upload / mailbox notices (not in-progress fetch/import)
+
+function isProgressNotice(notice: string): boolean {
+  return (
+    notice.startsWith("Fetch queued") ||
+    notice.startsWith("Processing…") ||
+    notice.startsWith("Historical import started")
+  );
+}
 
 async function waitForProcessingIdle(timeoutMs = PROCESSING_WAIT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -52,20 +61,6 @@ async function waitForProcessingIdle(timeoutMs = PROCESSING_WAIT_MS): Promise<vo
       sawRunning = true;
     }
     if (sawRunning && status.state === "idle" && status.active_tasks === 0) {
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-}
-
-async function waitForInvoicePipeline(
-  invoiceId: number,
-  timeoutMs = PROCESSING_WAIT_MS
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const inv = await api.getInvoice(invoiceId);
-    if (!PIPELINE_STATUSES.has(inv.status)) {
       return;
     }
     await new Promise((r) => setTimeout(r, 1500));
@@ -105,8 +100,9 @@ function mailboxNickname(mb: ConnectedMailbox): string {
   return mailboxDisplayName(mb.email, mb.display_name);
 }
 
-export function InboxPage() {
+export function UploadPage() {
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const { data: ruleBook } = useRuleBookConfig();
   const [all, setAll] = useState<Invoice[]>([]);
   const [mailboxes, setMailboxes] = useState<ConnectedMailbox[]>([]);
   const [totalInvoices, setTotalInvoices] = useState(0);
@@ -116,9 +112,17 @@ export function InboxPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [fetching, setFetching] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(
+    null
+  );
   const [fetchNotice, setFetchNotice] = useState<string | null>(null);
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [importMailbox, setImportMailbox] = useState<ConnectedMailbox | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importJob, setImportJob] = useState<MailboxBackfillJob | null>(null);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     if (!options?.silent) {
@@ -127,20 +131,33 @@ export function InboxPage() {
     }
     try {
       const fresh = options?.fresh ?? !options?.silent;
-      const [invoiceRows, mbs] = await Promise.all([
-        fetchAllInvoices(fresh),
-        api.listMailboxes({ fresh }).catch(() => [] as ConnectedMailbox[]),
-      ]);
+      const mbs = await api.listMailboxes({ fresh }).catch(() => [] as ConnectedMailbox[]);
+      const selectedMailboxId =
+        source === "all" ? null : (mbs.find((m) => m.email === source)?.id ?? null);
+      const invoiceRes = await api.listInvoicesWithMeta(
+        {
+          page: String(page),
+          page_size: String(PAGE_SIZE),
+          ...(selectedMailboxId != null
+            ? { connected_mailbox_id: String(selectedMailboxId) }
+            : {}),
+        },
+        { fresh }
+      );
+      const invoiceRows = invoiceRes.data;
+      const metaTotal = invoiceRes.meta?.total ?? invoiceRows.length;
+      const metaPages = invoiceRes.meta?.pages ?? 1;
       setAll(invoiceRows);
-      setTotalInvoices(invoiceRows.length);
+      setTotalInvoices(metaTotal);
+      setTotalPages(Math.max(1, metaPages));
       setMailboxes(mbs);
       return {
-        total: invoiceRows.length,
+        total: metaTotal,
         ids: invoiceRows.map((i) => i.id),
       };
     } catch (e) {
       if (!options?.silent) {
-        setError(e instanceof Error ? e.message : "Failed to load inbox");
+        setError(e instanceof Error ? e.message : "Failed to load documents");
         setAll([]);
         setMailboxes([]);
       }
@@ -148,7 +165,7 @@ export function InboxPage() {
     } finally {
       if (!options?.silent) setLoading(false);
     }
-  }, []);
+  }, [page, source]);
 
   useEffect(() => {
     void load();
@@ -158,17 +175,24 @@ export function InboxPage() {
     void load({ silent: true, fresh: true });
   }, INBOX_POLL_MS);
 
-  const captured = useMemo(
-    () => all.filter((r) => r.status !== "duplicate_skipped"),
-    [all]
-  );
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
-  const filtered = useMemo(() => {
-    if (source === "all") return captured;
-    const mb = mailboxes.find((m) => m.email === source);
-    if (!mb) return captured;
-    return captured.filter((i) => invoiceMatchesMailbox(i, mb.id));
-  }, [captured, source, mailboxes]);
+  useEffect(() => {
+    if (!fetchNotice || isProgressNotice(fetchNotice)) return;
+    const timer = window.setTimeout(() => setFetchNotice(null), NOTICE_AUTO_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [fetchNotice]);
+
+  const captured = useMemo(() => {
+    const rows = all.filter((r) => r.status !== "duplicate_skipped");
+    return sortInvoicesNewestFirst(rows);
+  }, [all]);
+
+  const filtered = useMemo(() => captured, [captured]);
 
   const docsPerMailbox = useMemo(() => {
     const counts = new Map<number, number>();
@@ -218,6 +242,7 @@ export function InboxPage() {
       setMailboxes((prev) => prev.filter((m) => m.id !== mb.id));
       if (source === mb.email) {
         setSource("all");
+        setPage(1);
       }
       await load({ silent: true, fresh: true });
     } catch (e) {
@@ -239,9 +264,11 @@ export function InboxPage() {
       for (let attempt = 0; attempt < 20; attempt += 1) {
         const snapshot = await load({ silent: true, fresh: true });
         if (snapshot != null) latestTotal = snapshot.total;
-        const hasNewDoc =
-          snapshot?.ids.some((id) => !beforeIds.has(id)) ?? false;
-        if (latestTotal > beforeTotal || hasNewDoc) break;
+        const hasNewDoc = snapshot?.ids.some((id) => !beforeIds.has(id)) ?? false;
+        if (latestTotal > beforeTotal || hasNewDoc) {
+          setPage(1);
+          break;
+        }
         if (attempt < 19) {
           setFetchNotice("Processing… checking for new documents");
           await new Promise((r) => setTimeout(r, 2000));
@@ -255,25 +282,102 @@ export function InboxPage() {
     }
   }
 
-  async function uploadDocument(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-
-    setUploading(true);
+  async function startHistoricalImport(payload: {
+    from_date: string;
+    to_date: string;
+    mark_processed: boolean;
+  }) {
+    if (!importMailbox) return;
+    setImportBusy(true);
     setFetchNotice(null);
     try {
-      const inv = await api.uploadInvoice(file);
-      setFetchNotice("Document uploaded — processing…");
-      await waitForInvoicePipeline(inv.id);
+      const queued = await api.startMailboxBackfill(importMailbox.id, payload);
+      const mailboxId = importMailbox.id;
+      setImportJob(queued.job);
+      setImportMailbox(null);
+      setFetchNotice("Historical import started…");
+
+      const deadline = Date.now() + PROCESSING_WAIT_MS;
+      let job = queued.job;
+      while (
+        Date.now() < deadline &&
+        (job.status === "queued" || job.status === "running")
+      ) {
+        await new Promise((r) => setTimeout(r, 2000));
+        job = await api.getMailboxBackfillStatus(mailboxId, job.id, { fresh: true });
+        setImportJob(job);
+      }
+
+      await waitForProcessingIdle();
+      setPage(1);
       await load({ fresh: true });
-      setFetchNotice(null);
-      openDrawer(inv.id);
+
+      if (job.status === "completed") {
+        setFetchNotice(
+          `Import complete — ${job.attachments_ingested} attachment(s) ingested from ${job.messages_scanned} message(s).`
+        );
+      } else if (job.status === "failed") {
+        setFetchNotice(job.error_message ?? "Historical import failed");
+      } else {
+        setFetchNotice("Import still running — refresh later for results.");
+      }
+    } catch (e) {
+      setFetchNotice(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function runUpload(rawFiles: File[]) {
+    const { accepted, skipped } = filterUploadFiles(rawFiles);
+    if (accepted.length === 0) {
+      if (skipped > 0) {
+        setFetchNotice(`${skipped} file(s) skipped — supported types: PDF, JPG, PNG, DOCX.`);
+      }
+      return;
+    }
+
+    const files =
+      accepted.length > BULK_UPLOAD_MAX_FILES
+        ? accepted.slice(0, BULK_UPLOAD_MAX_FILES)
+        : accepted;
+    const truncated = accepted.length > files.length;
+
+    setUploading(true);
+    setUploadProgress({ completed: 0, total: files.length });
+    setFetchNotice(null);
+    try {
+      const summary = await uploadFilesInBatch(files, {
+        onProgress: (completed, total) => setUploadProgress({ completed, total }),
+      });
+      let notice = formatBulkUploadNotice(summary);
+      if (skipped > 0) {
+        notice = `${skipped} unsupported file(s) skipped. ${notice}`;
+      }
+      if (truncated) {
+        notice = `${notice} Only the first ${BULK_UPLOAD_MAX_FILES} files were uploaded.`;
+      }
+      setFetchNotice(notice);
+      setPage(1);
+      await load({ silent: true, fresh: true });
+      if (summary.uploaded > 0) {
+        window.setTimeout(() => {
+          void load({ silent: true, fresh: true });
+        }, 3000);
+      }
     } catch (err) {
       setFetchNotice(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
+  }
+
+  async function uploadDocuments(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (selected.length === 0) return;
+    await runUpload(selected);
   }
 
   if (error) {
@@ -287,24 +391,13 @@ export function InboxPage() {
   return (
     <div>
       <PageHeader
-        title="Inbox"
+        title="Upload"
         subtitle="Documents captured from connected mailboxes, uploads and the vault."
         actions={
-          <>
-            <Button
-              variant="outline"
-              disabled={uploading}
-              onClick={() => uploadInputRef.current?.click()}
-              data-testid="button-upload-doc"
-            >
-              <Upload className="h-4 w-4 mr-1" />
-              {uploading ? "Uploading…" : "Upload doc"}
-            </Button>
-            <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" />
-              Add mailbox
-            </Button>
-          </>
+          <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4 mr-1" />
+            Add mailbox
+          </Button>
         }
       />
 
@@ -314,17 +407,51 @@ export function InboxPage() {
         onSendInvite={sendMailboxInvite}
       />
 
+      <MailboxImportDialog
+        open={importMailbox != null}
+        mailboxEmail={importMailbox?.email ?? ""}
+        busy={importBusy}
+        onClose={() => setImportMailbox(null)}
+        onSubmit={(payload) => void startHistoricalImport(payload)}
+      />
+
+      <UploadDropZone
+        className="mb-6"
+        compact={captured.length > 0}
+        disabled={uploading}
+        uploading={uploading}
+        progress={uploadProgress}
+        onFiles={(files) => void runUpload(files)}
+        onBrowse={() => uploadInputRef.current?.click()}
+      />
+
       <input
         ref={uploadInputRef}
         type="file"
         accept={UPLOAD_ACCEPT}
+        multiple
         className="hidden"
         data-testid="input-upload-doc"
-        onChange={uploadDocument}
+        onChange={uploadDocuments}
       />
 
-      {fetchNotice && (
-        <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">{fetchNotice}</Card>
+      {fetchNotice ? (
+        <Card
+          className="p-3 mb-4 text-xs text-muted-foreground border-dashed"
+          role="status"
+          data-testid="upload-notice"
+        >
+          {fetchNotice}
+        </Card>
+      ) : null}
+
+      {importJob && (importJob.status === "queued" || importJob.status === "running") && (
+        <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">
+          Importing mail from {importJob.from_date} to {importJob.to_date}…{" "}
+          {importJob.messages_scanned > 0
+            ? `${importJob.messages_scanned} message(s) scanned`
+            : "scanning mailbox"}
+        </Card>
       )}
 
       {mailboxes.length > 0 ? (
@@ -332,9 +459,9 @@ export function InboxPage() {
           {mailboxes.map((mb) => {
             const docCount = docsPerMailbox.get(mb.id) ?? 0;
             return (
-              <Card key={mb.id} className="p-4" data-testid={`card-mailbox-${mb.email}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
+              <Card key={mb.id} className="p-4 min-w-0" data-testid={`card-mailbox-${mb.email}`}>
+                <div className="flex items-start justify-between gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
                     <Mail className="h-4 w-4 text-primary shrink-0" />
                     <div className="min-w-0">
                       <p className="font-medium text-sm truncate">{mailboxNickname(mb)}</p>
@@ -360,46 +487,60 @@ export function InboxPage() {
                         : "Disconnected"}
                   </span>
                 </div>
-                <div className="flex items-center justify-between mt-3 text-xs text-muted-foreground">
-                  <span>
+                <div className="flex items-center justify-between gap-2 mt-3 text-xs text-muted-foreground min-w-0">
+                  <span className="truncate">
                     {mailboxProvider(mb)} · {relativeTime(mb.last_poll_at)}
                   </span>
-                  <span className="tnum">{docCount} docs</span>
+                  <span className="tnum shrink-0">{docCount} docs</span>
                 </div>
-                <div className="flex items-center gap-1.5 mt-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2 text-xs"
-                    data-testid={`button-fetch-${mb.email}`}
-                    disabled={fetching === mb.email}
-                    onClick={() => void fetchMailbox(mb)}
-                  >
-                    <RefreshCw
-                      className={cn("h-3 w-3 mr-1", fetching === mb.email && "animate-spin")}
-                    />
-                    Fetch
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2 text-xs"
-                    data-testid={`button-toggle-${mb.email}`}
-                    onClick={() => toggleMailboxActive(mb)}
-                  >
-                    {mb.is_active ? (
-                      <Pause className="h-3 w-3 mr-1" />
-                    ) : (
-                      <Play className="h-3 w-3 mr-1" />
-                    )}
-                    {mb.is_active ? "Pause" : "Resume"}
-                  </Button>
+                <div className="mt-3 flex items-center gap-1.5 min-w-0">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-xs"
+                      data-testid={`button-import-${mb.email}`}
+                      disabled={importBusy || fetching === mb.email}
+                      onClick={() => setImportMailbox(mb)}
+                    >
+                      <Calendar className="h-3 w-3 mr-1 shrink-0" />
+                      Import
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-xs"
+                      data-testid={`button-fetch-${mb.email}`}
+                      disabled={fetching === mb.email || importBusy}
+                      onClick={() => void fetchMailbox(mb)}
+                    >
+                      <RefreshCw
+                        className={cn("h-3 w-3 mr-1 shrink-0", fetching === mb.email && "animate-spin")}
+                      />
+                      Fetch
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-xs"
+                      data-testid={`button-toggle-${mb.email}`}
+                      onClick={() => toggleMailboxActive(mb)}
+                    >
+                      {mb.is_active ? (
+                        <Pause className="h-3 w-3 mr-1 shrink-0" />
+                      ) : (
+                        <Play className="h-3 w-3 mr-1 shrink-0" />
+                      )}
+                      {mb.is_active ? "Pause" : "Resume"}
+                    </Button>
+                  </div>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-destructive ml-auto"
+                    className="h-7 w-7 shrink-0 text-destructive"
                     data-testid={`button-remove-${mb.email}`}
                     onClick={() => removeMailbox(mb)}
+                    aria-label={`Remove ${mb.email}`}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
@@ -424,28 +565,16 @@ export function InboxPage() {
       )}
 
       {loading && captured.length === 0 ? (
-        <Card className="p-8 text-center text-sm text-muted-foreground">Loading inbox…</Card>
+        <Card className="p-8 text-center text-sm text-muted-foreground">Loading documents…</Card>
       ) : captured.length === 0 ? (
         <EmptyState
-          title="Inbox is empty"
-          hint="Connect a mailbox and fetch, or upload an invoice PDF from this page."
+          title="No documents yet"
+          hint="Drop files in the panel above, or connect a mailbox and fetch from email."
           action={
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={uploading}
-                onClick={() => uploadInputRef.current?.click()}
-                data-testid="button-upload-doc"
-              >
-                <Upload className="h-4 w-4 mr-1" />
-                {uploading ? "Uploading…" : "Upload doc"}
-              </Button>
-              <Button size="sm" onClick={() => setAddOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add mailbox
-              </Button>
-            </div>
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Add mailbox
+            </Button>
           }
         />
       ) : (
@@ -454,23 +583,15 @@ export function InboxPage() {
             <h3 className="text-sm font-semibold flex items-center gap-2">
               <Mail className="h-4 w-4 text-primary" />
               Captured documents
-              <span className="text-muted-foreground tnum font-normal">({filtered.length})</span>
+              <span className="text-muted-foreground tnum font-normal">({totalInvoices})</span>
             </h3>
             <div className="flex items-center gap-2 ml-auto">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                disabled={uploading}
-                onClick={() => uploadInputRef.current?.click()}
-                data-testid="button-upload-doc-toolbar"
-              >
-                <Upload className="h-3.5 w-3.5 mr-1" />
-                {uploading ? "Uploading…" : "Upload"}
-              </Button>
             <Select
               value={source}
-              onValueChange={setSource}
+              onValueChange={(value) => {
+                setSource(value);
+                setPage(1);
+              }}
               data-testid="select-source-filter"
               className="w-[220px] h-8 text-xs"
               options={[
@@ -517,10 +638,10 @@ export function InboxPage() {
                     onClick={() => openDrawer(inv.id)}
                   >
                     <td className="px-4 py-2.5">
-                      <div className="font-medium">{invId(inv.id)}</div>
+                      <div className="font-medium tnum">{documentDisplayRef(inv)}</div>
                       <div className="text-xs text-muted-foreground tnum">
-                        {inv.invoice_no ?? `DOC-${inv.id}`} ·{" "}
-                        {invoiceDocumentTypeLabel(invoiceDocumentType(inv))}
+                        {inv.invoice_no ? `${inv.invoice_no} · ` : ""}
+                        {invoiceDocumentTypeDisplayLabel(inv, ruleBook?.documentTypes)}
                       </div>
                     </td>
                     <td className="px-3 py-2.5 max-w-[160px] truncate">{inv.vendor ?? "—"}</td>
@@ -555,6 +676,42 @@ export function InboxPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-border">
+            <p className="text-xs text-muted-foreground">
+              Page {page} of {totalPages}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                Prev
+              </Button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                <Button
+                  key={p}
+                  variant={p === page ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 min-w-8 px-2 text-xs tnum"
+                  onClick={() => setPage(p)}
+                >
+                  {p}
+                </Button>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         </Card>
       )}

@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
-import { invId, money } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
 import { fetchAllApprovals, fetchAllInvoices } from "@/lib/invoices";
 import { approveAndProcess, watchProcessingUntilIdle } from "@/lib/invoiceActions";
 import { cn } from "@/lib/cn";
@@ -233,10 +233,14 @@ export function ApprovalsPage() {
       setToast("Publish is available for processed invoices only.");
       return;
     }
+    if (inv.published_to_ledger) {
+      setToast(`${documentDisplayRef(inv)} is already published.`);
+      return;
+    }
     setBusyId(inv.id);
     try {
       await api.publishInvoice(inv.id);
-      setToast(`Published · ${invId(inv.id)}`);
+      setToast(`Published · ${documentDisplayRef(inv)}`);
       await load({ silent: true, fresh: true });
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Publish failed");
@@ -274,11 +278,11 @@ export function ApprovalsPage() {
           hint="Exception invoices appear here for review. Rejected files are stored under rejected/org/vendor/year/month in Azure."
           action={
             <Link
-              to="/inbox"
+              to="/upload"
               data-testid="button-load-samples"
               className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             >
-              Go to Inbox
+              Go to Upload
             </Link>
           }
         />
@@ -361,7 +365,7 @@ export function ApprovalsPage() {
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium truncate">{inv.vendor ?? "—"}</span>
                         <Badge variant="outline" className="tnum text-[10px] shrink-0">
-                          {invId(inv.id)}
+                          {documentDisplayRef(inv)}
                         </Badge>
                       </div>
                       <div className="text-xs text-muted-foreground tnum mt-0.5">
@@ -425,7 +429,7 @@ export function ApprovalsPage() {
                             Reject
                           </Button>
                         )}
-                        {col.key === "approved" && (
+                        {col.key === "approved" && !inv.published_to_ledger && (
                           <Button
                             variant="ghost"
                             size="sm"
