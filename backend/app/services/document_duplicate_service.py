@@ -56,7 +56,7 @@ async def normalized_invoice_number_duplicate_exists(
     session: AsyncSession,
     data: InvoiceData,
     *,
-    org_id: int,
+    tenant_id: int,
     exclude_id: int | None = None,
 ) -> Invoice | None:
     target = normalize_invoice_number(data.invoice_no)
@@ -67,7 +67,7 @@ async def normalized_invoice_number_duplicate_exists(
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             func.lower(Invoice.vendor) == vendor_key,
             Invoice.status.notin_(VR02_IGNORE_STATUSES),
         )
@@ -86,7 +86,7 @@ async def fuzzy_business_duplicate_exists(
     session: AsyncSession,
     data: InvoiceData,
     *,
-    org_id: int,
+    tenant_id: int,
     exclude_id: int | None = None,
     amount_pct: Decimal = Decimal("0.005"),
     date_window_days: int = 7,
@@ -105,7 +105,7 @@ async def fuzzy_business_duplicate_exists(
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             func.lower(Invoice.vendor) == vendor_key,
             Invoice.total.is_not(None),
             Invoice.total >= low,
@@ -137,11 +137,11 @@ async def find_invoice_by_file_hash(
     session: AsyncSession,
     file_hash: str,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> Invoice | None:
     stmt = select(Invoice).where(
         Invoice.file_hash == file_hash,
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 
@@ -197,7 +197,7 @@ async def log_duplicate_skipped(
 async def create_duplicate_shadow_invoice(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     original: Invoice,
     connected_mailbox_id: int | None = None,
     whatsapp_connection_id: int | None = None,
@@ -212,11 +212,11 @@ async def create_duplicate_shadow_invoice(
     """
     Record a duplicate submission without changing the original processed invoice.
 
-    Shadow rows omit file_hash so the unique (org_id, file_hash) constraint still
+    Shadow rows omit file_hash so the unique (tenant_id, file_hash) constraint still
   protects the canonical stored document on the original row.
     """
     shadow = Invoice(
-        org_id=org_id,
+        tenant_id=tenant_id,
         connected_mailbox_id=connected_mailbox_id,
         whatsapp_connection_id=whatsapp_connection_id,
         status=InvoiceStatus.DUPLICATE_SKIPPED,
@@ -253,7 +253,7 @@ async def invoice_number_duplicate_exists(
     session: AsyncSession,
     data: InvoiceData,
     *,
-    org_id: int,
+    tenant_id: int,
     exclude_id: int | None = None,
 ) -> Invoice | None:
     """Return an existing invoice that blocks VR02, if any."""
@@ -266,7 +266,7 @@ async def invoice_number_duplicate_exists(
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             func.lower(Invoice.invoice_no) == data.invoice_no.strip().lower(),
             func.lower(Invoice.vendor) == vendor_key,
             Invoice.status.notin_(VR02_IGNORE_STATUSES),

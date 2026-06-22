@@ -108,12 +108,12 @@ def extraction_fields_for_invoice_code(
     code: str,
     document_types: list[DocumentTypeDefinition] | None,
     *,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> list[str]:
     definition = get_document_type_definition(
         code,
         document_types=document_types,
-        org_id=org_id,
+        tenant_id=tenant_id,
     )
     if definition is None:
         return []
@@ -124,7 +124,7 @@ def effective_document_type_code(
     invoice: Invoice,
     document_types: list[DocumentTypeDefinition] | None,
     *,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> str:
     """Stored DT code, or catalogue match from purchase document role when classifiers missed."""
     stored = (invoice.document_type_code or "").strip().upper()
@@ -175,7 +175,7 @@ def missing_extraction_fields(
 async def _invoice_dt_present(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     po_reference: str,
     dt_code: str,
     exclude_invoice_id: int | None,
@@ -183,7 +183,7 @@ async def _invoice_dt_present(
     stmt = (
         select(Invoice.id)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.po_reference == po_reference,
             Invoice.document_type_code == dt_code,
             Invoice.status.not_in(_TERMINAL_SKIP_STATUSES),
@@ -198,12 +198,12 @@ async def _invoice_dt_present(
 async def _purchase_po_present(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     po_reference: str,
 ) -> bool:
     stmt = (
         select(PurchaseOrder.id)
-        .where(PurchaseOrder.org_id == org_id, PurchaseOrder.po_number == po_reference)
+        .where(PurchaseOrder.tenant_id == tenant_id, PurchaseOrder.po_number == po_reference)
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none() is not None
@@ -212,13 +212,13 @@ async def _purchase_po_present(
 async def _purchase_grn_present(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     po_reference: str,
 ) -> bool:
     stmt = (
         select(GoodsReceipt.id)
         .join(PurchaseOrder, GoodsReceipt.purchase_order_id == PurchaseOrder.id)
-        .where(PurchaseOrder.org_id == org_id, PurchaseOrder.po_number == po_reference)
+        .where(PurchaseOrder.tenant_id == tenant_id, PurchaseOrder.po_number == po_reference)
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none() is not None
@@ -227,14 +227,14 @@ async def _purchase_grn_present(
 async def _purchase_document_upload_present(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     po_reference: str,
     purchase_document_type: str,
 ) -> bool:
     inv = await session.execute(
         select(Invoice.id)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.po_reference == po_reference,
             Invoice.purchase_document_type == purchase_document_type,
             Invoice.status.not_in(_TERMINAL_SKIP_STATUSES),
@@ -247,34 +247,34 @@ async def _purchase_document_upload_present(
 async def _bundle_dt_satisfied(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     po_reference: str,
     dt_code: str,
     exclude_invoice_id: int | None,
     document_types: list[DocumentTypeDefinition] | None = None,
 ) -> bool:
     code = dt_code.strip().upper()
-    member = get_document_type_definition(code, document_types=document_types, org_id=org_id)
+    member = get_document_type_definition(code, document_types=document_types, tenant_id=tenant_id)
     role = (member.purchase_bundle_role if member else "") or ""
 
     if role == "po":
-        if await _purchase_po_present(session, org_id=org_id, po_reference=po_reference):
+        if await _purchase_po_present(session, tenant_id=tenant_id, po_reference=po_reference):
             return True
         if await _purchase_document_upload_present(
-            session, org_id=org_id, po_reference=po_reference, purchase_document_type="po"
+            session, tenant_id=tenant_id, po_reference=po_reference, purchase_document_type="po"
         ):
             return True
     elif role == "grn":
-        if await _purchase_grn_present(session, org_id=org_id, po_reference=po_reference):
+        if await _purchase_grn_present(session, tenant_id=tenant_id, po_reference=po_reference):
             return True
         if await _purchase_document_upload_present(
-            session, org_id=org_id, po_reference=po_reference, purchase_document_type="grn"
+            session, tenant_id=tenant_id, po_reference=po_reference, purchase_document_type="grn"
         ):
             return True
 
     return await _invoice_dt_present(
         session,
-        org_id=org_id,
+        tenant_id=tenant_id,
         po_reference=po_reference,
         dt_code=code,
         exclude_invoice_id=exclude_invoice_id,
@@ -295,7 +295,7 @@ async def missing_bundle_dt_codes(
     for code in dt_codes:
         if not await _bundle_dt_satisfied(
             session,
-            org_id=invoice.org_id,
+            tenant_id=invoice.tenant_id,
             po_reference=po_reference,
             dt_code=code,
             exclude_invoice_id=invoice.id,
@@ -354,7 +354,7 @@ def resolve_definition_for_invoice(
     code = (invoice.document_type_code or "").strip().upper()
     if not code:
         return None
-    return get_document_type_definition(code, document_types=document_types, org_id=invoice.org_id)
+    return get_document_type_definition(code, document_types=document_types, tenant_id=invoice.tenant_id)
 
 
 def playbook_validation_results(playbook: PlaybookGateResult | None) -> list[object]:

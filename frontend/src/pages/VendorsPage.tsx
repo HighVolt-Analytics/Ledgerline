@@ -186,7 +186,7 @@ export function VendorsPage() {
 
   useEffect(() => {
     void load();
-  }, [load, user?.org_id]);
+  }, [load, user?.tenant_id]);
 
   useVisibilityPolling(() => {
     void load({ silent: true, fresh: true });

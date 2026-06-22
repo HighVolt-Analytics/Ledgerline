@@ -18,7 +18,7 @@ from app.models.mailbox_sync_job import (
     STATUS_RUNNING,
     MailboxSyncJob,
 )
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.services.audit_service import log_event
 from app.services.email_ingestion import fetch_historical_inbox
 from app.services.graph_mail_folders import finalize_graph_messages, folder_moves_enabled
@@ -29,11 +29,11 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def _known_message_ids(session: AsyncSession, *, org_id: int) -> frozenset[str]:
+async def _known_message_ids(session: AsyncSession, *, tenant_id: int) -> frozenset[str]:
     rows = (
         await session.execute(
             select(Invoice.email_message_id).where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.email_message_id.isnot(None),
             )
         )
@@ -45,13 +45,13 @@ async def _running_job_for_mailbox(
     session: AsyncSession,
     *,
     mailbox_id: int,
-    org_id: int,
+    tenant_id: int,
 ) -> MailboxSyncJob | None:
     return (
         await session.execute(
             select(MailboxSyncJob).where(
                 MailboxSyncJob.mailbox_id == mailbox_id,
-                MailboxSyncJob.org_id == org_id,
+                MailboxSyncJob.tenant_id == tenant_id,
                 MailboxSyncJob.status.in_((STATUS_QUEUED, STATUS_RUNNING)),
             )
         )
@@ -70,7 +70,7 @@ def validate_backfill_dates(from_day: date, to_day: date) -> None:
 async def create_mailbox_backfill_job(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     mailbox_id: int,
     from_day: date,
     to_day: date,
@@ -80,19 +80,19 @@ async def create_mailbox_backfill_job(
     validate_backfill_dates(from_day, to_day)
 
     mb = await session.get(ConnectedMailbox, mailbox_id)
-    if not mb or mb.org_id != org_id:
+    if not mb or mb.tenant_id != tenant_id:
         raise ValueError("Mailbox not found")
     if not mb.is_active:
         raise ValueError("Mailbox is paused")
     if not mb.is_pollable:
         raise ValueError("Mailbox is not connected — sign in with Microsoft to authorize access")
 
-    existing = await _running_job_for_mailbox(session, mailbox_id=mailbox_id, org_id=org_id)
+    existing = await _running_job_for_mailbox(session, mailbox_id=mailbox_id, tenant_id=tenant_id)
     if existing is not None:
         raise ValueError("A historical import is already running for this mailbox")
 
     job = MailboxSyncJob(
-        org_id=org_id,
+        tenant_id=tenant_id,
         mailbox_id=mailbox_id,
         from_date=from_day,
         to_date=to_day,
@@ -106,7 +106,7 @@ async def create_mailbox_backfill_job(
     await log_event(
         session,
         "mailbox_backfill_requested",
-        org_id=org_id,
+        tenant_id=tenant_id,
         detail={
             "job_id": job.id,
             "mailbox_id": mailbox_id,
@@ -128,8 +128,8 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
             raise ValueError("Import job not found")
 
         mb = await session.get(ConnectedMailbox, job.mailbox_id)
-        org = await session.get(Organisation, job.org_id)
-        if not mb or not org or mb.org_id != job.org_id:
+        org = await session.get(Tenant, job.tenant_id)
+        if not mb or not org or mb.tenant_id != job.tenant_id:
             job.status = STATUS_FAILED
             job.error_message = "Mailbox or organisation not found"
             job.finished_at = datetime.now(timezone.utc)
@@ -146,7 +146,7 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
 
         try:
             access_token = await resolve_mailbox_access_token(session, mb)
-            known_ids = await _known_message_ids(session, org_id=job.org_id)
+            known_ids = await _known_message_ids(session, tenant_id=job.tenant_id)
             emails = fetch_historical_inbox(
                 mb.email,
                 from_day=job.from_date,
@@ -160,8 +160,8 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
                 ingest_result = await ingest_email_attachments(
                     session,
                     emails,
-                    org_id=job.org_id,
-                    org_slug=org.slug,
+                    tenant_id=job.tenant_id,
+                    tenant_slug=org.slug,
                     connected_mailbox_id=mb.id,
                     mark_processed=job.mark_processed,
                     mark_processed_only_if_ingested=True,
@@ -186,7 +186,7 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
                 from app.workers.tasks import _fetch_pending_ids, _process_pending
 
                 job.invoices_processed = await _process_pending(
-                    await _fetch_pending_ids(org_id=job.org_id)
+                    await _fetch_pending_ids(tenant_id=job.tenant_id)
                 )
                 await session.commit()
 
@@ -209,7 +209,7 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
             await log_event(
                 session,
                 "mailbox_backfill_completed",
-                org_id=job.org_id,
+                tenant_id=job.tenant_id,
                 detail={
                     "job_id": job.id,
                     "mailbox_id": job.mailbox_id,
@@ -229,7 +229,7 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
                 await log_event(
                     session,
                     "mailbox_backfill_failed",
-                    org_id=job.org_id,
+                    tenant_id=job.tenant_id,
                     detail={"job_id": job.id, "error": job.error_message},
                 )
                 await session.commit()
@@ -244,9 +244,9 @@ async def get_mailbox_backfill_job(
     session: AsyncSession,
     *,
     job_id: int,
-    org_id: int,
+    tenant_id: int,
 ) -> MailboxSyncJob:
     job = await session.get(MailboxSyncJob, job_id)
-    if not job or job.org_id != org_id:
+    if not job or job.tenant_id != tenant_id:
         raise ValueError("Import job not found")
     return job

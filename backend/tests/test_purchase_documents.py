@@ -106,7 +106,7 @@ async def _add_line(session: AsyncSession, inv: Invoice, qty: str = "10", price:
 @pytest.mark.asyncio
 async def test_po_first_then_commercial_invoice(db_session: AsyncSession) -> None:
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-100",
         invoice_no="PO-MKT-2026-100",
@@ -126,7 +126,7 @@ async def test_po_first_then_commercial_invoice(db_session: AsyncSession) -> Non
     assert po_row.invoice_id is None
 
     commercial = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-100",
         invoice_no="META-INV-100",
@@ -150,7 +150,7 @@ async def test_po_first_then_commercial_invoice(db_session: AsyncSession) -> Non
 @pytest.mark.asyncio
 async def test_commercial_invoice_awaiting_po(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-999",
         invoice_no="META-INV-999",

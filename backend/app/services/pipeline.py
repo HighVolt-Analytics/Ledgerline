@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.services.amount_sanity import plausible_money
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.vendor import VendorRegistry
@@ -27,12 +27,17 @@ from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.services.invoice_evaluation_service import (
     EVAL_NEEDS_REVIEW,
     ROUTE_EXPENSES,
+    ROUTE_PURCHASE,
     ROUTE_TEAM,
     ROUTE_VAULT,
     apply_invoice_evaluation,
-    load_config_for_org,
+    load_config_for_tenant,
 )
-from app.services.document_type_rule_engine import list_configured_document_type_matches
+from app.services.segment_heading_classification import (
+    list_heading_aware_document_type_matches,
+    load_segment_heading_kind_from_audit,
+)
+from app.services.vault_paths import filename_from_stored
 from app.services.routing_review_service import (
     requires_gl_mapping_review,
     requires_routing_review,
@@ -68,7 +73,6 @@ from app.services.file_storage import (
     store_invoice_pdf,
     stored_file_available,
 )
-from app.services.vault_paths import filename_from_stored
 from app.services.graph_mail_folders import folder_moves_enabled
 from app.services.journal_generator import generate_entries
 from app.services.notifier import send_notification
@@ -160,17 +164,17 @@ async def find_by_hash(
     session: AsyncSession,
     file_hash: str,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> Invoice | None:
     """Backward-compatible alias for file-hash lookup."""
-    return await find_invoice_by_file_hash(session, file_hash, org_id=org_id)
+    return await find_invoice_by_file_hash(session, file_hash, tenant_id=tenant_id)
 
 
-async def _org_slug(session: AsyncSession, org_id: int) -> str:
-    org = await session.get(Organisation, org_id)
+async def _tenant_slug(session: AsyncSession, tenant_id: int) -> str:
+    org = await session.get(Tenant, tenant_id)
     if org:
         return org.slug
-    return get_settings().default_org_slug
+    return get_settings().default_tenant_slug
 
 
 async def _post_parse_relocate(
@@ -184,29 +188,29 @@ async def _post_parse_relocate(
     settings = get_settings()
     if settings.blob_auto_relocate_unknown:
         new_slug = await resolve_storage_slug_for_parsed_vendor(
-            session, parsed_vendor, org_id=invoice.org_id
+            session, parsed_vendor, tenant_id=invoice.tenant_id
         )
         old_slug = invoice.storage_vendor_slug or UNKNOWN_SLUG
         if new_slug != old_slug:
             if new_slug != UNKNOWN_SLUG or not is_valid_storage_slug(old_slug):
                 invoice.storage_vendor_slug = new_slug
 
-    org = await session.get(Organisation, invoice.org_id)
-    org_slug = org.slug if org else settings.default_org_slug
-    org_name = org.name if org else None
+    org = await session.get(Tenant, invoice.tenant_id)
+    tenant_slug = org.slug if org else settings.default_tenant_slug
+    tenant_name = org.name if org else None
     filename = _filename_from_stored(invoice.raw_file_path, invoice.id, invoice.file_hash)
-    config = load_config_for_org(invoice.org_id)
+    config = load_config_for_tenant(invoice.tenant_id)
     from app.services.vault_invoice_paths import vault_document_type_titles_for_invoice
 
     short_title, title = vault_document_type_titles_for_invoice(invoice, list(config.document_types))
     new_path = relocate_invoice_pdf(
         invoice.raw_file_path,
-        org_slug,
+        tenant_slug,
         invoice.storage_vendor_slug or UNKNOWN_SLUG,
         invoice.id,
         invoice.file_hash,
         filename,
-        org_name=org_name,
+        tenant_name=tenant_name,
         vendor_name=invoice.vendor or parsed_vendor,
         invoice_no=invoice.invoice_no,
         invoice_date=invoice.invoice_date,
@@ -243,7 +247,7 @@ async def _auto_learn_sender(session: AsyncSession, invoice: Invoice) -> None:
 
     rows = (
         await session.execute(
-            select(VendorRegistry).where(VendorRegistry.org_id == invoice.org_id)
+            select(VendorRegistry).where(VendorRegistry.tenant_id == invoice.tenant_id)
         )
     ).scalars().all()
     for row in rows:
@@ -254,7 +258,7 @@ async def _auto_learn_sender(session: AsyncSession, invoice: Invoice) -> None:
 
     session.add(
         VendorRegistry(
-            org_id=invoice.org_id,
+            tenant_id=invoice.tenant_id,
             vendor_slug=invoice.storage_vendor_slug,
             vendor_name=invoice.vendor or invoice.storage_vendor_slug,
             sender_pattern=invoice.email_sender,
@@ -307,8 +311,8 @@ async def ingest_email_attachments(
     session: AsyncSession,
     emails: list[RawEmail],
     *,
-    org_id: int,
-    org_slug: str,
+    tenant_id: int,
+    tenant_slug: str,
     connected_mailbox_id: int | None = None,
     mark_processed: bool = True,
     mark_processed_only_if_ingested: bool = False,
@@ -316,10 +320,10 @@ async def ingest_email_attachments(
 ) -> EmailIngestResult:
     """Save invoice attachments (PDF/image/DOCX) from emails."""
     result = EmailIngestResult()
-    org = await session.get(Organisation, org_id)
-    org_name = org.name if org else None
+    org = await session.get(Tenant, tenant_id)
+    tenant_name = org.name if org else None
 
-    capture_config = load_config_for_org(org_id)
+    capture_config = load_config_for_tenant(tenant_id)
 
     for email in emails:
         result.message_ids.append(email.message_id)
@@ -389,7 +393,7 @@ async def ingest_email_attachments(
                 continue
 
             file_hash = compute_sha256_bytes(att.data)
-            existing = await find_invoice_by_file_hash(session, file_hash, org_id=org_id)
+            existing = await find_invoice_by_file_hash(session, file_hash, tenant_id=tenant_id)
             duplicate_decision = evaluate_file_hash_duplicate(existing)
             if duplicate_decision.action == "skip_in_progress":
                 assert existing is not None
@@ -424,7 +428,7 @@ async def ingest_email_attachments(
                 assert existing is not None
                 await create_duplicate_shadow_invoice(
                     session,
-                    org_id=org_id,
+                    tenant_id=tenant_id,
                     original=existing,
                     connected_mailbox_id=connected_mailbox_id,
                     email_sender=email.sender or None,
@@ -463,10 +467,10 @@ async def ingest_email_attachments(
                 continue
 
             vendor_slug = await resolve_vendor_slug(
-                session, email.sender, org_id=org_id
+                session, email.sender, tenant_id=tenant_id
             )
             inv = Invoice(
-                org_id=org_id,
+                tenant_id=tenant_id,
                 connected_mailbox_id=connected_mailbox_id,
                 status=InvoiceStatus.PENDING,
                 file_hash=file_hash,
@@ -485,12 +489,12 @@ async def ingest_email_attachments(
 
             stored = store_invoice_pdf(
                 att.data,
-                org_slug,
+                tenant_slug,
                 vendor_slug,
                 inv.id,
                 file_hash,
                 att.filename,
-                org_name=org_name,
+                tenant_name=tenant_name,
                 route_target=inv.route_target,
             )
             inv.raw_file_path = stored
@@ -647,7 +651,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
 
     resolved_vendor = resolve_canonical_vendor_name(
-        invoice.org_id,
+        invoice.tenant_id,
         vendor_names=[parsed.vendor],
         abns=[parsed.abn],
     )
@@ -687,13 +691,15 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
     loaded = (await session.execute(stmt)).scalar_one()
 
-    config = load_config_for_org(invoice.org_id)
+    config = load_config_for_tenant(invoice.tenant_id)
+    segment_heading_kind = await load_segment_heading_kind_from_audit(session, invoice.id)
     classification = classify_document_type(
         invoice=loaded,
         parsed=parsed,
         document_types=config.document_types,
         parse_confidence=parse_result.confidence,
         unclassified=config.document_classification,
+        segment_heading_kind=segment_heading_kind,
     )
     apply_document_type_classification(loaded, classification)
     invoice.document_type_code = loaded.document_type_code
@@ -713,10 +719,11 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     await apply_purchase_document_type_after_eval(session, loaded)
 
-    classifier_matches = list_configured_document_type_matches(
+    classifier_matches = list_heading_aware_document_type_matches(
         list(config.document_types),
         invoice=loaded,
         parsed=parsed,
+        heading_kind=segment_heading_kind,
     )
     no_classifier_match = not classifier_matches
     dt_definition = resolve_definition_for_invoice(loaded, list(config.document_types))
@@ -753,6 +760,17 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.raw_file_path = loaded.raw_file_path
     invoice.storage_vendor_slug = loaded.storage_vendor_slug
 
+    if (loaded.route_target or "").strip() == ROUTE_PURCHASE:
+        from app.services.purchase_document_service import sync_purchase_document
+
+        await sync_purchase_document(session, loaded)
+        invoice.purchase_document_type = loaded.purchase_document_type
+        invoice.po_reference = loaded.po_reference
+        invoice.evaluation_status = loaded.evaluation_status
+        if loaded.status == InvoiceStatus.EXCEPTION:
+            invoice.status = InvoiceStatus.EXCEPTION
+            return
+
     if await apply_vendor_hold_if_needed(session, loaded):
         invoice.status = InvoiceStatus.EXCEPTION
         return
@@ -762,12 +780,16 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     doc_type = loaded.purchase_document_type
     from app.services.document_type_validation_service import PROFILE_STANDARD
 
-    validation_profile = PROFILE_STANDARD if no_classifier_match else None
+    validation_profile = (
+        PROFILE_STANDARD
+        if no_classifier_match and not (loaded.document_type_code or "").strip()
+        else None
+    )
     results = await run_all_validations(
         parsed,
         session,
         invoice.id,
-        org_id=invoice.org_id,
+        tenant_id=invoice.tenant_id,
         sender=invoice.email_sender,
         route_target=invoice.route_target,
         purchase_document_type=doc_type,
@@ -935,7 +957,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     from app.services.rule_book_mapper import ROUTE_EXPENSES, load_classification_config
 
-    map_config = load_classification_config(invoice.org_id)
+    map_config = load_classification_config(invoice.tenant_id)
     if (invoice.route_target or "").strip() == ROUTE_EXPENSES and is_staff_claim_sender(
         invoice.email_sender,
         map_config.employee_masters,
@@ -982,9 +1004,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await session.flush()
     recon_date = invoice.invoice_date or date.today()
     recon = await reconcile_daily(
-        session, recon_date, org_id=invoice.org_id, current_invoice=invoice
+        session, recon_date, tenant_id=invoice.tenant_id, current_invoice=invoice
     )
-    await save_reconciliation(session, recon)
+    await save_reconciliation(session, recon, tenant_id=invoice.tenant_id)
     if recon.halted:
         route = (invoice.route_target or "").strip()
         non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES)

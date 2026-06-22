@@ -42,8 +42,8 @@ async def _register_admin(client) -> str:
             "email": "admin@invite.example.com",
             "password": "securepass1",
             "full_name": "Invite Admin",
-            "org_name": "Invite Org",
-            "org_slug": "invite-org",
+            "tenant_name": "Invite Org",
+            "tenant_slug": "invite-org",
         },
     )
     assert reg.status_code == 201
@@ -99,8 +99,8 @@ async def test_preview_and_authorize_invite(client, mock_invite_email) -> None:
     )
     assert create.status_code == 201
     request_id = create.json()["data"]["id"]
-    org_id = create.json()["data"]["org_id"]
-    invite_token = create_invite_token(request_id=request_id, org_id=org_id)
+    tenant_id = create.json()["data"]["org_id"]
+    invite_token = create_invite_token(request_id=request_id, tenant_id=tenant_id)
 
     preview = await client.get(
         "/api/mailboxes/invites/preview",
@@ -109,7 +109,7 @@ async def test_preview_and_authorize_invite(client, mock_invite_email) -> None:
     assert preview.status_code == 200
     data = preview.json()["data"]
     assert data["requested_email"] == "preview@company.com"
-    assert data["org_name"]
+    assert data["tenant_name"]
 
     authorize = await client.get(
         "/api/mailboxes/invites/authorize",
@@ -205,7 +205,7 @@ async def test_invite_oauth_error_redirects_to_connect_mailbox(
     )
     assert create.status_code == 201
     body = create.json()["data"]
-    state = create_oauth_state(org_id=body["org_id"], invite_request_id=body["id"])
+    state = create_oauth_state(tenant_id=body["org_id"], invite_request_id=body["id"])
 
     res = await client.get(
         "/api/mailboxes/oauth/callback",

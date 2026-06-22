@@ -21,9 +21,9 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.services.reconciliation_service import reconcile_daily
-from app.services.rule_book_config_io import org_rule_book_config_path
+from app.services.rule_book_config_io import tenant_rule_book_config_path
 from app.services.rule_book_mapper import (
     FALLBACK_RULE_TYPE,
     load_classification_config,
@@ -85,7 +85,7 @@ def _extract_po_ref(invoice: Invoice) -> str:
     invoice_no = invoice.invoice_no
     if not invoice_no:
         return "—"
-    config = load_classification_config(invoice.org_id)
+    config = load_classification_config(invoice.tenant_id)
     inv_text = invoice_no.upper()
     for rule in config.purchase_rules:
         if not rule.enabled:
@@ -168,14 +168,14 @@ def _line_rows_for_export(invoice: Invoice) -> list[dict[str, object]]:
 def _write_readme(
     ws: Worksheet,
     *,
-    org_name: str,
-    org_slug: str,
-    org_id: int,
+    tenant_name: str,
+    tenant_slug: str,
+    tenant_id: int,
     date_from: date | None,
     date_to: date | None,
     invoice_count: int,
 ) -> None:
-    rule_path = org_rule_book_config_path(org_id)
+    rule_path = tenant_rule_book_config_path(tenant_id)
     priority_label = "Purchase rule → Expense rule → Vendor master → Fallback"
     if date_from and date_to:
         range_label = (
@@ -193,7 +193,7 @@ def _write_readme(
     lines = [
         "Invoice Processing Pipeline — Output Workbook",
         "",
-        f"Organisation: {org_name} ({org_slug})",
+        f"Tenant: {tenant_name} ({tenant_slug})",
         f"Invoice date filter: {range_label}",
         f"Invoices exported: {invoice_count}",
         "",
@@ -406,7 +406,7 @@ async def _write_daily_reconciliation_sheet(
     session: AsyncSession,
     invoices: list[Invoice],
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> None:
     headers = [
         "Date",
@@ -422,7 +422,7 @@ async def _write_daily_reconciliation_sheet(
 
     dates = sorted({inv.invoice_date for inv in invoices if inv.invoice_date})
     for day in dates:
-        recon = await reconcile_daily(session, day, org_id=org_id)
+        recon = await reconcile_daily(session, day, tenant_id=tenant_id)
         inv_total = sum(
             (inv.total or Decimal("0"))
             for inv in invoices
@@ -556,8 +556,8 @@ def _write_processing_status_sheet(
     _autosize_columns(ws)
 
 
-def _write_rule_book_sheet(ws: Worksheet, org_id: int) -> None:
-    config = load_classification_config(org_id)
+def _write_rule_book_sheet(ws: Worksheet, tenant_id: int) -> None:
+    config = load_classification_config(tenant_id)
     ws.append(["Classification Rule Book — Purchase → Expense → Vendor → Fallback"])
     ws.append([])
 
@@ -614,12 +614,12 @@ def _write_rule_book_sheet(ws: Worksheet, org_id: int) -> None:
 
 
 def workbook_filename(
-    org_slug: str,
+    tenant_slug: str,
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> str:
     """Stable on-disk name for a generate/download pair (scoped per organisation)."""
-    slug = org_slug.strip() or "org"
+    slug = tenant_slug.strip() or "org"
     if date_from is None and date_to is None:
         return f"output_workbook_{slug}.xlsx"
     if date_from is not None and date_to is not None and date_from == date_to:
@@ -636,14 +636,14 @@ def workbook_filename(
 async def _load_invoices(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> list[Invoice]:
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.status != InvoiceStatus.DUPLICATE_SKIPPED,
             Invoice.status != InvoiceStatus.REJECTED,
         )
@@ -669,7 +669,7 @@ def _reports_dir() -> Path:
 
 async def write_workbook(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     workbook_date: date | None = None,
     *,
     date_from: date | None = None,
@@ -678,7 +678,7 @@ async def write_workbook(
     """
     Write multi-sheet Excel workbook matching output_workbook.xlsx layout.
 
-    Scoped to org_id — invoices and Rule Book sheet use that organisation's data.
+    Scoped to tenant_id — invoices and Rule Book sheet use that organisation's data.
     Filter by invoice_date inclusive range (date_from / date_to).
     workbook_date sets both bounds to the same day (legacy single-day export).
     """
@@ -688,12 +688,12 @@ async def write_workbook(
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError("date_from must be on or before date_to")
 
-    org = await session.get(Organisation, org_id)
-    org_name = org.name if org else f"Organisation {org_id}"
-    org_slug = org.slug if org else str(org_id)
+    org = await session.get(Tenant, tenant_id)
+    tenant_name = org.name if org else f"Tenant {tenant_id}"
+    tenant_slug = org.slug if org else str(tenant_id)
 
     invoices = await _load_invoices(
-        session, org_id=org_id, date_from=date_from, date_to=date_to
+        session, tenant_id=tenant_id, date_from=date_from, date_to=date_to
     )
     wb = Workbook()
     wb.remove(wb.active)
@@ -703,9 +703,9 @@ async def write_workbook(
             SHEET_README,
             lambda ws: _write_readme(
                 ws,
-                org_name=org_name,
-                org_slug=org_slug,
-                org_id=org_id,
+                tenant_name=tenant_name,
+                tenant_slug=tenant_slug,
+                tenant_id=tenant_id,
                 date_from=date_from,
                 date_to=date_to,
                 invoice_count=len(invoices),
@@ -721,7 +721,7 @@ async def write_workbook(
         writer(ws)
 
     ws_recon = wb.create_sheet(SHEET_DAILY_RECON)
-    await _write_daily_reconciliation_sheet(ws_recon, session, invoices, org_id=org_id)
+    await _write_daily_reconciliation_sheet(ws_recon, session, invoices, tenant_id=tenant_id)
 
     ws_exp = wb.create_sheet(SHEET_EXPENSE_SUMMARY)
     _write_expense_summary_sheet(ws_exp, invoices)
@@ -731,9 +731,9 @@ async def write_workbook(
     _write_processing_status_sheet(ws_status, invoices, audit_flags)
 
     ws_rules = wb.create_sheet(SHEET_RULE_BOOK)
-    _write_rule_book_sheet(ws_rules, org_id)
+    _write_rule_book_sheet(ws_rules, tenant_id)
 
-    filename = workbook_filename(org_slug, date_from, date_to)
+    filename = workbook_filename(tenant_slug, date_from, date_to)
     dest = _reports_dir() / filename
     wb.save(dest)
     logger.info("workbook_written", path=str(dest), invoices=len(invoices))
@@ -748,4 +748,4 @@ async def write_workbook_for_invoice(
     """Regenerate workbook for the invoice's posting date."""
     if not invoice.invoice_date:
         return None
-    return await write_workbook(session, invoice.org_id, invoice.invoice_date)
+    return await write_workbook(session, invoice.tenant_id, invoice.invoice_date)

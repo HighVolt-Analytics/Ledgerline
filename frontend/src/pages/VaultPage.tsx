@@ -12,6 +12,7 @@ import { api } from "@/api/client";
 import type { DocumentSetRule, Invoice, VaultApiFile } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -41,6 +42,7 @@ import {
   type VaultTreeNode,
 } from "@/lib/vault";
 import { cn } from "@/lib/cn";
+import { invoiceMatchesListSearch, matchesListSearch } from "@/lib/listSearch";
 import { money, vaultDocLabel, vaultDocSubtitle } from "@/lib/format";
 
 const VAULT_POLL_MS = 30_000;
@@ -168,6 +170,7 @@ export function VaultPage() {
   const [rows, setRows] = useState<Invoice[]>([]);
   const [documentSets, setDocumentSets] = useState<ConfigDocumentSet[]>([]);
   const [tab, setTab] = useState<"files" | "sets">("files");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selection, setSelection] = useState<VaultSelection | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -179,7 +182,7 @@ export function VaultPage() {
   const [drawerInitialTab, setDrawerInitialTab] = useState<DrawerTab>("fields");
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
 
-  const orgLabel = user?.org_name ?? "your organisation";
+  const orgLabel = user?.tenant_name ?? "your organisation";
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     if (!options?.silent) {
@@ -233,13 +236,13 @@ export function VaultPage() {
 
   useEffect(() => {
     void load();
-  }, [load, user?.org_id]);
+  }, [load, user?.tenant_id]);
 
   useEffect(() => {
     setSelectedId(null);
     setSelection(null);
     setExpanded(new Set());
-  }, [user?.org_id]);
+  }, [user?.tenant_id]);
 
   useVisibilityPolling(() => {
     void load({ silent: true, fresh: true });
@@ -264,6 +267,23 @@ export function VaultPage() {
     [vaultFiles, selection]
   );
 
+  const filteredVisibleFiles = useMemo(() => {
+    if (!searchQuery.trim()) return visibleFiles;
+    return visibleFiles.filter((file) => {
+      const doc = invoiceById.get(file.invoice_id);
+      if (doc && invoiceMatchesListSearch(doc, searchQuery)) return true;
+      return matchesListSearch(
+        searchQuery,
+        file.vendor,
+        file.file_name,
+        file.purchase_document_type,
+        file.po_folder,
+        file.invoice_id,
+        doc ? vaultDocLabel(doc.id) : null
+      );
+    });
+  }, [visibleFiles, invoiceById, searchQuery]);
+
   const documentSetCards = useMemo((): DocSetWithDocs[] => {
     const sets = documentSets;
     const assigned = new Set<number>();
@@ -276,6 +296,16 @@ export function VaultPage() {
       return { ...set, docs };
     });
   }, [documentSets, rows]);
+
+  const filteredDocumentSetCards = useMemo(() => {
+    if (!searchQuery.trim()) return documentSetCards;
+    return documentSetCards
+      .map((set) => ({
+        ...set,
+        docs: set.docs.filter((doc) => invoiceMatchesListSearch(doc, searchQuery)),
+      }))
+      .filter((set) => set.docs.length > 0);
+  }, [documentSetCards, searchQuery]);
 
   const breadcrumbs = useMemo(() => selectionBreadcrumb(selection), [selection]);
 
@@ -390,7 +420,7 @@ export function VaultPage() {
         </Card>
       )}
 
-      <div className="flex gap-1 mb-4 border-b border-border">
+      <div className="flex flex-wrap items-center gap-2 mb-4 border-b border-border">
         {(
           [
             { id: "files" as const, label: "Files" },
@@ -412,6 +442,15 @@ export function VaultPage() {
             {t.label}
           </button>
         ))}
+        {vaultFiles.length > 0 ? (
+          <ListSearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search this list…"
+            testId="input-vault-search"
+            className="ml-auto mb-1"
+          />
+        ) : null}
       </div>
 
       {loading && vaultFiles.length === 0 ? (
@@ -431,13 +470,15 @@ export function VaultPage() {
           }
         />
       ) : tab === "sets" ? (
-        documentSetCards.length === 0 ? (
+        filteredDocumentSetCards.length === 0 ? (
           <Card className="p-8 text-center text-sm text-muted-foreground">
-            No document set rules defined. Add sets in the Rule Book.
+            {searchQuery.trim()
+              ? "No documents match your search."
+              : "No document set rules defined. Add sets in the Rule Book."}
           </Card>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
-            {documentSetCards.map((set) => (
+            {filteredDocumentSetCards.map((set) => (
               <Card key={set.id} className="p-4" data-testid={`set-${set.id}`}>
                 <div className="flex items-center gap-2 mb-2">
                   <Layers className="h-4 w-4 text-primary shrink-0" />
@@ -521,17 +562,19 @@ export function VaultPage() {
                 </span>
               ))}
               <Badge variant="outline" className="tnum ml-auto shrink-0">
-                {visibleFiles.length} files
+                {filteredVisibleFiles.length} files
               </Badge>
             </div>
 
-            {visibleFiles.length === 0 ? (
+            {filteredVisibleFiles.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-10">
-                No documents in this folder.
+                {searchQuery.trim()
+                  ? "No documents match your search."
+                  : "No documents in this folder."}
               </p>
             ) : (
               <div className="divide-y divide-border/60">
-                {visibleFiles.map((file: VaultApiFile) => {
+                {filteredVisibleFiles.map((file: VaultApiFile) => {
                   const doc = invoiceById.get(file.invoice_id);
                   return (
                     <button

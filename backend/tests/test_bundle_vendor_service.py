@@ -35,7 +35,7 @@ def test_resolve_canonical_vendor_prefers_master_abn(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         mod,
         "load_classification_config",
-        lambda org_id: type("Cfg", (), {"vendor_masters": [_sysco_master()]})(),
+        lambda tenant_id: type("Cfg", (), {"vendor_masters": [_sysco_master()]})(),
     )
     name = resolve_canonical_vendor_name(
         1,
@@ -51,7 +51,7 @@ def test_vendors_align_to_same_master_fuzzy(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         mod,
         "load_classification_config",
-        lambda org_id: type("Cfg", (), {"vendor_masters": [_sysco_master()]})(),
+        lambda tenant_id: type("Cfg", (), {"vendor_masters": [_sysco_master()]})(),
     )
     assert vendors_align_to_same_master(1, "Sysco", None, "Sysco Foods Australia", None)
 
@@ -81,11 +81,11 @@ async def test_grn_inherits_po_vendor_over_wrong_ocr(
     monkeypatch.setattr(
         mod,
         "load_classification_config",
-        lambda org_id: type("Cfg", (), {"vendor_masters": [_sysco_master()]})(),
+        lambda tenant_id: type("Cfg", (), {"vendor_masters": [_sysco_master()]})(),
     )
 
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco Australia Pty Ltd",
         po_reference="PO-MKT-2026-200",
         route_target=ROUTE_PURCHASE,
@@ -98,7 +98,7 @@ async def test_grn_inherits_po_vendor_over_wrong_ocr(
     await sync_purchase_document(db_session, po_doc)
 
     grn_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Wrong Warehouse Name",
         po_reference="PO-MKT-2026-200",
         route_target=ROUTE_PURCHASE,
@@ -135,11 +135,11 @@ async def test_commercial_invoice_aligns_to_po_master(
     monkeypatch.setattr(
         mod,
         "load_classification_config",
-        lambda org_id: type("Cfg", (), {"vendor_masters": [_sysco_master()]})(),
+        lambda tenant_id: type("Cfg", (), {"vendor_masters": [_sysco_master()]})(),
     )
 
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco Australia Pty Ltd",
         po_reference="PO-MKT-2026-201",
         route_target=ROUTE_PURCHASE,
@@ -152,7 +152,7 @@ async def test_commercial_invoice_aligns_to_po_master(
     await sync_purchase_document(db_session, po_doc)
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco",
         po_reference="PO-MKT-2026-201",
         invoice_no="INV-201",

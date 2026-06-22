@@ -14,7 +14,7 @@ from app.models.invoice import Invoice
 from app.schemas.rule_book_config import EmailCaptureRule, RuleBookConfigPayload
 from app.services.audit_service import log_event
 from app.services.email_ingestion import EmailAttachment, RawEmail
-from app.services.invoice_evaluation_service import load_config_for_org
+from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.services.rule_engine import SampleEmail, match_email_capture_rule
 
 
@@ -54,7 +54,7 @@ async def apply_ingest_capture(
 ) -> EmailCaptureRule | None:
     """Record a matched ingestion rule; routing is applied after OCR, not here."""
     if config is None:
-        config = load_config_for_org(invoice.org_id)
+        config = load_config_for_tenant(invoice.tenant_id)
 
     rule = evaluate_ingest_capture(email, attachment, config)
     if not rule:

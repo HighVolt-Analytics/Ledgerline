@@ -49,8 +49,8 @@ async def test_admin_consent_url_endpoint_returns_url(client: AsyncClient) -> No
             "email": "ga@consent.example.com",
             "password": "securepass1",
             "full_name": "GA Admin",
-            "org_name": "Consent Org",
-            "org_slug": "consent-org",
+            "tenant_name": "Consent Org",
+            "tenant_slug": "consent-org",
         },
     )
     token = reg.json()["data"]["access_token"]

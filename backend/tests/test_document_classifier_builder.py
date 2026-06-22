@@ -29,7 +29,7 @@ def test_supporting_po_signals_match_po_heading_not_invoice():
             {"type": "condition", "field": "is_commercial_invoice", "operator": "equals", "value": "false"},
         ],
     }
-    inv = Invoice(id=1, org_id=1, status=InvoiceStatus.PARSING, currency="AUD")
+    inv = Invoice(id=1, tenant_id=1, status=InvoiceStatus.PARSING, currency="AUD")
     parsed = InvoiceData(document_text="PURCHASE ORDER\nPO 12345")
     ctx = build_document_classifier_context(invoice=inv, parsed=parsed)
     resolver = lambda f: _document_field(ctx, f)

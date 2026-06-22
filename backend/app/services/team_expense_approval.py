@@ -11,7 +11,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.rule_book_config import RuleBookConfigPayload, TeamExpenseRule
 from app.services.audit_service import log_event
 from app.services.invoice_data import InvoiceData, ParsedLineItem
-from app.services.invoice_evaluation_service import EVAL_NEEDS_REVIEW, ROUTE_TEAM, load_config_for_org
+from app.services.invoice_evaluation_service import EVAL_NEEDS_REVIEW, ROUTE_TEAM, load_config_for_tenant
 from app.services.rule_engine import match_team_expense_rule
 from app.services.team_expense_validator import (
     has_receipt_attachment,
@@ -97,7 +97,7 @@ async def apply_team_expense_approval_gate(
     if invoice.route_target != ROUTE_TEAM:
         return False
 
-    config = load_config_for_org(invoice.org_id)
+    config = load_config_for_tenant(invoice.tenant_id)
     team_rule = team_rule_for_invoice(invoice, config)
     approved = await has_manager_approval(session, invoice.id)
 
@@ -112,7 +112,7 @@ async def apply_team_expense_approval_gate(
 
             employee = await resolve_employee_for_sender(
                 session,
-                invoice.org_id,
+                invoice.tenant_id,
                 invoice.email_sender,
             )
             await log_event(
@@ -153,7 +153,7 @@ async def assert_team_expense_approvable(
     if invoice.route_target != ROUTE_TEAM:
         return
 
-    config = load_config_for_org(invoice.org_id)
+    config = load_config_for_tenant(invoice.tenant_id)
     team_rule = team_rule_for_invoice(invoice, config)
     amount = float(invoice.total) if invoice.total is not None else None
     has_file = has_receipt_attachment(invoice.raw_file_path)

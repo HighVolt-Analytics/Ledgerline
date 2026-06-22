@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, get_auth_context, get_db, require_admin
 from app.schemas.common import ApiEnvelope
 from app.schemas.vault import VaultMigrateResponse, VaultTreeResponse
-from app.services.vault_service import get_vault_tree_for_org, migrate_vault_for_org
+from app.services.vault_service import get_vault_tree_for_tenant, migrate_vault_for_tenant
 
 router = APIRouter(prefix="/vault", tags=["vault"])
 
@@ -17,7 +17,7 @@ async def get_vault_tree(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[VaultTreeResponse]:
     """Folder tree for stored invoice files (excludes duplicate_skipped and file-less rows)."""
-    data = await get_vault_tree_for_org(db, org_id=ctx.org_id)
+    data = await get_vault_tree_for_tenant(db, tenant_id=ctx.tenant_id)
     return ApiEnvelope(data=data)
 
 
@@ -27,6 +27,6 @@ async def migrate_vault_blobs(
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[VaultMigrateResponse]:
     """Move this org's invoice blobs into invoice/{org}/{book}/{vendor}/{year}/{month}/."""
-    data = await migrate_vault_for_org(db, ctx.org_id)
+    data = await migrate_vault_for_tenant(db, ctx.tenant_id)
     await db.commit()
     return ApiEnvelope(data=data)

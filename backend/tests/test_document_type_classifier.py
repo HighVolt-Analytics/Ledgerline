@@ -40,7 +40,7 @@ def _clear_catalog_cache() -> None:
 def _invoice(**kwargs) -> Invoice:
     base = dict(
         id=1,
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.PARSING,
         currency="AUD",
     )

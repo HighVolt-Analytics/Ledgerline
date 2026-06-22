@@ -216,7 +216,7 @@ def resolve_purchase_vault_links(
 async def fetch_purchase_vault_links_for_rows(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     rows: list[AuditLog],
 ) -> tuple[dict[int, PurchaseVaultLinks], dict[str, PurchaseVaultLinks]]:
     po_ids: set[int] = set()
@@ -235,7 +235,7 @@ async def fetch_purchase_vault_links_for_rows(
     if not po_ids and not po_numbers:
         return {}, {}
 
-    filters = [PurchaseOrder.org_id == org_id]
+    filters = [PurchaseOrder.tenant_id == tenant_id]
     po_filters = []
     if po_ids:
         po_filters.append(PurchaseOrder.id.in_(po_ids))
@@ -377,7 +377,7 @@ def flatten_audit_detail(
 async def fetch_audit_rows_for_export(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     date_from: date | None = None,
     date_to: date | None = None,
     document_only: bool = False,
@@ -389,8 +389,8 @@ async def fetch_audit_rows_for_export(
     dict[str, PurchaseVaultLinks],
 ]:
     org_filter = or_(
-        AuditLog.org_id == org_id,
-        AuditLog.invoice_id.in_(select(Invoice.id).where(Invoice.org_id == org_id)),
+        AuditLog.tenant_id == tenant_id,
+        AuditLog.invoice_id.in_(select(Invoice.id).where(Invoice.tenant_id == tenant_id)),
     )
     stmt = (
         select(AuditLog)
@@ -428,7 +428,7 @@ async def fetch_audit_rows_for_export(
 
     by_po_id, by_po_number = await fetch_purchase_vault_links_for_rows(
         db,
-        org_id=org_id,
+        tenant_id=tenant_id,
         rows=rows,
     )
     return rows, invoice_map, by_po_id, by_po_number

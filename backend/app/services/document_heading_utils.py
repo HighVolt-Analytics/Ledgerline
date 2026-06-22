@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 HeadingKind = Literal[
     "tax_invoice",
+    "commercial_invoice",
     "invoice",
     "purchase_order",
     "grn",
@@ -21,14 +22,36 @@ HeadingKind = Literal[
     "timesheet",
     "statement",
     "contract",
+    "packing_list",
+    "certificate_of_origin",
+    "transport_doc",
+    "customs_permit",
 ]
 
 _HEADING_SCAN_LINES = 30
+
+_CONTINUATION_PAGE = re.compile(
+    r"\b(?:continuation\s+page|\(continuation\s+page\)|\(cont(?:\.|inued)?\))\b",
+    re.I,
+)
+
+# Keyword fallback when title is embedded in OCR layout (import / logistics dossiers).
+_PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
+    (re.compile(r"\bCOMMERCIAL\s+INVOICE\b", re.I), "commercial_invoice"),
+    (re.compile(r"\bCARGO\s+CLEARANCE\s+PERMIT\b", re.I), "customs_permit"),
+    (re.compile(r"\bCUSTOMS?\s+(?:ENTRY|DECLARATION)\b", re.I), "customs_permit"),
+    (re.compile(r"\bPACKING\s+LIST\b", re.I), "packing_list"),
+    (re.compile(r"\bCERTIFICATE\s+OF\s+ORIGIN\b", re.I), "certificate_of_origin"),
+    (re.compile(r"\b(?:HAWB|MAWB|AWB)\b", re.I), "transport_doc"),
+    (re.compile(r"\bBILL\s+OF\s+LADING\b", re.I), "transport_doc"),
+    (re.compile(r"\b(?:B/L|BL)\s*NO\b", re.I), "transport_doc"),
+]
 
 # Standalone title line (full line is essentially the document type label).
 _STANDALONE_TITLE = re.compile(
     r"^(?:"
     r"tax\s+invoice|"
+    r"commercial\s+invoice|"
     r"invoice|"
     r"purchase\s+order|"
     r"goods\s+receipt(?:\s+note)?|"
@@ -42,7 +65,10 @@ _STANDALONE_TITLE = re.compile(
     r"statement\s+of\s+account|"
     r"vendor\s+statement|"
     r"contract|"
-    r"agreement"
+    r"agreement|"
+    r"packing\s+list(?:\s*/\s*weight\s+list)?|"
+    r"certificate\s+of\s+origin|"
+    r"cargo\s+clearance\s+permit"
     r")\s*\.?$",
     re.I,
 )
@@ -51,6 +77,7 @@ _STANDALONE_TITLE = re.compile(
 _TRAILING_TITLE = re.compile(
     r"\b(?:"
     r"tax\s+invoice|"
+    r"commercial\s+invoice|"
     r"invoice|"
     r"purchase\s+order|"
     r"goods\s+receipt(?:\s+note)?|"
@@ -61,6 +88,7 @@ _TRAILING_TITLE = re.compile(
 
 _KIND_FROM_LABEL: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"^tax\s+invoice$", re.I), "tax_invoice"),
+    (re.compile(r"^commercial\s+invoice$", re.I), "commercial_invoice"),
     (re.compile(r"^invoice$", re.I), "invoice"),
     (re.compile(r"^purchase\s+order$", re.I), "purchase_order"),
     (re.compile(r"^goods\s+receipt", re.I), "grn"),
@@ -73,6 +101,9 @@ _KIND_FROM_LABEL: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"^time\s*sheet|^timesheet", re.I), "timesheet"),
     (re.compile(r"^statement", re.I), "statement"),
     (re.compile(r"^contract|^agreement", re.I), "contract"),
+    (re.compile(r"^packing\s+list", re.I), "packing_list"),
+    (re.compile(r"^certificate\s+of\s+origin", re.I), "certificate_of_origin"),
+    (re.compile(r"^cargo\s+clearance\s+permit", re.I), "customs_permit"),
 ]
 
 
@@ -84,7 +115,11 @@ class DocumentHeadingSignals:
 
     @property
     def has_heading_invoice(self) -> bool:
-        return "invoice" in self.kinds or "tax_invoice" in self.kinds
+        return (
+            "invoice" in self.kinds
+            or "tax_invoice" in self.kinds
+            or "commercial_invoice" in self.kinds
+        )
 
     @property
     def has_heading_po(self) -> bool:
@@ -144,6 +179,10 @@ def _label_from_line(line: str) -> str | None:
 
 def extract_document_heading_signals(text: str) -> DocumentHeadingSignals:
     """Scan the top of OCR text for document-type headings."""
+    return _heading_signals_from_lines(text)
+
+
+def _heading_signals_from_lines(text: str) -> DocumentHeadingSignals:
     if not text or not text.strip():
         return DocumentHeadingSignals(primary_label=None, primary_kind=None, kinds=())
 
@@ -166,6 +205,16 @@ def extract_document_heading_signals(text: str) -> DocumentHeadingSignals:
             seen_kinds.add(kind)
             kinds.append(kind)
 
+    if not kinds:
+        blob = "\n".join(text.splitlines()[:50])
+        for pattern, kind in _PAGE_KIND_KEYWORDS:
+            if kind in seen_kinds:
+                continue
+            if pattern.search(blob):
+                seen_kinds.add(kind)
+                kinds.append(kind)
+                labels.append(kind.replace("_", " "))
+
     primary_label = labels[0] if labels else None
     primary_kind = kinds[0] if kinds else None
     return DocumentHeadingSignals(
@@ -173,6 +222,29 @@ def extract_document_heading_signals(text: str) -> DocumentHeadingSignals:
         primary_kind=primary_kind,
         kinds=tuple(kinds),
     )
+
+
+def is_continuation_page(text: str) -> bool:
+    """True when OCR indicates this page continues the previous document."""
+    return bool(_CONTINUATION_PAGE.search(text or ""))
+
+
+def infer_page_document_kind(text: str) -> HeadingKind | None:
+    """Detect document kind from a single page (headings + import/logistics keywords)."""
+    if not text or not text.strip():
+        return None
+    if is_continuation_page(text):
+        return None
+
+    signals = _heading_signals_from_lines(text)
+    if signals.primary_kind is not None:
+        return signals.primary_kind
+
+    blob = "\n".join(text.splitlines()[:50])
+    for pattern, kind in _PAGE_KIND_KEYWORDS:
+        if pattern.search(blob):
+            return kind
+    return None
 
 
 def _expected_heading_kinds(

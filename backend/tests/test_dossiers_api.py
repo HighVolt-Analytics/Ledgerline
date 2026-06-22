@@ -16,16 +16,27 @@ from app.services.dossier_service import build_dossier_summary, dossier_public_i
 
 @pytest.mark.asyncio
 async def test_dossier_public_id_fallback(db_session: AsyncSession) -> None:
-    inv = Invoice(org_id=1, vendor="Acme", status=InvoiceStatus.PENDING)
+    inv = Invoice(tenant_id=1, vendor="Acme", status=InvoiceStatus.PENDING)
     db_session.add(inv)
     await db_session.flush()
-    assert dossier_public_id(inv) == str(inv.id)
+    assert dossier_public_id(inv) == f"DOC-{inv.id}"
+
+
+@pytest.mark.asyncio
+async def test_resolve_invoice_by_doc_id_fallback(db_session: AsyncSession) -> None:
+    inv = Invoice(tenant_id=1, vendor="X", status=InvoiceStatus.PENDING, file_hash="resolve-doc-fallback")
+    db_session.add(inv)
+    await db_session.flush()
+    token = f"DOC-{inv.id}"
+    found = await resolve_invoice_for_dossier(db_session, 1, token)
+    assert found is not None
+    assert found.id == inv.id
 
 
 @pytest.mark.asyncio
 async def test_pipeline_duplicate_fail(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         status=InvoiceStatus.DUPLICATE_SKIPPED,
         file_hash="abc",
@@ -58,7 +69,7 @@ async def test_pipeline_duplicate_fail(db_session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_get_dossier_api(client: AsyncClient, db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meridian Foods Pty Ltd",
         invoice_no="INV-9001",
         document_type_code="DT-01",
@@ -122,7 +133,7 @@ async def test_get_dossier_api(client: AsyncClient, db_session: AsyncSession) ->
 @pytest.mark.asyncio
 async def test_list_dossiers_api(client: AsyncClient, db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco",
         invoice_no="INV-9002",
         document_type_code="DT-01",
@@ -143,7 +154,7 @@ async def test_list_dossiers_api(client: AsyncClient, db_session: AsyncSession) 
 
 @pytest.mark.asyncio
 async def test_resolve_invoice_for_dossier(db_session: AsyncSession) -> None:
-    inv = Invoice(org_id=1, vendor="X", status=InvoiceStatus.PENDING, file_hash="resolve-1")
+    inv = Invoice(tenant_id=1, vendor="X", status=InvoiceStatus.PENDING, file_hash="resolve-1")
     db_session.add(inv)
     await db_session.flush()
     await assign_document_ref(db_session, inv)

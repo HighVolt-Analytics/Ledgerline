@@ -16,7 +16,7 @@ from app.services.invoice_evaluation_service import (
     ROUTE_PURCHASE,
     apply_invoice_evaluation,
     evaluate_invoice_routing,
-    load_config_for_org,
+    load_config_for_tenant,
     parse_matched_rule_ids,
 )
 from app.services.rule_book_mapper import clear_classification_config_cache
@@ -32,7 +32,7 @@ def _clear_config_cache() -> None:
 @pytest.mark.asyncio
 async def test_evaluate_invoice_with_po_routes_to_purchase(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",
@@ -58,7 +58,7 @@ async def test_evaluate_invoice_with_po_routes_to_purchase(db_session: AsyncSess
             .options(selectinload(Invoice.line_items))
         )
     ).scalar_one()
-    config = load_config_for_org(1)
+    config = load_config_for_tenant(1)
     result = evaluate_invoice_routing(loaded, config, mapping_rule_type="Purchase rule")
     assert result.route_target in {ROUTE_PURCHASE, "Purchase Management"}
     assert any(rule.startswith("purchase:") for rule in result.matched_rule_ids)
@@ -67,7 +67,7 @@ async def test_evaluate_invoice_with_po_routes_to_purchase(db_session: AsyncSess
 @pytest.mark.asyncio
 async def test_apply_invoice_evaluation_persists_fields(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Unknown Florist Co",
         invoice_no="UNKNOWN-001",
         status=InvoiceStatus.MAPPING,
@@ -92,7 +92,7 @@ async def test_apply_invoice_evaluation_uses_db_vendor_master(db_session: AsyncS
     """Pipeline must not crash or hold when vendor exists in DB but not rule book JSON."""
     db_session.add(
         VendorMasterRecord(
-            org_id=1,
+            tenant_id=1,
             master_id="vm-msft",
             name="Microsoft Pty Ltd",
             abn="29002588189",
@@ -101,7 +101,7 @@ async def test_apply_invoice_evaluation_uses_db_vendor_master(db_session: AsyncS
         )
     )
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Microsoft Pty Ltd",
         abn="29002588189",
         invoice_no="MSFT-1",
@@ -135,7 +135,7 @@ async def test_list_invoices_filter_by_route_target(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco Australia",
         invoice_no="SYSCO-INV-88210",
         po_reference="PO-BEV-2026-014",
@@ -160,7 +160,7 @@ async def test_remap_updates_evaluation_fields(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",

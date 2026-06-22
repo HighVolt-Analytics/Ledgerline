@@ -3,6 +3,7 @@ import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-rea
 import { api } from "@/api/client";
 import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
@@ -27,6 +28,7 @@ import {
   mailboxDisplayName,
 } from "@/lib/invoice";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
 import { cn } from "@/lib/cn";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
@@ -107,6 +109,8 @@ export function UploadPage() {
   const [mailboxes, setMailboxes] = useState<ConnectedMailbox[]>([]);
   const [totalInvoices, setTotalInvoices] = useState(0);
   const [source, setSource] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery.trim());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -141,6 +145,7 @@ export function UploadPage() {
           ...(selectedMailboxId != null
             ? { connected_mailbox_id: String(selectedMailboxId) }
             : {}),
+          ...(debouncedSearch ? { q: debouncedSearch } : {}),
         },
         { fresh }
       );
@@ -165,7 +170,11 @@ export function UploadPage() {
     } finally {
       if (!options?.silent) setLoading(false);
     }
-  }, [page, source]);
+  }, [page, source, debouncedSearch]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [source, debouncedSearch]);
 
   useEffect(() => {
     void load();
@@ -585,7 +594,13 @@ export function UploadPage() {
               Captured documents
               <span className="text-muted-foreground tnum font-normal">({totalInvoices})</span>
             </h3>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-2 ml-auto flex-wrap">
+            <ListSearchInput
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search this list…"
+              testId="input-upload-search"
+            />
             <Select
               value={source}
               onValueChange={(value) => {

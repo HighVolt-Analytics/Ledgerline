@@ -73,7 +73,7 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
     existing = (
         await db.execute(
             select(Payment).where(
-                Payment.org_id == invoice.org_id,
+                Payment.tenant_id == invoice.tenant_id,
                 Payment.invoice_id == invoice.id,
             )
         )
@@ -88,7 +88,7 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
         return existing
 
     payment = Payment(
-        org_id=invoice.org_id,
+        tenant_id=invoice.tenant_id,
         invoice_id=invoice.id,
         vendor=invoice.vendor,
         amount=invoice.total,
@@ -104,11 +104,11 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
 
 async def list_payments(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     *,
     status: str | None = None,
 ) -> list[PaymentResponse]:
-    stmt = select(Payment).where(Payment.org_id == org_id).order_by(Payment.created_at.desc())
+    stmt = select(Payment).where(Payment.tenant_id == tenant_id).order_by(Payment.created_at.desc())
     if status:
         stmt = stmt.where(Payment.status == PaymentStatus(status))
     rows = (await db.execute(stmt)).scalars().all()
@@ -117,13 +117,13 @@ async def list_payments(
 
 async def update_payment_status(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     payment_id: int,
     body: PaymentStatusUpdate,
 ) -> PaymentResponse:
     row = (
         await db.execute(
-            select(Payment).where(Payment.id == payment_id, Payment.org_id == org_id)
+            select(Payment).where(Payment.id == payment_id, Payment.tenant_id == tenant_id)
         )
     ).scalar_one_or_none()
     if row is None:
@@ -142,11 +142,11 @@ async def update_payment_status(
     return payment_to_response(row)
 
 
-async def wallet_summary(db: AsyncSession, org_id: int) -> WalletSummaryResponse:
+async def wallet_summary(db: AsyncSession, tenant_id: int) -> WalletSummaryResponse:
     rows = (
         await db.execute(
             select(Payment)
-            .where(Payment.org_id == org_id)
+            .where(Payment.tenant_id == tenant_id)
             .order_by(Payment.id.desc())
         )
     ).scalars().all()
@@ -190,11 +190,11 @@ async def wallet_summary(db: AsyncSession, org_id: int) -> WalletSummaryResponse
     )
 
 
-async def payments_queue_count(db: AsyncSession, org_id: int) -> int:
+async def payments_queue_count(db: AsyncSession, tenant_id: int) -> int:
     return (
         await db.execute(
             select(func.count(Payment.id)).where(
-                Payment.org_id == org_id,
+                Payment.tenant_id == tenant_id,
                 Payment.status.in_(_OPEN_STATUSES),
             )
         )

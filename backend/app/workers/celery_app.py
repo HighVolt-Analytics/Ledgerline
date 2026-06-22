@@ -34,7 +34,7 @@ _poll_schedule = (
 
 celery_app.conf.beat_schedule = {
     "poll-inbox": {
-        "task": "app.workers.tasks.process_inbox_task",
+        "task": "app.workers.tasks.poll_all_tenants_task",
         "schedule": _poll_schedule,
     },
 }

@@ -1,11 +1,13 @@
-import { FolderKanban, RefreshCw, Search } from "lucide-react";
+import { FolderKanban, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/api/client";
 import { DossierCard } from "@/components/dossiers/DossierCard";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { fetchDossiersPage } from "@/lib/dossierApi";
 import type { DossierSummary } from "@/lib/dossiers";
 
@@ -13,7 +15,7 @@ const PAGE_SIZE = 12;
 
 export function DossiersPage() {
   const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
+  const search = useDebouncedValue(query.trim());
   const [typeFilter, setTypeFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<DossierSummary[]>([]);
@@ -24,11 +26,6 @@ export function DossiersPage() {
   const [typeOptions, setTypeOptions] = useState<Array<{ value: string; label: string }>>([
     { value: "all", label: "All document types" },
   ]);
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => setSearch(query.trim()), 300);
-    return () => window.clearTimeout(handle);
-  }, [query]);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,7 +86,7 @@ export function DossiersPage() {
   const emptyMessage = useMemo(() => {
     if (loading) return null;
     if (search || typeFilter !== "all") return "No dossiers match your filters.";
-    return "No dossiers yet. Ingested invoices with a document reference appear here.";
+    return "No dossiers yet. Uploaded and ingested documents appear here after processing.";
   }, [loading, search, typeFilter]);
 
   return (
@@ -119,19 +116,12 @@ export function DossiersPage() {
             <span className="text-muted-foreground tnum font-normal">({total})</span>
           </h3>
           <div className="flex items-center gap-2 ml-auto flex-wrap">
-            <div className="relative">
-              <Search
-                className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-                aria-hidden
-              />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search dossiers…"
-                data-testid="input-dossier-search"
-                className="h-8 w-full min-w-[12rem] max-w-xs rounded-md border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary/40"
-              />
-            </div>
+            <ListSearchInput
+              value={query}
+              onChange={setQuery}
+              placeholder="Search dossiers…"
+              testId="input-dossier-search"
+            />
             <Select
               value={typeFilter}
               onValueChange={setTypeFilter}

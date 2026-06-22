@@ -13,7 +13,7 @@ from app.services.reconciliation_service import reconcile_daily
 async def test_balanced(db_session: AsyncSession) -> None:
     d = date(2026, 1, 15)
     sub, gst, total = Decimal("1000"), Decimal("100"), Decimal("1100")
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         vendor="Acme",
         invoice_no="INV-R1",
         invoice_date=d,
@@ -43,7 +43,7 @@ async def test_balanced(db_session: AsyncSession) -> None:
             )
         )
     await db_session.flush()
-    result = await reconcile_daily(db_session, d, org_id=1)
+    result = await reconcile_daily(db_session, d, tenant_id=1)
     assert result.is_balanced
     assert not result.halted
 
@@ -51,7 +51,7 @@ async def test_balanced(db_session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_halted(db_session: AsyncSession) -> None:
     d = date(2026, 1, 16)
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         invoice_no="INV-R2",
         invoice_date=d,
         subtotal=Decimal("100"),
@@ -86,7 +86,7 @@ async def test_halted(db_session: AsyncSession) -> None:
         )
     )
     await db_session.flush()
-    result = await reconcile_daily(db_session, d, org_id=1)
+    result = await reconcile_daily(db_session, d, tenant_id=1)
     assert result.halted
     assert not result.rc2_passed
 
@@ -97,7 +97,7 @@ async def test_rc1_includes_current_invoice_before_processed(
 ) -> None:
     """Invoice being reconciled counts toward RC1 even before status is processed."""
     d = date(2026, 5, 4)
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         vendor="Atlassian Pty Ltd",
         invoice_no="ATL-TEST",
         invoice_date=d,
@@ -128,10 +128,10 @@ async def test_rc1_includes_current_invoice_before_processed(
         )
     await db_session.flush()
 
-    without = await reconcile_daily(db_session, d, org_id=1)
+    without = await reconcile_daily(db_session, d, tenant_id=1)
     assert without.halted
 
-    with_current = await reconcile_daily(db_session, d, org_id=1, current_invoice=inv)
+    with_current = await reconcile_daily(db_session, d, tenant_id=1, current_invoice=inv)
     assert with_current.rc1_passed
     assert with_current.is_balanced
     assert not with_current.halted
@@ -142,7 +142,7 @@ async def test_reconciliation_scoped_per_org(db_session: AsyncSession) -> None:
     """Journal entries from another org must not affect RC1/RC2."""
     d = date(2026, 5, 4)
     org2 = Invoice(
-        org_id=2,
+        tenant_id=2,
         vendor="Atlassian Pty Ltd",
         invoice_no="ATL-ORG2",
         invoice_date=d,
@@ -154,7 +154,7 @@ async def test_reconciliation_scoped_per_org(db_session: AsyncSession) -> None:
         file_hash="org2-rc",
     )
     org1 = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Atlassian Pty Ltd",
         invoice_no="ATL-ORG1",
         invoice_date=d,
@@ -187,7 +187,7 @@ async def test_reconciliation_scoped_per_org(db_session: AsyncSession) -> None:
             )
     await db_session.flush()
 
-    result = await reconcile_daily(db_session, d, org_id=2, current_invoice=org2)
+    result = await reconcile_daily(db_session, d, tenant_id=2, current_invoice=org2)
     assert result.rc1_passed
     assert result.is_balanced
     assert not result.halted

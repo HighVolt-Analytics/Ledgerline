@@ -278,7 +278,7 @@ export function Layout() {
                   <div className="px-2 py-1.5">
                     <div className="font-medium">{user?.full_name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {user?.role} · {user?.org_name}
+                      {user?.role} · {user?.tenant_name}
                     </div>
                   </div>
                   <div className="my-1 h-px bg-border" />

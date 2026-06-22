@@ -75,7 +75,13 @@ async def whatsapp_status(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[WhatsappStatusResponse]:
-    connections = await list_connections(db, org_id=ctx.org_id)
+    connections = await list_connections(db, tenant_id=ctx.tenant_id)
+    for conn in connections:
+        if conn.is_connected and conn.whatsapp_business_account_id:
+            try:
+                await resubscribe_connection_webhooks(conn)
+            except Exception as exc:
+                logger.debug("whatsapp_resubscribe_skipped", id=conn.id, error=str(exc))
     return ApiEnvelope(
         data=WhatsappStatusResponse(
             configured=oauth_configured(),
@@ -94,7 +100,7 @@ async def whatsapp_authorize_url(
         raise HTTPException(503, _OAUTH_ERRORS["not_configured"])
     from app.services.whatsapp_graph_client import build_oauth_authorize_url
 
-    state = create_oauth_state(org_id=ctx.org_id, user_id=ctx.user_id or 0)
+    state = create_oauth_state(tenant_id=ctx.tenant_id, user_id=ctx.user_id or 0)
     return ApiEnvelope(
         data=WhatsappAuthorizeResponse(
             authorize_url=build_oauth_authorize_url(state=state),
@@ -109,7 +115,7 @@ async def whatsapp_disconnect(
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[dict]:
     row = await db.get(ConnectedWhatsapp, connection_id)
-    if not row or row.org_id != ctx.org_id:
+    if not row or row.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "WhatsApp connection not found")
     await disconnect_connection(db, row)
     return ApiEnvelope(data={"disconnected": True, "id": connection_id})
@@ -122,7 +128,7 @@ async def whatsapp_test(
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[WhatsappTestResponse]:
     row = await db.get(ConnectedWhatsapp, connection_id)
-    if not row or row.org_id != ctx.org_id:
+    if not row or row.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "WhatsApp connection not found")
     try:
         outcome = await test_connection(db, row)
@@ -163,7 +169,7 @@ async def whatsapp_oauth_callback(
 
     try:
         payload = parse_oauth_state(state)
-        org_id = int(payload["org_id"])
+        tenant_id = int(payload["org_id"])
         user_id = int(payload["sub"])
     except Exception as exc:
         logger.warning("whatsapp_oauth_state_invalid", error=str(exc))
@@ -171,7 +177,7 @@ async def whatsapp_oauth_callback(
         return RedirectResponse(url=url, status_code=302)
 
     user = await db.get(User, user_id)
-    if not user or not user.is_active or user.org_id != org_id:
+    if not user or not user.is_active or user.tenant_id != tenant_id:
         url = _append_query(return_base, {"wa": "error", "reason": "not_admin"})
         return RedirectResponse(url=url, status_code=302)
     if user.role != UserRole.ADMIN:
@@ -182,12 +188,12 @@ async def whatsapp_oauth_callback(
         stored = await complete_oauth_and_store_connections(
             db,
             code=code,
-            org_id=org_id,
+            tenant_id=tenant_id,
             user_id=user_id,
         )
         await db.commit()
         phone = stored[0].phone_number or stored[0].display_name or "WhatsApp"
-        logger.info("whatsapp_oauth_callback_success", org_id=org_id, phone=phone)
+        logger.info("whatsapp_oauth_callback_success", tenant_id=tenant_id, phone=phone)
         url = _append_query(
             return_base,
             {"wa": "connected", "phone": phone[:80]},
@@ -196,12 +202,12 @@ async def whatsapp_oauth_callback(
     except RuntimeError as exc:
         reason = str(exc)
         mapped = reason if reason in _OAUTH_ERRORS else "oauth_failed"
-        logger.warning("whatsapp_oauth_callback_runtime_error", reason=reason, org_id=org_id)
+        logger.warning("whatsapp_oauth_callback_runtime_error", reason=reason, tenant_id=tenant_id)
         await db.rollback()
         url = _append_query(return_base, {"wa": "error", "reason": mapped})
         return RedirectResponse(url=url, status_code=302)
     except Exception as exc:
-        logger.error("whatsapp_oauth_callback_failed", error=str(exc), org_id=org_id)
+        logger.error("whatsapp_oauth_callback_failed", error=str(exc), tenant_id=tenant_id)
         await db.rollback()
         url = _append_query(return_base, {"wa": "error", "reason": "oauth_failed"})
         return RedirectResponse(url=url, status_code=302)
@@ -257,13 +263,13 @@ async def process_whatsapp_payload(payload: dict) -> None:
                 for invoice_id in result.invoice_ids or []:
                     asyncio.create_task(process_invoice_background(invoice_id))
 
-                logger.info(
-                    "whatsapp_message_processed",
-                    message_id=msg.message_id,
-                    ingested=result.ingested_count,
-                    skipped=result.skipped_reason,
-                    tenant_id=connection.org_id,
-                )
+            logger.info(
+                "whatsapp_message_processed",
+                message_id=msg.message_id,
+                ingested=result.ingested_count,
+                skipped=result.skipped_reason,
+                tenant_id=connection.tenant_id,
+            )
     except Exception as exc:
         logger.exception("whatsapp_webhook_processing_failed", error=str(exc))
 

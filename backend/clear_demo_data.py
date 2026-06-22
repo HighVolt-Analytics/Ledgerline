@@ -95,7 +95,7 @@ async def clear_demo_data(
 
     async with async_session_factory() as session:
         if org_id is not None:
-            from app.models.organisation import Organisation
+            from app.models.tenant import Tenant
 
             org = await session.get(Organisation, org_id)
             if org is None:

@@ -133,7 +133,7 @@ async def test_rule_book_put_writes_audit_event(
         )
     ).scalars().first()
     assert row is not None
-    assert row.org_id == 1
+    assert row.tenant_id == 1
     assert row.detail is not None
     assert "changes" in row.detail
     assert "ec-1" in row.detail["changes"]["email_capture_rules"]["modified"]
@@ -225,7 +225,7 @@ async def test_member_cannot_put_rule_book_when_auth_required(
     clear_rule_book_cache()
 
     member = User(
-        org_id=1,
+        tenant_id=1,
         email="member@hv.com",
         password_hash=hash_password("memberpass1"),
         full_name="Member User",
@@ -236,8 +236,8 @@ async def test_member_cannot_put_rule_book_when_auth_required(
 
     token = create_access_token(
         user_id=member.id,
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=1,
+        tenant_slug="hv-org",
         email=member.email,
         role=member.role.value,
     )

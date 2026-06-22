@@ -1032,6 +1032,11 @@
   flex-shrink: 0;
 }
 
+.dossier-row__icon--bad {
+  color: hsl(var(--destructive));
+  flex-shrink: 0;
+}
+
 .dossier-row__icon--muted {
   color: hsl(var(--muted-foreground) / 0.5);
   flex-shrink: 0;

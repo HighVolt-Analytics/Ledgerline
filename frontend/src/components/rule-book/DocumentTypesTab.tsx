@@ -4,8 +4,10 @@ import { Layers, Pencil, Plus, Trash2, X, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
+import { matchesListSearch } from "@/lib/listSearch";
 import { ROUTE_TARGETS } from "@/lib/v4RuleBookTypes";
 import {
   DOCUMENT_TYPE_CLASSES,
@@ -14,12 +16,14 @@ import {
   type DocumentTypeFraudRisk,
 } from "@/lib/v5DocumentTypes";
 import { DocumentConditionBuilder } from "@/components/rule-book/DocumentConditionBuilder";
+import { DocumentTypeSamplesSection } from "@/components/rule-book/DocumentTypeSamplesSection";
 import { DocumentTypeTemplateDialog } from "@/components/rule-book/DocumentTypeTemplateDialog";
 import { SimpleClassifierSection } from "@/components/rule-book/SimpleClassifierSection";
 import {
   ValidationDetailSection,
   ValidationRulesEditor,
   ValidationViewDialog,
+  mergeConfigurableRules,
 } from "@/components/rule-book/DocumentValidationSection";
 import {
   PlaybookDetailSection,
@@ -896,6 +900,17 @@ function DocumentTypeEditDialog({
           </DetailCard>
 
           <DetailCard
+            title="Sample files"
+            hint="Upload examples — we suggest recognition, fields, and processing settings"
+          >
+            <DocumentTypeSamplesSection
+              draft={draft}
+              templateId={templateId}
+              onApply={(next) => onChange(next)}
+            />
+          </DetailCard>
+
+          <DetailCard
             title="Recognition"
             hint={
               advancedMode
@@ -1155,6 +1170,7 @@ export function DocumentTypesTab({
   canEdit = false,
 }: DocumentTypesTabProps) {
   const [classFilter, setClassFilter] = useState<"all" | DocumentTypeClass>("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [validationViewCode, setValidationViewCode] = useState<string | null>(null);
   const [editing, setEditing] = useState<DocumentTypeDefinition | null>(null);
@@ -1163,10 +1179,21 @@ export function DocumentTypesTab({
 
   const filtered = useMemo(
     () =>
-      classFilter === "all"
+      (classFilter === "all"
         ? documentTypes
-        : documentTypes.filter((dt) => dt.klass === classFilter),
-    [classFilter, documentTypes]
+        : documentTypes.filter((dt) => dt.klass === classFilter)
+      ).filter((docType) =>
+        matchesListSearch(
+          searchQuery,
+          docType.code,
+          docType.title,
+          docType.shortTitle,
+          docType.oneLine,
+          docType.klass,
+          docType.routeTarget
+        )
+      ),
+    [classFilter, documentTypes, searchQuery]
   );
 
   const selected = useMemo(
@@ -1193,10 +1220,11 @@ export function DocumentTypesTab({
   const saveEdit = () => {
     if (!editing) return;
     const normalized = editing.code.trim().toUpperCase();
-    const validationRules =
-      editing.validationRules.length > 0
-        ? editing.validationRules
-        : defaultValidationRulesForProfile(editing.validationProfile, normalized);
+    const validationRules = mergeConfigurableRules(
+      normalized,
+      editing.validationProfile,
+      editing.validationRules
+    );
     const next = { ...editing, code: normalized, validationRules };
     if (isNew) {
       const duplicate = documentTypes.some(
@@ -1246,7 +1274,7 @@ export function DocumentTypesTab({
         ) : null}
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-2">
         {DOCUMENT_TYPE_CLASSES.map((klass) => (
           <button
             key={klass}
@@ -1263,6 +1291,13 @@ export function DocumentTypesTab({
             {klass === "all" ? "All classes" : klass}
           </button>
         ))}
+        <ListSearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search types…"
+          testId="input-document-types-search"
+          className="ml-auto"
+        />
       </div>
 
       {filtered.length === 0 ? (
@@ -1270,7 +1305,9 @@ export function DocumentTypesTab({
           <div className="mb-3 text-muted-foreground/50">
             <Layers className="h-8 w-8" />
           </div>
-          <h3 className="text-sm font-semibold text-foreground">No types in this class</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            {searchQuery.trim() ? "No types match your search" : "No types in this class"}
+          </h3>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

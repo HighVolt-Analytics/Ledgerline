@@ -26,8 +26,8 @@ def generate_entries(invoice: Invoice, mapping: AccountMapping) -> list[JournalL
     subtotal = invoice.subtotal or Decimal("0")
     gst = invoice.gst or Decimal("0")
     total = invoice.total or subtotal + gst
-    tax = get_tax_account_mapping(invoice.org_id)
-    payable = get_payable_account_mapping(invoice.org_id)
+    tax = get_tax_account_mapping(invoice.tenant_id)
+    payable = get_payable_account_mapping(invoice.tenant_id)
 
     return [
         JournalLine(

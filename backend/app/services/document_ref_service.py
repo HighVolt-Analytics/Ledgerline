@@ -25,6 +25,27 @@ def display_document_ref(invoice: Invoice) -> str:
     return "—"
 
 
+def dossier_public_id(invoice: Invoice) -> str:
+    """Stable dossier URL id — assigned document_ref, else DOC-{invoice.id} fallback."""
+    ref = (getattr(invoice, "document_ref", None) or "").strip()
+    if ref:
+        return ref
+    return f"DOC-{invoice.id}"
+
+
+def parse_dossier_id_token(token: str) -> tuple[str | None, int | None]:
+    """Parse a dossier URL token into (document_ref lookup, invoice id fallback)."""
+    raw = token.strip()
+    if not raw:
+        return None, None
+    if raw.isdigit():
+        return None, int(raw)
+    match = _DOC_REF.match(raw)
+    if match:
+        return raw, int(match.group(1))
+    return raw, None
+
+
 def invoice_log_fields(invoice: Invoice | None) -> dict[str, int | str]:
     """Structured log / audit fields: always include document_ref when assigned."""
     if invoice is None:
@@ -55,19 +76,19 @@ def _session_supports_advisory_lock(session: AsyncSession) -> bool:
     return bind is not None and bind.dialect.name == "postgresql"
 
 
-async def _acquire_document_ref_lock(session: AsyncSession, org_id: int) -> None:
+async def _acquire_document_ref_lock(session: AsyncSession, tenant_id: int) -> None:
     """Serialize DOC-n allocation per org (bulk upload runs concurrent requests)."""
     if not _session_supports_advisory_lock(session):
         return
     await session.execute(
-        text("SELECT pg_advisory_xact_lock(:namespace, :org_id)"),
-        {"namespace": _DOC_REF_LOCK_NAMESPACE, "org_id": org_id},
+        text("SELECT pg_advisory_xact_lock(:namespace, :tenant_id)"),
+        {"namespace": _DOC_REF_LOCK_NAMESPACE, "tenant_id": tenant_id},
     )
 
 
-async def next_document_ref(session: AsyncSession, org_id: int) -> str:
+async def next_document_ref(session: AsyncSession, tenant_id: int) -> str:
     rows = await session.execute(
-        select(Invoice.document_ref).where(Invoice.org_id == org_id)
+        select(Invoice.document_ref).where(Invoice.tenant_id == tenant_id)
     )
     max_seq = 0
     for (ref,) in rows.all():
@@ -79,16 +100,16 @@ async def next_document_ref(session: AsyncSession, org_id: int) -> str:
     return format_document_ref(max_seq + 1)
 
 
-async def allocate_next_document_ref(session: AsyncSession, org_id: int) -> str:
+async def allocate_next_document_ref(session: AsyncSession, tenant_id: int) -> str:
     """Reserve the next org document ref under an advisory lock."""
-    await _acquire_document_ref_lock(session, org_id)
-    return await next_document_ref(session, org_id)
+    await _acquire_document_ref_lock(session, tenant_id)
+    return await next_document_ref(session, tenant_id)
 
 
 async def assign_document_ref(session: AsyncSession, invoice: Invoice) -> str:
     existing = (invoice.document_ref or "").strip()
     if existing:
         return existing
-    ref = await allocate_next_document_ref(session, invoice.org_id)
+    ref = await allocate_next_document_ref(session, invoice.tenant_id)
     invoice.document_ref = ref
     return ref

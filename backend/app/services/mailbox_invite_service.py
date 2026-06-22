@@ -19,7 +19,7 @@ from app.models.mailbox_connection_request import (
     STATUS_PENDING,
     MailboxConnectionRequest,
 )
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.audit_service import log_event
 from app.services.graph_mail_sender import graph_mail_send_configured, send_graph_mail
@@ -46,12 +46,12 @@ class InviteActionResult:
     email_error: str | None = None
 
 
-def create_invite_token(*, request_id: int, org_id: int) -> str:
+def create_invite_token(*, request_id: int, tenant_id: int) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS)
     payload = {
         "typ": INVITE_TYP,
         "request_id": request_id,
-        "org_id": org_id,
+        "org_id": tenant_id,
         "exp": expire,
     }
     return jwt.encode(payload, get_settings().jwt_secret, algorithm="HS256")
@@ -73,8 +73,8 @@ def invite_connect_url(token: str) -> str:
     return build_public_app_path(f"/connect-mailbox?{urlencode({'token': token})}")
 
 
-def build_connect_url_for_request(*, request_id: int, org_id: int) -> str:
-    token = create_invite_token(request_id=request_id, org_id=org_id)
+def build_connect_url_for_request(*, request_id: int, tenant_id: int) -> str:
+    token = create_invite_token(request_id=request_id, tenant_id=tenant_id)
     return invite_connect_url(token)
 
 
@@ -100,12 +100,12 @@ async def get_invite_request(
     session: AsyncSession,
     *,
     request_id: int,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> MailboxConnectionRequest:
     row = await session.get(MailboxConnectionRequest, request_id)
     if not row:
         raise ValueError("Invitation not found")
-    if org_id is not None and row.org_id != org_id:
+    if tenant_id is not None and row.tenant_id != tenant_id:
         raise ValueError("Invitation not found")
     if _is_expired(row) and row.status == STATUS_PENDING:
         row.status = STATUS_EXPIRED
@@ -118,35 +118,35 @@ async def get_invite_request(
 async def load_invite_for_token(
     session: AsyncSession,
     token: str,
-) -> tuple[MailboxConnectionRequest, Organisation]:
+) -> tuple[MailboxConnectionRequest, Tenant]:
     ids = parse_invite_token(token)
     row = await get_invite_request(
         session,
         request_id=ids["request_id"],
-        org_id=ids["org_id"],
+        tenant_id=ids["org_id"],
     )
-    org = await session.get(Organisation, row.org_id)
+    org = await session.get(Tenant, row.tenant_id)
     if not org:
-        raise ValueError("Organisation not found")
+        raise ValueError("Tenant not found")
     return row, org
 
 
 def send_invite_email(
     *,
     to_email: str,
-    org_name: str,
+    tenant_name: str,
     requested_email: str,
     connect_url: str,
     personal_message: str | None,
     expires_at: datetime,
 ) -> InviteEmailResult:
     settings = get_settings()
-    subject = f"{org_name} — connect your mailbox to LedgerLink"
+    subject = f"{tenant_name} — connect your mailbox to LedgerLink"
     expiry_label = expires_at.astimezone(timezone.utc).strftime("%d %b %Y")
 
     body_text = (
         f"Hello,\n\n"
-        f"{org_name} has requested permission to read invoice attachments from "
+        f"{tenant_name} has requested permission to read invoice attachments from "
         f"{requested_email} using LedgerLink.\n\n"
     )
     if personal_message and personal_message.strip():
@@ -159,7 +159,7 @@ def send_invite_email(
 
     html = (
         f"<p>Hello,</p>"
-        f"<p><strong>{org_name}</strong> has requested permission to read invoice "
+        f"<p><strong>{tenant_name}</strong> has requested permission to read invoice "
         f"attachments from <strong>{requested_email}</strong> using LedgerLink.</p>"
     )
     if personal_message and personal_message.strip():
@@ -207,7 +207,7 @@ def send_invite_email(
 async def create_mailbox_connection_request(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     requested_email: str,
     display_name: str | None,
     message: str | None,
@@ -222,7 +222,7 @@ async def create_mailbox_connection_request(
     pending = (
         await session.execute(
             select(MailboxConnectionRequest).where(
-                MailboxConnectionRequest.org_id == org_id,
+                MailboxConnectionRequest.tenant_id == tenant_id,
                 MailboxConnectionRequest.requested_email == email,
                 MailboxConnectionRequest.status == STATUS_PENDING,
             )
@@ -231,13 +231,13 @@ async def create_mailbox_connection_request(
     if pending and not _is_expired(pending):
         raise ValueError("A pending invitation already exists for this email")
 
-    org = await session.get(Organisation, org_id)
-    org_name = org.name if org else "Your organisation"
+    org = await session.get(Tenant, tenant_id)
+    tenant_name = org.name if org else "Your organisation"
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(days=INVITE_TTL_DAYS)
 
     row = MailboxConnectionRequest(
-        org_id=org_id,
+        tenant_id=tenant_id,
         requested_email=email,
         display_name=(display_name or "").strip() or None,
         message=(message or "").strip() or None,
@@ -249,11 +249,11 @@ async def create_mailbox_connection_request(
     session.add(row)
     await session.flush()
 
-    token = create_invite_token(request_id=row.id, org_id=org_id)
+    token = create_invite_token(request_id=row.id, tenant_id=tenant_id)
     url = invite_connect_url(token)
     delivery = send_invite_email(
         to_email=email,
-        org_name=org_name,
+        tenant_name=tenant_name,
         requested_email=email,
         connect_url=url,
         personal_message=message,
@@ -263,7 +263,7 @@ async def create_mailbox_connection_request(
     await log_event(
         session,
         "mailbox_connect_requested",
-        org_id=org_id,
+        tenant_id=tenant_id,
         detail={
             "request_id": row.id,
             "requested_email": email,
@@ -286,23 +286,23 @@ async def resend_mailbox_connection_request(
     session: AsyncSession,
     *,
     request_id: int,
-    org_id: int,
+    tenant_id: int,
     actor_name: str | None = None,
     actor_email: str | None = None,
 ) -> InviteActionResult:
-    row = await get_invite_request(session, request_id=request_id, org_id=org_id)
-    org = await session.get(Organisation, org_id)
-    org_name = org.name if org else "Your organisation"
+    row = await get_invite_request(session, request_id=request_id, tenant_id=tenant_id)
+    org = await session.get(Tenant, tenant_id)
+    tenant_name = org.name if org else "Your organisation"
     now = datetime.now(timezone.utc)
     row.expires_at = now + timedelta(days=INVITE_TTL_DAYS)
     row.invite_sent_at = now
     await session.flush()
 
-    token = create_invite_token(request_id=row.id, org_id=org_id)
+    token = create_invite_token(request_id=row.id, tenant_id=tenant_id)
     url = invite_connect_url(token)
     delivery = send_invite_email(
         to_email=row.requested_email,
-        org_name=org_name,
+        tenant_name=tenant_name,
         requested_email=row.requested_email,
         connect_url=url,
         personal_message=row.message,
@@ -312,7 +312,7 @@ async def resend_mailbox_connection_request(
     await log_event(
         session,
         "mailbox_connect_resent",
-        org_id=org_id,
+        tenant_id=tenant_id,
         detail={
             "request_id": row.id,
             "requested_email": row.requested_email,
@@ -334,12 +334,12 @@ async def mark_invite_connected(
     session: AsyncSession,
     *,
     request_id: int,
-    org_id: int,
+    tenant_id: int,
     mailbox_id: int,
     actor_email: str | None = None,
 ) -> None:
     row = await session.get(MailboxConnectionRequest, request_id)
-    if not row or row.org_id != org_id:
+    if not row or row.tenant_id != tenant_id:
         return
     row.status = STATUS_CONNECTED
     row.connected_mailbox_id = mailbox_id
@@ -347,7 +347,7 @@ async def mark_invite_connected(
     await log_event(
         session,
         "mailbox_connect_completed",
-        org_id=org_id,
+        tenant_id=tenant_id,
         detail={
             "request_id": row.id,
             "requested_email": row.requested_email,

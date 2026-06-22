@@ -95,29 +95,29 @@ def _save_store(data: dict[str, Any]) -> None:
         fh.write("\n")
 
 
-def load_policy_for_org(org_id: int) -> ApprovalPolicyPayload:
+def load_policy_for_tenant(tenant_id: int) -> ApprovalPolicyPayload:
     store = _load_store()
     orgs = store.get("orgs") or {}
-    raw = orgs.get(str(org_id)) or default_policy_dict()
+    raw = orgs.get(str(tenant_id)) or default_policy_dict()
     return ApprovalPolicyPayload.model_validate(raw)
 
 
-def save_policy_for_org(org_id: int, payload: ApprovalPolicyPayload) -> ApprovalPolicyPayload:
+def save_policy_for_tenant(tenant_id: int, payload: ApprovalPolicyPayload) -> ApprovalPolicyPayload:
     store = _load_store()
     orgs = store.setdefault("orgs", {})
-    orgs[str(org_id)] = payload.model_dump()
+    orgs[str(tenant_id)] = payload.model_dump()
     _save_store(store)
     return payload
 
 
-def unlock_policy(org_id: int, code: str) -> ApprovalPolicyPayload:
+def unlock_policy(tenant_id: int, code: str) -> ApprovalPolicyPayload:
     settings = get_settings()
     expected = settings.approval_policy_unlock_code.strip()
     if code != expected:
         raise ValueError("Invalid unlock code")
-    policy = load_policy_for_org(org_id)
+    policy = load_policy_for_tenant(tenant_id)
     policy.locked = False
-    return save_policy_for_org(org_id, policy)
+    return save_policy_for_tenant(tenant_id, policy)
 
 
 def validate_policy_payload(raw: dict[str, Any]) -> ApprovalPolicyPayload:

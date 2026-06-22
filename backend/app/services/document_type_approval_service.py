@@ -14,6 +14,7 @@ from app.services.document_type_playbook_profile_service import (
     effective_match_policy,
     match_mode_requires_po,
 )
+from app.services.document_type_match_service import is_clean_match_message
 from app.services.invoice_evaluation_service import EVAL_NEEDS_REVIEW, ROUTE_TEAM
 from app.services.purchase_match_service import compute_three_way_match, load_purchase_order_for_invoice
 from app.services.validator import ValidationResult
@@ -42,13 +43,16 @@ def _match_is_clean_for_touchless(
     *,
     match_mode: str,
 ) -> bool:
-    if not match_mode_requires_po(match_mode):
+    if not match_mode_requires_po(match_mode) and match_mode not in {
+        "reference_invoice",
+        "shipment",
+        "receipt_line",
+    }:
         return True
     vr15 = _validation_result_map(results).get("VR15")
     if vr15 is None or not vr15.passed:
         return False
-    message = (vr15.message or "").strip().lower()
-    return "3-way match" in message or message in {"full_match", "matched"}
+    return is_clean_match_message(vr15.message or "", match_mode=match_mode)
 
 
 async def apply_document_type_approval_gate(
@@ -123,15 +127,16 @@ async def apply_document_type_approval_gate(
 
     if mode == "touchless_on_clean_match":
         match_mode = effective_match_policy(definition).mode
-        if not match_mode_requires_po(match_mode):
+        if match_mode in {"none", "subledger_reconcile"}:
             return False
         if _match_is_clean_for_touchless(validation_results, match_mode=match_mode):
             return False
-        po = await load_purchase_order_for_invoice(session, invoice)
-        if po is not None:
-            match = compute_three_way_match(po, invoice)
-            if match.status == "3-Way Match" or po.variance_approved:
-                return False
+        if match_mode_requires_po(match_mode):
+            po = await load_purchase_order_for_invoice(session, invoice)
+            if po is not None:
+                match = compute_three_way_match(po, invoice)
+                if match.status == "3-Way Match" or po.variance_approved:
+                    return False
         invoice.status = InvoiceStatus.EXCEPTION
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
         await log_event(

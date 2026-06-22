@@ -123,40 +123,40 @@ def _invoice_date_filters(month_start: date, month_end: date):
 
 
 async def _count_by_status(
-    db: AsyncSession, status: InvoiceStatus, *, org_id: int
+    db: AsyncSession, status: InvoiceStatus, *, tenant_id: int
 ) -> int:
     q = select(func.count(Invoice.id)).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         Invoice.status == status,
     )
     return (await db.execute(q)).scalar() or 0
 
 
 async def _count_statuses(
-    db: AsyncSession, statuses: frozenset[InvoiceStatus], *, org_id: int
+    db: AsyncSession, statuses: frozenset[InvoiceStatus], *, tenant_id: int
 ) -> int:
     q = select(func.count(Invoice.id)).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         Invoice.status.in_(statuses),
     )
     return (await db.execute(q)).scalar() or 0
 
 
-async def _mailboxes_mapped(db: AsyncSession, org_id: int) -> int:
+async def _mailboxes_mapped(db: AsyncSession, tenant_id: int) -> int:
     return (
         await db.execute(
             select(func.count(ConnectedMailbox.id)).where(
-                ConnectedMailbox.org_id == org_id,
+                ConnectedMailbox.tenant_id == tenant_id,
                 ConnectedMailbox.is_active.is_(True),
             )
         )
     ).scalar() or 0
 
 
-async def _active_users(db: AsyncSession, org_id: int) -> int:
+async def _active_users(db: AsyncSession, tenant_id: int) -> int:
     return (
         await db.execute(
-            select(func.count(User.id)).where(User.org_id == org_id)
+            select(func.count(User.id)).where(User.tenant_id == tenant_id)
         )
     ).scalar() or 0
 
@@ -171,13 +171,13 @@ def _email_source_filter():
 
 async def _docs_via_email(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     *,
     month_start: date | None = None,
     month_end: date | None = None,
 ) -> int:
     stmt = select(func.count(Invoice.id)).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         _email_source_filter(),
     )
     if month_start is not None and month_end is not None:
@@ -188,13 +188,13 @@ async def _docs_via_email(
 
 async def _docs_via_upload(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     *,
     month_start: date | None = None,
     month_end: date | None = None,
 ) -> int:
     stmt = select(func.count(Invoice.id)).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         ~_email_source_filter(),
     )
     if month_start is not None and month_end is not None:
@@ -203,11 +203,11 @@ async def _docs_via_upload(
     return (await db.execute(stmt)).scalar() or 0
 
 
-async def _team_expenses_queue_count(db: AsyncSession, org_id: int) -> int:
+async def _team_expenses_queue_count(db: AsyncSession, tenant_id: int) -> int:
     return (
         await db.execute(
             select(func.count(Invoice.id)).where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.route_target == ROUTE_TEAM,
                 Invoice.status.in_(_TEAM_EXPENSE_ACTIONABLE),
             )
@@ -215,11 +215,11 @@ async def _team_expenses_queue_count(db: AsyncSession, org_id: int) -> int:
     ).scalar() or 0
 
 
-async def _business_expenses_queue_count(db: AsyncSession, org_id: int) -> int:
+async def _business_expenses_queue_count(db: AsyncSession, tenant_id: int) -> int:
     return (
         await db.execute(
             select(func.count(Invoice.id)).where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.route_target == ROUTE_EXPENSES,
                 Invoice.status.in_(_TEAM_EXPENSE_ACTIONABLE),
             )
@@ -227,15 +227,15 @@ async def _business_expenses_queue_count(db: AsyncSession, org_id: int) -> int:
     ).scalar() or 0
 
 
-async def _payments_queue_count(db: AsyncSession, org_id: int) -> int:
+async def _payments_queue_count(db: AsyncSession, tenant_id: int) -> int:
     """Open payment workflow rows (queue, awaiting, scheduled)."""
-    count = await _payments_table_count(db, org_id)
+    count = await _payments_table_count(db, tenant_id)
     if count > 0:
         return count
     return (
         await db.execute(
             select(func.count(Invoice.id)).where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.status == InvoiceStatus.PROCESSED,
                 Invoice.due_date.isnot(None),
                 Invoice.total.isnot(None),
@@ -244,13 +244,13 @@ async def _payments_queue_count(db: AsyncSession, org_id: int) -> int:
     ).scalar() or 0
 
 
-async def _integrations_connected(db: AsyncSession, org_id: int) -> int:
+async def _integrations_connected(db: AsyncSession, tenant_id: int) -> int:
     s = get_settings()
     count = sum(1 for flag in (s.blob_enabled, s.azure_di_enabled) if flag)
     mb_count = (
         await db.execute(
             select(func.count(ConnectedMailbox.id)).where(
-                ConnectedMailbox.org_id == org_id,
+                ConnectedMailbox.tenant_id == tenant_id,
                 ConnectedMailbox.is_active.is_(True),
             )
         )
@@ -262,7 +262,7 @@ async def _integrations_connected(db: AsyncSession, org_id: int) -> int:
 
 async def _count_in_period(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
     *,
@@ -270,7 +270,7 @@ async def _count_in_period(
 ) -> int:
     lo, hi = _invoice_date_filters(month_start, month_end)
     stmt = select(func.count(Invoice.id)).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         lo,
         hi,
     )
@@ -281,7 +281,7 @@ async def _count_in_period(
 
 async def _invoice_amount_rows_in_period(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
     *,
@@ -289,7 +289,7 @@ async def _invoice_amount_rows_in_period(
 ) -> list[tuple[str | None, Decimal | None]]:
     lo, hi = _invoice_date_filters(month_start, month_end)
     stmt = select(Invoice.currency, Invoice.total).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         lo,
         hi,
         Invoice.total.isnot(None),
@@ -302,21 +302,21 @@ async def _invoice_amount_rows_in_period(
 
 async def _sum_value_in_period(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
 ) -> tuple[Decimal, dict[str, Decimal]]:
     rows = await _invoice_amount_rows_in_period(
-        db, org_id, month_start, month_end, statuses=_BOOKED_STATUSES
+        db, tenant_id, month_start, month_end, statuses=_BOOKED_STATUSES
     )
     return sum_amounts_by_currency(rows)
 
 
-async def _active_users_as_of(db: AsyncSession, org_id: int, as_of: date) -> int:
+async def _active_users_as_of(db: AsyncSession, tenant_id: int, as_of: date) -> int:
     return (
         await db.execute(
             select(func.count(User.id)).where(
-                User.org_id == org_id,
+                User.tenant_id == tenant_id,
                 func.date(User.created_at) <= as_of,
             )
         )
@@ -325,7 +325,7 @@ async def _active_users_as_of(db: AsyncSession, org_id: int, as_of: date) -> int
 
 async def _mailboxes_with_docs_in_period(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
 ) -> int:
@@ -333,7 +333,7 @@ async def _mailboxes_with_docs_in_period(
     return (
         await db.execute(
             select(func.count(func.distinct(Invoice.connected_mailbox_id))).where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.connected_mailbox_id.isnot(None),
                 lo,
                 hi,
@@ -345,9 +345,9 @@ async def _mailboxes_with_docs_in_period(
 _RECON_TOLERANCE = Decimal("0.01")
 
 
-async def _reconciliation_for_org(
+async def _reconciliation_for_tenant(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
 ) -> tuple[bool | None, Decimal | None]:
     """Latest journal date for org invoices — balanced if debits ≈ credits."""
     latest = (
@@ -355,7 +355,7 @@ async def _reconciliation_for_org(
             select(func.max(JournalEntry.date))
             .join(Invoice, Invoice.id == JournalEntry.invoice_id)
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.status.in_(_BOOKED_STATUSES),
             )
         )
@@ -370,7 +370,7 @@ async def _reconciliation_for_org(
                 await db.execute(
                     select(func.coalesce(func.sum(JournalEntry.debit), 0))
                     .join(Invoice, Invoice.id == JournalEntry.invoice_id)
-                    .where(Invoice.org_id == org_id, JournalEntry.date == latest, booked)
+                    .where(Invoice.tenant_id == tenant_id, JournalEntry.date == latest, booked)
                 )
             ).scalar()
             or 0
@@ -382,7 +382,7 @@ async def _reconciliation_for_org(
                 await db.execute(
                     select(func.coalesce(func.sum(JournalEntry.credit), 0))
                     .join(Invoice, Invoice.id == JournalEntry.invoice_id)
-                    .where(Invoice.org_id == org_id, JournalEntry.date == latest, booked)
+                    .where(Invoice.tenant_id == tenant_id, JournalEntry.date == latest, booked)
                 )
             ).scalar()
             or 0
@@ -394,7 +394,7 @@ async def _reconciliation_for_org(
 
 async def _distinct_vendors_in_period(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
     *,
@@ -403,7 +403,7 @@ async def _distinct_vendors_in_period(
     vendor_expr = func.coalesce(Invoice.vendor, "Unknown")
     lo, hi = _invoice_date_filters(month_start, month_end)
     stmt = select(func.count(func.distinct(vendor_expr))).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         lo,
         hi,
     )
@@ -413,13 +413,13 @@ async def _distinct_vendors_in_period(
 
 
 async def _invoice_status_counts(
-    db: AsyncSession, org_id: int
+    db: AsyncSession, tenant_id: int
 ) -> dict[InvoiceStatus, int]:
     """Single grouped query for all status counters."""
     rows = (
         await db.execute(
             select(Invoice.status, func.count(Invoice.id))
-            .where(Invoice.org_id == org_id)
+            .where(Invoice.tenant_id == tenant_id)
             .group_by(Invoice.status)
         )
     ).all()
@@ -428,7 +428,7 @@ async def _invoice_status_counts(
 
 async def _period_invoice_metrics(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
 ) -> tuple[int, int, int]:
@@ -449,7 +449,7 @@ async def _period_invoice_metrics(
                     ),
                     0,
                 ),
-            ).where(Invoice.org_id == org_id, lo, hi)
+            ).where(Invoice.tenant_id == tenant_id, lo, hi)
         )
     ).one()
     return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
@@ -463,20 +463,20 @@ def _integrations_count(mailboxes_active: int) -> int:
     return count
 
 
-async def build_nav_badges(db: AsyncSession, *, org_id: int) -> NavBadges:
+async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
     """Sidebar badge counts in two DB round-trips (no period/value aggregates)."""
-    status_counts = await _invoice_status_counts(db, org_id)
+    status_counts = await _invoice_status_counts(db, tenant_id)
     pending_approval = sum(
         status_counts.get(s, 0) for s in _APPROVAL_STATUSES
     )
     inbox_count = sum(status_counts.get(s, 0) for s in _INBOX_STATUSES)
-    mailboxes_mapped = await _mailboxes_mapped(db, org_id=org_id)
+    mailboxes_mapped = await _mailboxes_mapped(db, tenant_id=tenant_id)
     return NavBadges(
         inbox_count=inbox_count,
         pending_approval=pending_approval,
-        team_expenses_count=await _team_expenses_queue_count(db, org_id),
-        business_expenses_count=await _business_expenses_queue_count(db, org_id),
-        payments_queue_count=await _payments_queue_count(db, org_id),
+        team_expenses_count=await _team_expenses_queue_count(db, tenant_id),
+        business_expenses_count=await _business_expenses_queue_count(db, tenant_id),
+        payments_queue_count=await _payments_queue_count(db, tenant_id),
         integrations_connected=_integrations_count(mailboxes_mapped),
     )
 
@@ -484,7 +484,7 @@ async def build_nav_badges(db: AsyncSession, *, org_id: int) -> NavBadges:
 async def build_stats(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     month_start: date | None = None,
     month_end: date | None = None,
 ) -> DashboardStats:
@@ -492,7 +492,7 @@ async def build_stats(
     period_start = month_start or _month_start(today)
     period_end = month_end or _month_end(period_start)
 
-    status_counts = await _invoice_status_counts(db, org_id)
+    status_counts = await _invoice_status_counts(db, tenant_id)
     total = sum(status_counts.values())
     processed = status_counts.get(InvoiceStatus.PROCESSED, 0)
     exceptions = status_counts.get(InvoiceStatus.EXCEPTION, 0)
@@ -505,16 +505,16 @@ async def build_stats(
     inbox_count = sum(status_counts.get(s, 0) for s in _INBOX_STATUSES)
 
     invoices_this_month, _, docs_via_email = await _period_invoice_metrics(
-        db, org_id, period_start, period_end
+        db, tenant_id, period_start, period_end
     )
     distinct_vendors = await _distinct_vendors_in_period(
-        db, org_id, period_start, period_end, statuses=_BOOKED_STATUSES
+        db, tenant_id, period_start, period_end, statuses=_BOOKED_STATUSES
     )
     total_value, value_by_currency = await _sum_value_in_period(
-        db, org_id, period_start, period_end
+        db, tenant_id, period_start, period_end
     )
     docs_via_upload = await _docs_via_upload(
-        db, org_id, month_start=period_start, month_end=period_end
+        db, tenant_id, month_start=period_start, month_end=period_end
     )
 
     sync_denominator = total - sum(
@@ -524,11 +524,11 @@ async def build_stats(
         round(processed / sync_denominator * 100) if sync_denominator else 0
     )
 
-    rec_balanced, rec_delta = await _reconciliation_for_org(db, org_id)
+    rec_balanced, rec_delta = await _reconciliation_for_tenant(db, tenant_id)
     avg_seconds = await _avg_processing_seconds(
-        db, org_id=org_id, month_start=period_start, month_end=period_end
+        db, tenant_id=tenant_id, month_start=period_start, month_end=period_end
     )
-    mailboxes_mapped = await _mailboxes_mapped(db, org_id=org_id)
+    mailboxes_mapped = await _mailboxes_mapped(db, tenant_id=tenant_id)
 
     return DashboardStats(
         total_invoices=total,
@@ -553,14 +553,14 @@ async def build_stats(
         docs_via_email=docs_via_email,
         docs_via_upload=docs_via_upload,
         mailboxes_mapped=mailboxes_mapped,
-        active_users=await _active_users(db, org_id=org_id),
+        active_users=await _active_users(db, tenant_id=tenant_id),
     )
 
 
 async def _avg_processing_seconds(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     month_start: date | None = None,
     month_end: date | None = None,
 ) -> float | None:
@@ -574,7 +574,7 @@ async def _avg_processing_seconds(
         .where(
             AuditLog.invoice_id.isnot(None),
             AuditLog.event == "invoice_processed",
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
         )
         .group_by(AuditLog.invoice_id)
         .subquery()
@@ -591,7 +591,7 @@ async def _avg_processing_seconds(
         .select_from(Invoice)
         .join(processed_log, processed_log.c.invoice_id == Invoice.id)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.status == InvoiceStatus.PROCESSED,
         )
     )
@@ -654,7 +654,7 @@ def _activity_item_from_row(
 
 
 async def fetch_activity(
-    db: AsyncSession, limit: int, *, org_id: int
+    db: AsyncSession, limit: int, *, tenant_id: int
 ) -> list[ActivityItem]:
     """Recent org activity for dashboard — always surfaces duplicate detections."""
     base = (
@@ -662,7 +662,7 @@ async def fetch_activity(
         .join(Invoice, Invoice.id == AuditLog.invoice_id)
         .where(
             AuditLog.invoice_id.isnot(None),
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
         )
     )
 
@@ -699,7 +699,7 @@ async def fetch_activity(
 async def fetch_top_vendors(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     limit: int = 5,
     month_start: date | None = None,
     month_end: date | None = None,
@@ -709,7 +709,7 @@ async def fetch_top_vendors(
         Invoice.total,
         Invoice.currency,
     ).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         Invoice.total.isnot(None),
         Invoice.status.in_(_BOOKED_STATUSES),
     )
@@ -737,12 +737,12 @@ async def fetch_top_vendors(
     ]
 
 
-async def fetch_cash_forecast(db: AsyncSession, *, org_id: int) -> list[CashForecastBucket]:
+async def fetch_cash_forecast(db: AsyncSession, *, tenant_id: int) -> list[CashForecastBucket]:
     today = date.today()
     amounts = {label: Decimal("0") for label, _, _ in _FORECAST_BUCKETS}
 
     stmt = select(Invoice.due_date, Invoice.total, Invoice.currency).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         Invoice.due_date.isnot(None),
         Invoice.total.isnot(None),
         Invoice.status.in_(_BOOKED_STATUSES),
@@ -777,7 +777,7 @@ def _sparkline_days(
 
 async def _daily_avg_processing_by_day(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     days_list: list[date],
 ) -> dict[date, int]:
     if not days_list:
@@ -791,7 +791,7 @@ async def _daily_avg_processing_by_day(
         .where(
             AuditLog.invoice_id.isnot(None),
             AuditLog.event == "invoice_processed",
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
         )
         .group_by(AuditLog.invoice_id)
         .subquery()
@@ -809,7 +809,7 @@ async def _daily_avg_processing_by_day(
         .select_from(Invoice)
         .join(processed_log, processed_log.c.invoice_id == Invoice.id)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             func.date(processed_log.c.processed_at) >= days_list[0],
             func.date(processed_log.c.processed_at) <= days_list[-1],
         )
@@ -824,7 +824,7 @@ async def _daily_avg_processing_by_day(
 
 async def _daily_recon_delta_by_day(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     days_list: list[date],
 ) -> dict[date, int]:
     if not days_list:
@@ -837,7 +837,7 @@ async def _daily_recon_delta_by_day(
         )
         .join(Invoice, Invoice.id == JournalEntry.invoice_id)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.status.in_(_BOOKED_STATUSES),
             JournalEntry.date >= days_list[0],
             JournalEntry.date <= days_list[-1],
@@ -855,7 +855,7 @@ async def _daily_recon_delta_by_day(
 async def fetch_kpi_sparklines(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
     days: int = 7,
@@ -888,7 +888,7 @@ async def fetch_kpi_sparklines(
                 Invoice.connected_mailbox_id,
                 Invoice.status,
             ).where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 func.date(Invoice.created_at) >= window_start,
                 func.date(Invoice.created_at) <= window_end,
             )
@@ -912,8 +912,8 @@ async def fetch_kpi_sparklines(
             (email_sender, email_message_id, total, currency, vendor, mailbox_id, status)
         )
 
-    avg_by_day = await _daily_avg_processing_by_day(db, org_id, days_list)
-    recon_by_day = await _daily_recon_delta_by_day(db, org_id, days_list)
+    avg_by_day = await _daily_avg_processing_by_day(db, tenant_id, days_list)
+    recon_by_day = await _daily_recon_delta_by_day(db, tenant_id, days_list)
 
     volume: list[int] = []
     email_docs: list[int] = []
@@ -958,7 +958,7 @@ async def fetch_kpi_sparklines(
         mailboxes.append(
             len({mb for _, _, _, _, _, mb, _ in rows if mb is not None})
         )
-        users.append(await _active_users_as_of(db, org_id, d))
+        users.append(await _active_users_as_of(db, tenant_id, d))
         avg_proc.append(avg_by_day.get(d, 0))
         recon.append(recon_by_day.get(d, 0))
 
@@ -978,14 +978,14 @@ async def fetch_kpi_sparklines(
 async def fetch_volume_sparkline(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
     days: int = 7,
 ) -> list[int]:
     sparklines = await fetch_kpi_sparklines(
         db,
-        org_id=org_id,
+        tenant_id=tenant_id,
         month_start=month_start,
         month_end=month_end,
         days=days,
@@ -1032,14 +1032,14 @@ def _validation_anomaly_tag(rule: str, message: str) -> str:
 async def _routing_anomaly_rows(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     limit: int,
 ) -> list[AnomalyRow]:
     invoices = (
         await db.execute(
             select(Invoice)
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.evaluation_status.in_(
                     [EVAL_PENDING_VENDOR, EVAL_NEEDS_REVIEW, EVAL_UNMATCHED_EXPENSE_VENDOR]
                 ),
@@ -1113,7 +1113,7 @@ async def _duplicate_anomaly_description(
 async def fetch_anomalies(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     limit: int = 5,
 ) -> list[AnomalyRow]:
     rows: list[AnomalyRow] = []
@@ -1122,7 +1122,7 @@ async def fetch_anomalies(
         await db.execute(
             select(Invoice)
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.status == InvoiceStatus.DUPLICATE_SKIPPED,
             )
             .order_by(Invoice.created_at.desc())
@@ -1142,7 +1142,7 @@ async def fetch_anomalies(
         rows.extend(
             await _routing_anomaly_rows(
                 db,
-                org_id=org_id,
+                tenant_id=tenant_id,
                 limit=limit - len(rows),
             )
         )
@@ -1150,7 +1150,7 @@ async def fetch_anomalies(
     exc_stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.status == InvoiceStatus.EXCEPTION,
         )
         .order_by(Invoice.created_at.desc())
@@ -1202,14 +1202,14 @@ async def fetch_anomalies(
 async def fetch_mailbox_breakdown(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
 ) -> list[MailboxBreakdownRow]:
     mailboxes = (
         await db.execute(
             select(ConnectedMailbox)
-            .where(ConnectedMailbox.org_id == org_id)
+            .where(ConnectedMailbox.tenant_id == tenant_id)
             .order_by(ConnectedMailbox.email)
         )
     ).scalars().all()
@@ -1220,7 +1220,7 @@ async def fetch_mailbox_breakdown(
         count = (
             await db.execute(
                 select(func.count(Invoice.id)).where(
-                    Invoice.org_id == org_id,
+                    Invoice.tenant_id == tenant_id,
                     Invoice.connected_mailbox_id == mb.id,
                     lo,
                     hi,
@@ -1268,53 +1268,53 @@ def _trend_from_pct(
 async def build_kpi_trends(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     month_start: date,
     month_end: date,
 ) -> dict[str, KpiTrend]:
     prev_end = month_start - timedelta(days=1)
     prev_start = _month_start(prev_end)
 
-    curr_invoices = await _count_in_period(db, org_id, month_start, month_end)
-    prev_invoices = await _count_in_period(db, org_id, prev_start, prev_end)
+    curr_invoices = await _count_in_period(db, tenant_id, month_start, month_end)
+    prev_invoices = await _count_in_period(db, tenant_id, prev_start, prev_end)
     curr_value = float(
-        (await _sum_value_in_period(db, org_id, month_start, month_end))[0]
+        (await _sum_value_in_period(db, tenant_id, month_start, month_end))[0]
     )
     prev_value = float(
-        (await _sum_value_in_period(db, org_id, prev_start, prev_end))[0]
+        (await _sum_value_in_period(db, tenant_id, prev_start, prev_end))[0]
     )
     curr_email = await _docs_via_email(
-        db, org_id, month_start=month_start, month_end=month_end
+        db, tenant_id, month_start=month_start, month_end=month_end
     )
     prev_email = await _docs_via_email(
-        db, org_id, month_start=prev_start, month_end=prev_end
+        db, tenant_id, month_start=prev_start, month_end=prev_end
     )
     curr_upload = await _docs_via_upload(
-        db, org_id, month_start=month_start, month_end=month_end
+        db, tenant_id, month_start=month_start, month_end=month_end
     )
     prev_upload = await _docs_via_upload(
-        db, org_id, month_start=prev_start, month_end=prev_end
+        db, tenant_id, month_start=prev_start, month_end=prev_end
     )
     curr_vendors = await _distinct_vendors_in_period(
-        db, org_id, month_start, month_end, statuses=_BOOKED_STATUSES
+        db, tenant_id, month_start, month_end, statuses=_BOOKED_STATUSES
     )
     prev_vendors = await _distinct_vendors_in_period(
-        db, org_id, prev_start, prev_end, statuses=_BOOKED_STATUSES
+        db, tenant_id, prev_start, prev_end, statuses=_BOOKED_STATUSES
     )
     curr_avg = await _avg_processing_seconds(
-        db, org_id=org_id, month_start=month_start, month_end=month_end
+        db, tenant_id=tenant_id, month_start=month_start, month_end=month_end
     )
     prev_avg = await _avg_processing_seconds(
-        db, org_id=org_id, month_start=prev_start, month_end=prev_end
+        db, tenant_id=tenant_id, month_start=prev_start, month_end=prev_end
     )
     curr_mailbox_activity = await _mailboxes_with_docs_in_period(
-        db, org_id, month_start, month_end
+        db, tenant_id, month_start, month_end
     )
     prev_mailbox_activity = await _mailboxes_with_docs_in_period(
-        db, org_id, prev_start, prev_end
+        db, tenant_id, prev_start, prev_end
     )
-    curr_users = await _active_users_as_of(db, org_id, month_end)
-    prev_users = await _active_users_as_of(db, org_id, prev_end)
+    curr_users = await _active_users_as_of(db, tenant_id, month_end)
+    prev_users = await _active_users_as_of(db, tenant_id, prev_end)
 
     trends: dict[str, KpiTrend] = {}
     mapping = {
@@ -1346,20 +1346,20 @@ async def build_kpi_trends(
 async def build_overview(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     activity_limit: int = 8,
     month: str | None = None,
 ) -> DashboardOverview:
     month_start, month_end, period = parse_period(month)
     stats = await build_stats(
         db,
-        org_id=org_id,
+        tenant_id=tenant_id,
         month_start=month_start,
         month_end=month_end,
     )
     kpi_sparklines = await fetch_kpi_sparklines(
         db,
-        org_id=org_id,
+        tenant_id=tenant_id,
         month_start=month_start,
         month_end=month_end,
     )
@@ -1368,29 +1368,29 @@ async def build_overview(
         period_has_data=stats.invoices_this_month > 0,
         cash_forecast_scope="All open payables for your organisation",
         stats=stats,
-        activity=await fetch_activity(db, activity_limit, org_id=org_id),
+        activity=await fetch_activity(db, activity_limit, tenant_id=tenant_id),
         top_vendors=await fetch_top_vendors(
             db,
-            org_id=org_id,
+            tenant_id=tenant_id,
             limit=5,
             month_start=month_start,
             month_end=month_end,
         ),
-        cash_forecast=await fetch_cash_forecast(db, org_id=org_id),
+        cash_forecast=await fetch_cash_forecast(db, tenant_id=tenant_id),
         mailbox_breakdown=await fetch_mailbox_breakdown(
             db,
-            org_id=org_id,
+            tenant_id=tenant_id,
             month_start=month_start,
             month_end=month_end,
         ),
-        anomalies=await fetch_anomalies(db, org_id=org_id),
+        anomalies=await fetch_anomalies(db, tenant_id=tenant_id),
         kpi_trends=await build_kpi_trends(
             db,
-            org_id=org_id,
+            tenant_id=tenant_id,
             month_start=month_start,
             month_end=month_end,
         ),
-        integrations_connected=await _integrations_connected(db, org_id),
+        integrations_connected=await _integrations_connected(db, tenant_id),
         kpi_sparklines=kpi_sparklines,
         invoice_volume_sparkline=kpi_sparklines.invoice_volume,
     )

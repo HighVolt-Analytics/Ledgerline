@@ -47,7 +47,7 @@ async def reclassify_invoice_document_type(
         return False
 
     if config is None:
-        config = validate_rule_book_config_payload(load_rule_book_config_dict(invoice.org_id))
+        config = validate_rule_book_config_payload(load_rule_book_config_dict(invoice.tenant_id))
 
     parsed = invoice_data_from_invoice(invoice)
     before = (
@@ -75,16 +75,16 @@ async def reclassify_invoice_document_type(
     return False
 
 
-async def reclassify_invoices_for_org(
+async def reclassify_invoices_for_tenant(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     invoices: Sequence[Invoice],
     config: RuleBookConfigPayload | None = None,
 ) -> list[int]:
     changed: list[int] = []
     if config is None:
-        config = validate_rule_book_config_payload(load_rule_book_config_dict(org_id))
+        config = validate_rule_book_config_payload(load_rule_book_config_dict(tenant_id))
     for invoice in invoices:
         if await reclassify_invoice_document_type(session, invoice, config=config):
             changed.append(invoice.id)

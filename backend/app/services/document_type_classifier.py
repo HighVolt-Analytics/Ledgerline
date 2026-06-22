@@ -21,6 +21,12 @@ from app.services.document_type_scoring_service import (
     pick_best_scored_definition,
     score_document_type_definition,
 )
+from app.services.segment_heading_classification import (
+    INVOICE_LIKE_KINDS,
+    classify_from_segment_heading,
+    list_heading_aware_document_type_matches,
+    resolve_segment_heading_kind,
+)
 from app.services.invoice_data import InvoiceData, ParseConfidence
 
 CONFIG_RULE_STRENGTH = 1.0
@@ -112,14 +118,38 @@ def _score_configured_matches(
     invoice: Invoice,
     parsed: InvoiceData,
     parse_confidence: ParseConfidence | None,
+    heading_kind=None,
 ) -> DocumentTypeClassification | None:
-    matches = list_configured_document_type_matches(
+    scored = _score_all_configured_matches(
+        document_types=document_types,
+        invoice=invoice,
+        parsed=parsed,
+        parse_confidence=parse_confidence,
+        heading_kind=heading_kind,
+    )
+    best = pick_best_scored_definition(scored)
+    if best is None:
+        return None
+    definition, breakdown, source = best
+    return _classification_from_scored_match(definition, breakdown, source)
+
+
+def _score_all_configured_matches(
+    *,
+    document_types: Sequence[DocumentTypeDefinition],
+    invoice: Invoice,
+    parsed: InvoiceData,
+    parse_confidence: ParseConfidence | None,
+    heading_kind=None,
+) -> list[tuple[DocumentTypeDefinition, DocumentTypeScoreBreakdown, str]]:
+    matches = list_heading_aware_document_type_matches(
         list(document_types),
         invoice=invoice,
         parsed=parsed,
+        heading_kind=heading_kind,
     )
     if not matches:
-        return None
+        return []
 
     scored: list[tuple[DocumentTypeDefinition, DocumentTypeScoreBreakdown, str]] = []
     for definition, source in matches:
@@ -131,15 +161,22 @@ def _score_configured_matches(
             parse_confidence=parse_confidence,
         )
         scored.append((definition, breakdown, source))
+    return scored
 
-    best = pick_best_scored_definition(scored)
-    if best is None:
-        return None
-    definition, breakdown, source = best
+
+def _classification_from_scored_match(
+    definition: DocumentTypeDefinition,
+    breakdown: DocumentTypeScoreBreakdown,
+    source: str,
+) -> DocumentTypeClassification:
     missing = breakdown.required_missing + breakdown.absent_violations
     reason = f"Rule book classifier matched ({source})"
     if missing:
         reason = f"{reason}; missing evidence: {', '.join(missing)}"
+    if breakdown.signal_conflicts:
+        reason = (
+            f"{reason}; signal conflicts: {', '.join(breakdown.signal_conflicts)}"
+        )
     return DocumentTypeClassification(
         definition.code,
         breakdown.confidence,
@@ -147,6 +184,42 @@ def _score_configured_matches(
         min_route_confidence=breakdown.min_route_confidence,
         score_breakdown=breakdown,
     )
+
+
+def rank_document_type_candidates(
+    *,
+    document_types: Sequence[DocumentTypeDefinition],
+    invoice: Invoice,
+    parsed: InvoiceData,
+    parse_confidence: ParseConfidence | None = None,
+    limit: int = 5,
+) -> list[DocumentTypeClassification]:
+    """Return scored classifier matches ordered by confidence then specificity."""
+    scored = _score_all_configured_matches(
+        document_types=document_types,
+        invoice=invoice,
+        parsed=parsed,
+        parse_confidence=parse_confidence,
+    )
+    if not scored:
+        return []
+
+    ordered = sorted(
+        scored,
+        key=lambda item: (
+            item[1].confidence,
+            -item[0].classifier.priority,
+            item[1].field_completeness,
+            -len(item[1].absent_violations),
+            -len(item[1].required_missing),
+            -len(item[1].signal_conflicts),
+        ),
+        reverse=True,
+    )
+    results: list[DocumentTypeClassification] = []
+    for definition, breakdown, source in ordered[: max(1, limit)]:
+        results.append(_classification_from_scored_match(definition, breakdown, source))
+    return results
 
 
 PURCHASE_KIND_FALLBACK_STRENGTH = 0.78
@@ -190,19 +263,49 @@ def classify_document_type(
     document_types: Sequence[DocumentTypeDefinition] | None = None,
     parse_confidence: ParseConfidence | None = None,
     unclassified: DocumentClassificationConfig | None = None,
+    segment_heading_kind=None,
 ) -> DocumentTypeClassification:
     """Pick the best DT-xx match from Rule Book classifiers only."""
     if not document_types:
         return _unclassified_result(unclassified, document_types)
+
+    heading_kind = resolve_segment_heading_kind(
+        document_text=parsed.document_text,
+        segment_heading_kind=segment_heading_kind,
+    )
+
+    heading_result = classify_from_segment_heading(
+        heading_kind=heading_kind,
+        document_types=document_types,
+        invoice=invoice,
+        parsed=parsed,
+        parse_confidence=parse_confidence,
+    )
+    if heading_result is not None and not heading_result.needs_review:
+        return _gate_classification(heading_result, document_types)
+
+    if heading_kind in INVOICE_LIKE_KINDS:
+        purchase_invoice = _classify_from_purchase_kind(
+            invoice=invoice,
+            parsed=parsed,
+            document_types=document_types,
+            parse_confidence=parse_confidence,
+        )
+        if purchase_invoice is not None:
+            return _gate_classification(purchase_invoice, document_types)
 
     configured = _score_configured_matches(
         document_types=document_types,
         invoice=invoice,
         parsed=parsed,
         parse_confidence=parse_confidence,
+        heading_kind=heading_kind,
     )
     if configured is not None:
         return _gate_classification(configured, document_types)
+
+    if heading_result is not None:
+        return _gate_classification(heading_result, document_types)
     purchase_fallback = _classify_from_purchase_kind(
         invoice=invoice,
         parsed=parsed,
@@ -227,12 +330,12 @@ def classification_audit_detail(
     result: DocumentTypeClassification,
     *,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> dict[str, object]:
     definition = get_document_type_definition(
         result.code,
         document_types=document_types,
-        org_id=org_id,
+        tenant_id=tenant_id,
     )
     detail: dict[str, object] = {
         "document_type_code": result.code,
@@ -253,5 +356,8 @@ def classification_audit_detail(
             "required_missing": result.score_breakdown.required_missing,
             "absent_ok": result.score_breakdown.absent_ok,
             "absent_violations": result.score_breakdown.absent_violations,
+            "signal_conflicts": result.score_breakdown.signal_conflicts,
         }
+        if result.score_breakdown.signal_conflicts:
+            detail["signal_conflicts"] = result.score_breakdown.signal_conflicts
     return detail

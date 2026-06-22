@@ -12,7 +12,7 @@ from app.models.invoice import Invoice
 from app.models.purchase_order import PurchaseOrderStatus
 from app.schemas.rule_book_config import RuleBookConfigPayload, VendorMaster
 from app.services.invoice_data import InvoiceData
-from app.services.purchase_match_service import compute_three_way_match, load_purchase_order_for_invoice
+from app.services.purchase_match_service import load_purchase_order_for_invoice
 from app.services.validator import ValidationResult
 from app.services.vendor_detection import find_matching_vendor_master, normalize_abn_digits
 
@@ -153,7 +153,7 @@ async def vr14_po_status(
     session: AsyncSession,
     *,
     invoice: Invoice | None,
-    org_id: int,
+    tenant_id: int,
 ) -> ValidationResult:
     po_ref = (data.po_reference or "").strip()
     if not po_ref:
@@ -180,63 +180,52 @@ async def vr14_po_status(
     return ValidationResult("VR14", True, f"PO {po_ref} is open and currency matches")
 
 
+async def vr15_document_match(
+    data: InvoiceData,
+    session: AsyncSession,
+    *,
+    invoice: Invoice | None,
+    tenant_id: int,
+    document_type_code: str | None = None,
+    document_types: list | None = None,
+) -> ValidationResult:
+    from app.services.document_type_match_service import run_document_match_validation
+
+    outcome = await run_document_match_validation(
+        data,
+        session,
+        invoice=invoice,
+        tenant_id=tenant_id,
+        document_type_code=document_type_code,
+        document_types=document_types,
+    )
+    skipped = outcome.status == "Skipped" and outcome.passed
+    return ValidationResult(
+        "VR15",
+        outcome.passed,
+        outcome.message,
+        skipped=skipped and "skipped" in outcome.message.lower(),
+    )
+
+
 async def vr15_three_way_match(
     data: InvoiceData,
     session: AsyncSession,
     *,
     invoice: Invoice | None,
-    org_id: int,
+    tenant_id: int,
+    document_type_code: str | None = None,
+    document_types: list | None = None,
 ) -> ValidationResult:
-    po_ref = (data.po_reference or "").strip()
-    if not po_ref:
-        return ValidationResult("VR15", True, "No PO reference — 3-way match skipped")
-
-    if invoice is None:
-        return ValidationResult("VR15", True, "3-way match deferred (no invoice context)")
-
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
-    from app.models.purchase_order import PurchaseOrder
-
-    po = (
-        await session.execute(
-            select(PurchaseOrder)
-            .where(
-                PurchaseOrder.org_id == org_id,
-                PurchaseOrder.po_number == po_ref,
-            )
-            .options(selectinload(PurchaseOrder.goods_receipts))
-        )
-    ).scalar_one_or_none()
-    if po is None:
-        return ValidationResult("VR15", False, f"PO {po_ref} not found for 3-way match")
-
-    match = compute_three_way_match(po, invoice)
-    if match.status == "No GRN":
-        return ValidationResult("VR15", False, "GRN required before invoice can match PO")
-
-    if match.status == "Qty Variance" and match.qty_variance_value > 0:
-        return ValidationResult(
-            "VR15",
-            False,
-            "Qty over-billing — invoice qty exceeds GRN (0% tolerance)",
-        )
-
-    po_unit = float(po.po_unit_price)
-    if po_unit > 0 and match.price_variance_value != 0:
-        pct = abs(match.price_variance_value) / (po_unit * max(float(po.po_qty), 1))
-        if pct > float(PRICE_MATCH_PCT) and abs(Decimal(str(match.price_variance_value))) > PRICE_MATCH_CAP_AUD:
-            return ValidationResult(
-                "VR15",
-                False,
-                f"Price variance {match.price_variance_value} exceeds tolerance",
-            )
-
-    if match.status in {"Price Variance", "Routed for Approval"}:
-        return ValidationResult("VR15", False, f"3-way match exception: {match.status}")
-
-    return ValidationResult("VR15", True, match.status)
+    """Backward-compatible alias — dispatches by document-type match mode."""
+    return await vr15_document_match(
+        data,
+        session,
+        invoice=invoice,
+        tenant_id=tenant_id,
+        document_type_code=document_type_code,
+        document_types=document_types,
+    )
 
 
 def vr16_freight_surcharges(data: InvoiceData) -> ValidationResult:
@@ -277,13 +266,15 @@ async def run_extended_validations(
     data: InvoiceData,
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     invoice: Invoice | None = None,
     config: RuleBookConfigPayload | None = None,
+    document_type_code: str | None = None,
+    document_types: list | None = None,
 ) -> ValidationResult | None:
-    from app.services.invoice_evaluation_service import load_config_for_org
+    from app.services.invoice_evaluation_service import load_config_for_tenant
 
-    rule_config = load_config_for_org(org_id) if config is None else config
+    rule_config = load_config_for_tenant(tenant_id) if config is None else config
 
     if code == "VR09":
         return vr09_line_arithmetic(data)
@@ -294,9 +285,16 @@ async def run_extended_validations(
     if code == "VR12":
         return vr12_vendor_master(data, vendor_masters=rule_config.vendor_masters)
     if code == "VR14":
-        return await vr14_po_status(data, session, invoice=invoice, org_id=org_id)
+        return await vr14_po_status(data, session, invoice=invoice, tenant_id=tenant_id)
     if code == "VR15":
-        return await vr15_three_way_match(data, session, invoice=invoice, org_id=org_id)
+        return await vr15_document_match(
+            data,
+            session,
+            invoice=invoice,
+            tenant_id=tenant_id,
+            document_type_code=document_type_code,
+            document_types=document_types,
+        )
     if code == "VR16":
         return vr16_freight_surcharges(data)
     return None

@@ -18,7 +18,7 @@ def is_posting_document_type(
     code: str | None,
     *,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> bool:
     normalized = (code or "").strip().upper()
     if not normalized:
@@ -26,7 +26,7 @@ def is_posting_document_type(
     definition = get_document_type_definition(
         normalized,
         document_types=document_types,
-        org_id=org_id,
+        tenant_id=tenant_id,
     )
     if definition is None:
         return True
@@ -80,5 +80,5 @@ def requires_gl_mapping_review(
     return is_posting_document_type(
         invoice.document_type_code,
         document_types=document_types,
-        org_id=invoice.org_id,
+        tenant_id=invoice.tenant_id,
     )

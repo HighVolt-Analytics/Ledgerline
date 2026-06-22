@@ -67,16 +67,16 @@ def map_with_details(
     return map_invoice_with_details(invoice, line_description=line_description)
 
 
-def get_tax_account_mapping(org_id: int) -> AccountMapping:
+def get_tax_account_mapping(tenant_id: int) -> AccountMapping:
     from app.services.rule_book_mapper import get_tax_account_mapping as _get_tax
 
-    return _get_tax(org_id)
+    return _get_tax(tenant_id)
 
 
-def get_payable_account_mapping(org_id: int) -> AccountMapping:
+def get_payable_account_mapping(tenant_id: int) -> AccountMapping:
     from app.services.rule_book_mapper import get_payable_account_mapping as _get_payable
 
-    return _get_payable(org_id)
+    return _get_payable(tenant_id)
 
 
 def clear_rule_book_cache() -> None:

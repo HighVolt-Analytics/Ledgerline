@@ -54,14 +54,14 @@ def _authority() -> str:
 
 def create_oauth_state(
     *,
-    org_id: int,
+    tenant_id: int,
     user_id: int | None = None,
     invite_request_id: int | None = None,
 ) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=STATE_TTL_MINUTES)
     payload: dict[str, Any] = {
         "typ": STATE_TYP,
-        "org_id": org_id,
+        "org_id": tenant_id,
         "exp": expire,
     }
     if invite_request_id is not None:
@@ -82,17 +82,17 @@ def parse_oauth_state(state: str) -> dict[str, Any]:
     return payload
 
 
-def build_authorize_url(*, org_id: int, user_id: int) -> str:
+def build_authorize_url(*, tenant_id: int, user_id: int) -> str:
     return _build_authorize_url(
-        org_id=org_id,
-        state=create_oauth_state(org_id=org_id, user_id=user_id),
+        tenant_id=tenant_id,
+        state=create_oauth_state(tenant_id=tenant_id, user_id=user_id),
     )
 
 
-def build_invite_authorize_url(*, org_id: int, invite_request_id: int) -> str:
+def build_invite_authorize_url(*, tenant_id: int, invite_request_id: int) -> str:
     return _build_authorize_url(
-        org_id=org_id,
-        state=create_oauth_state(org_id=org_id, invite_request_id=invite_request_id),
+        tenant_id=tenant_id,
+        state=create_oauth_state(tenant_id=tenant_id, invite_request_id=invite_request_id),
     )
 
 
@@ -111,7 +111,7 @@ def build_admin_consent_url() -> str:
     return f"{_authority()}/v2.0/adminconsent?{urlencode(params)}"
 
 
-def _build_authorize_url(*, org_id: int, state: str) -> str:
+def _build_authorize_url(*, tenant_id: int, state: str) -> str:
     settings = get_settings()
     if not oauth_configured():
         raise RuntimeError("Microsoft OAuth is not configured")
@@ -205,7 +205,7 @@ async def complete_oauth_callback(
 ) -> tuple[ConnectedMailbox, str]:
     """Exchange auth code, upsert connected mailbox. Returns (mailbox, flow)."""
     payload = parse_oauth_state(state)
-    org_id = int(payload["org_id"])
+    tenant_id = int(payload["org_id"])
     flow = str(payload.get("flow") or "direct")
     invite_request_id = payload.get("invite_request_id")
     user_id = payload.get("user_id")
@@ -219,13 +219,13 @@ async def complete_oauth_callback(
         invite_row = await get_invite_request(
             session,
             request_id=int(invite_request_id),
-            org_id=org_id,
+            tenant_id=tenant_id,
         )
     elif user_id is not None:
         from app.models.user import User
 
         user = await session.get(User, int(user_id))
-        if not user or not user.is_active or user.org_id != org_id:
+        if not user or not user.is_active or user.tenant_id != tenant_id:
             raise RuntimeError("OAuth session invalid — sign in again")
     else:
         raise RuntimeError("Invalid OAuth session")
@@ -255,7 +255,7 @@ async def complete_oauth_callback(
     existing = (
         await session.execute(
             select(ConnectedMailbox).where(
-                ConnectedMailbox.org_id == org_id,
+                ConnectedMailbox.tenant_id == tenant_id,
                 ConnectedMailbox.email == email,
             )
         )
@@ -265,7 +265,7 @@ async def complete_oauth_callback(
         mailbox = existing
     else:
         mailbox = ConnectedMailbox(
-            org_id=org_id,
+            tenant_id=tenant_id,
             email=email,
             display_name=display_name,
             is_active=True,
@@ -284,7 +284,7 @@ async def complete_oauth_callback(
         await mark_invite_connected(
             session,
             request_id=invite_row.id,
-            org_id=org_id,
+            tenant_id=tenant_id,
             mailbox_id=mailbox.id,
             actor_email=email,
         )
@@ -292,7 +292,7 @@ async def complete_oauth_callback(
     logger.info(
         "mailbox_oauth_connected",
         mailbox=email,
-        org_id=org_id,
+        tenant_id=tenant_id,
         flow=flow,
         invite_request_id=invite_request_id,
     )

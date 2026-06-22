@@ -13,7 +13,7 @@ def test_vault_document_type_segment_only_for_vault_route() -> None:
 
 def test_vault_document_type_folder_for_invoice_without_catalog() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.PROCESSED,
         route_target=ROUTE_VAULT,
         document_type_code="DT-25",

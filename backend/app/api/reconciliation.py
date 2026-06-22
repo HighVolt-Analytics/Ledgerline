@@ -20,7 +20,7 @@ async def reconciliation_overview(
 ) -> ApiEnvelope[ReconciliationOverview]:
     """Processed invoices with journal postings, grouped by invoice date."""
     return ApiEnvelope(
-        data=await build_reconciliation_overview(db, org_id=ctx.org_id)
+        data=await build_reconciliation_overview(db, tenant_id=ctx.tenant_id)
     )
 
 
@@ -30,10 +30,11 @@ async def list_daily(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[ReconciliationResponse]]:
     """Daily closed-loop batch summaries (legacy ledger table)."""
-    del ctx  # org-agnostic table; overview endpoint is org-scoped
     rows = (
         await db.execute(
-            select(DailyReconciliation).order_by(DailyReconciliation.date.desc())
+            select(DailyReconciliation)
+            .where(DailyReconciliation.tenant_id == ctx.tenant_id)
+            .order_by(DailyReconciliation.date.desc())
         )
     ).scalars().all()
     return ApiEnvelope(
@@ -47,10 +48,12 @@ async def get_daily(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[ReconciliationResponse]:
-    del ctx
     row = (
         await db.execute(
-            select(DailyReconciliation).where(DailyReconciliation.date == recon_date)
+            select(DailyReconciliation).where(
+                DailyReconciliation.date == recon_date,
+                DailyReconciliation.tenant_id == ctx.tenant_id,
+            )
         )
     ).scalar_one_or_none()
     if not row:

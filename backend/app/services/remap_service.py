@@ -29,14 +29,14 @@ class RemapResult:
     total: int
 
 
-async def remap_invoices_for_org(session: AsyncSession, *, org_id: int) -> RemapResult:
+async def remap_invoices_for_tenant(session: AsyncSession, *, tenant_id: int) -> RemapResult:
     """Update account mapping and routing fields from current rule book."""
     rows = (
         await session.execute(
             select(Invoice)
             .options(selectinload(Invoice.line_items))
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.status.not_in(_REMAP_SKIP),
             )
         )
@@ -44,7 +44,7 @@ async def remap_invoices_for_org(session: AsyncSession, *, org_id: int) -> Remap
 
     updated = 0
     changed_ids: list[int] = []
-    config = validate_rule_book_config_payload(load_rule_book_config_dict(org_id))
+    config = validate_rule_book_config_payload(load_rule_book_config_dict(tenant_id))
     for inv in rows:
         mapping = map_invoice_to_account(inv)
         changed = False

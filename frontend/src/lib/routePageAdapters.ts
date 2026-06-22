@@ -1,4 +1,5 @@
 import type { Invoice } from "@/api/types";
+import { documentDisplayRef } from "@/lib/format";
 import type {
   EmployeeMaster,
   ExpenseRule,
@@ -134,6 +135,7 @@ export function invoiceToTeamClaim(inv: Invoice): ExpenseClaim {
   const gst = parseAmount(inv.gst);
   return {
     id: String(inv.id),
+    documentRef: documentDisplayRef(inv),
     submitter: inferSubmitter(inv),
     channel: inferClaimChannel(inv.email_sender, inv.capture_source),
     category: inv.account_name ?? "Uncategorised",

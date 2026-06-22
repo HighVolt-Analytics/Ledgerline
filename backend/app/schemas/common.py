@@ -14,6 +14,8 @@ class ResponseMeta(BaseModel):
     page: int = 1
     total: int = 0
     pages: int = 0
+    segment_count: int | None = None
+    segment_invoice_ids: list[int] | None = None
 
 
 class ApiEnvelope(BaseModel, Generic[T]):

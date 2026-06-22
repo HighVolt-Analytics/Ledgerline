@@ -30,7 +30,7 @@ async def list_dossiers(
 ) -> ApiEnvelope[list[DossierSummaryResponse]]:
     invoices, total = await list_dossier_invoices(
         db,
-        ctx.org_id,
+        ctx.tenant_id,
         page=page,
         page_size=page_size,
         document_type_code=document_type_code,
@@ -42,8 +42,8 @@ async def list_dossiers(
 
     invoice_ids = [inv.id for inv in invoices]
     audit_by_id = await _audit_logs_for_invoices(db, invoice_ids)
-    payments_by_id = await _payments_for_invoices(db, ctx.org_id, invoice_ids)
-    buyer = await org_display_name(db, ctx.org_id)
+    payments_by_id = await _payments_for_invoices(db, ctx.tenant_id, invoice_ids)
+    buyer = await org_display_name(db, ctx.tenant_id)
 
     data: list[DossierSummaryResponse] = []
     for inv in invoices:
@@ -53,7 +53,7 @@ async def list_dossiers(
                 inv,
                 audit_by_id.get(inv.id, []),
                 payment=payments_by_id.get(inv.id),
-                org_name=buyer,
+                tenant_name=buyer,
                 compact=True,
             )
         )
@@ -66,7 +66,7 @@ async def get_dossier(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[DossierSummaryResponse]:
-    inv = await resolve_invoice_for_dossier(db, ctx.org_id, dossier_id)
+    inv = await resolve_invoice_for_dossier(db, ctx.tenant_id, dossier_id)
     if inv is None:
         raise HTTPException(404, "Dossier not found")
 
@@ -79,8 +79,8 @@ async def get_dossier(
             )
         ).scalars().all()
     )
-    payments = await _payments_for_invoices(db, ctx.org_id, [inv.id])
-    buyer = await org_display_name(db, ctx.org_id)
+    payments = await _payments_for_invoices(db, ctx.tenant_id, [inv.id])
+    buyer = await org_display_name(db, ctx.tenant_id)
 
     return ApiEnvelope(
         data=await build_dossier_summary(
@@ -88,7 +88,7 @@ async def get_dossier(
             inv,
             logs,
             payment=payments.get(inv.id),
-            org_name=buyer,
+            tenant_name=buyer,
             compact=False,
         )
     )

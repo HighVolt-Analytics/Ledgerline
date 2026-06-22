@@ -41,7 +41,7 @@ from app.services.validator import (
 class ValidationRunContext:
     data: object
     session: AsyncSession
-    org_id: int
+    tenant_id: int
     exclude_id: int | None = None
     sender: str | None = None
     route_target: str | None = None
@@ -70,7 +70,7 @@ def _playbook_results_for_rules(
     *,
     document_type_code: str | None = None,
     document_types: list | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> list[ValidationResult]:
     if playbook_gates is None:
         return []
@@ -83,7 +83,7 @@ def _playbook_results_for_rules(
         definition = get_document_type_definition(
             code,
             document_types=document_types,
-            org_id=org_id,
+            tenant_id=tenant_id,
         )
     enforce_bundle = should_enforce_bundle_mandatory(definition) if definition else True
 
@@ -122,7 +122,7 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
         profile = ctx.validation_profile or resolve_validation_profile(
             ctx.document_type_code,
             document_types=ctx.document_types,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
         )
         if profile == PROFILE_DIRECT_EXPENSE:
             return vr03_direct_expense(data)
@@ -131,7 +131,7 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
         return await vr05_abn(
             data,
             ctx.session,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             sender=ctx.sender,
         )
     if code == "VR06":
@@ -147,15 +147,17 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
             data,
             ctx.session,
             ctx.exclude_id,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
         )
 
     extended = await run_extended_validations(
         code,
         data,
         ctx.session,
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
         invoice=ctx.invoice,
+        document_type_code=ctx.document_type_code,
+        document_types=ctx.document_types,
     )
     if extended is not None:
         return extended
@@ -163,12 +165,15 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
 
 
 def _rules_for_context(ctx: ValidationRunContext) -> list[ValidationRuleConfig]:
-    if ctx.purchase_document_type == "po":
-        return [
-            ValidationRuleConfig(code="VR03", enabled=True, severity="block"),
-            ValidationRuleConfig(code="VR07", enabled=True, severity="block"),
-        ]
-    if ctx.purchase_document_type == "grn":
+    if ctx.purchase_document_type in {"po", "grn"}:
+        resolved = resolve_validation_rules(
+            ctx.document_type_code,
+            document_types=ctx.document_types,
+            tenant_id=ctx.tenant_id,
+            validation_profile=ctx.validation_profile,
+        )
+        if resolved:
+            return resolved
         return [
             ValidationRuleConfig(code="VR03", enabled=True, severity="block"),
             ValidationRuleConfig(code="VR07", enabled=True, severity="block"),
@@ -181,16 +186,10 @@ def _rules_for_context(ctx: ValidationRunContext) -> list[ValidationRuleConfig]:
     resolved = resolve_validation_rules(
         ctx.document_type_code,
         document_types=ctx.document_types,
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
         validation_profile=profile,
     )
-    if resolved:
-        return resolved
-
-    return default_validation_rules_for_profile(
-        profile or "standard",
-        document_type_code=ctx.document_type_code or "",
-    )
+    return resolved
 
 
 def _custom_rules_for_context(ctx: ValidationRunContext) -> list[CustomValidationRule]:
@@ -200,7 +199,7 @@ def _custom_rules_for_context(ctx: ValidationRunContext) -> list[CustomValidatio
     definition = get_document_type_definition(
         code,
         document_types=ctx.document_types,
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
     )
     if definition is None:
         return []
@@ -209,6 +208,7 @@ def _custom_rules_for_context(ctx: ValidationRunContext) -> list[CustomValidatio
 
 async def _run_universal_duplicate(ctx: ValidationRunContext) -> ValidationResult | None:
     from app.services.document_type_validation_service import resolve_validation_profile
+    from app.services.validation_rule_catalog import enabled_rule_codes
 
     doc_type = (ctx.purchase_document_type or "").strip().lower()
     if doc_type in {"po", "grn"}:
@@ -217,15 +217,20 @@ async def _run_universal_duplicate(ctx: ValidationRunContext) -> ValidationResul
     profile = ctx.validation_profile or resolve_validation_profile(
         ctx.document_type_code,
         document_types=ctx.document_types,
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
     )
     if profile == PROFILE_NON_ACTIONABLE:
         return None
+
+    active_codes = enabled_rule_codes(_rules_for_context(ctx))
+    if not active_codes:
+        return None
+
     raw = await vr02_unique(
         ctx.data,
         ctx.session,
         ctx.exclude_id,
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
     )
     return _with_severity(raw, "block")
 
@@ -235,7 +240,7 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
         team_results = await run_team_expense_validations(
             ctx.data,
             ctx.session,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             route_target=ctx.route_target,
             email_sender=ctx.sender,
             has_receipt_file=ctx.has_receipt_file,
@@ -251,7 +256,7 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
                 rules,
                 document_type_code=ctx.document_type_code,
                 document_types=ctx.document_types,
-                org_id=ctx.org_id,
+                tenant_id=ctx.tenant_id,
             )
         )
         return results
@@ -276,7 +281,7 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
                 rules,
                 document_type_code=ctx.document_type_code,
                 document_types=ctx.document_types,
-                org_id=ctx.org_id,
+                tenant_id=ctx.tenant_id,
             )
         )
     else:
@@ -286,7 +291,7 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
                 rules,
                 document_type_code=ctx.document_type_code,
                 document_types=ctx.document_types,
-                org_id=ctx.org_id,
+                tenant_id=ctx.tenant_id,
             )
         )
 
@@ -307,17 +312,22 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
             PROFILE_NON_ACTIONABLE,
             resolve_validation_profile,
         )
+        from app.services.validation_rule_catalog import enabled_rule_codes
 
         profile = ctx.validation_profile or resolve_validation_profile(
             ctx.document_type_code,
             document_types=ctx.document_types,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
         )
-        if profile not in (PROFILE_NON_ACTIONABLE, PROFILE_DIRECT_EXPENSE):
+        active_codes = enabled_rule_codes(_rules_for_context(ctx))
+        if (
+            profile not in (PROFILE_NON_ACTIONABLE, PROFILE_DIRECT_EXPENSE)
+            and active_codes
+        ):
             team_extra = await run_team_expense_validations(
                 ctx.data,
                 ctx.session,
-                org_id=ctx.org_id,
+                tenant_id=ctx.tenant_id,
                 route_target=ctx.route_target,
                 email_sender=ctx.sender,
                 has_receipt_file=ctx.has_receipt_file,
