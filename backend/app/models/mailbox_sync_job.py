@@ -1,8 +1,9 @@
 """Background job: import historical mailbox messages from a date range."""
 
+import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, func, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -17,7 +18,7 @@ class MailboxSyncJob(Base):
     __tablename__ = "mailbox_sync_jobs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("tenants.id"), index=True)
     mailbox_id: Mapped[int] = mapped_column(
         ForeignKey("connected_mailboxes.id", ondelete="CASCADE"),
         index=True,

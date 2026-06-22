@@ -5,6 +5,22 @@ const ACCESS_KEY = "ledgerline_access_token";
 const REFRESH_KEY = "ledgerline_refresh_token";
 const USER_KEY = "ledgerline_user";
 const MEMBERSHIPS_KEY = "ledgerline_memberships";
+const LAST_TENANT_KEY = "ledgerline_last_tenant_id";
+
+export function loadMembershipsFromSession(): TenantAccountSummary[] {
+  return getStoredMemberships();
+}
+
+export function rememberLastTenant(tenantId: string) {
+  localStorage.setItem(LAST_TENANT_KEY, String(tenantId));
+}
+
+export function getLastTenantId(): number | null {
+  const raw = localStorage.getItem(LAST_TENANT_KEY);
+  if (!raw) return null;
+  const id = Number(raw);
+  return Number.isFinite(id) ? id : null;
+}
 
 export function getAccessToken(): string | null {
   return sessionStorage.getItem(ACCESS_KEY);

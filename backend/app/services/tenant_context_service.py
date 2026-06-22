@@ -1,5 +1,7 @@
 """Resolve tenant context for API and workers."""
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,11 +11,11 @@ from app.models.tenant import Tenant
 from app.services.mailbox_oauth_service import mark_application_mailbox
 
 
-async def get_tenant_by_id(session: AsyncSession, tenant_id: int) -> Tenant | None:
+async def get_tenant_by_id(session: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:
     return await session.get(Tenant, tenant_id)
 
 
-async def get_tenant_slug(session: AsyncSession, tenant_id: int) -> str:
+async def get_tenant_slug(session: AsyncSession, tenant_id: uuid.UUID) -> str:
     tenant = await get_tenant_by_id(session, tenant_id)
     if tenant and tenant.slug.strip():
         return tenant.slug
@@ -35,7 +37,7 @@ async def get_or_create_default_tenant(session: AsyncSession) -> Tenant:
     return tenant
 
 
-async def list_active_tenant_ids(session: AsyncSession) -> list[int]:
+async def list_active_tenant_ids(session: AsyncSession) -> list[uuid.UUID]:
     rows = (
         await session.execute(
             select(Tenant.id).where(
@@ -49,7 +51,7 @@ async def list_active_tenant_ids(session: AsyncSession) -> list[int]:
 
 async def ensure_connected_mailbox(
     session: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     email: str,
     *,
     display_name: str | None = None,

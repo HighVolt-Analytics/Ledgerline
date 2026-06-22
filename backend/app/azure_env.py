@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import ssl
-from urllib.parse import quote, unquote, urlparse, urlunparse
+from typing import Any
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse, urlunparse
 
 
 def normalize_database_url(url: str) -> str:
@@ -55,6 +56,28 @@ def normalize_redis_url(url: str) -> str:
     port = parsed.port or (6380 if parsed.scheme == "rediss" else 6379)
     netloc = f":{safe_password}@{host}:{port}"
     return urlunparse(parsed._replace(netloc=netloc))
+
+
+def strip_ssl_query_params(url: str) -> str:
+    """Remove ssl/sslmode query params when SSL is supplied via connect_args."""
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if "ssl" not in query and "sslmode" not in query:
+        return url
+    query.pop("ssl", None)
+    query.pop("sslmode", None)
+    new_query = urlencode({key: values[0] for key, values in query.items()})
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def asyncpg_connect_args(database_url: str) -> dict[str, Any]:
+    """Asyncpg connect_args; Azure Postgres on Windows needs an explicit SSL context."""
+    args: dict[str, Any] = {"command_timeout": 60, "timeout": 30}
+    if "postgres.database.azure.com" in database_url:
+        args["ssl"] = ssl.create_default_context()
+    return args
 
 
 def celery_redis_ssl_options(broker_url: str, backend_url: str) -> dict[str, object]:

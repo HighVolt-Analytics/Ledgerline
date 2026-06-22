@@ -24,7 +24,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { LogoBlock } from "@/components/Logo";
-import { OrgSwitcher } from "@/components/OrgSwitcher";
+import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -217,7 +217,8 @@ export function Layout() {
           <div className="md:hidden text-primary">
             <LogoBlock collapsed />
           </div>
-          <OrgSwitcher />
+          <TenantSwitcher variant="header" showManageActions />
+          <TenantSwitcher variant="sidebar" />
           <button
             type="button"
             className="hidden md:flex items-center gap-2 h-9 px-3 rounded-md border border-border bg-card text-sm text-muted-foreground hover-elevate flex-1 max-w-md"

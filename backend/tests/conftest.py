@@ -20,8 +20,8 @@ from app.main import app
 
 get_settings.cache_clear()
 from app.models.audit import AuditLog
-from app.models.organisation import Organisation
-from app.models.user_org_membership import UserOrgMembership
+from app.models.tenant import Tenant
+from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.invoice_data import InvoiceData, ParsedLineItem
 
 TEST_DB = "sqlite+aiosqlite:///:memory:"
@@ -44,7 +44,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         session.add(
-            Organisation(id=1, name="High Volt Analytics", slug="hv-org")
+            Tenant(id=TESTING_TENANT_UUID, name="Testing", slug="testing")
         )
         await session.flush()
         yield session

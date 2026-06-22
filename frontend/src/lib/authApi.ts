@@ -7,10 +7,12 @@ const BASE =
 
 export type TenantAccountSummary = {
   user_id: number;
-  tenant_id: number;
+  tenant_id: string;
   tenant_name: string;
   tenant_slug: string;
   role: string;
+  default_tenant?: boolean;
+  is_platform?: boolean;
 };
 
 export type LoginChallengeResponse = {
@@ -32,6 +34,7 @@ export type TokenPairResponse = {
   refresh_token: string;
   token_type: string;
   user: AuthUser;
+  memberships?: TenantAccountSummary[];
 };
 
 async function parseError(res: Response): Promise<string> {
@@ -85,7 +88,7 @@ export async function apiResendOtp(challengeToken: string): Promise<LoginChallen
 
 export async function apiSelectTenant(
   tenantSelectToken: string,
-  tenantId: number
+  tenantId: string
 ): Promise<TokenPairResponse> {
   const res = await fetch(`${BASE}/api/auth/select-tenant`, {
     method: "POST",
@@ -105,6 +108,32 @@ export async function apiRefreshSession(refreshToken: string): Promise<TokenPair
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const json = await res.json();
+  return json.data as TokenPairResponse;
+}
+
+export async function fetchMyMemberships(accessToken: string): Promise<TenantAccountSummary[]> {
+  const res = await fetch(`${BASE}/api/auth/me/memberships`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const json = await res.json();
+  return json.data as TenantAccountSummary[];
+}
+
+export async function apiSwitchTenant(
+  accessToken: string,
+  tenantId: string
+): Promise<TokenPairResponse> {
+  const res = await fetch(`${BASE}/api/auth/switch-tenant`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ tenant_id: tenantId }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   const json = await res.json();

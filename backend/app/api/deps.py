@@ -9,10 +9,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
 from app.database import get_db
-from app.models.user import User, UserRole
+from app.models.user import User, UserRole, SUPER_ADMIN_ROLE
 from app.schemas.common import ApiEnvelope, ErrorDetail, ResponseMeta
 from app.services.auth_service import decode_access_token
-from app.services.org_context import get_org_slug, get_or_create_default_org
+from app.services.membership_service import get_membership_role, user_has_tenant_access
+from app.services.tenant_context_service import get_or_create_default_tenant, get_tenant_slug
+from app.tenant_context import set_jwt_tenant_id, set_request_tenant_id
+from app.tenant_isolation.resolution import TenantResolutionService
+from app.tenant_rls import apply_rls_session_context
+from app.tenant_ids import parse_tenant_id
+from app.tenant_status import assert_tenant_active_for_user
 from app.utils.logger import correlation_id_ctx
 
 __all__ = [
@@ -24,6 +30,8 @@ __all__ = [
     "get_auth_context",
     "get_db",
     "require_admin",
+    "require_super_admin",
+    "is_super_admin_role",
     "require_user",
 ]
 
@@ -33,8 +41,8 @@ _bearer = HTTPBearer(auto_error=False)
 @dataclass(frozen=True)
 class AuthContext:
     user_id: int | None
-    org_id: int
-    org_slug: str
+    tenant_id: uuid.UUID
+    tenant_slug: str
     email: str
     role: str
 
@@ -54,43 +62,73 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 async def _context_from_token(
     creds: HTTPAuthorizationCredentials | None,
     db: AsyncSession,
+    request: Request,
 ) -> AuthContext | None:
     if not creds or not creds.credentials:
         return None
     payload = decode_access_token(creds.credentials)
     if not payload:
         return None
-    org_id = int(payload["org_id"])
-    org_slug = str(payload.get("org_slug") or "").strip()
-    if not org_slug:
-        org_slug = await get_org_slug(db, org_id)
+
+    tenant_id = parse_tenant_id(payload.get("tenant_id") or payload.get("org_id"))
+    if tenant_id is None:
+        return None
+
+    tenant_slug = str(payload.get("tenant_slug") or payload.get("org_slug") or "").strip()
+    if not tenant_slug:
+        tenant_slug = await get_tenant_slug(db, tenant_id)
+
+    set_jwt_tenant_id(tenant_id)
+    set_request_tenant_id(tenant_id)
+
+    x_tid = request.headers.get("X-Tenant-Id")
+    err = TenantResolutionService.validate_header_scope(tenant_id, x_tid)
+    if err:
+        raise HTTPException(403, err)
+
+    role = str(payload.get("role", UserRole.MEMBER.value))
+    user_id = int(payload["sub"])
+
+    if not await user_has_tenant_access(db, user_id=user_id, tenant_id=tenant_id):
+        raise HTTPException(403, "Tenant access denied")
+
+    membership_role = await get_membership_role(db, user_id=user_id, tenant_id=tenant_id)
+    if membership_role:
+        role = membership_role
+
     return AuthContext(
-        user_id=int(payload["sub"]),
-        org_id=org_id,
-        org_slug=org_slug,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        tenant_slug=tenant_slug,
         email=str(payload.get("email", "")),
-        role=str(payload.get("role", UserRole.MEMBER.value)),
+        role=role,
     )
 
 
 async def require_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> AuthContext:
-    ctx = await _context_from_token(creds, db)
+    ctx = await _context_from_token(creds, db, request)
     if ctx:
         user = await db.get(User, ctx.user_id)
         if not user or not user.is_active:
             raise HTTPException(401, "Session invalid")
+        set_request_tenant_id(ctx.tenant_id)
+        await apply_rls_session_context(db, ctx.tenant_id)
+        await assert_tenant_active_for_user(db, user)
         return ctx
 
     settings = get_settings()
     if not settings.auth_required:
-        org = await get_or_create_default_org(db)
+        tenant = await get_or_create_default_tenant(db)
+        set_request_tenant_id(tenant.id)
+        await apply_rls_session_context(db, tenant.id)
         return AuthContext(
             user_id=None,
-            org_id=org.id,
-            org_slug=org.slug,
+            tenant_id=tenant.id,
+            tenant_slug=tenant.slug,
             email="system@local",
             role=UserRole.ADMIN.value,
         )
@@ -103,8 +141,20 @@ async def get_auth_context(ctx: AuthContext = Depends(require_user)) -> AuthCont
 
 
 async def require_admin(ctx: AuthContext = Depends(require_user)) -> AuthContext:
+    if is_super_admin_role(ctx.role):
+        raise HTTPException(403, "Tenant admin access required")
     if ctx.role != UserRole.ADMIN.value:
         raise HTTPException(403, "Admin access required")
+    return ctx
+
+
+def is_super_admin_role(role: str) -> bool:
+    return role == SUPER_ADMIN_ROLE
+
+
+async def require_super_admin(ctx: AuthContext = Depends(require_user)) -> AuthContext:
+    if not is_super_admin_role(ctx.role):
+        raise HTTPException(403, "Super admin access required")
     return ctx
 
 

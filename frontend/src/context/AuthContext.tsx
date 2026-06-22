@@ -7,31 +7,44 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ApiError, api, setAuthToken, setUnauthorizedHandler } from "@/api/client";
+import { ApiError, api, setAuthToken, setAuthUser, setUnauthorizedHandler } from "@/api/client";
 import type { AuthUser } from "@/api/types";
+import {
+  apiLogin,
+  apiResendOtp,
+  apiSelectTenant,
+  apiVerifyOtp,
+  fetchMyMemberships,
+  type TenantAccountSummary,
+} from "@/lib/authApi";
+import {
+  clearAuthSession,
+  getAccessToken,
+  getRefreshToken,
+  getStoredMemberships,
+  getStoredUser,
+  persistAuthSuccess,
+  rememberLastTenant,
+} from "@/lib/authSession";
 import { isTokenExpired, userFromToken } from "@/lib/authToken";
-
-const TOKEN_KEY = "ledgerline_token";
-const SESSION_REFRESH_MS = 30 * 60 * 1000;
-
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
+import { refreshAccessTokenSingleFlight } from "@/lib/authTokenRefresh";
+import { homePathForRole } from "@/lib/roles";
+import { queryClient } from "@/lib/queryClient";
 
 type AuthContextValue = {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (payload: {
-    org_name: string;
-    org_slug: string;
-    email: string;
-    password: string;
-    full_name: string;
-  }) => Promise<void>;
+  login: (email: string, password: string) => Promise<"otp">;
+  verifyOtp: (otp: string) => Promise<"done" | "pick-tenant">;
+  selectTenant: (tenantId: string) => Promise<void>;
+  resendOtp: () => Promise<void>;
   logout: () => void;
-  switchOrganisation: (orgId: number) => Promise<void>;
+  switchTenant: (tenantId: string) => Promise<void>;
+  switchOrganisation: (tenantId: string) => Promise<void>;
   refreshUser: () => Promise<void>;
+  challengeToken: string | null;
+  tenantPicker: TenantAccountSummary[];
+  tenantSelectToken: string | null;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -39,73 +52,130 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [challengeToken, setChallengeToken] = useState<string | null>(null);
+  const [tenantSelectToken, setTenantSelectToken] = useState<string | null>(null);
+  const [tenantPicker, setTenantPicker] = useState<TenantAccountSummary[]>([]);
 
-  const applyToken = useCallback((token: string | null) => {
-    setAuthToken(token);
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  }, []);
-
-  const logout = useCallback(() => {
-    applyToken(null);
-    setUser(null);
-    localStorage.removeItem("ledgerline_active_org_id");
-    void api.logout().catch(() => undefined);
-  }, [applyToken]);
-
-  const refreshSession = useCallback(async () => {
-    const data = await api.refreshSession();
-    applyToken(data.access_token);
-    setUser(data.user);
-    return data.user;
-  }, [applyToken]);
-
-  const login = useCallback(
-    async (email: string, password: string) => {
-      const data = await api.login(email, password);
-      applyToken(data.access_token);
-      setUser(data.user);
+  const applySession = useCallback(
+    (
+      access: string,
+      refresh: string,
+      profile: AuthUser,
+      memberships?: TenantAccountSummary[]
+    ) => {
+      persistAuthSuccess({
+        access_token: access,
+        refresh_token: refresh,
+        user: profile,
+        memberships,
+      });
+      setAuthToken(access);
+      setAuthUser(profile);
+      setUser(profile);
     },
-    [applyToken]
+    []
   );
 
-  const switchOrganisation = useCallback(
-    async (orgId: number) => {
-      const data = await api.switchOrganisation(orgId);
-      applyToken(data.access_token);
-      setUser(data.user);
+  const logout = useCallback(() => {
+    const refresh = getRefreshToken();
+    clearAuthSession();
+    setAuthToken(null);
+    setAuthUser(null);
+    setUser(null);
+    setChallengeToken(null);
+    setTenantSelectToken(null);
+    setTenantPicker([]);
+    void api.logout(refresh ?? undefined).catch(() => undefined);
+  }, []);
+
+  const login = useCallback(async (email: string, password: string) => {
+    const data = await apiLogin(email, password);
+    setChallengeToken(data.challenge_token);
+    return "otp" as const;
+  }, []);
+
+  const verifyOtp = useCallback(
+    async (otp: string) => {
+      if (!challengeToken) throw new Error("Login session expired");
+      const data = await apiVerifyOtp(challengeToken, otp);
+      setChallengeToken(null);
+      if (data.multi_tenant && data.tenant_select_token) {
+        setTenantSelectToken(data.tenant_select_token);
+        setTenantPicker(data.accounts ?? []);
+        if (data.accounts?.length) {
+          sessionStorage.setItem("ledgerline_memberships", JSON.stringify(data.accounts));
+        }
+        return "pick-tenant" as const;
+      }
+      if (!data.access_token || !data.refresh_token || !data.user) {
+        throw new Error("Invalid login response");
+      }
+      applySession(data.access_token, data.refresh_token, data.user);
+      return "done" as const;
     },
-    [applyToken]
+    [applySession, challengeToken]
+  );
+
+  const selectTenant = useCallback(
+    async (tenantId: string) => {
+      if (!tenantSelectToken) throw new Error("Tenant selection expired");
+      const data = await apiSelectTenant(tenantSelectToken, tenantId);
+      setTenantSelectToken(null);
+      setTenantPicker([]);
+      applySession(
+        data.access_token,
+        data.refresh_token,
+        data.user,
+        data.memberships
+      );
+      rememberLastTenant(tenantId);
+    },
+    [applySession, tenantSelectToken]
+  );
+
+  const resendOtp = useCallback(async () => {
+    if (!challengeToken) throw new Error("Login session expired");
+    const data = await apiResendOtp(challengeToken);
+    setChallengeToken(data.challenge_token);
+  }, [challengeToken]);
+
+  const switchTenant = useCallback(
+    async (tenantId: string) => {
+      const data = await api.switchTenant(tenantId);
+      applySession(
+        data.access_token,
+        data.refresh_token,
+        data.user,
+        data.memberships
+      );
+      rememberLastTenant(tenantId);
+      queryClient.clear();
+      window.location.assign(homePathForRole(data.user.role));
+    },
+    [applySession]
   );
 
   const refreshUser = useCallback(async () => {
     const me = await api.me();
     setUser(me);
+    setAuthUser(me);
+    const refresh = getRefreshToken();
+    const access = getAccessToken();
+    if (access && refresh) {
+      persistAuthSuccess({ access_token: access, refresh_token: refresh, user: me });
+    }
   }, []);
-
-  const register = useCallback(
-    async (payload: {
-      org_name: string;
-      org_slug: string;
-      email: string;
-      password: string;
-      full_name: string;
-    }) => {
-      const data = await api.register(payload);
-      applyToken(data.access_token);
-      setUser(data.user);
-    },
-    [applyToken]
-  );
 
   useEffect(() => {
     setUnauthorizedHandler(async () => {
-      if (!localStorage.getItem(TOKEN_KEY)) {
+      if (!getRefreshToken()) {
         logout();
         return;
       }
       try {
-        await refreshSession();
+        await refreshAccessTokenSingleFlight();
+        const stored = getStoredUser();
+        if (stored) setUser(stored);
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           logout();
@@ -113,51 +183,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
     return () => setUnauthorizedHandler(null);
-  }, [logout, refreshSession]);
+  }, [logout]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function restoreSession() {
-      const token = localStorage.getItem(TOKEN_KEY);
-      if (!token) {
+      const token = getAccessToken();
+      const refresh = getRefreshToken();
+      if (!token || !refresh) {
         setLoading(false);
         return;
       }
 
       if (isTokenExpired(token)) {
-        applyToken(null);
+        try {
+          await refreshAccessTokenSingleFlight();
+        } catch {
+          clearAuthSession();
+          setLoading(false);
+          return;
+        }
+      }
+
+      const access = getAccessToken();
+      if (!access) {
         setLoading(false);
         return;
       }
 
-      applyToken(token);
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        if (cancelled) return;
-        try {
-          const me = await api.me();
-          if (!cancelled) setUser(me);
-          return;
-        } catch (err) {
-          if (err instanceof ApiError && err.status === 401) {
-            try {
-              await refreshSession();
-            } catch {
-              applyToken(null);
-              if (!cancelled) setUser(null);
-            }
-            return;
-          }
-          if (attempt < 2) {
-            await sleep(750 * (attempt + 1));
-          }
-        }
+      setAuthToken(access);
+      const storedUser = getStoredUser();
+      if (storedUser) {
+        setAuthUser(storedUser);
+        setUser(storedUser);
       }
 
-      if (!cancelled) {
-        const fallback = userFromToken(token);
-        if (fallback) setUser(fallback);
+      try {
+        const me = await api.me();
+        if (!cancelled) {
+          setUser(me);
+          setAuthUser(me);
+        }
+        if (!cancelled && getStoredMemberships().length === 0) {
+          const memberships = await fetchMyMemberships(access);
+          if (memberships.length) {
+            sessionStorage.setItem("ledgerline_memberships", JSON.stringify(memberships));
+          }
+        }
+      } catch {
+        const fallback = userFromToken(access);
+        if (!cancelled && fallback) setUser(fallback);
       }
     }
 
@@ -168,39 +244,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [applyToken, refreshSession]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const maybeRefresh = () => {
-      if (document.visibilityState !== "visible") return;
-      const token = localStorage.getItem(TOKEN_KEY);
-      if (!token || isTokenExpired(token)) {
-        logout();
-        return;
-      }
-      void refreshSession().catch((err) => {
-        if (err instanceof ApiError && err.status === 401) {
-          logout();
-        }
-      });
-    };
-
-    const id = window.setInterval(maybeRefresh, SESSION_REFRESH_MS);
-    window.addEventListener("focus", maybeRefresh);
-    document.addEventListener("visibilitychange", maybeRefresh);
-
-    return () => {
-      window.clearInterval(id);
-      window.removeEventListener("focus", maybeRefresh);
-      document.removeEventListener("visibilitychange", maybeRefresh);
-    };
-  }, [user, logout, refreshSession]);
+  }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout, switchOrganisation, refreshUser }),
-    [user, loading, login, register, logout, switchOrganisation, refreshUser]
+    () => ({
+      user,
+      loading,
+      login,
+      verifyOtp,
+      selectTenant,
+      resendOtp,
+      logout,
+      switchTenant,
+      switchOrganisation: switchTenant,
+      refreshUser,
+      challengeToken,
+      tenantPicker,
+      tenantSelectToken,
+    }),
+    [
+      user,
+      loading,
+      login,
+      verifyOtp,
+      selectTenant,
+      resendOtp,
+      logout,
+      switchTenant,
+      refreshUser,
+      challengeToken,
+      tenantPicker,
+      tenantSelectToken,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

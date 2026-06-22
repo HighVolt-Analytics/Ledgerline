@@ -1,5 +1,7 @@
 """Tenant API schemas."""
 
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 
@@ -9,7 +11,7 @@ class CreateTenantRequest(BaseModel):
 
 
 class TenantResponse(BaseModel):
-    id: int
+    id: UUID
     name: str
     slug: str
     currency: str = "AUD"

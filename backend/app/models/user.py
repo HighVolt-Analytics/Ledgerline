@@ -1,9 +1,10 @@
-"""Application users scoped to an organisation."""
+"""Application users scoped to a tenant."""
 
 import enum
+import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, UniqueConstraint, func, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -12,14 +13,24 @@ from app.database import Base
 class UserRole(str, enum.Enum):
     ADMIN = "admin"
     MEMBER = "member"
+    SUPER_ADMIN = "super_admin"
+
+
+SUPER_ADMIN_ROLE = UserRole.SUPER_ADMIN.value
 
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_users_tenant_email"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("tenants.id"), index=True)
+    auth_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("auth_accounts.id"),
+        nullable=True,
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(String(255), index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(

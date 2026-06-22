@@ -1,6 +1,9 @@
 import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "@/components/Layout";
+import { SuperAdminLayout } from "@/components/SuperAdminLayout";
+import { SuperAdminRoute } from "@/components/SuperAdminRoute";
+import { TenantRoute } from "@/components/TenantRoute";
 import { PageLoader } from "@/components/PageLoader";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { getRouterBasename } from "@/lib/routerBasename";
@@ -75,6 +78,14 @@ const PaymentsPage = lazy(() =>
 const LedgerLinkPage = lazy(() =>
   import("@/pages/LedgerLinkPage").then((m) => ({ default: m.LedgerLinkPage }))
 );
+const ClientsPage = lazy(() =>
+  import("@/pages/platform/ClientsPage").then((m) => ({ default: m.ClientsPage }))
+);
+const TenantSettingsPage = lazy(() =>
+  import("@/pages/platform/TenantSettingsPage").then((m) => ({
+    default: m.TenantSettingsPage,
+  }))
+);
 
 function LazyPage({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
@@ -97,9 +108,10 @@ export default function App() {
           }
         />
 
-        {/* /ledgerlink and /ledgerlink/ -> dashboard (index route) */}
+        {/* Tenant app — hidden from super admins */}
         <Route path="/" element={<ProtectedRoute />}>
-          <Route element={<Layout />}>
+          <Route element={<TenantRoute />}>
+            <Route element={<Layout />}>
             <Route index element={<DashboardPage />} />
             <Route path="inbox" element={<Navigate to="/upload" replace />} />
             <Route
@@ -262,6 +274,32 @@ export default function App() {
                 </LazyPage>
               }
             />
+          </Route>
+          </Route>
+        </Route>
+
+        {/* Super admin platform console */}
+        <Route path="/platform" element={<ProtectedRoute />}>
+          <Route element={<SuperAdminRoute />}>
+            <Route element={<SuperAdminLayout />}>
+              <Route index element={<Navigate to="clients" replace />} />
+              <Route
+                path="clients"
+                element={
+                  <LazyPage>
+                    <ClientsPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="clients/:tenantId"
+                element={
+                  <LazyPage>
+                    <TenantSettingsPage />
+                  </LazyPage>
+                }
+              />
+            </Route>
           </Route>
         </Route>
 

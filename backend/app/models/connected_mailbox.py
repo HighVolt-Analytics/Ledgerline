@@ -1,8 +1,9 @@
 """Outlook mailbox connected for invoice ingestion."""
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -17,10 +18,10 @@ STATUS_ERROR = "error"
 
 class ConnectedMailbox(Base):
     __tablename__ = "connected_mailboxes"
-    __table_args__ = (UniqueConstraint("org_id", "email", name="uq_mailbox_org_email"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_mailbox_tenant_email"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("tenants.id"), index=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     display_name: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

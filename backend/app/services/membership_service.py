@@ -1,5 +1,7 @@
 """Tenant membership helpers."""
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +13,7 @@ async def ensure_membership(
     session: AsyncSession,
     *,
     user_id: int,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     role: str = "member",
 ) -> None:
     existing = (
@@ -37,7 +39,7 @@ async def ensure_membership(
 
 
 async def user_has_tenant_access(
-    session: AsyncSession, *, user_id: int, tenant_id: int
+    session: AsyncSession, *, user_id: int, tenant_id: uuid.UUID
 ) -> bool:
     row = (
         await session.execute(
@@ -53,7 +55,7 @@ async def user_has_tenant_access(
 
 
 async def list_user_tenants(
-    session: AsyncSession, *, user_id: int | None, current_tenant_id: int
+    session: AsyncSession, *, user_id: int | None, current_tenant_id: uuid.UUID
 ) -> list[Tenant]:
     if user_id is None:
         tenant = await session.get(Tenant, current_tenant_id)
@@ -79,7 +81,7 @@ async def list_user_tenants(
 
 
 async def get_membership_role(
-    session: AsyncSession, *, user_id: int, tenant_id: int
+    session: AsyncSession, *, user_id: int, tenant_id: uuid.UUID
 ) -> str | None:
     row = (
         await session.execute(

@@ -1,8 +1,9 @@
 """Mailbox connection invite — admin requests, owner completes OAuth via email link."""
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, func, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -17,7 +18,7 @@ class MailboxConnectionRequest(Base):
     __tablename__ = "mailbox_connection_requests"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("tenants.id"), index=True)
     requested_email: Mapped[str] = mapped_column(String(255), index=True)
     display_name: Mapped[str | None] = mapped_column(String(255))
     message: Mapped[str | None] = mapped_column(Text)

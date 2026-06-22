@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import enum
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Numeric, String, Text, func, Uuid
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,7 +26,7 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("tenants.id"), index=True)
     invoice_id: Mapped[int] = mapped_column(
         ForeignKey("invoices.id", ondelete="CASCADE"),
         index=True,

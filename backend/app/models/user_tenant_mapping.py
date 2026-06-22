@@ -1,8 +1,9 @@
 """Links users to tenants they can access."""
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, func, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base

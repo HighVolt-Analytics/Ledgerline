@@ -1,11 +1,13 @@
 """PostgreSQL RLS session context via set_config."""
 
+import uuid
+
 
 class RlsSessionContextError(RuntimeError):
     pass
 
 
-async def apply_rls_session_context(session, tenant_id: int | None) -> None:
+async def apply_rls_session_context(session, tenant_id: uuid.UUID | None) -> None:
     """Set transaction-local app.tenant_id for RLS policies (Postgres only)."""
     from sqlalchemy import text
 

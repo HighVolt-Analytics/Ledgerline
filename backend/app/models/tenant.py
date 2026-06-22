@@ -1,9 +1,10 @@
 """Tenant (client organisation) for multi-tenant SaaS."""
 
+import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, JSON, String, func
+from sqlalchemy import Boolean, DateTime, JSON, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -12,7 +13,11 @@ from app.database import Base
 class Tenant(Base):
     __tablename__ = "tenants"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
     name: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

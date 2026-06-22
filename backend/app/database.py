@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 
+from app.azure_env import asyncpg_connect_args, strip_ssl_query_params
 from app.config import get_settings
 
 
@@ -21,8 +22,8 @@ class Base(DeclarativeBase):
 
 def _build_engine() -> AsyncEngine:
     """Celery workers use NullPool to avoid stale asyncpg connections across asyncio.run()."""
-    url = get_settings().database_url
-    connect_args = {"command_timeout": 60, "timeout": 30}
+    url = strip_ssl_query_params(get_settings().database_url)
+    connect_args = asyncpg_connect_args(get_settings().database_url)
     if os.getenv("CELERY_WORKER") == "1":
         return create_async_engine(url, poolclass=NullPool, connect_args=connect_args)
     return create_async_engine(

@@ -3,28 +3,65 @@ export interface AuthUser {
   email: string;
   full_name: string;
   role: string;
-  org_id: number;
-  org_name: string;
-  org_slug: string;
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
 }
 
-export interface Organisation {
-  id: number;
+/** @deprecated use Tenant */
+export type Organisation = Tenant;
+
+export interface Tenant {
+  id: string;
   name: string;
   slug: string;
   currency: string;
   is_current: boolean;
 }
 
+export interface PlatformTenantModule {
+  module_key: string;
+  is_active: boolean;
+}
+
+export interface PlatformTenantSummary {
+  id: string;
+  name: string;
+  slug: string;
+  is_active: boolean;
+  lifecycle_status: string;
+  created_at: string | null;
+  user_count: number;
+  invoice_count: number;
+  credit_balance: number;
+}
+
+export interface PlatformTenantDetail extends PlatformTenantSummary {
+  settings_json: Record<string, unknown> | null;
+  modules: PlatformTenantModule[];
+}
+
+export interface TenantMembership {
+  user_id: number;
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  role: string;
+  default_tenant?: boolean;
+  is_platform?: boolean;
+}
+
 export interface TokenResponse {
   access_token: string;
+  refresh_token: string;
   token_type: string;
   user: AuthUser;
+  memberships?: TenantMembership[];
 }
 
 export interface ConnectedMailbox {
   id: number;
-  org_id: number;
+  tenant_id: string;
   email: string;
   display_name: string | null;
   is_active: boolean;
@@ -37,7 +74,7 @@ export interface ConnectedMailbox {
 
 export interface MailboxBackfillJob {
   id: number;
-  org_id: number;
+  tenant_id: string;
   mailbox_id: number;
   from_date: string;
   to_date: string;
@@ -60,7 +97,7 @@ export interface MailboxBackfillQueued {
 
 export interface MailboxConnectionRequest {
   id: number;
-  org_id: number;
+  tenant_id: string;
   requested_email: string;
   display_name: string | null;
   message: string | null;
@@ -79,7 +116,7 @@ export interface MailboxConnectionRequestAction extends MailboxConnectionRequest
 }
 
 export interface MailboxInvitePreview {
-  org_name: string;
+  tenant_name: string;
   requested_email: string;
   display_name: string | null;
   message: string | null;
@@ -107,8 +144,20 @@ export type InvoiceStatus =
 export interface ApiEnvelope<T> {
   data: T;
   error: { code: string; message: string } | null;
-  meta: { page: number; total: number; pages: number };
+  meta: {
+    page: number;
+    total: number;
+    pages: number;
+    segment_count?: number | null;
+    segment_invoice_ids?: number[] | null;
+  };
 }
+
+export type UploadInvoiceResult = {
+  invoice: Invoice;
+  segmentCount: number;
+  segmentInvoiceIds: number[];
+};
 
 export interface ValidationResult {
   rule: string;
@@ -485,7 +534,7 @@ export interface AppSettings {
 
 export interface WhatsappConnection {
   id: number;
-  org_id: number;
+  tenant_id: string;
   phone_number_id: string;
   phone_number: string | null;
   display_name: string | null;
@@ -919,4 +968,28 @@ export interface PipelineAuditStep {
   when: string;
   detail: string;
   state: "done" | "pending" | "fail" | "skipped";
+}
+
+export interface InvoiceClassificationScoreBreakdown {
+  rule_strength?: number;
+  field_completeness?: number;
+  parse_score?: number;
+  heading_alignment?: number;
+  required_present?: string[];
+  required_missing?: string[];
+  absent_ok?: string[];
+  absent_violations?: string[];
+  signal_conflicts?: string[];
+}
+
+export interface InvoiceClassificationAudit {
+  document_type_code?: string;
+  document_type_confidence?: number;
+  document_type_title?: string | null;
+  document_type_klass?: string | null;
+  reason?: string;
+  needs_review?: boolean;
+  min_route_confidence?: number;
+  signal_conflicts?: string[];
+  score_breakdown?: InvoiceClassificationScoreBreakdown;
 }

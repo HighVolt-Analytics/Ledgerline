@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import enum
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Numeric, String, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Numeric, String, func, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -27,7 +28,7 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("tenants.id"), index=True)
     po_number: Mapped[str] = mapped_column(String(100), index=True)
     vendor: Mapped[str | None] = mapped_column(String(255))
     po_date: Mapped[date | None] = mapped_column(Date)

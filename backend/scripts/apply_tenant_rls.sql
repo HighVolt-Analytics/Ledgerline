@@ -1,5 +1,5 @@
 -- PostgreSQL RLS for tenant isolation (idempotent).
--- Run after alembic upgrade 027: python scripts/run_rls.py
+-- Run after alembic upgrade 029: python scripts/run_rls.py
 
 DO $$
 DECLARE
@@ -26,10 +26,10 @@ BEGIN
         EXECUTE format(
           'CREATE POLICY tenant_isolation ON %I
            USING (
-             tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::integer
+             tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid
            )
            WITH CHECK (
-             tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::integer
+             tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid
            )',
           t
         );

@@ -1,11 +1,12 @@
 """Invoice ORM model."""
 
 import enum
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Numeric, String, Text, UniqueConstraint, func, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -36,10 +37,10 @@ class InvoiceStatus(str, enum.Enum):
 
 class Invoice(Base):
     __tablename__ = "invoices"
-    __table_args__ = (UniqueConstraint("org_id", "file_hash", name="uq_invoice_org_hash"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "file_hash", name="uq_invoice_tenant_hash"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("tenants.id"), index=True)
     connected_mailbox_id: Mapped[int | None] = mapped_column(
         ForeignKey("connected_mailboxes.id"),
         nullable=True,

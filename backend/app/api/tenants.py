@@ -1,5 +1,7 @@
 """Tenants available to the signed-in user."""
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +15,7 @@ from app.services.membership_service import ensure_membership, list_user_tenants
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
 
-def _to_response(tenant: Tenant, *, current_tenant_id: int) -> TenantResponse:
+def _to_response(tenant: Tenant, *, current_tenant_id: uuid.UUID) -> TenantResponse:
     return TenantResponse(
         id=tenant.id,
         name=tenant.name,

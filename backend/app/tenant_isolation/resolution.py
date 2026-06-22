@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.tenant_isolation.cache_keys import tenant_slug_cache_key
+from app.tenant_ids import parse_tenant_id
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -24,7 +25,7 @@ class TenantResolutionSource(str, Enum):
 
 @dataclass(frozen=True)
 class TenantResolution:
-    tenant_id: int | None
+    tenant_id: uuid.UUID | None
     tenant_slug: str | None
     source: TenantResolutionSource
 
@@ -53,11 +54,9 @@ class TenantResolutionService:
         return False
 
     @staticmethod
-    async def resolve_slug(session: AsyncSession, slug: str) -> int | None:
+    async def resolve_slug(session: AsyncSession, slug: str) -> uuid.UUID | None:
         from app.models.tenant import Tenant
 
-        key = tenant_slug_cache_key(slug)
-        # Redis cache optional — direct DB lookup
         row = (
             await session.execute(select(Tenant.id).where(Tenant.slug == slug.lower()))
         ).scalar_one_or_none()
@@ -68,7 +67,7 @@ class TenantResolutionService:
         request: Request,
         session: AsyncSession,
         *,
-        jwt_tenant_id: int | None = None,
+        jwt_tenant_id: uuid.UUID | None = None,
         jwt_tenant_slug: str | None = None,
     ) -> TenantResolution:
         if jwt_tenant_id is not None:
@@ -92,15 +91,14 @@ class TenantResolutionService:
 
     @staticmethod
     def validate_header_scope(
-        resolved_tenant_id: int | None,
+        resolved_tenant_id: uuid.UUID | None,
         x_tenant_id_hdr: str | None,
     ) -> str | None:
         if resolved_tenant_id is None or not x_tenant_id_hdr:
             return None
-        try:
-            hdr_tid = int(x_tenant_id_hdr.strip())
-        except ValueError:
-            return "X-Tenant-Id must be an integer"
+        hdr_tid = parse_tenant_id(x_tenant_id_hdr)
+        if hdr_tid is None:
+            return "X-Tenant-Id must be a UUID"
         if hdr_tid != resolved_tenant_id:
             return "X-Tenant-Id does not match authenticated tenant scope"
         return None
