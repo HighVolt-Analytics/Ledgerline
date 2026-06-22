@@ -127,7 +127,7 @@ def _conflict_detail(inv: Invoice, other: Invoice) -> list[MatrixConflictRow]:
 
 async def duplicate_conflict_for_invoice(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     inv: Invoice,
 ) -> tuple[str | None, list[MatrixConflictRow]]:
     if inv.status != InvoiceStatus.DUPLICATE_SKIPPED:
@@ -157,13 +157,13 @@ async def duplicate_conflict_for_invoice(
 
     if original_id is not None:
         other = await db.get(Invoice, original_id)
-        if other is not None and other.org_id == org_id:
+        if other is not None and other.tenant_id == tenant_id:
             return _document_ref(other), _conflict_detail(inv, other)
 
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.id != inv.id,
             Invoice.status != InvoiceStatus.DUPLICATE_SKIPPED,
         )

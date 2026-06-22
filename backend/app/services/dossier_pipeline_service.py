@@ -26,6 +26,13 @@ from app.services.pipeline_stages import (
 
 DossierStageState = Literal["pass", "fail", "waived", "pending"]
 
+_VAULT_ROUTE = "vault"
+
+
+def _is_vault_route(inv: Invoice) -> bool:
+    return (inv.route_target or "").strip().lower() == _VAULT_ROUTE
+
+
 STAGE_IDS: tuple[str, ...] = (
     "ingest",
     "duplicate",
@@ -473,6 +480,18 @@ def _resolve_validate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPip
             checks=checks,
         )
 
+    validation_passed_latest = validate_pass is not None and (
+        validate_fail is None or validate_pass.created_at >= validate_fail.created_at
+    )
+    if validation_passed_latest:
+        return _step(
+            "validate",
+            state="pass",
+            detail=_detail_from_log(validate_pass, fallback="validation_passed"),
+            at=validate_pass.created_at,
+            checks=checks,
+        )
+
     if failed_checks or (
         validate_fail and (validate_pass is None or validate_fail.created_at >= validate_pass.created_at)
     ):
@@ -587,6 +606,9 @@ def _resolve_approve(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 
 
 def _resolve_map_gl(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("map_gl", state="waived", detail="Not required — vault route")
+
     map_log = _latest_log(logs, "mapping_applied")
     map_review = _latest_log(logs, "mapping_review_required")
     account = (inv.account_name or "").strip()
@@ -633,6 +655,9 @@ def _resolve_map_gl(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
 
 
 def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("journal", state="waived", detail="Not required — vault route")
+
     processed = _latest_log(logs, "invoice_processed", "purchase_document_processed")
     if inv.status in (InvoiceStatus.JOURNALING, InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 10:
         at = processed.created_at if processed else None
@@ -646,6 +671,9 @@ def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 
 
 def _resolve_reconcile(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("reconcile", state="waived", detail="Not required — vault route")
+
     recon_halt = _latest_log(logs, "reconciliation_halted")
     recon_skip = _latest_log(logs, "reconciliation_skipped")
     if recon_halt and inv.status == InvoiceStatus.EXCEPTION:
@@ -670,6 +698,9 @@ def _resolve_reconcile(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPi
 
 
 def _resolve_post(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("post", state="waived", detail="Not required — vault route")
+
     processed_log = _latest_log(logs, "invoice_processed", "purchase_document_processed")
     published_log = _latest_log(logs, "invoice_published_to_ledger")
     if processed_log or inv.status == InvoiceStatus.PROCESSED or wm >= 12:
@@ -700,6 +731,12 @@ def _resolve_archive(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
     return _step("archive", state="pending", detail="—")
 
 
+def _resolve_pay(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("pay", state="waived", detail="Not required — vault route")
+    return _step("pay", state="pending", detail="—")
+
+
 _RESOLVERS = (
     _resolve_ingest,
     _resolve_duplicate,
@@ -714,7 +751,7 @@ _RESOLVERS = (
     _resolve_journal,
     _resolve_reconcile,
     _resolve_post,
-    lambda inv, logs, wm: _step("pay", state="pending", detail="—"),
+    _resolve_pay,
     _resolve_archive,
 )
 

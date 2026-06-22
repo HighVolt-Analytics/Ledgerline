@@ -65,7 +65,7 @@ async def reports_analytics(
 ) -> ApiEnvelope[ReportsAnalytics]:
     """Spend analytics, GL distribution, and vendor summary for the Reports page."""
     return ApiEnvelope(
-        data=await build_analytics(db, org_id=ctx.org_id, month=month)
+        data=await build_analytics(db, tenant_id=ctx.tenant_id, month=month)
     )
 
 
@@ -80,7 +80,7 @@ async def reports_documents(
     try:
         rows = await list_documents(
             db,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             date_from=date_from,
             date_to=date_to,
         )
@@ -105,7 +105,7 @@ async def generate_report(
     try:
         path = await write_workbook(
             db,
-            ctx.org_id,
+            ctx.tenant_id,
             date_from=d_from,
             date_to=d_to,
         )
@@ -124,7 +124,7 @@ async def download_report(
 ) -> FileResponse:
     """Download the generated workbook file."""
     d_from, d_to = _resolve_date_filter(workbook_date, date_from, date_to)
-    path = _reports_dir() / workbook_filename(ctx.org_slug, d_from, d_to)
+    path = _reports_dir() / workbook_filename(ctx.tenant_slug, d_from, d_to)
 
     if not path.is_file():
         raise HTTPException(

@@ -43,8 +43,8 @@ export function SetupPage() {
       replace: true,
       state: {
         mode: "register",
-        org_name: businessName.trim(),
-        org_slug: businessName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+        tenant_name: businessName.trim(),
+        tenant_slug: businessName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
         email: email.trim() || undefined,
       },
     });

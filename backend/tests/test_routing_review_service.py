@@ -26,14 +26,14 @@ def document_types():
 
 
 def test_routing_target_missing() -> None:
-    inv = Invoice(org_id=1, status=InvoiceStatus.VALIDATING, route_target=None)
+    inv = Invoice(tenant_id=1, status=InvoiceStatus.VALIDATING, route_target=None)
     assert routing_target_missing(inv) is True
     inv.route_target = "Purchase Management"
     assert routing_target_missing(inv) is False
 
 
 def test_requires_routing_review_when_unclassified() -> None:
-    inv = Invoice(org_id=1, status=InvoiceStatus.VALIDATING, route_target=None)
+    inv = Invoice(tenant_id=1, status=InvoiceStatus.VALIDATING, route_target=None)
     classification = DocumentTypeClassification(
         "DT-24",
         0.44,
@@ -46,7 +46,7 @@ def test_requires_routing_review_when_unclassified() -> None:
 
 def test_requires_gl_mapping_review_for_posting_fallback_only(document_types) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.MAPPING,
         document_type_code="DT-03",
         route_target="Expenses Management",

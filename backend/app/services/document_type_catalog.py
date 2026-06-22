@@ -97,11 +97,11 @@ def load_shipped_default_document_types() -> list[DocumentTypeDefinition]:
 
 
 @lru_cache
-def load_document_type_catalog(org_id: int) -> tuple[DocumentTypeDefinition, ...]:
+def load_document_type_catalog(tenant_id: int) -> tuple[DocumentTypeDefinition, ...]:
     from app.schemas.rule_book_config import validate_rule_book_config_payload
     from app.services.rule_book_config_io import load_rule_book_config_dict
 
-    raw = load_rule_book_config_dict(org_id)
+    raw = load_rule_book_config_dict(tenant_id)
     config = validate_rule_book_config_payload(raw)
     return tuple(config.document_types)
 
@@ -110,16 +110,16 @@ def get_document_type_definition(
     code: str,
     *,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> DocumentTypeDefinition | None:
     normalized = (code or "").strip().upper()
     if not normalized:
         return None
     catalog = document_types
     if catalog is None:
-        if org_id is None:
+        if tenant_id is None:
             return None
-        catalog = load_document_type_catalog(org_id)
+        catalog = load_document_type_catalog(tenant_id)
     for item in catalog:
         if item.code.upper() == normalized:
             return item
@@ -130,12 +130,12 @@ def min_route_confidence_for_document_type(
     code: str,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
     *,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> float:
     definition = get_document_type_definition(
         code,
         document_types=document_types,
-        org_id=org_id,
+        tenant_id=tenant_id,
     )
     if definition is None:
         return DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN
@@ -148,7 +148,7 @@ def route_target_for_document_type(
     code: str,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
     *,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> str | None:
     normalized = (code or "").strip().upper()
     if not normalized:
@@ -156,7 +156,7 @@ def route_target_for_document_type(
     definition = get_document_type_definition(
         normalized,
         document_types=document_types,
-        org_id=org_id,
+        tenant_id=tenant_id,
     )
     if definition is None or not definition.enabled:
         return None

@@ -40,7 +40,7 @@ async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> boo
         from app.services.master_data_service import list_vendor_masters
         from app.services.vendor_detection import find_matching_vendor_master
 
-        db_masters = await list_vendor_masters(session, invoice.org_id)
+        db_masters = await list_vendor_masters(session, invoice.tenant_id)
         if find_matching_vendor_master(name, invoice.abn, db_masters):
             return False
 
@@ -50,7 +50,7 @@ async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> boo
         pending_for_invoice = (
             await session.execute(
                 select(PendingVendor.id).where(
-                    PendingVendor.org_id == invoice.org_id,
+                    PendingVendor.tenant_id == invoice.tenant_id,
                     PendingVendor.status == "pending",
                     PendingVendor.source_invoice_id == invoice.id,
                 )
@@ -58,7 +58,7 @@ async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> boo
         ).scalar_one_or_none()
         return pending_for_invoice is not None
 
-    pending = await list_pending_vendors(session, invoice.org_id)
+    pending = await list_pending_vendors(session, invoice.tenant_id)
     key = name.lower()
     return any(row.detected_name.strip().lower() == key for row in pending)
 
@@ -130,7 +130,7 @@ async def _release_hold_when_po_vendor_matches(
         inv_vendor = po.vendor.strip()
 
     if not vendors_align_to_same_master(
-        invoice.org_id,
+        invoice.tenant_id,
         inv_vendor,
         invoice.abn,
         po.vendor,
@@ -186,7 +186,7 @@ async def apply_vendor_hold_if_needed(
 
 async def release_invoices_after_vendor_promotion(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     *,
     vendor_name: str,
     source_invoice_id: int | None = None,
@@ -198,7 +198,7 @@ async def release_invoices_after_vendor_promotion(
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.evaluation_status == EVAL_PENDING_VENDOR,
             Invoice.status.in_(
                 (

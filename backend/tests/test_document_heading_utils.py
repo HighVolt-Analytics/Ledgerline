@@ -71,3 +71,14 @@ def test_heading_alignment_neutral_when_no_heading() -> None:
     signals = extract_document_heading_signals("Random vendor letter\nNo title here")
     score = heading_alignment_score("DT-03", signals)
     assert score == 0.55
+
+
+def test_infer_import_logistics_page_kinds() -> None:
+    from app.services.document_heading_utils import infer_page_document_kind
+
+    assert infer_page_document_kind("COMMERCIAL INVOICE\nInv 1") == "commercial_invoice"
+    assert infer_page_document_kind("PACKING LIST / WEIGHT LIST") == "packing_list"
+    assert infer_page_document_kind("CERTIFICATE OF ORIGIN") == "certificate_of_origin"
+    assert infer_page_document_kind("HAWB NO: ABC123") == "transport_doc"
+    assert infer_page_document_kind("CARGO CLEARANCE PERMIT\nPERMIT 1") == "customs_permit"
+    assert infer_page_document_kind("(CONTINUATION PAGE)\nMore lines") is None

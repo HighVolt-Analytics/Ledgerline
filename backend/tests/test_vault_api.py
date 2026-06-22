@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.services.invoice_evaluation_service import ROUTE_PURCHASE
 
 
@@ -26,7 +26,7 @@ async def test_vault_tree_empty(client: AsyncClient) -> None:
 async def test_vault_tree_uses_hv_org_folder(
     client: AsyncClient, db_session: AsyncSession, tmp_path
 ) -> None:
-    org = await db_session.get(Organisation, 1)
+    org = await db_session.get(Tenant, 1)
     assert org is not None
     org.slug = "hv-org"
     org.name = "High Volt Analytics"
@@ -37,7 +37,7 @@ async def test_vault_tree_uses_hv_org_folder(
 
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Atlassian Pty Ltd",
             invoice_no="INV-001",
             invoice_date=date(2026, 5, 4),
@@ -66,7 +66,7 @@ async def test_vault_tree_with_stored_file(
 
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Atlassian Pty Ltd",
             invoice_no="INV-001",
             invoice_date=date(2026, 5, 4),
@@ -108,7 +108,7 @@ async def test_vault_tree_vault_document_type_folder(
 
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Sysco Australia",
             invoice_no="STMT-001",
             invoice_date=date(2026, 5, 4),
@@ -140,7 +140,7 @@ async def test_vault_tree_excludes_no_file_path(
 ) -> None:
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Demo Vendor",
             status=InvoiceStatus.PROCESSED,
             total=Decimal("50.00"),
@@ -164,7 +164,7 @@ async def test_vault_tree_excludes_duplicate_skipped(
 
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Dup Vendor",
             status=InvoiceStatus.DUPLICATE_SKIPPED,
             raw_file_path=str(pdf_path),

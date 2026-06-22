@@ -31,7 +31,7 @@ async def test_sync_purchase_order_from_routed_invoice(
     db_session: AsyncSession,
 ) -> None:
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme Supplies",
         po_reference="PO-9001",
         invoice_no="PO-9001",
@@ -60,7 +60,7 @@ async def test_sync_purchase_order_from_routed_invoice(
     assert po.po_document_id == po_doc.id
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme Supplies",
         po_reference="PO-9001",
         invoice_no="INV-9001",
@@ -95,7 +95,7 @@ async def test_purchases_api_lists_three_way_match(
     db_session: AsyncSession,
 ) -> None:
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme Supplies",
         po_reference="PO-API-1",
         invoice_no="PO-API-1",
@@ -119,7 +119,7 @@ async def test_purchases_api_lists_three_way_match(
     await sync_purchase_order_from_invoice(db_session, po_doc)
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme Supplies",
         po_reference="PO-API-1",
         invoice_no="INV-PO-1",
@@ -166,7 +166,7 @@ async def test_purchases_api_lists_each_invoice_on_shared_po(
 ) -> None:
     """Two purchase invoices on the same PO number each get a register row."""
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Shared Vendor",
         po_reference="PO-SHARED-1",
         invoice_no="PO-SHARED-1",
@@ -190,7 +190,7 @@ async def test_purchases_api_lists_each_invoice_on_shared_po(
     await sync_purchase_order_from_invoice(db_session, po_doc)
 
     inv_google = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Google Australia Pty Ltd",
         po_reference="PO-SHARED-1",
         invoice_no="GOOG-INV-1",
@@ -202,7 +202,7 @@ async def test_purchases_api_lists_each_invoice_on_shared_po(
         status=InvoiceStatus.PROCESSED,
     )
     inv_meta = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-SHARED-1",
         invoice_no="META-INV-1",
@@ -251,7 +251,7 @@ async def test_purchases_api_records_grn(
     db_session: AsyncSession,
 ) -> None:
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme Supplies",
         po_reference="PO-GRN-1",
         invoice_no="PO-GRN-1",
@@ -276,7 +276,7 @@ async def test_purchases_api_records_grn(
     assert po is not None
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme Supplies",
         po_reference="PO-GRN-1",
         invoice_no="INV-GRN-1",
@@ -327,7 +327,7 @@ async def test_purchases_api_approves_variance(
     db_session: AsyncSession,
 ) -> None:
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="PFD Foods",
         po_reference="PO-VAR-1",
         invoice_no="PO-VAR-1",
@@ -352,7 +352,7 @@ async def test_purchases_api_approves_variance(
     assert po is not None
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="PFD Foods",
         po_reference="PO-VAR-1",
         invoice_no="INV-VAR-1",
@@ -410,7 +410,7 @@ async def test_payment_created_for_processed_invoice(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Vendor Pay",
         total=Decimal("1200.00"),
         due_date=__import__("datetime").date(2026, 7, 1),
@@ -431,7 +431,7 @@ async def test_payments_api_lists_queue(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Vendor Pay",
         total=Decimal("800.00"),
         due_date=__import__("datetime").date(2026, 7, 1),
@@ -456,7 +456,7 @@ async def test_nav_badges_include_business_expenses(
 ) -> None:
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Telstra",
             route_target=ROUTE_EXPENSES,
             status=InvoiceStatus.PENDING,
@@ -513,7 +513,7 @@ async def test_member_cannot_publish_without_privilege(
     get_settings.cache_clear()
 
     admin = User(
-        org_id=1,
+        tenant_id=1,
         email="admin@example.com",
         full_name="Admin User",
         password_hash=hash_password("secret"),
@@ -524,8 +524,8 @@ async def test_member_cannot_publish_without_privilege(
     await db_session.flush()
     admin_token = create_access_token(
         user_id=admin.id,
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=1,
+        tenant_slug="hv-org",
         email=admin.email,
         role=UserRole.ADMIN.value,
     )
@@ -543,7 +543,7 @@ async def test_member_cannot_publish_without_privilege(
     )
 
     user = User(
-        org_id=1,
+        tenant_id=1,
         email="member@example.com",
         full_name="Member User",
         password_hash=hash_password("secret"),
@@ -552,14 +552,14 @@ async def test_member_cannot_publish_without_privilege(
     )
     db_session.add(user)
     await db_session.flush()
-    inv = Invoice(org_id=1, vendor="X", status=InvoiceStatus.PROCESSED, total=Decimal("100"))
+    inv = Invoice(tenant_id=1, vendor="X", status=InvoiceStatus.PROCESSED, total=Decimal("100"))
     db_session.add(inv)
     await db_session.commit()
 
     token = create_access_token(
         user_id=user.id,
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=1,
+        tenant_slug="hv-org",
         email=user.email,
         role=UserRole.MEMBER.value,
     )
@@ -576,7 +576,7 @@ async def test_wallet_summary_from_payments(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         total=Decimal("120.00"),
         status=InvoiceStatus.PROCESSED,
@@ -585,7 +585,7 @@ async def test_wallet_summary_from_payments(
     await db_session.flush()
     db_session.add(
         Payment(
-            org_id=1,
+            tenant_id=1,
             invoice_id=inv.id,
             vendor="Acme",
             amount=Decimal("120.00"),
@@ -594,7 +594,7 @@ async def test_wallet_summary_from_payments(
     )
     db_session.add(
         Payment(
-            org_id=1,
+            tenant_id=1,
             invoice_id=inv.id,
             vendor="Beta",
             amount=Decimal("80.00"),
@@ -635,7 +635,7 @@ async def test_ledger_link_exports_processed_invoices(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         invoice_no="LL-001",
         invoice_date=date(2026, 5, 1),
@@ -682,7 +682,7 @@ async def test_matrix_duplicate_conflict_detail(
     db_session: AsyncSession,
 ) -> None:
     original = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Dup Co",
         invoice_no="DUP-100",
         file_hash="hash-original",
@@ -690,7 +690,7 @@ async def test_matrix_duplicate_conflict_detail(
         status=InvoiceStatus.PROCESSED,
     )
     duplicate = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Dup Co",
         invoice_no="DUP-100",
         file_hash="hash-duplicate",

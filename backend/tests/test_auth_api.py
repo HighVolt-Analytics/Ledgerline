@@ -13,8 +13,8 @@ async def test_register_and_login(client: AsyncClient, db_session: AsyncSession)
     reg = await client.post(
         "/api/auth/register",
         json={
-            "org_name": "Acme Corp",
-            "org_slug": "acme-corp",
+            "tenant_name": "Acme Corp",
+            "tenant_slug": "acme-corp",
             "email": "admin@acme.com",
             "password": "securepass1",
             "full_name": "Admin User",
@@ -36,7 +36,7 @@ async def test_register_and_login(client: AsyncClient, db_session: AsyncSession)
     )
     assert me.status_code == 200
     assert me.json()["data"]["email"] == "admin@acme.com"
-    assert me.json()["data"]["org_slug"] == "acme-corp"
+    assert me.json()["data"]["tenant_slug"] == "acme-corp"
 
     refresh = await client.post(
         "/api/auth/refresh",
@@ -53,7 +53,7 @@ async def test_register_closed_after_first_user(
 ) -> None:
     db_session.add(
         User(
-            org_id=1,
+            tenant_id=1,
             email="existing@test.com",
             password_hash=hash_password("x"),
             full_name="Existing",
@@ -64,8 +64,8 @@ async def test_register_closed_after_first_user(
     resp = await client.post(
         "/api/auth/register",
         json={
-            "org_name": "Other",
-            "org_slug": "other",
+            "tenant_name": "Other",
+            "tenant_slug": "other",
             "email": "new@test.com",
             "password": "securepass1",
             "full_name": "New",
@@ -82,13 +82,13 @@ async def test_register_bootstrap_existing_default_org(
     reg = await client.post(
         "/api/auth/register",
         json={
-            "org_name": "High Volt Analytics",
-            "org_slug": "hv-org",
+            "tenant_name": "High Volt Analytics",
+            "tenant_slug": "hv-org",
             "email": "admin@hv.com",
             "password": "securepass1",
             "full_name": "Admin User",
         },
     )
     assert reg.status_code == 201
-    assert reg.json()["data"]["user"]["org_slug"] == "hv-org"
-    assert reg.json()["data"]["user"]["org_name"] == "High Volt Analytics"
+    assert reg.json()["data"]["user"]["tenant_slug"] == "hv-org"
+    assert reg.json()["data"]["user"]["tenant_name"] == "High Volt Analytics"

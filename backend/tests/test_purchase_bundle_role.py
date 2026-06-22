@@ -68,7 +68,7 @@ async def test_bundle_satisfied_by_purchase_role_po_upload() -> None:
 
     satisfied = await _bundle_dt_satisfied(
         session,
-        org_id=1,
+        tenant_id=1,
         po_reference="PO-MKT-2026-JUN9",
         dt_code="DT-02",
         exclude_invoice_id=None,
@@ -88,7 +88,7 @@ async def test_bundle_satisfied_by_purchase_role_grn_register() -> None:
 
     satisfied = await _bundle_dt_satisfied(
         session,
-        org_id=1,
+        tenant_id=1,
         po_reference="PO-MKT-2026-JUN9",
         dt_code="DT-03",
         exclude_invoice_id=None,

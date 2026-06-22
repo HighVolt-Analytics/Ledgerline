@@ -34,11 +34,11 @@ _DEFAULT_LIMIT = 50
 
 
 def _resolve_config(
-    org_id: int,
+    tenant_id: int,
     config_override: dict | RuleBookConfigPayload | None,
 ) -> RuleBookConfigPayload:
     if config_override is None:
-        raw = load_rule_book_config_dict(org_id)
+        raw = load_rule_book_config_dict(tenant_id)
         return validate_rule_book_config_payload(raw)
     if isinstance(config_override, RuleBookConfigPayload):
         return config_override
@@ -287,17 +287,17 @@ def serialize_eval_row(
 async def evaluate_rule_book(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     config_override: dict | RuleBookConfigPayload | None = None,
     invoice_ids: list[int] | None = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> dict:
-    config = _resolve_config(org_id, config_override)
+    config = _resolve_config(tenant_id, config_override)
     stmt = (
         select(Invoice)
         .options(selectinload(Invoice.line_items))
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.status.not_in(_SKIP_STATUSES),
         )
         .order_by(Invoice.created_at.desc())

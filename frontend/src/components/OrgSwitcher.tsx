@@ -29,9 +29,9 @@ export function OrgSwitcher() {
       .catch(() => {
         setOrgs([
           {
-            id: user.org_id,
-            name: user.org_name,
-            slug: user.org_slug,
+            id: user.tenant_id,
+            name: user.tenant_name,
+            slug: user.tenant_slug,
             currency: "AUD",
             is_current: true,
           },
@@ -45,14 +45,14 @@ export function OrgSwitcher() {
   }, [loadOrgs]);
 
   const active =
-    orgs.find((o) => o.id === user?.org_id) ??
+    orgs.find((o) => o.id === user?.tenant_id) ??
     orgs.find((o) => o.is_current) ??
     orgs[0];
 
   const canSwitch = orgs.length > 1;
 
   const selectOrg = async (org: Organisation) => {
-    if (org.id === user?.org_id) {
+    if (org.id === user?.tenant_id) {
       setOpen(false);
       return;
     }
@@ -69,7 +69,7 @@ export function OrgSwitcher() {
     }
   };
 
-  const displayName = active?.name ?? user?.org_name ?? "Organisation";
+  const displayName = active?.name ?? user?.tenant_name ?? "Organisation";
 
   return (
     <>
@@ -96,7 +96,7 @@ export function OrgSwitcher() {
               <p className="px-3 pt-3 pb-2 text-sm font-semibold">Organisations</p>
               <ul className="px-1 pb-1">
                 {orgs.map((org) => {
-                  const selected = org.id === user?.org_id;
+                  const selected = org.id === user?.tenant_id;
                   const busy = switchingId === org.id;
                   return (
                     <li key={org.id}>

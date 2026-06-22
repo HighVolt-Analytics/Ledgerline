@@ -9,7 +9,7 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.services.audit_service import log_event
-from app.services.billing_io import load_billing_for_org, save_billing_for_org
+from app.services.billing_io import load_billing_for_tenant, save_billing_for_tenant
 from app.services.document_ref_service import display_document_ref
 from app.services.workbook_writer import write_workbook_for_invoice
 
@@ -45,15 +45,15 @@ async def is_published_to_ledger(session: AsyncSession, invoice_id: int) -> bool
     return invoice_id in await published_invoice_ids(session, [invoice_id])
 
 
-def _deduct_publish_credits(org_id: int, *, skip_if_insufficient: bool) -> bool:
+def _deduct_publish_credits(tenant_id: int, *, skip_if_insufficient: bool) -> bool:
     """Return True when credits were deducted; False when skipped (auto path only)."""
-    state = load_billing_for_org(org_id)
+    state = load_billing_for_tenant(tenant_id)
     if state.balance < PUBLISH_CREDIT_COST:
         if skip_if_insufficient:
             return False
         raise InsufficientCreditsError(state.balance, PUBLISH_CREDIT_COST)
     state.balance -= PUBLISH_CREDIT_COST
-    save_billing_for_org(org_id, state)
+    save_billing_for_tenant(tenant_id, state)
     return True
 
 
@@ -89,7 +89,7 @@ async def publish_invoice_to_ledger(
         raise ValueError("No journal entries to publish")
 
     credits_charged = _deduct_publish_credits(
-        invoice.org_id,
+        invoice.tenant_id,
         skip_if_insufficient=auto and skip_if_insufficient_credits,
     )
     if not credits_charged and auto:

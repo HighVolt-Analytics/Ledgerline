@@ -205,8 +205,8 @@ async def apply_invoice_evaluation(
 ) -> InvoiceEvaluationResult:
     """Evaluate and persist routing fields; optionally enqueue unknown vendors."""
     if config is None:
-        config = load_classification_config(invoice.org_id)
-    config = await classification_config_with_db_masters(session, invoice.org_id, config)
+        config = load_classification_config(invoice.tenant_id)
+    config = await classification_config_with_db_masters(session, invoice.tenant_id, config)
 
     existing_ids = parse_matched_rule_ids(invoice.matched_rule_ids)
     existing_email_ids = [rule_id for rule_id in existing_ids if rule_id.startswith("email:")]
@@ -274,7 +274,7 @@ async def apply_invoice_evaluation(
 
         employee = await resolve_employee_for_sender(
             session,
-            invoice.org_id,
+            invoice.tenant_id,
             invoice.email_sender,
         )
         await log_event(
@@ -315,11 +315,11 @@ async def _maybe_enqueue_pending_vendor(
     from app.services.master_data_service import list_vendor_masters
     from app.services.vendor_detection import find_matching_vendor_master
 
-    db_masters = await list_vendor_masters(session, invoice.org_id)
+    db_masters = await list_vendor_masters(session, invoice.tenant_id)
     if find_matching_vendor_master(name, invoice.abn, db_masters):
         return
 
-    existing = await list_pending_vendors(session, invoice.org_id)
+    existing = await list_pending_vendors(session, invoice.tenant_id)
     for row in existing:
         if row.detected_name.strip().lower() == name.lower():
             return
@@ -327,7 +327,7 @@ async def _maybe_enqueue_pending_vendor(
     try:
         await create_pending_vendor(
             session,
-            invoice.org_id,
+            invoice.tenant_id,
             PendingVendorCreate(
                 detected_name=name,
                 detected_abn=invoice.abn,
@@ -340,6 +340,6 @@ async def _maybe_enqueue_pending_vendor(
         return
 
 
-def load_config_for_org(org_id: int) -> RuleBookConfigPayload:
-    raw = load_rule_book_config_dict(org_id)
+def load_config_for_tenant(tenant_id: int) -> RuleBookConfigPayload:
+    raw = load_rule_book_config_dict(tenant_id)
     return validate_rule_book_config_payload(raw)

@@ -137,6 +137,26 @@ class Settings(BaseSettings):
     )
     azure_di_model_id: str = "prebuilt-invoice"
     parse_min_text_chars: int = 200
+    pdf_multi_document_split: bool = Field(
+        default=True,
+        validation_alias="PDF_MULTI_DOCUMENT_SPLIT",
+    )
+    pdf_segment_max_pages: int = Field(
+        default=200,
+        ge=1,
+        le=500,
+        validation_alias="PDF_SEGMENT_MAX_PAGES",
+    )
+    pdf_segment_max_segments: int = Field(
+        default=20,
+        ge=2,
+        le=50,
+        validation_alias="PDF_SEGMENT_MAX_SEGMENTS",
+    )
+    azure_di_read_model_id: str = Field(
+        default="prebuilt-read",
+        validation_alias="AZURE_DI_READ_MODEL_ID",
+    )
     abn_validation_mode: str = Field(default="format")
     duplicate_invoice_check_enabled: bool = Field(
         default=True,
@@ -174,8 +194,19 @@ class Settings(BaseSettings):
     )
     jwt_secret: str = "change-me-in-production"
     jwt_expire_minutes: int = 60 * 24 * 7
-    default_org_slug: str = "hv-org"
-    default_org_name: str = "High Volt Analytics"
+    access_token_expire_minutes: int = Field(
+        default=60,
+        validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES",
+    )
+    refresh_token_expire_days: int = Field(
+        default=90,
+        validation_alias="REFRESH_TOKEN_EXPIRE_DAYS",
+    )
+    otp_expire_minutes: int = Field(default=5, validation_alias="OTP_EXPIRE_MINUTES")
+    dev_otp_code: str = Field(default="123456", validation_alias="DEV_OTP_CODE")
+    app_env: str = Field(default="development", validation_alias="APP_ENV")
+    default_tenant_slug: str = Field(default="testing", validation_alias="DEFAULT_TENANT_SLUG")
+    default_tenant_name: str = Field(default="Testing", validation_alias="DEFAULT_TENANT_NAME")
     approval_policy_unlock_code: str = "000000"
 
     # Meta / WhatsApp Cloud API
@@ -369,6 +400,10 @@ class Settings(BaseSettings):
             and self.whatsapp_effective_app_secret
             and self.whatsapp_effective_verify_token
         )
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() in ("production", "prod")
 
     @property
     def whatsapp_frontend_return_url(self) -> str:

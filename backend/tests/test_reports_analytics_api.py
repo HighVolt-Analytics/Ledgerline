@@ -28,7 +28,7 @@ async def test_reports_analytics_processed_invoices(
     db_session.add_all(
         [
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="AWS",
                 invoice_no="INV-001",
                 invoice_date=date(2026, 5, 2),
@@ -41,7 +41,7 @@ async def test_reports_analytics_processed_invoices(
                 file_hash="rep1",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Atlassian",
                 invoice_date=date(2026, 5, 4),
                 account_name="Software Subscription Expense",
@@ -53,7 +53,7 @@ async def test_reports_analytics_processed_invoices(
                 file_hash="rep2",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Pending Co",
                 invoice_date=date(2026, 5, 6),
                 total=Decimal("999.00"),
@@ -83,7 +83,7 @@ async def test_reports_documents_date_range(
 ) -> None:
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Telstra",
             invoice_no="BILL-040",
             invoice_date=date(2026, 4, 14),

@@ -17,9 +17,17 @@ def test_blob_name_matches_invoice_marker() -> None:
         "invoice/HvOrg/Purchase Management/Vendor/2026/May/INV-104_2026-05-16.pdf",
         104,
     )
+    assert _blob_name_matches_invoice(
+        "invoice/HvOrg/Vault/DT-07 · coo/Vendor/2026/June/260671582_2026-06-05_id21.pdf",
+        21,
+    )
     assert not _blob_name_matches_invoice(
         "invoice/HvOrg/Purchase Management/Vendor/2026/May/INV-1040_2026-05-16.pdf",
         104,
+    )
+    assert not _blob_name_matches_invoice(
+        "invoice/HvOrg/Vault/DT-07 · coo/Vendor/2026/June/260671582_2026-06-05_id22.pdf",
+        21,
     )
 
 
@@ -28,7 +36,7 @@ async def test_repair_invoice_stored_path_from_blob_search(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
         file_hash="abc",
@@ -64,7 +72,7 @@ async def test_repair_invoice_stored_path_from_audit(
     from app.models.audit import AuditLog
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
         file_hash="abc",

@@ -18,7 +18,7 @@ from app.services.invoice_evaluation_service import (
     EVAL_AUTO_CODED,
     apply_evaluation_to_invoice,
     evaluate_invoice_routing,
-    load_config_for_org,
+    load_config_for_tenant,
 )
 from app.services.rule_book_evaluate_service import invoice_to_eval_document
 from app.services.rule_engine import detect_vendor
@@ -40,7 +40,7 @@ def _vr_pass(raw: str | None) -> int | None:
 async def test_list_invoices_exposes_inbox_columns(client: AsyncClient, db_session: AsyncSession) -> None:
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Microsoft Azure",
             abn="31002882614",
             total=2288,
@@ -79,7 +79,7 @@ async def test_evaluation_status_matches_vendor_confidence_rules(
 ) -> None:
     """Stored inbox fields must align with rule book vendor detection."""
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Unknown Cafe",
         total=120,
         status=InvoiceStatus.PROCESSED,
@@ -89,7 +89,7 @@ async def test_evaluation_status_matches_vendor_confidence_rules(
     )
     db_session.add(inv)
     await db_session.flush()
-    config = load_config_for_org(1)
+    config = load_config_for_tenant(1)
     result = evaluate_invoice_routing(inv, config, route_override=inv.route_target)
     apply_evaluation_to_invoice(inv, result)
 
@@ -117,7 +117,7 @@ async def test_evaluation_status_matches_vendor_confidence_rules(
 async def test_team_expenses_never_vendor_flagged_at_zero_confidence(
     db_session: AsyncSession,
 ) -> None:
-    config = load_config_for_org(1)
+    config = load_config_for_tenant(1)
     threshold = config.vendor_detection_config.threshold
     hold = expense_vendor_hold_above(config)
     flag = vendor_detection_evaluation_status(

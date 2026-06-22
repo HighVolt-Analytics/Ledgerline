@@ -26,8 +26,10 @@ import type {
   LedgerLinkResponse,
   InvoiceUpdatePayload,
   Organisation,
+  Tenant,
   MatrixRow,
   PipelineAuditStep,
+  InvoiceClassificationAudit,
   ProcessingStatus,
   RuleBookConfig,
   RuleBookChangelogEntry,
@@ -56,6 +58,7 @@ const inflightGets = new Map<string, Promise<unknown>>();
 const getCache = new Map<string, { data: unknown; at: number }>();
 
 let authToken: string | null = null;
+let authUser: AuthUser | null = null;
 let unauthorizedHandler: (() => void | Promise<void>) | null = null;
 let handlingUnauthorized = false;
 
@@ -112,6 +115,19 @@ async function notifyUnauthorized() {
 export function setAuthToken(token: string | null) {
   authToken = token;
   clearGetCache();
+}
+
+export function setAuthUser(user: AuthUser | null) {
+  authUser = user;
+}
+
+function getScopedAuthHeaders(init?: RequestInit): Headers {
+  const headers = withAuthHeaders(init);
+  const tid = authUser?.tenant_id;
+  if (tid) {
+    headers.set("X-Tenant-Id", String(tid));
+  }
+  return headers;
 }
 
 export function clearGetCache() {
@@ -205,7 +221,7 @@ async function requestBlob(
   init?: RequestInit,
   fallbackFilename = "download"
 ): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: withAuthHeaders(init) });
+  const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
   if (!res.ok) {
     const msg = await parseErrorResponse(res);
     if (res.status === 401) {
@@ -220,7 +236,7 @@ async function requestBlob(
 }
 
 async function fetchEnvelope<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: withAuthHeaders(init) });
+  const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
   if (!res.ok) {
     const msg = await parseErrorResponse(res);
     if (
@@ -289,7 +305,7 @@ async function requestWithMeta<T>(
   }
 
   const promise = (async () => {
-    const res = await fetch(`${BASE}${path}`, { ...init, headers: withAuthHeaders(init) });
+    const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
     if (!res.ok) {
       const msg = await parseErrorResponse(res);
       if (res.status === 401) {
@@ -317,41 +333,44 @@ async function requestWithMeta<T>(
 }
 
 export const api = {
-  login: (email: string, password: string) =>
-    request<TokenResponse>("/api/auth/login", {
+  logout: (refreshToken?: string) =>
+    request<{ message: string }>("/api/auth/logout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
     }),
-  register: (body: {
-    org_name: string;
-    org_slug: string;
-    email: string;
-    password: string;
-    full_name: string;
-  }) =>
-    request<TokenResponse>("/api/auth/register", {
+  refreshSession: (refreshToken: string) =>
+    request<TokenResponse>("/api/auth/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ refresh_token: refreshToken }),
     }),
-  logout: () =>
-    request<{ message: string }>("/api/auth/logout", { method: "POST" }),
-  refreshSession: () =>
-    request<TokenResponse>("/api/auth/refresh", { method: "POST" }),
   me: () => request<AuthUser>("/api/auth/me"),
-  listOrganisations: () => request<Organisation[]>("/api/organisations"),
-  createOrganisation: (body: { name: string; slug: string; currency?: string }) =>
-    request<Organisation>("/api/organisations", {
+  listTenants: () => request<Tenant[]>("/api/tenants"),
+  listOrganisations: () => request<Tenant[]>("/api/tenants"),
+  createTenant: (body: { name: string; slug: string; currency?: string }) =>
+    request<Tenant>("/api/tenants", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  switchOrganisation: (orgId: number) =>
-    request<TokenResponse>("/api/auth/switch-org", {
+  createOrganisation: (body: { name: string; slug: string; currency?: string }) =>
+    request<Tenant>("/api/tenants", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org_id: orgId }),
+      body: JSON.stringify(body),
+    }),
+  switchTenant: (tenantId: number) =>
+    request<TokenResponse>("/api/auth/switch-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenant_id: tenantId }),
+    }),
+  switchOrganisation: (tenantId: number) =>
+    request<TokenResponse>("/api/auth/switch-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenant_id: tenantId }),
     }),
 
   listMailboxes: (options?: FreshRequestOptions) => {
@@ -484,6 +503,11 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<{ steps: PipelineAuditStep[] }>(path).then((r) => r.steps);
   },
+  getInvoiceClassificationAudit: (id: number, options?: FreshRequestOptions) => {
+    const path = `/api/invoices/${id}/classification-audit`;
+    if (options?.fresh) bustGetCache(path);
+    return request<InvoiceClassificationAudit>(path);
+  },
   getPurchaseDossier: (id: number, options?: FreshRequestOptions) => {
     const path = `/api/invoices/${id}/purchase-dossier`;
     if (options?.fresh) bustGetCache(path);
@@ -506,11 +530,11 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<import("@/lib/dossierApi").DossierSummaryApi>(path);
   },
-  uploadInvoice: (
+  uploadInvoice: async (
     file: File,
     purchaseDocumentType?: "po" | "grn" | "invoice",
     options?: { deferProcessing?: boolean }
-  ) => {
+  ): Promise<import("./types").UploadInvoiceResult> => {
     const fd = new FormData();
     fd.append("file", file);
     const params = new URLSearchParams();
@@ -521,7 +545,28 @@ export const api = {
       params.set("defer_processing", "true");
     }
     const q = params.toString() ? `?${params.toString()}` : "";
-    return request<Invoice>(`/api/invoices/upload${q}`, { method: "POST", body: fd });
+    invalidateGetCache();
+    const res = await fetch(`${BASE}/api/invoices/upload${q}`, {
+      method: "POST",
+      body: fd,
+      headers: getScopedAuthHeaders(),
+    });
+    if (!res.ok) {
+      const msg = await parseErrorResponse(res);
+      if (res.status === 401) {
+        void notifyUnauthorized();
+      }
+      throw new ApiError(msg, res.status);
+    }
+    const json = (await res.json()) as ApiEnvelope<Invoice>;
+    if (json.error) throw new Error(json.error.message);
+    const invoice = json.data;
+    const segmentCount = json.meta?.segment_count ?? 1;
+    const segmentInvoiceIds =
+      json.meta?.segment_invoice_ids?.length
+        ? json.meta.segment_invoice_ids
+        : [invoice.id];
+    return { invoice, segmentCount, segmentInvoiceIds };
   },
   processInvoicesBatch: (invoiceIds: number[]) =>
     request<{ queued: number; status: string }>("/api/invoices/process-batch", {
@@ -724,6 +769,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  analyzeDocumentTypeSamples: (formData: FormData) =>
+    request<import("@/lib/documentTypeSampleAnalysis").DocumentTypeSampleProposal>(
+      "/api/rule-book/document-types/analyze-samples",
+      { method: "POST", body: formData }
+    ),
   getRuleBookChangelog: (limit = 20) =>
     request<RuleBookChangelogEntry[]>(`/api/rule-book/changelog?limit=${limit}`),
   getSettings: () => request<AppSettings>("/api/settings"),

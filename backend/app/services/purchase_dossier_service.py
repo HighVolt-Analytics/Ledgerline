@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.schemas.purchase import PurchaseDossierMember, PurchaseDossierResponse, ThreeWayMatchResult
 from app.services.file_storage import stored_file_available
+from app.services.document_ref_service import dossier_public_id
 from app.services.po_reference import is_plausible_po_reference
 from app.services.purchase_match_service import (
     _latest_grn,
@@ -29,10 +30,7 @@ _ACTIVE_STATUSES = {
 
 
 def _document_ref(inv: Invoice) -> str:
-    ref = (inv.document_ref or "").strip()
-    if ref:
-        return ref
-    return f"DOC-{inv.id}"
+    return dossier_public_id(inv)
 
 
 def _current_role(invoice: Invoice) -> str | None:
@@ -57,7 +55,7 @@ async def _invoice_by_id(session: AsyncSession, invoice_id: int | None) -> Invoi
 async def _latest_upload_for_role(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     po_reference: str,
     purchase_document_type: str,
 ) -> Invoice | None:
@@ -65,7 +63,7 @@ async def _latest_upload_for_role(
         await session.execute(
             select(Invoice)
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.po_reference == po_reference,
                 Invoice.purchase_document_type == purchase_document_type,
                 Invoice.status.not_in(_ACTIVE_STATUSES),
@@ -126,19 +124,19 @@ async def build_purchase_dossier(
 
     po_upload = await _latest_upload_for_role(
         session,
-        org_id=invoice.org_id,
+        tenant_id=invoice.tenant_id,
         po_reference=po_reference,
         purchase_document_type=PurchaseDocumentType.PO.value,
     )
     grn_upload = await _latest_upload_for_role(
         session,
-        org_id=invoice.org_id,
+        tenant_id=invoice.tenant_id,
         po_reference=po_reference,
         purchase_document_type=PurchaseDocumentType.GRN.value,
     )
     invoice_upload = await _latest_upload_for_role(
         session,
-        org_id=invoice.org_id,
+        tenant_id=invoice.tenant_id,
         po_reference=po_reference,
         purchase_document_type=PurchaseDocumentType.INVOICE.value,
     )

@@ -18,7 +18,7 @@ class MailboxConnectionRequestCreate(BaseModel):
 
 class MailboxConnectionRequestResponse(BaseModel):
     id: int
-    org_id: int
+    tenant_id: int
     requested_email: str
     display_name: str | None
     message: str | None
@@ -43,7 +43,7 @@ class MailboxInviteLinkResponse(BaseModel):
 
 
 class MailboxInvitePreviewResponse(BaseModel):
-    org_name: str
+    tenant_name: str
     requested_email: str
     display_name: str | None
     message: str | None
@@ -61,7 +61,7 @@ class MailboxAdminConsentResponse(BaseModel):
 
 class MailboxResponse(BaseModel):
     id: int
-    org_id: int
+    tenant_id: int
     email: str
     display_name: str | None
     is_active: bool
@@ -82,7 +82,7 @@ class MailboxBackfillCreate(BaseModel):
 
 class MailboxBackfillResponse(BaseModel):
     id: int
-    org_id: int
+    tenant_id: int
     mailbox_id: int
     from_date: date
     to_date: date

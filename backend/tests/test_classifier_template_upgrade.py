@@ -44,7 +44,7 @@ def test_unclassified_forces_review_below_route_threshold() -> None:
     result = classify_document_type(
         invoice=Invoice(
             id=2,
-            org_id=1,
+            tenant_id=1,
             status=InvoiceStatus.PARSING,
             currency="AUD",
             email_attachment_name="random-upload.pdf",

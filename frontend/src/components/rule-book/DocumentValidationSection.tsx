@@ -225,7 +225,7 @@ export function ValidationViewDialog({
   );
 }
 
-function mergeConfigurableRules(
+export function mergeConfigurableRules(
   documentTypeCode: string,
   validationProfile: string,
   value: ValidationRuleConfig[]

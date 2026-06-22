@@ -48,11 +48,11 @@ def get_processing_status() -> dict[str, str | int | None]:
     }
 
 
-async def _fetch_pending_ids(*, org_id: int | None = None) -> list[int]:
+async def _fetch_pending_ids(*, tenant_id: int | None = None) -> list[int]:
     async with async_session_factory() as session:
         stmt = select(Invoice.id).where(Invoice.status.in_(_PENDING_STATUSES))
-        if org_id is not None:
-            stmt = stmt.where(Invoice.org_id == org_id)
+        if tenant_id is not None:
+            stmt = stmt.where(Invoice.tenant_id == tenant_id)
         return list((await session.execute(stmt)).scalars().all())
 
 
@@ -158,20 +158,20 @@ async def _process_pending(invoice_ids: list[int]) -> int:
 async def run_pipeline(
     *,
     mailbox_id: int | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
     poll_inbox: bool = False,
 ) -> dict[str, int]:
     """Poll mailboxes (optional) and process pending invoices."""
-    processed = await _process_pending(await _fetch_pending_ids(org_id=org_id))
+    processed = await _process_pending(await _fetch_pending_ids(tenant_id=tenant_id))
 
     ingested = 0
     message_ids: list[str] = []
     preskip: dict[str, str] = {}
 
-    if mailbox_id is not None and org_id is not None:
+    if mailbox_id is not None and tenant_id is not None:
         async with async_session_factory() as session:
             ingest_result = await poll_mailbox_and_ingest(
-                session, mailbox_id=mailbox_id, org_id=org_id
+                session, mailbox_id=mailbox_id, tenant_id=tenant_id
             )
             await session.commit()
             ingested = ingest_result.ingested_count
@@ -179,7 +179,7 @@ async def run_pipeline(
             preskip = ingest_result.preskip_exceptions
     elif poll_inbox:
         async with async_session_factory() as session:
-            ingest_result = await poll_all_and_ingest(session)
+            ingest_result = await poll_all_and_ingest(session, tenant_id=tenant_id)
             await session.commit()
             ingested = ingest_result.ingested_count
             message_ids = ingest_result.message_ids
@@ -188,7 +188,7 @@ async def run_pipeline(
         ingest_result = EmailIngestResult()
 
     if ingested:
-        processed += await _process_pending(await _fetch_pending_ids(org_id=org_id))
+        processed += await _process_pending(await _fetch_pending_ids(tenant_id=tenant_id))
 
     if message_ids and folder_moves_enabled():
         async with async_session_factory() as session:
@@ -206,7 +206,7 @@ async def run_pipeline(
 async def run_pipeline_background(
     *,
     mailbox_id: int | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
     poll_inbox: bool = False,
 ) -> None:
     """FastAPI background task — must be async (uvicorn already has a running loop)."""
@@ -217,12 +217,12 @@ async def run_pipeline_background(
         logger.info(
             "inline_pipeline_started",
             mailbox_id=mailbox_id,
-            org_id=org_id,
+            tenant_id=tenant_id,
             poll_inbox=poll_inbox,
         )
         result = await run_pipeline(
             mailbox_id=mailbox_id,
-            org_id=org_id,
+            tenant_id=tenant_id,
             poll_inbox=poll_inbox,
         )
         logger.info("inline_pipeline_done", **result)
@@ -234,7 +234,7 @@ async def run_pipeline_background(
 def run_pipeline_sync(
     *,
     mailbox_id: int | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
     poll_inbox: bool = False,
     dispose_pool: bool = False,
 ) -> dict[str, int]:
@@ -245,7 +245,7 @@ def run_pipeline_sync(
         try:
             return await run_pipeline(
                 mailbox_id=mailbox_id,
-                org_id=org_id,
+                tenant_id=tenant_id,
                 poll_inbox=poll_inbox,
             )
         finally:
@@ -257,12 +257,46 @@ def run_pipeline_sync(
 
 @celery_app.task(
     bind=True,
+    name="app.workers.tasks.poll_all_tenants_task",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+)
+def poll_all_tenants_task(self) -> dict[str, int]:
+    """Fan out inbox polling per active tenant."""
+    global _last_run
+    configure_logging(get_settings().log_level)
+    logger.info("poll_all_tenants_started", task_id=self.request.id)
+
+    async def run_with_cleanup() -> dict[str, int]:
+        from app.services.tenant_context_service import list_active_tenant_ids
+
+        totals = {"ingested": 0, "processed": 0}
+        try:
+            async with async_session_factory() as session:
+                tenant_ids = await list_active_tenant_ids(session)
+            for tid in tenant_ids:
+                result = await run_pipeline(tenant_id=tid, poll_inbox=True)
+                totals["ingested"] += result.get("ingested", 0)
+                totals["processed"] += result.get("processed", 0)
+            return totals
+        finally:
+            await dispose_engine()
+
+    result = asyncio.run(run_with_cleanup())
+    _last_run = datetime.now(timezone.utc).isoformat()
+    logger.info("poll_all_tenants_done", **result)
+    return result
+
+
+@celery_app.task(
+    bind=True,
     name="app.workers.tasks.process_inbox_task",
     autoretry_for=(Exception,),
     retry_backoff=True,
     max_retries=3,
 )
-def process_inbox_task(self, mailbox_id: int | None = None, org_id: int | None = None) -> dict[str, int]:
+def process_inbox_task(self, mailbox_id: int | None = None, tenant_id: int | None = None) -> dict[str, int]:
     global _last_run
     configure_logging(get_settings().log_level)
     logger.info("task_started", task_id=self.request.id, mailbox_id=mailbox_id)
@@ -271,7 +305,7 @@ def process_inbox_task(self, mailbox_id: int | None = None, org_id: int | None =
         try:
             return await run_pipeline(
                 mailbox_id=mailbox_id,
-                org_id=org_id,
+                tenant_id=tenant_id,
                 poll_inbox=True,
             )
         finally:

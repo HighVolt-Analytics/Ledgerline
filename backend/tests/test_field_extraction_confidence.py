@@ -9,7 +9,7 @@ from app.services.field_extraction_confidence import compute_extraction_field_co
 
 
 def _invoice(**kwargs) -> Invoice:
-    inv = Invoice(org_id=1, currency="AUD")
+    inv = Invoice(tenant_id=1, currency="AUD")
     for key, value in kwargs.items():
         setattr(inv, key, value)
     return inv

@@ -13,7 +13,7 @@ from app.services.purchase_document_service import sync_purchase_document
 
 @pytest.mark.asyncio
 async def test_dossier_without_po_reference(db_session: AsyncSession) -> None:
-    inv = Invoice(org_id=1, vendor="Acme", status=InvoiceStatus.MAPPING)
+    inv = Invoice(tenant_id=1, vendor="Acme", status=InvoiceStatus.MAPPING)
     db_session.add(inv)
     await db_session.flush()
 
@@ -30,7 +30,7 @@ async def test_dossier_po_and_invoice_linked(db_session: AsyncSession) -> None:
     from sqlalchemy.orm import selectinload
 
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-200",
         invoice_no="PO-MKT-2026-200",
@@ -54,7 +54,7 @@ async def test_dossier_po_and_invoice_linked(db_session: AsyncSession) -> None:
     await sync_purchase_document(db_session, po_doc)
 
     commercial = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-200",
         invoice_no="META-INV-200",

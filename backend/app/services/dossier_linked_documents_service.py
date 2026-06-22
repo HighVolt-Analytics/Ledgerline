@@ -11,10 +11,10 @@ from app.schemas.dossier import (
     DossierLinkedDocumentsResponse,
     DossierMatchSummaryResponse,
 )
-from app.services.document_ref_service import display_document_ref
+from app.services.document_ref_service import display_document_ref, dossier_public_id
 from app.services.document_type_playbook_profile_service import should_enforce_bundle_mandatory
 from app.services.document_type_playbook_service import split_bundle_items
-from app.services.invoice_evaluation_service import load_config_for_org
+from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.services.po_reference import is_plausible_po_reference
 from app.services.purchase_dossier_service import build_purchase_dossier
 
@@ -32,10 +32,7 @@ _BUNDLE_ROLE = {
 
 
 def _dossier_id_for_invoice(inv: Invoice) -> str:
-    ref = (inv.document_ref or "").strip()
-    if ref:
-        return ref
-    return str(inv.id)
+    return dossier_public_id(inv)
 
 
 def _dt_label(code: str, document_types: list[DocumentTypeDefinition]) -> str:
@@ -65,8 +62,8 @@ async def build_dossier_linked_documents(
                     linked_id = anchor_id
                 elif member.document_ref and member.document_ref != "—":
                     linked_id = member.document_ref
-                else:
-                    linked_id = str(member.invoice_id)
+                elif member.invoice_id is not None:
+                    linked_id = f"DOC-{member.invoice_id}"
             documents.append(
                 DossierLinkedDocumentResponse(
                     id=f"{dt_code}-{member.role}",
@@ -106,7 +103,7 @@ async def build_dossier_linked_documents(
             purchase_order_id=purchase.purchase_order_id,
         )
 
-    config = load_config_for_org(invoice.org_id)
+    config = load_config_for_tenant(invoice.tenant_id)
     document_types = config.document_types
     enforce = should_enforce_bundle_mandatory(definition) if definition else False
     mandatory_codes: list[str] = []

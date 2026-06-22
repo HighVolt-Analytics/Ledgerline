@@ -13,7 +13,8 @@ export type DossierApprovalStepState =
   | "waived"
   | "blocked"
   | "skipped"
-  | "not_required";
+  | "not_required"
+  | "fail";
 
 export type DossierApprovalStepKind =
   | "po_buyer"
@@ -45,6 +46,7 @@ export type DossierApprovalChain = {
 export function approvalStepStateLabel(state: DossierApprovalStepState): string {
   if (state === "done") return "approved";
   if (state === "not_required") return "n/a";
+  if (state === "fail") return "failed";
   return state;
 }
 

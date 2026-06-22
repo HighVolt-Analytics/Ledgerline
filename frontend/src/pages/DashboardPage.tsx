@@ -227,7 +227,7 @@ export function DashboardPage() {
           data-testid="text-welcome"
         >
           <h1 className="text-xl font-semibold tracking-tight">
-            Welcome back, {firstName(user.full_name)} — {user.org_name}
+            Welcome back, {firstName(user.full_name)} — {user.tenant_name}
           </h1>
           <Badge variant="outline" className="mt-2 text-xs font-normal text-muted-foreground tnum" data-testid="chip-userid">
             {user.email}
@@ -373,7 +373,7 @@ export function DashboardPage() {
         className="p-5 mb-6 bg-gradient-to-r from-primary/5 to-transparent border-primary/15"
       >
         <h1 className="text-xl font-semibold tracking-tight" data-testid="text-welcome">
-          Welcome back, {firstName(user.full_name)} — {user.org_name}
+          Welcome back, {firstName(user.full_name)} — {user.tenant_name}
         </h1>
         <Badge
           variant="outline"

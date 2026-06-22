@@ -20,7 +20,7 @@ from app.services.validator import all_passed, run_all_validations
 
 
 def _invoice(**kwargs) -> Invoice:
-    base = dict(id=1, org_id=1, status=InvoiceStatus.PARSING, currency="AUD")
+    base = dict(id=1, tenant_id=1, status=InvoiceStatus.PARSING, currency="AUD")
     base.update(kwargs)
     return Invoice(**base)
 
@@ -44,7 +44,7 @@ async def test_dt21_direct_expense_omits_abn_and_gst(
     results = await run_all_validations(
         _directus_parsed(),
         db_session,
-        org_id=1,
+        tenant_id=1,
         document_type_code="DT-21",
         validation_profile="direct_expense",
         document_types=list(capture_config.document_types),
@@ -60,7 +60,7 @@ async def test_reclassify_updates_document_type_from_fields(
     capture_config,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.EXCEPTION,
         currency="USD",
         vendor="Directus Cloud",
@@ -102,7 +102,7 @@ async def test_reclassify_updates_document_type_from_fields(
 def test_catalogue_present_no_classifier_match_returns_unclassified(capture_config) -> None:
     invoice = Invoice(
         id=1,
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.PARSING,
         currency="AUD",
         email_attachment_name="totally-unknown.pdf",

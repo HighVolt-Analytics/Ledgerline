@@ -31,7 +31,7 @@ async def log_event(
     event: str,
     *,
     invoice_id: int | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
     detail: dict[str, Any] | None = None,
     actor_name: str | None = None,
     actor_email: str | None = None,
@@ -40,12 +40,12 @@ async def log_event(
     from app.models.invoice import Invoice
     from app.services.audit_detail_helpers import invoice_snapshot_detail
 
-    resolved_org_id = org_id
+    resolved_tenant_id = tenant_id
     invoice_for_snapshot: Invoice | None = None
     if invoice_id is not None:
         invoice_for_snapshot = await session.get(Invoice, invoice_id)
-        if invoice_for_snapshot is not None and resolved_org_id is None:
-            resolved_org_id = invoice_for_snapshot.org_id
+        if invoice_for_snapshot is not None and resolved_tenant_id is None:
+            resolved_tenant_id = invoice_for_snapshot.tenant_id
 
     merged_detail = merge_actor_detail(
         detail,
@@ -60,13 +60,13 @@ async def log_event(
     if client_ip:
         merged_detail = dict(merged_detail or {})
         merged_detail["client_ip"] = client_ip
-    if resolved_org_id is not None:
+    if resolved_tenant_id is not None:
         merged_detail = dict(merged_detail or {})
-        merged_detail.setdefault("org_id", resolved_org_id)
+        merged_detail.setdefault("tenant_id", resolved_tenant_id)
 
     entry = AuditLog(
         event=event,
-        org_id=resolved_org_id,
+        tenant_id=resolved_tenant_id,
         invoice_id=invoice_id,
         correlation_id=correlation_id_ctx.get(),
         detail=merged_detail,

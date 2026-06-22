@@ -49,18 +49,18 @@ REJECTED_ROOT = "rejected"
 
 def slug_to_pascal(slug: str) -> str:
     parts = [p for p in slug.replace("_", "-").split("-") if p]
-    return "".join(part[:1].upper() + part[1:] for part in parts) or "Organisation"
+    return "".join(part[:1].upper() + part[1:] for part in parts) or "Tenant"
 
 
 def slug_to_title(slug: str) -> str:
     return " ".join(part[:1].upper() + part[1:] for part in slug.split("-") if part)
 
 
-def vault_org_folder(org_slug: str, org_name: str | None = None) -> str:
-    if org_slug and org_slug.strip():
-        return slug_to_pascal(org_slug)
-    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", org_name or "Organisation").strip("_")
-    return cleaned or "Organisation"
+def vault_tenant_folder(tenant_slug: str, tenant_name: str | None = None) -> str:
+    if tenant_slug and tenant_slug.strip():
+        return slug_to_pascal(tenant_slug)
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", tenant_name or "Tenant").strip("_")
+    return cleaned or "Tenant"
 
 
 def vault_book_folder(route_target: str | None) -> str:
@@ -219,13 +219,14 @@ def vault_file_name(
         prefix = "GRN_"
     elif purchase_document_type == "invoice":
         prefix = "INV_"
-    return f"{prefix}{doc_no}_{date_part}{suffix}"
+    # invoice_id keeps split dossier members unique when they share invoice_no / PO ref.
+    return f"{prefix}{doc_no}_{date_part}_id{invoice_id}{suffix}"
 
 
 def build_vault_blob_name(
-    org_slug: str,
+    tenant_slug: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     route_target: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
@@ -251,8 +252,8 @@ def build_vault_blob_name(
         )
     return _build_storage_blob_name(
         VAULT_ROOT,
-        org_slug,
-        org_name=org_name,
+        tenant_slug,
+        tenant_name=tenant_name,
         route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,
@@ -267,9 +268,9 @@ def build_vault_blob_name(
 
 
 def build_rejected_blob_name(
-    org_slug: str,
+    tenant_slug: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     route_target: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
@@ -293,8 +294,8 @@ def build_rejected_blob_name(
         )
     return _build_storage_blob_name(
         REJECTED_ROOT,
-        org_slug,
-        org_name=org_name,
+        tenant_slug,
+        tenant_name=tenant_name,
         route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,
@@ -308,9 +309,9 @@ def build_rejected_blob_name(
 
 def _build_storage_blob_name(
     root: str,
-    org_slug: str,
+    tenant_slug: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     route_target: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
@@ -322,7 +323,7 @@ def _build_storage_blob_name(
     purchase_document_type: str | None = None,
     document_type_folder: str | None = None,
 ) -> str:
-    org = vault_org_folder(org_slug, org_name)
+    org = vault_tenant_folder(tenant_slug, tenant_name)
     book = vault_book_folder(route_target)
     vendor = vault_vendor_folder(vendor_name, storage_vendor_slug)
     year = vault_year(invoice_date)
@@ -343,9 +344,9 @@ def _build_storage_blob_name(
 
 
 def build_virtual_path(
-    org_slug: str,
+    tenant_slug: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     route_target: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
@@ -361,8 +362,8 @@ def build_virtual_path(
     document_type_folder: str | None = None,
 ) -> str:
     return build_vault_blob_name(
-        org_slug,
-        org_name=org_name,
+        tenant_slug,
+        tenant_name=tenant_name,
         route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,

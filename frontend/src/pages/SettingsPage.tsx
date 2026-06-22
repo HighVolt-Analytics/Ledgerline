@@ -61,7 +61,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (user) {
-      setBusinessName(user.org_name);
+      setBusinessName(user.tenant_name);
       setEmail(user.email);
     }
   }, [user]);
@@ -79,9 +79,9 @@ export function SettingsPage() {
     if (!user) return [];
     return [
       {
-        id: user.org_id,
-        name: user.org_name,
-        slug: user.org_slug,
+        id: user.tenant_id,
+        name: user.tenant_name,
+        slug: user.tenant_slug,
         currency: countryMeta.currency,
         is_current: true,
       },
@@ -105,7 +105,7 @@ export function SettingsPage() {
   };
 
   const handleSwitchOrg = async (orgId: number) => {
-    if (!user || orgId === user.org_id || switchingOrgId != null) return;
+    if (!user || orgId === user.tenant_id || switchingOrgId != null) return;
     setSwitchingOrgId(orgId);
     try {
       await switchOrganisation(orgId);

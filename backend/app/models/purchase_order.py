@@ -27,7 +27,7 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     po_number: Mapped[str] = mapped_column(String(100), index=True)
     vendor: Mapped[str | None] = mapped_column(String(255))
     po_date: Mapped[date | None] = mapped_column(Date)

@@ -68,7 +68,7 @@ def _matching_capture_email(data: bytes, *, message_id: str = "msg-dup") -> RawE
     ],
 )
 def test_evaluate_file_hash_duplicate(status: InvoiceStatus, expected: str) -> None:
-    existing = Invoice(org_id=1, status=status, file_hash="abc", currency="AUD")
+    existing = Invoice(tenant_id=1, status=status, file_hash="abc", currency="AUD")
     decision = evaluate_file_hash_duplicate(existing)
     assert decision.action == expected
     assert decision.existing is existing
@@ -88,7 +88,7 @@ async def test_email_duplicate_preserves_processed_invoice(
     file_hash = compute_sha256_bytes(pdf_bytes)
 
     processed = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Vendor Co",
         invoice_no="INV-100",
         status=InvoiceStatus.PROCESSED,
@@ -107,8 +107,8 @@ async def test_email_duplicate_preserves_processed_invoice(
     result = await ingest_email_attachments(
         db_session,
         [_matching_capture_email(pdf_bytes)],
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=1,
+        tenant_slug="hv-org",
     )
     assert result.ingested_count == 0
 
@@ -134,7 +134,7 @@ async def test_email_duplicate_in_progress_logs_without_second_row(
     file_hash = compute_sha256_bytes(pdf_bytes)
 
     pending = Invoice(
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.PARSING,
         file_hash=file_hash,
         currency="AUD",
@@ -150,8 +150,8 @@ async def test_email_duplicate_in_progress_logs_without_second_row(
     result = await ingest_email_attachments(
         db_session,
         [_matching_capture_email(pdf_bytes, message_id="msg-2")],
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=1,
+        tenant_slug="hv-org",
     )
     assert result.ingested_count == 0
     rows = (await db_session.execute(select(Invoice))).scalars().all()
@@ -170,7 +170,7 @@ async def test_vr02_ignores_rejected_invoice(
 
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Acme Pty Ltd",
             invoice_no="INV-DUP",
             status=InvoiceStatus.REJECTED,
@@ -182,7 +182,7 @@ async def test_vr02_ignores_rejected_invoice(
 
     sample_invoice_data.invoice_no = "INV-DUP"
     sample_invoice_data.vendor = "Acme Pty Ltd"
-    result = await vr02_unique(sample_invoice_data, db_session, org_id=1)
+    result = await vr02_unique(sample_invoice_data, db_session, tenant_id=1)
     assert result.passed
 
     get_settings.cache_clear()
@@ -198,7 +198,7 @@ async def test_pipeline_stages_show_duplicate_skipped(
     from app.services.pipeline_stages import build_pipeline_stages
 
     shadow = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         invoice_no="INV-1",
         status=InvoiceStatus.DUPLICATE_SKIPPED,

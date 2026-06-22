@@ -3,12 +3,15 @@ export interface AuthUser {
   email: string;
   full_name: string;
   role: string;
-  org_id: number;
-  org_name: string;
-  org_slug: string;
+  tenant_id: number;
+  tenant_name: string;
+  tenant_slug: string;
 }
 
-export interface Organisation {
+/** @deprecated use Tenant */
+export type Organisation = Tenant;
+
+export interface Tenant {
   id: number;
   name: string;
   slug: string;
@@ -18,13 +21,14 @@ export interface Organisation {
 
 export interface TokenResponse {
   access_token: string;
+  refresh_token: string;
   token_type: string;
   user: AuthUser;
 }
 
 export interface ConnectedMailbox {
   id: number;
-  org_id: number;
+  tenant_id: number;
   email: string;
   display_name: string | null;
   is_active: boolean;
@@ -37,7 +41,7 @@ export interface ConnectedMailbox {
 
 export interface MailboxBackfillJob {
   id: number;
-  org_id: number;
+  tenant_id: number;
   mailbox_id: number;
   from_date: string;
   to_date: string;
@@ -60,7 +64,7 @@ export interface MailboxBackfillQueued {
 
 export interface MailboxConnectionRequest {
   id: number;
-  org_id: number;
+  tenant_id: number;
   requested_email: string;
   display_name: string | null;
   message: string | null;
@@ -79,7 +83,7 @@ export interface MailboxConnectionRequestAction extends MailboxConnectionRequest
 }
 
 export interface MailboxInvitePreview {
-  org_name: string;
+  tenant_name: string;
   requested_email: string;
   display_name: string | null;
   message: string | null;
@@ -107,8 +111,20 @@ export type InvoiceStatus =
 export interface ApiEnvelope<T> {
   data: T;
   error: { code: string; message: string } | null;
-  meta: { page: number; total: number; pages: number };
+  meta: {
+    page: number;
+    total: number;
+    pages: number;
+    segment_count?: number | null;
+    segment_invoice_ids?: number[] | null;
+  };
 }
+
+export type UploadInvoiceResult = {
+  invoice: Invoice;
+  segmentCount: number;
+  segmentInvoiceIds: number[];
+};
 
 export interface ValidationResult {
   rule: string;
@@ -485,7 +501,7 @@ export interface AppSettings {
 
 export interface WhatsappConnection {
   id: number;
-  org_id: number;
+  tenant_id: number;
   phone_number_id: string;
   phone_number: string | null;
   display_name: string | null;
@@ -919,4 +935,28 @@ export interface PipelineAuditStep {
   when: string;
   detail: string;
   state: "done" | "pending" | "fail" | "skipped";
+}
+
+export interface InvoiceClassificationScoreBreakdown {
+  rule_strength?: number;
+  field_completeness?: number;
+  parse_score?: number;
+  heading_alignment?: number;
+  required_present?: string[];
+  required_missing?: string[];
+  absent_ok?: string[];
+  absent_violations?: string[];
+  signal_conflicts?: string[];
+}
+
+export interface InvoiceClassificationAudit {
+  document_type_code?: string;
+  document_type_confidence?: number;
+  document_type_title?: string | null;
+  document_type_klass?: string | null;
+  reason?: string;
+  needs_review?: boolean;
+  min_route_confidence?: number;
+  signal_conflicts?: string[];
+  score_breakdown?: InvoiceClassificationScoreBreakdown;
 }

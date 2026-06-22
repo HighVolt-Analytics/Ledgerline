@@ -53,7 +53,7 @@ def test_validation_audit_detail_team_and_expense_routes() -> None:
 
 def test_compute_three_way_audit_status() -> None:
     po = PurchaseOrder(
-        org_id=1,
+        tenant_id=1,
         po_number="PO-1",
         po_document_id=10,
         invoice_id=20,
@@ -83,7 +83,7 @@ def test_compute_three_way_audit_status() -> None:
         invoice_gst=0,
         invoice_total=0,
     )
-    po_no_grn = PurchaseOrder(org_id=1, po_number="PO-2", po_document_id=10)
+    po_no_grn = PurchaseOrder(tenant_id=1, po_number="PO-2", po_document_id=10)
     po_no_grn.goods_receipts = []
     assert compute_three_way_audit_status(po_no_grn, partial) == "partial"
 
@@ -93,7 +93,7 @@ async def test_persist_three_way_match_audit_writes_event(
     db_session: AsyncSession,
 ) -> None:
     po = PurchaseOrder(
-        org_id=1,
+        tenant_id=1,
         po_number="PO-AUDIT-001",
         po_qty=Decimal("1"),
         po_unit_price=Decimal("100"),
@@ -120,7 +120,7 @@ async def test_persist_three_way_match_audit_on_sync_logs_when_unchanged(
     db_session: AsyncSession,
 ) -> None:
     po = PurchaseOrder(
-        org_id=1,
+        tenant_id=1,
         po_number="PO-AUDIT-002",
         po_qty=Decimal("1"),
         po_unit_price=Decimal("100"),
@@ -150,7 +150,7 @@ async def test_persist_three_way_match_audit_on_sync_logs_when_unchanged(
 @pytest.mark.asyncio
 async def test_unmatched_team_vendor_audit(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         route_target=ROUTE_TEAM,
         vendor="Unknown Cafe",
         email_sender="staff@example.com",
@@ -180,7 +180,7 @@ async def test_unmatched_team_vendor_audit(db_session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_team_expense_auto_approved_audit(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         route_target=ROUTE_TEAM,
         vendor="Local Cafe",
         total=Decimal("24.50"),

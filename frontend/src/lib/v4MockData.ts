@@ -18,6 +18,8 @@ export type ApproverStep = {
 
 export type ExpenseClaim = {
   id: string;
+  /** Org document label (DOC-… / document_ref) — not the legacy INV- prefix. */
+  documentRef?: string;
   submitter: string;
   channel: string;
   category: string;

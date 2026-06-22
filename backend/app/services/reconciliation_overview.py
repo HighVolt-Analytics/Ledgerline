@@ -51,12 +51,12 @@ def _postings_for_invoice(entries: list[JournalEntry]) -> list[ReconPostingRow]:
 async def build_reconciliation_overview(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> ReconciliationOverview:
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.status.in_(_PROCESSED),
             Invoice.invoice_date.is_not(None),
         )

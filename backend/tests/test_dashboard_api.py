@@ -40,7 +40,7 @@ async def test_dashboard_stats_empty(client: AsyncClient) -> None:
 async def test_dashboard_overview(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         vendor="Acme Corp",
         total=Decimal("1000.00"),
         due_date=date.today() + timedelta(days=5),
@@ -89,7 +89,7 @@ async def test_dashboard_activity_includes_duplicate(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     original = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Dup Vendor",
         invoice_no="INV-DUP-1",
         status=InvoiceStatus.PROCESSED,
@@ -97,7 +97,7 @@ async def test_dashboard_activity_includes_duplicate(
         file_hash="dash-dup-original",
     )
     shadow = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Dup Vendor",
         invoice_no="INV-DUP-1",
         status=InvoiceStatus.DUPLICATE_SKIPPED,
@@ -134,7 +134,7 @@ async def test_pending_approval_count(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     db_session.add(
-        Invoice(org_id=1,
+        Invoice(tenant_id=1,
             vendor="X",
             status=InvoiceStatus.EXCEPTION,
             currency="AUD",
@@ -156,7 +156,7 @@ async def test_total_value_counts_processed_only(
     db_session.add_all(
         [
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Booked Co",
                 total=Decimal("1000.00"),
                 status=InvoiceStatus.PROCESSED,
@@ -164,7 +164,7 @@ async def test_total_value_counts_processed_only(
                 file_hash="dash-booked",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Exception Co",
                 total=Decimal("500.00"),
                 status=InvoiceStatus.EXCEPTION,
@@ -172,7 +172,7 @@ async def test_total_value_counts_processed_only(
                 file_hash="dash-exc",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Rejected Co",
                 total=Decimal("250.00"),
                 status=InvoiceStatus.REJECTED,
@@ -180,7 +180,7 @@ async def test_total_value_counts_processed_only(
                 file_hash="dash-rej",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Dupe Co",
                 total=Decimal("100.00"),
                 status=InvoiceStatus.DUPLICATE_SKIPPED,
@@ -221,11 +221,11 @@ async def test_reject_processed_updates_dashboard_value(
 
     vault_path = upload_dir / "invoice" / "HvOrg" / "Spend Co" / "2026" / "May"
     vault_path.mkdir(parents=True)
-    pdf = vault_path / "INV-010_2026-05-04.pdf"
+    pdf = vault_path / "INV-010_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Spend Co",
         invoice_no="INV-010",
         invoice_date=date(2026, 5, 4),
@@ -267,7 +267,7 @@ async def test_nav_badges_team_expenses_and_payments(
     db_session.add_all(
         [
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Team Vendor",
                 status=InvoiceStatus.VALIDATING,
                 route_target="Team Expenses",
@@ -275,7 +275,7 @@ async def test_nav_badges_team_expenses_and_payments(
                 file_hash="badge-team",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Payable Co",
                 status=InvoiceStatus.PROCESSED,
                 due_date=date.today() + timedelta(days=3),
@@ -299,7 +299,7 @@ async def test_docs_via_upload_counts_non_email_sources(
     db_session.add_all(
         [
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Email Co",
                 status=InvoiceStatus.PENDING,
                 email_sender="vendor@example.com",
@@ -307,7 +307,7 @@ async def test_docs_via_upload_counts_non_email_sources(
                 file_hash="dash-email",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Upload Co",
                 status=InvoiceStatus.PENDING,
                 currency="AUD",
@@ -329,7 +329,7 @@ async def test_dashboard_anomalies_include_rule_book_routing(
     db_session.add_all(
         [
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Unknown Supplier Pty Ltd",
                 status=InvoiceStatus.MAPPING,
                 route_target="Purchase Management",
@@ -338,7 +338,7 @@ async def test_dashboard_anomalies_include_rule_book_routing(
                 file_hash="dash-pending-vendor",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Ambiguous Co",
                 status=InvoiceStatus.VALIDATING,
                 route_target="Team Expenses",

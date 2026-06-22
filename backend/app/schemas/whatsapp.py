@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 class WhatsappConnectionResponse(BaseModel):
     id: int
-    org_id: int
+    tenant_id: int
     phone_number_id: str
     phone_number: str | None
     display_name: str | None

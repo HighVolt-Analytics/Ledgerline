@@ -508,13 +508,13 @@ def build_import_template(mode: EmployeeImportMode) -> bytes:
 
 async def import_employee_masters(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     *,
     mode: EmployeeImportMode,
     rows: list[dict[str, str]],
     dry_run: bool = False,
 ) -> EmployeeImportResult:
-    await ensure_masters_imported(db, org_id)
+    await ensure_masters_imported(db, tenant_id)
     fields = _REGISTER_FIELDS if mode == "register" else _PAYMENT_FIELDS
     if not rows:
         raise ValueError("No data rows found")
@@ -548,7 +548,7 @@ async def import_employee_masters(
 
         assert parsed is not None
         email = parsed["email"]
-        existing = await get_employee_master_by_email(db, org_id, email)
+        existing = await get_employee_master_by_email(db, tenant_id, email)
 
         if mode == "register":
             preview_name = parsed["name"]
@@ -575,7 +575,7 @@ async def import_employee_masters(
                 if not dry_run:
                     db.add(
                         EmployeeMasterRecord(
-                            org_id=org_id,
+                            tenant_id=tenant_id,
                             master_id=_new_master_id("em", parsed["name"]),
                             name=parsed["name"],
                             role=parsed.get("role") or "",
@@ -644,6 +644,6 @@ async def import_employee_masters(
 
     if not dry_run and (result.created or result.updated):
         await db.flush()
-        await sync_masters_to_config_file(db, org_id)
+        await sync_masters_to_config_file(db, tenant_id)
 
     return result

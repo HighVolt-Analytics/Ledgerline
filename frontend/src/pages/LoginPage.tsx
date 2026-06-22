@@ -1,56 +1,70 @@
 import { useState } from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { LogoBlock } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 
-type SetupState = {
-  mode?: "register";
-  org_name?: string;
-  org_slug?: string;
-  email?: string;
-};
+type Step = "credentials" | "otp" | "pick-tenant";
 
 export function LoginPage() {
-  const { user, loading, login, register } = useAuth();
-  const location = useLocation();
-  const setup = (location.state as SetupState | null) ?? {};
-  const [mode, setMode] = useState<"login" | "register">(
-    setup.mode === "register" ? "register" : "login"
-  );
+  const {
+    user,
+    loading,
+    login,
+    verifyOtp,
+    selectTenant,
+    resendOtp,
+    tenantPicker,
+  } = useAuth();
+
+  const [step, setStep] = useState<Step>("credentials");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const [email, setEmail] = useState(setup.email ?? "");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [orgName, setOrgName] = useState(setup.org_name ?? "");
-  const [orgSlug, setOrgSlug] = useState(setup.org_slug ?? "");
+  const [otp, setOtp] = useState("");
 
   if (!loading && user && user.id > 0) {
     return <Navigate to="/" replace />;
   }
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onCredentials(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setBusy(true);
     try {
-      if (mode === "login") {
-        await login(email, password);
-      } else {
-        await register({
-          org_name: orgName,
-          org_slug: orgSlug.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
-          email,
-          password,
-          full_name: fullName,
-        });
-      }
+      await login(email, password);
+      setStep("otp");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await verifyOtp(otp);
+      if (result === "pick-tenant") setStep("pick-tenant");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onPickTenant(tenantId: number) {
+    setError(null);
+    setBusy(true);
+    try {
+      await selectTenant(tenantId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not select tenant");
     } finally {
       setBusy(false);
     }
@@ -64,91 +78,101 @@ export function LoginPage() {
         </div>
         <div className="text-center space-y-1">
           <h1 className="text-xl font-semibold">
-            {mode === "login" ? "Sign in" : "Create your organisation"}
+            {step === "credentials"
+              ? "Sign in"
+              : step === "otp"
+                ? "Verify your email"
+                : "Choose organisation"}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {mode === "login"
+            {step === "credentials"
               ? "Access your invoice pipeline dashboard"
-              : "First-time setup — register your company and admin account"}
+              : step === "otp"
+                ? "Enter the verification code sent to your email (dev: 123456)"
+                : "Select which organisation to open"}
           </p>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-3">
-          {mode === "register" && (
-            <>
-              <Input
-                placeholder="Organisation name"
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                required
-              />
-              <Input
-                placeholder="Organisation slug (e.g. acme-corp)"
-                value={orgSlug}
-                onChange={(e) => setOrgSlug(e.target.value)}
-                required
-                pattern="[a-z0-9-]+"
-              />
-              <Input
-                placeholder="Your full name"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-              />
-            </>
-          )}
-          <Input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            autoComplete="email"
-          />
-          <Input
-            type="password"
-            placeholder="Password (min 8 characters)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={8}
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-          />
-          {error && (
-            <p className="text-sm text-destructive" role="alert">
-              {error}
-            </p>
-          )}
-          <Button type="submit" className="w-full" disabled={busy}>
-            {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
-          </Button>
-        </form>
+        {step === "credentials" && (
+          <form onSubmit={onCredentials} className="space-y-3">
+            <Input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+            />
+            <Input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+            />
+            {error && (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            )}
+            <Button type="submit" className="w-full" disabled={busy}>
+              {busy ? "Please wait…" : "Continue"}
+            </Button>
+          </form>
+        )}
 
-        <p className="text-center text-sm text-muted-foreground">
-          {mode === "login" ? (
-            <>
-              First time here?{" "}
-              <button
+        {step === "otp" && (
+          <form onSubmit={onOtp} className="space-y-3">
+            <Input
+              placeholder="6-digit code"
+              value={otp}
+              onChange={(e) => setOtp(e.target.value)}
+              required
+              inputMode="numeric"
+              autoComplete="one-time-code"
+            />
+            {error && (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            )}
+            <Button type="submit" className="w-full" disabled={busy}>
+              {busy ? "Verifying…" : "Verify"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full"
+              disabled={busy}
+              onClick={() => void resendOtp().catch((e) => setError(String(e)))}
+            >
+              Resend code
+            </Button>
+          </form>
+        )}
+
+        {step === "pick-tenant" && (
+          <div className="space-y-2">
+            {tenantPicker.map((t) => (
+              <Button
+                key={t.tenant_id}
                 type="button"
-                className="text-primary underline-offset-2 hover:underline"
-                onClick={() => setMode("register")}
+                variant="outline"
+                className="w-full justify-start"
+                disabled={busy}
+                onClick={() => void onPickTenant(t.tenant_id)}
               >
-                Register organisation
-              </button>
-            </>
-          ) : (
-            <>
-              Already have an account?{" "}
-              <button
-                type="button"
-                className="text-primary underline-offset-2 hover:underline"
-                onClick={() => setMode("login")}
-              >
-                Sign in
-              </button>
-            </>
-          )}
-        </p>
+                {t.tenant_name}
+              </Button>
+            ))}
+            {error && (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+        )}
       </Card>
     </div>
   );

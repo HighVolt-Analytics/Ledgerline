@@ -47,7 +47,7 @@ VALIDATION_CHECK_LABELS: dict[str, str] = {
     "VR11": "Date sanity",
     "VR12": "Vendor master",
     "VR14": "PO status & currency",
-    "VR15": "3-way match",
+    "VR15": "Document match",
     "VR16": "Freight / surcharges",
     "VR-PB01": "Extraction completeness",
     "VR-PB02": "Mandatory bundle",
@@ -151,24 +151,29 @@ def resolve_validation_rules(
     document_type_code: str | None,
     *,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
     validation_profile: str | None = None,
 ) -> list[ValidationRuleConfig]:
     code = (document_type_code or "").strip().upper()
     if not code:
         profile = validation_profile or PROFILE_STANDARD
         return default_validation_rules_for_profile(profile)
+
     definition = get_document_type_definition(
         code,
         document_types=document_types,
-        org_id=org_id,
+        tenant_id=tenant_id,
     )
     if definition is None:
         profile = validation_profile or PROFILE_STANDARD
         return default_validation_rules_for_profile(profile, document_type_code=code)
-    if validation_profile and not definition.validation_rules:
-        return default_validation_rules_for_profile(validation_profile, document_type_code=code)
-    return effective_validation_rules(definition)
+
+    explicit = normalize_validation_rules(definition.validation_rules)
+    if explicit:
+        return explicit
+
+    profile = validation_profile or effective_validation_profile(definition)
+    return default_validation_rules_for_profile(profile, document_type_code=code)
 
 
 def enabled_rule_codes(rules: Sequence[ValidationRuleConfig]) -> set[str]:

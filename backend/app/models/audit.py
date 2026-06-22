@@ -16,9 +16,9 @@ class AuditLog(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     correlation_id: Mapped[str | None] = mapped_column(String(36), index=True)
     event: Mapped[str] = mapped_column(String(100), index=True)
-    org_id: Mapped[int | None] = mapped_column(
+    tenant_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("organisations.id", ondelete="SET NULL"),
+        ForeignKey("tenants.id", ondelete="SET NULL"),
         index=True,
     )
     invoice_id: Mapped[int | None] = mapped_column(

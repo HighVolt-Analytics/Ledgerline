@@ -112,15 +112,15 @@ def _payment_export_row(payment: Payment) -> LedgerExportRowResponse:
 async def build_ledger_link(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> LedgerLinkResponse:
-    overview = await build_reconciliation_overview(session, org_id=org_id)
+    overview = await build_reconciliation_overview(session, tenant_id=tenant_id)
 
     invoices = (
         await session.execute(
             select(Invoice)
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.status == InvoiceStatus.PROCESSED,
             )
             .options(selectinload(Invoice.journal_entries))
@@ -164,7 +164,7 @@ async def build_ledger_link(
     payments = (
         await session.execute(
             select(Payment)
-            .where(Payment.org_id == org_id)
+            .where(Payment.tenant_id == tenant_id)
             .order_by(Payment.id.desc())
         )
     ).scalars().all()

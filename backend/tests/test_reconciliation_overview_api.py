@@ -27,7 +27,7 @@ async def test_reconciliation_overview_processed_with_journals(
 ) -> None:
     inv_date = date(2026, 5, 2)
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         invoice_date=inv_date,
@@ -59,7 +59,7 @@ async def test_reconciliation_overview_processed_with_journals(
     await db_session.flush()
 
     pending = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Pending Co",
         invoice_date=date(2026, 5, 3),
         total=Decimal("500.00"),
@@ -90,7 +90,7 @@ async def test_reconciliation_overview_excludes_other_org(
 ) -> None:
     inv_date = date(2026, 4, 10)
     inv = Invoice(
-        org_id=2,
+        tenant_id=2,
         vendor="Other Org",
         invoice_date=inv_date,
         total=Decimal("200.00"),

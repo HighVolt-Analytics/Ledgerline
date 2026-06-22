@@ -75,11 +75,11 @@ def _invite_context_from_state(
     if str(payload.get("flow") or "") != "invite":
         return None, None, None
     invite_request_id = payload.get("invite_request_id")
-    org_id = payload.get("org_id")
+    tenant_id = payload.get("org_id")
     return (
         "invite",
         int(invite_request_id) if invite_request_id is not None else None,
-        int(org_id) if org_id is not None else None,
+        int(tenant_id) if tenant_id is not None else None,
     )
 
 
@@ -87,14 +87,14 @@ def _oauth_return_url(
     *,
     flow: str | None,
     invite_request_id: int | None,
-    org_id: int | None,
+    tenant_id: int | None,
     settings,
 ) -> str:
     if flow == "invite":
-        if invite_request_id is not None and org_id is not None:
+        if invite_request_id is not None and tenant_id is not None:
             return build_connect_url_for_request(
                 request_id=invite_request_id,
-                org_id=org_id,
+                tenant_id=tenant_id,
             )
         return build_public_app_path("/connect-mailbox").rstrip("/")
     return settings.graph_oauth_frontend_return_url.rstrip("/")
@@ -191,7 +191,7 @@ async def create_mailbox_connection_invite(
     try:
         result = await create_mailbox_connection_request(
             db,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             requested_email=str(body.email),
             display_name=body.display_name,
             message=body.message,
@@ -216,7 +216,7 @@ async def list_mailbox_connection_requests(
     rows = (
         await db.execute(
             select(MailboxConnectionRequest)
-            .where(MailboxConnectionRequest.org_id == ctx.org_id)
+            .where(MailboxConnectionRequest.tenant_id == ctx.tenant_id)
             .order_by(MailboxConnectionRequest.created_at.desc())
         )
     ).scalars().all()
@@ -239,7 +239,7 @@ async def resend_mailbox_connection_invite(
         result = await resend_mailbox_connection_request(
             db,
             request_id=request_id,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             actor_name=actor_name,
             actor_email=actor_email,
         )
@@ -259,10 +259,10 @@ async def get_mailbox_connection_invite_link(
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[MailboxInviteLinkResponse]:
     try:
-        row = await get_invite_request(db, request_id=request_id, org_id=ctx.org_id)
+        row = await get_invite_request(db, request_id=request_id, tenant_id=ctx.tenant_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
-    url = build_connect_url_for_request(request_id=row.id, org_id=row.org_id)
+    url = build_connect_url_for_request(request_id=row.id, tenant_id=row.tenant_id)
     return ApiEnvelope(data=MailboxInviteLinkResponse(connect_url=url))
 
 
@@ -282,7 +282,7 @@ async def preview_mailbox_invite(
         raise HTTPException(400, "Invalid or expired invitation") from exc
     return ApiEnvelope(
         data=MailboxInvitePreviewResponse(
-            org_name=org.name,
+            tenant_name=org.name,
             requested_email=row.requested_email,
             display_name=row.display_name,
             message=row.message,
@@ -303,7 +303,7 @@ async def authorize_mailbox_invite(
         raise HTTPException(503, "Microsoft OAuth is not configured")
     try:
         row, _org = await load_invite_for_token(db, token)
-        url = build_invite_authorize_url(org_id=row.org_id, invite_request_id=row.id)
+        url = build_invite_authorize_url(tenant_id=row.tenant_id, invite_request_id=row.id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     except RuntimeError as exc:
@@ -321,14 +321,14 @@ async def mailbox_oauth_callback(
 ) -> RedirectResponse:
     """OAuth redirect target — exchanges code and returns user to the frontend."""
     settings = get_settings()
-    flow, invite_request_id, org_id = _invite_context_from_state(state)
+    flow, invite_request_id, tenant_id = _invite_context_from_state(state)
     params: dict[str, str] = {}
 
     def return_url() -> str:
         return _oauth_return_url(
             flow=flow,
             invite_request_id=invite_request_id,
-            org_id=org_id,
+            tenant_id=tenant_id,
             settings=settings,
         )
 
@@ -351,7 +351,7 @@ async def mailbox_oauth_callback(
         params["email"] = mailbox.email
         if completed_flow == "invite":
             flow = "invite"
-            _, invite_request_id, org_id = _invite_context_from_state(state)
+            _, invite_request_id, tenant_id = _invite_context_from_state(state)
     except Exception as exc:
         await db.rollback()
         logger.exception("mailbox_oauth_callback_failed", error=str(exc))
@@ -369,7 +369,7 @@ async def list_mailboxes(
     rows = (
         await db.execute(
             select(ConnectedMailbox)
-            .where(ConnectedMailbox.org_id == ctx.org_id)
+            .where(ConnectedMailbox.tenant_id == ctx.tenant_id)
             .order_by(ConnectedMailbox.email)
         )
     ).scalars().all()
@@ -398,7 +398,7 @@ async def add_mailbox(
     existing = (
         await db.execute(
             select(ConnectedMailbox).where(
-                ConnectedMailbox.org_id == ctx.org_id,
+                ConnectedMailbox.tenant_id == ctx.tenant_id,
                 ConnectedMailbox.email == email,
             )
         )
@@ -407,7 +407,7 @@ async def add_mailbox(
         raise HTTPException(409, f"Mailbox '{email}' is already connected")
 
     row = ConnectedMailbox(
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
         email=email,
         display_name=body.display_name or email,
         is_active=True,
@@ -425,12 +425,12 @@ async def remove_mailbox(
     ctx=Depends(require_admin),
 ) -> None:
     row = await db.get(ConnectedMailbox, mailbox_id)
-    if not row or row.org_id != ctx.org_id:
+    if not row or row.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Mailbox not found")
     await db.execute(
         update(Invoice)
         .where(
-            Invoice.org_id == ctx.org_id,
+            Invoice.tenant_id == ctx.tenant_id,
             Invoice.connected_mailbox_id == mailbox_id,
         )
         .values(connected_mailbox_id=None)
@@ -463,7 +463,7 @@ async def start_mailbox_backfill(
     try:
         job = await create_mailbox_backfill_job(
             db,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             mailbox_id=mailbox_id,
             from_day=body.from_date,
             to_day=to_day,
@@ -512,7 +512,7 @@ async def get_mailbox_backfill_status(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[MailboxBackfillResponse]:
     try:
-        job = await get_mailbox_backfill_job(db, job_id=job_id, org_id=ctx.org_id)
+        job = await get_mailbox_backfill_job(db, job_id=job_id, tenant_id=ctx.tenant_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     if job.mailbox_id != mailbox_id:
@@ -527,7 +527,7 @@ async def toggle_mailbox(
     ctx=Depends(require_admin),
 ) -> ApiEnvelope[MailboxResponse]:
     row = await db.get(ConnectedMailbox, mailbox_id)
-    if not row or row.org_id != ctx.org_id:
+    if not row or row.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Mailbox not found")
     row.is_active = not row.is_active
     row.last_poll_at = row.last_poll_at or datetime.now(timezone.utc)
@@ -544,7 +544,7 @@ async def disconnect_mailbox(
 ) -> ApiEnvelope[MailboxResponse]:
     """Revoke stored OAuth tokens for a delegated mailbox."""
     row = await db.get(ConnectedMailbox, mailbox_id)
-    if not row or row.org_id != ctx.org_id:
+    if not row or row.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Mailbox not found")
     if row.auth_type != AUTH_DELEGATED:
         raise HTTPException(422, "Only OAuth-connected mailboxes can be disconnected")

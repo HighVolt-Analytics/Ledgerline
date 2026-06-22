@@ -28,7 +28,7 @@ def resolve_validation_profile(
     document_type_code: str | None,
     *,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
-    org_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> ValidationProfile:
     code = (document_type_code or "").strip().upper()
     if not code:
@@ -36,7 +36,7 @@ def resolve_validation_profile(
     definition = get_document_type_definition(
         code,
         document_types=document_types,
-        org_id=org_id,
+        tenant_id=tenant_id,
     )
     if definition is None:
         seeded = default_validation_profile(code)

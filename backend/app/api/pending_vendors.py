@@ -26,7 +26,7 @@ async def list_pending_vendor_records(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[PendingVendorResponse]]:
-    rows = await list_pending_vendors(db, ctx.org_id)
+    rows = await list_pending_vendors(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
 
 
@@ -36,7 +36,7 @@ async def create_pending_vendor_record(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[PendingVendorResponse]:
-    row = await create_pending_vendor(db, ctx.org_id, body)
+    row = await create_pending_vendor(db, ctx.tenant_id, body)
     return ApiEnvelope(data=row)
 
 
@@ -48,7 +48,7 @@ async def promote_pending_vendor_record(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[VendorMasterResponse]:
     try:
-        vendor = await promote_pending_vendor(db, ctx.org_id, pending_id, body)
+        vendor = await promote_pending_vendor(db, ctx.tenant_id, pending_id, body)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     return ApiEnvelope(data=vendor)
@@ -61,6 +61,6 @@ async def dismiss_pending_vendor_record(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
     try:
-        await dismiss_pending_vendor(db, ctx.org_id, pending_id)
+        await dismiss_pending_vendor(db, ctx.tenant_id, pending_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc

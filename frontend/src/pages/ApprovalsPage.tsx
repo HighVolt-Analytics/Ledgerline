@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef, money } from "@/lib/format";
 import { fetchAllApprovals, fetchAllInvoices } from "@/lib/invoices";
 import { approveAndProcess, watchProcessingUntilIdle } from "@/lib/invoiceActions";
+import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { cn } from "@/lib/cn";
 
 const APPROVAL_POLL_MS = 15_000;
@@ -87,6 +89,7 @@ export function ApprovalsPage() {
   }
   const [busyId, setBusyId] = useState<number | null>(null);
   const [processingBusy, setProcessingBusy] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const runProcessing = async () => {
     setProcessingBusy(true);
@@ -155,10 +158,11 @@ export function ApprovalsPage() {
       rejected: [],
     };
     for (const inv of invoices) {
+      if (!invoiceMatchesListSearch(inv, searchQuery)) continue;
       cols[columnForInvoice(inv)].push(inv);
     }
     return cols;
-  }, [invoices]);
+  }, [invoices, searchQuery]);
 
   const queueCount = useMemo(
     () => invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
@@ -338,6 +342,15 @@ export function ApprovalsPage() {
           </Button>
         </Card>
       )}
+
+      <div className="mb-4 flex justify-end">
+        <ListSearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search this list…"
+          testId="input-approvals-search"
+        />
+      </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {COLUMNS.map((col) => {

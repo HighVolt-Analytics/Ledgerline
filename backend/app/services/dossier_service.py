@@ -10,24 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.dossier import DossierSummaryResponse
-from app.services.document_ref_service import display_document_ref
+from app.services.document_ref_service import display_document_ref, dossier_public_id, parse_dossier_id_token
 from app.services.document_type_playbook_service import resolve_definition_for_invoice
 from app.services.dossier_approval_service import build_dossier_approval_chain
 from app.services.dossier_linked_documents_service import build_dossier_linked_documents
 from app.services.dossier_pipeline_service import build_dossier_pipeline, first_pipeline_failure
-from app.services.invoice_evaluation_service import load_config_for_org
+from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.services.matrix_service import derive_matrix_payment_status
 from app.services.pipeline_stages import _actor_name, _latest_log, _source_label
-
-
-def dossier_public_id(invoice: Invoice) -> str:
-    ref = (invoice.document_ref or "").strip()
-    if ref:
-        return ref
-    return str(invoice.id)
 
 
 def dossier_capture_channel(invoice: Invoice) -> str:
@@ -57,8 +50,8 @@ def _confidence_pct(value: float | None) -> int:
     return int(round(value))
 
 
-def _document_type_title(code: str, org_id: int) -> str:
-    config = load_config_for_org(org_id)
+def _document_type_title(code: str, tenant_id: int) -> str:
+    config = load_config_for_tenant(tenant_id)
     token = (code or "").strip().upper()
     for row in config.document_types:
         if row.code.upper() == token:
@@ -128,6 +121,9 @@ def _derive_outcome(
         return "parked", "Payment failed — parked for review"
     if payment and payment.status in (PaymentStatus.AWAITING, PaymentStatus.QUEUE) and invoice.status == InvoiceStatus.PROCESSED:
         return "parked", "Posted — awaiting payment release"
+    if (invoice.route_target or "").strip().lower() == "vault":
+        if any(log.event == "vault_stored" for log in logs) or invoice.status == InvoiceStatus.PROCESSED:
+            return "in_progress", "Stored in document vault"
     if invoice.status == InvoiceStatus.PROCESSED:
         approved = any(log.event == "invoice_approved" for log in logs)
         if published:
@@ -142,10 +138,10 @@ async def build_dossier_summary(
     logs: list[AuditLog],
     *,
     payment: Payment | None = None,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     compact: bool = False,
 ) -> DossierSummaryResponse:
-    config = load_config_for_org(invoice.org_id)
+    config = load_config_for_tenant(invoice.tenant_id)
     definition = resolve_definition_for_invoice(invoice, config.document_types)
     published = any(log.event == "invoice_published_to_ledger" for log in logs)
     pay_key, pay_detail = _payment_status_key(invoice, payment)
@@ -189,9 +185,9 @@ async def build_dossier_summary(
         id=dossier_public_id(invoice),
         invoice_id=invoice.id,
         document_type_code=code,
-        document_type_title=_document_type_title(code, invoice.org_id),
+        document_type_title=_document_type_title(code, invoice.tenant_id),
         vendor=(invoice.vendor or "Unknown vendor").strip(),
-        buyer=(org_name or "Organisation").strip(),
+        buyer=(tenant_name or "Tenant").strip(),
         invoice_ref=(invoice.invoice_no or display_document_ref(invoice)).strip(),
         capture_channel=dossier_capture_channel(invoice),
         invoice_date=inv_date,
@@ -216,42 +212,36 @@ async def build_dossier_summary(
 
 async def resolve_invoice_for_dossier(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     dossier_id: str,
 ) -> Invoice | None:
-    token = dossier_id.strip()
-    if not token:
+    ref_lookup, id_fallback = parse_dossier_id_token(dossier_id)
+    if ref_lookup is None and id_fallback is None:
         return None
 
-    if token.isdigit():
-        inv = await session.get(Invoice, int(token))
-        return inv if inv is not None and inv.org_id == org_id else None
+    if ref_lookup:
+        for candidate in (ref_lookup, ref_lookup.upper()):
+            row = (
+                await session.execute(
+                    select(Invoice).where(
+                        Invoice.tenant_id == tenant_id,
+                        Invoice.document_ref == candidate,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is not None:
+                return row
 
-    upper = token.upper()
-    row = (
-        await session.execute(
-            select(Invoice).where(
-                Invoice.org_id == org_id,
-                Invoice.document_ref == upper,
-            )
-        )
-    ).scalar_one_or_none()
-    if row is not None:
-        return row
+    if id_fallback is not None:
+        inv = await session.get(Invoice, id_fallback)
+        return inv if inv is not None and inv.tenant_id == tenant_id else None
 
-    return (
-        await session.execute(
-            select(Invoice).where(
-                Invoice.org_id == org_id,
-                Invoice.document_ref == token,
-            )
-        )
-    ).scalar_one_or_none()
+    return None
 
 
 async def list_dossier_invoices(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     *,
     page: int,
     page_size: int,
@@ -260,10 +250,10 @@ async def list_dossier_invoices(
 ) -> tuple[list[Invoice], int]:
     stmt = (
         select(Invoice)
-        .where(Invoice.org_id == org_id)
+        .where(Invoice.tenant_id == tenant_id)
         .order_by(Invoice.created_at.desc(), Invoice.id.desc())
     )
-    count_stmt = select(func.count(Invoice.id)).where(Invoice.org_id == org_id)
+    count_stmt = select(func.count(Invoice.id)).where(Invoice.tenant_id == tenant_id)
 
     if document_type_code and document_type_code.strip().lower() != "all":
         code = document_type_code.strip().upper()
@@ -289,6 +279,6 @@ async def list_dossier_invoices(
     return list(rows), total
 
 
-async def org_display_name(session: AsyncSession, org_id: int) -> str:
-    org = await session.get(Organisation, org_id)
-    return org.name if org and org.name else "Organisation"
+async def org_display_name(session: AsyncSession, tenant_id: int) -> str:
+    org = await session.get(Tenant, tenant_id)
+    return org.name if org and org.name else "Tenant"

@@ -17,11 +17,11 @@ STATUS_ACTION_REQUIRED = "action_required"
 class ConnectedWhatsapp(Base):
     __tablename__ = "connected_whatsapp_accounts"
     __table_args__ = (
-        UniqueConstraint("org_id", "phone_number_id", name="uq_whatsapp_org_phone_id"),
+        UniqueConstraint("tenant_id", "phone_number_id", name="uq_whatsapp_tenant_phone_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     phone_number_id: Mapped[str] = mapped_column(String(64), index=True)
     phone_number: Mapped[str | None] = mapped_column(String(32))
     display_name: Mapped[str | None] = mapped_column(String(256))

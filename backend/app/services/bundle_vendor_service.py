@@ -16,7 +16,7 @@ from app.services.vendor_resolver import match_rule_book_vendor_name
 
 
 def resolve_canonical_vendor_name(
-    org_id: int,
+    tenant_id: int,
     *,
     vendor_names: list[str | None],
     abns: list[str | None] | None = None,
@@ -26,7 +26,7 @@ def resolve_canonical_vendor_name(
     Pick one vendor label for a dossier: vendor master (ABN / fuzzy name) then PO anchor.
     """
     abns = abns or []
-    config = load_classification_config(org_id)
+    config = load_classification_config(tenant_id)
     masters = config.vendor_masters
 
     for abn in abns:
@@ -49,7 +49,7 @@ def resolve_canonical_vendor_name(
         master = find_matching_vendor_master(name, None, masters)
         if master:
             return master.name
-        canonical = match_rule_book_vendor_name(name, org_id=org_id)
+        canonical = match_rule_book_vendor_name(name, tenant_id=tenant_id)
         if canonical:
             return canonical
         normalized = normalize_vendor_name(name)
@@ -60,7 +60,7 @@ def resolve_canonical_vendor_name(
 
 
 def vendors_align_to_same_master(
-    org_id: int,
+    tenant_id: int,
     left_name: str | None,
     left_abn: str | None,
     right_name: str | None,
@@ -72,7 +72,7 @@ def vendors_align_to_same_master(
     if left and right and left.lower() == right.lower():
         return True
 
-    config = load_classification_config(org_id)
+    config = load_classification_config(tenant_id)
     masters = config.vendor_masters
     left_master = find_matching_vendor_master(left, left_abn, masters)
     right_master = find_matching_vendor_master(right, right_abn, masters)
@@ -128,7 +128,7 @@ async def propagate_canonical_vendor(
 
     for inv_id in _dossier_invoice_ids(po):
         inv = await db.get(Invoice, inv_id)
-        if inv is None or inv.org_id != po.org_id:
+        if inv is None or inv.tenant_id != po.tenant_id:
             continue
         inv.vendor = canonical_vendor.strip()
         if canonical_abn and not (inv.abn or "").strip():
@@ -168,7 +168,7 @@ async def reconcile_dossier_vendor(
         prefer = po_anchor or invoice.vendor
 
     canonical = resolve_canonical_vendor_name(
-        invoice.org_id,
+        invoice.tenant_id,
         vendor_names=candidate_names,
         abns=candidate_abns,
         prefer_name=prefer,
@@ -178,7 +178,7 @@ async def reconcile_dossier_vendor(
 
     canonical_abn = (invoice.abn or "").strip() or None
     if not canonical_abn:
-        config = load_classification_config(invoice.org_id)
+        config = load_classification_config(invoice.tenant_id)
         master = find_matching_vendor_master(canonical, None, config.vendor_masters)
         if master and master.abn and master.abn != "PENDING":
             canonical_abn = master.abn
@@ -188,11 +188,11 @@ async def reconcile_dossier_vendor(
     elif doc_type == PurchaseDocumentType.INVOICE.value:
         parsed = (invoice.vendor or "").strip()
         if not parsed or vendors_align_to_same_master(
-            invoice.org_id, parsed, invoice.abn, canonical, canonical_abn
+            invoice.tenant_id, parsed, invoice.abn, canonical, canonical_abn
         ):
             invoice.vendor = canonical
         elif po_anchor and not vendors_align_to_same_master(
-            invoice.org_id, parsed, invoice.abn, po_anchor, None
+            invoice.tenant_id, parsed, invoice.abn, po_anchor, None
         ):
             invoice.vendor = canonical
     else:

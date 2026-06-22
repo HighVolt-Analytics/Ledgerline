@@ -109,7 +109,7 @@ async def test_evaluate_playbook_gates_no_po_reference() -> None:
     definition = _definition()
     invoice = Invoice(
         id=1,
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.VALIDATING,
         po_reference=None,
         document_type_code="DT-01",
@@ -132,7 +132,7 @@ async def test_evaluate_playbook_gates_no_po_reference() -> None:
 
 
 def test_routing_review_includes_playbook_gate() -> None:
-    inv = Invoice(org_id=1, status=InvoiceStatus.VALIDATING, route_target="Purchase Management")
+    inv = Invoice(tenant_id=1, status=InvoiceStatus.VALIDATING, route_target="Purchase Management")
     classification = DocumentTypeClassification(
         "DT-01",
         0.95,

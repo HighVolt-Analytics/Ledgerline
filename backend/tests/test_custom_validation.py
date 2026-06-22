@@ -18,7 +18,7 @@ from app.services.validator import run_all_validations
 def _invoice(**kwargs) -> Invoice:
     base = dict(
         id=1,
-        org_id=1,
+        tenant_id=1,
         status=InvoiceStatus.VALIDATING,
         currency="AUD",
         vendor="Acme Pty Ltd",
@@ -72,7 +72,7 @@ async def test_universal_duplicate_always_runs(db_session: AsyncSession) -> None
     results = await run_all_validations(
         data,
         db_session,
-        org_id=1,
+        tenant_id=1,
         document_type_code="DT-03",
         document_types=[
             DocumentTypeDefinition.model_validate(
