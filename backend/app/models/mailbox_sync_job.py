@@ -17,7 +17,7 @@ class MailboxSyncJob(Base):
     __tablename__ = "mailbox_sync_jobs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     mailbox_id: Mapped[int] = mapped_column(
         ForeignKey("connected_mailboxes.id", ondelete="CASCADE"),
         index=True,

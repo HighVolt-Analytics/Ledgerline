@@ -1,208 +1,360 @@
-"""Registration, login, and current user."""
+"""Registration, login, OTP, and session management."""
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_user
-from app.models.organisation import Organisation
+from app.api.deps import AuthContext, get_db, require_user
+from app.models.auth_account import AuthAccount
+from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.auth import (
+    LoginChallengeResponse,
     LoginRequest,
-    RegisterRequest,
-    SwitchOrgRequest,
+    RefreshTokenRequest,
+    SelectTenantRequest,
+    SwitchTenantRequest,
+    TenantAccountSummary,
     TokenResponse,
     UserResponse,
+    VerifyOtpRequest,
+    VerifyOtpResponse,
 )
-from app.services.org_membership import ensure_membership, user_has_org_access
 from app.schemas.common import ApiEnvelope
+from app.services.auth_account_service import resolve_login_account
+from app.services.auth_email_service import send_login_otp_email
 from app.services.auth_service import (
+    TOKEN_TYPE_CHALLENGE,
+    TOKEN_TYPE_REFRESH,
+    TOKEN_TYPE_TENANT_SELECT,
     create_access_token,
+    create_challenge_token,
+    create_refresh_token,
+    create_tenant_select_token,
+    decode_token,
     hash_password,
     verify_password,
 )
-from app.services.org_context import get_or_create_default_org, sync_env_mailbox
+from app.services.auth_session_service import (
+    clear_otp,
+    generate_otp,
+    is_user_revoked,
+    new_jti,
+    register_refresh_session,
+    revoke_refresh_jti,
+    store_otp,
+    validate_refresh_jti,
+    verify_otp,
+)
+from app.services.membership_enumeration import list_memberships_for_auth_account
+from app.services.membership_service import ensure_membership, user_has_tenant_access
+from app.services.tenant_context_service import get_tenant_slug
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+_bearer = HTTPBearer(auto_error=False)
 
 
-def _user_response(user: User, org: Organisation) -> UserResponse:
+def _user_response(user: User, tenant: Tenant, *, role: str | None = None) -> UserResponse:
     return UserResponse(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
-        role=user.role.value,
-        org_id=org.id,
-        org_name=org.name,
-        org_slug=org.slug,
+        role=role or user.role.value,
+        tenant_id=tenant.id,
+        tenant_name=tenant.name,
+        tenant_slug=tenant.slug,
     )
 
 
-@router.post("/register", response_model=ApiEnvelope[TokenResponse], status_code=201)
-async def register(
-    body: RegisterRequest,
-    db: AsyncSession = Depends(get_db),
-) -> ApiEnvelope[TokenResponse]:
-    user_count = (await db.execute(select(func.count(User.id)))).scalar() or 0
-    if user_count > 0:
-        raise HTTPException(403, "Registration is closed. Sign in with an existing account.")
-
-    email_taken = (
-        await db.execute(select(User).where(User.email == body.email.lower()))
-    ).scalar_one_or_none()
-    if email_taken:
-        raise HTTPException(409, "Email already registered")
-
-    existing_org = (
-        await db.execute(select(Organisation).where(Organisation.slug == body.org_slug))
-    ).scalar_one_or_none()
-    if existing_org:
-        org = existing_org
-        if body.org_name.strip():
-            org.name = body.org_name.strip()
-    else:
-        org = Organisation(name=body.org_name, slug=body.org_slug)
-        db.add(org)
-        await db.flush()
-
-    user = User(
-        org_id=org.id,
-        email=body.email.lower(),
-        password_hash=hash_password(body.password),
-        full_name=body.full_name,
-        role=UserRole.ADMIN,
+def _account_summary_from_membership(m) -> TenantAccountSummary:
+    return TenantAccountSummary(
+        user_id=m.user_id,
+        tenant_id=m.tenant_id,
+        tenant_name=m.tenant_name,
+        tenant_slug=m.tenant_slug,
+        role=m.role,
     )
-    db.add(user)
-    await db.flush()
-    await ensure_membership(db, user_id=user.id, org_id=org.id)
-    await sync_env_mailbox(db, org.id)
 
-    token = create_access_token(
+
+async def _mint_session_tokens(
+    db: AsyncSession,
+    *,
+    user: User,
+    tenant: Tenant,
+    role: str,
+) -> tuple[str, str]:
+    from app.config import get_settings
+
+    settings = get_settings()
+    jti = new_jti()
+    slug = tenant.slug
+    access = create_access_token(
         user_id=user.id,
-        org_id=org.id,
-        org_slug=org.slug,
+        tenant_id=tenant.id,
+        tenant_slug=slug,
         email=user.email,
-        role=user.role.value,
+        role=role,
     )
-    return ApiEnvelope(
-        data=TokenResponse(
-            access_token=token,
-            user=_user_response(user, org),
-        )
+    refresh = create_refresh_token(
+        user_id=user.id,
+        tenant_id=tenant.id,
+        tenant_slug=slug,
+        email=user.email,
+        role=role,
+        jti=jti,
     )
+    await register_refresh_session(
+        jti=jti,
+        user_id=user.id,
+        tenant_id=tenant.id,
+        ttl_days=settings.refresh_token_expire_days,
+    )
+    return access, refresh
 
 
-@router.post("/login", response_model=ApiEnvelope[TokenResponse])
+def _require_token_type(creds: HTTPAuthorizationCredentials | None, expected: str) -> dict:
+    if not creds or not creds.credentials:
+        raise HTTPException(401, "Authentication required")
+    payload = decode_token(creds.credentials)
+    if not payload or payload.get("type") != expected:
+        raise HTTPException(401, "Invalid token")
+    return payload
+
+
+@router.post("/login", response_model=ApiEnvelope[LoginChallengeResponse])
 async def login(
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
-) -> ApiEnvelope[TokenResponse]:
-    user = (
-        await db.execute(select(User).where(User.email == body.email.lower()))
-    ).scalar_one_or_none()
-    if not user or not user.is_active:
+) -> ApiEnvelope[LoginChallengeResponse]:
+    from app.config import get_settings
+
+    settings = get_settings()
+    account = await resolve_login_account(db, body.email)
+    if not account or account.is_blocked:
         raise HTTPException(401, "Invalid email or password")
-    if not verify_password(body.password, user.password_hash):
+    if not verify_password(body.password, account.password_hash):
         raise HTTPException(401, "Invalid email or password")
 
-    org = await db.get(Organisation, user.org_id)
-    if not org:
-        raise HTTPException(500, "User organisation missing")
-
-    token = create_access_token(
-        user_id=user.id,
-        org_id=org.id,
-        org_slug=org.slug,
-        email=user.email,
-        role=user.role.value,
+    otp = generate_otp()
+    await store_otp(
+        auth_account_id=account.id,
+        email=account.email,
+        otp=otp,
+        ttl_seconds=settings.otp_expire_minutes * 60,
     )
+    await send_login_otp_email(to_email=account.email, otp=otp)
+
+    token = create_challenge_token(auth_account_id=account.id, email=account.email)
     return ApiEnvelope(
-        data=TokenResponse(
-            access_token=token,
-            user=_user_response(user, org),
+        data=LoginChallengeResponse(challenge_token=token),
+    )
+
+
+@router.post("/verify-otp", response_model=ApiEnvelope[VerifyOtpResponse])
+async def verify_otp_endpoint(
+    body: VerifyOtpRequest,
+    db: AsyncSession = Depends(get_db),
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> ApiEnvelope[VerifyOtpResponse]:
+    payload = _require_token_type(creds, TOKEN_TYPE_CHALLENGE)
+    auth_account_id = int(payload["sub"])
+    email = str(payload["email"])
+
+    account = await db.get(AuthAccount, auth_account_id)
+    if not account or account.is_blocked:
+        raise HTTPException(401, "Invalid session")
+
+    if not await verify_otp(auth_account_id=account.id, email=email, otp=body.otp):
+        raise HTTPException(401, "Invalid verification code")
+
+    await clear_otp(auth_account_id=account.id, email=email)
+    memberships = await list_memberships_for_auth_account(db, auth_account_id=account.id)
+    if not memberships:
+        raise HTTPException(403, "No tenant access for this account")
+
+    if len(memberships) == 1:
+        m = memberships[0]
+        user = await db.get(User, m.user_id)
+        tenant = await db.get(Tenant, m.tenant_id)
+        if not user or not tenant or not user.is_active:
+            raise HTTPException(403, "Account inactive")
+        access, refresh = await _mint_session_tokens(db, user=user, tenant=tenant, role=m.role)
+        return ApiEnvelope(
+            data=VerifyOtpResponse(
+                multi_tenant=False,
+                access_token=access,
+                refresh_token=refresh,
+                user=_user_response(user, tenant, role=m.role),
+            )
+        )
+
+    select_token = create_tenant_select_token(auth_account_id=account.id, email=email)
+    return ApiEnvelope(
+        data=VerifyOtpResponse(
+            multi_tenant=True,
+            tenant_select_token=select_token,
+            accounts=[_account_summary_from_membership(m) for m in memberships],
         )
     )
 
 
-@router.post("/switch-org", response_model=ApiEnvelope[TokenResponse])
-async def switch_organisation(
-    body: SwitchOrgRequest,
+@router.post("/resend-otp", response_model=ApiEnvelope[LoginChallengeResponse])
+async def resend_otp(
     db: AsyncSession = Depends(get_db),
-    ctx=Depends(require_user),
-) -> ApiEnvelope[TokenResponse]:
-    """Switch active tenant (demo multi-org). Issues a new JWT scoped to org_id."""
-    if ctx.user_id is None:
-        raise HTTPException(401, "Sign in to switch organisation")
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> ApiEnvelope[LoginChallengeResponse]:
+    from app.config import get_settings
 
-    if not await user_has_org_access(db, user_id=ctx.user_id, org_id=body.org_id):
-        raise HTTPException(403, "You do not have access to this organisation")
+    settings = get_settings()
+    payload = _require_token_type(creds, TOKEN_TYPE_CHALLENGE)
+    auth_account_id = int(payload["sub"])
+    email = str(payload["email"])
+    account = await db.get(AuthAccount, auth_account_id)
+    if not account:
+        raise HTTPException(401, "Invalid session")
 
-    user = await db.get(User, ctx.user_id)
-    if not user or not user.is_active:
-        raise HTTPException(401, "Session invalid")
-
-    org = await db.get(Organisation, body.org_id)
-    if not org:
-        raise HTTPException(404, "Organisation not found")
-
-    user.org_id = org.id
-    await db.flush()
-
-    token = create_access_token(
-        user_id=user.id,
-        org_id=org.id,
-        org_slug=org.slug,
-        email=user.email,
-        role=user.role.value,
+    otp = generate_otp()
+    await store_otp(
+        auth_account_id=account.id,
+        email=account.email,
+        otp=otp,
+        ttl_seconds=settings.otp_expire_minutes * 60,
     )
+    await send_login_otp_email(to_email=account.email, otp=otp)
+    token = create_challenge_token(auth_account_id=account.id, email=account.email)
+    return ApiEnvelope(data=LoginChallengeResponse(challenge_token=token))
+
+
+@router.post("/select-tenant", response_model=ApiEnvelope[TokenResponse])
+async def select_tenant(
+    body: SelectTenantRequest,
+    db: AsyncSession = Depends(get_db),
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> ApiEnvelope[TokenResponse]:
+    payload = _require_token_type(creds, TOKEN_TYPE_TENANT_SELECT)
+    auth_account_id = int(payload["sub"])
+    memberships = await list_memberships_for_auth_account(db, auth_account_id=auth_account_id)
+    match = next((m for m in memberships if m.tenant_id == body.tenant_id), None)
+    if not match:
+        raise HTTPException(403, "You do not have access to this tenant")
+
+    user = await db.get(User, match.user_id)
+    tenant = await db.get(Tenant, match.tenant_id)
+    if not user or not tenant:
+        raise HTTPException(404, "Tenant not found")
+
+    access, refresh = await _mint_session_tokens(db, user=user, tenant=tenant, role=match.role)
     return ApiEnvelope(
         data=TokenResponse(
-            access_token=token,
-            user=_user_response(user, org),
+            access_token=access,
+            refresh_token=refresh,
+            user=_user_response(user, tenant, role=match.role),
+        )
+    )
+
+
+@router.post("/switch-tenant", response_model=ApiEnvelope[TokenResponse])
+async def switch_tenant(
+    body: SwitchTenantRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_user),
+) -> ApiEnvelope[TokenResponse]:
+    if ctx.user_id is None:
+        raise HTTPException(401, "Sign in to switch tenant")
+
+    account = (
+        await db.execute(
+            select(AuthAccount)
+            .join(User, User.auth_account_id == AuthAccount.id)
+            .where(User.id == ctx.user_id)
+        )
+    ).scalar_one_or_none()
+    if not account:
+        raise HTTPException(401, "Session invalid")
+
+    memberships = await list_memberships_for_auth_account(db, auth_account_id=account.id)
+    match = next((m for m in memberships if m.tenant_id == body.tenant_id), None)
+    if not match:
+        if not await user_has_tenant_access(db, user_id=ctx.user_id, tenant_id=body.tenant_id):
+            raise HTTPException(403, "You do not have access to this tenant")
+        user = await db.get(User, ctx.user_id)
+        tenant = await db.get(Tenant, body.tenant_id)
+        role = user.role.value if user else "member"
+    else:
+        user = await db.get(User, match.user_id)
+        tenant = await db.get(Tenant, match.tenant_id)
+        role = match.role
+
+    if not user or not tenant or not user.is_active:
+        raise HTTPException(401, "Session invalid")
+
+    access, refresh = await _mint_session_tokens(db, user=user, tenant=tenant, role=role)
+    return ApiEnvelope(
+        data=TokenResponse(
+            access_token=access,
+            refresh_token=refresh,
+            user=_user_response(user, tenant, role=role),
         )
     )
 
 
 @router.post("/refresh", response_model=ApiEnvelope[TokenResponse])
 async def refresh_session(
-    ctx=Depends(require_user),
+    body: RefreshTokenRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[TokenResponse]:
-    """Issue a new JWT while the current one is still valid (extends active sessions)."""
-    if ctx.user_id is None:
-        raise HTTPException(401, "Authentication required")
+    payload = decode_token(body.refresh_token)
+    if not payload or payload.get("type") != TOKEN_TYPE_REFRESH:
+        raise HTTPException(401, "Invalid refresh token")
 
-    user = await db.get(User, ctx.user_id)
-    if not user or not user.is_active:
+    jti = str(payload.get("jti", ""))
+    stored = await validate_refresh_jti(jti)
+    if not stored:
+        raise HTTPException(401, "Refresh session expired")
+
+    user_id = int(payload["sub"])
+    tenant_id = int(payload["tenant_id"])
+    if await is_user_revoked(user_id):
+        raise HTTPException(401, "Session revoked")
+
+    user = await db.get(User, user_id)
+    tenant = await db.get(Tenant, tenant_id)
+    if not user or not tenant or not user.is_active:
         raise HTTPException(401, "Session invalid")
 
-    org = await db.get(Organisation, ctx.org_id)
-    if not org:
-        raise HTTPException(500, "Organisation missing")
+    if not await user_has_tenant_access(db, user_id=user_id, tenant_id=tenant_id):
+        raise HTTPException(403, "Tenant access revoked")
 
-    token = create_access_token(
-        user_id=user.id,
-        org_id=org.id,
-        org_slug=org.slug,
-        email=user.email,
-        role=user.role.value,
-    )
+    await revoke_refresh_jti(jti)
+    role = str(payload.get("role", user.role.value))
+    access, refresh = await _mint_session_tokens(db, user=user, tenant=tenant, role=role)
     return ApiEnvelope(
         data=TokenResponse(
-            access_token=token,
-            user=_user_response(user, org),
+            access_token=access,
+            refresh_token=refresh,
+            user=_user_response(user, tenant, role=role),
         )
     )
 
 
+@router.post("/logout", response_model=ApiEnvelope[dict[str, str]])
+async def logout(body: RefreshTokenRequest | None = None) -> ApiEnvelope[dict[str, str]]:
+    if body and body.refresh_token:
+        payload = decode_token(body.refresh_token)
+        if payload and payload.get("jti"):
+            await revoke_refresh_jti(str(payload["jti"]))
+    return ApiEnvelope(data={"message": "Signed out"})
+
+
 @router.get("/me", response_model=ApiEnvelope[UserResponse])
 async def me(
-    ctx=Depends(require_user),
+    ctx: AuthContext = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[UserResponse]:
-    org = await db.get(Organisation, ctx.org_id)
-    if not org:
-        raise HTTPException(500, "Organisation missing")
+    tenant = await db.get(Tenant, ctx.tenant_id)
+    if not tenant:
+        raise HTTPException(500, "Tenant missing")
     if ctx.user_id is None:
         return ApiEnvelope(
             data=UserResponse(
@@ -210,17 +362,30 @@ async def me(
                 email=ctx.email,
                 full_name="System",
                 role=ctx.role,
-                org_id=org.id,
-                org_name=org.name,
-                org_slug=org.slug,
+                tenant_id=tenant.id,
+                tenant_name=tenant.name,
+                tenant_slug=tenant.slug,
             )
         )
     user = await db.get(User, ctx.user_id)
     if not user:
         raise HTTPException(401, "Session invalid")
-    return ApiEnvelope(data=_user_response(user, org))
+    return ApiEnvelope(data=_user_response(user, tenant, role=ctx.role))
 
 
-@router.post("/logout", response_model=ApiEnvelope[dict[str, str]])
-async def logout() -> ApiEnvelope[dict[str, str]]:
-    return ApiEnvelope(data={"message": "Signed out. Discard the client token."})
+@router.get("/me/memberships", response_model=ApiEnvelope[list[TenantAccountSummary]])
+async def my_memberships(
+    ctx: AuthContext = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[list[TenantAccountSummary]]:
+    if ctx.user_id is None:
+        raise HTTPException(401, "Authentication required")
+    user = await db.get(User, ctx.user_id)
+    if not user or not user.auth_account_id:
+        raise HTTPException(401, "Session invalid")
+    memberships = await list_memberships_for_auth_account(
+        db, auth_account_id=user.auth_account_id
+    )
+    return ApiEnvelope(
+        data=[_account_summary_from_membership(m) for m in memberships],
+    )

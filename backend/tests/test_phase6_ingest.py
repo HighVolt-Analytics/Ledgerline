@@ -94,7 +94,7 @@ async def test_apply_ingest_capture_records_ingest_rule_without_route(
     capture_config: RuleBookConfigPayload,
 ) -> None:
     email = _aws_billing_email()
-    inv = Invoice(org_id=1, status=InvoiceStatus.PENDING, file_hash="abc123")
+    inv = Invoice(tenant_id=1, status=InvoiceStatus.PENDING, file_hash="abc123")
     db_session.add(inv)
     await db_session.flush()
 
@@ -129,8 +129,8 @@ async def test_ingest_email_attachments_does_not_set_early_route(
     result = await ingest_email_attachments(
         db_session,
         [_aws_billing_email()],
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=1,
+        tenant_slug="hv-org",
     )
     assert result.ingested_count == 1
 
@@ -145,7 +145,7 @@ async def test_apply_invoice_evaluation_preserves_ingest_email_route(
     capture_config: RuleBookConfigPayload,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         status=InvoiceStatus.MAPPING,
@@ -175,7 +175,7 @@ async def test_apply_invoice_evaluation_preserves_email_route_over_po_reference(
 ) -> None:
     """Junk po_reference must not override email capture route_to on re-evaluation."""
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Qantas Airways Limited",
         invoice_no="QF-BOOK-3318745",
         po_reference="the",
@@ -205,7 +205,7 @@ async def test_team_expense_budget_validation_fails(
 ) -> None:
     db_session.add(
         EmployeeMasterRecord(
-            org_id=1,
+            tenant_id=1,
             master_id="em-test",
             name="Site Supervisor",
             email="supervisor@acme-hospitality.com.au",
@@ -231,7 +231,7 @@ async def test_team_expense_budget_validation_fails(
     results = await run_team_expense_validations(
         data,
         db_session,
-        org_id=1,
+        tenant_id=1,
         route_target=ROUTE_TEAM,
         email_sender="supervisor@acme-hospitality.com.au",
         config=capture_config,
@@ -250,7 +250,7 @@ async def test_run_all_validations_skips_team_rules_for_purchase_route(
     results = await run_all_validations(
         sample_invoice_data,
         db_session,
-        org_id=1,
+        tenant_id=1,
         route_target="Purchase Management",
     )
     assert not any(result.rule.startswith("VR-TE") for result in results)
@@ -263,7 +263,7 @@ async def test_run_all_validations_includes_team_rules(
 ) -> None:
     db_session.add(
         EmployeeMasterRecord(
-            org_id=1,
+            tenant_id=1,
             master_id="em-test-2",
             name="Ops Lead",
             email="ops@acme-hospitality.com.au",
@@ -278,7 +278,7 @@ async def test_run_all_validations_includes_team_rules(
     results = await run_all_validations(
         sample_invoice_data,
         db_session,
-        org_id=1,
+        tenant_id=1,
         sender="ops@acme-hospitality.com.au",
         route_target=ROUTE_TEAM,
     )

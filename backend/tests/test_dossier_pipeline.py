@@ -22,7 +22,7 @@ def _log(event: str, invoice_id: int, **detail: object) -> AuditLog:
 
 @pytest.mark.asyncio
 async def test_pipeline_always_fifteen_stages(db_session: AsyncSession) -> None:
-    inv = Invoice(org_id=1, vendor="Acme", status=InvoiceStatus.PENDING)
+    inv = Invoice(tenant_id=1, vendor="Acme", status=InvoiceStatus.PENDING)
     db_session.add(inv)
     await db_session.flush()
     pipeline = build_dossier_pipeline(inv, [])
@@ -33,7 +33,7 @@ async def test_pipeline_always_fifteen_stages(db_session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_pipeline_processed_invoice_full_pass(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meridian Foods",
         invoice_no="INV-100",
         document_type_code="DT-01",
@@ -70,7 +70,7 @@ async def test_pipeline_processed_invoice_full_pass(db_session: AsyncSession) ->
 
 @pytest.mark.asyncio
 async def test_pipeline_duplicate_blocks_downstream(db_session: AsyncSession) -> None:
-    inv = Invoice(org_id=1, vendor="Acme", status=InvoiceStatus.DUPLICATE_SKIPPED, file_hash="x")
+    inv = Invoice(tenant_id=1, vendor="Acme", status=InvoiceStatus.DUPLICATE_SKIPPED, file_hash="x")
     db_session.add(inv)
     await db_session.flush()
     logs = [
@@ -89,7 +89,7 @@ async def test_pipeline_duplicate_blocks_downstream(db_session: AsyncSession) ->
 @pytest.mark.asyncio
 async def test_pipeline_map_gl_without_audit_log(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         status=InvoiceStatus.MAPPING,
         account_name="5100 Food inventory",
@@ -102,7 +102,7 @@ async def test_pipeline_map_gl_without_audit_log(db_session: AsyncSession) -> No
     assert map_gl.state == "pass"
     assert "5100" in map_gl.detail
 
-    inv = Invoice(org_id=1, vendor="Acme", status=InvoiceStatus.EXCEPTION)
+    inv = Invoice(tenant_id=1, vendor="Acme", status=InvoiceStatus.EXCEPTION)
     db_session.add(inv)
     await db_session.flush()
     logs = [
@@ -122,7 +122,7 @@ async def test_pipeline_extract_ignores_stale_parsing_failed_after_success(
 ) -> None:
     """Concurrent re-run can log parsing_failed after parse_completed; dossier should not lie."""
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Hilton Sydney",
         invoice_no="HIL-SYD-5572",
         document_type_code="DT-03",

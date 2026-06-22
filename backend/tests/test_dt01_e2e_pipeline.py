@@ -98,7 +98,7 @@ async def test_dt01_po_grn_invoice_happy_path(
     po_row = (
         await db_session.execute(
             select(PurchaseOrder).where(
-                PurchaseOrder.org_id == inv.org_id,
+                PurchaseOrder.tenant_id == inv.tenant_id,
                 PurchaseOrder.po_number == PO_NUMBER,
             )
         )

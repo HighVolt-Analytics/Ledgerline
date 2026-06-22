@@ -114,7 +114,7 @@ async def vr05_abn(
 
     *,
 
-    org_id: int,
+    tenant_id: int,
 
     sender: str | None = None,
 
@@ -154,7 +154,7 @@ async def vr05_abn(
 
         session,
 
-        org_id=org_id,
+        tenant_id=tenant_id,
 
         vendor_name=data.vendor,
 
@@ -268,7 +268,7 @@ async def vr02_unique(
 
     *,
 
-    org_id: int,
+    tenant_id: int,
 
 ) -> ValidationResult:
 
@@ -296,7 +296,7 @@ async def vr02_unique(
     duplicate = await invoice_number_duplicate_exists(
         session,
         data,
-        org_id=org_id,
+        tenant_id=tenant_id,
         exclude_id=exclude_id,
     )
     if duplicate is not None:
@@ -309,7 +309,7 @@ async def vr02_unique(
     normalized_dup = await normalized_invoice_number_duplicate_exists(
         session,
         data,
-        org_id=org_id,
+        tenant_id=tenant_id,
         exclude_id=exclude_id,
     )
     if normalized_dup is not None:
@@ -322,7 +322,7 @@ async def vr02_unique(
     fuzzy_dup = await fuzzy_business_duplicate_exists(
         session,
         data,
-        org_id=org_id,
+        tenant_id=tenant_id,
         exclude_id=exclude_id,
     )
     if fuzzy_dup is not None:
@@ -405,7 +405,7 @@ async def run_all_validations(
     session: AsyncSession,
     exclude_id: int | None = None,
     *,
-    org_id: int,
+    tenant_id: int,
     sender: str | None = None,
     route_target: str | None = None,
     purchase_document_type: str | None = None,
@@ -421,7 +421,7 @@ async def run_all_validations(
     ctx = ValidationRunContext(
         data=data,
         session=session,
-        org_id=org_id,
+        tenant_id=tenant_id,
         exclude_id=exclude_id,
         sender=sender,
         route_target=route_target,

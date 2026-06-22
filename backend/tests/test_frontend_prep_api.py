@@ -18,8 +18,8 @@ from app.services.rule_book_mapper import clear_classification_config_cache
 
 
 @pytest.mark.asyncio
-async def test_list_organisations(client: AsyncClient) -> None:
-    res = await client.get("/api/organisations")
+async def test_list_tenants(client: AsyncClient) -> None:
+    res = await client.get("/api/tenants")
     assert res.status_code == 200
     rows = res.json()["data"]
     assert len(rows) == 1
@@ -86,7 +86,7 @@ async def test_rule_book_config_put_invalid_email_rule(client: AsyncClient) -> N
 async def test_document_matrix(client: AsyncClient, db_session: AsyncSession) -> None:
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Acme Pty Ltd",
             invoice_date=date(2026, 5, 13),
             status=InvoiceStatus.PROCESSED,
@@ -112,7 +112,7 @@ async def test_document_matrix(client: AsyncClient, db_session: AsyncSession) ->
 async def test_document_matrix_flags_exception(client: AsyncClient, db_session: AsyncSession) -> None:
     db_session.add(
         Invoice(
-            org_id=1,
+            tenant_id=1,
             vendor="Risky Vendor",
             status=InvoiceStatus.EXCEPTION,
             evaluation_status="needs_review",
@@ -135,14 +135,14 @@ async def test_list_invoices_vendor_and_date_filters(
 ) -> None:
     db_session.add_all(
         [
-            Invoice(org_id=1,
+            Invoice(tenant_id=1,
                 vendor="Qantas Airways Limited",
                 invoice_date=date(2026, 5, 13),
                 status=InvoiceStatus.PROCESSED,
                 currency="AUD",
                 file_hash="f1",
             ),
-            Invoice(org_id=1,
+            Invoice(tenant_id=1,
                 vendor="Hilton Sydney",
                 invoice_date=date(2026, 6, 1),
                 status=InvoiceStatus.PROCESSED,
@@ -169,13 +169,13 @@ async def test_list_invoices_connected_mailbox_filter(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     mb_a = ConnectedMailbox(
-        org_id=1,
+        tenant_id=1,
         email="inbox-a@example.com",
         display_name="Inbox A",
         is_active=True,
     )
     mb_b = ConnectedMailbox(
-        org_id=1,
+        tenant_id=1,
         email="inbox-b@example.com",
         display_name="Inbox B",
         is_active=True,
@@ -186,7 +186,7 @@ async def test_list_invoices_connected_mailbox_filter(
     db_session.add_all(
         [
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Vendor A",
                 status=InvoiceStatus.PROCESSED,
                 currency="AUD",
@@ -195,7 +195,7 @@ async def test_list_invoices_connected_mailbox_filter(
                 email_sender="vendor@example.com",
             ),
             Invoice(
-                org_id=1,
+                tenant_id=1,
                 vendor="Vendor B",
                 status=InvoiceStatus.PROCESSED,
                 currency="AUD",
@@ -220,7 +220,7 @@ async def test_toggle_mailbox_active_state(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     mb = ConnectedMailbox(
-        org_id=1,
+        tenant_id=1,
         email="toggle@example.com",
         display_name="Toggle Test",
         is_active=True,
@@ -245,7 +245,7 @@ async def test_delete_mailbox_with_linked_invoices(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     mb = ConnectedMailbox(
-        org_id=1,
+        tenant_id=1,
         email="remove@example.com",
         display_name="Remove Me",
         is_active=True,
@@ -254,7 +254,7 @@ async def test_delete_mailbox_with_linked_invoices(
     await db_session.flush()
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         connected_mailbox_id=mb.id,
         vendor="Vendor Co",
         status=InvoiceStatus.PROCESSED,
@@ -288,7 +288,7 @@ async def test_download_invoice_file_local(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         status=InvoiceStatus.PROCESSED,
         currency="AUD",
         file_hash="abc",
@@ -305,7 +305,7 @@ async def test_download_invoice_file_local(
 
 @pytest.mark.asyncio
 async def test_delete_vendor(client: AsyncClient, db_session: AsyncSession) -> None:
-    row = VendorRegistry(org_id=1,
+    row = VendorRegistry(tenant_id=1,
         vendor_slug="test-vendor",
         vendor_name="Test Vendor",
         sender_pattern="@test.com",
@@ -329,7 +329,7 @@ async def test_approvals_list_and_approve(
     pdf = tmp_path / "inv.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         vendor="Bad Co",
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
@@ -359,7 +359,7 @@ async def test_approvals_list_and_approve(
 async def test_approve_requires_stored_file(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         vendor="No File Co",
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
@@ -384,7 +384,7 @@ async def test_attach_then_approve(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
         file_hash="old",
@@ -406,7 +406,7 @@ async def test_attach_then_approve(
 
 @pytest.mark.asyncio
 async def test_approve_rejects_processed(client: AsyncClient, db_session: AsyncSession) -> None:
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         status=InvoiceStatus.PROCESSED,
         currency="AUD",
         file_hash="ok1",

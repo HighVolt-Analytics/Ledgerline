@@ -29,10 +29,10 @@ async def trigger_processing(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[dict[str, str]]:
     mailbox_id = body.mailbox_id if body else None
-    org_id = ctx.org_id
+    tenant_id = ctx.tenant_id
     if mailbox_id is not None:
         mb = await db.get(ConnectedMailbox, mailbox_id)
-        if not mb or mb.org_id != ctx.org_id:
+        if not mb or mb.tenant_id != ctx.tenant_id:
             raise HTTPException(404, "Mailbox not found")
         if not mb.is_active:
             raise HTTPException(400, "Mailbox is paused")
@@ -43,7 +43,7 @@ async def trigger_processing(
         background_tasks.add_task(
             run_pipeline_background,
             mailbox_id=mailbox_id,
-            org_id=org_id,
+            tenant_id=tenant_id,
             poll_inbox=poll_inbox,
         )
         return ApiEnvelope(data={"task_id": "inline", "status": "running"})
@@ -51,13 +51,13 @@ async def trigger_processing(
     try:
         from app.workers.tasks import process_inbox_task
 
-        task = process_inbox_task.delay(mailbox_id=mailbox_id, org_id=org_id)
+        task = process_inbox_task.delay(mailbox_id=mailbox_id, tenant_id=tenant_id)
         return ApiEnvelope(data={"task_id": task.id, "status": "queued"})
     except Exception:
         background_tasks.add_task(
             run_pipeline_background,
             mailbox_id=mailbox_id,
-            org_id=org_id,
+            tenant_id=tenant_id,
             poll_inbox=poll_inbox,
         )
         return ApiEnvelope(data={"task_id": "inline", "status": "running"})

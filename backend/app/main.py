@@ -20,7 +20,7 @@ from app.api import (
     employee_masters,
     invoices,
     mailboxes,
-    organisations,
+    tenants,
     payments,
     pending_vendors,
     processing,
@@ -38,11 +38,12 @@ from app.api.deps import CorrelationIdMiddleware, require_user
 from app.config import get_settings
 from app.database import async_session_factory
 from app.middleware.proxy_path import ProxyPathPrefixMiddleware
+from app.middleware.tenant_context_middleware import TenantContextMiddleware
 from app.services.inline_mailbox_poller import (
     start_inline_mailbox_poller,
     stop_inline_mailbox_poller,
 )
-from app.services.org_context import get_or_create_default_org, sync_env_mailbox
+from app.services.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.telemetry import setup_application_insights
 from app.utils.logger import configure_logging, get_logger
 
@@ -58,8 +59,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.application_insights_runtime_enabled:
         setup_application_insights(settings.applicationinsights_connection_string)
     async with async_session_factory() as session:
-        org = await get_or_create_default_org(session)
-        await sync_env_mailbox(session, org.id)
+        tenant = await get_or_create_default_tenant(session)
+        await sync_env_mailbox(session, tenant.id)
         await session.commit()
     logger.info("app_started")
     start_inline_mailbox_poller()
@@ -76,13 +77,14 @@ app = FastAPI(
 )
 
 app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(TenantContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Correlation-ID"],
+    expose_headers=["X-Correlation-ID", "X-Tenant-Id"],
 )
 if _settings.root_path:
     app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
@@ -118,7 +120,7 @@ app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
 app.include_router(dossiers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
-app.include_router(organisations.router, prefix="/api", dependencies=_api_deps)
+app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
 app.include_router(vault.router, prefix="/api", dependencies=_api_deps)
 
 _CONNECT_MAILBOX_HTML = (

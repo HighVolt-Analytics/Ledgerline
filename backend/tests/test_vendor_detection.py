@@ -148,7 +148,7 @@ def test_partial_name_match_triggers_pending_vendor() -> None:
         )
     )
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Totally Unknown Vendor Pty Ltd",
         invoice_no="PARTIAL-1",
         status=InvoiceStatus.MAPPING,
@@ -192,7 +192,7 @@ def test_known_master_name_match_does_not_trigger_pending_vendor() -> None:
         }
     )
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco Foods Australia Pty Ltd",
         po_reference="PO-MKT-2026-TEST",
         invoice_no="GRN-1",

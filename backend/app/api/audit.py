@@ -41,13 +41,13 @@ async def list_audit_log(
 ) -> ApiEnvelope[list[AuditLogResponse]]:
     if invoice_id is not None:
         inv = await db.get(Invoice, invoice_id)
-        if not inv or inv.org_id != ctx.org_id:
+        if not inv or inv.tenant_id != ctx.tenant_id:
             raise HTTPException(404, "Invoice not found")
 
     org_filter = or_(
-        AuditLog.org_id == ctx.org_id,
+        AuditLog.tenant_id == ctx.tenant_id,
         AuditLog.invoice_id.in_(
-            select(Invoice.id).where(Invoice.org_id == ctx.org_id)
+            select(Invoice.id).where(Invoice.tenant_id == ctx.tenant_id)
         ),
     )
     stmt = select(AuditLog).where(org_filter).order_by(AuditLog.created_at.desc())
@@ -123,7 +123,7 @@ async def export_audit_log_csv(
     rows, invoice_map, purchase_by_po_id, purchase_by_po_number = (
         await fetch_audit_rows_for_export(
             db,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             date_from=d_from,
             date_to=d_to,
             document_only=document_only,

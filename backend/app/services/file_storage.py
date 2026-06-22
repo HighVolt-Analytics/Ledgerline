@@ -23,13 +23,13 @@ def _local_vault_path(blob_name: str) -> Path:
 
 def store_invoice_pdf(
     data: bytes,
-    org_slug: str,
+    tenant_slug: str,
     vendor_slug: str,
     invoice_id: int,
     file_hash: str,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
@@ -42,12 +42,12 @@ def store_invoice_pdf(
     document_type_folder: str | None = None,
 ) -> str:
     blob_name = blob_storage.build_blob_name(
-        org_slug,
+        tenant_slug,
         vendor_slug,
         invoice_id,
         file_hash,
         filename,
-        org_name=org_name,
+        tenant_name=tenant_name,
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
@@ -92,11 +92,11 @@ def relocate_stored_pdf(stored_path: str, new_blob_name: str) -> str:
 
 def relocate_invoice_to_rejected(
     stored_path: str,
-    org_slug: str,
+    tenant_slug: str,
     invoice_id: int,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
     invoice_no: str | None = None,
@@ -108,8 +108,8 @@ def relocate_invoice_to_rejected(
     document_type_folder: str | None = None,
 ) -> str:
     new_name = vault_paths.build_rejected_blob_name(
-        org_slug,
-        org_name=org_name,
+        tenant_slug,
+        tenant_name=tenant_name,
         route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,
@@ -127,13 +127,13 @@ def relocate_invoice_to_rejected(
 
 def relocate_rejected_to_vault(
     stored_path: str,
-    org_slug: str,
+    tenant_slug: str,
     vendor_slug: str,
     invoice_id: int,
     file_hash: str,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
@@ -145,12 +145,12 @@ def relocate_rejected_to_vault(
 ) -> str:
     _ = file_hash
     new_name = blob_storage.build_blob_name(
-        org_slug,
+        tenant_slug,
         vendor_slug,
         invoice_id,
         file_hash,
         filename,
-        org_name=org_name,
+        tenant_name=tenant_name,
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
@@ -165,13 +165,13 @@ def relocate_rejected_to_vault(
 
 def relocate_invoice_pdf(
     stored_path: str,
-    org_slug: str,
+    tenant_slug: str,
     new_vendor_slug: str,
     invoice_id: int,
     file_hash: str,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
@@ -184,12 +184,12 @@ def relocate_invoice_pdf(
     document_type_folder: str | None = None,
 ) -> str:
     new_name = blob_storage.build_blob_name(
-        org_slug,
+        tenant_slug,
         new_vendor_slug,
         invoice_id,
         file_hash,
         filename,
-        org_name=org_name,
+        tenant_name=tenant_name,
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
@@ -272,7 +272,7 @@ async def repair_invoice_stored_path(session, invoice) -> bool:
     from sqlalchemy import select
 
     from app.models.audit import AuditLog
-    from app.models.organisation import Organisation
+    from app.models.tenant import Tenant
     from app.services.audit_service import log_event
 
     rows = (
@@ -307,9 +307,9 @@ async def repair_invoice_stored_path(session, invoice) -> bool:
             )
             return True
 
-    org = await session.get(Organisation, invoice.org_id)
-    org_slug = org.slug if org else get_settings().default_org_slug
-    found = blob_storage.find_blob_uri_for_invoice(invoice.id, org_slug=org_slug)
+    org = await session.get(Tenant, invoice.tenant_id)
+    tenant_slug = org.slug if org else get_settings().default_tenant_slug
+    found = blob_storage.find_blob_uri_for_invoice(invoice.id, tenant_slug=tenant_slug)
     if found and stored_file_available(found):
         old_path = invoice.raw_file_path
         invoice.raw_file_path = found

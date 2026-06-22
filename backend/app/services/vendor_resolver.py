@@ -84,14 +84,14 @@ async def resolve_vendor_slug(
     session: AsyncSession,
     sender: str,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> str:
     if not sender.strip():
         return UNKNOWN_SLUG
 
     rows = (
         await session.execute(
-            select(VendorRegistry).where(VendorRegistry.org_id == org_id)
+            select(VendorRegistry).where(VendorRegistry.tenant_id == tenant_id)
         )
     ).scalars().all()
     exact: VendorRegistry | None = None
@@ -116,11 +116,11 @@ def slug_for_parsed_vendor(vendor_name: str | None) -> str:
     return slugify_vendor_name(vendor_name)
 
 
-def match_rule_book_vendor_name(vendor_name: str | None, *, org_id: int) -> str | None:
+def match_rule_book_vendor_name(vendor_name: str | None, *, tenant_id: int) -> str | None:
     """Return canonical vendor master name when parsed text matches."""
     if not vendor_name or not vendor_name.strip():
         return None
-    config = load_classification_config(org_id)
+    config = load_classification_config(tenant_id)
     vendor_l = vendor_name.lower()
     for master in config.vendor_masters:
         names = [master.name, *master.aliases]
@@ -135,7 +135,7 @@ async def resolve_storage_slug_for_parsed_vendor(
     session: AsyncSession,
     parsed_vendor: str | None,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> str:
     """
     Blob folder slug after parse: registry slug for rule-book vendors,
@@ -144,13 +144,13 @@ async def resolve_storage_slug_for_parsed_vendor(
     if not is_plausible_vendor_name(parsed_vendor):
         return UNKNOWN_SLUG
 
-    canonical = match_rule_book_vendor_name(parsed_vendor, org_id=org_id)
+    canonical = match_rule_book_vendor_name(parsed_vendor, tenant_id=tenant_id)
     search_name = canonical or parsed_vendor
     search_l = search_name.lower()
 
     rows = (
         await session.execute(
-            select(VendorRegistry).where(VendorRegistry.org_id == org_id)
+            select(VendorRegistry).where(VendorRegistry.tenant_id == tenant_id)
         )
     ).scalars().all()
     for row in rows:
@@ -166,14 +166,14 @@ async def resolve_storage_slug_for_parsed_vendor(
 async def find_approved_vendor(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     vendor_name: str | None,
     sender: str | None = None,
 ) -> VendorRegistry | None:
     rows = (
         await session.execute(
             select(VendorRegistry).where(
-                VendorRegistry.org_id == org_id,
+                VendorRegistry.tenant_id == tenant_id,
                 VendorRegistry.approved.is_(True),
             )
         )

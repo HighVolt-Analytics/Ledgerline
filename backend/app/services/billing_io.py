@@ -46,10 +46,10 @@ def _save_store(data: dict[str, Any]) -> None:
         fh.write("\n")
 
 
-def load_billing_for_org(org_id: int) -> BillingStateResponse:
+def load_billing_for_tenant(tenant_id: int) -> BillingStateResponse:
     store = _load_store()
     orgs = store.get("orgs") or {}
-    raw = orgs.get(str(org_id)) or deepcopy(_DEFAULT_STATE)
+    raw = orgs.get(str(tenant_id)) or deepcopy(_DEFAULT_STATE)
     return BillingStateResponse(
         balance=int(raw.get("balance", _DEFAULT_STATE["balance"])),
         current_pack=str(raw.get("current_pack", _DEFAULT_STATE["current_pack"])),
@@ -59,10 +59,10 @@ def load_billing_for_org(org_id: int) -> BillingStateResponse:
     )
 
 
-def save_billing_for_org(org_id: int, state: BillingStateResponse) -> BillingStateResponse:
+def save_billing_for_tenant(tenant_id: int, state: BillingStateResponse) -> BillingStateResponse:
     store = _load_store()
     orgs = store.setdefault("orgs", {})
-    orgs[str(org_id)] = {
+    orgs[str(tenant_id)] = {
         "balance": state.balance,
         "current_pack": state.current_pack,
         "auto_recharge": state.auto_recharge,
@@ -72,11 +72,11 @@ def save_billing_for_org(org_id: int, state: BillingStateResponse) -> BillingSta
     return state
 
 
-def purchase_pack(org_id: int, pack_id: str) -> BillingStateResponse:
+def purchase_pack(tenant_id: int, pack_id: str) -> BillingStateResponse:
     pack = next((p for p in CREDIT_PACKS if p.id == pack_id), None)
     if pack is None:
         raise ValueError("Unknown credit pack")
-    state = load_billing_for_org(org_id)
+    state = load_billing_for_tenant(tenant_id)
     state.balance += pack.credits
     state.current_pack = pack.id
-    return save_billing_for_org(org_id, state)
+    return save_billing_for_tenant(tenant_id, state)

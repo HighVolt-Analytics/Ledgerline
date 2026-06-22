@@ -16,5 +16,5 @@ async def get_ledger_link(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[LedgerLinkResponse]:
-    data = await build_ledger_link(db, org_id=ctx.org_id)
+    data = await build_ledger_link(db, tenant_id=ctx.tenant_id)
     return ApiEnvelope(data=data)

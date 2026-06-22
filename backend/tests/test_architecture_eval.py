@@ -64,7 +64,7 @@ def test_category_rules_use_priority_first_match_wins() -> None:
 
 def test_gl_cascade_expense_before_team() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Local Cafe",
         invoice_no="MEAL-001",
         route_target="Expenses Management",
@@ -106,7 +106,7 @@ def test_gl_cascade_expense_before_team() -> None:
 
 def test_routing_expense_before_team_without_email() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Local Cafe",
         invoice_no="MEAL-002",
         status=InvoiceStatus.MAPPING,

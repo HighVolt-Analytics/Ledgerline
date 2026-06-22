@@ -81,7 +81,7 @@ async def test_register_import_creates_and_updates(db_session: AsyncSession) -> 
     row = (
         await db_session.execute(
             select(EmployeeMasterRecord).where(
-                EmployeeMasterRecord.org_id == 1,
+                EmployeeMasterRecord.tenant_id == 1,
                 EmployeeMasterRecord.email == "alex@example.com",
             )
         )

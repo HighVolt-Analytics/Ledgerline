@@ -84,8 +84,8 @@ export function ClaimDetailPanel({
     <div>
       <div className="flex items-center justify-between gap-2 mb-3">
         <div>
-          <div className="text-sm font-semibold">
-            {claim.id} · {claim.submitter}
+          <div className="text-sm font-semibold tnum">
+            {claim.documentRef ?? claim.id} · {claim.submitter}
           </div>
           <div className="text-xs text-muted-foreground">
             via {claim.channel} · {claim.submittedTs}
@@ -190,7 +190,10 @@ export function ClaimDetailPanel({
         </Button>
       </div>
 
-      <DocumentAuditTrail docId={claim.id} invoiceId={invoiceId} />
+      <DocumentAuditTrail
+        docId={claim.documentRef ?? claim.id}
+        invoiceId={invoiceId}
+      />
     </div>
   );
 }

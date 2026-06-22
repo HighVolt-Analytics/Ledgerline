@@ -168,7 +168,7 @@ async def _get_or_load_po(
         await db.execute(
             select(PurchaseOrder)
             .where(
-                PurchaseOrder.org_id == invoice.org_id,
+                PurchaseOrder.tenant_id == invoice.tenant_id,
                 PurchaseOrder.po_number == po_number,
             )
             .options(selectinload(PurchaseOrder.goods_receipts))
@@ -184,7 +184,7 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
     po = await _get_or_load_po(db, invoice, po_number)
     if po is None:
         po = PurchaseOrder(
-            org_id=invoice.org_id,
+            tenant_id=invoice.tenant_id,
             po_number=po_number,
             vendor=invoice.vendor,
             po_date=invoice.invoice_date,
@@ -211,7 +211,7 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
         if po.po_unit_price <= 0:
             po.po_unit_price = unit
 
-    config = load_classification_config(invoice.org_id)
+    config = load_classification_config(invoice.tenant_id)
     if not po.ledger:
         code_po_from_invoice(po, invoice, config)
     inherit_po_coding_to_invoice(po, invoice)

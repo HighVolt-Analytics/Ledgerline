@@ -17,10 +17,10 @@ STATUS_ERROR = "error"
 
 class ConnectedMailbox(Base):
     __tablename__ = "connected_mailboxes"
-    __table_args__ = (UniqueConstraint("org_id", "email", name="uq_mailbox_org_email"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_mailbox_tenant_email"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     display_name: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

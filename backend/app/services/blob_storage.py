@@ -34,13 +34,13 @@ def _ensure_container() -> None:
 
 
 def build_blob_name(
-    org_slug: str,
+    tenant_slug: str,
     vendor_slug: str,
     invoice_id: int,
     file_hash: str,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
@@ -56,8 +56,8 @@ def build_blob_name(
     """Build vault blob path: invoice/{org}/{book}/[{dt}/]{vendor}/{year}/{month}/{file}."""
     _ = (file_hash, day)
     return vault_paths.build_vault_blob_name(
-        org_slug,
-        org_name=org_name,
+        tenant_slug,
+        tenant_name=tenant_name,
         route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=vendor_slug,
@@ -150,15 +150,19 @@ def _invoice_blob_marker(invoice_id: int) -> str:
 
 
 def _blob_name_matches_invoice(blob_name: str, invoice_id: int) -> bool:
-    marker = _invoice_blob_marker(invoice_id)
     filename = blob_name.rsplit("/", 1)[-1]
-    return filename.startswith(f"{marker}_") or filename.startswith(f"{marker}.")
+    marker = _invoice_blob_marker(invoice_id)
+    if filename.startswith(f"{marker}_") or filename.startswith(f"{marker}."):
+        return True
+    # Relocated split dossier members: {doc_no}_{date}_id{invoice_id}.pdf
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return stem.endswith(f"_id{invoice_id}")
 
 
 def find_blob_uri_for_invoice(
     invoice_id: int,
     *,
-    org_slug: str | None = None,
+    tenant_slug: str | None = None,
 ) -> str | None:
     """Locate a relocated invoice blob when raw_file_path is stale."""
     if not is_blob_enabled():
@@ -167,8 +171,8 @@ def find_blob_uri_for_invoice(
     client = _service_client()
     container = client.get_container_client(settings.azure_storage_container)
     prefixes: list[str]
-    if org_slug:
-        prefixes = [f"invoice/{org_slug}/", "invoice/"]
+    if tenant_slug:
+        prefixes = [f"invoice/{tenant_slug}/", "invoice/"]
     else:
         prefixes = ["invoice/"]
     seen: set[str] = set()

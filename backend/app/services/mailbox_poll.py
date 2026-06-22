@@ -6,27 +6,31 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connected_mailbox import ConnectedMailbox
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.services.email_ingestion import poll_inbox
 from app.services.mailbox_oauth_service import resolve_mailbox_access_token
-from app.services.org_context import get_or_create_default_org, sync_env_mailbox
+from app.services.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.pipeline import EmailIngestResult, ingest_email_attachments
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-async def poll_all_and_ingest(session: AsyncSession) -> EmailIngestResult:
-    """Poll every active connected mailbox for the organisation(s)."""
+async def poll_all_and_ingest(
+    session: AsyncSession,
+    *,
+    tenant_id: int | None = None,
+) -> EmailIngestResult:
+    """Poll active connected mailboxes; optionally scoped to one tenant."""
     merged = EmailIngestResult()
-    default_org = await get_or_create_default_org(session)
-    await sync_env_mailbox(session, default_org.id)
+    if tenant_id is None:
+        default_org = await get_or_create_default_tenant(session)
+        await sync_env_mailbox(session, default_org.id)
 
-    mailboxes = (
-        await session.execute(
-            select(ConnectedMailbox).where(ConnectedMailbox.is_active.is_(True))
-        )
-    ).scalars().all()
+    stmt = select(ConnectedMailbox).where(ConnectedMailbox.is_active.is_(True))
+    if tenant_id is not None:
+        stmt = stmt.where(ConnectedMailbox.tenant_id == tenant_id)
+    mailboxes = (await session.execute(stmt)).scalars().all()
 
     for mb in mailboxes:
         if not mb.is_pollable:
@@ -38,7 +42,7 @@ async def poll_all_and_ingest(session: AsyncSession) -> EmailIngestResult:
             )
             continue
 
-        org = await session.get(Organisation, mb.org_id)
+        org = await session.get(Tenant, mb.tenant_id)
         if not org:
             continue
 
@@ -52,8 +56,8 @@ async def poll_all_and_ingest(session: AsyncSession) -> EmailIngestResult:
         result = await ingest_email_attachments(
             session,
             emails,
-            org_id=mb.org_id,
-            org_slug=org.slug,
+            tenant_id=mb.tenant_id,
+            tenant_slug=org.slug,
             connected_mailbox_id=mb.id,
         )
         mb.last_poll_at = datetime.now(timezone.utc)
@@ -68,26 +72,26 @@ async def poll_mailbox_and_ingest(
     session: AsyncSession,
     *,
     mailbox_id: int,
-    org_id: int,
+    tenant_id: int,
 ) -> EmailIngestResult:
     """Poll a single connected mailbox and ingest attachments."""
     mb = await session.get(ConnectedMailbox, mailbox_id)
-    if not mb or mb.org_id != org_id or not mb.is_active:
+    if not mb or mb.tenant_id != tenant_id or not mb.is_active:
         raise ValueError("Mailbox not found or inactive")
     if not mb.is_pollable:
         raise ValueError("Mailbox is not connected — sign in with Microsoft to authorize access")
 
-    org = await session.get(Organisation, mb.org_id)
+    org = await session.get(Tenant, mb.tenant_id)
     if not org:
-        raise ValueError("Organisation not found")
+        raise ValueError("Tenant not found")
 
     access_token = await resolve_mailbox_access_token(session, mb)
     emails = poll_inbox(mb.email, access_token=access_token)
     result = await ingest_email_attachments(
         session,
         emails,
-        org_id=mb.org_id,
-        org_slug=org.slug,
+        tenant_id=mb.tenant_id,
+        tenant_slug=org.slug,
         connected_mailbox_id=mb.id,
     )
     mb.last_poll_at = datetime.now(timezone.utc)

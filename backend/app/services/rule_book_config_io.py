@@ -15,14 +15,14 @@ def global_rule_book_config_path() -> Path:
     return Path(get_settings().rule_book_config_path)
 
 
-def org_rule_book_config_path(org_id: int) -> Path:
+def tenant_rule_book_config_path(tenant_id: int) -> Path:
     base = Path(get_settings().upload_dir) / "rule_books"
-    return base / f"{org_id}_config.json"
+    return base / f"{tenant_id}_config.json"
 
 
-def _seed_org_rule_book_config(org_id: int) -> Path:
+def _seed_tenant_rule_book_config(tenant_id: int) -> Path:
     """Create org rule book from template once; never overwrite saved org config."""
-    path = org_rule_book_config_path(org_id)
+    path = tenant_rule_book_config_path(tenant_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
         return path
@@ -39,17 +39,17 @@ def _seed_org_rule_book_config(org_id: int) -> Path:
     return path
 
 
-def load_rule_book_config_dict(org_id: int) -> dict[str, Any]:
-    path = _seed_org_rule_book_config(org_id)
+def load_rule_book_config_dict(tenant_id: int) -> dict[str, Any]:
+    path = _seed_tenant_rule_book_config(tenant_id)
     with path.open(encoding="utf-8") as fh:
         return json.load(fh)
 
 
-def save_rule_book_config(payload: RuleBookConfigPayload, org_id: int) -> Path:
+def save_rule_book_config(payload: RuleBookConfigPayload, tenant_id: int) -> Path:
     from app.services.document_type_catalog import clear_document_type_catalog_cache
     from app.services.rule_book_mapper import clear_classification_config_cache
 
-    path = org_rule_book_config_path(org_id)
+    path = tenant_rule_book_config_path(tenant_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = payload.model_dump()
     with path.open("w", encoding="utf-8") as fh:

@@ -11,13 +11,14 @@ const UPLOAD_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".docx"]);
 const UPLOAD_RETRY_STATUSES = new Set([500, 502, 503, 504]);
 
 export type BulkUploadItemResult =
-  | { ok: true; fileName: string; invoiceId: number }
+  | { ok: true; fileName: string; invoiceIds: number[]; segmentCount: number }
   | { ok: false; fileName: string; reason: "duplicate" | "failed"; message: string };
 
 export type BulkUploadSummary = {
   uploaded: number;
   duplicate: number;
   failed: number;
+  segmentedFiles: number;
   results: BulkUploadItemResult[];
 };
 
@@ -25,7 +26,12 @@ export function formatBulkUploadNotice(summary: BulkUploadSummary): string {
   const parts: string[] = [];
   if (summary.uploaded > 0) {
     parts.push(
-      `${summary.uploaded} document${summary.uploaded === 1 ? "" : "s"} uploaded — processing in background`
+      `${summary.uploaded} file${summary.uploaded === 1 ? "" : "s"} uploaded — processing in background`
+    );
+  }
+  if (summary.segmentedFiles > 0) {
+    parts.push(
+      `${summary.segmentedFiles} PDF${summary.segmentedFiles === 1 ? "" : "s"} split into separate documents`
     );
   }
   if (summary.duplicate > 0) {
@@ -75,8 +81,13 @@ async function uploadOneFile(file: File): Promise<BulkUploadItemResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const inv = await api.uploadInvoice(file, undefined, { deferProcessing: true });
-      return { ok: true, fileName: file.name, invoiceId: inv.id };
+      const upload = await api.uploadInvoice(file, undefined, { deferProcessing: true });
+      return {
+        ok: true,
+        fileName: file.name,
+        invoiceIds: upload.segmentInvoiceIds,
+        segmentCount: upload.segmentCount,
+      };
     } catch (err) {
       lastError = err;
       if (err instanceof ApiError) {
@@ -134,7 +145,7 @@ export async function uploadFilesInBatch(
 
   const uploadedIds = results
     .filter((row): row is Extract<BulkUploadItemResult, { ok: true }> => row.ok)
-    .map((row) => row.invoiceId);
+    .flatMap((row) => row.invoiceIds);
   if (uploadedIds.length > 0) {
     await api.processInvoicesBatch(uploadedIds);
   }
@@ -143,6 +154,9 @@ export async function uploadFilesInBatch(
     uploaded: results.filter((r) => r.ok).length,
     duplicate: results.filter((r) => !r.ok && r.reason === "duplicate").length,
     failed: results.filter((r) => !r.ok && r.reason === "failed").length,
+    segmentedFiles: results.filter(
+      (r): r is Extract<BulkUploadItemResult, { ok: true }> => r.ok && r.segmentCount > 1
+    ).length,
     results,
   };
 }

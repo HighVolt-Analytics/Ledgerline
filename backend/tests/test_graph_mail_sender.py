@@ -42,7 +42,7 @@ def test_send_invite_email_uses_graph_when_configured(
 
     result = send_invite_email(
         to_email="owner@example.com",
-        org_name="Acme",
+        tenant_name="Acme",
         requested_email="owner@example.com",
         connect_url="http://localhost:5173/connect-mailbox?token=abc",
         personal_message="Please connect",

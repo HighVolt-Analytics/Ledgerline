@@ -17,7 +17,7 @@ class MailboxConnectionRequest(Base):
     __tablename__ = "mailbox_connection_requests"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     requested_email: Mapped[str] = mapped_column(String(255), index=True)
     display_name: Mapped[str | None] = mapped_column(String(255))
     message: Mapped[str | None] = mapped_column(Text)

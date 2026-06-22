@@ -38,11 +38,11 @@ def oauth_configured() -> bool:
     return get_settings().whatsapp_configured
 
 
-def create_oauth_state(*, org_id: int, user_id: int) -> str:
+def create_oauth_state(*, tenant_id: int, user_id: int) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=STATE_TTL_MINUTES)
     payload: dict[str, Any] = {
         "typ": STATE_TYP,
-        "org_id": org_id,
+        "org_id": tenant_id,
         # PyJWT requires sub to be a string (RFC 7519).
         "sub": str(user_id),
         "exp": expire,
@@ -60,12 +60,12 @@ def parse_oauth_state(state: str) -> dict[str, Any]:
 async def list_connections(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> list[ConnectedWhatsapp]:
     rows = (
         await session.execute(
             select(ConnectedWhatsapp)
-            .where(ConnectedWhatsapp.org_id == org_id)
+            .where(ConnectedWhatsapp.tenant_id == tenant_id)
             .order_by(ConnectedWhatsapp.created_at.desc())
         )
     ).scalars().all()
@@ -128,7 +128,7 @@ def resolve_access_token(connection: ConnectedWhatsapp) -> str:
 async def upsert_phone_connection(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     phone: WhatsappPhoneNumber,
     access_token: str,
     token_expires_at: datetime | None,
@@ -137,7 +137,7 @@ async def upsert_phone_connection(
     existing = (
         await session.execute(
             select(ConnectedWhatsapp).where(
-                ConnectedWhatsapp.org_id == org_id,
+                ConnectedWhatsapp.tenant_id == tenant_id,
                 ConnectedWhatsapp.phone_number_id == phone.phone_number_id,
             )
         )
@@ -146,7 +146,7 @@ async def upsert_phone_connection(
     if existing:
         row = existing
     else:
-        row = ConnectedWhatsapp(org_id=org_id, phone_number_id=phone.phone_number_id)
+        row = ConnectedWhatsapp(tenant_id=tenant_id, phone_number_id=phone.phone_number_id)
         session.add(row)
 
     row.phone_number = phone.display_phone_number or row.phone_number
@@ -167,10 +167,10 @@ async def complete_oauth_and_store_connections(
     session: AsyncSession,
     *,
     code: str,
-    org_id: int,
+    tenant_id: int,
     user_id: int,
 ) -> list[ConnectedWhatsapp]:
-    logger.info("whatsapp_oauth_start", org_id=org_id, user_id=user_id)
+    logger.info("whatsapp_oauth_start", tenant_id=tenant_id, user_id=user_id)
     short = await exchange_code_for_token(code)
     short_token = str(short.get("access_token") or "")
     if not short_token:
@@ -185,9 +185,9 @@ async def complete_oauth_and_store_connections(
     if not phones:
         waba_ids = await discover_waba_ids(access_token)
         if not waba_ids:
-            logger.warning("whatsapp_oauth_no_waba", org_id=org_id)
+            logger.warning("whatsapp_oauth_no_waba", tenant_id=tenant_id)
             raise RuntimeError("no_waba")
-        logger.warning("whatsapp_oauth_no_phone", org_id=org_id, waba_ids=waba_ids)
+        logger.warning("whatsapp_oauth_no_phone", tenant_id=tenant_id, waba_ids=waba_ids)
         raise RuntimeError("no_phone")
 
     stored: list[ConnectedWhatsapp] = []
@@ -206,7 +206,7 @@ async def complete_oauth_and_store_connections(
 
         row = await upsert_phone_connection(
             session,
-            org_id=org_id,
+            tenant_id=tenant_id,
             phone=phone,
             access_token=access_token,
             token_expires_at=token_expires_at,
@@ -217,7 +217,7 @@ async def complete_oauth_and_store_connections(
     await session.flush()
     logger.info(
         "whatsapp_oauth_connected",
-        org_id=org_id,
+        tenant_id=tenant_id,
         phones=len(stored),
         phone_number_ids=[row.phone_number_id for row in stored],
     )

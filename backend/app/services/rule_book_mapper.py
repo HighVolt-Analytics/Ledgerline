@@ -39,8 +39,8 @@ class ConfigMappingHit:
 
 
 @lru_cache
-def load_classification_config(org_id: int) -> RuleBookConfigPayload:
-    raw = load_rule_book_config_dict(org_id)
+def load_classification_config(tenant_id: int) -> RuleBookConfigPayload:
+    raw = load_rule_book_config_dict(tenant_id)
     return validate_rule_book_config_payload(raw)
 
 
@@ -197,7 +197,7 @@ def resolve_config_mapping(
 
 def map_invoice_to_account(invoice: Invoice) -> AccountMapping:
     """Map invoice header to GL account using the unified rule book."""
-    config = load_classification_config(invoice.org_id)
+    config = load_classification_config(invoice.tenant_id)
     return resolve_config_mapping(invoice, config).mapping
 
 
@@ -209,7 +209,7 @@ def map_invoice_with_details(
 ) -> MappingDetail:
     """Map invoice with audit metadata using the unified rule book."""
     del line_description  # header-level rules; line text is in invoice line_items for eval
-    config = load_classification_config(invoice.org_id)
+    config = load_classification_config(invoice.tenant_id)
     hit = resolve_config_mapping(invoice, config, purchase_order=purchase_order)
     return MappingDetail(
         expense_category=hit.mapping.expense_category or hit.mapping.account_name,
@@ -224,11 +224,11 @@ def is_fallback_mapping(detail: MappingDetail) -> bool:
     return detail.rule_type == FALLBACK_RULE_TYPE
 
 
-def get_tax_account_mapping(org_id: int) -> AccountMapping:
-    config = load_classification_config(org_id)
+def get_tax_account_mapping(tenant_id: int) -> AccountMapping:
+    config = load_classification_config(tenant_id)
     return resolve_category(config.posting_defaults.tax_account)
 
 
-def get_payable_account_mapping(org_id: int) -> AccountMapping:
-    config = load_classification_config(org_id)
+def get_payable_account_mapping(tenant_id: int) -> AccountMapping:
+    config = load_classification_config(tenant_id)
     return resolve_category(config.posting_defaults.payable_account)

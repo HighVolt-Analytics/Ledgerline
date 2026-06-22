@@ -15,7 +15,7 @@ async def test_vr05_uses_approved_registry_abn(
 ) -> None:
     sample_invoice_data.abn = "63110305305"
     db_session.add(
-        VendorRegistry(org_id=1,
+        VendorRegistry(tenant_id=1,
             vendor_slug="amazon-web-services",
             vendor_name="Amazon Web Services",
             sender_pattern="@amazonaws.com",
@@ -28,7 +28,7 @@ async def test_vr05_uses_approved_registry_abn(
     result = await vr05_abn(
         sample_invoice_data,
         db_session,
-        org_id=1,
+        tenant_id=1,
         sender="billing@amazonaws.com",
     )
     assert result.passed

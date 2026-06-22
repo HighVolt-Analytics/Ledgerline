@@ -21,9 +21,14 @@ from app.services.document_heading_utils import (
     extract_document_heading_signals,
     heading_alignment_score,
 )
+from app.services.document_type_conflicts import (
+    conflict_confidence_penalty,
+    detect_signal_conflicts,
+)
 from app.services.invoice_data import InvoiceData, ParseConfidence
 
 WEIGHT_RULE = 0.45
+CONFIDENCE_TIE_EPSILON = 0.02
 WEIGHT_FIELDS = 0.30
 WEIGHT_PARSE = 0.15
 WEIGHT_HEADING = 0.10
@@ -40,6 +45,7 @@ class DocumentTypeScoreBreakdown:
     required_missing: list[str]
     absent_ok: list[str]
     absent_violations: list[str]
+    signal_conflicts: list[str]
     min_route_confidence: float
 
 
@@ -131,11 +137,16 @@ def score_document_type_definition(
         document_text=context.document_text,
         definition=definition,
     )
+    conflicts = detect_signal_conflicts(context)
     confidence = compute_document_type_confidence(
         rule_strength=rule_strength,
         field_completeness=field_score,
         parse_confidence=parse_confidence,
         heading_alignment=heading_score,
+    )
+    confidence = round(
+        max(0.0, confidence - conflict_confidence_penalty(conflicts)),
+        4,
     )
     return DocumentTypeScoreBreakdown(
         rule_strength=rule_strength,
@@ -147,7 +158,22 @@ def score_document_type_definition(
         required_missing=req_missing,
         absent_ok=abs_ok,
         absent_violations=abs_bad,
+        signal_conflicts=conflicts,
         min_route_confidence=effective_min_route_confidence(definition),
+    )
+
+
+def _candidate_rank_key(
+    item: tuple[DocumentTypeDefinition, DocumentTypeScoreBreakdown, str],
+) -> tuple[float, int, float, int, int, int]:
+    definition, breakdown, _source = item
+    return (
+        breakdown.confidence,
+        -definition.classifier.priority,
+        breakdown.field_completeness,
+        -len(breakdown.absent_violations),
+        -len(breakdown.required_missing),
+        -len(breakdown.signal_conflicts),
     )
 
 
@@ -156,10 +182,11 @@ def pick_best_scored_definition(
 ) -> tuple[DocumentTypeDefinition, DocumentTypeScoreBreakdown, str] | None:
     if not candidates:
         return None
-    return max(
-        candidates,
-        key=lambda item: (
-            item[1].confidence,
-            -item[0].classifier.priority,
-        ),
-    )
+    best_confidence = max(item[1].confidence for item in candidates)
+    near_best = [
+        item
+        for item in candidates
+        if item[1].confidence >= best_confidence - CONFIDENCE_TIE_EPSILON
+    ]
+    pool = near_best if len(near_best) > 1 else list(candidates)
+    return max(pool, key=_candidate_rank_key)

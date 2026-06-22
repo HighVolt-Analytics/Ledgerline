@@ -5,6 +5,7 @@ import type { Invoice, MatrixRow } from "@/api/types";
 import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { MatrixFlagBadge } from "@/components/matrix/MatrixFlagBadge";
 import { MatrixFlagDrawer } from "@/components/matrix/MatrixFlagDrawer";
 import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
@@ -17,6 +18,7 @@ import { MATRIX_STAGES, type MatrixStage } from "@/lib/matrix";
 import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
+import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 
 const MATRIX_POLL_MS = 15_000;
@@ -82,6 +84,7 @@ function rowFromApi(row: MatrixRow): MatrixTableRow {
 export function MatrixPage() {
   const [matrixData, setMatrixData] = useState<MatrixRow[]>([]);
   const [filter, setFilter] = useState<MatrixFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +133,7 @@ export function MatrixPage() {
   const filteredRows = useMemo(
     () =>
       matrixRows.filter((row) => {
+        if (!invoiceMatchesListSearch(row.inv, searchQuery)) return false;
         if (filter === "anomalies") {
           return (
             row.flag === "Anomaly Detected" ||
@@ -143,7 +147,7 @@ export function MatrixPage() {
         if (filter === "paid") return row.payment === "Paid";
         return true;
       }),
-    [matrixRows, filter]
+    [matrixRows, filter, searchQuery]
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
@@ -155,7 +159,7 @@ export function MatrixPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [filter]);
+  }, [filter, searchQuery]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -296,7 +300,14 @@ export function MatrixPage() {
                 {pill.label}
               </button>
             ))}
-            <span className="ml-auto text-xs text-muted-foreground">
+            <ListSearchInput
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search this list…"
+              testId="input-matrix-search"
+              className="ml-auto"
+            />
+            <span className="text-xs text-muted-foreground shrink-0">
               {filteredRows.length} of {matrixRows.length} documents
               {filteredRows.length > PAGE_SIZE
                 ? ` · page ${page} of ${totalPages}`
@@ -326,6 +337,16 @@ export function MatrixPage() {
                   </tr>
                 </thead>
                 <tbody>
+                  {pagedRows.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={MATRIX_STAGES.length + 5}
+                        className="px-4 py-8 text-center text-muted-foreground"
+                      >
+                        No documents match your search.
+                      </td>
+                    </tr>
+                  )}
                   {pagedRows.map(({ inv, cells, flag, payment }) => {
                     const docRef = documentDisplayRef(inv);
                     const flagged = flag !== "Clean";

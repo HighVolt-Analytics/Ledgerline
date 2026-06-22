@@ -1,15 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchAllInvoices } from "@/lib/invoices";
 import type { Invoice } from "@/api/types";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { invoiceStage, StageBadge } from "@/components/StageBadge";
 import { Card } from "@/components/ui/card";
 import { invId, money } from "@/lib/format";
+import { fetchAllInvoices } from "@/lib/invoices";
+import { invoiceMatchesListSearch } from "@/lib/listSearch";
 
 export function AllInvoicesPage() {
   const [rows, setRows] = useState<Invoice[]>([]);
   const [status, setStatus] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     const params: Record<string, string> = {};
@@ -17,10 +20,15 @@ export function AllInvoicesPage() {
     void fetchAllInvoices(false, params).then(setRows);
   }, [status]);
 
+  const filtered = useMemo(
+    () => rows.filter((row) => invoiceMatchesListSearch(row, searchQuery)),
+    [rows, searchQuery]
+  );
+
   return (
     <div>
       <PageHeader title="All invoices" subtitle="Search and filter the full invoice register" />
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         {["", "processed", "exception", "pending"].map((s) => (
           <button
             key={s || "all"}
@@ -35,6 +43,13 @@ export function AllInvoicesPage() {
             {s === "" ? "All statuses" : s.replace(/_/g, " ")}
           </button>
         ))}
+        <ListSearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search this list…"
+          testId="input-all-invoices-search"
+          className="ml-auto"
+        />
       </div>
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
@@ -50,7 +65,14 @@ export function AllInvoicesPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                    No invoices match your search.
+                  </td>
+                </tr>
+              )}
+              {filtered.map((r) => (
                 <tr key={r.id} className="row-band border-b border-border last:border-0 hover-elevate">
                   <td className="px-3 py-2.5 font-medium">{invId(r.id)}</td>
                   <td className="px-3 py-2.5">{r.vendor ?? "—"}</td>

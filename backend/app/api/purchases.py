@@ -22,7 +22,7 @@ async def get_purchase_orders(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[PurchaseOrderResponse]]:
-    rows = await list_purchase_orders(db, ctx.org_id)
+    rows = await list_purchase_orders(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
 
 
@@ -37,7 +37,7 @@ async def post_goods_receipt(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[PurchaseOrderResponse]:
     try:
-        row = await record_goods_receipt(db, ctx.org_id, purchase_order_id, body)
+        row = await record_goods_receipt(db, ctx.tenant_id, purchase_order_id, body)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -47,7 +47,7 @@ async def post_goods_receipt(
             db,
             "goods_receipt_recorded",
             invoice_id=row.invoice_id,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             actor_name=actor_name,
             actor_email=actor_email,
             detail={
@@ -72,7 +72,7 @@ async def post_approve_variance(
 ) -> ApiEnvelope[PurchaseOrderResponse]:
     require_privilege(ctx, "Approve")
     try:
-        row = await approve_purchase_variance(db, ctx.org_id, purchase_order_id)
+        row = await approve_purchase_variance(db, ctx.tenant_id, purchase_order_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -82,7 +82,7 @@ async def post_approve_variance(
             db,
             "purchase_variance_approved",
             invoice_id=row.invoice_id,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             actor_name=actor_name,
             actor_email=actor_email,
             detail={

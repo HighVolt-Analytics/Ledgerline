@@ -10,12 +10,13 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/api/client";
-import type { InvoiceDetails, InvoiceUpdatePayload, LineItem, PipelineAuditStep, PurchaseDossier } from "@/api/types";
+import type { InvoiceDetails, InvoiceClassificationAudit, InvoiceUpdatePayload, LineItem, PipelineAuditStep, PurchaseDossier } from "@/api/types";
 import {
   InvoiceDocumentViewer,
   InvoicePreviewModeToggle,
   type PreviewPaneMode,
 } from "@/components/InvoiceFilePreview";
+import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -531,6 +532,8 @@ export function InvoiceDetailDrawer({
   const [sheetState, setSheetState] = useState<"open" | "closed">("closed");
   const [pipelineSteps, setPipelineSteps] = useState<PipelineAuditStep[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [classificationAudit, setClassificationAudit] = useState<InvoiceClassificationAudit | null>(null);
+  const [classificationLoading, setClassificationLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<InvoiceEditDraft | null>(null);
@@ -571,6 +574,7 @@ export function InvoiceDetailDrawer({
       if (!mounted) {
         setInv(null);
         setPipelineSteps([]);
+        setClassificationAudit(null);
         setPreviewMode("summary");
         setDossier(null);
       }
@@ -583,6 +587,21 @@ export function InvoiceDetailDrawer({
       .catch(() => setInv(null))
       .finally(() => setLoading(false));
   }, [mounted, activeInvoiceId]);
+
+  useEffect(() => {
+    if (!inv) {
+      setClassificationAudit(null);
+      return;
+    }
+    setClassificationLoading(true);
+    api
+      .getInvoiceClassificationAudit(inv.id, { fresh: true })
+      .then((detail) => {
+        setClassificationAudit(detail?.document_type_code ? detail : null);
+      })
+      .catch(() => setClassificationAudit(null))
+      .finally(() => setClassificationLoading(false));
+  }, [inv?.id]);
 
   useEffect(() => {
     if (!inv || tab !== "po") return;
@@ -930,6 +949,10 @@ export function InvoiceDetailDrawer({
 
                 {tab === "fields" && inv && (
                   <div className="mt-4 space-y-3">
+                    <InvoiceClassificationPanel
+                      audit={classificationAudit}
+                      loading={classificationLoading}
+                    />
                     {extractionFieldKeys.length === 0 ? (
                       <p className="text-sm text-muted-foreground">
                         {!resolvedDocumentTypeCode

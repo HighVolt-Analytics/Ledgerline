@@ -26,7 +26,7 @@ async def list_vendor_master_records(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[VendorMasterResponse]]:
-    rows = await list_vendor_masters(db, ctx.org_id)
+    rows = await list_vendor_masters(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
 
 
@@ -38,7 +38,7 @@ async def create_vendor_master_record(
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[VendorMasterResponse]:
     try:
-        row = await create_vendor_master(db, ctx.org_id, body)
+        row = await create_vendor_master(db, ctx.tenant_id, body)
     except ValueError as exc:
         message = str(exc)
         status = 409 if "already exists" in message.lower() else 400
@@ -48,7 +48,7 @@ async def create_vendor_master_record(
     await log_event(
         db,
         "vendor_master_created",
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
         detail={"master_id": row.id, "name": row.name, "after": row.model_dump()},
         actor_name=actor_name,
         actor_email=actor_email,
@@ -65,10 +65,10 @@ async def update_vendor_master_record(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[VendorMasterResponse]:
-    before_rows = await list_vendor_masters(db, ctx.org_id)
+    before_rows = await list_vendor_masters(db, ctx.tenant_id)
     before = next((row for row in before_rows if row.id == master_id), None)
     try:
-        row = await update_vendor_master(db, ctx.org_id, master_id, body)
+        row = await update_vendor_master(db, ctx.tenant_id, master_id, body)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -78,7 +78,7 @@ async def update_vendor_master_record(
     await log_event(
         db,
         "vendor_master_updated",
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
         detail={
             "master_id": master_id,
             "before": before.model_dump() if before else None,
@@ -98,6 +98,6 @@ async def delete_vendor_master_record(
     ctx: AuthContext = Depends(require_admin),
 ) -> None:
     try:
-        await delete_vendor_master(db, ctx.org_id, master_id)
+        await delete_vendor_master(db, ctx.tenant_id, master_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc

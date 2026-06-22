@@ -41,17 +41,17 @@ async def test_start_backfill_api(client, db_session) -> None:
             "email": "backfill@example.com",
             "password": "securepass1",
             "full_name": "Backfill User",
-            "org_name": "Backfill Org",
-            "org_slug": "backfill-org",
+            "tenant_name": "Backfill Org",
+            "tenant_slug": "backfill-org",
         },
     )
     assert reg.status_code == 201
     reg_body = reg.json()["data"]
     token = reg_body["access_token"]
-    org_id = reg_body["user"]["org_id"]
+    tenant_id = reg_body["user"]["org_id"]
 
     mb = ConnectedMailbox(
-        org_id=org_id,
+        tenant_id=tenant_id,
         email="inbox@company.com",
         display_name="Inbox",
         is_active=True,

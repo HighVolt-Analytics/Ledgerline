@@ -41,7 +41,7 @@ def test_rule_match_reason_avoids_doubled_prefix() -> None:
 
 def test_purchase_rule_maps_before_fallback() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",
@@ -58,7 +58,7 @@ def test_purchase_rule_maps_before_fallback() -> None:
 
 def test_expense_rule_maps_from_line_descriptions() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-999",
         route_target="Expenses Management",
@@ -75,7 +75,7 @@ def test_expense_rule_maps_from_line_descriptions() -> None:
 
 def test_config_fallback_when_no_rule_matches() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Unknown Supplier Pty Ltd",
         invoice_no="X-1",
         status=InvoiceStatus.MAPPING,
@@ -89,7 +89,7 @@ def test_config_fallback_when_no_rule_matches() -> None:
 
 def test_atlassian_maps_via_expense_rule() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Atlassian Pty Ltd",
         invoice_no="ATL-2026-55721",
         route_target="Expenses Management",
@@ -103,7 +103,7 @@ def test_atlassian_maps_via_expense_rule() -> None:
 
 def test_marketing_po_uses_purchase_rule() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Google Australia Pty Ltd",
         invoice_no="GOOG-AU-99102",
         po_reference="PO-MKT-2026-014",

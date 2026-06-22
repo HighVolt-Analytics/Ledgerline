@@ -191,7 +191,7 @@ async def finalize_graph_messages(
         elif mailbox_email:
             stmt = select(ConnectedMailbox).where(ConnectedMailbox.email == mailbox_email)
             if rows:
-                stmt = stmt.where(ConnectedMailbox.org_id == rows[0].org_id)
+                stmt = stmt.where(ConnectedMailbox.tenant_id == rows[0].tenant_id)
             mb_row = (await session.execute(stmt)).scalar_one_or_none()
         if mb_row and mb_row.is_pollable:
             try:

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connected_whatsapp import ConnectedWhatsapp
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.services.audit_service import log_event
 from app.services.capture_channel import normalize_phone
 from app.services.file_storage import store_invoice_pdf
@@ -84,13 +84,13 @@ async def ingest_whatsapp_message(
         result.skipped_reason = "skipped_message_type"
         return result
 
-    org = await session.get(Organisation, connection.org_id)
+    org = await session.get(Tenant, connection.tenant_id)
     if not org:
         result.skipped_reason = "org_not_found"
         return result
 
     sender = _sender_phone(msg.sender_wa_id)
-    employee = await resolve_employee_for_sender(session, connection.org_id, sender)
+    employee = await resolve_employee_for_sender(session, connection.tenant_id, sender)
 
     if msg.msg_type == "text" or (msg.text and not msg.media_id):
         await send_text_message_with_retry(
@@ -168,7 +168,7 @@ async def ingest_whatsapp_message(
     file_hash = compute_sha256_bytes(data)
     caption = (msg.caption or msg.text or "").strip()
 
-    existing = await find_invoice_by_file_hash(session, file_hash, org_id=connection.org_id)
+    existing = await find_invoice_by_file_hash(session, file_hash, tenant_id=connection.tenant_id)
     duplicate_decision = evaluate_file_hash_duplicate(existing)
     if duplicate_decision.action == "skip_in_progress":
         await send_text_message_with_retry(
@@ -198,7 +198,7 @@ async def ingest_whatsapp_message(
         if duplicate_decision.action == "shadow_duplicate":
             await create_duplicate_shadow_invoice(
                 session,
-                org_id=connection.org_id,
+                tenant_id=connection.tenant_id,
                 original=existing,
                 whatsapp_connection_id=connection.id,
                 email_sender=sender,
@@ -266,9 +266,9 @@ async def ingest_whatsapp_message(
         )
         return result
 
-    vendor_slug = await resolve_vendor_slug(session, sender, org_id=connection.org_id)
+    vendor_slug = await resolve_vendor_slug(session, sender, tenant_id=connection.tenant_id)
     inv = Invoice(
-        org_id=connection.org_id,
+        tenant_id=connection.tenant_id,
         whatsapp_connection_id=connection.id,
         status=InvoiceStatus.PENDING,
         file_hash=file_hash,
@@ -292,7 +292,7 @@ async def ingest_whatsapp_message(
         inv.id,
         file_hash,
         filename,
-        org_name=org.name,
+        tenant_name=org.name,
     )
     inv.raw_file_path = stored
 

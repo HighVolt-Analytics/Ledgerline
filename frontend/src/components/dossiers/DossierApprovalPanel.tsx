@@ -1,4 +1,4 @@
-import { Check, CircleDashed, Lock, Minus, Shield } from "lucide-react";
+import { Check, CircleDashed, Lock, Minus, Shield, X } from "lucide-react";
 import { SectionBlock } from "@/components/SectionBlock";
 import { StatusPill, pillTones } from "@/components/StatusPill";
 import type { DossierApprovalChain, DossierApprovalStepState } from "@/lib/dossierApproval";
@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 
 function stepIcon(state: DossierApprovalStepState) {
   if (state === "done") return <Check className="h-4 w-4 dossier-row__icon--ok shrink-0" />;
+  if (state === "fail") return <X className="h-4 w-4 dossier-row__icon--bad shrink-0" />;
   if (state === "waived" || state === "not_required" || state === "skipped") {
     return <Minus className="h-4 w-4 dossier-row__icon--muted shrink-0" />;
   }
@@ -16,8 +17,8 @@ function stepIcon(state: DossierApprovalStepState) {
 
 function stepTone(state: DossierApprovalStepState): string {
   if (state === "done") return pillTones.ok;
+  if (state === "fail" || state === "blocked") return pillTones.bad;
   if (state === "pending") return pillTones.amber;
-  if (state === "blocked") return pillTones.bad;
   return pillTones.muted;
 }
 
@@ -40,7 +41,8 @@ export function DossierApprovalPanel({ chain }: { chain: DossierApprovalChain })
               key={step.id}
               className={cn(
                 "dossier-approval-chain__item",
-                step.state === "blocked" && "dossier-approval-chain__item--blocked",
+                (step.state === "blocked" || step.state === "fail") &&
+                  "dossier-approval-chain__item--blocked",
                 step.state === "pending" && "dossier-approval-chain__item--pending"
               )}
               data-testid={`approval-step-${step.id}`}

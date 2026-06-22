@@ -19,7 +19,7 @@ from app.services.vault_paths import build_rejected_blob_name
 def test_build_rejected_blob_name() -> None:
     path = build_rejected_blob_name(
         "hv-org",
-        org_name="High Volt Analytics",
+        tenant_name="High Volt Analytics",
         vendor_name="Atlassian Pty Ltd",
         storage_vendor_slug="atlassian",
         invoice_id=7,
@@ -27,7 +27,7 @@ def test_build_rejected_blob_name() -> None:
         invoice_date=date(2026, 5, 12),
         original_filename="scan.pdf",
     )
-    assert path == "rejected/HvOrg/Unrouted/Atlassian Pty Ltd/2026/May/INV-007_2026-05-12.pdf"
+    assert path == "rejected/HvOrg/Unrouted/Atlassian Pty Ltd/2026/May/INV-007_2026-05-12_id7.pdf"
 
 
 @pytest.mark.asyncio
@@ -42,11 +42,11 @@ async def test_reject_moves_file_and_sets_status(
 
     vault_path = upload_dir / "invoice" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May"
     vault_path.mkdir(parents=True)
-    pdf = vault_path / "INV-001_2026-05-04.pdf"
+    pdf = vault_path / "INV-001_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Bad Co",
         invoice_no="INV-001",
         invoice_date=date(2026, 5, 4),
@@ -71,7 +71,7 @@ async def test_reject_moves_file_and_sets_status(
     assert not pdf.is_file()
 
     rejected_pdf = (
-        upload_dir / "rejected" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May" / "INV-001_2026-05-04.pdf"
+        upload_dir / "rejected" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May" / "INV-001_2026-05-04_id1.pdf"
     )
     assert rejected_pdf.is_file()
 
@@ -91,11 +91,11 @@ async def test_reject_processed_clears_journal_entries(
 
     vault_path = upload_dir / "invoice" / "HvOrg" / "Posted Co" / "2026" / "May"
     vault_path.mkdir(parents=True)
-    pdf = vault_path / "INV-004_2026-05-04.pdf"
+    pdf = vault_path / "INV-004_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Posted Co",
         invoice_no="INV-004",
         invoice_date=date(2026, 5, 4),
@@ -148,11 +148,11 @@ async def test_reject_processed_invoice(
 
     vault_path = upload_dir / "invoice" / "HvOrg" / "Done Co" / "2026" / "May"
     vault_path.mkdir(parents=True)
-    pdf = vault_path / "INV-003_2026-05-04.pdf"
+    pdf = vault_path / "INV-003_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Done Co",
         invoice_no="INV-003",
         invoice_date=date(2026, 5, 4),
@@ -185,7 +185,7 @@ async def test_reject_requires_rejectable_status(
     pdf.write_bytes(b"%PDF-1.4")
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Pending Co",
         status=InvoiceStatus.PENDING,
         currency="AUD",
@@ -211,11 +211,11 @@ async def test_approve_from_rejected_restores_vault_path(
 
     rejected_path = upload_dir / "rejected" / "HvOrg" / "Bad Co" / "2026" / "May"
     rejected_path.mkdir(parents=True)
-    pdf = rejected_path / "INV-002_2026-05-04.pdf"
+    pdf = rejected_path / "INV-002_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Bad Co",
         invoice_no="INV-002",
         invoice_date=date(2026, 5, 4),
@@ -237,7 +237,7 @@ async def test_approve_from_rejected_restores_vault_path(
     assert "HvOrg/Unrouted/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
     assert not pdf.is_file()
 
-    vault_pdf = upload_dir / "invoice" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May" / "INV-002_2026-05-04.pdf"
+    vault_pdf = upload_dir / "invoice" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May" / "INV-002_2026-05-04_id1.pdf"
     assert vault_pdf.is_file()
 
 
@@ -253,11 +253,11 @@ async def test_permanently_delete_rejected_invoice(
 
     rejected_path = upload_dir / "rejected" / "HvOrg" / "Gone Co" / "2026" / "May"
     rejected_path.mkdir(parents=True)
-    pdf = rejected_path / "INV-099_2026-05-04.pdf"
+    pdf = rejected_path / "INV-099_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Gone Co",
         invoice_no="INV-099",
         invoice_date=date(2026, 5, 4),
@@ -286,7 +286,7 @@ async def test_permanent_delete_rejects_non_rejected_status(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Active Co",
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",

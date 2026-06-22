@@ -16,7 +16,7 @@ async def test_list_empty(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_get_invoice(client: AsyncClient, db_session: AsyncSession) -> None:
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         vendor="Acme",
         invoice_no="INV-1",
         status=InvoiceStatus.PROCESSED,
@@ -40,8 +40,8 @@ async def test_not_found(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_filter_status(client: AsyncClient, db_session: AsyncSession) -> None:
     db_session.add_all([
-        Invoice(org_id=1, vendor="A", status=InvoiceStatus.PROCESSED, currency="AUD", file_hash="f1"),
-        Invoice(org_id=1, vendor="B", status=InvoiceStatus.EXCEPTION, currency="AUD", file_hash="f2"),
+        Invoice(tenant_id=1, vendor="A", status=InvoiceStatus.PROCESSED, currency="AUD", file_hash="f1"),
+        Invoice(tenant_id=1, vendor="B", status=InvoiceStatus.EXCEPTION, currency="AUD", file_hash="f2"),
     ])
     await db_session.flush()
 
@@ -55,7 +55,7 @@ async def test_patch_invoice_in_review_queue(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor=None,
         invoice_no=None,
         status=InvoiceStatus.EXCEPTION,
@@ -89,7 +89,7 @@ async def test_patch_invoice_rejects_processed(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         status=InvoiceStatus.PROCESSED,
         currency="AUD",

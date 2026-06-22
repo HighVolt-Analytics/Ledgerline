@@ -31,7 +31,7 @@ async def test_publish_records_audit_and_charges_credits(
     get_settings.cache_clear()
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         invoice_no="PUB-001",
         document_ref="DOC-9",
@@ -65,7 +65,7 @@ async def test_publish_records_audit_and_charges_credits(
     )
     await db_session.commit()
 
-    balance_before = load_billing_for_org(1).balance
+    balance_before = load_billing_for_tenant(1).balance
     published = await publish_invoice_to_ledger(
         db_session,
         inv,
@@ -76,7 +76,7 @@ async def test_publish_records_audit_and_charges_credits(
 
     assert published is True
     assert await is_published_to_ledger(db_session, inv.id)
-    assert load_billing_for_org(1).balance == balance_before - PUBLISH_CREDIT_COST
+    assert load_billing_for_tenant(1).balance == balance_before - PUBLISH_CREDIT_COST
 
     row = (
         await db_session.execute(
@@ -102,7 +102,7 @@ async def test_publish_is_idempotent(db_session: AsyncSession, tmp_path, monkeyp
     get_settings.cache_clear()
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         invoice_date=date(2026, 6, 2),
         total=Decimal("50.00"),
@@ -123,12 +123,12 @@ async def test_publish_is_idempotent(db_session: AsyncSession, tmp_path, monkeyp
     )
     await db_session.commit()
 
-    balance_before = load_billing_for_org(1).balance
+    balance_before = load_billing_for_tenant(1).balance
     assert await publish_invoice_to_ledger(db_session, inv) is True
     await db_session.commit()
     assert await publish_invoice_to_ledger(db_session, inv) is False
     await db_session.commit()
-    assert load_billing_for_org(1).balance == balance_before - PUBLISH_CREDIT_COST
+    assert load_billing_for_tenant(1).balance == balance_before - PUBLISH_CREDIT_COST
 
 
 @pytest.mark.asyncio
@@ -142,12 +142,12 @@ async def test_manual_publish_fails_without_credits(
     from app.services.billing_io import save_billing_for_org
 
     get_settings.cache_clear()
-    state = load_billing_for_org(1)
+    state = load_billing_for_tenant(1)
     state.balance = 0
-    save_billing_for_org(1, state)
+    save_billing_for_tenant(1, state)
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Acme",
         invoice_date=date(2026, 6, 3),
         total=Decimal("20.00"),

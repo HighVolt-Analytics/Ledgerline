@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from app.api.deps import AuthContext
 from app.models.user import UserRole
-from app.services.approval_policy_io import load_policy_for_org
+from app.services.approval_policy_io import load_policy_for_tenant
 
 _MATRIX_ROLE_BY_JWT: dict[str, str] = {
     UserRole.ADMIN.value: "Admin",
@@ -19,7 +19,7 @@ def matrix_role_for_context(ctx: AuthContext) -> str:
 
 
 def user_has_privilege(ctx: AuthContext, action: str) -> bool:
-    policy = load_policy_for_org(ctx.org_id)
+    policy = load_policy_for_tenant(ctx.tenant_id)
     role = matrix_role_for_context(ctx)
     row = policy.matrix.get(role) or {}
     return bool(row.get(action, False))

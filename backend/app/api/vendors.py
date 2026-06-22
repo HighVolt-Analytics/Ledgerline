@@ -20,7 +20,7 @@ async def list_vendors(
     rows = (
         await db.execute(
             select(VendorRegistry)
-            .where(VendorRegistry.org_id == ctx.org_id)
+            .where(VendorRegistry.tenant_id == ctx.tenant_id)
             .order_by(VendorRegistry.vendor_name)
         )
     ).scalars().all()
@@ -36,7 +36,7 @@ async def create_vendor(
     existing = (
         await db.execute(
             select(VendorRegistry).where(
-                VendorRegistry.org_id == ctx.org_id,
+                VendorRegistry.tenant_id == ctx.tenant_id,
                 VendorRegistry.vendor_slug == body.vendor_slug,
             )
         )
@@ -45,7 +45,7 @@ async def create_vendor(
         raise HTTPException(409, f"Vendor slug '{body.vendor_slug}' already exists")
 
     row = VendorRegistry(
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
         vendor_slug=body.vendor_slug,
         vendor_name=body.vendor_name,
         sender_pattern=body.sender_pattern,
@@ -65,7 +65,7 @@ async def update_vendor(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[VendorResponse]:
     row = await db.get(VendorRegistry, vendor_id)
-    if not row or row.org_id != ctx.org_id:
+    if not row or row.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Vendor not found")
 
     if body.vendor_name is not None:
@@ -88,7 +88,7 @@ async def delete_vendor(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
     row = await db.get(VendorRegistry, vendor_id)
-    if not row or row.org_id != ctx.org_id:
+    if not row or row.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Vendor not found")
     await db.delete(row)
     await db.flush()

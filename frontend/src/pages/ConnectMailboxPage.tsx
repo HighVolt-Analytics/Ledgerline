@@ -112,7 +112,7 @@ export function ConnectMailboxPage() {
           <Mail className="h-10 w-10 text-primary mx-auto" />
           <h1 className="text-lg font-semibold">Connect your mailbox</h1>
           <p className="text-sm text-muted-foreground">
-            <strong>{preview.org_name}</strong> has requested access to read invoice
+            <strong>{preview.tenant_name}</strong> has requested access to read invoice
             attachments from:
           </p>
           <p className="text-sm font-medium">{preview.requested_email}</p>

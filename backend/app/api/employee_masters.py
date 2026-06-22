@@ -92,7 +92,7 @@ async def import_employee_master_file(
         rows = parse_employee_import_file(raw, file.filename or "import.xlsx")
         result = await import_employee_masters(
             db,
-            ctx.org_id,
+            ctx.tenant_id,
             mode=mode,
             rows=rows,
             dry_run=dry_run,
@@ -106,7 +106,7 @@ async def import_employee_master_file(
         await log_event(
             db,
             "employee_import_completed",
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             detail={
                 "mode": mode,
                 "created": result.created,
@@ -128,7 +128,7 @@ async def list_employee_master_records(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[EmployeeMasterResponse]]:
-    rows = await list_employee_masters(db, ctx.org_id)
+    rows = await list_employee_masters(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
 
 
@@ -139,7 +139,7 @@ async def create_employee_master_record(
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[EmployeeMasterResponse]:
     try:
-        row = await create_employee_master(db, ctx.org_id, body)
+        row = await create_employee_master(db, ctx.tenant_id, body)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return ApiEnvelope(data=row)
@@ -153,10 +153,10 @@ async def update_employee_master_record(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[EmployeeMasterResponse]:
-    before_rows = await list_employee_masters(db, ctx.org_id)
+    before_rows = await list_employee_masters(db, ctx.tenant_id)
     before = next((row for row in before_rows if row.id == master_id), None)
     try:
-        row = await update_employee_master(db, ctx.org_id, master_id, body)
+        row = await update_employee_master(db, ctx.tenant_id, master_id, body)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     actor_name, actor_email = await actor_from_context(db, ctx)
@@ -164,7 +164,7 @@ async def update_employee_master_record(
     await log_event(
         db,
         "employee_master_updated",
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
         detail={
             "master_id": master_id,
             "before": before.model_dump() if before else None,
@@ -184,6 +184,6 @@ async def delete_employee_master_record(
     ctx: AuthContext = Depends(require_admin),
 ) -> None:
     try:
-        await delete_employee_master(db, ctx.org_id, master_id)
+        await delete_employee_master(db, ctx.tenant_id, master_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc

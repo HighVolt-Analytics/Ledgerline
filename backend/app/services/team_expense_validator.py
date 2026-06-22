@@ -8,7 +8,7 @@ from app.schemas.master_data import EmployeeMasterResponse
 from app.schemas.rule_book_config import RuleBookConfigPayload, TeamExpenseRule
 from app.services.capture_channel import infer_capture_channel, normalize_phone
 from app.services.invoice_data import InvoiceData
-from app.services.invoice_evaluation_service import ROUTE_TEAM, load_config_for_org
+from app.services.invoice_evaluation_service import ROUTE_TEAM, load_config_for_tenant
 from app.services.master_data_service import list_employee_masters
 from app.services.po_reference import effective_po_reference
 from app.services.rule_engine import EvalDocument, match_team_expense_rule
@@ -17,10 +17,10 @@ from app.services.validator import ValidationResult
 
 async def resolve_employee_for_sender(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     sender: str | None,
 ) -> EmployeeMasterResponse | None:
-    employees = await list_employee_masters(session, org_id)
+    employees = await list_employee_masters(session, tenant_id)
     return _find_employee_by_sender(employees, sender)
 
 
@@ -203,7 +203,7 @@ async def run_team_expense_validations(
     data: InvoiceData,
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     route_target: str | None,
     email_sender: str | None,
     config: RuleBookConfigPayload | None = None,
@@ -213,9 +213,9 @@ async def run_team_expense_validations(
         return []
 
     if config is None:
-        config = load_config_for_org(org_id)
+        config = load_config_for_tenant(tenant_id)
 
-    employees = await list_employee_masters(session, org_id)
+    employees = await list_employee_masters(session, tenant_id)
     employee = _find_employee_by_sender(employees, email_sender)
     amount = _invoice_amount(data)
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { BusinessExpenseCaptureStrip } from "@/components/team-expenses/BusinessExpenseCaptureStrip";
@@ -14,6 +15,7 @@ import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
+import { matchesListSearch } from "@/lib/listSearch";
 import { money } from "@/lib/format";
 import { expenseRulesToCategories, invoiceToBusinessExpense } from "@/lib/routePageAdapters";
 import { fmtAud } from "@/lib/v4MockData";
@@ -40,6 +42,7 @@ export function ExpensesManagementPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [tab, setTab] = useState("expenses");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useVisibilityPolling(() => {
     void refetch();
@@ -60,6 +63,23 @@ export function ExpensesManagementPage() {
   }, [claims]);
 
   const selected = claims.find((e) => e.id === selectedId) ?? claims[0] ?? null;
+  const filteredClaims = useMemo(
+    () =>
+      claims.filter((claim) =>
+        matchesListSearch(
+          searchQuery,
+          claim.id,
+          claim.documentRef,
+          claim.merchant,
+          claim.category,
+          claim.state,
+          claim.channel,
+          claim.amount,
+          claim.date
+        )
+      ),
+    [claims, searchQuery]
+  );
   const selectedInvoice = selected ? invoiceById.get(Number(selected.id)) : undefined;
 
   return (
@@ -129,7 +149,19 @@ export function ExpensesManagementPage() {
         ) : (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
             <div className="space-y-2 lg:max-h-[calc(100dvh-360px)] lg:overflow-y-auto lg:pr-1">
-              {claims.map((claim) => (
+              <ListSearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search this list…"
+                testId="input-biz-expenses-search"
+                className="sticky top-0 z-10 bg-background pb-2"
+              />
+              {filteredClaims.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  No expenses match your search.
+                </p>
+              ) : null}
+              {filteredClaims.map((claim) => (
                 <button
                   key={claim.id}
                   type="button"
@@ -148,6 +180,11 @@ export function ExpensesManagementPage() {
                       <div className="text-xs text-muted-foreground mt-0.5 truncate">
                         {claim.category} · {claim.date}
                       </div>
+                      {claim.documentRef ? (
+                        <div className="text-[10px] text-muted-foreground tnum mt-0.5 truncate">
+                          {claim.documentRef}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="text-right shrink-0">
                       <div className="tnum font-semibold text-sm">{money(claim.amount)}</div>

@@ -14,7 +14,7 @@ class PendingVendor(Base):
     __tablename__ = "pending_vendors"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     detected_name: Mapped[str] = mapped_column(String(255))
     detected_abn: Mapped[str | None] = mapped_column(String(11))
     detected_address: Mapped[str | None] = mapped_column(String(500))
