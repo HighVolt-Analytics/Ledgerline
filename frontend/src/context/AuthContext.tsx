@@ -29,6 +29,7 @@ import {
 import { isTokenExpired, userFromToken } from "@/lib/authToken";
 import { refreshAccessTokenSingleFlight } from "@/lib/authTokenRefresh";
 import { homePathForRole } from "@/lib/roles";
+import { withRouterBasename } from "@/lib/routerBasename";
 import { queryClient } from "@/lib/queryClient";
 
 type AuthContextValue = {
@@ -151,7 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
       rememberLastTenant(tenantId);
       queryClient.clear();
-      window.location.assign(homePathForRole(data.user.role));
+      window.location.assign(withRouterBasename(homePathForRole(data.user.role)));
     },
     [applySession]
   );
@@ -167,7 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
       rememberLastTenant(tenantId);
       queryClient.clear();
-      window.location.assign("/");
+      window.location.assign(withRouterBasename("/"));
     },
     [applySession]
   );
