@@ -3,28 +3,137 @@ export interface AuthUser {
   email: string;
   full_name: string;
   role: string;
-  org_id: number;
-  org_name: string;
-  org_slug: string;
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  tenant_timezone: string;
+  tenant_locale: string;
 }
 
-export interface Organisation {
+export type ApprovalActionKey =
+  | "View"
+  | "Comment"
+  | "Approve"
+  | "Reject"
+  | "Publish"
+  | "Edit Policy"
+  | "Manage Users";
+
+export interface UserPermissions {
+  role: string;
+  matrix_role: string;
+  permissions: Record<ApprovalActionKey, boolean>;
+}
+
+export interface TenantMember {
+  user_id: number;
+  email: string;
+  full_name: string;
+  role: string;
+  status: string;
+  is_active: boolean;
+}
+
+export interface PendingTenantInvite {
   id: number;
+  email: string;
+  full_name: string;
+  role: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface TenantMembersList {
+  members: TenantMember[];
+  pending_invites: PendingTenantInvite[];
+}
+
+export interface TenantInviteCreated {
+  invite_id: number;
+  email: string;
+  accept_url: string;
+  expires_at: string;
+  email_sent?: boolean;
+  email_error?: string | null;
+}
+
+export interface InvitePreview {
+  email: string;
+  full_name: string;
+  role: string;
+  tenant_name: string;
+  tenant_slug: string;
+  expired: boolean;
+  accepted: boolean;
+}
+
+export interface InviteAcceptResult {
+  message: string;
+  tenant_id: string;
+  tenant_name: string;
+  email: string;
+}
+
+/** @deprecated use Tenant */
+export type Organisation = Tenant;
+
+export interface Tenant {
+  id: string;
   name: string;
   slug: string;
   currency: string;
   is_current: boolean;
 }
 
+export interface InstitutionSettings {
+  country: string;
+  timezone: string;
+  locale: string;
+}
+
+export interface PlatformTenantModule {
+  module_key: string;
+  is_active: boolean;
+}
+
+export interface PlatformTenantSummary {
+  id: string;
+  name: string;
+  slug: string;
+  is_active: boolean;
+  lifecycle_status: string;
+  created_at: string | null;
+  user_count: number;
+  invoice_count: number;
+  credit_balance: number;
+}
+
+export interface PlatformTenantDetail extends PlatformTenantSummary {
+  settings_json: Record<string, unknown> | null;
+  modules: PlatformTenantModule[];
+}
+
+export interface TenantMembership {
+  user_id: number;
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  role: string;
+  default_tenant?: boolean;
+  is_platform?: boolean;
+}
+
 export interface TokenResponse {
   access_token: string;
+  refresh_token: string;
   token_type: string;
   user: AuthUser;
+  memberships?: TenantMembership[];
 }
 
 export interface ConnectedMailbox {
   id: number;
-  org_id: number;
+  tenant_id: string;
   email: string;
   display_name: string | null;
   is_active: boolean;
@@ -35,9 +144,32 @@ export interface ConnectedMailbox {
   last_poll_at: string | null;
 }
 
+export interface MailboxBackfillJob {
+  id: number;
+  tenant_id: string;
+  mailbox_id: number;
+  from_date: string;
+  to_date: string;
+  mark_processed: boolean;
+  status: "queued" | "running" | "completed" | "failed" | string;
+  messages_scanned: number;
+  attachments_ingested: number;
+  messages_skipped: number;
+  invoices_processed: number;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface MailboxBackfillQueued {
+  job: MailboxBackfillJob;
+  task_id: string;
+}
+
 export interface MailboxConnectionRequest {
   id: number;
-  org_id: number;
+  tenant_id: string;
   requested_email: string;
   display_name: string | null;
   message: string | null;
@@ -56,7 +188,7 @@ export interface MailboxConnectionRequestAction extends MailboxConnectionRequest
 }
 
 export interface MailboxInvitePreview {
-  org_name: string;
+  tenant_name: string;
   requested_email: string;
   display_name: string | null;
   message: string | null;
@@ -84,8 +216,20 @@ export type InvoiceStatus =
 export interface ApiEnvelope<T> {
   data: T;
   error: { code: string; message: string } | null;
-  meta: { page: number; total: number; pages: number };
+  meta: {
+    page: number;
+    total: number;
+    pages: number;
+    segment_count?: number | null;
+    segment_invoice_ids?: number[] | null;
+  };
 }
+
+export type UploadInvoiceResult = {
+  invoice: Invoice;
+  segmentCount: number;
+  segmentInvoiceIds: number[];
+};
 
 export interface ValidationResult {
   rule: string;
@@ -96,6 +240,7 @@ export interface ValidationResult {
 
 export interface Invoice {
   id: number;
+  document_ref?: string | null;
   vendor: string | null;
   abn: string | null;
   invoice_no: string | null;
@@ -128,8 +273,19 @@ export interface Invoice {
     | null;
   validation_results: ValidationResult[] | null;
   purchase_document_type?: string | null;
+  document_type_code?: string | null;
+  document_type_confidence?: number | null;
+  document_type_extraction_fields?: string[] | null;
+  bank_bsb?: string | null;
+  bank_account?: string | null;
+  email_attachment_name?: string | null;
+  billing_address?: string | null;
+  email_subject?: string | null;
+  document_text?: string | null;
+  extraction_field_confidence?: Record<string, number> | null;
   created_at: string;
   has_stored_file: boolean;
+  published_to_ledger?: boolean;
 }
 
 export interface LineItem {
@@ -202,6 +358,25 @@ export interface ThreeWayMatchApi {
   invoice_value: number;
   invoice_gst: number;
   invoice_total: number;
+}
+
+export interface PurchaseDossierMember {
+  role: string;
+  label: string;
+  invoice_id: number | null;
+  document_ref: string | null;
+  present: boolean;
+  has_stored_file: boolean;
+  is_current: boolean;
+}
+
+export interface PurchaseDossier {
+  po_reference: string | null;
+  current_role: string | null;
+  members: PurchaseDossierMember[];
+  purchase_order_id: number | null;
+  match: ThreeWayMatchApi | null;
+  match_status: string | null;
 }
 
 export interface PurchaseOrderApi {
@@ -289,6 +464,7 @@ export interface ActivityItem {
   created_at: string;
   vendor: string | null;
   status: InvoiceStatus | null;
+  summary?: string | null;
 }
 
 export interface TopVendorRow {
@@ -430,7 +606,7 @@ export interface AppSettings {
 
 export interface WhatsappConnection {
   id: number;
-  org_id: number;
+  tenant_id: string;
   phone_number_id: string;
   phone_number: string | null;
   display_name: string | null;
@@ -552,6 +728,58 @@ export interface RuleBookConfig {
     set_name: string;
     isolated?: boolean;
   }>;
+  document_classification?: {
+    unclassified_document_type_code: string;
+    unclassified_min_confidence: number;
+  };
+  document_types: Array<{
+    code: string;
+    title: string;
+    short_title: string;
+    klass: string;
+    posting: string;
+    fraud_risk: string;
+    one_line: string;
+    route_target: string;
+    enabled: boolean;
+    classifier: {
+      enabled: boolean;
+      priority: number;
+      confidence: number;
+      root: Record<string, unknown>;
+    };
+    validation_profile?: string;
+    playbook_profile?: string;
+    match_policy?: { mode: string };
+    approval_policy?: { mode: string };
+    validation_rules?: Array<{
+      code: string;
+      enabled: boolean;
+      severity: "block" | "warn";
+    }>;
+    custom_validation_rules?: Array<{
+      id: string;
+      name: string;
+      field: string;
+      operator: "present" | "absent" | "contains" | "not_contains" | "gte" | "lte";
+      value: string;
+      enabled: boolean;
+      severity: "block" | "warn";
+    }>;
+    required_fields?: string[];
+    absent_fields?: string[];
+    min_route_confidence?: number;
+    extraction_fields?: string[];
+    extraction: string[];
+    checks: string[];
+    match: string[];
+    approval: string[];
+    accounting: string[];
+    special: string[];
+    bundle_mandatory: string[];
+    bundle_conditional: string[];
+    purchase_bundle_role?: string;
+  }>;
 }
 
 export type RuleBookRulesPayload = Omit<
@@ -566,6 +794,7 @@ export interface RuleBookEvaluationRow {
     invoice_no: string;
     vendor: string;
     primary_account: string;
+    document_type_code?: string | null;
   };
   email_rule: { id: string; name: string } | null;
   email_rule_disabled: { id: string; name: string } | null;
@@ -675,6 +904,7 @@ export interface VaultApiFile {
   invoice_id: number;
   org: string;
   book: string;
+  document_type?: string | null;
   vendor: string;
   year: string;
   month: string;
@@ -810,4 +1040,28 @@ export interface PipelineAuditStep {
   when: string;
   detail: string;
   state: "done" | "pending" | "fail" | "skipped";
+}
+
+export interface InvoiceClassificationScoreBreakdown {
+  rule_strength?: number;
+  field_completeness?: number;
+  parse_score?: number;
+  heading_alignment?: number;
+  required_present?: string[];
+  required_missing?: string[];
+  absent_ok?: string[];
+  absent_violations?: string[];
+  signal_conflicts?: string[];
+}
+
+export interface InvoiceClassificationAudit {
+  document_type_code?: string;
+  document_type_confidence?: number;
+  document_type_title?: string | null;
+  document_type_klass?: string | null;
+  reason?: string;
+  needs_review?: boolean;
+  min_route_confidence?: number;
+  signal_conflicts?: string[];
+  score_breakdown?: InvoiceClassificationScoreBreakdown;
 }

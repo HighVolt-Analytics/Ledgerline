@@ -152,7 +152,7 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
 ) -> None:
     config = validate_rule_book_config_payload(load_rule_book_config_dict(1))
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         po_reference="PO-CLOUD-2026-999",
         invoice_no="PO-CLOUD-2026-999",
@@ -189,7 +189,7 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
     assert po.purchase_rule_id == "pr-1"
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         po_reference="PO-CLOUD-2026-999",
         invoice_no="AWS-TEST-1",
@@ -228,10 +228,10 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
 @pytest.mark.asyncio
 async def test_code_po_from_invoice_persists_ledger(db_session: AsyncSession) -> None:
     config = validate_rule_book_config_payload(load_rule_book_config_dict(1))
-    po = PurchaseOrder(org_id=1, po_number="PO-CLOUD-2026-100")
+    po = PurchaseOrder(tenant_id=1, po_number="PO-CLOUD-2026-100")
     db_session.add(po)
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         po_reference="PO-CLOUD-2026-100",
         invoice_no="AWS-2",

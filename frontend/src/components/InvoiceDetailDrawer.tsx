@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Clock,
@@ -10,29 +10,41 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/api/client";
-import type { InvoiceDetails, InvoiceUpdatePayload, LineItem, PipelineAuditStep } from "@/api/types";
+import type { InvoiceDetails, InvoiceClassificationAudit, InvoiceUpdatePayload, LineItem, PipelineAuditStep, PurchaseDossier } from "@/api/types";
 import {
   InvoiceDocumentViewer,
   InvoicePreviewModeToggle,
   type PreviewPaneMode,
 } from "@/components/InvoiceFilePreview";
+import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { formatQty, invId } from "@/lib/format";
+import { formatQty, documentDisplayRef } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import {
-  evaluationStatusLabel,
-  invoiceVendorConfidence,
-  routeTargetShortLabel,
-} from "@/lib/invoice";
-import {
   approveAndProcess,
+  canApproveClaim,
   canRejectClaim,
   canRequestInfo,
   reprocessAndWatch,
 } from "@/lib/invoiceActions";
+import {
+  invoiceFieldConfidence,
+} from "@/lib/invoice";
+import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import {
+  extractionFieldLabel,
+  extractionFieldsForDocumentType,
+  isPresetExtractionFieldKey,
+  normalizeExtractionFieldKeys,
+} from "@/lib/documentExtractionFields";
+import {
+  documentTypeLabelForCode,
+  effectiveDocumentTypeCode,
+} from "@/lib/documentTypeResolve";
 
 const TABS = ["fields", "lines", "po", "tax", "audit"] as const;
 type Tab = (typeof TABS)[number];
@@ -150,18 +162,99 @@ function taxMeta(currency: string): { label: string; rate: number } {
   return { label: "GST", rate: 10 };
 }
 
-function fieldConfidence(
+function extractionFieldDisplayLabel(
+  key: string,
+  tax: { label: string; rate: number }
+): string {
+  if (key === "gst") return `${tax.label} ${tax.rate}%`;
+  return extractionFieldLabel(key);
+}
+
+function isEditableExtractionField(key: string): boolean {
+  if (["line_items", "bank_details", "attachment_name", "document_text"].includes(key)) return false;
+  if (!isPresetExtractionFieldKey(key)) return false;
+  return true;
+}
+
+function invoiceScalarValue(inv: InvoiceDetails, key: string): string | null {
+  const record = inv as Record<string, unknown>;
+  const val = record[key];
+  if (val == null) return null;
+  const text = String(val).trim();
+  return text || null;
+}
+
+function readExtractionFieldValue(
+  key: string,
   inv: InvoiceDetails,
-  field: string
-): number {
-  const seed = inv.id * 7 + field.length * 13;
-  const base = 88 + (seed % 12);
-  if (field === "po" && !inv.po_reference) return 60;
-  if (inv.validation_results?.length) {
-    const passed = inv.validation_results.filter((r) => r.passed || r.skipped).length;
-    return Math.min(99, Math.max(70, Math.round((passed / inv.validation_results.length) * 100)));
+  draft: InvoiceEditDraft | null,
+  editing: boolean,
+  fmt: (value: string | null | undefined) => string
+): string {
+  if (key === "line_items") {
+    const count = editing && draft ? draft.line_items.length : inv.line_items.length;
+    return count ? `${count} line item${count === 1 ? "" : "s"}` : "—";
   }
-  return Math.min(99, base);
+  if (key === "bank_details") {
+    const parts = [inv.bank_bsb, inv.bank_account].filter(Boolean);
+    return parts.length ? parts.join(" / ") : "—";
+  }
+  if (key === "attachment_name") {
+    return inv.email_attachment_name?.trim() || "—";
+  }
+  if (key === "document_text") {
+    const body = inv.document_text?.trim();
+    if (!body) return "—";
+    const max = 280;
+    return body.length > max ? `${body.slice(0, max)}… (${body.length.toLocaleString()} chars)` : body;
+  }
+  if (editing && draft && isEditableExtractionField(key)) {
+    const draftValue = draft[key as keyof InvoiceEditDraft];
+    if (typeof draftValue === "string") {
+      return draftValue;
+    }
+  }
+  if (key === "subtotal" || key === "gst" || key === "total") {
+    if (editing && draft && isEditableExtractionField(key)) {
+      return draft[key];
+    }
+    const raw = inv[key];
+    return raw ? fmt(raw) : "—";
+  }
+  const raw = invoiceScalarValue(inv, key);
+  if (raw) return raw;
+  return "—";
+}
+
+function updateDraftExtractionField(
+  draft: InvoiceEditDraft,
+  key: string,
+  value: string
+): InvoiceEditDraft {
+  switch (key) {
+    case "vendor":
+      return { ...draft, vendor: value };
+    case "abn":
+      return { ...draft, abn: value };
+    case "invoice_no":
+      return { ...draft, invoice_no: value };
+    case "po_reference":
+      return { ...draft, po_reference: value };
+    case "cost_centre":
+      return { ...draft, cost_centre: value };
+    case "invoice_date":
+      return { ...draft, invoice_date: value };
+    case "due_date":
+      return { ...draft, due_date: value };
+    case "subtotal":
+      return { ...draft, subtotal: value };
+    case "gst":
+      return { ...draft, gst: value };
+    case "total":
+      return { ...draft, total: value };
+    default:
+      return draft;
+  }
 }
 
 function ConfidenceDot({ value }: { value: number }) {
@@ -432,17 +525,25 @@ export function InvoiceDetailDrawer({
   initialTab = "fields",
 }: InvoiceDetailDrawerProps) {
   const [tab, setTab] = useState<Tab>(initialTab);
+  const { data: ruleBook } = useRuleBookConfig(open);
   const [inv, setInv] = useState<InvoiceDetails | null>(null);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [sheetState, setSheetState] = useState<"open" | "closed">("closed");
   const [pipelineSteps, setPipelineSteps] = useState<PipelineAuditStep[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [classificationAudit, setClassificationAudit] = useState<InvoiceClassificationAudit | null>(null);
+  const [classificationLoading, setClassificationLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<InvoiceEditDraft | null>(null);
   const [attachBusy, setAttachBusy] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewPaneMode>("summary");
+  const [viewId, setViewId] = useState<number | null>(null);
+  const [dossier, setDossier] = useState<PurchaseDossier | null>(null);
+  const [dossierLoading, setDossierLoading] = useState(false);
+
+  const activeInvoiceId = viewId ?? invoiceId;
 
   useEffect(() => {
     if (open) {
@@ -465,21 +566,52 @@ export function InvoiceDetailDrawer({
   }, [invoiceId, open]);
 
   useEffect(() => {
-    if (!mounted || invoiceId == null) {
+    setViewId(null);
+  }, [invoiceId, open]);
+
+  useEffect(() => {
+    if (!mounted || activeInvoiceId == null) {
       if (!mounted) {
         setInv(null);
         setPipelineSteps([]);
+        setClassificationAudit(null);
         setPreviewMode("summary");
+        setDossier(null);
       }
       return;
     }
     setLoading(true);
     api
-      .getInvoice(invoiceId)
+      .getInvoice(activeInvoiceId)
       .then(setInv)
       .catch(() => setInv(null))
       .finally(() => setLoading(false));
-  }, [mounted, invoiceId]);
+  }, [mounted, activeInvoiceId]);
+
+  useEffect(() => {
+    if (!inv) {
+      setClassificationAudit(null);
+      return;
+    }
+    setClassificationLoading(true);
+    api
+      .getInvoiceClassificationAudit(inv.id, { fresh: true })
+      .then((detail) => {
+        setClassificationAudit(detail?.document_type_code ? detail : null);
+      })
+      .catch(() => setClassificationAudit(null))
+      .finally(() => setClassificationLoading(false));
+  }, [inv?.id]);
+
+  useEffect(() => {
+    if (!inv || tab !== "po") return;
+    setDossierLoading(true);
+    api
+      .getPurchaseDossier(inv.id, { fresh: true })
+      .then(setDossier)
+      .catch(() => setDossier(null))
+      .finally(() => setDossierLoading(false));
+  }, [inv, tab]);
 
   useEffect(() => {
     if (!inv || tab !== "audit") return;
@@ -517,6 +649,39 @@ export function InvoiceDetailDrawer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [mounted, onClose]);
+
+  const resolvedDocumentTypeCode = useMemo(() => {
+    if (!inv || !ruleBook) return "";
+    return effectiveDocumentTypeCode(inv, ruleBook.documentTypes);
+  }, [inv, ruleBook]);
+
+  const extractionFieldKeys = useMemo(() => {
+    if (!inv) return [];
+    const fromApi = normalizeExtractionFieldKeys(inv.document_type_extraction_fields ?? undefined);
+    if (fromApi.length) return fromApi;
+    if (ruleBook && resolvedDocumentTypeCode) {
+      return extractionFieldsForDocumentType(ruleBook.documentTypes, resolvedDocumentTypeCode);
+    }
+    return [];
+  }, [inv, ruleBook, resolvedDocumentTypeCode]);
+
+  const documentTypeInCatalogue = useMemo(() => {
+    const code = resolvedDocumentTypeCode;
+    if (!code || !ruleBook) return false;
+    return ruleBook.documentTypes.some((dt) => dt.code.toUpperCase() === code);
+  }, [resolvedDocumentTypeCode, ruleBook]);
+
+  const documentTypeBadgeLabel = useMemo(() => {
+    if (!ruleBook) return null;
+    if (resolvedDocumentTypeCode) {
+      return documentTypeLabelForCode(ruleBook.documentTypes, resolvedDocumentTypeCode);
+    }
+    const purchase = inv?.purchase_document_type?.trim();
+    if (purchase) {
+      return purchase.toUpperCase();
+    }
+    return null;
+  }, [inv?.purchase_document_type, resolvedDocumentTypeCode, ruleBook]);
 
   if (!mounted) return null;
 
@@ -584,7 +749,7 @@ export function InvoiceDetailDrawer({
 
   async function handleReject() {
     if (!inv || !canRejectClaim(inv.status)) return;
-    if (!window.confirm(`Reject ${inv.vendor ?? invId(inv.id)}?`)) return;
+    if (!window.confirm(`Reject ${inv.vendor ?? documentDisplayRef(inv)}?`)) return;
     setActionBusy(true);
     try {
       await api.reject(inv.id);
@@ -630,24 +795,34 @@ export function InvoiceDetailDrawer({
     }
   }
 
-  async function publish() {
-    if (!inv) return;
+  async function handleApproveAndProcess() {
+    if (!inv || !canApproveClaim(inv.status)) return;
+    if (!inv.has_stored_file) {
+      alert("Upload a PDF before approving this invoice.");
+      return;
+    }
     setActionBusy(true);
     try {
-      if (["exception", "duplicate_skipped", "rejected"].includes(inv.status)) {
-        if (!inv.has_stored_file) {
-          alert("Upload a PDF before approving this invoice.");
-          return;
-        }
-        await approveAndProcess(inv.id, async () => {
-          onUpdated?.();
-          await reloadInvoice();
-        });
-      } else if (inv.status === "processed") {
-        await api.publishInvoice(inv.id);
-      }
+      await approveAndProcess(inv.id, async () => {
+        onUpdated?.();
+        await reloadInvoice();
+      });
       onUpdated?.();
       onClose();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Approve failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function publish() {
+    if (!inv || inv.status !== "processed" || inv.published_to_ledger) return;
+    setActionBusy(true);
+    try {
+      await api.publishInvoice(inv.id);
+      onUpdated?.();
+      await reloadInvoice();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Publish failed");
     } finally {
@@ -681,14 +856,16 @@ export function InvoiceDetailDrawer({
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-base font-semibold truncate">{inv.vendor ?? "—"}</span>
                   <Badge variant="outline" className="tnum">
-                    {invId(inv.id)}
+                    {documentDisplayRef(inv)}
                   </Badge>
                   <Badge variant="outline" className="tnum text-[10px]">
                     {docNumber}
                   </Badge>
-                  <Badge className="bg-accent text-accent-foreground border-0 text-[10px]">
-                    Invoice
-                  </Badge>
+                  {documentTypeBadgeLabel ? (
+                    <Badge className="bg-accent text-accent-foreground border-0 text-[10px]">
+                      {documentTypeBadgeLabel}
+                    </Badge>
+                  ) : null}
                 </div>
                 <p className="text-xs text-muted-foreground tnum mt-0.5">
                   {inv.invoice_no ?? "—"} · {inv.invoice_date ?? "—"} · {fmt(inv.total)}
@@ -770,155 +947,56 @@ export function InvoiceDetailDrawer({
                   ))}
                 </div>
 
-                {tab === "fields" && draft && editing && (
+                {tab === "fields" && inv && (
                   <div className="mt-4 space-y-3">
-                    <FieldRow
-                      label="Vendor"
-                      value={draft.vendor}
-                      confidence={fieldConfidence(inv, "vendor")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, vendor: v })}
+                    <InvoiceClassificationPanel
+                      audit={classificationAudit}
+                      loading={classificationLoading}
                     />
-                    <FieldRow
-                      label="Tax ID"
-                      value={draft.abn}
-                      confidence={fieldConfidence(inv, "abn")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, abn: v })}
-                    />
-                    <FieldRow
-                      label="Invoice number"
-                      value={draft.invoice_no}
-                      confidence={fieldConfidence(inv, "invoice_no")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, invoice_no: v })}
-                    />
-                    <FieldRow
-                      label="Invoice date"
-                      value={draft.invoice_date}
-                      confidence={fieldConfidence(inv, "date")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, invoice_date: v })}
-                    />
-                    <FieldRow
-                      label="Due date"
-                      value={draft.due_date}
-                      confidence={fieldConfidence(inv, "date")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, due_date: v })}
-                    />
-                    <FieldRow
-                      label="PO reference"
-                      value={draft.po_reference}
-                      confidence={fieldConfidence(inv, "po")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, po_reference: v })}
-                    />
-                    <FieldRow
-                      label="Cost centre"
-                      value={draft.cost_centre}
-                      confidence={fieldConfidence(inv, "cost")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, cost_centre: v })}
-                    />
-                    <FieldRow
-                      label="Subtotal"
-                      value={draft.subtotal}
-                      confidence={fieldConfidence(inv, "total")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, subtotal: v })}
-                    />
-                    <FieldRow
-                      label={`${tax.label} ${tax.rate}%`}
-                      value={draft.gst}
-                      confidence={fieldConfidence(inv, "total")}
-                      editable
-                      onChange={(v) => setDraft({ ...draft, gst: v })}
-                    />
-                    <FieldRow
-                      label="Total"
-                      value={draft.total}
-                      confidence={fieldConfidence(inv, "total")}
-                      bold
-                      editable
-                      onChange={(v) => setDraft({ ...draft, total: v })}
-                    />
-                  </div>
-                )}
-
-                {tab === "fields" && !(draft && editing) && (
-                  <div className="mt-4 space-y-3">
-                    <FieldRow
-                      label="Vendor"
-                      value={inv.vendor ?? "—"}
-                      confidence={fieldConfidence(inv, "vendor")}
-                    />
-                    <FieldRow
-                      label="Tax ID"
-                      value={inv.abn ?? "—"}
-                      confidence={fieldConfidence(inv, "abn")}
-                    />
-                    <FieldRow
-                      label="Document number"
-                      value={docNumber}
-                      confidence={99}
-                    />
-                    <FieldRow
-                      label="Invoice number"
-                      value={inv.invoice_no ?? "—"}
-                      confidence={fieldConfidence(inv, "invoice_no")}
-                    />
-                    <FieldRow
-                      label="Invoice date"
-                      value={inv.invoice_date ?? "—"}
-                      confidence={fieldConfidence(inv, "date")}
-                    />
-                    <FieldRow
-                      label="Due date"
-                      value={inv.due_date ?? "—"}
-                      confidence={fieldConfidence(inv, "date")}
-                    />
-                    <FieldRow
-                      label="PO reference"
-                      value={inv.po_reference ?? "—"}
-                      confidence={fieldConfidence(inv, "po")}
-                    />
-                    <FieldRow
-                      label="Cost centre"
-                      value={inv.cost_centre ?? "—"}
-                      confidence={fieldConfidence(inv, "cost")}
-                    />
-                    <FieldRow
-                      label="Route target"
-                      value={routeTargetShortLabel(inv.route_target)}
-                      confidence={invoiceVendorConfidence(inv) ?? 0}
-                    />
-                    <FieldRow
-                      label="Evaluation"
-                      value={evaluationStatusLabel(inv.evaluation_status)}
-                      confidence={invoiceVendorConfidence(inv) ?? 0}
-                    />
-                    <FieldRow
-                      label="Matched rules"
-                      value={(inv.matched_rule_ids ?? []).join(", ") || "—"}
-                      confidence={99}
-                    />
-                    <FieldRow
-                      label="Subtotal"
-                      value={fmt(inv.subtotal)}
-                      confidence={fieldConfidence(inv, "total")}
-                    />
-                    <FieldRow
-                      label={`${tax.label} ${tax.rate}%`}
-                      value={fmt(inv.gst)}
-                      confidence={fieldConfidence(inv, "total")}
-                    />
-                    <FieldRow
-                      label="Total"
-                      value={fmt(inv.total)}
-                      confidence={fieldConfidence(inv, "total")}
-                      bold
-                    />
+                    {extractionFieldKeys.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {!resolvedDocumentTypeCode
+                          ? "No document type matched. Configure classifiers in Rule Book → Document types, then reprocess."
+                          : !documentTypeInCatalogue
+                            ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or reprocess after fixing classifiers.`
+                            : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type card in Rule Book.`}
+                      </p>
+                    ) : (
+                      extractionFieldKeys.map((key) => (
+                        <div key={key}>
+                          <FieldRow
+                            label={extractionFieldDisplayLabel(key, tax)}
+                            value={readExtractionFieldValue(
+                              key,
+                              inv,
+                              draft,
+                              Boolean(draft && editing),
+                              fmt
+                            )}
+                            confidence={invoiceFieldConfidence(inv, key)}
+                            bold={key === "total"}
+                            editable={Boolean(
+                              draft && editing && isEditableExtractionField(key)
+                            )}
+                            onChange={
+                              draft && editing && isEditableExtractionField(key)
+                                ? (value) =>
+                                    setDraft(updateDraftExtractionField(draft, key, value))
+                                : undefined
+                            }
+                          />
+                          {key === "line_items" && inv.line_items.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setTab("lines")}
+                              className="mt-1 text-xs text-primary hover:underline"
+                            >
+                              View line items tab
+                            </button>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
                   </div>
                 )}
 
@@ -1069,25 +1147,13 @@ export function InvoiceDetailDrawer({
                   </div>
                 )}
 
-                {tab === "po" &&
-                  (inv.po_reference ? (
-                    <div className="mt-4 space-y-3">
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-primary/15 text-primary border-0">3-way match</Badge>
-                        <span className="text-sm text-muted-foreground tnum">{inv.po_reference}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-4 rounded-md border border-dashed border-border p-6 text-center">
-                      <p className="text-sm font-medium">No purchase order linked</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        2-way match only. Coding applied via vendor / keyword rules.
-                      </p>
-                      <Button variant="outline" size="sm" className="mt-3" disabled>
-                        Link a PO
-                      </Button>
-                    </div>
-                  ))}
+                {tab === "po" && (
+                  <InvoicePurchaseDossierSection
+                    dossier={dossier}
+                    loading={dossierLoading}
+                    onOpenSibling={(id) => setViewId(id)}
+                  />
+                )}
 
                 {tab === "tax" && (
                   <div className="mt-4 space-y-2 text-sm">
@@ -1207,15 +1273,28 @@ export function InvoiceDetailDrawer({
                       <Clock className="h-4 w-4 mr-1" />
                       Request approval
                     </Button>
-                    <Button
-                      size="sm"
-                      data-testid="button-publish"
-                      disabled={actionBusy}
-                      onClick={() => void publish()}
-                    >
-                      <Send className="h-4 w-4 mr-1" />
-                      Publish to ledger
-                    </Button>
+                    {canApproveClaim(inv.status) && (
+                      <Button
+                        size="sm"
+                        data-testid="button-approve-process"
+                        disabled={actionBusy || !inv.has_stored_file}
+                        onClick={() => void handleApproveAndProcess()}
+                      >
+                        <Send className="h-4 w-4 mr-1" />
+                        Approve &amp; process
+                      </Button>
+                    )}
+                    {inv.status === "processed" && !inv.published_to_ledger && (
+                      <Button
+                        size="sm"
+                        data-testid="button-publish"
+                        disabled={actionBusy}
+                        onClick={() => void publish()}
+                      >
+                        <Send className="h-4 w-4 mr-1" />
+                        Publish to ledger
+                      </Button>
+                    )}
                   </div>
                 </>
               )}

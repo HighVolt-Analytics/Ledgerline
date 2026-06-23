@@ -42,7 +42,7 @@ async def _audit_logs_for_invoices(
 
 async def _payments_for_invoices(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     invoice_ids: list[int],
 ) -> dict[int, Payment]:
     if not invoice_ids:
@@ -50,7 +50,7 @@ async def _payments_for_invoices(
     rows = (
         await db.execute(
             select(Payment).where(
-                Payment.org_id == org_id,
+                Payment.tenant_id == tenant_id,
                 Payment.invoice_id.in_(invoice_ids),
             )
         )
@@ -71,10 +71,10 @@ async def document_matrix(
     """Invoices with server-computed pipeline stage cells, flags, and payment readiness."""
     stmt = (
         select(Invoice)
-        .where(Invoice.org_id == ctx.org_id)
-        .order_by(Invoice.created_at.desc())
+        .where(Invoice.tenant_id == ctx.tenant_id)
+        .order_by(Invoice.created_at.desc(), Invoice.id.desc())
     )
-    count_stmt = select(func.count(Invoice.id)).where(Invoice.org_id == ctx.org_id)
+    count_stmt = select(func.count(Invoice.id)).where(Invoice.tenant_id == ctx.tenant_id)
     if status:
         try:
             status_enum = InvoiceStatus(status)
@@ -97,16 +97,23 @@ async def document_matrix(
 
     invoice_ids = [inv.id for inv in invoices]
     audit_by_id = await _audit_logs_for_invoices(db, invoice_ids)
-    payments_by_id = await _payments_for_invoices(db, ctx.org_id, invoice_ids)
+    payments_by_id = await _payments_for_invoices(db, ctx.tenant_id, invoice_ids)
+    published_ids = {
+        inv_id
+        for inv_id, logs in audit_by_id.items()
+        if any(log.event == "invoice_published_to_ledger" for log in logs)
+    }
 
     data: list[MatrixRowResponse] = []
     for inv in invoices:
         flag, flag_reason = derive_matrix_flag(inv)
         payment = payments_by_id.get(inv.id)
-        conflict_with, conflict_detail = await duplicate_conflict_for_invoice(db, ctx.org_id, inv)
+        conflict_with, conflict_detail = await duplicate_conflict_for_invoice(db, ctx.tenant_id, inv)
         data.append(
             MatrixRowResponse(
-                invoice=_to_response(inv),
+                invoice=_to_response(
+                    inv, published_to_ledger=inv.id in published_ids
+                ),
                 stages=build_matrix_cells(inv, audit_by_id.get(inv.id, [])),
                 flag=flag,
                 flag_reason=flag_reason,

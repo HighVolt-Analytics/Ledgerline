@@ -24,16 +24,10 @@ from app.services.rule_engine import SampleEmail, match_email_capture_rule
 from app.services.team_expense_service import record_team_expense_processed
 
 
-@pytest.fixture
-def capture_config() -> RuleBookConfigPayload:
-    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
-    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
-
-
 def test_expense_rule_wins_over_team_for_shared_vendor(capture_config: RuleBookConfigPayload) -> None:
     """Expenses route evaluates expense book only (team book is route-gated)."""
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Uber Australia",
         invoice_no="UBER-001",
         total=45.0,
@@ -48,7 +42,7 @@ def test_expense_rule_wins_over_team_for_shared_vendor(capture_config: RuleBookC
 
 def test_team_expense_rule_maps_ledger(capture_config: RuleBookConfigPayload) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Ola Cabs",
         invoice_no="OLA-001",
         total=45.0,
@@ -109,7 +103,7 @@ def test_ingest_capture_skips_wrong_mailbox(capture_config: RuleBookConfigPayloa
 async def test_record_team_expense_processed_updates_mtd(db_session: AsyncSession) -> None:
     db_session.add(
         EmployeeMasterRecord(
-            org_id=1,
+            tenant_id=1,
             master_id="em-ops",
             name="Ops Lead",
             email="ops@acme-hospitality.com.au",
@@ -120,7 +114,7 @@ async def test_record_team_expense_processed_updates_mtd(db_session: AsyncSessio
         )
     )
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Local Cafe",
         invoice_no="MEAL-99",
         total=50.0,

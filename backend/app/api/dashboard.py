@@ -20,7 +20,7 @@ async def badges(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[NavBadges]:
     """Lightweight sidebar counters for layout navigation."""
-    return ApiEnvelope(data=await build_nav_badges(db, org_id=ctx.org_id))
+    return ApiEnvelope(data=await build_nav_badges(db, tenant_id=ctx.tenant_id))
 
 
 @router.get("/stats", response_model=ApiEnvelope[DashboardStats])
@@ -29,7 +29,7 @@ async def stats(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[DashboardStats]:
     """Aggregate KPI counters for dashboard cards and layout badges."""
-    return ApiEnvelope(data=await build_stats(db, org_id=ctx.org_id))
+    return ApiEnvelope(data=await build_stats(db, tenant_id=ctx.tenant_id))
 
 
 @router.get("/overview", response_model=ApiEnvelope[DashboardOverview])
@@ -47,7 +47,7 @@ async def overview(
     return ApiEnvelope(
         data=await build_overview(
             db,
-            org_id=ctx.org_id,
+            tenant_id=ctx.tenant_id,
             activity_limit=activity_limit,
             month=month,
         )
@@ -60,4 +60,4 @@ async def activity(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[ActivityItem]]:
-    return ApiEnvelope(data=await fetch_activity(db, limit, org_id=ctx.org_id))
+    return ApiEnvelope(data=await fetch_activity(db, limit, tenant_id=ctx.tenant_id))

@@ -55,7 +55,6 @@ _REQUIRED = (
 
 
 @dataclass
-
 class ValidationResult:
 
     rule: str
@@ -64,6 +63,10 @@ class ValidationResult:
 
     message: str
 
+    skipped: bool = False
+
+    severity: str = "block"
+
 
 
 
@@ -71,6 +74,11 @@ class ValidationResult:
 def vr03_required(data: InvoiceData) -> ValidationResult:
 
     missing = [f for f in _REQUIRED if getattr(data, f) is None]
+
+    if not data.abn:
+        gstin = data.raw_fields.get("gstin")
+        if gstin and is_acceptable_tax_id(str(gstin)):
+            missing = [field for field in missing if field != "abn"]
 
     if not data.line_items:
 
@@ -106,7 +114,7 @@ async def vr05_abn(
 
     *,
 
-    org_id: int,
+    tenant_id: int,
 
     sender: str | None = None,
 
@@ -136,13 +144,17 @@ async def vr05_abn(
 
         return ValidationResult("VR05", True, "Tax ID accepted (equivalent identifier)")
 
+    gstin = data.raw_fields.get("gstin")
+    if gstin and is_acceptable_tax_id(str(gstin)):
+        return ValidationResult("VR05", True, "GSTIN / tax ID present on document")
+
 
 
     approved = await find_approved_vendor(
 
         session,
 
-        org_id=org_id,
+        tenant_id=tenant_id,
 
         vendor_name=data.vendor,
 
@@ -256,7 +268,7 @@ async def vr02_unique(
 
     *,
 
-    org_id: int,
+    tenant_id: int,
 
 ) -> ValidationResult:
 
@@ -275,35 +287,55 @@ async def vr02_unique(
 
 
 
-    vendor_key = data.vendor.strip().lower()
-
-    stmt = select(Invoice).where(
-
-        Invoice.org_id == org_id,
-
-        func.lower(Invoice.invoice_no) == data.invoice_no.strip().lower(),
-
-        func.lower(Invoice.vendor) == vendor_key,
-
+    from app.services.document_duplicate_service import (
+        fuzzy_business_duplicate_exists,
+        invoice_number_duplicate_exists,
+        normalized_invoice_number_duplicate_exists,
     )
 
-    if exclude_id:
-
-        stmt = stmt.where(Invoice.id != exclude_id)
-
-    if (await session.execute(stmt)).scalar_one_or_none():
-
+    duplicate = await invoice_number_duplicate_exists(
+        session,
+        data,
+        tenant_id=tenant_id,
+        exclude_id=exclude_id,
+    )
+    if duplicate is not None:
         return ValidationResult(
-
             "VR02",
-
             False,
-
-            f"Duplicate invoice no for vendor {data.vendor}: {data.invoice_no}",
-
+            f"Exact duplicate invoice no for vendor {data.vendor}: {data.invoice_no}",
         )
 
-    return ValidationResult("VR02", True, "Invoice number unique for vendor")
+    normalized_dup = await normalized_invoice_number_duplicate_exists(
+        session,
+        data,
+        tenant_id=tenant_id,
+        exclude_id=exclude_id,
+    )
+    if normalized_dup is not None:
+        return ValidationResult(
+            "VR02",
+            False,
+            f"Normalized duplicate invoice no for vendor {data.vendor}: {data.invoice_no}",
+        )
+
+    fuzzy_dup = await fuzzy_business_duplicate_exists(
+        session,
+        data,
+        tenant_id=tenant_id,
+        exclude_id=exclude_id,
+    )
+    if fuzzy_dup is not None:
+        return ValidationResult(
+            "VR02",
+            False,
+            (
+                f"Fuzzy duplicate: vendor {data.vendor}, similar amount/date "
+                f"(invoice {fuzzy_dup.invoice_no})"
+            ),
+        )
+
+    return ValidationResult("VR02", True, "No duplicate detected (exact, normalized, fuzzy)")
 
 
 
@@ -335,7 +367,37 @@ def vr03_grn_document(data: InvoiceData) -> ValidationResult:
     return ValidationResult("VR03", True, "GRN document fields present")
 
 
+def vr03_direct_expense(data: InvoiceData) -> ValidationResult:
+    missing: list[str] = []
+    if not (data.vendor or "").strip():
+        missing.append("vendor")
+    if not (data.invoice_no or "").strip():
+        missing.append("invoice_no")
+    if data.total is None:
+        missing.append("total")
+    if not data.line_items:
+        missing.append("line_items")
+    if missing:
+        return ValidationResult("VR03", False, f"Missing: {', '.join(missing)}")
+    return ValidationResult("VR03", True, "Direct expense fields present")
+
+
+def _skipped(rule: str, reason: str) -> ValidationResult:
+    return ValidationResult(rule, True, reason, skipped=True)
+
+
 _SYNC_RULES = [vr03_required, vr06_dates, vr07_currency, vr08_gst, vr01_total]
+
+
+def _append_playbook_validations(
+    results: list[ValidationResult],
+    playbook_gates: object | None,
+) -> list[ValidationResult]:
+    if playbook_gates is None:
+        return results
+    from app.services.document_type_playbook_service import playbook_validation_results
+
+    return [*results, *playbook_validation_results(playbook_gates)]
 
 
 async def run_all_validations(
@@ -343,53 +405,35 @@ async def run_all_validations(
     session: AsyncSession,
     exclude_id: int | None = None,
     *,
-    org_id: int,
+    tenant_id: int,
     sender: str | None = None,
     route_target: str | None = None,
     purchase_document_type: str | None = None,
     has_receipt_file: bool = False,
+    document_type_code: str | None = None,
+    validation_profile: str | None = None,
+    document_types: list | None = None,
+    playbook_gates: object | None = None,
+    invoice: Invoice | None = None,
 ) -> list[ValidationResult]:
-    if purchase_document_type == "po":
-        return [
-            vr03_po_document(data),
-            await vr05_abn(data, session, org_id=org_id, sender=sender),
-            vr07_currency(data),
-        ]
-    if purchase_document_type == "grn":
-        return [
-            vr03_grn_document(data),
-            vr07_currency(data),
-        ]
+    from app.services.validation_runner import ValidationRunContext, run_configured_validations
 
-    from app.services.invoice_evaluation_service import ROUTE_TEAM
-    from app.services.team_expense_validator import run_team_expense_validations
-
-    if route_target == ROUTE_TEAM:
-        return await run_team_expense_validations(
-            data,
-            session,
-            org_id=org_id,
-            route_target=route_target,
-            email_sender=sender,
-            has_receipt_file=has_receipt_file,
-        )
-
-    results = [fn(data) for fn in _SYNC_RULES]
-    results.insert(1, await vr05_abn(data, session, org_id=org_id, sender=sender))
-    results.append(await vr02_unique(data, session, exclude_id, org_id=org_id))
-
-    results.extend(
-        await run_team_expense_validations(
-            data,
-            session,
-            org_id=org_id,
-            route_target=route_target,
-            email_sender=sender,
-            has_receipt_file=has_receipt_file,
-        )
+    ctx = ValidationRunContext(
+        data=data,
+        session=session,
+        tenant_id=tenant_id,
+        exclude_id=exclude_id,
+        sender=sender,
+        route_target=route_target,
+        purchase_document_type=purchase_document_type,
+        has_receipt_file=has_receipt_file,
+        document_type_code=document_type_code,
+        validation_profile=validation_profile,
+        document_types=document_types,
+        playbook_gates=playbook_gates,
+        invoice=invoice,
     )
-
-    return results
+    return await run_configured_validations(ctx)
 
 
 
@@ -397,7 +441,10 @@ async def run_all_validations(
 
 def all_passed(results: list[ValidationResult]) -> bool:
 
-    return all(r.passed for r in results)
+    return all(
+        r.passed or r.skipped or (not r.passed and r.severity == "warn")
+        for r in results
+    )
 
 
 
@@ -405,6 +452,6 @@ def all_passed(results: list[ValidationResult]) -> bool:
 
 def results_to_json(results: list[ValidationResult]) -> str:
 
-    return json.dumps([r.__dict__ for r in results])
+    return json.dumps([{**r.__dict__} for r in results])
 
 

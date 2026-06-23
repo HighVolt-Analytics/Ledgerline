@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { BudgetUtilBar } from "@/components/team-expenses/BudgetUtilBar";
@@ -16,6 +17,7 @@ import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
+import { matchesListSearch } from "@/lib/listSearch";
 import { money } from "@/lib/format";
 import {
   employeeBudgetRows,
@@ -52,6 +54,7 @@ export function TeamExpensesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [tab, setTab] = useState("claims");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useVisibilityPolling(() => {
     void refetch();
@@ -76,6 +79,23 @@ export function TeamExpensesPage() {
   }, [claims, budgets]);
 
   const selected = claims.find((e) => e.id === selectedId) ?? claims[0] ?? null;
+  const filteredClaims = useMemo(
+    () =>
+      claims.filter((claim) =>
+        matchesListSearch(
+          searchQuery,
+          claim.id,
+          claim.documentRef,
+          claim.submitter,
+          claim.category,
+          claim.merchant,
+          claim.state,
+          claim.channel,
+          claim.amount
+        )
+      ),
+    [claims, searchQuery]
+  );
   const selectedInvoice = selected ? invoiceById.get(Number(selected.id)) : undefined;
   const budget = selected
     ? budgets.find((b) => b.owner !== "Team" && b.category === selected.category)
@@ -127,7 +147,7 @@ export function TeamExpensesPage() {
       <RoutedInvoicesPanel
         routeTarget={ROUTE_TARGET}
         title="Documents routed from Rule Book"
-        hint="Employee channel claims routed here by email capture or team expense rules."
+        hint="Employee expense claims routed here after OCR and document classification."
         testId="team-routed-invoices"
       />
 
@@ -147,12 +167,24 @@ export function TeamExpensesPage() {
         ) : claims.length === 0 ? (
           <EmptyState
             title="No team expense claims yet"
-            hint="Documents routed to Team Expenses appear here after email capture or rule-book remap."
+            hint="Documents routed to Team Expenses appear here after OCR and rule-book evaluation."
           />
         ) : (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
             <div className="space-y-2 lg:max-h-[calc(100dvh-360px)] lg:overflow-y-auto lg:pr-1">
-              {claims.map((claim) => (
+              <ListSearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search this list…"
+                testId="input-team-claims-search"
+                className="sticky top-0 z-10 bg-background pb-2"
+              />
+              {filteredClaims.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  No claims match your search.
+                </p>
+              ) : null}
+              {filteredClaims.map((claim) => (
                 <button
                   key={claim.id}
                   type="button"
@@ -177,6 +209,11 @@ export function TeamExpensesPage() {
                       <div className="text-xs text-muted-foreground truncate mt-0.5">
                         {claim.category} · {claim.merchant}
                       </div>
+                      {claim.documentRef ? (
+                        <div className="text-[10px] text-muted-foreground tnum mt-0.5 truncate">
+                          {claim.documentRef}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="text-right shrink-0">
                       <div className="tnum font-semibold text-sm">{fmtAud(claim.amount)}</div>

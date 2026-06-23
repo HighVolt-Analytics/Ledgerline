@@ -1,11 +1,15 @@
 import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "@/components/Layout";
+import { SuperAdminLayout } from "@/components/SuperAdminLayout";
+import { SuperAdminRoute } from "@/components/SuperAdminRoute";
+import { TenantRoute } from "@/components/TenantRoute";
 import { PageLoader } from "@/components/PageLoader";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { getRouterBasename } from "@/lib/routerBasename";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
 import { SetupPage } from "@/pages/SetupPage";
 
 const ApprovalsPage = lazy(() =>
@@ -17,8 +21,8 @@ const BillingPage = lazy(() =>
 const ConnectMailboxPage = lazy(() =>
   import("@/pages/ConnectMailboxPage").then((m) => ({ default: m.ConnectMailboxPage }))
 );
-const InboxPage = lazy(() =>
-  import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage }))
+const UploadPage = lazy(() =>
+  import("@/pages/UploadPage").then((m) => ({ default: m.UploadPage }))
 );
 const IntegrationsPage = lazy(() =>
   import("@/pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage }))
@@ -63,11 +67,25 @@ const PurchaseManagementPage = lazy(() =>
     default: m.PurchaseManagementPage,
   }))
 );
+const DossiersPage = lazy(() =>
+  import("@/pages/DossiersPage").then((m) => ({ default: m.DossiersPage }))
+);
+const DossierDetailPage = lazy(() =>
+  import("@/pages/DossierDetailPage").then((m) => ({ default: m.DossierDetailPage }))
+);
 const PaymentsPage = lazy(() =>
   import("@/pages/PaymentsPage").then((m) => ({ default: m.PaymentsPage }))
 );
 const LedgerLinkPage = lazy(() =>
   import("@/pages/LedgerLinkPage").then((m) => ({ default: m.LedgerLinkPage }))
+);
+const ClientsPage = lazy(() =>
+  import("@/pages/platform/ClientsPage").then((m) => ({ default: m.ClientsPage }))
+);
+const TenantSettingsPage = lazy(() =>
+  import("@/pages/platform/TenantSettingsPage").then((m) => ({
+    default: m.TenantSettingsPage,
+  }))
 );
 
 function LazyPage({ children }: { children: React.ReactNode }) {
@@ -81,6 +99,7 @@ export default function App() {
     <BrowserRouter basename={routerBasename}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
         <Route path="/setup" element={<SetupPage />} />
         <Route
           path="/connect-mailbox"
@@ -91,15 +110,17 @@ export default function App() {
           }
         />
 
-        {/* /ledgerlink and /ledgerlink/ -> dashboard (index route) */}
+        {/* Tenant app — hidden from super admins */}
         <Route path="/" element={<ProtectedRoute />}>
-          <Route element={<Layout />}>
+          <Route element={<TenantRoute />}>
+            <Route element={<Layout />}>
             <Route index element={<DashboardPage />} />
+            <Route path="inbox" element={<Navigate to="/upload" replace />} />
             <Route
-              path="inbox"
+              path="upload"
               element={
                 <LazyPage>
-                  <InboxPage />
+                  <UploadPage />
                 </LazyPage>
               }
             />
@@ -140,6 +161,22 @@ export default function App() {
               element={
                 <LazyPage>
                   <ApprovalsPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="dossiers"
+              element={
+                <LazyPage>
+                  <DossiersPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="dossiers/:dossierId"
+              element={
+                <LazyPage>
+                  <DossierDetailPage />
                 </LazyPage>
               }
             />
@@ -239,6 +276,32 @@ export default function App() {
                 </LazyPage>
               }
             />
+          </Route>
+          </Route>
+        </Route>
+
+        {/* Super admin platform console */}
+        <Route path="/platform" element={<ProtectedRoute />}>
+          <Route element={<SuperAdminRoute />}>
+            <Route element={<SuperAdminLayout />}>
+              <Route index element={<Navigate to="clients" replace />} />
+              <Route
+                path="clients"
+                element={
+                  <LazyPage>
+                    <ClientsPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="clients/:tenantId"
+                element={
+                  <LazyPage>
+                    <TenantSettingsPage />
+                  </LazyPage>
+                }
+              />
+            </Route>
           </Route>
         </Route>
 

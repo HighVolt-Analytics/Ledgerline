@@ -20,12 +20,6 @@ from app.schemas.rule_book_config import validate_rule_book_config_payload
 
 
 @pytest.fixture
-def capture_config():
-    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
-    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
-
-
-@pytest.fixture
 def clean_org_rule_book(tmp_path, monkeypatch: pytest.MonkeyPatch):
     upload = tmp_path / "uploads"
     rule_books = upload / "rule_books"
@@ -82,7 +76,7 @@ def _unmatched_email() -> RawEmail:
 
 def test_legacy_cascade_vendor_match(capture_config) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Qantas Airways Limited",
         invoice_no="QAN-001",
         status=InvoiceStatus.MAPPING,
@@ -95,7 +89,7 @@ def test_legacy_cascade_vendor_match(capture_config) -> None:
 
 def test_legacy_cascade_po_code_match(capture_config) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Campaign Vendor",
         po_reference="PO-MKT-2026-014",
         status=InvoiceStatus.MAPPING,
@@ -110,7 +104,7 @@ def test_legacy_cascade_maps_before_suspense(capture_config) -> None:
     from app.services.rule_book_mapper import resolve_config_mapping
 
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Hilton Sydney",
         invoice_no="HTL-LEGACY-1",
         status=InvoiceStatus.MAPPING,
@@ -135,13 +129,16 @@ async def test_ingest_skips_email_without_capture_rule(
     monkeypatch: pytest.MonkeyPatch,
     clean_org_rule_book,
 ) -> None:
-    monkeypatch.setattr("app.services.pipeline._finish_email_message", lambda *args: None)
+    monkeypatch.setattr(
+        "app.services.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
 
     result = await ingest_email_attachments(
         db_session,
         [_unmatched_email()],
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=1,
+        tenant_slug="hv-org",
     )
     assert result.ingested_count == 0
     count = len((await db_session.execute(select(Invoice))).scalars().all())
@@ -158,13 +155,16 @@ async def test_ingest_creates_invoice_when_capture_rule_matches(
         "app.services.pipeline.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/test.pdf",
     )
-    monkeypatch.setattr("app.services.pipeline._finish_email_message", lambda *args: None)
+    monkeypatch.setattr(
+        "app.services.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
 
     result = await ingest_email_attachments(
         db_session,
         [_aws_billing_email()],
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=1,
+        tenant_slug="hv-org",
     )
     assert result.ingested_count == 1
 
@@ -176,7 +176,7 @@ async def test_upload_routing_from_category_rules_after_parse(
 ) -> None:
     """Uploads without email metadata get route_target from purchase/expense rules."""
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",

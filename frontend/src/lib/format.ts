@@ -47,6 +47,16 @@ export function invId(id: number): string {
   return `INV-${String(id).padStart(3, "0")}`;
 }
 
+/** Stable org document label shown in lists and drawers. */
+export function documentDisplayRef(inv: {
+  id: number;
+  document_ref?: string | null;
+}): string {
+  const ref = inv.document_ref?.trim();
+  if (ref) return ref;
+  return `DOC-${inv.id}`;
+}
+
 /** Human-readable vault document id (matches inbox / matrix list style). */
 export function vaultDocLabel(id: number): string {
   return `DOC-2026-${String(id).padStart(4, "0")}`;

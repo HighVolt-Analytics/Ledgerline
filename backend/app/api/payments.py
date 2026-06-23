@@ -17,7 +17,7 @@ async def get_wallet_summary(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[WalletSummaryResponse]:
-    data = await wallet_summary(db, ctx.org_id)
+    data = await wallet_summary(db, ctx.tenant_id)
     return ApiEnvelope(data=data)
 
 
@@ -27,7 +27,7 @@ async def get_payments(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[PaymentResponse]]:
-    rows = await list_payments(db, ctx.org_id, status=status)
+    rows = await list_payments(db, ctx.tenant_id, status=status)
     return ApiEnvelope(data=rows)
 
 
@@ -47,14 +47,14 @@ async def patch_payment(
             await db.execute(
                 select(Payment).where(
                     Payment.id == payment_id,
-                    Payment.org_id == ctx.org_id,
+                    Payment.tenant_id == ctx.tenant_id,
                 )
             )
         ).scalar_one_or_none()
         if existing is None:
             raise LookupError("Payment not found")
         previous_status = existing.status.value
-        row = await update_payment_status(db, ctx.org_id, payment_id, body)
+        row = await update_payment_status(db, ctx.tenant_id, payment_id, body)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -65,7 +65,7 @@ async def patch_payment(
         db,
         "payment_status_updated",
         invoice_id=row.invoice_id,
-        org_id=ctx.org_id,
+        tenant_id=ctx.tenant_id,
         detail={
             "payment_id": payment_id,
             "previous_status": previous_status,

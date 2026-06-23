@@ -14,15 +14,21 @@ import shutil
 import sys
 from pathlib import Path
 
-# New batch — avoids collision with PO-MKT-2026-TEST already in the database.
-DEFAULT_PO_NUMBER = "PO-MKT-2026-JUN9"
-VENDOR = "Sysco Foods Australia Pty Ltd"
-VENDOR_ABN = "51 824 753 556"
-INVOICE_NO = "INV-MKT-JUN9-001"
-GRN_NO = "GRN-PO-MKT-2026-JUN9"
+# Fresh batch — change PO number when re-testing to avoid duplicate file-hash skips.
+DEFAULT_PO_NUMBER = "PO-MKT-2026-JUN17"
+# Align with rule_book_demo vendor master vm-2 (Sysco Australia).
+VENDOR = "Sysco Australia"
+VENDOR_ABN = "11 22 334 4556"
+
+
+def _suffix(po_number: str) -> str:
+    token = po_number.rsplit("-", 1)[-1].upper()
+    return token if token else "001"
 
 
 def _texts(po_number: str) -> tuple[str, str, str]:
+    invoice_no = f"INV-MKT-{_suffix(po_number)}-001"
+    grn_no = f"GRN-{po_number}"
     po_text = f"""PURCHASE ORDER
 {VENDOR}
 ABN {VENDOR_ABN}
@@ -34,7 +40,7 @@ Ship To: High Volt Analytics
 Bill To: High Volt Analytics
 
 Description                    Qty   Unit Price    Amount
-Fresh produce delivery          10      50.00     500.00
+Fresh seasonal produce          10      50.00     500.00
 
 Subtotal AUD                                   500.00
 GST 10%                                          0.00
@@ -45,13 +51,13 @@ Authorized by: Procurement Team
 
     grn_text = f"""GOODS RECEIPT NOTE
 {VENDOR}
-GRN Number: {GRN_NO}
+GRN Number: {grn_no}
 PO Reference: {po_number}
 Receipt Date: 11 June 2026
 Receiver: Warehouse Team
 
 Description                    Qty Received   Condition
-Fresh produce delivery                  10   Good
+Fresh seasonal produce                  10   Good
 
 All items received in good condition.
 Signed: J. Smith
@@ -60,13 +66,13 @@ Signed: J. Smith
     invoice_text = f"""TAX INVOICE
 {VENDOR}
 ABN {VENDOR_ABN}
-Invoice Number: {INVOICE_NO}
+Invoice Number: {invoice_no}
 PO Reference: {po_number}
 Invoice Date: 12 June 2026
 Due Date: 12 July 2026
 
 Description                    Qty   Unit Price    Amount
-Fresh produce delivery          10      50.00     500.00
+Fresh seasonal produce          10      50.00     500.00
 
 Subtotal AUD                                   500.00
 GST 10%                                         50.00
@@ -157,7 +163,7 @@ def main() -> None:
     print("=" * 72)
     print(f"Shared PO number : {po_number}")
     print(f"Vendor           : {VENDOR}")
-    print(f"Invoice number   : {INVOICE_NO}")
+    print(f"Invoice number   : INV-MKT-{_suffix(po_number)}-001")
     print()
     print("Rule book — add ONE email capture rule (if not already present):")
     print("  Name     : Purchase test documents (email)")
@@ -177,9 +183,9 @@ def main() -> None:
         print(f"     Attach:  {filename}")
     print()
     print("Expected in LedgerLink:")
-    print("  Email 1 → Purchase Management, document type PO, PO register created")
-    print("  Email 2 → GRN linked to same PO, qty 10 received")
-    print("  Email 3 → Commercial invoice, three-way match = Matched")
+    print("  Email 1 -> Purchase Management, document type PO, PO register created")
+    print("  Email 2 -> GRN linked to same PO, qty 10 received")
+    print("  Email 3 -> Commercial invoice, three-way match = Matched")
     print()
     print("Ensure Celery worker + beat are running for email ingest.")
     print("=" * 72)

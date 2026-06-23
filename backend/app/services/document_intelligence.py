@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.services.amount_sanity import plausible_money
 from app.services.invoice_data import InvoiceData, ParsedLineItem
 from app.services.line_items_parser import parse_line_items_from_di_items
 from app.services.vendor_name_utils import normalize_vendor_name
@@ -26,7 +27,7 @@ def _parse_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     try:
-        return Decimal(str(value))
+        return plausible_money(Decimal(str(value)))
     except (InvalidOperation, ValueError):
         return None
 
@@ -201,7 +202,14 @@ def parse_with_document_intelligence(
         logger.warning("di_no_documents", path=str(path))
         return None
 
+    content = (getattr(result, "content", None) or "").strip()
     data = _map_di_document(documents[0])
+    if content:
+        from app.services.document_text import cap_document_text
+
+        capped = cap_document_text(content)
+        data.document_text = capped
+        data.raw_fields["document_text"] = capped
     logger.info(
         "di_parse_ok",
         path=str(path),
@@ -209,3 +217,54 @@ def parse_with_document_intelligence(
         invoice_no=data.invoice_no,
     )
     return data
+
+
+def read_pdf_page_texts_via_di(file_path: str | Path) -> list[tuple[int, str]] | None:
+    """
+    OCR each page with Azure prebuilt-read when local PDF text is empty.
+
+    Returns list of (page_index, text) or None when DI is unavailable.
+    """
+    if not is_di_enabled():
+        return None
+
+    settings = get_settings()
+    path = Path(file_path)
+    if not path.is_file():
+        return None
+
+    model_id = (settings.azure_di_read_model_id or "prebuilt-read").strip()
+    try:
+        from azure.ai.documentintelligence import DocumentIntelligenceClient
+        from azure.core.credentials import AzureKeyCredential
+    except ImportError as exc:
+        logger.error("di_sdk_missing", error=str(exc))
+        return None
+
+    try:
+        client = DocumentIntelligenceClient(
+            settings.azure_di_endpoint.rstrip("/"),
+            AzureKeyCredential(settings.azure_di_key),
+        )
+        with path.open("rb") as document:
+            poller = client.begin_analyze_document(
+                model_id,
+                body=document,
+                content_type="application/pdf",
+            )
+        result = poller.result()
+    except Exception as exc:
+        logger.warning("di_read_failed", path=str(path), model_id=model_id, error=str(exc))
+        return None
+
+    pages_out: list[tuple[int, str]] = []
+    for index, page in enumerate(getattr(result, "pages", None) or []):
+        lines = [line.content for line in (getattr(page, "lines", None) or []) if line.content]
+        pages_out.append((index, "\n".join(lines)))
+
+    if not pages_out:
+        logger.warning("di_read_no_pages", path=str(path))
+        return None
+
+    logger.info("di_read_ok", path=str(path), model_id=model_id, pages=len(pages_out))
+    return pages_out

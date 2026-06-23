@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
+from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 
 
 async def reset_invoice_for_reprocess(session: AsyncSession, inv: Invoice) -> None:
@@ -25,16 +26,19 @@ async def reset_invoice_for_reprocess(session: AsyncSession, inv: Invoice) -> No
     inv.account_code = None
     inv.account_name = None
     inv.purchase_document_type = None
+    inv.document_type_code = None
+    inv.document_type_confidence = None
+    inv.document_text = None
 
     for entry in (
         await session.execute(
-            select(JournalEntry).where(JournalEntry.invoice_id == inv.id)
+            select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
         )
     ).scalars().all():
         await session.delete(entry)
 
     for line in (
-        await session.execute(select(LineItem).where(LineItem.invoice_id == inv.id))
+        await session.execute(select(LineItem).where(*line_items_for_invoice(inv.tenant_id, inv.id)))
     ).scalars().all():
         await session.delete(line)
 
@@ -49,13 +53,13 @@ async def clear_invoice_posting_artifacts(session: AsyncSession, inv: Invoice) -
 
     for entry in (
         await session.execute(
-            select(JournalEntry).where(JournalEntry.invoice_id == inv.id)
+            select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
         )
     ).scalars().all():
         await session.delete(entry)
 
     for line in (
-        await session.execute(select(LineItem).where(LineItem.invoice_id == inv.id))
+        await session.execute(select(LineItem).where(*line_items_for_invoice(inv.tenant_id, inv.id)))
     ).scalars().all():
         await session.delete(line)
 

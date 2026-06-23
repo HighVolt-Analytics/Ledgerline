@@ -12,13 +12,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import get_settings
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice
 from app.models.purchase_order import PurchaseOrder
 from app.services.audit_change_summary import summarize_audit_change
 from app.services.audit_detail_helpers import _latest_grn, truncate_audit_error
-from app.services.public_app_url import resolve_public_app_base_url
+from app.services.public_app_url import build_public_app_path
 
 _EXPORT_LIMIT = 10_000
 
@@ -217,7 +216,7 @@ def resolve_purchase_vault_links(
 async def fetch_purchase_vault_links_for_rows(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     rows: list[AuditLog],
 ) -> tuple[dict[int, PurchaseVaultLinks], dict[str, PurchaseVaultLinks]]:
     po_ids: set[int] = set()
@@ -236,7 +235,7 @@ async def fetch_purchase_vault_links_for_rows(
     if not po_ids and not po_numbers:
         return {}, {}
 
-    filters = [PurchaseOrder.org_id == org_id]
+    filters = [PurchaseOrder.tenant_id == tenant_id]
     po_filters = []
     if po_ids:
         po_filters.append(PurchaseOrder.id.in_(po_ids))
@@ -265,16 +264,7 @@ def vault_view_path(invoice_id: int | None) -> str:
     """Clickable URL to open the document in Vault (Excel-friendly https://… link)."""
     if invoice_id is None:
         return ""
-    settings = get_settings()
-    path_suffix = f"/vault?invoice={invoice_id}"
-    prefix = settings.root_path.rstrip("/")
-    base = resolve_public_app_base_url()
-    if base:
-        base = base.rstrip("/")
-        if prefix and not base.endswith(prefix):
-            return f"{base}{prefix}{path_suffix}"
-        return f"{base}{path_suffix}"
-    return f"{prefix}{path_suffix}" if prefix else path_suffix
+    return build_public_app_path(f"/vault?invoice={invoice_id}")
 
 
 def _invoice_amount_label(invoice: Invoice) -> str:
@@ -331,14 +321,9 @@ def flatten_audit_detail(
     }
 
     if event == "ingest_capture_matched":
-        route = _first_str(d, "route_to")
         rule_name = _first_str(d, "rule_name")
-        if route and rule_name:
-            flat["rule_matched"] = f"{route} · {rule_name}"
-        elif rule_name:
-            flat["rule_matched"] = rule_name
-        elif route:
-            flat["rule_matched"] = route
+        if rule_name:
+            flat["rule_matched"] = f"Ingestion · {rule_name}"
 
     if event not in ("reconciliation_skipped", "email_moved"):
         raw_hold = _first_str(d, "hold_reason", "reason", "error")
@@ -392,7 +377,7 @@ def flatten_audit_detail(
 async def fetch_audit_rows_for_export(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     date_from: date | None = None,
     date_to: date | None = None,
     document_only: bool = False,
@@ -404,8 +389,8 @@ async def fetch_audit_rows_for_export(
     dict[str, PurchaseVaultLinks],
 ]:
     org_filter = or_(
-        AuditLog.org_id == org_id,
-        AuditLog.invoice_id.in_(select(Invoice.id).where(Invoice.org_id == org_id)),
+        AuditLog.tenant_id == tenant_id,
+        AuditLog.invoice_id.in_(select(Invoice.id).where(Invoice.tenant_id == tenant_id)),
     )
     stmt = (
         select(AuditLog)
@@ -443,7 +428,7 @@ async def fetch_audit_rows_for_export(
 
     by_po_id, by_po_number = await fetch_purchase_vault_links_for_rows(
         db,
-        org_id=org_id,
+        tenant_id=tenant_id,
         rows=rows,
     )
     return rows, invoice_map, by_po_id, by_po_number

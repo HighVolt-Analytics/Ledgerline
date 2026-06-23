@@ -6,12 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.schemas.vault import VaultFileEntry, VaultMigrateResponse, VaultTreeNode, VaultTreeResponse
 from app.services import blob_storage
 from app.services.audit_service import log_event
 from app.services.file_storage import has_stored_path
-from app.services.org_context import get_org_slug
+from app.services.invoice_evaluation_service import load_config_for_tenant
+from app.services.tenant_context_service import get_tenant_slug
+from app.services.vault_invoice_paths import vault_document_type_folder_for_invoice
 from app.services.vault_migrate import migrate_org_blobs_to_vault
 from app.services.vault_paths import (
     build_vault_tree,
@@ -20,28 +22,30 @@ from app.services.vault_paths import (
     vault_book_folder,
     vault_file_name,
     vault_month,
-    vault_org_folder,
+    vault_tenant_folder,
     vault_po_reference_label,
     vault_vendor_folder,
     vault_year,
 )
 
 
-async def get_vault_tree_for_org(
+async def get_vault_tree_for_tenant(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> VaultTreeResponse:
-    """Return org → book → vendor → year → month tree for stored invoice files."""
-    org = await session.get(Organisation, org_id)
-    org_slug = await get_org_slug(session, org_id)
-    org_name = org.name if org else None
-    org_folder = vault_org_folder(org_slug, org_name)
+    """Return org → book → [document_type →] vendor → year → month tree for stored invoice files."""
+    org = await session.get(Tenant, tenant_id)
+    tenant_slug = await get_tenant_slug(session, tenant_id)
+    tenant_name = org.name if org else None
+    org_folder = vault_tenant_folder(tenant_slug, tenant_name)
+    config = await load_config_for_tenant(session, tenant_id)
+    document_types = list(config.document_types)
 
     rows = (
         await session.execute(
             select(Invoice).where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.status != InvoiceStatus.DUPLICATE_SKIPPED,
                 Invoice.status != InvoiceStatus.REJECTED,
                 Invoice.raw_file_path.isnot(None),
@@ -55,6 +59,7 @@ async def get_vault_tree_for_org(
     for inv in rows:
         original = filename_from_stored(inv.raw_file_path)
         book = vault_book_folder(inv.route_target)
+        document_type = vault_document_type_folder_for_invoice(inv, document_types)
         vendor = vault_vendor_folder(inv.vendor, inv.storage_vendor_slug)
         year = vault_year(inv.invoice_date)
         month = vault_month(inv.invoice_date)
@@ -68,8 +73,8 @@ async def get_vault_tree_for_org(
             po_reference=inv.po_reference,
         )
         virtual_path = build_virtual_path(
-            org_slug,
-            org_name=org_name,
+            tenant_slug,
+            tenant_name=tenant_name,
             route_target=inv.route_target,
             vendor_name=inv.vendor,
             storage_vendor_slug=inv.storage_vendor_slug,
@@ -79,11 +84,14 @@ async def get_vault_tree_for_org(
             original_filename=original,
             po_reference=inv.po_reference,
             purchase_document_type=inv.purchase_document_type,
+            document_type_code=inv.document_type_code,
+            document_type_folder=document_type,
         )
         has_file = has_stored_path(inv.raw_file_path)
         entry = {
             "org": org_folder,
             "book": book,
+            "document_type": document_type or "",
             "vendor": vendor,
             "year": year,
             "month": month,
@@ -94,6 +102,7 @@ async def get_vault_tree_for_org(
                 invoice_id=inv.id,
                 org=org_folder,
                 book=book,
+                document_type=document_type,
                 vendor=vendor,
                 year=year,
                 month=month,
@@ -116,18 +125,18 @@ async def get_vault_tree_for_org(
     )
 
 
-async def migrate_vault_for_org(
+async def migrate_vault_for_tenant(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
 ) -> VaultMigrateResponse:
     """Relocate this org's invoice blobs into the vault folder layout."""
     if not blob_storage.is_blob_enabled():
         return VaultMigrateResponse(moved=0, skipped=0, blob_enabled=False)
 
-    moved, skipped = await migrate_org_blobs_to_vault(session, org_id)
+    moved, skipped = await migrate_org_blobs_to_vault(session, tenant_id)
     await log_event(
         session,
         "vault_migrated",
-        detail={"moved": moved, "skipped": skipped, "org_id": org_id},
+        detail={"moved": moved, "skipped": skipped, "tenant_id": tenant_id},
     )
     return VaultMigrateResponse(moved=moved, skipped=skipped, blob_enabled=True)

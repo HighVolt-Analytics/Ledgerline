@@ -13,6 +13,7 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.ledger_link import LedgerExportRowResponse, LedgerLinkExports, LedgerLinkResponse
+from app.services.document_ref_service import display_document_ref
 from app.services.invoice_evaluation_service import (
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
@@ -68,7 +69,7 @@ def _invoice_export_row(
     debit, credit = _primary_debit_credit(postings)
     inv_date = invoice.invoice_date
     date_str = inv_date.isoformat() if isinstance(inv_date, date) else "—"
-    doc = (invoice.invoice_no or "").strip() or f"{doc_prefix}-{invoice.id:03d}"
+    doc = (invoice.invoice_no or "").strip() or display_document_ref(invoice)
     amount = float(invoice.total or 0)
     return LedgerExportRowResponse(
         id=f"ll-inv-{invoice.id}",
@@ -111,15 +112,15 @@ def _payment_export_row(payment: Payment) -> LedgerExportRowResponse:
 async def build_ledger_link(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
 ) -> LedgerLinkResponse:
-    overview = await build_reconciliation_overview(session, org_id=org_id)
+    overview = await build_reconciliation_overview(session, tenant_id=tenant_id)
 
     invoices = (
         await session.execute(
             select(Invoice)
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.status == InvoiceStatus.PROCESSED,
             )
             .options(selectinload(Invoice.journal_entries))
@@ -163,7 +164,7 @@ async def build_ledger_link(
     payments = (
         await session.execute(
             select(Payment)
-            .where(Payment.org_id == org_id)
+            .where(Payment.tenant_id == tenant_id)
             .order_by(Payment.id.desc())
         )
     ).scalars().all()

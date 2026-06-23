@@ -16,6 +16,10 @@ _GRN_LINE_ROW = re.compile(
     r"^(.{4,80}?)\s+(\d+(?:\.\d+)?)\s+(?:Good|Damaged|Partial|[A-Za-z]{3,})\s*$",
     re.M,
 )
+_GRN_QTY_TABLE_ROW = re.compile(
+    r"^\s*\d+\s+(.+?)\s+\d+(?:\.\d+)?\s+(?:Kg|Nos|Box|Pair|Units?|Ltr|Litre)\s+",
+    re.M | re.I,
+)
 _ABN_ROW = re.compile(r"\babn\b", re.I)
 
 
@@ -63,6 +67,29 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
             ParsedLineItem(
                 description=desc.strip(),
                 qty=Decimal(qty_s),
+                unit_price=None,
+                amount=None,
+            )
+        )
+    if items:
+        return items
+
+    for m in _GRN_QTY_TABLE_ROW.finditer(text):
+        desc = m.group(1).strip()
+        if _skip_line_row(desc) or re.search(r"item\s+description|po\s+qty", desc, re.I):
+            continue
+        qty_match = re.findall(
+            r"(\d+(?:\.\d+)?)\s+(?:Kg|Nos|Box|Pair|Units?|Ltr|Litre)\b",
+            m.group(0),
+            re.I,
+        )
+        qty = Decimal(qty_match[1]) if len(qty_match) >= 2 else (
+            Decimal(qty_match[0]) if qty_match else None
+        )
+        items.append(
+            ParsedLineItem(
+                description=desc,
+                qty=qty,
                 unit_price=None,
                 amount=None,
             )

@@ -93,10 +93,11 @@ def derive_matrix_payment_status(inv: Invoice, payment: Payment | None) -> str:
     return "—"
 
 
+from app.services.document_ref_service import display_document_ref
+
+
 def _document_ref(invoice: Invoice) -> str:
-    if invoice.invoice_no and invoice.invoice_no.strip():
-        return invoice.invoice_no.strip()
-    return f"INV-{invoice.id:03d}"
+    return display_document_ref(invoice)
 
 
 def _conflict_detail(inv: Invoice, other: Invoice) -> list[MatrixConflictRow]:
@@ -126,16 +127,43 @@ def _conflict_detail(inv: Invoice, other: Invoice) -> list[MatrixConflictRow]:
 
 async def duplicate_conflict_for_invoice(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     inv: Invoice,
 ) -> tuple[str | None, list[MatrixConflictRow]]:
     if inv.status != InvoiceStatus.DUPLICATE_SKIPPED:
         return None, []
 
+    from app.models.audit import AuditLog
+
+    original_id: int | None = None
+    file_hash: str | None = inv.file_hash
+    audit_row = (
+        await db.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.invoice_id == inv.id,
+                AuditLog.event == "duplicate_skipped",
+            )
+            .order_by(AuditLog.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if audit_row and isinstance(audit_row.detail, dict):
+        raw_id = audit_row.detail.get("original_invoice_id")
+        if isinstance(raw_id, int):
+            original_id = raw_id
+        if not file_hash and isinstance(audit_row.detail.get("file_hash"), str):
+            file_hash = audit_row.detail["file_hash"]
+
+    if original_id is not None:
+        other = await db.get(Invoice, original_id)
+        if other is not None and other.tenant_id == tenant_id:
+            return _document_ref(other), _conflict_detail(inv, other)
+
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.id != inv.id,
             Invoice.status != InvoiceStatus.DUPLICATE_SKIPPED,
         )
@@ -146,8 +174,8 @@ async def duplicate_conflict_for_invoice(
             Invoice.invoice_no == inv.invoice_no,
             Invoice.vendor == inv.vendor,
         )
-    elif inv.file_hash:
-        stmt = stmt.where(Invoice.file_hash == inv.file_hash)
+    elif file_hash:
+        stmt = stmt.where(Invoice.file_hash == file_hash)
     else:
         return None, []
 

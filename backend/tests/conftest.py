@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -20,11 +21,19 @@ from app.main import app
 
 get_settings.cache_clear()
 from app.models.audit import AuditLog
-from app.models.organisation import Organisation
-from app.models.user_org_membership import UserOrgMembership
+from app.models.tenant import Tenant
+from app.models.tenant_rule_book_config import TenantRuleBookConfig
+from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.invoice_data import InvoiceData, ParsedLineItem
 
 TEST_DB = "sqlite+aiosqlite:///:memory:"
+
+
+@pytest.fixture
+def capture_config():
+    from tests.rule_book_fixtures import load_capture_config
+
+    return load_capture_config()
 
 
 @pytest_asyncio.fixture
@@ -34,10 +43,22 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    fixture = Path(__file__).resolve().parent / "fixtures" / "rule_book_demo.json"
+    demo_config = json.loads(fixture.read_text(encoding="utf-8"))
+    demo_config.pop("vendor_masters", None)
+    demo_config.pop("employee_masters", None)
+
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         session.add(
-            Organisation(id=1, name="High Volt Analytics", slug="hv-org")
+            Tenant(id=TESTING_TENANT_UUID, name="Testing", slug="testing")
+        )
+        session.add(
+            TenantRuleBookConfig(
+                tenant_id=TESTING_TENANT_UUID,
+                config=demo_config,
+                schema_version=int(demo_config.get("schema_version") or 1),
+            )
         )
         await session.flush()
         yield session
@@ -62,15 +83,18 @@ def _use_demo_rule_book_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path_factor
     monkeypatch.setenv("RULE_BOOK_SAVE_DEBOUNCE_MS", "0")
     get_settings.cache_clear()
     from app.services.account_mapper import clear_rule_book_cache
+    from app.services.document_type_catalog import clear_document_type_catalog_cache
     from app.services.rule_book_mapper import clear_classification_config_cache
     from app.services.rule_book_save_buffer import clear_rule_book_save_buffers
 
     clear_rule_book_cache()
+    clear_document_type_catalog_cache()
     clear_classification_config_cache()
     clear_rule_book_save_buffers()
     yield
     clear_rule_book_save_buffers()
     clear_classification_config_cache()
+    clear_document_type_catalog_cache()
     clear_rule_book_cache()
     get_settings.cache_clear()
 
@@ -112,6 +136,7 @@ def sample_invoice_data() -> InvoiceData:
                 amount=Decimal("1000.00"),
             )
         ],
+        document_text="Tax Invoice for consulting services",
     )
 
 

@@ -15,7 +15,7 @@ from app.services.approval_service import (
     reject_invoice,
     request_approval,
 )
-from app.services.file_storage import stored_file_available
+from app.services.file_storage import repair_invoice_stored_path, stored_file_available
 from app.services.privilege_service import require_privilege
 from app.workers.tasks import process_invoice_background
 
@@ -39,13 +39,13 @@ async def list_approvals(
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == ctx.org_id,
+            Invoice.tenant_id == ctx.tenant_id,
             Invoice.status.in_(_QUEUE_STATUSES),
         )
         .order_by(Invoice.created_at.desc())
     )
     count_stmt = select(func.count(Invoice.id)).where(
-        Invoice.org_id == ctx.org_id,
+        Invoice.tenant_id == ctx.tenant_id,
         Invoice.status.in_(_QUEUE_STATUSES),
     )
 
@@ -76,8 +76,9 @@ async def approve_invoice(
     """
     require_privilege(ctx, "Approve")
     inv = await db.get(Invoice, invoice_id)
-    if not inv or inv.org_id != ctx.org_id:
+    if not inv or inv.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Invoice not found")
+    await repair_invoice_stored_path(db, inv)
     if not stored_file_available(inv.raw_file_path):
         raise HTTPException(
             400,
@@ -109,7 +110,7 @@ async def reject_invoice_route(
     """
     require_privilege(ctx, "Reject")
     inv = await db.get(Invoice, invoice_id)
-    if not inv or inv.org_id != ctx.org_id:
+    if not inv or inv.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Invoice not found")
     try:
         actor_name, actor_email = await actor_from_context(db, ctx)
@@ -127,7 +128,7 @@ async def request_approval_route(
 ) -> ApiEnvelope[InvoiceResponse]:
     """Route an invoice to the approval queue for human review."""
     inv = await db.get(Invoice, invoice_id)
-    if not inv or inv.org_id != ctx.org_id:
+    if not inv or inv.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Invoice not found")
     try:
         actor_name, actor_email = await actor_from_context(db, ctx)
@@ -146,7 +147,7 @@ async def permanently_delete_invoice_route(
     """Permanently delete a rejected or duplicate-skipped invoice and its stored file."""
     require_privilege(ctx, "Reject")
     inv = await db.get(Invoice, invoice_id)
-    if not inv or inv.org_id != ctx.org_id:
+    if not inv or inv.tenant_id != ctx.tenant_id:
         raise HTTPException(404, "Invoice not found")
     try:
         await permanently_delete_invoice(db, inv)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -9,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.invoice_evaluation_service import apply_invoice_evaluation
+from app.services.invoice_evaluation_service import apply_invoice_evaluation, load_config_for_tenant
+from app.services.document_type_reclassify_service import reclassify_invoice_document_type
 from app.services.rule_book_mapper import map_invoice_to_account
 
 _REMAP_SKIP = frozenset(
@@ -26,14 +28,18 @@ class RemapResult:
     total: int
 
 
-async def remap_invoices_for_org(session: AsyncSession, *, org_id: int) -> RemapResult:
+async def remap_invoices_for_tenant(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+) -> RemapResult:
     """Update account mapping and routing fields from current rule book."""
     rows = (
         await session.execute(
             select(Invoice)
             .options(selectinload(Invoice.line_items))
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.status.not_in(_REMAP_SKIP),
             )
         )
@@ -41,9 +47,12 @@ async def remap_invoices_for_org(session: AsyncSession, *, org_id: int) -> Remap
 
     updated = 0
     changed_ids: list[int] = []
+    config = await load_config_for_tenant(session, tenant_id)
     for inv in rows:
-        mapping = map_invoice_to_account(inv)
+        mapping = map_invoice_to_account(inv, config=config)
         changed = False
+        if await reclassify_invoice_document_type(session, inv, config=config):
+            changed = True
         if (
             inv.account_code != mapping.account_code
             or inv.account_name != mapping.account_name
@@ -58,7 +67,7 @@ async def remap_invoices_for_org(session: AsyncSession, *, org_id: int) -> Remap
             inv.vendor_confidence,
             inv.evaluation_status,
         )
-        await apply_invoice_evaluation(session, inv, enqueue_pending=False)
+        await apply_invoice_evaluation(session, inv, config=config, enqueue_pending=False)
         after = (
             inv.route_target,
             inv.matched_rule_ids,
@@ -72,5 +81,4 @@ async def remap_invoices_for_org(session: AsyncSession, *, org_id: int) -> Remap
             updated += 1
             changed_ids.append(inv.id)
 
-    await session.flush()
     return RemapResult(updated=updated, invoice_ids=changed_ids, total=len(rows))

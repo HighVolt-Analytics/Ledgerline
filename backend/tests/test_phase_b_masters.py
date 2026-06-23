@@ -41,12 +41,6 @@ from app.schemas.master_data import EmployeeMasterResponse
 from app.schemas.rule_book_config import BankDetails, EmployeeBudget
 
 
-@pytest.fixture
-def capture_config() -> RuleBookConfigPayload:
-    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
-    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
-
-
 def test_infer_capture_channel() -> None:
     assert infer_capture_channel("ops@acme.com") == "email"
     assert infer_capture_channel("+61 412 345 678") == "mob"
@@ -118,17 +112,17 @@ def test_team_manual_approval_required_above_auto_threshold(
     team_rule = capture_config.team_expense_rules[0].model_copy(
         update={"policy": TeamExpensePolicy(auto_approve_below=30, require_receipt=True)}
     )
-    inv = Invoice(org_id=1, route_target=ROUTE_TEAM, total=Decimal("50.00"))
+    inv = Invoice(tenant_id=1, route_target=ROUTE_TEAM, total=Decimal("50.00"))
     assert requires_manual_approval(inv, team_rule, manager_approved=False)
     assert not requires_manual_approval(inv, team_rule, manager_approved=True)
-    inv_small = Invoice(org_id=1, route_target=ROUTE_TEAM, total=Decimal("20.00"))
+    inv_small = Invoice(tenant_id=1, route_target=ROUTE_TEAM, total=Decimal("20.00"))
     assert not requires_manual_approval(inv_small, team_rule, manager_approved=False)
 
 
 @pytest.mark.asyncio
 async def test_has_manager_approval_with_duplicate_audit_rows(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         route_target=ROUTE_TEAM,
         status=InvoiceStatus.MAPPING,
         currency="AUD",
@@ -152,7 +146,7 @@ async def test_has_manager_approval_with_duplicate_audit_rows(db_session: AsyncS
 @pytest.mark.asyncio
 async def test_team_expense_approval_gate_holds_large_claim(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         route_target=ROUTE_TEAM,
         vendor="Local Cafe",
         total=Decimal("75.00"),
@@ -174,7 +168,7 @@ async def test_vendor_hold_blocks_processing(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Unknown Supplier Pty Ltd",
         status=InvoiceStatus.VALIDATING,
         evaluation_status=EVAL_PENDING_VENDOR,
@@ -208,7 +202,7 @@ async def test_promote_pending_vendor_releases_held_invoice(
 
     clear_classification_config_cache()
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="New Vendor Co",
         abn="51824753556",
         status=InvoiceStatus.EXCEPTION,
@@ -220,7 +214,7 @@ async def test_promote_pending_vendor_releases_held_invoice(
     await db_session.flush()
 
     pending = PendingVendor(
-        org_id=1,
+        tenant_id=1,
         detected_name="New Vendor Co",
         detected_abn="51824753556",
         source_invoice_id=inv.id,
@@ -254,7 +248,7 @@ async def test_quarterly_budget_validation(
 ) -> None:
     db_session.add(
         EmployeeMasterRecord(
-            org_id=1,
+            tenant_id=1,
             master_id="em-qtr",
             name="Ops Lead",
             email="ops@acme-hospitality.com.au",
@@ -276,7 +270,7 @@ async def test_quarterly_budget_validation(
     results = await run_team_expense_validations(
         data,
         db_session,
-        org_id=1,
+        tenant_id=1,
         route_target=ROUTE_TEAM,
         email_sender="ops@acme-hospitality.com.au",
         config=capture_config,
@@ -289,7 +283,7 @@ async def test_quarterly_budget_validation(
 @pytest.mark.asyncio
 async def test_vendor_hold_skipped_for_team_expense_route(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Riverside Cafe Pty Ltd",
         route_target=ROUTE_TEAM,
         status=InvoiceStatus.VALIDATING,
@@ -309,7 +303,7 @@ async def test_vendor_hold_skipped_for_team_expense_route(db_session: AsyncSessi
 @pytest.mark.asyncio
 async def test_vendor_hold_skipped_for_grn_document(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco Foods Australia Pty Ltd",
         status=InvoiceStatus.VALIDATING,
         evaluation_status=EVAL_PENDING_VENDOR,
@@ -328,7 +322,7 @@ async def test_vendor_hold_skipped_for_grn_document(db_session: AsyncSession) ->
 @pytest.mark.asyncio
 async def test_vendor_hold_released_when_po_vendor_matches(db_session: AsyncSession) -> None:
     po = PurchaseOrder(
-        org_id=1,
+        tenant_id=1,
         po_number="PO-MKT-2026-TEST",
         vendor="Sysco Foods Australia Pty Ltd",
         po_qty=Decimal("10"),
@@ -336,7 +330,7 @@ async def test_vendor_hold_released_when_po_vendor_matches(db_session: AsyncSess
     )
     db_session.add(po)
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco Foods Australia Pty Ltd",
         po_reference="PO-MKT-2026-TEST",
         purchase_document_type=PurchaseDocumentType.INVOICE.value,

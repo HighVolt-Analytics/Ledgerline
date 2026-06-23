@@ -55,6 +55,24 @@ def test_infer_po_from_parsed_fields_when_filename_generic() -> None:
     assert infer_purchase_document_type(inv) == PurchaseDocumentType.PO.value
 
 
+def test_infer_po_from_document_heading_when_due_date_present() -> None:
+    inv = Invoice(
+        email_attachment_name="document.pdf",
+        document_text="Acme Corp PURCHASE ORDER\nNo: PO-2025-00142\nDue: 30 Jun 2025",
+        due_date=__import__("datetime").date(2025, 6, 30),
+        total=Decimal("261370.00"),
+    )
+    assert infer_purchase_document_type(inv) == PurchaseDocumentType.PO.value
+
+
+def test_infer_grn_from_document_heading() -> None:
+    inv = Invoice(
+        email_attachment_name="scan.pdf",
+        document_text="GOODS RECEIPT NOTE\nGRN-2025-00089",
+    )
+    assert infer_purchase_document_type(inv) == PurchaseDocumentType.GRN.value
+
+
 def test_infer_invoice_from_parsed_invoice_number() -> None:
     inv = Invoice(
         email_attachment_name="scan.pdf",
@@ -88,7 +106,7 @@ async def _add_line(session: AsyncSession, inv: Invoice, qty: str = "10", price:
 @pytest.mark.asyncio
 async def test_po_first_then_commercial_invoice(db_session: AsyncSession) -> None:
     po_doc = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-100",
         invoice_no="PO-MKT-2026-100",
@@ -108,7 +126,7 @@ async def test_po_first_then_commercial_invoice(db_session: AsyncSession) -> Non
     assert po_row.invoice_id is None
 
     commercial = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-100",
         invoice_no="META-INV-100",
@@ -132,7 +150,7 @@ async def test_po_first_then_commercial_invoice(db_session: AsyncSession) -> Non
 @pytest.mark.asyncio
 async def test_commercial_invoice_awaiting_po(db_session: AsyncSession) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-999",
         invoice_no="META-INV-999",

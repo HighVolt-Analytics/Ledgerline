@@ -61,7 +61,7 @@ def test_flatten_audit_detail_extracts_common_fields() -> None:
 def test_audit_rows_to_csv_column_order_and_flattening() -> None:
     row = AuditLog(
         id=42,
-        org_id=1,
+        tenant_id=1,
         event="mapping_applied",
         invoice_id=7,
         correlation_id="corr-abc",
@@ -135,13 +135,13 @@ def test_email_moved_clears_hold_reason() -> None:
 def test_purchase_sync_enriches_vendor_and_amount_from_invoice() -> None:
     invoice = Invoice(
         id=9,
-        org_id=1,
+        tenant_id=1,
         vendor="Sysco Australia",
         total=Decimal("1420.00"),
     )
     row = AuditLog(
         id=1,
-        org_id=1,
+        tenant_id=1,
         event="purchase_invoice_document_synced",
         invoice_id=9,
         detail={"po_number": "PO-MKT-2026-014"},
@@ -177,7 +177,9 @@ def test_vault_view_path_full_url_from_public_app_url(monkeypatch: pytest.Monkey
     from app.config import get_settings
 
     monkeypatch.setenv("PUBLIC_APP_URL", "http://localhost:5173")
+    monkeypatch.setenv("AZURE_WEBAPP_URL", "")
     monkeypatch.setenv("PUBLIC_TUNNEL_URL", "")
+    monkeypatch.setenv("NGROK_URL", "")
     monkeypatch.delenv("BASE_PATH", raising=False)
     get_settings.cache_clear()
     assert vault_view_path(40) == "http://localhost:5173/vault?invoice=40"
@@ -200,7 +202,9 @@ def test_resolve_public_app_base_from_oauth_return_url(monkeypatch: pytest.Monke
     from app.config import get_settings
 
     monkeypatch.delenv("PUBLIC_APP_URL", raising=False)
+    monkeypatch.setenv("AZURE_WEBAPP_URL", "")
     monkeypatch.setenv("PUBLIC_TUNNEL_URL", "")
+    monkeypatch.setenv("NGROK_URL", "")
     monkeypatch.setenv(
         "GRAPH_OAUTH_FRONTEND_RETURN_URL",
         "http://localhost:5173/integrations",
@@ -213,7 +217,7 @@ def test_resolve_public_app_base_from_oauth_return_url(monkeypatch: pytest.Monke
 def test_flatten_enriches_from_invoice() -> None:
     invoice = Invoice(
         id=35,
-        org_id=1,
+        tenant_id=1,
         vendor="Telstra Corporation Limited",
         invoice_no="EXP-MKT-TEST-TEL-001",
         po_reference=None,
@@ -239,21 +243,21 @@ def test_flatten_enriches_from_invoice() -> None:
 def test_dedupe_high_churn_audit_rows_keeps_latest() -> None:
     older = AuditLog(
         id=1,
-        org_id=1,
+        tenant_id=1,
         event="purchase_invoice_document_synced",
         invoice_id=32,
         created_at=datetime(2026, 6, 10, 7, 40, tzinfo=timezone.utc),
     )
     newer = AuditLog(
         id=2,
-        org_id=1,
+        tenant_id=1,
         event="purchase_invoice_document_synced",
         invoice_id=32,
         created_at=datetime(2026, 6, 10, 11, 38, tzinfo=timezone.utc),
     )
     other = AuditLog(
         id=3,
-        org_id=1,
+        tenant_id=1,
         event="invoice_processed",
         invoice_id=32,
         created_at=datetime(2026, 6, 10, 11, 39, tzinfo=timezone.utc),
@@ -265,7 +269,7 @@ def test_dedupe_high_churn_audit_rows_keeps_latest() -> None:
 def test_flatten_prefers_point_in_time_status_from_detail() -> None:
     invoice = Invoice(
         id=10,
-        org_id=1,
+        tenant_id=1,
         vendor="Vendor",
         status=InvoiceStatus.PROCESSED,
         evaluation_status="ready_for_payment",
@@ -306,14 +310,14 @@ def test_truncate_audit_error_extracts_error_code() -> None:
 def test_dedupe_parse_completed_keeps_latest() -> None:
     older = AuditLog(
         id=1,
-        org_id=1,
+        tenant_id=1,
         event="parse_completed",
         invoice_id=5,
         created_at=datetime(2026, 6, 10, 7, 0, tzinfo=timezone.utc),
     )
     newer = AuditLog(
         id=2,
-        org_id=1,
+        tenant_id=1,
         event="parse_completed",
         invoice_id=5,
         created_at=datetime(2026, 6, 10, 8, 0, tzinfo=timezone.utc),
@@ -325,7 +329,7 @@ def test_dedupe_parse_completed_keeps_latest() -> None:
 def test_purchase_vault_links_for_po_resolves_three_documents() -> None:
     po = PurchaseOrder(
         id=1,
-        org_id=1,
+        tenant_id=1,
         po_number="PO-MKT-2026-014",
         po_document_id=10,
         invoice_id=30,
@@ -346,7 +350,7 @@ def test_purchase_vault_links_for_po_resolves_three_documents() -> None:
 def test_three_way_match_csv_includes_all_vault_urls() -> None:
     row = AuditLog(
         id=5,
-        org_id=1,
+        tenant_id=1,
         event="three_way_match_evaluated",
         invoice_id=30,
         detail={
@@ -402,7 +406,7 @@ def test_parse_completed_summary() -> None:
 async def test_audit_export_csv(client: AsyncClient, db_session: AsyncSession) -> None:
     db_session.add(
         AuditLog(
-            org_id=1,
+            tenant_id=1,
             event="invoice_processed",
             invoice_id=None,
             detail={"actor_name": "Auditor"},

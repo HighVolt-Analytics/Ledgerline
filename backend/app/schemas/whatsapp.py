@@ -1,13 +1,14 @@
 """Pydantic schemas for WhatsApp integration APIs."""
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel
 
 
 class WhatsappConnectionResponse(BaseModel):
     id: int
-    org_id: int
+    tenant_id: UUID
     phone_number_id: str
     phone_number: str | None
     display_name: str | None

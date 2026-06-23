@@ -6,6 +6,7 @@ export type CountryOption = {
   currency: string;
   symbol: string;
   locale: string;
+  timeZone: string;
   taxRate: number;
   taxLabel: string;
   dialCode: string;
@@ -42,6 +43,7 @@ export const COUNTRIES: CountryOption[] = [
     currency: "AUD",
     symbol: "A$",
     locale: "en-AU",
+    timeZone: "Australia/Sydney",
     taxRate: 10,
     taxLabel: "GST",
     dialCode: "+61",
@@ -52,6 +54,7 @@ export const COUNTRIES: CountryOption[] = [
     currency: "USD",
     symbol: "$",
     locale: "en-US",
+    timeZone: "America/New_York",
     taxRate: 8.5,
     taxLabel: "Sales Tax",
     dialCode: "+1",
@@ -62,6 +65,7 @@ export const COUNTRIES: CountryOption[] = [
     currency: "GBP",
     symbol: "£",
     locale: "en-GB",
+    timeZone: "Europe/London",
     taxRate: 20,
     taxLabel: "VAT",
     dialCode: "+44",
@@ -72,6 +76,7 @@ export const COUNTRIES: CountryOption[] = [
     currency: "INR",
     symbol: "₹",
     locale: "en-IN",
+    timeZone: "Asia/Kolkata",
     taxRate: 18,
     taxLabel: "GST",
     dialCode: "+91",
@@ -82,6 +87,7 @@ export const COUNTRIES: CountryOption[] = [
     currency: "SGD",
     symbol: "S$",
     locale: "en-SG",
+    timeZone: "Asia/Singapore",
     taxRate: 9,
     taxLabel: "GST",
     dialCode: "+65",
@@ -92,6 +98,7 @@ export const COUNTRIES: CountryOption[] = [
     currency: "NZD",
     symbol: "NZ$",
     locale: "en-NZ",
+    timeZone: "Pacific/Auckland",
     taxRate: 15,
     taxLabel: "GST",
     dialCode: "+64",
@@ -102,6 +109,7 @@ export const COUNTRIES: CountryOption[] = [
     currency: "AED",
     symbol: "د.إ",
     locale: "ar-AE",
+    timeZone: "Asia/Dubai",
     taxRate: 5,
     taxLabel: "VAT",
     dialCode: "+971",
@@ -112,6 +120,7 @@ export const COUNTRIES: CountryOption[] = [
     currency: "EUR",
     symbol: "€",
     locale: "de-DE",
+    timeZone: "Europe/Berlin",
     taxRate: 19,
     taxLabel: "VAT",
     dialCode: "+49",

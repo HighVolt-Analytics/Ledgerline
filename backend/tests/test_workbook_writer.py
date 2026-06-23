@@ -41,7 +41,7 @@ def _clear_settings() -> None:
 
 @pytest.mark.asyncio
 async def test_map_with_details_po_match() -> None:
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         vendor="Google Australia Pty Ltd",
         invoice_no="GOOG-AU-99102",
         po_reference="PO-MKT-2026-014",
@@ -61,7 +61,7 @@ async def test_write_workbook_sheets(db_session: AsyncSession, tmp_path: Path) -
 
     original = Path(get_settings().upload_dir)
 
-    inv = Invoice(org_id=1,
+    inv = Invoice(tenant_id=1,
         vendor="Google Australia Pty Ltd",
         abn="33102417032",
         invoice_no="GOOG-INV-7781032",

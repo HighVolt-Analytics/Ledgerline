@@ -41,6 +41,18 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RULE_BOOK_CONFIG_PATH", "RULE_BOOK_PATH"),
     )
     chart_of_accounts_path: str = "./app/chart_of_accounts.json"
+    document_types_catalog_path: str = Field(
+        default="./data/document_types.json",
+        validation_alias="DOCUMENT_TYPES_CATALOG_PATH",
+    )
+    document_type_classifiers_path: str = Field(
+        default="./data/document_type_classifiers.json",
+        validation_alias="DOCUMENT_TYPE_CLASSIFIERS_PATH",
+    )
+    document_type_defaults_path: str = Field(
+        default="./data/document_type_defaults.json",
+        validation_alias="DOCUMENT_TYPE_DEFAULTS_PATH",
+    )
     cors_origins: str = "http://localhost:5173"
     public_app_url: str = Field(
         default="",
@@ -92,6 +104,18 @@ class Settings(BaseSettings):
         validation_alias="GRAPH_OAUTH_FRONTEND_RETURN_URL",
     )
     graph_max_messages: int = 50
+    graph_backfill_max_messages: int = Field(
+        default=500,
+        ge=1,
+        le=5000,
+        validation_alias="GRAPH_BACKFILL_MAX_MESSAGES",
+    )
+    graph_backfill_max_days: int = Field(
+        default=90,
+        ge=1,
+        le=365,
+        validation_alias="GRAPH_BACKFILL_MAX_DAYS",
+    )
     graph_poll_interval_minutes: int = Field(default=2, ge=1, le=60)
     graph_folder_moves_enabled: bool = True
     graph_processed_folder: str = "Processed"
@@ -113,8 +137,31 @@ class Settings(BaseSettings):
     )
     azure_di_model_id: str = "prebuilt-invoice"
     parse_min_text_chars: int = 200
+    pdf_multi_document_split: bool = Field(
+        default=True,
+        validation_alias="PDF_MULTI_DOCUMENT_SPLIT",
+    )
+    pdf_segment_max_pages: int = Field(
+        default=200,
+        ge=1,
+        le=500,
+        validation_alias="PDF_SEGMENT_MAX_PAGES",
+    )
+    pdf_segment_max_segments: int = Field(
+        default=20,
+        ge=2,
+        le=50,
+        validation_alias="PDF_SEGMENT_MAX_SEGMENTS",
+    )
+    azure_di_read_model_id: str = Field(
+        default="prebuilt-read",
+        validation_alias="AZURE_DI_READ_MODEL_ID",
+    )
     abn_validation_mode: str = Field(default="format")
-    duplicate_invoice_check_enabled: bool = False
+    duplicate_invoice_check_enabled: bool = Field(
+        default=True,
+        validation_alias="DUPLICATE_INVOICE_CHECK_ENABLED",
+    )
 
     azure_storage_connection_string: str = Field(
         default="",
@@ -147,8 +194,19 @@ class Settings(BaseSettings):
     )
     jwt_secret: str = "change-me-in-production"
     jwt_expire_minutes: int = 60 * 24 * 7
-    default_org_slug: str = "hv-org"
-    default_org_name: str = "High Volt Analytics"
+    access_token_expire_minutes: int = Field(
+        default=60,
+        validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES",
+    )
+    refresh_token_expire_days: int = Field(
+        default=90,
+        validation_alias="REFRESH_TOKEN_EXPIRE_DAYS",
+    )
+    otp_expire_minutes: int = Field(default=5, validation_alias="OTP_EXPIRE_MINUTES")
+    dev_otp_code: str = Field(default="123456", validation_alias="DEV_OTP_CODE")
+    app_env: str = Field(default="development", validation_alias="APP_ENV")
+    default_tenant_slug: str = Field(default="testing", validation_alias="DEFAULT_TENANT_SLUG")
+    default_tenant_name: str = Field(default="Testing", validation_alias="DEFAULT_TENANT_NAME")
     approval_policy_unlock_code: str = "000000"
 
     # Meta / WhatsApp Cloud API
@@ -255,6 +313,27 @@ class Settings(BaseSettings):
 
         return self
 
+    @model_validator(mode="after")
+    def apply_azure_webapp_public_url(self) -> Self:
+        """Use AZURE_WEBAPP_URL for invite/OAuth links when env still has localhost defaults."""
+        webapp = self.azure_webapp_url.strip().rstrip("/")
+        if not webapp:
+            return self
+
+        public = self.public_app_url.strip().rstrip("/")
+        if not public or "localhost" in public or "127.0.0.1" in public:
+            self.public_app_url = webapp
+
+        frontend = self.graph_oauth_frontend_return_url.strip()
+        if not frontend or "localhost" in frontend or "127.0.0.1" in frontend:
+            self.graph_oauth_frontend_return_url = f"{webapp}/integrations"
+
+        redirect = self.graph_oauth_redirect_uri.strip()
+        if not redirect or "localhost" in redirect or "127.0.0.1" in redirect:
+            self.graph_oauth_redirect_uri = f"{webapp}/api/mailboxes/oauth/callback"
+
+        return self
+
     @property
     def blob_enabled(self) -> bool:
         return bool(self.azure_storage_connection_string.strip())
@@ -321,6 +400,10 @@ class Settings(BaseSettings):
             and self.whatsapp_effective_app_secret
             and self.whatsapp_effective_verify_token
         )
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() in ("production", "prod")
 
     @property
     def whatsapp_frontend_return_url(self) -> str:

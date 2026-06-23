@@ -9,8 +9,12 @@ from sqlalchemy.orm import selectinload
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.pending_vendor import PendingVendor
 from app.services.audit_service import log_event
+from app.services.bundle_vendor_service import (
+    reconcile_dossier_vendor,
+    vendors_align_to_same_master,
+)
 from app.services.expense_vendor_policy import is_unmatched_expense_vendor_status
-from app.services.invoice_evaluation_service import EVAL_PENDING_VENDOR, ROUTE_TEAM
+from app.services.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_PENDING_VENDOR, ROUTE_PURCHASE, ROUTE_TEAM, ROUTE_VAULT
 from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.services.master_data_service import list_pending_vendors
 
@@ -19,19 +23,25 @@ def _is_team_expense_route(invoice: Invoice) -> bool:
     return (invoice.route_target or "").strip() == ROUTE_TEAM
 
 
+def _is_vault_route(invoice: Invoice) -> bool:
+    return (invoice.route_target or "").strip() == ROUTE_VAULT
+
+
 async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> bool:
     if _is_team_expense_route(invoice):
         return False
     if is_unmatched_expense_vendor_status(invoice.evaluation_status):
         return False
+    if await purchase_invoice_trusts_po_register(session, invoice):
+        return False
 
     name = (invoice.vendor or "").strip()
     if name:
-        from app.services.invoice_evaluation_service import load_config_for_org
+        from app.services.master_data_service import list_vendor_masters
         from app.services.vendor_detection import find_matching_vendor_master
 
-        config = load_config_for_org(invoice.org_id)
-        if find_matching_vendor_master(name, invoice.abn, config.vendor_masters):
+        db_masters = await list_vendor_masters(session, invoice.tenant_id)
+        if find_matching_vendor_master(name, invoice.abn, db_masters):
             return False
 
     if invoice.evaluation_status == EVAL_PENDING_VENDOR:
@@ -40,7 +50,7 @@ async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> boo
         pending_for_invoice = (
             await session.execute(
                 select(PendingVendor.id).where(
-                    PendingVendor.org_id == invoice.org_id,
+                    PendingVendor.tenant_id == invoice.tenant_id,
                     PendingVendor.status == "pending",
                     PendingVendor.source_invoice_id == invoice.id,
                 )
@@ -48,13 +58,53 @@ async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> boo
         ).scalar_one_or_none()
         return pending_for_invoice is not None
 
-    pending = await list_pending_vendors(session, invoice.org_id)
+    pending = await list_pending_vendors(session, invoice.tenant_id)
     key = name.lower()
     return any(row.detected_name.strip().lower() == key for row in pending)
 
 
 def _is_purchase_supporting_document(invoice: Invoice) -> bool:
     return invoice.purchase_document_type in ("po", "grn")
+
+
+async def purchase_invoice_trusts_po_register(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    """Commercial purchase invoice linked to an existing PO register row."""
+    if (invoice.route_target or "").strip() != ROUTE_PURCHASE:
+        return False
+    if _is_purchase_supporting_document(invoice):
+        return False
+
+    from app.services.purchase_match_service import load_purchase_order_for_invoice
+
+    return await load_purchase_order_for_invoice(session, invoice) is not None
+
+
+async def _release_hold_when_po_linked_purchase_invoice(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    """PO-backed commercial invoice: PO approval is the vendor gate — skip registration hold."""
+    if not await purchase_invoice_trusts_po_register(session, invoice):
+        return False
+
+    from app.services.purchase_match_service import load_purchase_order_for_invoice
+
+    po = await load_purchase_order_for_invoice(session, invoice)
+    if po:
+        await reconcile_dossier_vendor(
+            session,
+            invoice,
+            po,
+            document_type=invoice.purchase_document_type,
+        )
+
+    if invoice.evaluation_status == EVAL_PENDING_VENDOR:
+        invoice.evaluation_status = EVAL_AUTO_CODED
+    await session.flush()
+    return True
 
 
 async def _release_hold_when_po_vendor_matches(
@@ -79,8 +129,17 @@ async def _release_hold_when_po_vendor_matches(
         invoice.vendor = po.vendor
         inv_vendor = po.vendor.strip()
 
-    if inv_vendor.lower() != po.vendor.strip().lower():
+    if not vendors_align_to_same_master(
+        invoice.tenant_id,
+        inv_vendor,
+        invoice.abn,
+        po.vendor,
+        None,
+        config=await load_config_for_tenant(session, invoice.tenant_id),
+    ):
         return False
+
+    invoice.vendor = (po.vendor or inv_vendor).strip()
 
     invoice.evaluation_status = EVAL_AUTO_CODED
     await session.flush()
@@ -92,7 +151,10 @@ async def apply_vendor_hold_if_needed(
     invoice: Invoice,
 ) -> bool:
     """Set exception + pending_vendor when registration is required. Returns True if held."""
-    if _is_purchase_supporting_document(invoice) or _is_team_expense_route(invoice):
+    if _is_purchase_supporting_document(invoice) or _is_team_expense_route(invoice) or _is_vault_route(invoice):
+        return False
+
+    if await _release_hold_when_po_linked_purchase_invoice(session, invoice):
         return False
 
     if await _release_hold_when_po_vendor_matches(session, invoice):
@@ -125,7 +187,7 @@ async def apply_vendor_hold_if_needed(
 
 async def release_invoices_after_vendor_promotion(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     *,
     vendor_name: str,
     source_invoice_id: int | None = None,
@@ -137,7 +199,7 @@ async def release_invoices_after_vendor_promotion(
     stmt = (
         select(Invoice)
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.evaluation_status == EVAL_PENDING_VENDOR,
             Invoice.status.in_(
                 (

@@ -1,4 +1,9 @@
 import type { Invoice } from "@/api/types";
+import { documentDisplayRef } from "@/lib/format";
+import {
+  isDueWithinDays,
+  isOverdueDate,
+} from "@/lib/tenantTime";
 import type {
   EmployeeMaster,
   ExpenseRule,
@@ -55,8 +60,8 @@ export type TeamExpenseChannelChip = {
 };
 
 const CHANNEL_META: Record<string, TeamExpenseChannelChip> = {
-  email: { id: "em", name: "Email", detail: "Email capture rules" },
-  em: { id: "em", name: "Email", detail: "Email capture rules" },
+  email: { id: "em", name: "Email", detail: "Ingestion rules (accept/skip only)" },
+  em: { id: "em", name: "Email", detail: "Ingestion rules (accept/skip only)" },
   mob: { id: "mob", name: "Mobile", detail: "SMS / messaging capture" },
   mobile: { id: "mob", name: "Mobile", detail: "SMS / messaging capture" },
   wa: { id: "wa", name: "WhatsApp", detail: "Mobile messaging channel" },
@@ -134,6 +139,7 @@ export function invoiceToTeamClaim(inv: Invoice): ExpenseClaim {
   const gst = parseAmount(inv.gst);
   return {
     id: String(inv.id),
+    documentRef: documentDisplayRef(inv),
     submitter: inferSubmitter(inv),
     channel: inferClaimChannel(inv.email_sender, inv.capture_source),
     category: inv.account_name ?? "Uncategorised",
@@ -327,32 +333,17 @@ export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
   };
 }
 
-export function paymentsKpis(rows: PaymentRecord[]) {
+export function paymentsKpis(rows: PaymentRecord[], timeZone: string) {
   const open = rows.filter((p) => p.tab === "queue" || p.tab === "awaiting" || p.tab === "scheduled");
-  const now = new Date();
   const total = open.reduce((sum, p) => sum + p.amount, 0);
-  const overdue = open.filter((p) => p.dueDate && new Date(p.dueDate) < now).length;
-  const dueSoon = open.filter((p) => {
-    if (!p.dueDate) return false;
-    const due = new Date(p.dueDate);
-    const days = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-    return days >= 0 && days <= 7;
-  }).length;
+  const overdue = open.filter((p) => isOverdueDate(p.dueDate, timeZone)).length;
+  const dueSoon = open.filter((p) => isDueWithinDays(p.dueDate, 7, timeZone)).length;
   return { count: open.length, total, overdue, dueSoon };
 }
 
-export function payablesKpis(invoices: Invoice[]) {
-  const now = new Date();
+export function payablesKpis(invoices: Invoice[], timeZone: string) {
   const total = invoices.reduce((sum, inv) => sum + parseAmount(inv.total), 0);
-  const overdue = invoices.filter((inv) => {
-    if (!inv.due_date) return false;
-    return new Date(inv.due_date) < now;
-  }).length;
-  const dueSoon = invoices.filter((inv) => {
-    if (!inv.due_date) return false;
-    const due = new Date(inv.due_date);
-    const days = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-    return days >= 0 && days <= 7;
-  }).length;
+  const overdue = invoices.filter((inv) => isOverdueDate(inv.due_date, timeZone)).length;
+  const dueSoon = invoices.filter((inv) => isDueWithinDays(inv.due_date, 7, timeZone)).length;
   return { count: invoices.length, total, overdue, dueSoon };
 }

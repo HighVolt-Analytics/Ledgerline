@@ -21,8 +21,14 @@ async def _poll_once() -> None:
         return
 
     async with _poll_lock:
-        result = await run_pipeline(poll_inbox=True)
-        logger.info("inline_mailbox_poll_done", **result)
+        from app.database import async_session_factory
+        from app.services.tenant_context_service import list_active_tenant_ids
+
+        async with async_session_factory() as session:
+            tenant_ids = await list_active_tenant_ids(session)
+        for tid in tenant_ids:
+            result = await run_pipeline(tenant_id=tid, poll_inbox=True)
+            logger.info("inline_mailbox_poll_done", tenant_id=tid, **result)
 
 
 async def _poll_loop() -> None:

@@ -16,6 +16,7 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _RULE_LIST_KEYS = (
+    "document_types",
     "email_capture_rules",
     "purchase_rules",
     "expense_rules",
@@ -39,7 +40,7 @@ def _rule_rows(section: Any) -> list[dict[str, Any]]:
 def _rule_index(rules: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     indexed: dict[str, dict[str, Any]] = {}
     for rule in rules:
-        rule_id = str(rule.get("id") or "").strip()
+        rule_id = str(rule.get("id") or rule.get("code") or "").strip()
         if rule_id:
             indexed[rule_id] = rule
     return indexed
@@ -58,6 +59,11 @@ def _rule_signature(rule: dict[str, Any]) -> dict[str, Any]:
         "root": rule.get("root"),
         "pattern": rule.get("pattern"),
         "set_name": rule.get("setName") or rule.get("set_name"),
+        "route_target": rule.get("route_target"),
+        "classifier": rule.get("classifier"),
+        "title": rule.get("title"),
+        "klass": rule.get("klass"),
+        "posting": rule.get("posting"),
     }
 
 
@@ -256,13 +262,13 @@ def extract_rule_book_content_from_audit_detail(
 
 async def fetch_last_rule_book_updated(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
 ) -> AuditLog | None:
     return (
         await session.execute(
             select(AuditLog)
             .where(
-                AuditLog.org_id == org_id,
+                AuditLog.tenant_id == tenant_id,
                 AuditLog.event == "rule_book_updated",
             )
             .order_by(AuditLog.id.desc())
@@ -273,11 +279,11 @@ async def fetch_last_rule_book_updated(
 
 async def is_duplicate_rule_book_update(
     session: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     incoming_content: dict[str, Any],
 ) -> bool:
     """True when incoming config matches the last persisted rule_book_updated snapshot."""
-    last = await fetch_last_rule_book_updated(session, org_id)
+    last = await fetch_last_rule_book_updated(session, tenant_id)
     if last is None:
         return False
 
@@ -286,8 +292,10 @@ async def is_duplicate_rule_book_update(
     )
     if prior_content is None:
         try:
-            prior_content = normalize_rule_book_for_diff(load_rule_book_config_dict(org_id))
-        except FileNotFoundError:
+            prior_content = normalize_rule_book_for_diff(
+                await load_rule_book_config_dict(session, tenant_id)
+            )
+        except (FileNotFoundError, ValueError):
             return False
 
     return rule_book_content_equal(prior_content, incoming_content)
@@ -296,7 +304,7 @@ async def is_duplicate_rule_book_update(
 async def log_rule_book_updated(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     after_config: dict[str, Any],
     detail: dict[str, Any],
     actor_name: str | None = None,
@@ -304,14 +312,14 @@ async def log_rule_book_updated(
     client_ip: str | None = None,
 ) -> AuditLog | None:
     """Write rule_book_updated unless content is identical to the last audit row for this org."""
-    if await is_duplicate_rule_book_update(session, org_id, after_config):
-        logger.info("rule_book_updated_suppressed_duplicate", org_id=org_id)
+    if await is_duplicate_rule_book_update(session, tenant_id, after_config):
+        logger.info("rule_book_updated_suppressed_duplicate", tenant_id=tenant_id)
         return None
 
     return await log_event(
         session,
         "rule_book_updated",
-        org_id=org_id,
+        tenant_id=tenant_id,
         detail={**detail, "content": after_config},
         actor_name=actor_name,
         actor_email=actor_email,

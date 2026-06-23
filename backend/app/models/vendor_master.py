@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -15,11 +16,11 @@ from app.database import Base
 class VendorMasterRecord(Base):
     __tablename__ = "vendor_masters"
     __table_args__ = (
-        UniqueConstraint("org_id", "master_id", name="uq_vendor_master_org_id"),
+        UniqueConstraint("tenant_id", "master_id", name="uq_vendor_master_tenant_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    org_id: Mapped[int] = mapped_column(ForeignKey("organisations.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("tenants.id"), index=True)
     master_id: Mapped[str] = mapped_column(String(100), index=True)
     name: Mapped[str] = mapped_column(String(255))
     aliases: Mapped[list[str]] = mapped_column(JSON, default=list)

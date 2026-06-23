@@ -1,11 +1,18 @@
 import type { AuthUser } from "@/api/types";
+import {
+  DEFAULT_TENANT_LOCALE,
+  DEFAULT_TENANT_TIMEZONE,
+} from "@/lib/tenantTime";
 
 type JwtPayload = {
   sub?: string;
-  org_id?: number;
+  tenant_id?: string;
+  org_id?: string;
+  tenant_slug?: string;
   email?: string;
   role?: string;
   exp?: number;
+  type?: string;
 };
 
 export function decodeJwtPayload(token: string): JwtPayload | null {
@@ -34,15 +41,18 @@ export function isTokenExpired(token: string, skewMs = 30_000): boolean {
 /** Fallback profile when /me is temporarily unreachable but the JWT is still valid. */
 export function userFromToken(token: string): AuthUser | null {
   const payload = decodeJwtPayload(token);
-  if (!payload?.sub || !payload.org_id) return null;
+  const tenantId = payload?.tenant_id ?? payload?.org_id;
+  if (!payload?.sub || !tenantId) return null;
   const email = String(payload.email ?? "");
   return {
     id: Number(payload.sub),
     email,
     full_name: email ? email.split("@")[0] : "User",
     role: String(payload.role ?? "member"),
-    org_id: Number(payload.org_id),
-    org_name: "",
-    org_slug: "",
+    tenant_id: String(tenantId),
+    tenant_name: "",
+    tenant_slug: String(payload.tenant_slug ?? ""),
+    tenant_timezone: DEFAULT_TENANT_TIMEZONE,
+    tenant_locale: DEFAULT_TENANT_LOCALE,
   };
 }

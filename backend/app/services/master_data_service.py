@@ -25,10 +25,10 @@ from app.schemas.master_data import (
     VendorMasterResponse,
     VendorMasterUpdate,
 )
-from app.schemas.rule_book_config import BillingAddress, EmployeeMaster, VendorMaster
+from app.schemas.rule_book_config import BillingAddress, EmployeeMaster, RuleBookConfigPayload, VendorMaster
 from app.services.rule_book_config_io import (
+    load_legacy_file_dict_with_masters,
     load_rule_book_config_dict,
-    org_rule_book_config_path,
 )
 from app.services.rule_book_mapper import clear_classification_config_cache
 
@@ -101,39 +101,41 @@ def employee_master_to_dict(employee: EmployeeMaster) -> dict[str, Any]:
     return data
 
 
-async def count_vendor_masters(db: AsyncSession, org_id: int) -> int:
+async def count_vendor_masters(db: AsyncSession, tenant_id: int) -> int:
     return int(
         (
             await db.execute(
                 select(func.count())
                 .select_from(VendorMasterRecord)
-                .where(VendorMasterRecord.org_id == org_id)
+                .where(VendorMasterRecord.tenant_id == tenant_id)
             )
         ).scalar_one()
     )
 
 
-async def count_employee_masters(db: AsyncSession, org_id: int) -> int:
+async def count_employee_masters(db: AsyncSession, tenant_id: int) -> int:
     return int(
         (
             await db.execute(
                 select(func.count())
                 .select_from(EmployeeMasterRecord)
-                .where(EmployeeMasterRecord.org_id == org_id)
+                .where(EmployeeMasterRecord.tenant_id == tenant_id)
             )
         ).scalar_one()
     )
 
 
-async def import_masters_from_config_file(db: AsyncSession, org_id: int) -> None:
+async def import_masters_from_config_file(db: AsyncSession, tenant_id: uuid.UUID) -> None:
     """One-time import of embedded JSON masters into Postgres."""
-    raw = load_rule_book_config_dict(org_id)
+    raw = load_legacy_file_dict_with_masters(tenant_id)
+    if raw is None:
+        raw = await load_rule_book_config_dict(db, tenant_id)
     for item in raw.get("vendor_masters") or []:
         master_id = str(item.get("id") or _new_master_id("vm", str(item.get("name", "vendor"))))
         existing = (
             await db.execute(
                 select(VendorMasterRecord).where(
-                    VendorMasterRecord.org_id == org_id,
+                    VendorMasterRecord.tenant_id == tenant_id,
                     VendorMasterRecord.master_id == master_id,
                 )
             )
@@ -142,7 +144,7 @@ async def import_masters_from_config_file(db: AsyncSession, org_id: int) -> None
             continue
         db.add(
             VendorMasterRecord(
-                org_id=org_id,
+                tenant_id=tenant_id,
                 master_id=master_id,
                 name=str(item.get("name", "")),
                 aliases=item.get("aliases") or [],
@@ -165,7 +167,7 @@ async def import_masters_from_config_file(db: AsyncSession, org_id: int) -> None
         existing = (
             await db.execute(
                 select(EmployeeMasterRecord).where(
-                    EmployeeMasterRecord.org_id == org_id,
+                    EmployeeMasterRecord.tenant_id == tenant_id,
                     EmployeeMasterRecord.master_id == master_id,
                 )
             )
@@ -174,7 +176,7 @@ async def import_masters_from_config_file(db: AsyncSession, org_id: int) -> None
             continue
         db.add(
             EmployeeMasterRecord(
-                org_id=org_id,
+                tenant_id=tenant_id,
                 master_id=master_id,
                 name=str(item.get("name", "")),
                 role=str(item.get("role") or ""),
@@ -194,31 +196,49 @@ async def import_masters_from_config_file(db: AsyncSession, org_id: int) -> None
     await db.flush()
 
 
-async def ensure_masters_imported(db: AsyncSession, org_id: int) -> None:
-    vendor_count = await count_vendor_masters(db, org_id)
-    employee_count = await count_employee_masters(db, org_id)
+async def ensure_masters_imported(db: AsyncSession, tenant_id: int) -> None:
+    vendor_count = await count_vendor_masters(db, tenant_id)
+    employee_count = await count_employee_masters(db, tenant_id)
     if vendor_count == 0 and employee_count == 0:
-        await import_masters_from_config_file(db, org_id)
+        await import_masters_from_config_file(db, tenant_id)
 
 
-async def list_vendor_masters(db: AsyncSession, org_id: int) -> list[VendorMasterResponse]:
-    await ensure_masters_imported(db, org_id)
+async def list_vendor_masters(db: AsyncSession, tenant_id: int) -> list[VendorMasterResponse]:
+    await ensure_masters_imported(db, tenant_id)
     rows = (
         await db.execute(
             select(VendorMasterRecord)
-            .where(VendorMasterRecord.org_id == org_id)
+            .where(VendorMasterRecord.tenant_id == tenant_id)
             .order_by(VendorMasterRecord.name)
         )
     ).scalars().all()
     return [vendor_record_to_schema(row) for row in rows]
 
 
-async def list_employee_masters(db: AsyncSession, org_id: int) -> list[EmployeeMasterResponse]:
-    await ensure_masters_imported(db, org_id)
+async def classification_config_with_db_masters(
+    db: AsyncSession,
+    tenant_id: int,
+    config: RuleBookConfigPayload,
+) -> RuleBookConfigPayload:
+    """Merge DB masters into rule book config for pipeline evaluation."""
+    vendors = await list_vendor_masters(db, tenant_id)
+    employees = await list_employee_masters(db, tenant_id)
+    updates: dict[str, list] = {}
+    if vendors:
+        updates["vendor_masters"] = vendors
+    if employees:
+        updates["employee_masters"] = employees
+    if not updates:
+        return config
+    return config.model_copy(update=updates)
+
+
+async def list_employee_masters(db: AsyncSession, tenant_id: int) -> list[EmployeeMasterResponse]:
+    await ensure_masters_imported(db, tenant_id)
     rows = (
         await db.execute(
             select(EmployeeMasterRecord)
-            .where(EmployeeMasterRecord.org_id == org_id)
+            .where(EmployeeMasterRecord.tenant_id == tenant_id)
             .order_by(EmployeeMasterRecord.name)
         )
     ).scalars().all()
@@ -227,13 +247,13 @@ async def list_employee_masters(db: AsyncSession, org_id: int) -> list[EmployeeM
 
 async def get_vendor_master_by_id(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     master_id: str,
 ) -> VendorMasterRecord | None:
     return (
         await db.execute(
             select(VendorMasterRecord).where(
-                VendorMasterRecord.org_id == org_id,
+                VendorMasterRecord.tenant_id == tenant_id,
                 VendorMasterRecord.master_id == master_id,
             )
         )
@@ -242,52 +262,57 @@ async def get_vendor_master_by_id(
 
 async def get_employee_master_by_id(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     master_id: str,
 ) -> EmployeeMasterRecord | None:
     return (
         await db.execute(
             select(EmployeeMasterRecord).where(
-                EmployeeMasterRecord.org_id == org_id,
+                EmployeeMasterRecord.tenant_id == tenant_id,
                 EmployeeMasterRecord.master_id == master_id,
             )
         )
     ).scalar_one_or_none()
 
 
-async def sync_masters_to_config_file(db: AsyncSession, org_id: int) -> None:
-    """Write current DB masters into the org rule book JSON for the mapping engine."""
-    vendors = await list_vendor_masters(db, org_id)
-    employees = await list_employee_masters(db, org_id)
-    path = org_rule_book_config_path(org_id)
-    if not path.is_file():
-        load_rule_book_config_dict(org_id)
-    with path.open(encoding="utf-8") as fh:
-        data = json.load(fh)
-    data["vendor_masters"] = [vendor_master_to_dict(v) for v in vendors]
-    data["employee_masters"] = [employee_master_to_dict(e) for e in employees]
-    try:
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
-            fh.write("\n")
-    except OSError as exc:
-        raise ValueError(f"Could not sync vendor masters to rule book file: {exc}") from exc
+async def get_employee_master_by_email(
+    db: AsyncSession,
+    tenant_id: int,
+    email: str,
+) -> EmployeeMasterRecord | None:
+    key = (email or "").strip().lower()
+    if not key:
+        return None
+    from sqlalchemy import func
+
+    return (
+        await db.execute(
+            select(EmployeeMasterRecord).where(
+                EmployeeMasterRecord.tenant_id == tenant_id,
+                func.lower(EmployeeMasterRecord.email) == key,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def sync_masters_to_config_file(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """No-op: masters live in Postgres and are merged at read time."""
     clear_classification_config_cache()
 
 
 async def create_vendor_master(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     body: VendorMasterCreate,
 ) -> VendorMasterResponse:
-    await ensure_masters_imported(db, org_id)
+    await ensure_masters_imported(db, tenant_id)
     master_id = body.master_id or _new_master_id("vm", body.name)
-    existing = await get_vendor_master_by_id(db, org_id, master_id)
+    existing = await get_vendor_master_by_id(db, tenant_id, master_id)
     if existing:
         raise ValueError(f"Vendor master id '{master_id}' already exists")
 
     row = VendorMasterRecord(
-        org_id=org_id,
+        tenant_id=tenant_id,
         master_id=master_id,
         name=body.name,
         aliases=body.aliases,
@@ -305,17 +330,17 @@ async def create_vendor_master(
     )
     db.add(row)
     await db.flush()
-    await sync_masters_to_config_file(db, org_id)
+    await sync_masters_to_config_file(db, tenant_id)
     return vendor_record_to_schema(row)
 
 
 async def update_vendor_master(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     master_id: str,
     body: VendorMasterUpdate,
 ) -> VendorMasterResponse:
-    row = await get_vendor_master_by_id(db, org_id, master_id)
+    row = await get_vendor_master_by_id(db, tenant_id, master_id)
     if not row:
         raise LookupError("Vendor master not found")
 
@@ -328,32 +353,32 @@ async def update_vendor_master(
                 value = value.model_dump(exclude_none=True)
         setattr(row, key, value)
     await db.flush()
-    await sync_masters_to_config_file(db, org_id)
+    await sync_masters_to_config_file(db, tenant_id)
     return vendor_record_to_schema(row)
 
 
-async def delete_vendor_master(db: AsyncSession, org_id: int, master_id: str) -> None:
-    row = await get_vendor_master_by_id(db, org_id, master_id)
+async def delete_vendor_master(db: AsyncSession, tenant_id: int, master_id: str) -> None:
+    row = await get_vendor_master_by_id(db, tenant_id, master_id)
     if not row:
         raise LookupError("Vendor master not found")
     await db.delete(row)
     await db.flush()
-    await sync_masters_to_config_file(db, org_id)
+    await sync_masters_to_config_file(db, tenant_id)
 
 
 async def create_employee_master(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     body: EmployeeMasterCreate,
 ) -> EmployeeMasterResponse:
-    await ensure_masters_imported(db, org_id)
+    await ensure_masters_imported(db, tenant_id)
     master_id = body.master_id or _new_master_id("em", body.name)
-    existing = await get_employee_master_by_id(db, org_id, master_id)
+    existing = await get_employee_master_by_id(db, tenant_id, master_id)
     if existing:
         raise ValueError(f"Employee master id '{master_id}' already exists")
 
     row = EmployeeMasterRecord(
-        org_id=org_id,
+        tenant_id=tenant_id,
         master_id=master_id,
         name=body.name,
         role=body.role,
@@ -371,17 +396,17 @@ async def create_employee_master(
     )
     db.add(row)
     await db.flush()
-    await sync_masters_to_config_file(db, org_id)
+    await sync_masters_to_config_file(db, tenant_id)
     return employee_record_to_schema(row)
 
 
 async def update_employee_master(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     master_id: str,
     body: EmployeeMasterUpdate,
 ) -> EmployeeMasterResponse:
-    row = await get_employee_master_by_id(db, org_id, master_id)
+    row = await get_employee_master_by_id(db, tenant_id, master_id)
     if not row:
         raise LookupError("Employee master not found")
 
@@ -392,26 +417,26 @@ async def update_employee_master(
                 value = value.model_dump(exclude_none=True) if key == "bank" else value.model_dump()
         setattr(row, key, value)
     await db.flush()
-    await sync_masters_to_config_file(db, org_id)
+    await sync_masters_to_config_file(db, tenant_id)
     return employee_record_to_schema(row)
 
 
-async def delete_employee_master(db: AsyncSession, org_id: int, master_id: str) -> None:
-    row = await get_employee_master_by_id(db, org_id, master_id)
+async def delete_employee_master(db: AsyncSession, tenant_id: int, master_id: str) -> None:
+    row = await get_employee_master_by_id(db, tenant_id, master_id)
     if not row:
         raise LookupError("Employee master not found")
     await db.delete(row)
     await db.flush()
-    await sync_masters_to_config_file(db, org_id)
+    await sync_masters_to_config_file(db, tenant_id)
 
 
-async def list_pending_vendors(db: AsyncSession, org_id: int) -> list[PendingVendorResponse]:
-    await _dismiss_pending_matching_masters(db, org_id)
+async def list_pending_vendors(db: AsyncSession, tenant_id: int) -> list[PendingVendorResponse]:
+    await _dismiss_pending_matching_masters(db, tenant_id)
     rows = (
         await db.execute(
             select(PendingVendor)
             .where(
-                PendingVendor.org_id == org_id,
+                PendingVendor.tenant_id == tenant_id,
                 PendingVendor.status == "pending",
             )
             .order_by(PendingVendor.created_at.desc())
@@ -420,15 +445,15 @@ async def list_pending_vendors(db: AsyncSession, org_id: int) -> list[PendingVen
     return [PendingVendorResponse.model_validate(row) for row in rows]
 
 
-async def _dismiss_pending_matching_masters(db: AsyncSession, org_id: int) -> None:
+async def _dismiss_pending_matching_masters(db: AsyncSession, tenant_id: int) -> None:
     """Remove queue rows when the vendor is already registered in masters."""
     from app.services.vendor_detection import find_matching_vendor_master
 
-    masters = await list_vendor_masters(db, org_id)
+    masters = await list_vendor_masters(db, tenant_id)
     pending = (
         await db.execute(
             select(PendingVendor).where(
-                PendingVendor.org_id == org_id,
+                PendingVendor.tenant_id == tenant_id,
                 PendingVendor.status == "pending",
             )
         )
@@ -445,19 +470,19 @@ async def _dismiss_pending_matching_masters(db: AsyncSession, org_id: int) -> No
 
 async def create_pending_vendor(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     body: PendingVendorCreate,
 ) -> PendingVendorResponse:
     from app.services.vendor_detection import find_matching_vendor_master
 
-    masters = await list_vendor_masters(db, org_id)
+    masters = await list_vendor_masters(db, tenant_id)
     if find_matching_vendor_master(body.detected_name, body.detected_abn, masters):
         raise ValueError("Vendor already registered in master data")
 
     existing = (
         await db.execute(
             select(PendingVendor).where(
-                PendingVendor.org_id == org_id,
+                PendingVendor.tenant_id == tenant_id,
                 PendingVendor.status == "pending",
             )
         )
@@ -468,7 +493,7 @@ async def create_pending_vendor(
             return PendingVendorResponse.model_validate(row)
 
     row = PendingVendor(
-        org_id=org_id,
+        tenant_id=tenant_id,
         detected_name=body.detected_name,
         detected_abn=body.detected_abn,
         detected_address=body.detected_address,
@@ -481,9 +506,9 @@ async def create_pending_vendor(
     return PendingVendorResponse.model_validate(row)
 
 
-async def dismiss_pending_vendor(db: AsyncSession, org_id: int, pending_id: int) -> None:
+async def dismiss_pending_vendor(db: AsyncSession, tenant_id: int, pending_id: int) -> None:
     row = await db.get(PendingVendor, pending_id)
-    if not row or row.org_id != org_id:
+    if not row or row.tenant_id != tenant_id:
         raise LookupError("Pending vendor not found")
     row.status = "dismissed"
     row.resolved_at = datetime.now(UTC)
@@ -492,17 +517,17 @@ async def dismiss_pending_vendor(db: AsyncSession, org_id: int, pending_id: int)
 
 async def promote_pending_vendor(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     pending_id: int,
     body: PendingVendorPromote,
 ) -> VendorMasterResponse:
     row = await db.get(PendingVendor, pending_id)
-    if not row or row.org_id != org_id or row.status != "pending":
+    if not row or row.tenant_id != tenant_id or row.status != "pending":
         raise LookupError("Pending vendor not found")
 
     from app.services.vendor_detection import find_matching_vendor_master
 
-    masters = await list_vendor_masters(db, org_id)
+    masters = await list_vendor_masters(db, tenant_id)
     existing = find_matching_vendor_master(row.detected_name, row.detected_abn, masters)
     if existing is not None:
         row.status = "promoted"
@@ -513,7 +538,7 @@ async def promote_pending_vendor(
 
         await release_invoices_after_vendor_promotion(
             db,
-            org_id,
+            tenant_id,
             vendor_name=existing.name,
             source_invoice_id=row.source_invoice_id,
         )
@@ -523,7 +548,7 @@ async def promote_pending_vendor(
     master_id = body.master_id or _new_master_id("vm", name)
     vendor = await create_vendor_master(
         db,
-        org_id,
+        tenant_id,
         VendorMasterCreate(
             master_id=master_id,
             name=name,
@@ -543,7 +568,7 @@ async def promote_pending_vendor(
 
     await release_invoices_after_vendor_promotion(
         db,
-        org_id,
+        tenant_id,
         vendor_name=name,
         source_invoice_id=row.source_invoice_id,
     )
@@ -552,12 +577,12 @@ async def promote_pending_vendor(
 
 async def attach_masters_to_config_dict(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     data: dict[str, Any],
 ) -> dict[str, Any]:
     """Merge DB masters into a rule book config dict for API responses."""
-    vendors = await list_vendor_masters(db, org_id)
-    employees = await list_employee_masters(db, org_id)
+    vendors = await list_vendor_masters(db, tenant_id)
+    employees = await list_employee_masters(db, tenant_id)
     merged = dict(data)
     merged["vendor_masters"] = [vendor_master_to_dict(v) for v in vendors]
     merged["employee_masters"] = [employee_master_to_dict(e) for e in employees]

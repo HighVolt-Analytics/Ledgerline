@@ -45,7 +45,7 @@ async def test_resolve_storage_slug_rejects_boilerplate(db_session: AsyncSession
     slug = await resolve_storage_slug_for_parsed_vendor(
         db_session,
         "Invoice Date: Please reference the invoice number with payment",
-        org_id=1,
+        tenant_id=1,
     )
     assert slug == UNKNOWN_SLUG
 
@@ -54,18 +54,18 @@ def test_match_rule_book_vendor_name() -> None:
     clear_rule_book_cache()
     clear_classification_config_cache()
     assert (
-        match_rule_book_vendor_name("Amazon Web Services", org_id=1)
+        match_rule_book_vendor_name("Amazon Web Services", tenant_id=1)
         == "Amazon Web Services"
     )
-    assert match_rule_book_vendor_name("SYSCO AU", org_id=1) == "Sysco Australia"
-    assert match_rule_book_vendor_name("Random Corp", org_id=1) is None
+    assert match_rule_book_vendor_name("SYSCO AU", tenant_id=1) == "Sysco Australia"
+    assert match_rule_book_vendor_name("Random Corp", tenant_id=1) is None
 
 
 @pytest.mark.asyncio
 async def test_resolve_storage_slug_rule_book_registry(db_session: AsyncSession) -> None:
     db_session.add(
         VendorRegistry(
-            org_id=1,
+            tenant_id=1,
             vendor_slug="qantas",
             vendor_name="Qantas Airways Limited",
             sender_pattern="@qantas.com.au",
@@ -74,7 +74,7 @@ async def test_resolve_storage_slug_rule_book_registry(db_session: AsyncSession)
     )
     await db_session.flush()
     slug = await resolve_storage_slug_for_parsed_vendor(
-        db_session, "Qantas", org_id=1
+        db_session, "Qantas", tenant_id=1
     )
     assert slug == "qantas"
 
@@ -83,7 +83,7 @@ async def test_resolve_storage_slug_rule_book_registry(db_session: AsyncSession)
 async def test_resolve_vendor_slug_exact(db_session: AsyncSession) -> None:
     db_session.add(
         VendorRegistry(
-            org_id=1,
+            tenant_id=1,
             vendor_slug="atlassian",
             vendor_name="Atlassian Pty Ltd",
             sender_pattern="billing@atlassian.com",
@@ -91,7 +91,7 @@ async def test_resolve_vendor_slug_exact(db_session: AsyncSession) -> None:
         )
     )
     await db_session.flush()
-    slug = await resolve_vendor_slug(db_session, "billing@atlassian.com", org_id=1)
+    slug = await resolve_vendor_slug(db_session, "billing@atlassian.com", tenant_id=1)
     assert slug == "atlassian"
 
 
@@ -99,7 +99,7 @@ async def test_resolve_vendor_slug_exact(db_session: AsyncSession) -> None:
 async def test_resolve_vendor_slug_domain(db_session: AsyncSession) -> None:
     db_session.add(
         VendorRegistry(
-            org_id=1,
+            tenant_id=1,
             vendor_slug="atlassian",
             vendor_name="Atlassian Pty Ltd",
             sender_pattern="@atlassian.com",
@@ -107,13 +107,13 @@ async def test_resolve_vendor_slug_domain(db_session: AsyncSession) -> None:
         )
     )
     await db_session.flush()
-    slug = await resolve_vendor_slug(db_session, "noreply@atlassian.com", org_id=1)
+    slug = await resolve_vendor_slug(db_session, "noreply@atlassian.com", tenant_id=1)
     assert slug == "atlassian"
 
 
 @pytest.mark.asyncio
 async def test_resolve_vendor_slug_unknown(db_session: AsyncSession) -> None:
-    slug = await resolve_vendor_slug(db_session, "random@example.com", org_id=1)
+    slug = await resolve_vendor_slug(db_session, "random@example.com", tenant_id=1)
     assert slug == UNKNOWN_SLUG
 
 
@@ -126,7 +126,7 @@ def test_build_blob_name() -> None:
         42,
         "abc123def456",
         "invoice.pdf",
-        org_name="High Volt Analytics",
+        tenant_name="High Volt Analytics",
         vendor_name="Atlassian Pty Ltd",
         invoice_no="INV-042",
         invoice_date=date(2026, 5, 4),
@@ -134,14 +134,14 @@ def test_build_blob_name() -> None:
     )
     assert (
         name
-        == "invoice/HvOrg/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04.pdf"
+        == "invoice/HvOrg/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04_id42.pdf"
     )
 
 
 def test_stored_uri_roundtrip() -> None:
     uri = blob_storage.to_stored_uri(
-        "invoice/HvOrg/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04.pdf"
+        "invoice/HvOrg/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04_id42.pdf"
     )
     parsed = blob_storage.parse_stored_uri(uri)
     assert parsed is not None
-    assert parsed[1].endswith("INV-042_2026-05-04.pdf")
+    assert parsed[1].endswith("INV-042_2026-05-04_id42.pdf")

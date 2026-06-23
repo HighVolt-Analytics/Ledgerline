@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { useReconciliationOverview } from "@/hooks/useReconciliationOverview";
+import { useTenantTime } from "@/hooks/useTenantTime";
 import { money } from "@/lib/format";
 import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import { DEFAULT_POSTING_DEFAULTS } from "@/lib/v4RuleBookMockData";
@@ -28,6 +29,7 @@ import { cn } from "@/lib/cn";
 
 export function ReconciliationPage() {
   const { user } = useAuth();
+  const { timeZone, locale } = useTenantTime();
   const {
     data: overview,
     isLoading,
@@ -63,24 +65,24 @@ export function ReconciliationPage() {
     if (!fullRecon) return "";
     if (period) {
       const year = yearFromPeriod(period);
-      const months = buildMonthsForYear(year);
+      const months = buildMonthsForYear(year, timeZone, locale);
       if (months.some((m) => m.value === period)) return period;
     }
-    return defaultReconPeriod(fullRecon);
-  }, [fullRecon, period]);
+    return defaultReconPeriod(fullRecon, timeZone);
+  }, [fullRecon, period, timeZone, locale]);
 
   const periodOptions = useMemo(
-    () => buildReconPeriodOptions(fullRecon),
-    [fullRecon]
+    () => buildReconPeriodOptions(fullRecon, timeZone, locale),
+    [fullRecon, timeZone, locale]
   );
 
-  const yearOptions = useMemo(() => buildReconYears(fullRecon), [fullRecon]);
+  const yearOptions = useMemo(() => buildReconYears(fullRecon, timeZone), [fullRecon, timeZone]);
 
   const selectedYear = activePeriod ? yearFromPeriod(activePeriod) : yearOptions[0] ?? "";
 
   const monthOptions = useMemo(
-    () => (selectedYear ? buildMonthsForYear(selectedYear) : []),
-    [selectedYear]
+    () => (selectedYear ? buildMonthsForYear(selectedYear, timeZone, locale) : []),
+    [selectedYear, timeZone, locale]
   );
 
   useEffect(() => {
@@ -90,10 +92,10 @@ export function ReconciliationPage() {
 
   const periodLabel =
     periodOptions.find((p) => p.value === activePeriod)?.label ??
-    (activePeriod ? formatReconMonthLabel(activePeriod) : "Select month");
+    (activePeriod ? formatReconMonthLabel(activePeriod, locale) : "Select month");
 
   const handleYearChange = (year: string) => {
-    const months = buildMonthsForYear(year);
+    const months = buildMonthsForYear(year, timeZone, locale);
     if (months.length === 0) {
       setPeriod("");
       setExpanded({});

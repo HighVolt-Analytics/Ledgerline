@@ -28,12 +28,12 @@ async def record_team_expense_processed(
     if not invoice.email_sender or invoice.total is None:
         return
 
-    employees = await list_employee_masters(session, invoice.org_id)
+    employees = await list_employee_masters(session, invoice.tenant_id)
     employee = _find_employee_by_sender(employees, invoice.email_sender)
     if employee is None:
         return
 
-    row = await get_employee_master_by_id(session, invoice.org_id, employee.id)
+    row = await get_employee_master_by_id(session, invoice.tenant_id, employee.id)
     if row is None:
         return
 
@@ -44,4 +44,4 @@ async def record_team_expense_processed(
     row.claim_count = (row.claim_count or 0) + 1
     row.last_claim = (invoice.invoice_date or date.today()).isoformat()
     await session.flush()
-    await sync_masters_to_config_file(session, invoice.org_id)
+    await sync_masters_to_config_file(session, invoice.tenant_id)

@@ -26,7 +26,7 @@ def _clear_caches() -> None:
 
 def test_atlassian_maps_to_software_subscription() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Atlassian Pty Ltd",
         invoice_no="ATL-2026-55721",
         route_target="Expenses Management",
@@ -40,7 +40,7 @@ def test_atlassian_maps_to_software_subscription() -> None:
 
 def test_aws_maps_to_cloud_hosting() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",
@@ -55,7 +55,7 @@ def test_aws_maps_to_cloud_hosting() -> None:
 
 def test_po_code_in_invoice_no_uses_purchase_rule() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Atlassian Pty Ltd",
         invoice_no="INV PO-MKT-2026-014",
         po_reference="PO-MKT-2026-014",
@@ -70,7 +70,7 @@ def test_po_code_in_invoice_no_uses_purchase_rule() -> None:
 
 def test_unknown_vendor_uses_fallback() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Unknown Supplier Pty Ltd",
         invoice_no="X-1",
         status=InvoiceStatus.MAPPING,
@@ -89,7 +89,7 @@ def test_tax_account_from_posting_defaults() -> None:
 
 def test_doc_number_series_maps_to_operating_expenses() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Generic Supplier",
         invoice_no="DOC-2026-00042",
         status=InvoiceStatus.MAPPING,
@@ -102,7 +102,7 @@ def test_doc_number_series_maps_to_operating_expenses() -> None:
 
 def test_marketing_po_detail_includes_rule_type() -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=1,
         vendor="Google Australia Pty Ltd",
         invoice_no="GOOG-AU-99102",
         po_reference="PO-MKT-2026-014",

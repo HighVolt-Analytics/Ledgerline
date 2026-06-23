@@ -105,11 +105,9 @@ def compute_three_way_match(
 
     if po.variance_approved:
         status = "3-Way Match"
-    elif po.status == PurchaseOrderStatus.VARIANCE_PENDING and not po.variance_approved:
-        status = "Routed for Approval"
     elif price_variance != 0:
         status = "Price Variance"
-    elif grn_qty != inv_qty_f:
+    elif inv_qty_f > grn_qty:
         status = "Qty Variance"
     else:
         status = "3-Way Match"
@@ -151,7 +149,7 @@ async def persist_three_way_match_audit(
             session,
             "three_way_match_evaluated",
             invoice_id=audit_invoice_id,
-            org_id=po.org_id,
+            tenant_id=po.tenant_id,
             detail=three_way_match_audit_detail(po, match, new_status),
         )
     return new_status, match
@@ -256,7 +254,7 @@ def purchase_order_to_response(
 
 async def list_purchase_orders(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
 ) -> list[PurchaseOrderResponse]:
     """One register row per purchase-routed invoice; POs without invoices listed once."""
     from app.services.po_reference import is_plausible_po_reference
@@ -264,7 +262,7 @@ async def list_purchase_orders(
     rows = (
         await db.execute(
             select(PurchaseOrder)
-            .where(PurchaseOrder.org_id == org_id)
+            .where(PurchaseOrder.tenant_id == tenant_id)
             .options(
                 selectinload(PurchaseOrder.goods_receipts),
             )
@@ -277,7 +275,7 @@ async def list_purchase_orders(
         await db.execute(
             select(Invoice)
             .where(
-                Invoice.org_id == org_id,
+                Invoice.tenant_id == tenant_id,
                 Invoice.route_target == ROUTE_PURCHASE,
                 Invoice.po_reference.isnot(None),
                 Invoice.po_reference != "",
@@ -287,7 +285,7 @@ async def list_purchase_orders(
         )
     ).scalars().all()
 
-    config = load_classification_config(org_id)
+    config = await load_classification_config(db, tenant_id)
     responses: list[PurchaseOrderResponse] = []
     seen_pairs: set[tuple[int, int]] = set()
     pos_with_rows: set[int] = set()
@@ -346,17 +344,19 @@ async def load_purchase_order_for_invoice(
         return None
     return (
         await db.execute(
-            select(PurchaseOrder).where(
-                PurchaseOrder.org_id == invoice.org_id,
+            select(PurchaseOrder)
+            .where(
+                PurchaseOrder.tenant_id == invoice.tenant_id,
                 PurchaseOrder.po_number == po_number,
             )
+            .options(selectinload(PurchaseOrder.goods_receipts))
         )
     ).scalar_one_or_none()
 
 
 async def record_goods_receipt(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     purchase_order_id: int,
     body: GoodsReceiptCreate,
 ) -> PurchaseOrderResponse:
@@ -365,7 +365,7 @@ async def record_goods_receipt(
             select(PurchaseOrder)
             .where(
                 PurchaseOrder.id == purchase_order_id,
-                PurchaseOrder.org_id == org_id,
+                PurchaseOrder.tenant_id == tenant_id,
             )
             .options(selectinload(PurchaseOrder.goods_receipts))
         )
@@ -374,6 +374,7 @@ async def record_goods_receipt(
         raise LookupError("Purchase order not found")
 
     grn = GoodsReceipt(
+        tenant_id=po.tenant_id,
         purchase_order_id=po.id,
         grn_qty=body.grn_qty,
         grn_date=body.grn_date or date.today(),
@@ -395,13 +396,13 @@ async def record_goods_receipt(
         ).scalar_one_or_none()
 
     await persist_three_way_match_audit(db, po, inv, invoice_id_for_audit=po.invoice_id)
-    config = load_classification_config(org_id)
+    config = await load_classification_config(db, tenant_id)
     return purchase_order_to_response(po, inv, config=config)
 
 
 async def approve_purchase_variance(
     db: AsyncSession,
-    org_id: int,
+    tenant_id: int,
     purchase_order_id: int,
 ) -> PurchaseOrderResponse:
     po = (
@@ -409,7 +410,7 @@ async def approve_purchase_variance(
             select(PurchaseOrder)
             .where(
                 PurchaseOrder.id == purchase_order_id,
-                PurchaseOrder.org_id == org_id,
+                PurchaseOrder.tenant_id == tenant_id,
             )
             .options(selectinload(PurchaseOrder.goods_receipts))
         )
@@ -429,5 +430,5 @@ async def approve_purchase_variance(
         ).scalar_one_or_none()
 
     await persist_three_way_match_audit(db, po, inv, invoice_id_for_audit=po.invoice_id)
-    config = load_classification_config(org_id)
+    config = await load_classification_config(db, tenant_id)
     return purchase_order_to_response(po, inv, config=config)

@@ -17,7 +17,7 @@ from app.schemas.reports import (
     VendorSpendRow,
 )
 from app.services.currency import BASE_CURRENCY, convert_to_base
-from app.services.dashboard_service import parse_period
+from app.services.dashboard_service import parse_period, _institution_today
 
 _REPORTABLE_STATUSES = frozenset({InvoiceStatus.PROCESSED})
 _SUSPENSE_ACCOUNT = "Suspense Account"
@@ -38,10 +38,11 @@ def _period_label(month_start: date) -> str:
     return month_start.strftime("%B %Y")
 
 
+from app.services.document_ref_service import display_document_ref
+
+
 def _document_ref(invoice: Invoice) -> str:
-    if invoice.invoice_no and invoice.invoice_no.strip():
-        return invoice.invoice_no.strip()
-    return f"INV-{invoice.id:04d}"
+    return display_document_ref(invoice)
 
 
 def _account_name(invoice: Invoice) -> str:
@@ -78,14 +79,14 @@ def _prior_month(month_start: date) -> tuple[date, date, str]:
 async def _load_invoices(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     month_start: date | None = None,
     month_end: date | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> list[Invoice]:
     stmt = select(Invoice).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         Invoice.status.in_(_REPORTABLE_STATUSES),
     )
     effective = _effective_invoice_date()
@@ -171,18 +172,19 @@ def invoice_to_document_row(invoice: Invoice) -> ReportDocumentRow:
 async def build_analytics(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     month: str | None = None,
 ) -> ReportsAnalytics:
-    month_start, month_end, period_key = parse_period(month)
+    today = await _institution_today(db, tenant_id)
+    month_start, month_end, period_key = parse_period(month, today=today)
     invoices = await _load_invoices(
-        db, org_id=org_id, month_start=month_start, month_end=month_end
+        db, tenant_id=tenant_id, month_start=month_start, month_end=month_end
     )
     net, tax, gross = _totals(invoices)
 
     prior_start, prior_end, _ = _prior_month(month_start)
     prior_invoices = await _load_invoices(
-        db, org_id=org_id, month_start=prior_start, month_end=prior_end
+        db, tenant_id=tenant_id, month_start=prior_start, month_end=prior_end
     )
     prior_net, prior_tax, prior_gross = _totals(prior_invoices)
 
@@ -210,13 +212,13 @@ async def build_analytics(
 async def list_documents(
     db: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: int,
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> list[ReportDocumentRow]:
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError("date_from must be on or before date_to")
     invoices = await _load_invoices(
-        db, org_id=org_id, date_from=date_from, date_to=date_to
+        db, tenant_id=tenant_id, date_from=date_from, date_to=date_to
     )
     return [invoice_to_document_row(inv) for inv in invoices]

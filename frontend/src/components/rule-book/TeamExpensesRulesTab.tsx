@@ -101,8 +101,8 @@ export function TeamExpensesRulesTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Staff-submitted expense claims via WhatsApp, Viber, Mobile or Web — with submission channel
-          and policy limits.
+          GL coding and policy for documents routed to Team Expenses (employee claims). Channel
+          rules here refine ledger and limits — they do not set workspace routing.
         </p>
         <Button size="sm" onClick={addRule} data-testid="button-new-team-rule">
           <Plus className="h-4 w-4 mr-1" /> New Rule

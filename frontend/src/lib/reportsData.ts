@@ -2,6 +2,7 @@
 
 import type { GlAccountSpendRow, ReportDocumentRow, VendorSpendRow } from "@/api/types";
 import { toNumber } from "@/lib/format";
+import { tenantMonthKey } from "@/lib/tenantTime";
 
 export type ReportInvoice = {
   id: string;
@@ -82,17 +83,15 @@ export const REPORT_CHART_COLORS = [
   "hsl(280 40% 55%)",
 ] as const;
 
-export function defaultReportPeriod(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+export function defaultReportPeriod(timeZone: string): string {
+  return tenantMonthKey(timeZone);
 }
 
-export function buildReportPeriodOptions(): { label: string; value: string }[] {
-  const now = new Date();
+export function buildReportPeriodOptions(timeZone: string, locale = "en-US"): { label: string; value: string }[] {
   return [0, 1, 2].map((offset) => {
-    const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
-    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const label = d.toLocaleString("en-US", { month: "long", year: "numeric" });
+    const value = tenantMonthKey(timeZone, offset);
+    const [y, m] = value.split("-").map(Number);
+    const label = new Date(y, m - 1, 1).toLocaleString(locale, { month: "long", year: "numeric" });
     return { label, value };
   });
 }

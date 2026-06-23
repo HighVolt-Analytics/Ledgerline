@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
+import { useMemo, useState } from "react";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import {
   EvaluationStatusBadge,
   RouteTargetBadge,
@@ -9,8 +11,9 @@ import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
 import { StageBadge, inboxStage } from "@/components/StageBadge";
 import { Card } from "@/components/ui/card";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
-import { invId, money } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
 import { invoiceVendorConfidence } from "@/lib/invoice";
+import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
 
 type RoutedInvoicesPanelProps = {
@@ -46,18 +49,25 @@ function InvoiceTable({
           </tr>
         </thead>
         <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={showPo ? 9 : 8} className="px-4 py-8 text-center text-muted-foreground">
+                No documents match your search.
+              </td>
+            </tr>
+          )}
           {rows.map((inv) => (
             <tr key={inv.id} className="row-band border-b border-border/60 last:border-0">
               <td className="px-4 py-2.5">
                 <Link
-                  to={`/inbox?doc=${inv.id}`}
+                  to={`/upload?doc=${inv.id}`}
                   className="font-medium hover:text-primary"
                   data-testid={`routed-doc-${inv.id}`}
                 >
-                  {invId(inv.id)}
+                  {documentDisplayRef(inv)}
                 </Link>
                 <div className="text-xs text-muted-foreground tnum">
-                  {inv.invoice_no ?? `DOC-${inv.id}`}
+                  {inv.invoice_no ?? "—"}
                 </div>
               </td>
               <td className="px-3 py-2.5 max-w-[140px] truncate">{inv.vendor ?? "—"}</td>
@@ -100,12 +110,27 @@ export function RoutedInvoicesPanel({
   showPo = false,
 }: RoutedInvoicesPanelProps) {
   const { data: rows = [], isLoading, isError } = useRoutedInvoices(routeTarget);
+  const [searchQuery, setSearchQuery] = useState("");
+  const filtered = useMemo(
+    () => rows.filter((inv) => invoiceMatchesListSearch(inv, searchQuery)),
+    [rows, searchQuery]
+  );
 
   return (
     <Card className="overflow-hidden" data-testid={testId}>
-      <div className="px-4 py-3 border-b border-border">
-        <h3 className="text-sm font-semibold">{title}</h3>
-        {hint ? <p className="text-xs text-muted-foreground mt-1">{hint}</p> : null}
+      <div className="px-4 py-3 border-b border-border flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">{title}</h3>
+          {hint ? <p className="text-xs text-muted-foreground mt-1">{hint}</p> : null}
+        </div>
+        {!isLoading && !isError && rows.length > 0 ? (
+          <ListSearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search this list…"
+            testId={`${testId}-search`}
+          />
+        ) : null}
       </div>
       {isLoading ? (
         <div className="px-4 py-8 text-sm text-muted-foreground">Loading routed documents…</div>
@@ -119,7 +144,7 @@ export function RoutedInvoicesPanel({
           />
         </div>
       ) : (
-        <InvoiceTable rows={rows} showPo={showPo} />
+        <InvoiceTable rows={filtered} showPo={showPo} />
       )}
     </Card>
   );

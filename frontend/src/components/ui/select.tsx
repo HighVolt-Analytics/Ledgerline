@@ -40,7 +40,7 @@ type SelectProps = {
 export function Select({
   value,
   onValueChange,
-  options,
+  options = [],
   placeholder = "Select…",
   className,
   disabled,

@@ -1,8 +1,17 @@
 import { api } from "@/api/client";
-import type { MatrixRow } from "@/api/types";
+import type { Invoice, MatrixRow } from "@/api/types";
 import { MATRIX_STAGES, type MatrixCell, type MatrixStage } from "@/lib/matrix";
+import { sortInvoicesNewestFirst } from "@/lib/invoices";
 
 const DEFAULT_PAGE_SIZE = "100";
+
+/** Newest ingested matrix rows first (by invoice created_at / id). */
+export function sortMatrixRowsNewestFirst(rows: MatrixRow[]): MatrixRow[] {
+  const order = new Map(
+    sortInvoicesNewestFirst(rows.map((r) => r.invoice)).map((inv, i) => [inv.id, i])
+  );
+  return [...rows].sort((a, b) => (order.get(a.invoice.id) ?? 0) - (order.get(b.invoice.id) ?? 0));
+}
 
 export async function fetchAllMatrixRows(
   fresh = false,

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import uuid
+
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import json
-
 from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.rule_book_config import EmailCaptureRule, RuleBookConfigPayload, validate_rule_book_config_payload
-from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.capture_channel import infer_capture_channel
+from app.services.document_ref_service import display_document_ref
 from app.services.po_reference import effective_po_reference
 from app.services.rule_engine import (
     EvalDocument,
@@ -32,12 +33,15 @@ _SKIP_STATUSES = frozenset(
 _DEFAULT_LIMIT = 50
 
 
-def _resolve_config(
-    org_id: int,
+async def _resolve_config(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
     config_override: dict | RuleBookConfigPayload | None,
 ) -> RuleBookConfigPayload:
     if config_override is None:
-        raw = load_rule_book_config_dict(org_id)
+        from app.services.rule_book_config_io import load_rule_book_config_with_masters
+
+        raw = await load_rule_book_config_with_masters(session, tenant_id)
         return validate_rule_book_config_payload(raw)
     if isinstance(config_override, RuleBookConfigPayload):
         return config_override
@@ -54,8 +58,8 @@ def invoice_to_eval_document(inv: Invoice) -> EvalDocument:
             for line in inv.line_items
             if (line.description or "").strip()
         )
-    invoice_no = inv.invoice_no or ""
-    doc_number = invoice_no or f"DOC-{inv.id:04d}"
+    invoice_no = (inv.invoice_no or "").strip()
+    doc_number = display_document_ref(inv)
     primary = inv.account_name or "Suspense Account"
     doc_type = "invoice"
     if inv.purchase_document_type == "po":
@@ -209,7 +213,28 @@ def _resolve_ledger(row: LiveEvalRow, config: RuleBookConfigPayload) -> str | No
     return rule.post_to.ledger if rule else None
 
 
-def serialize_eval_row(row: LiveEvalRow, config: RuleBookConfigPayload) -> dict:
+def _fallback_document_type_code(
+    inv: Invoice,
+    config: RuleBookConfigPayload,
+) -> str | None:
+    explicit = (inv.document_type_code or "").strip().upper()
+    if explicit:
+        return explicit
+
+    purchase_kind = (inv.purchase_document_type or "").strip().lower()
+    if purchase_kind in {"po", "grn"}:
+        for dt in config.document_types:
+            if (dt.purchase_bundle_role or "").strip().lower() == purchase_kind:
+                return dt.code
+    return None
+
+
+def serialize_eval_row(
+    row: LiveEvalRow,
+    config: RuleBookConfigPayload,
+    *,
+    document_type_code: str | None = None,
+) -> dict:
     email_rule = None
     if row.email_rule:
         email_rule = {"id": row.email_rule.id, "name": row.email_rule.name}
@@ -251,6 +276,7 @@ def serialize_eval_row(row: LiveEvalRow, config: RuleBookConfigPayload) -> dict:
             "invoice_no": row.doc.invoice_no,
             "vendor": row.doc.vendor,
             "primary_account": ledger,
+            "document_type_code": document_type_code,
         },
         "email_rule": email_rule,
         "email_rule_disabled": email_rule_disabled,
@@ -264,17 +290,17 @@ def serialize_eval_row(row: LiveEvalRow, config: RuleBookConfigPayload) -> dict:
 async def evaluate_rule_book(
     session: AsyncSession,
     *,
-    org_id: int,
+    tenant_id: uuid.UUID,
     config_override: dict | RuleBookConfigPayload | None = None,
     invoice_ids: list[int] | None = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> dict:
-    config = _resolve_config(org_id, config_override)
+    config = await _resolve_config(session, tenant_id, config_override)
     stmt = (
         select(Invoice)
         .options(selectinload(Invoice.line_items))
         .where(
-            Invoice.org_id == org_id,
+            Invoice.tenant_id == tenant_id,
             Invoice.status.not_in(_SKIP_STATUSES),
         )
         .order_by(Invoice.created_at.desc())
@@ -295,7 +321,17 @@ async def evaluate_rule_book(
     rows = build_live_evaluation(docs, config, default_mailbox=mailbox)
     if invoices:
         rows = _apply_stored_email_capture(rows, invoices, config)
+    doc_type_by_doc_id: dict[str, str | None] = {}
+    for inv in invoices:
+        doc_type_by_doc_id[str(inv.id)] = _fallback_document_type_code(inv, config)
     return {
         "source": source,
-        "rows": [serialize_eval_row(row, config) for row in rows],
+        "rows": [
+            serialize_eval_row(
+                row,
+                config,
+                document_type_code=doc_type_by_doc_id.get(str(row.doc.id)),
+            )
+            for row in rows
+        ],
     }

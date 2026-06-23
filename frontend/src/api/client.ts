@@ -7,6 +7,8 @@ import type {
   AppSettings,
   AuthUser,
   ConnectedMailbox,
+  MailboxBackfillJob,
+  MailboxBackfillQueued,
   MailboxConnectionRequest,
   MailboxConnectionRequestAction,
   MailboxInvitePreview,
@@ -14,6 +16,7 @@ import type {
   NavBadges,
   PaymentApi,
   PurchaseOrderApi,
+  PurchaseDossier,
   DashboardOverview,
   DashboardStats,
   ReportsAnalytics,
@@ -23,8 +26,13 @@ import type {
   LedgerLinkResponse,
   InvoiceUpdatePayload,
   Organisation,
+  Tenant,
+  PlatformTenantSummary,
+  PlatformTenantDetail,
+  PlatformTenantModule,
   MatrixRow,
   PipelineAuditStep,
+  InvoiceClassificationAudit,
   ProcessingStatus,
   RuleBookConfig,
   RuleBookChangelogEntry,
@@ -33,6 +41,13 @@ import type {
   RuleBookEvaluateResult,
   ReconciliationOverview,
   TokenResponse,
+  TenantMembersList,
+  TenantMember,
+  TenantInviteCreated,
+  InvitePreview,
+  InviteAcceptResult,
+  InstitutionSettings,
+  UserPermissions,
   Vendor,
   VaultTreeResponse,
   VaultMigrateResponse,
@@ -53,6 +68,7 @@ const inflightGets = new Map<string, Promise<unknown>>();
 const getCache = new Map<string, { data: unknown; at: number }>();
 
 let authToken: string | null = null;
+let authUser: AuthUser | null = null;
 let unauthorizedHandler: (() => void | Promise<void>) | null = null;
 let handlingUnauthorized = false;
 
@@ -64,6 +80,32 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
   }
+}
+
+export type EmployeeImportMode = "register" | "payment";
+
+export interface EmployeeImportRowError {
+  row_number: number;
+  email: string | null;
+  message: string;
+}
+
+export interface EmployeeImportRowPreview {
+  row_number: number;
+  email: string;
+  name: string | null;
+  action: string;
+  detail: string;
+}
+
+export interface EmployeeImportResult {
+  mode: EmployeeImportMode;
+  dry_run: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: EmployeeImportRowError[];
+  previews: EmployeeImportRowPreview[];
 }
 
 export function setUnauthorizedHandler(handler: (() => void | Promise<void>) | null) {
@@ -83,6 +125,19 @@ async function notifyUnauthorized() {
 export function setAuthToken(token: string | null) {
   authToken = token;
   clearGetCache();
+}
+
+export function setAuthUser(user: AuthUser | null) {
+  authUser = user;
+}
+
+function getScopedAuthHeaders(init?: RequestInit): Headers {
+  const headers = withAuthHeaders(init);
+  const tid = authUser?.tenant_id;
+  if (tid) {
+    headers.set("X-Tenant-Id", String(tid));
+  }
+  return headers;
 }
 
 export function clearGetCache() {
@@ -176,7 +231,7 @@ async function requestBlob(
   init?: RequestInit,
   fallbackFilename = "download"
 ): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: withAuthHeaders(init) });
+  const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
   if (!res.ok) {
     const msg = await parseErrorResponse(res);
     if (res.status === 401) {
@@ -191,7 +246,7 @@ async function requestBlob(
 }
 
 async function fetchEnvelope<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: withAuthHeaders(init) });
+  const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
   if (!res.ok) {
     const msg = await parseErrorResponse(res);
     if (
@@ -260,7 +315,7 @@ async function requestWithMeta<T>(
   }
 
   const promise = (async () => {
-    const res = await fetch(`${BASE}${path}`, { ...init, headers: withAuthHeaders(init) });
+    const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
     if (!res.ok) {
       const msg = await parseErrorResponse(res);
       if (res.status === 401) {
@@ -288,41 +343,120 @@ async function requestWithMeta<T>(
 }
 
 export const api = {
-  login: (email: string, password: string) =>
-    request<TokenResponse>("/api/auth/login", {
+  logout: (refreshToken?: string) =>
+    request<{ message: string }>("/api/auth/logout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
     }),
-  register: (body: {
-    org_name: string;
-    org_slug: string;
-    email: string;
-    password: string;
-    full_name: string;
-  }) =>
-    request<TokenResponse>("/api/auth/register", {
+  refreshSession: (refreshToken: string) =>
+    request<TokenResponse>("/api/auth/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ refresh_token: refreshToken }),
     }),
-  logout: () =>
-    request<{ message: string }>("/api/auth/logout", { method: "POST" }),
-  refreshSession: () =>
-    request<TokenResponse>("/api/auth/refresh", { method: "POST" }),
   me: () => request<AuthUser>("/api/auth/me"),
-  listOrganisations: () => request<Organisation[]>("/api/organisations"),
-  createOrganisation: (body: { name: string; slug: string; currency?: string }) =>
-    request<Organisation>("/api/organisations", {
+  getInstitutionSettings: () =>
+    request<InstitutionSettings>("/api/tenants/current/institution"),
+  updateInstitutionSettings: (body: {
+    country?: string;
+    timezone?: string;
+    locale?: string;
+  }) =>
+    request<InstitutionSettings>("/api/tenants/current/institution", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getMyPermissions: () => request<UserPermissions>("/api/auth/me/permissions"),
+  listTenantMembers: () => request<TenantMembersList>("/api/tenants/current/members"),
+  inviteTenantMember: (body: { email: string; full_name: string; role: string }) =>
+    request<TenantInviteCreated>("/api/tenants/current/members/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  switchOrganisation: (orgId: number) =>
-    request<TokenResponse>("/api/auth/switch-org", {
+  updateTenantMemberRole: (userId: number, role: string) =>
+    request<TenantMember>("/api/tenants/current/members/" + userId, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    }),
+  deactivateTenantMember: (userId: number) =>
+    request<{ message: string }>("/api/tenants/current/members/" + userId, {
+      method: "DELETE",
+    }),
+  revokeTenantInvite: (inviteId: number) =>
+    request<{ message: string }>("/api/tenants/current/members/invites/" + inviteId, {
+      method: "DELETE",
+    }),
+  previewTenantInvite: (token: string) =>
+    request<InvitePreview>(`/api/auth/invite/preview?token=${encodeURIComponent(token)}`),
+  acceptTenantInvite: (body: { token: string; password: string; full_name?: string }) =>
+    request<InviteAcceptResult>("/api/auth/invite/accept", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ org_id: orgId }),
+      body: JSON.stringify(body),
+    }),
+  listTenants: () => request<Tenant[]>("/api/tenants"),
+  listOrganisations: () => request<Tenant[]>("/api/tenants"),
+  createTenant: (body: { name: string; slug: string; currency?: string }) =>
+    request<Tenant>("/api/tenants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  createOrganisation: (body: { name: string; slug: string; currency?: string }) =>
+    request<Tenant>("/api/tenants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  switchTenant: (tenantId: string) =>
+    request<TokenResponse>("/api/auth/switch-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenant_id: tenantId }),
+    }),
+  switchOrganisation: (tenantId: string) =>
+    request<TokenResponse>("/api/auth/switch-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenant_id: tenantId }),
+    }),
+
+  listPlatformTenants: () => request<PlatformTenantSummary[]>("/api/platform/tenants"),
+  getPlatformTenant: (tenantId: string) =>
+    request<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}`),
+  createPlatformTenant: (body: { name: string; slug: string }) =>
+    request<PlatformTenantDetail>("/api/platform/tenants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updatePlatformTenant: (
+    tenantId: string,
+    body: {
+      name?: string;
+      is_active?: boolean;
+      lifecycle_status?: string;
+      modules?: PlatformTenantModule[];
+    }
+  ) =>
+    request<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  enterClientWorkspace: (tenantId: string) =>
+    request<TokenResponse>(`/api/platform/tenants/${tenantId}/enter-workspace`, {
+      method: "POST",
+    }),
+  deletePlatformTenant: (tenantId: string, confirmSlug: string) =>
+    request<{ status: string }>(`/api/platform/tenants/${tenantId}/delete-permanently`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm_slug: confirmSlug }),
     }),
 
   listMailboxes: (options?: FreshRequestOptions) => {
@@ -381,6 +515,20 @@ export const api = {
   },
   toggleMailbox: (id: number) =>
     request<ConnectedMailbox>(`/api/mailboxes/${id}/toggle`, { method: "PATCH" }),
+  startMailboxBackfill: (
+    mailboxId: number,
+    body: { from_date: string; to_date: string; mark_processed?: boolean }
+  ) =>
+    request<MailboxBackfillQueued>(`/api/mailboxes/${mailboxId}/backfill`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getMailboxBackfillStatus: (mailboxId: number, jobId: number, options?: FreshRequestOptions) => {
+    const path = `/api/mailboxes/${mailboxId}/backfill/${jobId}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<MailboxBackfillJob>(path);
+  },
 
   getWhatsappStatus: (options?: FreshRequestOptions) => {
     const path = "/api/integrations/whatsapp/status";
@@ -441,21 +589,77 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<{ steps: PipelineAuditStep[] }>(path).then((r) => r.steps);
   },
+  getInvoiceClassificationAudit: (id: number, options?: FreshRequestOptions) => {
+    const path = `/api/invoices/${id}/classification-audit`;
+    if (options?.fresh) bustGetCache(path);
+    return request<InvoiceClassificationAudit>(path);
+  },
+  getPurchaseDossier: (id: number, options?: FreshRequestOptions) => {
+    const path = `/api/invoices/${id}/purchase-dossier`;
+    if (options?.fresh) bustGetCache(path);
+    return request<PurchaseDossier>(path);
+  },
   getMatrixWithMeta: (params?: Record<string, string>, options?: FreshRequestOptions) => {
     const q = new URLSearchParams(params).toString();
     const path = `/api/matrix${q ? `?${q}` : ""}`;
     if (options?.fresh) bustGetCache(path);
     return requestWithMeta<MatrixRow[]>(path);
   },
-  uploadInvoice: (file: File, purchaseDocumentType?: "po" | "grn" | "invoice") => {
+  listDossiersWithMeta: (params?: Record<string, string>, options?: FreshRequestOptions) => {
+    const q = new URLSearchParams(params).toString();
+    const path = `/api/dossiers${q ? `?${q}` : ""}`;
+    if (options?.fresh) bustGetCache(path);
+    return requestWithMeta<import("@/lib/dossierApi").DossierSummaryApi[]>(path);
+  },
+  getDossier: (dossierId: string, options?: FreshRequestOptions) => {
+    const path = `/api/dossiers/${encodeURIComponent(dossierId)}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<import("@/lib/dossierApi").DossierSummaryApi>(path);
+  },
+  uploadInvoice: async (
+    file: File,
+    purchaseDocumentType?: "po" | "grn" | "invoice",
+    options?: { deferProcessing?: boolean }
+  ): Promise<import("./types").UploadInvoiceResult> => {
     const fd = new FormData();
     fd.append("file", file);
-    const q =
-      purchaseDocumentType != null
-        ? `?purchase_document_type=${encodeURIComponent(purchaseDocumentType)}`
-        : "";
-    return request<Invoice>(`/api/invoices/upload${q}`, { method: "POST", body: fd });
+    const params = new URLSearchParams();
+    if (purchaseDocumentType != null) {
+      params.set("purchase_document_type", purchaseDocumentType);
+    }
+    if (options?.deferProcessing) {
+      params.set("defer_processing", "true");
+    }
+    const q = params.toString() ? `?${params.toString()}` : "";
+    invalidateGetCache();
+    const res = await fetch(`${BASE}/api/invoices/upload${q}`, {
+      method: "POST",
+      body: fd,
+      headers: getScopedAuthHeaders(),
+    });
+    if (!res.ok) {
+      const msg = await parseErrorResponse(res);
+      if (res.status === 401) {
+        void notifyUnauthorized();
+      }
+      throw new ApiError(msg, res.status);
+    }
+    const json = (await res.json()) as ApiEnvelope<Invoice>;
+    if (json.error) throw new Error(json.error.message);
+    const invoice = json.data;
+    const segmentCount = json.meta?.segment_count ?? 1;
+    const segmentInvoiceIds =
+      json.meta?.segment_invoice_ids?.length
+        ? json.meta.segment_invoice_ids
+        : [invoice.id];
+    return { invoice, segmentCount, segmentInvoiceIds };
   },
+  processInvoicesBatch: (invoiceIds: number[]) =>
+    request<{ queued: number; status: string }>("/api/invoices/process-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invoice_ids: invoiceIds }),
+    }),
   reprocess: (id: number) =>
     request<Invoice>(`/api/invoices/${id}/reprocess`, { method: "POST" }),
   attachInvoiceFile: (id: number, file: File) => {
@@ -596,6 +800,22 @@ export const api = {
     }),
   deleteEmployeeMaster: (masterId: string) =>
     request<void>(`/api/employee-masters/${encodeURIComponent(masterId)}`, { method: "DELETE" }),
+  downloadEmployeeImportTemplate: async (mode: EmployeeImportMode) => {
+    const { blob, filename } = await requestBlob(
+      `/api/employee-masters/import/templates/${mode}`,
+      undefined,
+      `employee-${mode}-template.xlsx`
+    );
+    saveBlobAsFile(blob, filename);
+  },
+  importEmployeeMasters: (mode: EmployeeImportMode, file: File, dryRun: boolean) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return request<EmployeeImportResult>(
+      `/api/employee-masters/import?mode=${encodeURIComponent(mode)}&dry_run=${dryRun ? "true" : "false"}`,
+      { method: "POST", body: fd }
+    );
+  },
   listPendingVendors: (options?: FreshRequestOptions) => {
     const path = "/api/pending-vendors";
     if (options?.fresh) bustGetCache(path);
@@ -635,6 +855,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  analyzeDocumentTypeSamples: (formData: FormData) =>
+    request<import("@/lib/documentTypeSampleAnalysis").DocumentTypeSampleProposal>(
+      "/api/rule-book/document-types/analyze-samples",
+      { method: "POST", body: formData }
+    ),
   getRuleBookChangelog: (limit = 20) =>
     request<RuleBookChangelogEntry[]>(`/api/rule-book/changelog?limit=${limit}`),
   getSettings: () => request<AppSettings>("/api/settings"),

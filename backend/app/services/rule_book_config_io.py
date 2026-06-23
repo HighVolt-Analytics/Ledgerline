@@ -1,58 +1,159 @@
-"""Org-scoped classification rule book storage."""
+"""Org-scoped classification rule book storage (DB source of truth)."""
 
 from __future__ import annotations
 
 import json
-import shutil
+import time
+import uuid
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import get_settings
 from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
+from app.services.rule_book_config_repository import (
+    ensure_default_config,
+    fetch_config_dict,
+    upsert_config,
+)
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID, parse_tenant_id
+
+_LEGACY_FILE_TENANT_MAP: dict[str, uuid.UUID] = {
+    "1": TESTING_TENANT_UUID,
+    "2": PLATFORM_TENANT_UUID,
+}
+
+_POSTING_CONFIG_CACHE_TTL_SEC = 30.0
+_posting_config_cache: dict[uuid.UUID, tuple[float, RuleBookConfigPayload]] = {}
+
+
+def clear_posting_config_cache() -> None:
+    _posting_config_cache.clear()
 
 
 def global_rule_book_config_path() -> Path:
     return Path(get_settings().rule_book_config_path)
 
 
-def org_rule_book_config_path(org_id: int) -> Path:
+def tenant_rule_book_config_path(tenant_id: uuid.UUID | int | str) -> Path:
+    """Legacy filesystem path (fallback import only)."""
     base = Path(get_settings().upload_dir) / "rule_books"
-    return base / f"{org_id}_config.json"
+    return base / f"{tenant_id}_config.json"
 
 
-def _seed_org_rule_book_config(org_id: int) -> Path:
-    """Create org rule book from template once; never overwrite saved org config."""
-    path = org_rule_book_config_path(org_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_file():
-        return path
-
-    template = global_rule_book_config_path()
-    if template.is_file():
-        shutil.copy2(template, path)
-    else:
-        payload = RuleBookConfigPayload()
-        path.write_text(
-            json.dumps(payload.model_dump(), indent=2) + "\n",
-            encoding="utf-8",
-        )
-    return path
+def _legacy_file_paths_for_tenant(tenant_id: uuid.UUID) -> list[Path]:
+    paths = [tenant_rule_book_config_path(tenant_id)]
+    for legacy_key, mapped in _LEGACY_FILE_TENANT_MAP.items():
+        if mapped == tenant_id:
+            paths.append(tenant_rule_book_config_path(legacy_key))
+    extra = Path("./data/uploads/rule_books") / f"{tenant_id}_config.json"
+    if extra not in paths:
+        paths.append(extra)
+    for legacy_key, mapped in _LEGACY_FILE_TENANT_MAP.items():
+        if mapped == tenant_id:
+            legacy_extra = Path("./data/uploads/rule_books") / f"{legacy_key}_config.json"
+            if legacy_extra not in paths:
+                paths.append(legacy_extra)
+    return paths
 
 
-def load_rule_book_config_dict(org_id: int) -> dict[str, Any]:
-    path = _seed_org_rule_book_config(org_id)
-    with path.open(encoding="utf-8") as fh:
-        return json.load(fh)
+def _load_legacy_file_dict(tenant_id: uuid.UUID) -> dict[str, Any] | None:
+    legacy = load_legacy_file_dict_with_masters(tenant_id)
+    if legacy is None:
+        return None
+    data = deepcopy(legacy)
+    data.pop("vendor_masters", None)
+    data.pop("employee_masters", None)
+    return data
 
 
-def save_rule_book_config(payload: RuleBookConfigPayload, org_id: int) -> Path:
+def load_legacy_file_dict_with_masters(tenant_id: uuid.UUID) -> dict[str, Any] | None:
+    for path in _legacy_file_paths_for_tenant(tenant_id):
+        if not path.is_file():
+            continue
+        with path.open(encoding="utf-8") as fh:
+            raw = json.load(fh)
+        if isinstance(raw, dict):
+            return deepcopy(raw)
+    return None
+
+
+async def load_rule_book_config_dict(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Load config from DB; fall back to legacy file and upsert into DB."""
+    tid = parse_tenant_id(tenant_id)
+    if tid is None:
+        raise ValueError("Invalid tenant_id")
+
+    stored = await fetch_config_dict(session, tid)
+    if stored is not None:
+        return stored
+
+    legacy = _load_legacy_file_dict(tid)
+    if legacy is not None:
+        await upsert_config(session, tid, legacy)
+        return legacy
+
+    return await ensure_default_config(session, tid)
+
+
+async def save_rule_book_config(
+    session: AsyncSession,
+    payload: RuleBookConfigPayload,
+    tenant_id: uuid.UUID,
+    *,
+    updated_by_user_id: int | None = None,
+) -> None:
+    from app.services.document_type_catalog import clear_document_type_catalog_cache
     from app.services.rule_book_mapper import clear_classification_config_cache
 
-    path = org_rule_book_config_path(org_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    tid = parse_tenant_id(tenant_id)
+    if tid is None:
+        raise ValueError("Invalid tenant_id")
+
     data = payload.model_dump()
-    with path.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
-        fh.write("\n")
+    data.pop("vendor_masters", None)
+    data.pop("employee_masters", None)
+    await upsert_config(
+        session,
+        tid,
+        data,
+        updated_by_user_id=updated_by_user_id,
+    )
     clear_classification_config_cache()
-    return path
+    clear_document_type_catalog_cache()
+    clear_posting_config_cache()
+
+
+async def load_rule_book_config_with_masters(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    from app.services.master_data_service import attach_masters_to_config_dict
+
+    raw = await load_rule_book_config_dict(session, tenant_id)
+    return await attach_masters_to_config_dict(session, tenant_id, raw)
+
+
+async def load_posting_config_payload(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> RuleBookConfigPayload:
+    """Cached rule book without master tables — safe for dossier/matrix read paths."""
+    tid = parse_tenant_id(tenant_id)
+    if tid is None:
+        raise ValueError("Invalid tenant_id")
+
+    now = time.monotonic()
+    cached = _posting_config_cache.get(tid)
+    if cached is not None and now - cached[0] < _POSTING_CONFIG_CACHE_TTL_SEC:
+        return cached[1]
+
+    raw = await load_rule_book_config_dict(session, tid)
+    payload = validate_rule_book_config_payload(raw)
+    _posting_config_cache[tid] = (now, payload)
+    return payload

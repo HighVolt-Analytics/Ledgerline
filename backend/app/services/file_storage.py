@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from contextlib import contextmanager
 from datetime import date
@@ -22,33 +23,41 @@ def _local_vault_path(blob_name: str) -> Path:
 
 def store_invoice_pdf(
     data: bytes,
-    org_slug: str,
+    tenant_slug: str,
     vendor_slug: str,
     invoice_id: int,
     file_hash: str,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
     route_target: str | None = None,
     po_reference: str | None = None,
     purchase_document_type: str | None = None,
+    document_type_code: str | None = None,
+    document_type_short_title: str | None = None,
+    document_type_title: str | None = None,
+    document_type_folder: str | None = None,
 ) -> str:
     blob_name = blob_storage.build_blob_name(
-        org_slug,
+        tenant_slug,
         vendor_slug,
         invoice_id,
         file_hash,
         filename,
-        org_name=org_name,
+        tenant_name=tenant_name,
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
         route_target=route_target,
         po_reference=po_reference,
         purchase_document_type=purchase_document_type,
+        document_type_code=document_type_code,
+        document_type_short_title=document_type_short_title,
+        document_type_title=document_type_title,
+        document_type_folder=document_type_folder,
     )
 
     if blob_storage.is_blob_enabled():
@@ -83,20 +92,24 @@ def relocate_stored_pdf(stored_path: str, new_blob_name: str) -> str:
 
 def relocate_invoice_to_rejected(
     stored_path: str,
-    org_slug: str,
+    tenant_slug: str,
     invoice_id: int,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     storage_vendor_slug: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
     route_target: str | None = None,
+    document_type_code: str | None = None,
+    document_type_short_title: str | None = None,
+    document_type_title: str | None = None,
+    document_type_folder: str | None = None,
 ) -> str:
     new_name = vault_paths.build_rejected_blob_name(
-        org_slug,
-        org_name=org_name,
+        tenant_slug,
+        tenant_name=tenant_name,
         route_target=route_target,
         vendor_name=vendor_name,
         storage_vendor_slug=storage_vendor_slug,
@@ -104,69 +117,89 @@ def relocate_invoice_to_rejected(
         invoice_no=invoice_no,
         invoice_date=invoice_date,
         original_filename=filename,
+        document_type_code=document_type_code,
+        document_type_short_title=document_type_short_title,
+        document_type_title=document_type_title,
+        document_type_folder=document_type_folder,
     )
     return relocate_stored_pdf(stored_path, new_name)
 
 
 def relocate_rejected_to_vault(
     stored_path: str,
-    org_slug: str,
+    tenant_slug: str,
     vendor_slug: str,
     invoice_id: int,
     file_hash: str,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
     route_target: str | None = None,
+    document_type_code: str | None = None,
+    document_type_short_title: str | None = None,
+    document_type_title: str | None = None,
+    document_type_folder: str | None = None,
 ) -> str:
     _ = file_hash
     new_name = blob_storage.build_blob_name(
-        org_slug,
+        tenant_slug,
         vendor_slug,
         invoice_id,
         file_hash,
         filename,
-        org_name=org_name,
+        tenant_name=tenant_name,
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
         route_target=route_target,
+        document_type_code=document_type_code,
+        document_type_short_title=document_type_short_title,
+        document_type_title=document_type_title,
+        document_type_folder=document_type_folder,
     )
     return relocate_stored_pdf(stored_path, new_name)
 
 
 def relocate_invoice_pdf(
     stored_path: str,
-    org_slug: str,
+    tenant_slug: str,
     new_vendor_slug: str,
     invoice_id: int,
     file_hash: str,
     filename: str,
     *,
-    org_name: str | None = None,
+    tenant_name: str | None = None,
     vendor_name: str | None = None,
     invoice_no: str | None = None,
     invoice_date: date | str | None = None,
     route_target: str | None = None,
     po_reference: str | None = None,
     purchase_document_type: str | None = None,
+    document_type_code: str | None = None,
+    document_type_short_title: str | None = None,
+    document_type_title: str | None = None,
+    document_type_folder: str | None = None,
 ) -> str:
     new_name = blob_storage.build_blob_name(
-        org_slug,
+        tenant_slug,
         new_vendor_slug,
         invoice_id,
         file_hash,
         filename,
-        org_name=org_name,
+        tenant_name=tenant_name,
         vendor_name=vendor_name,
         invoice_no=invoice_no,
         invoice_date=invoice_date,
         route_target=route_target,
         po_reference=po_reference,
         purchase_document_type=purchase_document_type,
+        document_type_code=document_type_code,
+        document_type_short_title=document_type_short_title,
+        document_type_title=document_type_title,
+        document_type_folder=document_type_folder,
     )
     return relocate_stored_pdf(stored_path, new_name)
 
@@ -225,6 +258,70 @@ def stored_file_available(stored_path: str | None) -> bool:
     ):
         return blob_storage.blob_exists(stored_path)
     return Path(stored_path).is_file()
+
+
+async def repair_invoice_stored_path(session, invoice) -> bool:
+    """
+    Recover raw_file_path when the blob was relocated but the DB row was not updated.
+
+    Returns True when raw_file_path was repaired to an existing blob/file.
+    """
+    if stored_file_available(invoice.raw_file_path):
+        return False
+
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+    from app.models.tenant import Tenant
+    from app.services.audit_service import log_event
+
+    rows = (
+        await session.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.invoice_id == invoice.id,
+                AuditLog.event == "blob_relocated",
+            )
+            .order_by(AuditLog.id.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+    for row in rows:
+        detail = row.detail
+        if isinstance(detail, str):
+            try:
+                detail = json.loads(detail)
+            except json.JSONDecodeError:
+                detail = {}
+        if not isinstance(detail, dict):
+            detail = {}
+        to_path = detail.get("to_path")
+        if isinstance(to_path, str) and stored_file_available(to_path):
+            old_path = invoice.raw_file_path
+            invoice.raw_file_path = to_path
+            await log_event(
+                session,
+                "blob_path_repaired",
+                invoice_id=invoice.id,
+                detail={"from_path": old_path, "to_path": to_path, "source": "audit"},
+            )
+            return True
+
+    org = await session.get(Tenant, invoice.tenant_id)
+    tenant_slug = org.slug if org else get_settings().default_tenant_slug
+    found = blob_storage.find_blob_uri_for_invoice(invoice.id, tenant_slug=tenant_slug)
+    if found and stored_file_available(found):
+        old_path = invoice.raw_file_path
+        invoice.raw_file_path = found
+        await log_event(
+            session,
+            "blob_path_repaired",
+            invoice_id=invoice.id,
+            detail={"from_path": old_path, "to_path": found, "source": "blob_search"},
+        )
+        return True
+
+    return False
 
 
 def delete_stored_file(stored_path: str | None) -> None:

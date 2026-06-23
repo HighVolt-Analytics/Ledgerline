@@ -34,7 +34,7 @@ async def test_log_rule_book_updated_suppresses_identical_content(
 
     first = await log_rule_book_updated(
         db_session,
-        org_id=1,
+        tenant_id=1,
         after_config=config,
         detail={"changes": {"email_capture_rules": {"modified": ["ec-1"]}}},
         actor_name="Admin",
@@ -46,7 +46,7 @@ async def test_log_rule_book_updated_suppresses_identical_content(
 
     second = await log_rule_book_updated(
         db_session,
-        org_id=1,
+        tenant_id=1,
         after_config=config,
         detail={"changes": {"email_capture_rules": {"modified": ["ec-1"]}}},
         actor_name="Admin",
@@ -85,7 +85,7 @@ async def test_log_rule_book_updated_allows_real_change(
 
     await log_rule_book_updated(
         db_session,
-        org_id=1,
+        tenant_id=1,
         after_config=base,
         detail={"changes": {}},
     )
@@ -95,7 +95,7 @@ async def test_log_rule_book_updated_allows_real_change(
 
     row = await log_rule_book_updated(
         db_session,
-        org_id=1,
+        tenant_id=1,
         after_config=changed,
         detail={"changes": {}},
     )

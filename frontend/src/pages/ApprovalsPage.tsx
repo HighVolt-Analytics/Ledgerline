@@ -5,14 +5,16 @@ import { api } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
-import { invId, money } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
 import { fetchAllApprovals, fetchAllInvoices } from "@/lib/invoices";
 import { approveAndProcess, watchProcessingUntilIdle } from "@/lib/invoiceActions";
+import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { cn } from "@/lib/cn";
 
 const APPROVAL_POLL_MS = 15_000;
@@ -87,6 +89,7 @@ export function ApprovalsPage() {
   }
   const [busyId, setBusyId] = useState<number | null>(null);
   const [processingBusy, setProcessingBusy] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const runProcessing = async () => {
     setProcessingBusy(true);
@@ -155,10 +158,11 @@ export function ApprovalsPage() {
       rejected: [],
     };
     for (const inv of invoices) {
+      if (!invoiceMatchesListSearch(inv, searchQuery)) continue;
       cols[columnForInvoice(inv)].push(inv);
     }
     return cols;
-  }, [invoices]);
+  }, [invoices, searchQuery]);
 
   const queueCount = useMemo(
     () => invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
@@ -233,10 +237,14 @@ export function ApprovalsPage() {
       setToast("Publish is available for processed invoices only.");
       return;
     }
+    if (inv.published_to_ledger) {
+      setToast(`${documentDisplayRef(inv)} is already published.`);
+      return;
+    }
     setBusyId(inv.id);
     try {
       await api.publishInvoice(inv.id);
-      setToast(`Published · ${invId(inv.id)}`);
+      setToast(`Published · ${documentDisplayRef(inv)}`);
       await load({ silent: true, fresh: true });
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Publish failed");
@@ -274,11 +282,11 @@ export function ApprovalsPage() {
           hint="Exception invoices appear here for review. Rejected files are stored under rejected/org/vendor/year/month in Azure."
           action={
             <Link
-              to="/inbox"
+              to="/upload"
               data-testid="button-load-samples"
               className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             >
-              Go to Inbox
+              Go to Upload
             </Link>
           }
         />
@@ -335,6 +343,15 @@ export function ApprovalsPage() {
         </Card>
       )}
 
+      <div className="mb-4 flex justify-end">
+        <ListSearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search this list…"
+          testId="input-approvals-search"
+        />
+      </div>
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {COLUMNS.map((col) => {
             const cards = board[col.key];
@@ -361,7 +378,7 @@ export function ApprovalsPage() {
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium truncate">{inv.vendor ?? "—"}</span>
                         <Badge variant="outline" className="tnum text-[10px] shrink-0">
-                          {invId(inv.id)}
+                          {documentDisplayRef(inv)}
                         </Badge>
                       </div>
                       <div className="text-xs text-muted-foreground tnum mt-0.5">
@@ -425,7 +442,7 @@ export function ApprovalsPage() {
                             Reject
                           </Button>
                         )}
-                        {col.key === "approved" && (
+                        {col.key === "approved" && !inv.published_to_ledger && (
                           <Button
                             variant="ghost"
                             size="sm"

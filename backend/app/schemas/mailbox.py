@@ -1,6 +1,7 @@
 """Connected mailbox schemas."""
 
-from datetime import datetime
+from datetime import date, datetime
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -18,7 +19,7 @@ class MailboxConnectionRequestCreate(BaseModel):
 
 class MailboxConnectionRequestResponse(BaseModel):
     id: int
-    org_id: int
+    tenant_id: UUID
     requested_email: str
     display_name: str | None
     message: str | None
@@ -43,7 +44,7 @@ class MailboxInviteLinkResponse(BaseModel):
 
 
 class MailboxInvitePreviewResponse(BaseModel):
-    org_name: str
+    tenant_name: str
     requested_email: str
     display_name: str | None
     message: str | None
@@ -61,7 +62,7 @@ class MailboxAdminConsentResponse(BaseModel):
 
 class MailboxResponse(BaseModel):
     id: int
-    org_id: int
+    tenant_id: UUID
     email: str
     display_name: str | None
     is_active: bool
@@ -72,3 +73,34 @@ class MailboxResponse(BaseModel):
     last_poll_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class MailboxBackfillCreate(BaseModel):
+    from_date: date
+    to_date: date | None = None
+    mark_processed: bool = False
+
+
+class MailboxBackfillResponse(BaseModel):
+    id: int
+    tenant_id: UUID
+    mailbox_id: int
+    from_date: date
+    to_date: date
+    mark_processed: bool
+    status: str
+    messages_scanned: int
+    attachments_ingested: int
+    messages_skipped: int
+    invoices_processed: int
+    error_message: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MailboxBackfillQueuedResponse(BaseModel):
+    job: MailboxBackfillResponse
+    task_id: str

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from app.models.invoice import Invoice
 from app.models.journal import EntryType
+from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.account_mapper import AccountMapping
 from app.services.rule_book_mapper import (
     get_payable_account_mapping,
@@ -21,13 +22,18 @@ class JournalLine:
     entry_type: EntryType
 
 
-def generate_entries(invoice: Invoice, mapping: AccountMapping) -> list[JournalLine]:
+def generate_entries(
+    invoice: Invoice,
+    mapping: AccountMapping,
+    *,
+    config: RuleBookConfigPayload,
+) -> list[JournalLine]:
     entry_date = invoice.invoice_date or date.today()
     subtotal = invoice.subtotal or Decimal("0")
     gst = invoice.gst or Decimal("0")
     total = invoice.total or subtotal + gst
-    tax = get_tax_account_mapping(invoice.org_id)
-    payable = get_payable_account_mapping(invoice.org_id)
+    tax = get_tax_account_mapping(config)
+    payable = get_payable_account_mapping(config)
 
     return [
         JournalLine(

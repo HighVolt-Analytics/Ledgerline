@@ -3,10 +3,12 @@ import { Check } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
+import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { MatchStatusBadge } from "@/components/purchases/MatchStatusBadge";
 import { ThreeWayAuditBadge } from "@/components/purchases/ThreeWayAuditBadge";
 import { PurchaseCaptureStrip } from "@/components/purchases/PurchaseCaptureStrip";
+import { RoutedInvoicesPanel } from "@/components/rule-book/RoutedInvoicesPanel";
 import {
   PurchaseDetailContent,
   PurchaseDetailSheet,
@@ -20,6 +22,7 @@ import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
+import { matchesListSearch } from "@/lib/listSearch";
 import { apiPurchaseToRow, purchaseKpisFromRegister } from "@/lib/routePageAdapters";
 import { fmtAud } from "@/lib/v4MockData";
 
@@ -39,8 +42,27 @@ export function PurchaseManagementPage() {
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const rows = useMemo(() => purchaseRows.map(apiPurchaseToRow), [purchaseRows]);
+  const filteredRows = useMemo(
+    () =>
+      rows.filter(({ purchaseId, invoiceId, po, m, threeWayAuditStatus }) =>
+        matchesListSearch(
+          searchQuery,
+          purchaseId,
+          invoiceId,
+          po.id,
+          po.vendor,
+          po.invoiceNo,
+          po.item,
+          po.requestor,
+          m.status,
+          threeWayAuditStatus
+        )
+      ),
+    [rows, searchQuery]
+  );
   const kpis = useMemo(
     () => purchaseKpisFromRegister(purchaseRows, routed),
     [purchaseRows, routed]
@@ -96,12 +118,9 @@ export function PurchaseManagementPage() {
         subtitle="PO → GRN → Invoice three-way matching. Variances are routed for tiered approval before payment."
       />
 
-      <PurchaseCaptureStrip
-        activeRuleCount={activeRuleCount}
-        onUploaded={() => void refetchAll()}
-      />
+      <PurchaseCaptureStrip activeRuleCount={activeRuleCount} />
 
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-3 mb-5">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 mb-5">
         <KpiCard
           label="Open POs"
           value={purchasesLoading ? "…" : kpis.openPos}
@@ -127,9 +146,27 @@ export function PurchaseManagementPage() {
               : undefined
           }
         />
+        <KpiCard
+          label="Missing PO link"
+          value={purchasesLoading ? "…" : kpis.withoutPoRef}
+          testid="kpi-po-missing-ref"
+          delta={
+            !purchasesLoading && kpis.withoutPoRef > 0
+              ? { dir: "down", text: "routed, no PO ref", good: false }
+              : undefined
+          }
+        />
       </div>
 
-      <Card className="overflow-hidden">
+      <RoutedInvoicesPanel
+        routeTarget={ROUTE_TARGET}
+        title="Documents routed to Purchase Management"
+        hint="Commercial invoices and PO dossier members appear here after classification. Link a PO reference to enter the three-way match register below. Exception rows may need vendor registration in Master Data."
+        testId="purchase-routed-invoices"
+        showPo
+      />
+
+      <Card className="overflow-hidden mt-5">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-border">
           <div>
             <span className="text-sm font-medium">Three-way match register</span>
@@ -137,7 +174,17 @@ export function PurchaseManagementPage() {
               Click a row to open the three-way match detail drawer.
             </p>
           </div>
-          <VarianceFormulaHint />
+          <div className="flex items-center gap-2">
+            {rows.length > 0 ? (
+              <ListSearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search this list…"
+                testId="input-purchase-search"
+              />
+            ) : null}
+            <VarianceFormulaHint />
+          </div>
         </div>
 
         {purchasesLoading ? (
@@ -148,7 +195,7 @@ export function PurchaseManagementPage() {
           <div className="px-4 py-6">
             <EmptyState
               title="No purchase orders yet"
-              hint="Routed purchase invoices with a PO reference appear here after processing. Check Inbox for documents missing a PO link (see KPI above)."
+              hint="PO-linked commercial invoices appear here after processing. Routed documents without a PO reference stay in the list above until you attach a PO number."
             />
           </div>
         ) : (
@@ -171,7 +218,14 @@ export function PurchaseManagementPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ purchaseId, invoiceId, po, m, threeWayAuditStatus }) => {
+                {filteredRows.length === 0 && (
+                  <tr>
+                    <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
+                      No purchase orders match your search.
+                    </td>
+                  </tr>
+                )}
+                {filteredRows.map(({ purchaseId, invoiceId, po, m, threeWayAuditStatus }) => {
                   const rowKey = purchaseRowKey(purchaseId, invoiceId);
                   const showApprove = po.routedForApproval;
                   return (

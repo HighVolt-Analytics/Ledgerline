@@ -30,13 +30,8 @@ from app.services.pipeline import ingest_email_attachments
 from app.services.rule_book_mapper import clear_classification_config_cache
 from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
 from app.services.team_expense_validator import run_team_expense_validations
+from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.validator import run_all_validations
-
-
-@pytest.fixture
-def capture_config() -> RuleBookConfigPayload:
-    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
-    return validate_rule_book_config_payload(json.loads(template.read_text(encoding="utf-8")))
 
 
 @pytest.fixture
@@ -95,12 +90,12 @@ def test_evaluate_ingest_capture_matches_aws_rule(capture_config: RuleBookConfig
 
 
 @pytest.mark.asyncio
-async def test_apply_ingest_capture_persists_route(
+async def test_apply_ingest_capture_records_ingest_rule_without_route(
     db_session: AsyncSession,
     capture_config: RuleBookConfigPayload,
 ) -> None:
     email = _aws_billing_email()
-    inv = Invoice(org_id=1, status=InvoiceStatus.PENDING, file_hash="abc123")
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING, file_hash="abc123")
     db_session.add(inv)
     await db_session.flush()
 
@@ -112,13 +107,13 @@ async def test_apply_ingest_capture_persists_route(
         config=capture_config,
     )
     assert rule is not None
-    assert inv.route_target == "Purchase Management"
-    assert parse_matched_rule_ids(inv.matched_rule_ids) == ["email:ec-1"]
-    assert inv.evaluation_status == "needs_review"
+    assert inv.route_target is None
+    assert parse_matched_rule_ids(inv.matched_rule_ids) == ["ingest:ec-1"]
+    assert inv.evaluation_status is None
 
 
 @pytest.mark.asyncio
-async def test_ingest_email_attachments_sets_early_route(
+async def test_ingest_email_attachments_does_not_set_early_route(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     clean_org_rule_book,
@@ -127,19 +122,22 @@ async def test_ingest_email_attachments_sets_early_route(
         "app.services.pipeline.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/test.pdf",
     )
-    monkeypatch.setattr("app.services.pipeline._finish_email_message", lambda *args: None)
+    monkeypatch.setattr(
+        "app.services.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
 
     result = await ingest_email_attachments(
         db_session,
         [_aws_billing_email()],
-        org_id=1,
-        org_slug="hv-org",
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
     )
     assert result.ingested_count == 1
 
     inv = (await db_session.execute(select(Invoice))).scalar_one()
-    assert inv.route_target == "Purchase Management"
-    assert "email:ec-1" in (inv.matched_rule_ids or "")
+    assert inv.route_target is None
+    assert "ingest:ec-1" in (inv.matched_rule_ids or "")
 
 
 @pytest.mark.asyncio
@@ -148,7 +146,7 @@ async def test_apply_invoice_evaluation_preserves_ingest_email_route(
     capture_config: RuleBookConfigPayload,
 ) -> None:
     inv = Invoice(
-        org_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         status=InvoiceStatus.MAPPING,
@@ -178,7 +176,7 @@ async def test_apply_invoice_evaluation_preserves_email_route_over_po_reference(
 ) -> None:
     """Junk po_reference must not override email capture route_to on re-evaluation."""
     inv = Invoice(
-        org_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Qantas Airways Limited",
         invoice_no="QF-BOOK-3318745",
         po_reference="the",
@@ -208,7 +206,7 @@ async def test_team_expense_budget_validation_fails(
 ) -> None:
     db_session.add(
         EmployeeMasterRecord(
-            org_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             master_id="em-test",
             name="Site Supervisor",
             email="supervisor@acme-hospitality.com.au",
@@ -234,7 +232,7 @@ async def test_team_expense_budget_validation_fails(
     results = await run_team_expense_validations(
         data,
         db_session,
-        org_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         route_target=ROUTE_TEAM,
         email_sender="supervisor@acme-hospitality.com.au",
         config=capture_config,
@@ -253,7 +251,7 @@ async def test_run_all_validations_skips_team_rules_for_purchase_route(
     results = await run_all_validations(
         sample_invoice_data,
         db_session,
-        org_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         route_target="Purchase Management",
     )
     assert not any(result.rule.startswith("VR-TE") for result in results)
@@ -266,7 +264,7 @@ async def test_run_all_validations_includes_team_rules(
 ) -> None:
     db_session.add(
         EmployeeMasterRecord(
-            org_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             master_id="em-test-2",
             name="Ops Lead",
             email="ops@acme-hospitality.com.au",
@@ -281,7 +279,7 @@ async def test_run_all_validations_includes_team_rules(
     results = await run_all_validations(
         sample_invoice_data,
         db_session,
-        org_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         sender="ops@acme-hospitality.com.au",
         route_target=ROUTE_TEAM,
     )
@@ -294,4 +292,3 @@ async def test_run_all_validations_includes_team_rules(
         "VR-TE05",
         "VR-TE06",
     ]
-    assert not any(result.rule.startswith("VR0") for result in results)

@@ -11,9 +11,10 @@ from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
 from app.models.line_item import LineItem
-from app.models.organisation import Organisation
+from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.services.auth_service import create_access_token, hash_password
+from app.services.membership_service import ensure_membership
 
 
 @pytest.mark.asyncio
@@ -25,8 +26,8 @@ async def test_line_items_cross_org_returns_404(
     monkeypatch.setenv("AUTH_REQUIRED", "true")
     get_settings.cache_clear()
 
-    db_session.add(Organisation(id=2, name="Other Org", slug="other-org"))
-    inv = Invoice(org_id=1, status=InvoiceStatus.PENDING, currency="AUD")
+    db_session.add(Tenant(id=2, name="Other Org", slug="other-org"))
+    inv = Invoice(tenant_id=1, status=InvoiceStatus.PENDING, currency="AUD")
     db_session.add(inv)
     await db_session.flush()
     db_session.add(
@@ -40,7 +41,7 @@ async def test_line_items_cross_org_returns_404(
     )
 
     outsider = User(
-        org_id=2,
+        tenant_id=2,
         email="outsider@other.com",
         password_hash=hash_password("outsiderpass1"),
         full_name="Outsider",
@@ -48,17 +49,18 @@ async def test_line_items_cross_org_returns_404(
     )
     db_session.add(outsider)
     await db_session.flush()
+    await ensure_membership(db_session, user_id=outsider.id, tenant_id=2)
 
     token = create_access_token(
         user_id=outsider.id,
-        org_id=2,
-        org_slug="other-org",
+        tenant_id=2,
+        tenant_slug="other-org",
         email=outsider.email,
         role=outsider.role.value,
     )
     res = await client.get(
         f"/api/invoices/{inv.id}/line-items",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "2"},
     )
     assert res.status_code == 404
 
@@ -74,8 +76,8 @@ async def test_journal_entries_cross_org_returns_404(
     monkeypatch.setenv("AUTH_REQUIRED", "true")
     get_settings.cache_clear()
 
-    db_session.add(Organisation(id=2, name="Other Org", slug="other-org"))
-    inv = Invoice(org_id=1, status=InvoiceStatus.PROCESSED, currency="AUD")
+    db_session.add(Tenant(id=2, name="Other Org", slug="other-org"))
+    inv = Invoice(tenant_id=1, status=InvoiceStatus.PROCESSED, currency="AUD")
     db_session.add(inv)
     await db_session.flush()
     db_session.add(
@@ -91,7 +93,7 @@ async def test_journal_entries_cross_org_returns_404(
     )
 
     outsider = User(
-        org_id=2,
+        tenant_id=2,
         email="outsider2@other.com",
         password_hash=hash_password("outsiderpass1"),
         full_name="Outsider",
@@ -99,17 +101,18 @@ async def test_journal_entries_cross_org_returns_404(
     )
     db_session.add(outsider)
     await db_session.flush()
+    await ensure_membership(db_session, user_id=outsider.id, tenant_id=2)
 
     token = create_access_token(
         user_id=outsider.id,
-        org_id=2,
-        org_slug="other-org",
+        tenant_id=2,
+        tenant_slug="other-org",
         email=outsider.email,
         role=outsider.role.value,
     )
     res = await client.get(
         f"/api/invoices/{inv.id}/journal-entries",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "2"},
     )
     assert res.status_code == 404
 

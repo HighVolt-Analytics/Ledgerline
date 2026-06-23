@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice
 from app.schemas.rule_book_config import RuleBookConfigPayload
-from app.services.master_data_service import create_pending_vendor, list_pending_vendors
-from app.services.rule_book_config_io import load_rule_book_config_dict
+from app.services.master_data_service import (
+    classification_config_with_db_masters,
+    create_pending_vendor,
+    list_pending_vendors,
+)
+from app.services.rule_book_config_io import load_rule_book_config_with_masters
 from app.services.rule_book_evaluate_service import invoice_to_eval_document
 from app.services.rule_book_mapper import (
     FALLBACK_RULE_TYPE,
@@ -36,6 +41,11 @@ from app.services.expense_vendor_policy import (
 )
 from app.services.audit_service import log_event
 from app.services.capture_channel import infer_capture_channel
+from app.services.document_type_catalog import (
+    DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN,
+    min_route_confidence_for_document_type,
+    route_target_for_document_type,
+)
 
 ROUTE_PURCHASE = "Purchase Management"
 ROUTE_EXPENSES = "Expenses Management"
@@ -96,7 +106,22 @@ def evaluate_invoice_routing(
         matched_rule_ids.append(f"team:{team.id}")
 
     route_target: str | None = None
-    if email_rule:
+    dt_code = (invoice.document_type_code or "").strip().upper()
+    dt_confidence = float(invoice.document_type_confidence or 0.0)
+    dt_route = (
+        route_target_for_document_type(dt_code, config.document_types)
+        if dt_code
+        else None
+    )
+    dt_min_confidence = (
+        min_route_confidence_for_document_type(dt_code, config.document_types)
+        if dt_code
+        else DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN
+    )
+    if dt_code and dt_confidence >= dt_min_confidence and dt_route:
+        route_target = dt_route
+        matched_rule_ids.append(f"dt:{dt_code}")
+    elif email_rule:
         route_target = email_rule.action.route_to
     elif purchase:
         route_target = ROUTE_PURCHASE
@@ -106,6 +131,11 @@ def evaluate_invoice_routing(
         route_target = ROUTE_TEAM
     elif is_plausible_po_reference(doc.po):
         route_target = ROUTE_PURCHASE
+    else:
+        from app.services.purchase_document_service import infer_purchase_document_type
+
+        if infer_purchase_document_type(invoice):
+            route_target = ROUTE_PURCHASE
 
     is_fallback = mapping_rule_type == FALLBACK_RULE_TYPE
 
@@ -125,6 +155,8 @@ def evaluate_invoice_routing(
 
     if vendor_flag:
         evaluation_status = vendor_flag
+    elif dt_code and dt_confidence < dt_min_confidence:
+        evaluation_status = EVAL_NEEDS_REVIEW
     elif is_fallback:
         evaluation_status = EVAL_NEEDS_REVIEW
     elif purchase or expense or team or (
@@ -174,13 +206,26 @@ async def apply_invoice_evaluation(
 ) -> InvoiceEvaluationResult:
     """Evaluate and persist routing fields; optionally enqueue unknown vendors."""
     if config is None:
-        config = load_classification_config(invoice.org_id)
+        config = await load_classification_config(session, invoice.tenant_id)
+    config = await classification_config_with_db_masters(session, invoice.tenant_id, config)
 
     existing_ids = parse_matched_rule_ids(invoice.matched_rule_ids)
     existing_email_ids = [rule_id for rule_id in existing_ids if rule_id.startswith("email:")]
     prior_route = invoice.route_target
+    dt_min_confidence = (
+        min_route_confidence_for_document_type(
+            (invoice.document_type_code or "").strip().upper(),
+            config.document_types,
+        )
+        if (invoice.document_type_code or "").strip()
+        else DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN
+    )
+    dt_confident = bool(
+        (invoice.document_type_code or "").strip()
+        and float(invoice.document_type_confidence or 0.0) >= dt_min_confidence
+    )
 
-    mapping_detail = map_invoice_with_details(invoice)
+    mapping_detail = map_invoice_with_details(invoice, config=config)
     result = evaluate_invoice_routing(
         invoice,
         config,
@@ -188,9 +233,9 @@ async def apply_invoice_evaluation(
         route_override=prior_route,
     )
 
-    if (prior_route or "").strip():
+    if (prior_route or "").strip() and not dt_confident:
         merged_ids = list(dict.fromkeys([*existing_ids, *result.matched_rule_ids]))
-        # Ingest / email capture route is sticky; post-parse category rules must not re-route.
+        # Ingest / email capture route is sticky; DT classification overrides when confident.
         evaluation_status = result.evaluation_status
         if prior_route.strip() == ROUTE_TEAM and evaluation_status == EVAL_PENDING_VENDOR:
             evaluation_status = EVAL_AUTO_CODED
@@ -202,6 +247,12 @@ async def apply_invoice_evaluation(
         )
 
     apply_evaluation_to_invoice(invoice, result)
+
+    if result.evaluation_status == EVAL_PENDING_VENDOR:
+        from app.services.vendor_hold_service import purchase_invoice_trusts_po_register
+
+        if await purchase_invoice_trusts_po_register(session, invoice):
+            invoice.evaluation_status = EVAL_AUTO_CODED
 
     if is_unmatched_expense_vendor_status(result.evaluation_status):
         await log_event(
@@ -224,7 +275,7 @@ async def apply_invoice_evaluation(
 
         employee = await resolve_employee_for_sender(
             session,
-            invoice.org_id,
+            invoice.tenant_id,
             invoice.email_sender,
         )
         await log_event(
@@ -239,7 +290,7 @@ async def apply_invoice_evaluation(
             },
         )
 
-    if enqueue_pending and result.evaluation_status == EVAL_PENDING_VENDOR:
+    if enqueue_pending and invoice.evaluation_status == EVAL_PENDING_VENDOR:
         await _maybe_enqueue_pending_vendor(session, invoice, result)
 
     from app.services.purchase_match_service import sync_purchase_order_from_invoice
@@ -262,29 +313,46 @@ async def _maybe_enqueue_pending_vendor(
     if not name:
         return
 
-    config = load_config_for_org(invoice.org_id)
+    from app.services.master_data_service import list_vendor_masters
     from app.services.vendor_detection import find_matching_vendor_master
 
-    if find_matching_vendor_master(name, invoice.abn, config.vendor_masters):
+    db_masters = await list_vendor_masters(session, invoice.tenant_id)
+    if find_matching_vendor_master(name, invoice.abn, db_masters):
         return
 
-    existing = await list_pending_vendors(session, invoice.org_id)
+    existing = await list_pending_vendors(session, invoice.tenant_id)
     for row in existing:
         if row.detected_name.strip().lower() == name.lower():
             return
 
-    await create_pending_vendor(
-        session,
-        invoice.org_id,
-        PendingVendorCreate(
-            detected_name=name,
-            detected_abn=invoice.abn,
-            source_invoice_id=invoice.id,
-            confidence=result.vendor_confidence,
-        ),
-    )
+    try:
+        await create_pending_vendor(
+            session,
+            invoice.tenant_id,
+            PendingVendorCreate(
+                detected_name=name,
+                detected_abn=invoice.abn,
+                source_invoice_id=invoice.id,
+                confidence=result.vendor_confidence,
+            ),
+        )
+    except ValueError:
+        # Vendor registered in masters since evaluation started — safe to skip.
+        return
 
 
-def load_config_for_org(org_id: int) -> RuleBookConfigPayload:
-    raw = load_rule_book_config_dict(org_id)
-    return validate_rule_book_config_payload(raw)
+async def load_config_for_tenant(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> RuleBookConfigPayload:
+    return await load_classification_config(session, tenant_id)
+
+
+async def load_posting_config_for_tenant(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> RuleBookConfigPayload:
+    """Rule book for dossier/matrix reads — document types only, no vendor/employee masters."""
+    from app.services.rule_book_config_io import load_posting_config_payload
+
+    return await load_posting_config_payload(session, tenant_id)

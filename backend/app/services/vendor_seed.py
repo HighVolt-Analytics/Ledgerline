@@ -10,7 +10,7 @@ from app.services.vendor_resolver import slugify_vendor_name
 DEFAULT_VENDORS: list[dict[str, str | bool | None]] = []
 
 
-async def seed_vendors(session: AsyncSession, *, org_id: int = 1) -> int:
+async def seed_vendors(session: AsyncSession, *, tenant_id: int = 1) -> int:
     """Insert default vendors when slug is not already present."""
     added = 0
     for item in DEFAULT_VENDORS:
@@ -18,7 +18,7 @@ async def seed_vendors(session: AsyncSession, *, org_id: int = 1) -> int:
         exists = (
             await session.execute(
                 select(VendorRegistry).where(
-                    VendorRegistry.org_id == org_id,
+                    VendorRegistry.tenant_id == tenant_id,
                     VendorRegistry.vendor_slug == slug,
                 )
             )
@@ -27,7 +27,7 @@ async def seed_vendors(session: AsyncSession, *, org_id: int = 1) -> int:
             continue
         session.add(
             VendorRegistry(
-                org_id=org_id,
+                tenant_id=tenant_id,
                 vendor_slug=slug,
                 vendor_name=str(item["vendor_name"]),
                 sender_pattern=str(item["sender_pattern"]),

@@ -4,20 +4,22 @@ from datetime import date
 
 from app.services.vault_paths import (
     ROUTE_PURCHASE,
+    ROUTE_VAULT,
     ROUTE_UNROUTED,
     build_vault_blob_name,
     build_vault_tree,
     filename_from_stored,
     vault_book_folder,
+    vault_document_type_folder,
     vault_file_name,
     vault_month,
-    vault_org_folder,
+    vault_tenant_folder,
     vault_vendor_folder,
 )
 
 
-def test_vault_org_folder() -> None:
-    assert vault_org_folder("hv-org") == "HvOrg"
+def test_vault_tenant_folder() -> None:
+    assert vault_tenant_folder("hv-org") == "HvOrg"
 
 
 def test_vault_book_folder() -> None:
@@ -38,7 +40,7 @@ def test_vault_month_name_only() -> None:
 def test_build_vault_blob_name() -> None:
     path = build_vault_blob_name(
         "hv-org",
-        org_name="HV Org",
+        tenant_name="HV Org",
         route_target=ROUTE_PURCHASE,
         vendor_name="James Patel Consulting",
         storage_vendor_slug="james-patel",
@@ -49,7 +51,31 @@ def test_build_vault_blob_name() -> None:
     )
     assert (
         path
-        == "invoice/HvOrg/Purchase Management/James Patel Consulting/2026/May/INV-007_2026-05-12.pdf"
+        == "invoice/HvOrg/Purchase Management/James Patel Consulting/2026/May/INV-007_2026-05-12_id7.pdf"
+    )
+
+
+def test_build_vault_blob_name_with_document_type() -> None:
+    path = build_vault_blob_name(
+        "hv-org",
+        route_target=ROUTE_VAULT,
+        vendor_name="ATO",
+        invoice_id=9,
+        invoice_no="GST-001",
+        invoice_date=date(2026, 4, 1),
+        original_filename="notice.pdf",
+        document_type_code="DT-25",
+        document_type_short_title="Tax authority notice",
+    )
+    assert (
+        path
+        == "invoice/HvOrg/Vault/DT-25 · Tax authority notice/ATO/2026/April/GST-001_2026-04-01_id9.pdf"
+    )
+
+
+def test_vault_document_type_folder_label() -> None:
+    assert vault_document_type_folder("DT-13", short_title="Vendor statement") == (
+        "DT-13 · Vendor statement"
     )
 
 
@@ -65,7 +91,7 @@ def test_purchase_blob_name_flat_with_shared_po_in_filename() -> None:
         po_reference="PO-MKT-2026-014",
         purchase_document_type="grn",
     )
-    assert path.endswith("GRN_PO-MKT-2026-014_2026-06-03.pdf")
+    assert path.endswith("GRN_PO-MKT-2026-014_2026-06-03_id102.pdf")
     assert "PO-MKT-2026-014/" not in path
 
 
@@ -79,7 +105,7 @@ def test_vault_file_name_uses_po_reference_for_purchase_docs() -> None:
             purchase_document_type="grn",
             po_reference="PO-MKT-2026-014",
         )
-        == "GRN_PO-MKT-2026-014_2026-06-03.pdf"
+        == "GRN_PO-MKT-2026-014_2026-06-03_id102.pdf"
     )
     assert (
         vault_file_name(
@@ -90,17 +116,46 @@ def test_vault_file_name_uses_po_reference_for_purchase_docs() -> None:
             purchase_document_type="invoice",
             po_reference="PO-MKT-2026-014",
         )
-        == "INV_PO-MKT-2026-014_2026-06-05.pdf"
+        == "INV_PO-MKT-2026-014_2026-06-05_id103.pdf"
     )
+
+
+def test_vault_file_name_unique_for_shared_invoice_no() -> None:
+    shared_no = "260671582"
+    a = vault_file_name(shared_no, 21, None, "part1.pdf")
+    b = vault_file_name(shared_no, 22, None, "part2.pdf")
+    assert a != b
+    assert a.endswith("_id21.pdf")
+    assert b.endswith("_id22.pdf")
 
 
 def test_filename_from_stored_vault_path() -> None:
     assert (
         filename_from_stored(
-            "azureblob://invoices/invoice/HvOrg/Purchase Management/Vendor/2026/May/INV-007_2026-05-12.pdf"
+            "azureblob://invoices/invoice/HvOrg/Purchase Management/Vendor/2026/May/INV-007_2026-05-12_id7.pdf"
         )
-        == "INV-007_2026-05-12.pdf"
+        == "INV-007_2026-05-12_id7.pdf"
     )
+
+
+def test_relocate_paths_unique_for_shared_invoice_no() -> None:
+    """Split dossier members must not collide when OCR yields the same invoice_no."""
+    shared = "260671582"
+    paths = [
+        build_vault_blob_name(
+            "hv-org",
+            invoice_id=invoice_id,
+            invoice_no=shared,
+            invoice_date=date(2026, 6, 5),
+            original_filename="part.pdf",
+            route_target=ROUTE_VAULT,
+            vendor_name="Spectra Innovations",
+            document_type_folder="DT-07 · COO",
+        )
+        for invoice_id in (21, 22, 23, 24, 25)
+    ]
+    assert len(set(paths)) == 5
+    assert all("_id" in path for path in paths)
 
 
 def test_build_vault_tree() -> None:
@@ -109,6 +164,7 @@ def test_build_vault_tree() -> None:
             {
                 "org": "HvOrg",
                 "book": "Purchase Management",
+                "document_type": "",
                 "vendor": "Atlassian Pty Ltd",
                 "year": "2026",
                 "month": "May",
@@ -116,6 +172,7 @@ def test_build_vault_tree() -> None:
             {
                 "org": "HvOrg",
                 "book": "Expenses Management",
+                "document_type": "",
                 "vendor": "James Patel Consulting",
                 "year": "2026",
                 "month": "May",
@@ -126,3 +183,23 @@ def test_build_vault_tree() -> None:
     assert len(tree[0]["children"]) == 2
     assert tree[0]["children"][0]["kind"] == "book"
     assert tree[0]["children"][0]["children"][0]["kind"] == "vendor"
+
+
+def test_build_vault_tree_with_document_type() -> None:
+    tree = build_vault_tree(
+        [
+            {
+                "org": "HvOrg",
+                "book": ROUTE_VAULT,
+                "document_type": "DT-13 · Vendor statement",
+                "vendor": "Sysco",
+                "year": "2026",
+                "month": "May",
+            },
+        ]
+    )
+    vault_book = tree[0]["children"][0]
+    assert vault_book["label"] == ROUTE_VAULT
+    assert vault_book["children"][0]["kind"] == "document_type"
+    assert vault_book["children"][0]["label"] == "DT-13 · Vendor statement"
+    assert vault_book["children"][0]["children"][0]["kind"] == "vendor"

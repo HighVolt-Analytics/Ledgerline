@@ -31,14 +31,14 @@ async def reconcile_daily(
     session: AsyncSession,
     recon_date: date,
     *,
-    org_id: int,
+    tenant_id: int,
     current_invoice: Invoice | None = None,
 ) -> ReconciliationResult:
     inv_q = select(
         func.count(Invoice.id),
         func.coalesce(func.sum(Invoice.total), 0),
     ).where(
-        Invoice.org_id == org_id,
+        Invoice.tenant_id == tenant_id,
         Invoice.status == InvoiceStatus.PROCESSED,
         Invoice.invoice_date == recon_date,
     )
@@ -55,14 +55,11 @@ async def reconcile_daily(
         count = int(count or 0) + 1
         inv_sum += current_invoice.total
 
-    journal_org = JournalEntry.invoice_id == Invoice.id
-
     ap_q = (
         select(func.coalesce(func.sum(JournalEntry.credit), 0))
         .select_from(JournalEntry)
-        .join(Invoice, journal_org)
         .where(
-            Invoice.org_id == org_id,
+            JournalEntry.tenant_id == tenant_id,
             JournalEntry.account_code == AP_CODE,
             JournalEntry.date == recon_date,
             JournalEntry.entry_type == EntryType.CREDIT,
@@ -73,14 +70,12 @@ async def reconcile_daily(
     dr_q = (
         select(func.coalesce(func.sum(JournalEntry.debit), 0))
         .select_from(JournalEntry)
-        .join(Invoice, journal_org)
-        .where(Invoice.org_id == org_id, JournalEntry.date == recon_date)
+        .where(JournalEntry.tenant_id == tenant_id, JournalEntry.date == recon_date)
     )
     cr_q = (
         select(func.coalesce(func.sum(JournalEntry.credit), 0))
         .select_from(JournalEntry)
-        .join(Invoice, journal_org)
-        .where(Invoice.org_id == org_id, JournalEntry.date == recon_date)
+        .where(JournalEntry.tenant_id == tenant_id, JournalEntry.date == recon_date)
     )
     debits = Decimal(str((await session.execute(dr_q)).scalar() or 0))
     credits = Decimal(str((await session.execute(cr_q)).scalar() or 0))
@@ -113,8 +108,13 @@ async def reconcile_daily(
 async def save_reconciliation(
     session: AsyncSession,
     result: ReconciliationResult,
+    *,
+    tenant_id: int,
 ) -> DailyReconciliation:
-    stmt = select(DailyReconciliation).where(DailyReconciliation.date == result.date)
+    stmt = select(DailyReconciliation).where(
+        DailyReconciliation.date == result.date,
+        DailyReconciliation.tenant_id == tenant_id,
+    )
     row = (await session.execute(stmt)).scalar_one_or_none()
     if row:
         row.total_invoices = result.total_invoices
@@ -126,6 +126,7 @@ async def save_reconciliation(
         row.halt_reason = result.halt_reason
     else:
         row = DailyReconciliation(
+            tenant_id=tenant_id,
             date=result.date,
             total_invoices=result.total_invoices,
             total_ap_credits=result.total_ap_credits,
