@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import uuid
+
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import json
-
 from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.rule_book_config import EmailCaptureRule, RuleBookConfigPayload, validate_rule_book_config_payload
-from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.capture_channel import infer_capture_channel
 from app.services.document_ref_service import display_document_ref
 from app.services.po_reference import effective_po_reference
@@ -33,12 +33,15 @@ _SKIP_STATUSES = frozenset(
 _DEFAULT_LIMIT = 50
 
 
-def _resolve_config(
-    tenant_id: int,
+async def _resolve_config(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
     config_override: dict | RuleBookConfigPayload | None,
 ) -> RuleBookConfigPayload:
     if config_override is None:
-        raw = load_rule_book_config_dict(tenant_id)
+        from app.services.rule_book_config_io import load_rule_book_config_with_masters
+
+        raw = await load_rule_book_config_with_masters(session, tenant_id)
         return validate_rule_book_config_payload(raw)
     if isinstance(config_override, RuleBookConfigPayload):
         return config_override
@@ -287,12 +290,12 @@ def serialize_eval_row(
 async def evaluate_rule_book(
     session: AsyncSession,
     *,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     config_override: dict | RuleBookConfigPayload | None = None,
     invoice_ids: list[int] | None = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> dict:
-    config = _resolve_config(tenant_id, config_override)
+    config = await _resolve_config(session, tenant_id, config_override)
     stmt = (
         select(Invoice)
         .options(selectinload(Invoice.line_items))

@@ -213,7 +213,7 @@ async def run_team_expense_validations(
         return []
 
     if config is None:
-        config = load_config_for_tenant(tenant_id)
+        config = await load_config_for_tenant(session, tenant_id)
 
     employees = await list_employee_masters(session, tenant_id)
     employee = _find_employee_by_sender(employees, email_sender)

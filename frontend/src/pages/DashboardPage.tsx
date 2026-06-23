@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { useDashboardOverview } from "@/hooks/useDashboardOverview";
+import { useTenantTime } from "@/hooks/useTenantTime";
 import { axisMoney, currencySymbol, formatDuration, money, toNumber } from "@/lib/format";
 import { toV3SparkSeries } from "@/lib/kpiSpark";
 import { vaultInvoiceLink } from "@/lib/vault";
@@ -128,22 +129,25 @@ function trendToDelta(trend: KpiTrend | undefined) {
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const [period, setPeriod] = useState(() => defaultReportPeriod());
+  const { timeZone, locale } = useTenantTime();
+  const [periodOverride, setPeriodOverride] = useState<string | null>(null);
+  const period = periodOverride ?? defaultReportPeriod(timeZone);
+  const setPeriod = setPeriodOverride;
   const {
     data: overview,
     error,
     isLoading,
   } = useDashboardOverview(period, 10);
 
-  const yearOptions = useMemo(() => buildReconYears(null), []);
+  const yearOptions = useMemo(() => buildReconYears(null, timeZone), [timeZone]);
   const selectedYear = period ? yearFromPeriod(period) : yearOptions[0] ?? "";
   const monthOptions = useMemo(
-    () => (selectedYear ? buildMonthsForYear(selectedYear) : []),
-    [selectedYear]
+    () => (selectedYear ? buildMonthsForYear(selectedYear, timeZone, locale) : []),
+    [selectedYear, timeZone, locale]
   );
 
   const handleYearChange = (year: string) => {
-    const months = buildMonthsForYear(year);
+    const months = buildMonthsForYear(year, timeZone, locale);
     if (months.length === 0) {
       setPeriod("");
       return;

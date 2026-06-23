@@ -165,7 +165,9 @@ async def clear_demo_data(
 
     if reset_rules and org is not None:
         payload = _empty_rule_book_payload()
-        save_rule_book_config(payload, org.id)
+        async with async_session_factory() as rule_session:
+            await save_rule_book_config(rule_session, payload, org.id)
+            await rule_session.commit()
         clear_classification_config_cache()
         org_path = org_rule_book_config_path(org.id)
         print(f"Reset rule book: {org_path}")

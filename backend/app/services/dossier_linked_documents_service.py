@@ -14,7 +14,6 @@ from app.schemas.dossier import (
 from app.services.document_ref_service import display_document_ref, dossier_public_id
 from app.services.document_type_playbook_profile_service import should_enforce_bundle_mandatory
 from app.services.document_type_playbook_service import split_bundle_items
-from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.services.po_reference import is_plausible_po_reference
 from app.services.purchase_dossier_service import build_purchase_dossier
 
@@ -47,12 +46,13 @@ async def build_dossier_linked_documents(
     invoice: Invoice,
     *,
     definition: DocumentTypeDefinition | None,
+    document_types: list[DocumentTypeDefinition] | None = None,
 ) -> DossierLinkedDocumentsResponse:
     anchor_id = _dossier_id_for_invoice(invoice)
     po_ref = (invoice.po_reference or "").strip() or None
 
     if po_ref and is_plausible_po_reference(po_ref):
-        purchase = await build_purchase_dossier(session, invoice)
+        purchase = await build_purchase_dossier(session, invoice, verify_stored_file=False)
         documents: list[DossierLinkedDocumentResponse] = []
         for member in purchase.members:
             dt_code, default_label = _ROLE_TO_DT.get(member.role, (member.role.upper(), member.label))
@@ -103,8 +103,10 @@ async def build_dossier_linked_documents(
             purchase_order_id=purchase.purchase_order_id,
         )
 
-    config = load_config_for_tenant(invoice.tenant_id)
-    document_types = config.document_types
+    if document_types is None:
+        from app.services.invoice_evaluation_service import load_posting_config_for_tenant
+
+        document_types = (await load_posting_config_for_tenant(session, invoice.tenant_id)).document_types
     enforce = should_enforce_bundle_mandatory(definition) if definition else False
     mandatory_codes: list[str] = []
     advisories: list[str] = []

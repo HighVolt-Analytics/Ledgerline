@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -101,19 +102,25 @@ async def find_connection_by_phone_or_waba(
     return None
 
 
-async def try_claim_message_mid(session: AsyncSession, message_mid: str) -> bool:
+async def try_claim_message_mid(
+    session: AsyncSession,
+    message_mid: str,
+    *,
+    tenant_id: uuid.UUID,
+) -> bool:
     if not message_mid:
         return False
     existing = (
         await session.execute(
             select(MetaWebhookDedupe.id).where(
-                MetaWebhookDedupe.message_mid == message_mid
+                MetaWebhookDedupe.tenant_id == tenant_id,
+                MetaWebhookDedupe.message_mid == message_mid,
             )
         )
     ).scalar_one_or_none()
     if existing is not None:
         return False
-    session.add(MetaWebhookDedupe(message_mid=message_mid))
+    session.add(MetaWebhookDedupe(tenant_id=tenant_id, message_mid=message_mid))
     await session.flush()
     return True
 

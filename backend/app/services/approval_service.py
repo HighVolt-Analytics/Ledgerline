@@ -75,7 +75,7 @@ async def reject_invoice(
     org = await session.get(Tenant, inv.tenant_id)
     tenant_slug = org.slug if org else "default"
     tenant_name = org.name if org else None
-    config = load_config_for_tenant(inv.tenant_id)
+    config = await load_config_for_tenant(session, inv.tenant_id)
     short_title, title = vault_document_type_titles_for_invoice(inv, list(config.document_types))
 
     previous_status = inv.status.value
@@ -146,7 +146,7 @@ async def approve_invoice_for_reprocess(
     org = await session.get(Tenant, inv.tenant_id)
     tenant_slug = org.slug if org else "default"
     tenant_name = org.name if org else None
-    config = load_config_for_tenant(inv.tenant_id)
+    config = await load_config_for_tenant(session, inv.tenant_id)
     short_title, title = vault_document_type_titles_for_invoice(inv, list(config.document_types))
     previous_status = inv.status.value
 

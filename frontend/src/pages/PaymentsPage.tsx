@@ -9,6 +9,7 @@ import { PaymentRow } from "@/components/payments/PaymentRow";
 import { WalletCard } from "@/components/payments/WalletCard";
 import { Card } from "@/components/ui/card";
 import { usePaymentMutations, usePayments } from "@/hooks/usePayments";
+import { useTenantTime } from "@/hooks/useTenantTime";
 import { money } from "@/lib/format";
 import { apiPaymentToRecord, paymentsKpis } from "@/lib/routePageAdapters";
 import { paymentTierLabel, type PaymentRecord, type PaymentTab } from "@/lib/v4MockData";
@@ -22,6 +23,7 @@ const TABS: { value: PaymentTab; label: string; testid: string }[] = [
 ];
 
 export function PaymentsPage() {
+  const { timeZone } = useTenantTime();
   const { data: paymentRows = [], isLoading, isError } = usePayments();
   const { updateStatus } = usePaymentMutations();
   const [tab, setTab] = useState<PaymentTab>("queue");
@@ -29,7 +31,7 @@ export function PaymentsPage() {
   const [receipt, setReceipt] = useState<PaymentRecord | null>(null);
 
   const payments = useMemo(() => paymentRows.map(apiPaymentToRecord), [paymentRows]);
-  const kpis = paymentsKpis(payments);
+  const kpis = paymentsKpis(payments, timeZone);
   const tabPayments = useMemo(
     () => payments.filter((p) => p.tab === tab),
     [payments, tab]

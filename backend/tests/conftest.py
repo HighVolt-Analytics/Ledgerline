@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from app.main import app
 get_settings.cache_clear()
 from app.models.audit import AuditLog
 from app.models.tenant import Tenant
+from app.models.tenant_rule_book_config import TenantRuleBookConfig
 from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.invoice_data import InvoiceData, ParsedLineItem
 
@@ -41,10 +43,22 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    fixture = Path(__file__).resolve().parent / "fixtures" / "rule_book_demo.json"
+    demo_config = json.loads(fixture.read_text(encoding="utf-8"))
+    demo_config.pop("vendor_masters", None)
+    demo_config.pop("employee_masters", None)
+
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         session.add(
             Tenant(id=TESTING_TENANT_UUID, name="Testing", slug="testing")
+        )
+        session.add(
+            TenantRuleBookConfig(
+                tenant_id=TESTING_TENANT_UUID,
+                config=demo_config,
+                schema_version=int(demo_config.get("schema_version") or 1),
+            )
         )
         await session.flush()
         yield session

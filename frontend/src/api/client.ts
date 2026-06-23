@@ -41,6 +41,13 @@ import type {
   RuleBookEvaluateResult,
   ReconciliationOverview,
   TokenResponse,
+  TenantMembersList,
+  TenantMember,
+  TenantInviteCreated,
+  InvitePreview,
+  InviteAcceptResult,
+  InstitutionSettings,
+  UserPermissions,
   Vendor,
   VaultTreeResponse,
   VaultMigrateResponse,
@@ -349,6 +356,48 @@ export const api = {
       body: JSON.stringify({ refresh_token: refreshToken }),
     }),
   me: () => request<AuthUser>("/api/auth/me"),
+  getInstitutionSettings: () =>
+    request<InstitutionSettings>("/api/tenants/current/institution"),
+  updateInstitutionSettings: (body: {
+    country?: string;
+    timezone?: string;
+    locale?: string;
+  }) =>
+    request<InstitutionSettings>("/api/tenants/current/institution", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getMyPermissions: () => request<UserPermissions>("/api/auth/me/permissions"),
+  listTenantMembers: () => request<TenantMembersList>("/api/tenants/current/members"),
+  inviteTenantMember: (body: { email: string; full_name: string; role: string }) =>
+    request<TenantInviteCreated>("/api/tenants/current/members/invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateTenantMemberRole: (userId: number, role: string) =>
+    request<TenantMember>("/api/tenants/current/members/" + userId, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    }),
+  deactivateTenantMember: (userId: number) =>
+    request<{ message: string }>("/api/tenants/current/members/" + userId, {
+      method: "DELETE",
+    }),
+  revokeTenantInvite: (inviteId: number) =>
+    request<{ message: string }>("/api/tenants/current/members/invites/" + inviteId, {
+      method: "DELETE",
+    }),
+  previewTenantInvite: (token: string) =>
+    request<InvitePreview>(`/api/auth/invite/preview?token=${encodeURIComponent(token)}`),
+  acceptTenantInvite: (body: { token: string; password: string; full_name?: string }) =>
+    request<InviteAcceptResult>("/api/auth/invite/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   listTenants: () => request<Tenant[]>("/api/tenants"),
   listOrganisations: () => request<Tenant[]>("/api/tenants"),
   createTenant: (body: { name: string; slug: string; currency?: string }) =>
@@ -398,6 +447,16 @@ export const api = {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    }),
+  enterClientWorkspace: (tenantId: string) =>
+    request<TokenResponse>(`/api/platform/tenants/${tenantId}/enter-workspace`, {
+      method: "POST",
+    }),
+  deletePlatformTenant: (tenantId: string, confirmSlug: string) =>
+    request<{ status: string }>(`/api/platform/tenants/${tenantId}/delete-permanently`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm_slug: confirmSlug }),
     }),
 
   listMailboxes: (options?: FreshRequestOptions) => {

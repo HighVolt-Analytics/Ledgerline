@@ -17,6 +17,8 @@ from app.models.payment import Payment, PaymentStatus
 from app.models.purchase_order import PurchaseOrder
 from app.models.user import User, UserRole
 from app.services.auth_service import create_access_token, hash_password
+from app.services.membership_service import ensure_membership
+from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.invoice_evaluation_service import ROUTE_EXPENSES, ROUTE_PURCHASE
 from app.services.payment_service import ensure_payment_for_invoice
 from app.schemas.purchase import GoodsReceiptCreate
@@ -513,7 +515,7 @@ async def test_member_cannot_publish_without_privilege(
     get_settings.cache_clear()
 
     admin = User(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         email="admin@example.com",
         full_name="Admin User",
         password_hash=hash_password("secret"),
@@ -522,10 +524,11 @@ async def test_member_cannot_publish_without_privilege(
     )
     db_session.add(admin)
     await db_session.flush()
+    await ensure_membership(db_session, user_id=admin.id, tenant_id=TESTING_TENANT_UUID, role="admin")
     admin_token = create_access_token(
         user_id=admin.id,
-        tenant_id=1,
-        tenant_slug="hv-org",
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="testing",
         email=admin.email,
         role=UserRole.ADMIN.value,
     )
@@ -543,7 +546,7 @@ async def test_member_cannot_publish_without_privilege(
     )
 
     user = User(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         email="member@example.com",
         full_name="Member User",
         password_hash=hash_password("secret"),
@@ -552,16 +555,24 @@ async def test_member_cannot_publish_without_privilege(
     )
     db_session.add(user)
     await db_session.flush()
-    inv = Invoice(tenant_id=1, vendor="X", status=InvoiceStatus.PROCESSED, total=Decimal("100"))
+    await ensure_membership(
+        db_session, user_id=user.id, tenant_id=TESTING_TENANT_UUID, role="approver"
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="X",
+        status=InvoiceStatus.PROCESSED,
+        total=Decimal("100"),
+    )
     db_session.add(inv)
     await db_session.commit()
 
     token = create_access_token(
         user_id=user.id,
-        tenant_id=1,
-        tenant_slug="hv-org",
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="testing",
         email=user.email,
-        role=UserRole.MEMBER.value,
+        role="approver",
     )
     res = await client.post(
         f"/api/invoices/{inv.id}/publish",

@@ -9,7 +9,8 @@ DECLARE
     'pending_vendors', 'purchase_orders', 'payments', 'connected_mailboxes',
     'connected_whatsapp_accounts', 'mailbox_connection_requests', 'mailbox_sync_jobs',
     'audit_logs', 'daily_reconciliations', 'user_tenant_mappings', 'tenant_modules',
-    'email_verification_otp'
+    'email_verification_otp', 'tenant_member_invites', 'tenant_rule_book_configs',
+    'line_items', 'journal_entries', 'goods_receipts', 'meta_webhook_dedupe'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP

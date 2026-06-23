@@ -1,5 +1,9 @@
 import type { InvoiceDetails, JournalEntry, ReconciliationOverview, RuleBook } from "@/api/types";
 import { invId } from "@/lib/format";
+import {
+  tenantMonthKey,
+  tenantZonedParts,
+} from "@/lib/tenantTime";
 
 export type ReconPosting = {
   account: string;
@@ -331,19 +335,19 @@ export function monthKeyFromDate(isoDate: string): string {
   return isoDate.slice(0, 7);
 }
 
-export function formatReconMonthLabel(monthKey: string): string {
+export function formatReconMonthLabel(monthKey: string, locale = "en-AU"): string {
   const [y, m] = monthKey.split("-").map(Number);
   if (!y || !m) return monthKey;
-  return new Date(y, m - 1, 1).toLocaleString("en-AU", {
+  return new Date(y, m - 1, 1).toLocaleString(locale, {
     month: "long",
     year: "numeric",
   });
 }
 
-export function formatReconMonthOnly(monthKey: string): string {
+export function formatReconMonthOnly(monthKey: string, locale = "en-AU"): string {
   const [, m] = monthKey.split("-").map(Number);
   if (!m) return monthKey;
-  return new Date(2020, m - 1, 1).toLocaleString("en-AU", { month: "long" });
+  return new Date(2020, m - 1, 1).toLocaleString(locale, { month: "long" });
 }
 
 export function yearFromPeriod(monthKey: string): string {
@@ -370,13 +374,12 @@ export function reconYearsFromOptions(options: { label: string; value: string }[
 }
 
 /** All years with data, plus years touched by the rolling 12-month window and the current year. */
-export function buildReconYears(recon: ReconSummary | null): string[] {
+export function buildReconYears(recon: ReconSummary | null, timeZone: string): string[] {
   const years = new Set<string>();
-  const now = new Date();
-  years.add(String(now.getFullYear()));
+  const { year } = tenantZonedParts(timeZone);
+  years.add(String(year));
   for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    years.add(String(d.getFullYear()));
+    years.add(tenantMonthKey(timeZone, i).slice(0, 4));
   }
   if (recon) {
     for (const day of recon.byDate) {
@@ -389,13 +392,13 @@ export function buildReconYears(recon: ReconSummary | null): string[] {
 /** Calendar months for a year — current year up to today; prior years all 12 (newest first). */
 export function buildMonthsForYear(
   year: string,
-  now: Date = new Date()
+  timeZone: string,
+  locale = "en-AU"
 ): { label: string; value: string }[] {
   const y = Number(year);
   if (!y || Number.isNaN(y)) return [];
 
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
+  const { year: currentYear, month: currentMonth } = tenantZonedParts(timeZone);
 
   if (y > currentYear) return [];
 
@@ -404,25 +407,29 @@ export function buildMonthsForYear(
   return Array.from({ length: maxMonth }, (_, i) => {
     const month = maxMonth - i;
     const value = `${year}-${String(month).padStart(2, "0")}`;
-    return { value, label: formatReconMonthOnly(value) };
+    return { value, label: formatReconMonthOnly(value, locale) };
   });
 }
 
 export function reconMonthsForYear(
   options: { label: string; value: string }[],
-  year: string
+  year: string,
+  timeZone: string,
+  locale = "en-AU"
 ): { label: string; value: string }[] {
   void options;
-  return buildMonthsForYear(year);
+  return buildMonthsForYear(year, timeZone, locale);
 }
 
 /** Rolling 12 months plus any months present in reconciliation data. */
-export function buildReconPeriodOptions(recon: ReconSummary | null): { label: string; value: string }[] {
+export function buildReconPeriodOptions(
+  recon: ReconSummary | null,
+  timeZone: string,
+  locale = "en-AU"
+): { label: string; value: string }[] {
   const keys = new Set<string>();
-  const now = new Date();
   for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    keys.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    keys.add(tenantMonthKey(timeZone, i));
   }
   if (recon) {
     for (const day of recon.byDate) {
@@ -432,11 +439,11 @@ export function buildReconPeriodOptions(recon: ReconSummary | null): { label: st
   return Array.from(keys)
     .sort()
     .reverse()
-    .map((value) => ({ value, label: formatReconMonthLabel(value) }));
+    .map((value) => ({ value, label: formatReconMonthLabel(value, locale) }));
 }
 
-export function defaultReconPeriod(recon: ReconSummary | null): string {
-  const options = buildReconPeriodOptions(recon);
+export function defaultReconPeriod(recon: ReconSummary | null, timeZone: string): string {
+  const options = buildReconPeriodOptions(recon, timeZone);
   if (recon?.byDate.length) {
     const latest = monthKeyFromDate(recon.byDate[recon.byDate.length - 1].date);
     if (options.some((o) => o.value === latest)) return latest;

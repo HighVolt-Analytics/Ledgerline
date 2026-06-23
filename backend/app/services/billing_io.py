@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+import uuid
 
 from app.config import get_settings
 from app.schemas.billing import BillingStateResponse, CreditPack
@@ -80,3 +81,14 @@ def purchase_pack(tenant_id: int, pack_id: str) -> BillingStateResponse:
     state.balance += pack.credits
     state.current_pack = pack.id
     return save_billing_for_tenant(tenant_id, state)
+
+
+def remove_billing_for_tenant(tenant_id: uuid.UUID | int) -> None:
+    store = _load_store()
+    orgs = store.get("orgs") or {}
+    key = str(tenant_id)
+    if key not in orgs:
+        return
+    del orgs[key]
+    store["orgs"] = orgs
+    _save_store(store)

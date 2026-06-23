@@ -13,8 +13,7 @@ from app.services.document_type_classifier import (
     classify_document_type,
 )
 from app.services.invoice_data import ParseConfidence, invoice_data_from_invoice
-from app.services.rule_book_config_io import load_rule_book_config_dict
-from app.schemas.rule_book_config import validate_rule_book_config_payload
+from app.services.invoice_evaluation_service import load_config_for_tenant
 
 _SKIP_RECLASSIFY = frozenset(
     {
@@ -47,7 +46,7 @@ async def reclassify_invoice_document_type(
         return False
 
     if config is None:
-        config = validate_rule_book_config_payload(load_rule_book_config_dict(invoice.tenant_id))
+        config = await load_config_for_tenant(session, invoice.tenant_id)
 
     parsed = invoice_data_from_invoice(invoice)
     before = (
@@ -84,7 +83,8 @@ async def reclassify_invoices_for_tenant(
 ) -> list[int]:
     changed: list[int] = []
     if config is None:
-        config = validate_rule_book_config_payload(load_rule_book_config_dict(tenant_id))
+        tid = invoices[0].tenant_id if invoices else tenant_id
+        config = await load_config_for_tenant(session, tid)
     for invoice in invoices:
         if await reclassify_invoice_document_type(session, invoice, config=config):
             changed.append(invoice.id)

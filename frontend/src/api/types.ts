@@ -6,6 +6,72 @@ export interface AuthUser {
   tenant_id: string;
   tenant_name: string;
   tenant_slug: string;
+  tenant_timezone: string;
+  tenant_locale: string;
+}
+
+export type ApprovalActionKey =
+  | "View"
+  | "Comment"
+  | "Approve"
+  | "Reject"
+  | "Publish"
+  | "Edit Policy"
+  | "Manage Users";
+
+export interface UserPermissions {
+  role: string;
+  matrix_role: string;
+  permissions: Record<ApprovalActionKey, boolean>;
+}
+
+export interface TenantMember {
+  user_id: number;
+  email: string;
+  full_name: string;
+  role: string;
+  status: string;
+  is_active: boolean;
+}
+
+export interface PendingTenantInvite {
+  id: number;
+  email: string;
+  full_name: string;
+  role: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface TenantMembersList {
+  members: TenantMember[];
+  pending_invites: PendingTenantInvite[];
+}
+
+export interface TenantInviteCreated {
+  invite_id: number;
+  email: string;
+  accept_url: string;
+  expires_at: string;
+  email_sent?: boolean;
+  email_error?: string | null;
+}
+
+export interface InvitePreview {
+  email: string;
+  full_name: string;
+  role: string;
+  tenant_name: string;
+  tenant_slug: string;
+  expired: boolean;
+  accepted: boolean;
+}
+
+export interface InviteAcceptResult {
+  message: string;
+  tenant_id: string;
+  tenant_name: string;
+  email: string;
 }
 
 /** @deprecated use Tenant */
@@ -17,6 +83,12 @@ export interface Tenant {
   slug: string;
   currency: string;
   is_current: boolean;
+}
+
+export interface InstitutionSettings {
+  country: string;
+  timezone: string;
+  locale: string;
 }
 
 export interface PlatformTenantModule {

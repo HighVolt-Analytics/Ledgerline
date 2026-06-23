@@ -11,6 +11,7 @@ from app.services.account_mapper import MappingDetail
 from app.services.document_type_classifier import DocumentTypeClassification
 from app.services.routing_review_service import (
     classification_unmatched,
+    requires_classification_review,
     requires_gl_mapping_review,
     requires_routing_review,
     routing_target_missing,
@@ -32,7 +33,7 @@ def test_routing_target_missing() -> None:
     assert routing_target_missing(inv) is False
 
 
-def test_requires_routing_review_when_unclassified() -> None:
+def test_requires_classification_review_when_unclassified() -> None:
     inv = Invoice(tenant_id=1, status=InvoiceStatus.VALIDATING, route_target=None)
     classification = DocumentTypeClassification(
         "DT-24",
@@ -41,6 +42,7 @@ def test_requires_routing_review_when_unclassified() -> None:
         min_route_confidence=0.85,
     )
     assert classification_unmatched(classification)
+    assert requires_classification_review(inv, classification) is True
     assert requires_routing_review(inv, classification) is True
 
 

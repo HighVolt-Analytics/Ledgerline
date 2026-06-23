@@ -223,9 +223,6 @@ async def process_whatsapp_payload(payload: dict) -> None:
             for msg in messages:
                 if not msg.message_id:
                     continue
-                if not await try_claim_message_mid(session, msg.message_id):
-                    logger.info("whatsapp_dedupe_skip", message_id=msg.message_id)
-                    continue
 
                 connection = await find_connection_by_phone_or_waba(
                     session,
@@ -238,6 +235,14 @@ async def process_whatsapp_payload(payload: dict) -> None:
                         phone_number_id=msg.phone_number_id,
                         waba_id=msg.waba_id,
                     )
+                    continue
+
+                if not await try_claim_message_mid(
+                    session,
+                    msg.message_id,
+                    tenant_id=connection.tenant_id,
+                ):
+                    logger.info("whatsapp_dedupe_skip", message_id=msg.message_id)
                     continue
 
                 from app.services.whatsapp_connection_service import resolve_access_token

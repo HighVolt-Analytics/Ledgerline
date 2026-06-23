@@ -32,7 +32,7 @@ async def migrate_org_blobs_to_vault(session: AsyncSession, tenant_id: int) -> t
         )
     ).scalars().all()
 
-    config = load_config_for_tenant(tenant_id)
+    config = await load_config_for_tenant(session, tenant_id)
     document_types = list(config.document_types)
 
     for inv in rows:

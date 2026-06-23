@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import get_settings
 from app.database import get_db
 from app.models.user import User, UserRole, SUPER_ADMIN_ROLE
+from app.tenant_roles import TenantRole
 from app.schemas.common import ApiEnvelope, ErrorDetail, ResponseMeta
 from app.services.auth_service import decode_access_token
 from app.services.membership_service import get_membership_role, user_has_tenant_access
@@ -19,7 +20,9 @@ from app.tenant_isolation.resolution import TenantResolutionService
 from app.tenant_rls import apply_rls_session_context
 from app.tenant_ids import parse_tenant_id
 from app.tenant_status import assert_tenant_active_for_user
-from app.utils.logger import correlation_id_ctx
+from app.utils.logger import correlation_id_ctx, get_logger
+
+logger = get_logger(__name__)
 
 __all__ = [
     "ApiEnvelope",
@@ -72,6 +75,11 @@ async def _context_from_token(
 
     tenant_id = parse_tenant_id(payload.get("tenant_id") or payload.get("org_id"))
     if tenant_id is None:
+        logger.warning(
+            "auth_missing_tenant_in_jwt",
+            user_id=payload.get("sub"),
+            path=request.url.path,
+        )
         return None
 
     tenant_slug = str(payload.get("tenant_slug") or payload.get("org_slug") or "").strip()
@@ -118,6 +126,14 @@ async def require_user(
         set_request_tenant_id(ctx.tenant_id)
         await apply_rls_session_context(db, ctx.tenant_id)
         await assert_tenant_active_for_user(db, user)
+        logger.info(
+            "auth_context_resolved",
+            tenant_id=str(ctx.tenant_id),
+            user_id=ctx.user_id,
+            role=ctx.role,
+            path=request.url.path,
+            x_tenant_id=request.headers.get("X-Tenant-Id"),
+        )
         return ctx
 
     settings = get_settings()
@@ -125,6 +141,15 @@ async def require_user(
         tenant = await get_or_create_default_tenant(db)
         set_request_tenant_id(tenant.id)
         await apply_rls_session_context(db, tenant.id)
+        logger.info(
+            "auth_context_resolved",
+            tenant_id=str(tenant.id),
+            user_id=None,
+            role=UserRole.ADMIN.value,
+            path=request.url.path,
+            x_tenant_id=request.headers.get("X-Tenant-Id"),
+            auth_bypass=True,
+        )
         return AuthContext(
             user_id=None,
             tenant_id=tenant.id,
@@ -143,7 +168,7 @@ async def get_auth_context(ctx: AuthContext = Depends(require_user)) -> AuthCont
 async def require_admin(ctx: AuthContext = Depends(require_user)) -> AuthContext:
     if is_super_admin_role(ctx.role):
         raise HTTPException(403, "Tenant admin access required")
-    if ctx.role != UserRole.ADMIN.value:
+    if ctx.role != TenantRole.ADMIN.value and ctx.role != UserRole.ADMIN.value:
         raise HTTPException(403, "Admin access required")
     return ctx
 

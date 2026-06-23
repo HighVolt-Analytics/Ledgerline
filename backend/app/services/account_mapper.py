@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import get_settings
 from app.models.invoice import Invoice
+from app.schemas.rule_book_config import RuleBookConfigPayload
 
 
 @dataclass
@@ -51,32 +55,70 @@ def resolve_category(category: str) -> AccountMapping:
     return AccountMapping("9999", category, expense_category=category)
 
 
-def map_to_account(invoice: Invoice) -> AccountMapping:
+async def _resolve_config(
+    *,
+    session: AsyncSession | None,
+    tenant_id: uuid.UUID | int | None,
+    config: RuleBookConfigPayload | None,
+) -> RuleBookConfigPayload:
+    if config is not None:
+        return config
+    if session is None or tenant_id is None:
+        raise ValueError("Provide config or (session, tenant_id)")
+    from app.services.rule_book_mapper import load_classification_config
+
+    return await load_classification_config(session, tenant_id)
+
+
+async def map_to_account(
+    invoice: Invoice,
+    *,
+    session: AsyncSession | None = None,
+    tenant_id: uuid.UUID | int | None = None,
+    config: RuleBookConfigPayload | None = None,
+) -> AccountMapping:
     from app.services.rule_book_mapper import map_invoice_to_account
 
-    return map_invoice_to_account(invoice)
+    cfg = await _resolve_config(session=session, tenant_id=tenant_id or invoice.tenant_id, config=config)
+    return map_invoice_to_account(invoice, config=cfg)
 
 
-def map_with_details(
+async def map_with_details(
     invoice: Invoice,
     *,
     line_description: str | None = None,
+    session: AsyncSession | None = None,
+    tenant_id: uuid.UUID | int | None = None,
+    config: RuleBookConfigPayload | None = None,
 ) -> MappingDetail:
     from app.services.rule_book_mapper import map_invoice_with_details
 
-    return map_invoice_with_details(invoice, line_description=line_description)
+    cfg = await _resolve_config(session=session, tenant_id=tenant_id or invoice.tenant_id, config=config)
+    return map_invoice_with_details(invoice, config=cfg, line_description=line_description)
 
 
-def get_tax_account_mapping(tenant_id: int) -> AccountMapping:
+async def get_tax_account_mapping(
+    *,
+    session: AsyncSession | None = None,
+    tenant_id: uuid.UUID | int | None = None,
+    config: RuleBookConfigPayload | None = None,
+) -> AccountMapping:
     from app.services.rule_book_mapper import get_tax_account_mapping as _get_tax
 
-    return _get_tax(tenant_id)
+    cfg = await _resolve_config(session=session, tenant_id=tenant_id, config=config)
+    return _get_tax(cfg)
 
 
-def get_payable_account_mapping(tenant_id: int) -> AccountMapping:
+async def get_payable_account_mapping(
+    *,
+    session: AsyncSession | None = None,
+    tenant_id: uuid.UUID | int | None = None,
+    config: RuleBookConfigPayload | None = None,
+) -> AccountMapping:
     from app.services.rule_book_mapper import get_payable_account_mapping as _get_payable
 
-    return _get_payable(tenant_id)
+    cfg = await _resolve_config(session=session, tenant_id=tenant_id, config=config)
+    return _get_payable(cfg)
 
 
 def clear_rule_book_cache() -> None:

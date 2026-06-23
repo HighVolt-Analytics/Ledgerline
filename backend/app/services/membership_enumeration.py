@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth_account import AuthAccount
 from app.models.tenant import Tenant
-from app.models.user import User
+from app.models.user import SUPER_ADMIN_ROLE, User
 from app.models.user_tenant_mapping import UserTenantMapping
 
 
@@ -21,6 +21,19 @@ class TenantMembershipAccount:
     role: str
     default_tenant: bool
     is_platform: bool = False
+
+
+def membership_is_switchable(m: TenantMembershipAccount) -> bool:
+    """Client tenants are always listed; platform tenant only for super admins."""
+    if not m.is_platform:
+        return True
+    return m.role == SUPER_ADMIN_ROLE
+
+
+def filter_switchable_memberships(
+    memberships: list[TenantMembershipAccount],
+) -> list[TenantMembershipAccount]:
+    return [m for m in memberships if membership_is_switchable(m)]
 
 
 async def list_memberships_for_auth_account(

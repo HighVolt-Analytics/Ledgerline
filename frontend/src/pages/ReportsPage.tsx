@@ -22,6 +22,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { YearMonthPeriodPicker } from "@/components/YearMonthPeriodPicker";
 import { Card } from "@/components/ui/card";
+import { useTenantTime } from "@/hooks/useTenantTime";
 import { useReportDocuments, useReportsAnalytics } from "@/hooks/useReportsAnalytics";
 import { axisMoney, currencySymbol, money, toNumber } from "@/lib/format";
 import {
@@ -36,6 +37,7 @@ import {
   mapGlAccountRow,
   mapVendorSpendRow,
 } from "@/lib/reportsData";
+import { tenantMonthStartIso, tenantTodayIso } from "@/lib/tenantTime";
 
 const CHART_MARGIN = { top: 4, right: 12, left: 8, bottom: 0 };
 const PIE_HOVER_OFFSET = 6;
@@ -67,15 +69,6 @@ function renderActivePieSector(props: PieSectorProps) {
   );
 }
 
-function firstDayOfMonthIso(): string {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
-}
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function pctDelta(pct: number | null | undefined, goodWhenDown = false) {
   if (pct == null || Number.isNaN(pct)) return undefined;
   const dir = pct > 0 ? "up" : pct < 0 ? "down" : "flat";
@@ -95,12 +88,15 @@ function countDelta(delta: number | null | undefined) {
 }
 
 export function ReportsPage() {
-  const [month, setMonth] = useState(() => defaultReportPeriod());
+  const { timeZone, locale } = useTenantTime();
+  const [monthOverride, setMonthOverride] = useState<string | null>(null);
+  const month = monthOverride ?? defaultReportPeriod(timeZone);
+  const setMonth = setMonthOverride;
   const [toast, setToast] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportMode, setExportMode] = useState<"range" | "all">("range");
-  const [dateFrom, setDateFrom] = useState(firstDayOfMonthIso);
-  const [dateTo, setDateTo] = useState(todayIso);
+  const [dateFrom, setDateFrom] = useState(() => tenantMonthStartIso(timeZone));
+  const [dateTo, setDateTo] = useState(() => tenantTodayIso(timeZone));
   const [exportBusy, setExportBusy] = useState(false);
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const [activePieIndex, setActivePieIndex] = useState<number | null>(null);
@@ -108,15 +104,15 @@ export function ReportsPage() {
   const { data: analytics, isLoading, error } = useReportsAnalytics(month);
   const rangeInvalid = exportMode === "range" && dateFrom > dateTo;
 
-  const yearOptions = useMemo(() => buildReconYears(null), []);
+  const yearOptions = useMemo(() => buildReconYears(null, timeZone), [timeZone]);
   const selectedYear = month ? yearFromPeriod(month) : yearOptions[0] ?? "";
   const monthOptions = useMemo(
-    () => (selectedYear ? buildMonthsForYear(selectedYear) : []),
-    [selectedYear]
+    () => (selectedYear ? buildMonthsForYear(selectedYear, timeZone, locale) : []),
+    [selectedYear, timeZone, locale]
   );
 
   const handleYearChange = (year: string) => {
-    const months = buildMonthsForYear(year);
+    const months = buildMonthsForYear(year, timeZone, locale);
     if (months.length === 0) {
       setMonth("");
       return;

@@ -1,6 +1,7 @@
 """Rule book config CRUD and evaluation."""
 
 import json
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -8,7 +9,8 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
+from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
+from app.services.privilege_service import require_privilege
 from app.models.audit import AuditLog
 from app.schemas.common import ApiEnvelope
 from app.schemas.rule_book_changelog import RuleBookChangelogEntry
@@ -28,7 +30,7 @@ from app.services.document_type_classify_preview import (
     classify_samples_against_catalog,
     merge_draft_document_type,
 )
-from app.services.master_data_service import attach_masters_to_config_dict, sync_masters_to_config_file
+from app.services.master_data_service import attach_masters_to_config_dict
 from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.rule_book_evaluate_service import evaluate_rule_book
@@ -51,14 +53,14 @@ def _validation_http_error(exc: Exception) -> HTTPException:
 
 async def _load_rule_book_response_dict(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
 ) -> dict[str, Any]:
     buffered = get_buffered_rule_book_raw(tenant_id)
     if buffered is not None:
         data = buffered
     else:
         try:
-            data = load_rule_book_config_dict(tenant_id)
+            data = await load_rule_book_config_dict(db, tenant_id)
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
         except json.JSONDecodeError as exc:
@@ -85,14 +87,12 @@ async def get_rule_book_config(
 async def put_rule_book_config(
     body: RuleBookRulesPayload,
     request: Request,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[dict[str, Any]]:
     """Buffer rule book changes; commit after server-side debounce (audit + remap once)."""
-    try:
-        load_rule_book_config_dict(ctx.tenant_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    require_privilege(ctx, "Edit Policy")
+    await load_rule_book_config_dict(db, ctx.tenant_id)
 
     try:
         raw = body.model_dump()
@@ -145,7 +145,7 @@ async def get_rule_book_changelog(
 
 async def _draft_config_with_masters(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     draft: RuleBookRulesPayload,
 ) -> RuleBookConfigPayload:
     raw = draft.model_dump()
@@ -180,9 +180,11 @@ async def analyze_document_type_samples_endpoint(
     purchase_bundle_role: str = Form(""),
     expected_document_type_code: str = Form(""),
     draft_document_type_json: str = Form(""),
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[DocumentTypeSampleProposal]:
     """Parse sample PDFs/images and propose document-type settings (deterministic OCR)."""
+    require_privilege(ctx, "Edit Policy")
     if not files:
         raise HTTPException(400, "At least one sample file is required")
     if len(files) > _MAX_SAMPLE_FILES:
@@ -208,7 +210,7 @@ async def analyze_document_type_samples_endpoint(
             raise HTTPException(422, f"Invalid draft document type: {exc}") from exc
 
     try:
-        config = load_config_for_tenant(ctx.tenant_id)
+        config = await load_config_for_tenant(db, ctx.tenant_id)
     except FileNotFoundError:
         config = None
 

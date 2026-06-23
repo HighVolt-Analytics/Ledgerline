@@ -211,7 +211,7 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
         if po.po_unit_price <= 0:
             po.po_unit_price = unit
 
-    config = load_classification_config(invoice.tenant_id)
+    config = await load_classification_config(db, invoice.tenant_id)
     if not po.ledger:
         code_po_from_invoice(po, invoice, config)
     inherit_po_coding_to_invoice(po, invoice)
@@ -267,6 +267,7 @@ async def _sync_grn_document(db: AsyncSession, invoice: Invoice, po_number: str)
     invoice = await _load_invoice_with_lines(db, invoice)
     qty, _, _ = _invoice_qty_and_price(invoice)
     grn = GoodsReceipt(
+        tenant_id=po.tenant_id,
         purchase_order_id=po.id,
         grn_qty=qty,
         grn_date=invoice.invoice_date or date.today(),

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { Building2, Check, ChevronDown, Shield } from "lucide-react";
 import { AddOrganisationDialog } from "@/components/AddOrganisationDialog";
@@ -9,29 +17,61 @@ import { getAccessToken, loadMembershipsFromSession } from "@/lib/authSession";
 import { cn } from "@/lib/cn";
 
 type TenantSwitcherProps = {
-  variant: "header" | "sidebar";
+  /** @deprecated styling is responsive; prop is ignored */
+  variant?: "header" | "sidebar";
   showManageActions?: boolean;
+  /** @deprecated unused */
   isCollapsed?: boolean;
 };
 
-function formatRole(role: string) {
-  return role.replace(/_/g, " ");
+const MENU_WIDTH = 288;
+const MENU_GAP = 8;
+
+import { formatTenantRole } from "@/lib/tenantRoles";
+import { SUPER_ADMIN_ROLE } from "@/lib/roles";
+
+function switchableMemberships(rows: TenantAccountSummary[]): TenantAccountSummary[] {
+  return rows.filter((m) => !m.is_platform || m.role === SUPER_ADMIN_ROLE);
+}
+
+function computeMenuPosition(rect: DOMRect, menuHeight: number) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let left = rect.left;
+  const width = Math.max(rect.width, MENU_WIDTH);
+  if (left + width > vw - MENU_GAP) {
+    left = rect.right - width;
+  }
+  left = Math.max(MENU_GAP, Math.min(left, vw - width - MENU_GAP));
+
+  const spaceBelow = vh - rect.bottom - MENU_GAP;
+  const spaceAbove = rect.top - MENU_GAP;
+  let top: number;
+  if (spaceBelow >= menuHeight || spaceBelow >= spaceAbove) {
+    top = rect.bottom + MENU_GAP;
+  } else {
+    top = Math.max(MENU_GAP, rect.top - menuHeight - MENU_GAP);
+  }
+
+  return { top, left, width };
 }
 
 export function TenantSwitcher({
-  variant,
   showManageActions = false,
-  isCollapsed = false,
 }: TenantSwitcherProps) {
   const navigate = useNavigate();
   const { user, switchTenant } = useAuth();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [memberships, setMemberships] = useState<TenantAccountSummary[]>(() =>
     loadMembershipsFromSession()
   );
-  const [switchingId, setSwitchingId] = useState<number | null>(null);
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [menuStyle, setMenuStyle] = useState({ top: 0, left: 0, width: MENU_WIDTH });
 
   const refreshMemberships = useCallback(async () => {
     const token = getAccessToken();
@@ -52,12 +92,52 @@ export function TenantSwitcher({
   }, [memberships.length, refreshMemberships]);
 
   const currentTenantId = user?.tenant_id;
+  const visibleMemberships = useMemo(
+    () => switchableMemberships(memberships),
+    [memberships]
+  );
   const current = useMemo(
-    () => memberships.find((m) => m.tenant_id === currentTenantId),
-    [memberships, currentTenantId]
+    () => visibleMemberships.find((m) => m.tenant_id === currentTenantId),
+    [visibleMemberships, currentTenantId]
   );
 
-  if (memberships.length < 2) {
+  const updatePosition = useCallback(() => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const menuHeight = menuRef.current?.offsetHeight ?? 320;
+    setMenuStyle(computeMenuPosition(rect, menuHeight));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, updatePosition, visibleMemberships.length, showManageActions, error]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (visibleMemberships.length < 2) {
     return null;
   }
 
@@ -78,67 +158,60 @@ export function TenantSwitcher({
     }
   };
 
-  const triggerClass =
-    variant === "header"
-      ? "flex items-center gap-2 h-9 max-w-[11rem] px-3 rounded-full border border-border bg-card text-sm hover-elevate shrink-0"
-      : cn(
-          "flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground text-sm hover:bg-sidebar-accent transition-colors",
-          isCollapsed ? "h-9 w-9 justify-center p-0" : "w-full px-3 py-2"
-        );
-
-  const menuPosition =
-    variant === "header"
-      ? "absolute right-0 top-full mt-2 w-72"
-      : isCollapsed
-        ? "absolute left-full ml-2 bottom-0 w-72"
-        : "absolute left-0 bottom-full mb-2 w-full min-w-[16rem]";
-
-  const visibilityClass = variant === "header" ? "hidden md:block" : "block md:hidden";
-
   return (
     <>
-      <div className={cn("relative", visibilityClass)}>
-        <button
-          type="button"
-          data-testid="button-tenant-switcher"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-label="Switch organization"
-          onClick={() => setOpen((v) => !v)}
-          className={triggerClass}
-        >
-          {current?.is_platform ? (
-            <Shield className="h-4 w-4 text-amber-500 shrink-0" />
-          ) : (
-            <Building2 className="h-4 w-4 text-primary shrink-0" />
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="button-tenant-switcher"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Switch organization"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 h-9 min-w-0 max-w-[10rem] sm:max-w-[12rem] px-3 rounded-full border border-border bg-card text-sm hover-elevate shrink-0"
+      >
+        {current?.is_platform ? (
+          <Shield className="h-4 w-4 text-amber-500 shrink-0" />
+        ) : (
+          <Building2 className="h-4 w-4 text-primary shrink-0" />
+        )}
+        <span className="truncate font-medium flex-1 text-left">{displayName}</span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform duration-150",
+            open && "rotate-180"
           )}
-          {!(variant === "sidebar" && isCollapsed) && (
-            <>
-              <span className="truncate font-medium flex-1 text-left">{displayName}</span>
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            </>
-          )}
-        </button>
+        />
+      </button>
 
-        {open && (
+      {open &&
+        createPortal(
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+            <div className="fixed inset-0 z-[240]" aria-hidden onClick={() => setOpen(false)} />
             <div
+              ref={menuRef}
               role="listbox"
-              className={cn(
-                "z-50 rounded-md border border-border bg-popover shadow-lg text-sm overflow-hidden",
-                menuPosition
-              )}
               data-testid="menu-tenant-switcher"
+              className="fixed z-[250] rounded-lg border border-border bg-popover shadow-lg text-sm overflow-hidden"
+              style={{
+                top: menuStyle.top,
+                left: menuStyle.left,
+                width: menuStyle.width,
+              }}
             >
               {error && (
                 <p className="px-3 py-2 text-xs text-destructive bg-destructive/10 border-b border-border">
                   {error}
                 </p>
               )}
-              <p className="px-3 pt-3 pb-2 text-sm font-semibold">Switch organization</p>
-              <ul className="px-1 pb-1 max-h-64 overflow-y-auto">
-                {memberships.map((m) => {
+              <div className="px-3 pt-3 pb-2 border-b border-border/60">
+                <p className="text-sm font-semibold">Switch organization</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {visibleMemberships.length} workspaces available
+                </p>
+              </div>
+              <ul className="p-1 max-h-64 overflow-y-auto">
+                {visibleMemberships.map((m) => {
                   const selected = m.tenant_id === currentTenantId;
                   const busy = switchingId === m.tenant_id;
                   return (
@@ -151,12 +224,12 @@ export function TenantSwitcher({
                         data-testid={`tenant-option-${m.tenant_id}`}
                         onClick={() => void handleSwitch(m.tenant_id)}
                         className={cn(
-                          "w-full flex items-start gap-2 px-2 py-2 rounded-sm text-left transition-colors hover:bg-accent disabled:opacity-60",
-                          busy && "opacity-50",
-                          selected && "bg-accent/40"
+                          "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left transition-colors hover:bg-accent disabled:cursor-default",
+                          busy && "opacity-60",
+                          selected && "bg-accent/50"
                         )}
                       >
-                        <span className="mt-0.5 shrink-0">
+                        <span className="shrink-0">
                           {m.is_platform ? (
                             <Shield className="h-4 w-4 text-amber-500" />
                           ) : (
@@ -164,22 +237,22 @@ export function TenantSwitcher({
                           )}
                         </span>
                         <span className="flex-1 min-w-0">
-                          <span className="flex items-center gap-1.5 flex-wrap">
+                          <span className="flex items-center gap-1.5 min-w-0">
                             <span className="font-medium truncate">{m.tenant_name}</span>
                             {m.is_platform && (
-                              <Badge variant="outline" className="text-[10px] px-1 py-0">
+                              <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">
                                 Platform
                               </Badge>
                             )}
                           </span>
-                          <span className="block text-xs text-muted-foreground capitalize">
-                            {formatRole(m.role)}
+                          <span className="block text-xs text-muted-foreground capitalize truncate">
+                            {formatTenantRole(m.role)}
                           </span>
                         </span>
                         {busy ? (
                           <span className="text-xs text-muted-foreground shrink-0">…</span>
                         ) : selected ? (
-                          <Check className="h-4 w-4 text-[hsl(var(--chart-1))] shrink-0 mt-0.5" />
+                          <Check className="h-4 w-4 text-[hsl(var(--chart-1))] shrink-0" />
                         ) : null}
                       </button>
                     </li>
@@ -188,11 +261,11 @@ export function TenantSwitcher({
               </ul>
               {showManageActions && (
                 <>
-                  <div className="h-px bg-border mx-2" />
+                  <div className="h-px bg-border" />
                   <div className="p-1">
                     <button
                       type="button"
-                      className="w-full text-left px-2 py-2 rounded-sm hover:bg-accent text-sm"
+                      className="w-full text-left px-2.5 py-2 rounded-md hover:bg-accent text-sm"
                       onClick={() => {
                         setOpen(false);
                         setAddOpen(true);
@@ -202,7 +275,7 @@ export function TenantSwitcher({
                     </button>
                     <button
                       type="button"
-                      className="w-full text-left px-2 py-2 rounded-sm hover:bg-accent text-sm"
+                      className="w-full text-left px-2.5 py-2 rounded-md hover:bg-accent text-sm"
                       onClick={() => {
                         setOpen(false);
                         navigate("/settings?tab=orgs");
@@ -214,9 +287,9 @@ export function TenantSwitcher({
                 </>
               )}
             </div>
-          </>
+          </>,
+          document.body
         )}
-      </div>
 
       {showManageActions && (
         <AddOrganisationDialog

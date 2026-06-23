@@ -61,8 +61,7 @@ export function SuperAdminLayout() {
             Platform Console
           </Badge>
           <div className="flex-1" />
-          <TenantSwitcher variant="header" />
-          <TenantSwitcher variant="sidebar" />
+          <TenantSwitcher />
           <Button
             variant="ghost"
             size="icon"

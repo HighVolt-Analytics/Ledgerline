@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, ExternalLink, Save } from "lucide-react";
 import { api } from "@/api/client";
 import type { PlatformTenantDetail } from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/cn";
 
 const LIFECYCLE_OPTIONS = [
@@ -20,12 +21,17 @@ const LIFECYCLE_OPTIONS = [
 export function TenantSettingsPage() {
   const { tenantId } = useParams<{ tenantId: string }>();
   const navigate = useNavigate();
+  const { enterClientWorkspace } = useAuth();
   const id = tenantId?.trim() ?? "";
   const isValidId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
   const [tenant, setTenant] = useState<PlatformTenantDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [entering, setEntering] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [confirmSlug, setConfirmSlug] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -62,6 +68,35 @@ export function TenantSettingsPage() {
     const t = setTimeout(() => setSaved(false), 3000);
     return () => clearTimeout(t);
   }, [saved]);
+
+  async function handleEnterWorkspace() {
+    if (!tenant) return;
+    setEntering(true);
+    setError(null);
+    try {
+      await enterClientWorkspace(tenant.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not open workspace");
+      setEntering(false);
+    }
+  }
+
+  async function handleDeletePermanently() {
+    if (!tenant) return;
+    if (confirmSlug.trim().toLowerCase() !== tenant.slug) {
+      setError(`Type "${tenant.slug}" to confirm deletion.`);
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.deletePlatformTenant(tenant.id, confirmSlug.trim().toLowerCase());
+      navigate("/platform/clients", { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete tenant");
+      setDeleting(false);
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -124,11 +159,23 @@ export function TenantSettingsPage() {
         title={tenant.name}
         subtitle={`Tenant settings · ${tenant.slug}`}
         actions={
-          saved ? (
-            <Badge variant="outline" className="text-[hsl(var(--chart-1))]">
-              Saved
-            </Badge>
-          ) : null
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="button-enter-workspace"
+              disabled={entering || !tenant.is_active}
+              onClick={() => void handleEnterWorkspace()}
+            >
+              <ExternalLink className="h-4 w-4 mr-1.5" />
+              {entering ? "Opening…" : "Open workspace"}
+            </Button>
+            {saved ? (
+              <Badge variant="outline" className="text-[hsl(var(--chart-1))]">
+                Saved
+              </Badge>
+            ) : null}
+          </div>
         }
       />
 
@@ -253,6 +300,67 @@ export function TenantSettingsPage() {
           </Button>
         </div>
       </form>
+
+      <Card className="p-5 border-destructive/40 space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-destructive">Danger zone</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Permanently delete this client tenant, all users, invoices, and configuration.
+            This cannot be undone.
+          </p>
+        </div>
+        {!deleteOpen ? (
+          <Button
+            type="button"
+            variant="destructive"
+            data-testid="button-delete-tenant-open"
+            onClick={() => {
+              setDeleteOpen(true);
+              setConfirmSlug("");
+              setError(null);
+            }}
+          >
+            Delete tenant permanently
+          </Button>
+        ) : (
+          <div className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-4">
+            <p className="text-sm">
+              Type <span className="font-mono font-semibold">{tenant.slug}</span> to confirm.
+            </p>
+            <Input
+              data-testid="input-delete-tenant-confirm"
+              value={confirmSlug}
+              onChange={(e) => setConfirmSlug(e.target.value)}
+              placeholder={tenant.slug}
+              autoComplete="off"
+              disabled={deleting}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="destructive"
+                data-testid="button-delete-tenant-confirm"
+                disabled={deleting || confirmSlug.trim().toLowerCase() !== tenant.slug}
+                onClick={() => void handleDeletePermanently()}
+              >
+                {deleting ? "Deleting…" : "Delete permanently"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={deleting}
+                onClick={() => {
+                  setDeleteOpen(false);
+                  setConfirmSlug("");
+                  setError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

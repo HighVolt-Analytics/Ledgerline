@@ -17,7 +17,7 @@ from app.schemas.reports import (
     VendorSpendRow,
 )
 from app.services.currency import BASE_CURRENCY, convert_to_base
-from app.services.dashboard_service import parse_period
+from app.services.dashboard_service import parse_period, _institution_today
 
 _REPORTABLE_STATUSES = frozenset({InvoiceStatus.PROCESSED})
 _SUSPENSE_ACCOUNT = "Suspense Account"
@@ -175,7 +175,8 @@ async def build_analytics(
     tenant_id: int,
     month: str | None = None,
 ) -> ReportsAnalytics:
-    month_start, month_end, period_key = parse_period(month)
+    today = await _institution_today(db, tenant_id)
+    month_start, month_end, period_key = parse_period(month, today=today)
     invoices = await _load_invoices(
         db, tenant_id=tenant_id, month_start=month_start, month_end=month_end
     )

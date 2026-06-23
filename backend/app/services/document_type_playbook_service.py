@@ -218,7 +218,11 @@ async def _purchase_grn_present(
     stmt = (
         select(GoodsReceipt.id)
         .join(PurchaseOrder, GoodsReceipt.purchase_order_id == PurchaseOrder.id)
-        .where(PurchaseOrder.tenant_id == tenant_id, PurchaseOrder.po_number == po_reference)
+        .where(
+            GoodsReceipt.tenant_id == tenant_id,
+            PurchaseOrder.tenant_id == tenant_id,
+            PurchaseOrder.po_number == po_reference,
+        )
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none() is not None

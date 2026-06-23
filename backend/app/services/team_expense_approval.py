@@ -97,7 +97,7 @@ async def apply_team_expense_approval_gate(
     if invoice.route_target != ROUTE_TEAM:
         return False
 
-    config = load_config_for_tenant(invoice.tenant_id)
+    config = await load_config_for_tenant(session, invoice.tenant_id)
     team_rule = team_rule_for_invoice(invoice, config)
     approved = await has_manager_approval(session, invoice.id)
 
@@ -153,7 +153,7 @@ async def assert_team_expense_approvable(
     if invoice.route_target != ROUTE_TEAM:
         return
 
-    config = load_config_for_tenant(invoice.tenant_id)
+    config = await load_config_for_tenant(session, invoice.tenant_id)
     team_rule = team_rule_for_invoice(invoice, config)
     amount = float(invoice.total) if invoice.total is not None else None
     has_file = has_receipt_attachment(invoice.raw_file_path)

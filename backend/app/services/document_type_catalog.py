@@ -98,12 +98,10 @@ def load_shipped_default_document_types() -> list[DocumentTypeDefinition]:
 
 @lru_cache
 def load_document_type_catalog(tenant_id: int) -> tuple[DocumentTypeDefinition, ...]:
-    from app.schemas.rule_book_config import validate_rule_book_config_payload
-    from app.services.rule_book_config_io import load_rule_book_config_dict
-
-    raw = load_rule_book_config_dict(tenant_id)
-    config = validate_rule_book_config_payload(raw)
-    return tuple(config.document_types)
+    """Deprecated: pass document_types from load_config_for_tenant instead."""
+    raise RuntimeError(
+        "load_document_type_catalog is deprecated; pass document_types from config"
+    )
 
 
 def get_document_type_definition(
@@ -112,14 +110,13 @@ def get_document_type_definition(
     document_types: Sequence[DocumentTypeDefinition] | None = None,
     tenant_id: int | None = None,
 ) -> DocumentTypeDefinition | None:
+    del tenant_id
     normalized = (code or "").strip().upper()
     if not normalized:
         return None
     catalog = document_types
     if catalog is None:
-        if tenant_id is None:
-            return None
-        catalog = load_document_type_catalog(tenant_id)
+        return None
     for item in catalog:
         if item.code.upper() == normalized:
             return item
@@ -206,4 +203,7 @@ def resolve_document_type_for_purchase_kind(
 
 
 def clear_document_type_catalog_cache() -> None:
-    load_document_type_catalog.cache_clear()
+    try:
+        load_document_type_catalog.cache_clear()
+    except RuntimeError:
+        pass

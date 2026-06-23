@@ -39,8 +39,9 @@ from app.services.segment_heading_classification import (
 )
 from app.services.vault_paths import filename_from_stored
 from app.services.routing_review_service import (
+    requires_classification_review,
     requires_gl_mapping_review,
-    requires_routing_review,
+    requires_playbook_review,
 )
 from app.services.document_type_playbook_service import (
     evaluate_playbook_gates,
@@ -56,6 +57,7 @@ from app.services.vendor_hold_service import apply_vendor_hold_if_needed
 from app.services.bundle_vendor_service import reconcile_dossier_vendor, resolve_canonical_vendor_name
 from app.services.vendor_name_utils import is_plausible_vendor_name
 from app.services.invoice_data import ParsedLineItem
+from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 from app.services.attachment_filter import filter_invoice_attachments
 from app.services.audit_detail_helpers import validation_audit_detail
 from app.services.audit_service import log_event
@@ -105,11 +107,16 @@ async def _replace_line_items(
     invoice: Invoice,
     lines: list[ParsedLineItem],
 ) -> None:
-    await session.execute(delete(LineItem).where(LineItem.invoice_id == invoice.id))
+    await session.execute(
+        delete(LineItem).where(
+            *line_items_for_invoice(invoice.tenant_id, invoice.id),
+        )
+    )
     await session.flush()
     for line in lines:
         session.add(
             LineItem(
+                tenant_id=invoice.tenant_id,
                 invoice_id=invoice.id,
                 description=line.description,
                 qty=line.qty,
@@ -123,11 +130,12 @@ async def _replace_line_items(
 def _resolve_header_mapping(
     invoice: Invoice,
     *,
+    config,
     purchase_order=None,
 ) -> tuple[AccountMapping, MappingDetail]:
     """Map invoice header using unified classification config."""
     if not invoice.line_items:
-        detail = map_invoice_with_details(invoice, purchase_order=purchase_order)
+        detail = map_invoice_with_details(invoice, config=config, purchase_order=purchase_order)
         return (
             AccountMapping(
                 account_code=detail.account_code,
@@ -136,7 +144,7 @@ def _resolve_header_mapping(
             ),
             detail,
         )
-    best_detail = map_invoice_with_details(invoice, purchase_order=purchase_order)
+    best_detail = map_invoice_with_details(invoice, config=config, purchase_order=purchase_order)
     best = AccountMapping(
         account_code=best_detail.account_code,
         account_name=best_detail.account_name,
@@ -145,6 +153,7 @@ def _resolve_header_mapping(
     for line in invoice.line_items:
         detail = map_invoice_with_details(
             invoice,
+            config=config,
             line_description=line.description,
             purchase_order=purchase_order,
         )
@@ -199,7 +208,7 @@ async def _post_parse_relocate(
     tenant_slug = org.slug if org else settings.default_tenant_slug
     tenant_name = org.name if org else None
     filename = _filename_from_stored(invoice.raw_file_path, invoice.id, invoice.file_hash)
-    config = load_config_for_tenant(invoice.tenant_id)
+    config = await load_config_for_tenant(session, invoice.tenant_id)
     from app.services.vault_invoice_paths import vault_document_type_titles_for_invoice
 
     short_title, title = vault_document_type_titles_for_invoice(invoice, list(config.document_types))
@@ -323,7 +332,7 @@ async def ingest_email_attachments(
     org = await session.get(Tenant, tenant_id)
     tenant_name = org.name if org else None
 
-    capture_config = load_config_for_tenant(tenant_id)
+    capture_config = await load_config_for_tenant(session, tenant_id)
 
     for email in emails:
         result.message_ids.append(email.message_id)
@@ -537,7 +546,12 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
         )
     ).scalar_one()
     linked_po = await load_purchase_order_for_invoice(session, loaded)
-    mapping, mapping_detail = _resolve_header_mapping(loaded, purchase_order=linked_po)
+    map_config = await load_config_for_tenant(session, loaded.tenant_id)
+    mapping, mapping_detail = _resolve_header_mapping(
+        loaded,
+        config=map_config,
+        purchase_order=linked_po,
+    )
     invoice.account_code = mapping.account_code
     invoice.account_name = mapping.account_name
     await apply_invoice_evaluation(session, loaded)
@@ -650,10 +664,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         },
     )
 
+    config = await load_config_for_tenant(session, invoice.tenant_id)
     resolved_vendor = resolve_canonical_vendor_name(
         invoice.tenant_id,
         vendor_names=[parsed.vendor],
         abns=[parsed.abn],
+        config=config,
     )
     if not resolved_vendor and parsed.vendor and is_plausible_vendor_name(parsed.vendor):
         resolved_vendor = parsed.vendor
@@ -691,7 +707,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
     loaded = (await session.execute(stmt)).scalar_one()
 
-    config = load_config_for_tenant(invoice.tenant_id)
     segment_heading_kind = await load_segment_heading_kind_from_audit(session, invoice.id)
     classification = classify_document_type(
         invoice=loaded,
@@ -727,6 +742,28 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
     no_classifier_match = not classifier_matches
     dt_definition = resolve_definition_for_invoice(loaded, list(config.document_types))
+
+    if requires_classification_review(loaded, classification):
+        loaded.evaluation_status = EVAL_NEEDS_REVIEW
+        invoice.evaluation_status = EVAL_NEEDS_REVIEW
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "routing_review_required",
+            invoice_id=invoice.id,
+            detail={
+                "gate": "classification",
+                "document_type_code": loaded.document_type_code,
+                "document_type_confidence": loaded.document_type_confidence,
+                "route_target": invoice.route_target,
+                "reason": classification.reason,
+                "no_classifier_match": no_classifier_match,
+                "needs_review": classification.needs_review,
+            },
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
     playbook = await evaluate_playbook_gates(
         session,
         invoice=loaded,
@@ -747,14 +784,31 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             ),
         },
     )
-    if requires_routing_review(
-        loaded,
-        classification,
-        playbook=playbook,
-        definition=dt_definition,
-    ):
+    if requires_playbook_review(playbook, definition=dt_definition):
         loaded.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "routing_review_required",
+            invoice_id=invoice.id,
+            detail={
+                "gate": "playbook",
+                "document_type_code": loaded.document_type_code,
+                "document_type_confidence": loaded.document_type_confidence,
+                "route_target": invoice.route_target,
+                "reason": classification.reason,
+                "no_classifier_match": no_classifier_match,
+                "playbook": playbook.audit_detail(),
+                **(
+                    playbook_policy_audit_detail(dt_definition)
+                    if dt_definition is not None
+                    else {}
+                ),
+            },
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
 
     await _post_parse_relocate(session, loaded, resolved_vendor)
     invoice.raw_file_path = loaded.raw_file_path
@@ -838,35 +892,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         ),
     )
 
-    if requires_routing_review(
-        loaded,
-        classification,
-        playbook=playbook,
-        definition=dt_definition,
-    ):
-        invoice.status = InvoiceStatus.EXCEPTION
-        invoice.evaluation_status = EVAL_NEEDS_REVIEW
-        await log_event(
-            session,
-            "routing_review_required",
-            invoice_id=invoice.id,
-            detail={
-                "document_type_code": loaded.document_type_code,
-                "document_type_confidence": loaded.document_type_confidence,
-                "route_target": invoice.route_target,
-                "reason": classification.reason,
-                "no_classifier_match": no_classifier_match,
-                "playbook": playbook.audit_detail(),
-                **(
-                    playbook_policy_audit_detail(dt_definition)
-                    if dt_definition is not None
-                    else {}
-                ),
-            },
-        )
-        send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
-
     if await apply_document_type_approval_gate(
         session,
         invoice,
@@ -917,7 +942,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     from app.services.purchase_match_service import load_purchase_order_for_invoice
 
     linked_po = await load_purchase_order_for_invoice(session, loaded)
-    mapping, mapping_detail = _resolve_header_mapping(loaded, purchase_order=linked_po)
+    map_config = await load_config_for_tenant(session, loaded.tenant_id)
+    mapping, mapping_detail = _resolve_header_mapping(
+        loaded,
+        config=map_config,
+        purchase_order=linked_po,
+    )
     invoice.account_code = mapping.account_code
     invoice.account_name = mapping.account_name
     await apply_invoice_evaluation(session, loaded)
@@ -955,12 +985,11 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
-    from app.services.rule_book_mapper import ROUTE_EXPENSES, load_classification_config
+    from app.services.rule_book_mapper import ROUTE_EXPENSES
 
-    map_config = load_classification_config(invoice.tenant_id)
     if (invoice.route_target or "").strip() == ROUTE_EXPENSES and is_staff_claim_sender(
         invoice.email_sender,
-        map_config.employee_masters,
+        config.employee_masters,
     ):
         await log_event(
             session,
@@ -981,15 +1010,18 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await session.flush()
     existing_entries = (
         await session.execute(
-            select(JournalEntry).where(JournalEntry.invoice_id == invoice.id)
+            select(JournalEntry).where(
+                *journal_entries_for_invoice(invoice.tenant_id, invoice.id),
+            )
         )
     ).scalars().all()
     for entry in existing_entries:
         await session.delete(entry)
     await session.flush()
-    for line in generate_entries(invoice, mapping):
+    for line in generate_entries(invoice, mapping, config=config):
         session.add(
             JournalEntry(
+                tenant_id=invoice.tenant_id,
                 invoice_id=invoice.id,
                 date=line.date,
                 account_code=line.account_code,

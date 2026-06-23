@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,7 +13,6 @@ from app.config import get_settings
 from app.database import async_session_factory
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.audit_service import log_event
-from app.services.master_data_service import sync_masters_to_config_file
 from app.services.remap_service import remap_invoices_for_tenant
 from app.services.rule_book_audit import (
     diff_rule_book_config,
@@ -29,12 +29,12 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _buffer_lock = asyncio.Lock()
-_buffers: dict[int, PendingRuleBookSave] = {}
+_buffers: dict[uuid.UUID, PendingRuleBookSave] = {}
 
 
 @dataclass
 class PendingRuleBookSave:
-    tenant_id: int
+    tenant_id: uuid.UUID
     payload: RuleBookConfigPayload
     after_raw: dict[str, Any]
     before_raw: dict[str, Any]
@@ -48,7 +48,7 @@ def _debounce_seconds() -> float:
     return max(0.0, get_settings().rule_book_save_debounce_ms / 1000.0)
 
 
-def get_buffered_rule_book_raw(tenant_id: int) -> dict[str, Any] | None:
+def get_buffered_rule_book_raw(tenant_id: uuid.UUID) -> dict[str, Any] | None:
     pending = _buffers.get(tenant_id)
     return dict(pending.after_raw) if pending else None
 
@@ -61,7 +61,7 @@ def clear_rule_book_save_buffers() -> None:
 
 
 async def flush_rule_book_save_buffer(
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     *,
     db: AsyncSession | None = None,
 ) -> None:
@@ -76,7 +76,7 @@ async def flush_rule_book_save_buffer(
 
 async def schedule_rule_book_save(
     *,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     payload: RuleBookConfigPayload,
     after_raw: dict[str, Any],
     actor_name: str | None,
@@ -92,7 +92,11 @@ async def schedule_rule_book_save(
             if existing.timer_handle is not None:
                 existing.timer_handle.cancel()
         else:
-            before_raw = load_rule_book_config_dict(tenant_id)
+            if db is not None:
+                before_raw = await load_rule_book_config_dict(db, tenant_id)
+            else:
+                async with async_session_factory() as session:
+                    before_raw = await load_rule_book_config_dict(session, tenant_id)
 
         pending = PendingRuleBookSave(
             tenant_id=tenant_id,
@@ -118,7 +122,7 @@ async def schedule_rule_book_save(
         pending.timer_handle = loop.call_later(delay, _on_timer)
 
 
-async def _flush_from_timer(tenant_id: int) -> None:
+async def _flush_from_timer(tenant_id: uuid.UUID) -> None:
     async with _buffer_lock:
         pending = _buffers.pop(tenant_id, None)
     if pending is None:
@@ -128,7 +132,7 @@ async def _flush_from_timer(tenant_id: int) -> None:
             await commit_rule_book_save(pending, db=session)
             await session.commit()
     except Exception:
-        logger.exception("rule_book_save_flush_failed", tenant_id=tenant_id)
+        logger.exception("rule_book_save_flush_failed", tenant_id=str(tenant_id))
 
 
 async def _commit_rule_book_db_side_effects(
@@ -143,11 +147,11 @@ async def _commit_rule_book_db_side_effects(
     if await is_duplicate_rule_book_update(session, pending.tenant_id, after_norm):
         logger.info(
             "rule_book_save_suppressed_duplicate",
-            tenant_id=pending.tenant_id,
+            tenant_id=str(pending.tenant_id),
         )
         return
 
-    await sync_masters_to_config_file(session, pending.tenant_id)
+    await save_rule_book_config(session, pending.payload, pending.tenant_id)
 
     if rule_book_changes_are_auditable(
         changes,
@@ -203,8 +207,6 @@ async def commit_rule_book_save(
         before=before_norm,
         after=after_norm,
     )
-
-    save_rule_book_config(pending.payload, pending.tenant_id)
 
     if db is not None:
         await _commit_rule_book_db_side_effects(

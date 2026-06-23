@@ -15,10 +15,10 @@ class UserTenantMapping(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    tenant_id: Mapped[int] = mapped_column(
-        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
-    role: Mapped[str] = mapped_column(String(32), default="member")
+    role: Mapped[str] = mapped_column(String(32), default="approver")
     status: Mapped[str] = mapped_column(String(16), default="active")
     default_tenant: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -1,10 +1,12 @@
 """Rule book evaluate API."""
 
+import json
+from pathlib import Path
+
 import pytest
 from httpx import AsyncClient
 
 from app.schemas.rule_book_config import validate_rule_book_config_payload
-from app.services.rule_book_config_io import load_rule_book_config_dict
 
 
 @pytest.mark.asyncio
@@ -18,7 +20,8 @@ async def test_evaluate_rule_book_sample(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_evaluate_rule_book_draft_config(client: AsyncClient) -> None:
-    saved = load_rule_book_config_dict(1)
+    fixture = Path(__file__).resolve().parent / "fixtures" / "rule_book_demo.json"
+    saved = json.loads(fixture.read_text(encoding="utf-8"))
     config = validate_rule_book_config_payload(saved)
     payload = config.model_dump()
     payload["vendor_detection_config"]["threshold"] = 99

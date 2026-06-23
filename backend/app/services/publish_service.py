@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
+from app.tenant_child_tables import journal_entries_for_invoice
 from app.services.audit_service import log_event
 from app.services.billing_io import load_billing_for_tenant, save_billing_for_tenant
 from app.services.document_ref_service import display_document_ref
@@ -82,7 +83,7 @@ async def publish_invoice_to_ledger(
         await session.execute(
             select(func.count())
             .select_from(JournalEntry)
-            .where(JournalEntry.invoice_id == invoice.id)
+            .where(*journal_entries_for_invoice(invoice.tenant_id, invoice.id))
         )
     ).scalar() or 0
     if journal_count == 0:

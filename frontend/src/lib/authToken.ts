@@ -1,4 +1,8 @@
 import type { AuthUser } from "@/api/types";
+import {
+  DEFAULT_TENANT_LOCALE,
+  DEFAULT_TENANT_TIMEZONE,
+} from "@/lib/tenantTime";
 
 type JwtPayload = {
   sub?: string;
@@ -48,5 +52,7 @@ export function userFromToken(token: string): AuthUser | null {
     tenant_id: String(tenantId),
     tenant_name: "",
     tenant_slug: String(payload.tenant_slug ?? ""),
+    tenant_timezone: DEFAULT_TENANT_TIMEZONE,
+    tenant_locale: DEFAULT_TENANT_LOCALE,
   };
 }

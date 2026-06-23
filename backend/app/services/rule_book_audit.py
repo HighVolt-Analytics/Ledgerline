@@ -292,8 +292,10 @@ async def is_duplicate_rule_book_update(
     )
     if prior_content is None:
         try:
-            prior_content = normalize_rule_book_for_diff(load_rule_book_config_dict(tenant_id))
-        except FileNotFoundError:
+            prior_content = normalize_rule_book_for_diff(
+                await load_rule_book_config_dict(session, tenant_id)
+            )
+        except (FileNotFoundError, ValueError):
             return False
 
     return rule_book_content_equal(prior_content, incoming_content)

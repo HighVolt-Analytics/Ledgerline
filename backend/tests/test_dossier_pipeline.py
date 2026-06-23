@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.dossier_pipeline_service import STAGE_IDS, build_dossier_pipeline, first_pipeline_failure
+from app.tenant_ids import TESTING_TENANT_UUID
 
 
 def _log(event: str, invoice_id: int, **detail: object) -> AuditLog:
@@ -114,6 +115,38 @@ async def test_pipeline_map_gl_without_audit_log(db_session: AsyncSession) -> No
     assert extract.state == "fail"
     assert extract.remediation
     assert next(s for s in pipeline if s.stage_id == "classify").blocked_reason
+
+
+@pytest.mark.asyncio
+async def test_pipeline_unclassified_blocks_downstream() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-24",
+        document_type_confidence=0.44,
+    )
+    logs = [
+        _log("invoice_uploaded", 1),
+        _log("parse_completed", 1, confidence=0.9),
+        _log("document_classified", 1, document_type_code="DT-24"),
+        _log(
+            "routing_review_required",
+            1,
+            gate="classification",
+            no_classifier_match=True,
+            reason="No classifier matched in rule book catalogue",
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    classify = next(s for s in pipeline if s.stage_id == "classify")
+    assert classify.state == "fail"
+    assert classify.exception_code == "DOCUMENT_UNCLASSIFIED"
+    bundle = next(s for s in pipeline if s.stage_id == "bundle")
+    assert bundle.state == "pending"
+    assert bundle.blocked_reason
+    assert first_pipeline_failure(pipeline) is not None
+    assert first_pipeline_failure(pipeline).stage_id == "classify"
 
 
 @pytest.mark.asyncio

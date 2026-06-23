@@ -39,7 +39,7 @@ async def get_vault_tree_for_tenant(
     tenant_slug = await get_tenant_slug(session, tenant_id)
     tenant_name = org.name if org else None
     org_folder = vault_tenant_folder(tenant_slug, tenant_name)
-    config = load_config_for_tenant(tenant_id)
+    config = await load_config_for_tenant(session, tenant_id)
     document_types = list(config.document_types)
 
     rows = (

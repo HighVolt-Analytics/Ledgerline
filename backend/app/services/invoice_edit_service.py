@@ -56,6 +56,7 @@ async def update_invoice_fields(
         for item in line_items_payload:
             session.add(
                 LineItem(
+                    tenant_id=inv.tenant_id,
                     invoice_id=inv.id,
                     description=item.get("description"),
                     qty=item.get("qty"),

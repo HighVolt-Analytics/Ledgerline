@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
-from functools import lru_cache
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.invoice import Invoice
 from app.models.purchase_order import PurchaseOrder
 from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
 from app.services.account_mapper import AccountMapping, MappingDetail, resolve_category
 from app.services.capture_channel import is_staff_claim_sender
-from app.services.rule_book_config_io import load_rule_book_config_dict
+from app.services.rule_book_config_io import load_rule_book_config_with_masters
 from app.services.rule_book_evaluate_service import invoice_to_eval_document
+
 ROUTE_PURCHASE = "Purchase Management"
 ROUTE_EXPENSES = "Expenses Management"
 ROUTE_TEAM = "Team Expenses"
@@ -38,17 +42,20 @@ class ConfigMappingHit:
     match_reason: str
 
 
-@lru_cache
-def load_classification_config(tenant_id: int) -> RuleBookConfigPayload:
-    raw = load_rule_book_config_dict(tenant_id)
+async def load_classification_config(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> RuleBookConfigPayload:
+    raw = await load_rule_book_config_with_masters(session, tenant_id)
     return validate_rule_book_config_payload(raw)
 
 
 def clear_classification_config_cache() -> None:
     from app.services.document_type_catalog import clear_document_type_catalog_cache
+    from app.services.rule_book_config_io import clear_posting_config_cache
 
-    load_classification_config.cache_clear()
     clear_document_type_catalog_cache()
+    clear_posting_config_cache()
 
 
 def _ledger_to_mapping(ledger: str) -> AccountMapping:
@@ -195,21 +202,24 @@ def resolve_config_mapping(
     return _resolve_legacy_and_fallback(invoice, config)
 
 
-def map_invoice_to_account(invoice: Invoice) -> AccountMapping:
+def map_invoice_to_account(
+    invoice: Invoice,
+    *,
+    config: RuleBookConfigPayload,
+) -> AccountMapping:
     """Map invoice header to GL account using the unified rule book."""
-    config = load_classification_config(invoice.tenant_id)
     return resolve_config_mapping(invoice, config).mapping
 
 
 def map_invoice_with_details(
     invoice: Invoice,
     *,
+    config: RuleBookConfigPayload,
     line_description: str | None = None,
     purchase_order: PurchaseOrder | None = None,
 ) -> MappingDetail:
     """Map invoice with audit metadata using the unified rule book."""
     del line_description  # header-level rules; line text is in invoice line_items for eval
-    config = load_classification_config(invoice.tenant_id)
     hit = resolve_config_mapping(invoice, config, purchase_order=purchase_order)
     return MappingDetail(
         expense_category=hit.mapping.expense_category or hit.mapping.account_name,
@@ -224,11 +234,9 @@ def is_fallback_mapping(detail: MappingDetail) -> bool:
     return detail.rule_type == FALLBACK_RULE_TYPE
 
 
-def get_tax_account_mapping(tenant_id: int) -> AccountMapping:
-    config = load_classification_config(tenant_id)
+def get_tax_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
     return resolve_category(config.posting_defaults.tax_account)
 
 
-def get_payable_account_mapping(tenant_id: int) -> AccountMapping:
-    config = load_classification_config(tenant_id)
+def get_payable_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
     return resolve_category(config.posting_defaults.payable_account)

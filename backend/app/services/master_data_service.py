@@ -27,8 +27,8 @@ from app.schemas.master_data import (
 )
 from app.schemas.rule_book_config import BillingAddress, EmployeeMaster, RuleBookConfigPayload, VendorMaster
 from app.services.rule_book_config_io import (
+    load_legacy_file_dict_with_masters,
     load_rule_book_config_dict,
-    tenant_rule_book_config_path,
 )
 from app.services.rule_book_mapper import clear_classification_config_cache
 
@@ -125,9 +125,11 @@ async def count_employee_masters(db: AsyncSession, tenant_id: int) -> int:
     )
 
 
-async def import_masters_from_config_file(db: AsyncSession, tenant_id: int) -> None:
+async def import_masters_from_config_file(db: AsyncSession, tenant_id: uuid.UUID) -> None:
     """One-time import of embedded JSON masters into Postgres."""
-    raw = load_rule_book_config_dict(tenant_id)
+    raw = load_legacy_file_dict_with_masters(tenant_id)
+    if raw is None:
+        raw = await load_rule_book_config_dict(db, tenant_id)
     for item in raw.get("vendor_masters") or []:
         master_id = str(item.get("id") or _new_master_id("vm", str(item.get("name", "vendor"))))
         existing = (
@@ -293,23 +295,8 @@ async def get_employee_master_by_email(
     ).scalar_one_or_none()
 
 
-async def sync_masters_to_config_file(db: AsyncSession, tenant_id: int) -> None:
-    """Write current DB masters into the org rule book JSON for the mapping engine."""
-    vendors = await list_vendor_masters(db, tenant_id)
-    employees = await list_employee_masters(db, tenant_id)
-    path = tenant_rule_book_config_path(tenant_id)
-    if not path.is_file():
-        load_rule_book_config_dict(tenant_id)
-    with path.open(encoding="utf-8") as fh:
-        data = json.load(fh)
-    data["vendor_masters"] = [vendor_master_to_dict(v) for v in vendors]
-    data["employee_masters"] = [employee_master_to_dict(e) for e in employees]
-    try:
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
-            fh.write("\n")
-    except OSError as exc:
-        raise ValueError(f"Could not sync vendor masters to rule book file: {exc}") from exc
+async def sync_masters_to_config_file(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """No-op: masters live in Postgres and are merged at read time."""
     clear_classification_config_cache()
 
 

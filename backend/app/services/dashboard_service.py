@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.audit import AuditLog
+from app.models.tenant import Tenant
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.user import User
@@ -37,6 +38,7 @@ from app.schemas.dashboard import (
     TopVendorRow,
 )
 from app.schemas.invoice import InvoiceStatus as InvoiceStatusSchema
+from app.tenant_settings import tenant_today
 
 _APPROVAL_STATUSES = frozenset(
     {
@@ -101,7 +103,7 @@ def _month_end(month_start: date) -> date:
     return date(month_start.year, month_start.month + 1, 1) - timedelta(days=1)
 
 
-def parse_period(month: str | None) -> tuple[date, date, str]:
+def parse_period(month: str | None, *, today: date | None = None) -> tuple[date, date, str]:
     """Return (month_start, month_end, period_key YYYY-MM)."""
     if month:
         parts = month.split("-")
@@ -110,9 +112,14 @@ def parse_period(month: str | None) -> tuple[date, date, str]:
             if 1 <= m <= 12:
                 start = date(y, m, 1)
                 return start, _month_end(start), f"{y:04d}-{m:02d}"
-    today = date.today()
-    start = _month_start(today)
-    return start, _month_end(start), f"{today.year:04d}-{today.month:02d}"
+    anchor = today or date.today()
+    start = _month_start(anchor)
+    return start, _month_end(start), f"{anchor.year:04d}-{anchor.month:02d}"
+
+
+async def _institution_today(db: AsyncSession, tenant_id) -> date:
+    tenant = await db.get(Tenant, tenant_id)
+    return tenant_today(tenant)
 
 
 def _invoice_date_filters(month_start: date, month_end: date):
@@ -487,9 +494,10 @@ async def build_stats(
     tenant_id: int,
     month_start: date | None = None,
     month_end: date | None = None,
+    today: date | None = None,
 ) -> DashboardStats:
-    today = date.today()
-    period_start = month_start or _month_start(today)
+    anchor = today or await _institution_today(db, tenant_id)
+    period_start = month_start or _month_start(anchor)
     period_end = month_end or _month_end(period_start)
 
     status_counts = await _invoice_status_counts(db, tenant_id)
@@ -737,8 +745,10 @@ async def fetch_top_vendors(
     ]
 
 
-async def fetch_cash_forecast(db: AsyncSession, *, tenant_id: int) -> list[CashForecastBucket]:
-    today = date.today()
+async def fetch_cash_forecast(
+    db: AsyncSession, *, tenant_id: int, today: date | None = None
+) -> list[CashForecastBucket]:
+    anchor = today or await _institution_today(db, tenant_id)
     amounts = {label: Decimal("0") for label, _, _ in _FORECAST_BUCKETS}
 
     stmt = select(Invoice.due_date, Invoice.total, Invoice.currency).where(
@@ -750,7 +760,7 @@ async def fetch_cash_forecast(db: AsyncSession, *, tenant_id: int) -> list[CashF
     for due_date, total, currency in (await db.execute(stmt)).all():
         if due_date is None or total is None:
             continue
-        days = (due_date - today).days
+        days = (due_date - anchor).days
         amt = convert_to_base(total, currency)
         for label, lo, hi in _FORECAST_BUCKETS:
             if hi is None and days >= lo:
@@ -767,10 +777,11 @@ def _sparkline_days(
     month_start: date,
     month_end: date,
     *,
+    today: date,
     days: int = 7,
 ) -> list[date]:
     """Last N calendar days within the period, oldest first."""
-    end = min(month_end, date.today())
+    end = min(month_end, today)
     start = max(month_start, end - timedelta(days=days - 1))
     return [start + timedelta(days=i) for i in range(days)]
 
@@ -858,9 +869,11 @@ async def fetch_kpi_sparklines(
     tenant_id: int,
     month_start: date,
     month_end: date,
+    today: date | None = None,
     days: int = 7,
 ) -> KpiSparklines:
-    days_list = _sparkline_days(month_start, month_end, days=days)
+    anchor = today or await _institution_today(db, tenant_id)
+    days_list = _sparkline_days(month_start, month_end, today=anchor, days=days)
     if not days_list:
         empty = [0] * days
         return KpiSparklines(
@@ -1350,18 +1363,21 @@ async def build_overview(
     activity_limit: int = 8,
     month: str | None = None,
 ) -> DashboardOverview:
-    month_start, month_end, period = parse_period(month)
+    today = await _institution_today(db, tenant_id)
+    month_start, month_end, period = parse_period(month, today=today)
     stats = await build_stats(
         db,
         tenant_id=tenant_id,
         month_start=month_start,
         month_end=month_end,
+        today=today,
     )
     kpi_sparklines = await fetch_kpi_sparklines(
         db,
         tenant_id=tenant_id,
         month_start=month_start,
         month_end=month_end,
+        today=today,
     )
     return DashboardOverview(
         period=period,
@@ -1376,7 +1392,7 @@ async def build_overview(
             month_start=month_start,
             month_end=month_end,
         ),
-        cash_forecast=await fetch_cash_forecast(db, tenant_id=tenant_id),
+        cash_forecast=await fetch_cash_forecast(db, tenant_id=tenant_id, today=today),
         mailbox_breakdown=await fetch_mailbox_breakdown(
             db,
             tenant_id=tenant_id,

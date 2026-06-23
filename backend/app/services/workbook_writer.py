@@ -22,6 +22,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.tenant import Tenant
+from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.reconciliation_service import reconcile_daily
 from app.services.rule_book_config_io import tenant_rule_book_config_path
 from app.services.rule_book_mapper import (
@@ -79,13 +80,12 @@ def _autosize_columns(ws: Worksheet, max_width: int = 42) -> None:
         ws.column_dimensions[letter].width = min(max(max_len + 2, 10), max_width)
 
 
-def _extract_po_ref(invoice: Invoice) -> str:
+def _extract_po_ref(invoice: Invoice, config: RuleBookConfigPayload) -> str:
     if invoice.po_reference:
         return invoice.po_reference
     invoice_no = invoice.invoice_no
     if not invoice_no:
         return "—"
-    config = load_classification_config(invoice.tenant_id)
     inv_text = invoice_no.upper()
     for rule in config.purchase_rules:
         if not rule.enabled:
@@ -216,7 +216,7 @@ def _write_readme(
     ws.column_dimensions["A"].width = 88
 
 
-def _write_invoices_sheet(ws: Worksheet, invoices: list[Invoice]) -> None:
+def _write_invoices_sheet(ws: Worksheet, invoices: list[Invoice], config: RuleBookConfigPayload) -> None:
     headers = [
         "ID",
         "Vendor",
@@ -253,7 +253,7 @@ def _write_invoices_sheet(ws: Worksheet, invoices: list[Invoice]) -> None:
                 inv.invoice_date.isoformat() if inv.invoice_date else None,
                 inv.due_date.isoformat() if inv.due_date else None,
                 inv.currency,
-                _extract_po_ref(inv),
+                _extract_po_ref(inv, config),
                 "—",
                 sub,
                 gst,
@@ -318,7 +318,9 @@ def _write_line_items_sheet(ws: Worksheet, invoices: list[Invoice]) -> None:
     _autosize_columns(ws)
 
 
-def _write_ledger_mapping_sheet(ws: Worksheet, invoices: list[Invoice]) -> None:
+def _write_ledger_mapping_sheet(
+    ws: Worksheet, invoices: list[Invoice], config: RuleBookConfigPayload
+) -> None:
     headers = [
         "Invoice ID",
         "Invoice Date",
@@ -333,7 +335,7 @@ def _write_ledger_mapping_sheet(ws: Worksheet, invoices: list[Invoice]) -> None:
     for inv in sorted(invoices, key=lambda i: (i.invoice_date or date.min, i.id)):
         for line in _line_rows_for_export(inv):
             desc = str(line["description"])
-            detail = map_invoice_with_details(inv, line_description=desc)
+            detail = map_invoice_with_details(inv, config=config, line_description=desc)
             ws.append(
                 [
                     invoice_display_id(inv),
@@ -355,13 +357,15 @@ def _write_ledger_mapping_sheet(ws: Worksheet, invoices: list[Invoice]) -> None:
     _autosize_columns(ws)
 
 
-def _write_journal_entries_sheet(ws: Worksheet, invoices: list[Invoice]) -> None:
+def _write_journal_entries_sheet(
+    ws: Worksheet, invoices: list[Invoice], config: RuleBookConfigPayload
+) -> None:
     headers = ["Date", "Invoice ID", "JE #", "Account", "Description", "Debit", "Credit"]
     _write_header(ws, headers)
     for inv in sorted(invoices, key=lambda i: (i.invoice_date or date.min, i.id)):
         entries = sorted(inv.journal_entries, key=lambda e: e.id)
         if not entries and inv.status == InvoiceStatus.PROCESSED:
-            mapping = map_invoice_with_details(inv)
+            mapping = map_invoice_with_details(inv, config=config)
             sub = inv.subtotal or Decimal("0")
             gst = inv.gst or Decimal("0")
             total = inv.total or sub + gst
@@ -449,6 +453,7 @@ async def _write_daily_reconciliation_sheet(
 def _write_expense_summary_sheet(
     ws: Worksheet,
     invoices: list[Invoice],
+    config: RuleBookConfigPayload,
 ) -> None:
     headers = ["Ledger Account", "# Lines", "Total (ex-GST)", "% of Total"]
     _write_header(ws, headers)
@@ -459,7 +464,7 @@ def _write_expense_summary_sheet(
     for inv in invoices:
         for line in _line_rows_for_export(inv):
             desc = str(line["description"])
-            detail = map_invoice_with_details(inv, line_description=desc)
+            detail = map_invoice_with_details(inv, config=config, line_description=desc)
             totals[detail.expense_category] += Decimal(str(line["subtotal"]))
             counts[detail.expense_category] += 1
 
@@ -556,8 +561,7 @@ def _write_processing_status_sheet(
     _autosize_columns(ws)
 
 
-def _write_rule_book_sheet(ws: Worksheet, tenant_id: int) -> None:
-    config = load_classification_config(tenant_id)
+def _write_rule_book_sheet(ws: Worksheet, config: RuleBookConfigPayload) -> None:
     ws.append(["Classification Rule Book — Purchase → Expense → Vendor → Fallback"])
     ws.append([])
 
@@ -695,6 +699,7 @@ async def write_workbook(
     invoices = await _load_invoices(
         session, tenant_id=tenant_id, date_from=date_from, date_to=date_to
     )
+    config = await load_classification_config(session, tenant_id)
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -711,10 +716,10 @@ async def write_workbook(
                 invoice_count=len(invoices),
             ),
         ),
-        (SHEET_INVOICES, lambda ws: _write_invoices_sheet(ws, invoices)),
+        (SHEET_INVOICES, lambda ws: _write_invoices_sheet(ws, invoices, config)),
         (SHEET_LINE_ITEMS, lambda ws: _write_line_items_sheet(ws, invoices)),
-        (SHEET_LEDGER_MAPPING, lambda ws: _write_ledger_mapping_sheet(ws, invoices)),
-        (SHEET_JOURNAL_ENTRIES, lambda ws: _write_journal_entries_sheet(ws, invoices)),
+        (SHEET_LEDGER_MAPPING, lambda ws: _write_ledger_mapping_sheet(ws, invoices, config)),
+        (SHEET_JOURNAL_ENTRIES, lambda ws: _write_journal_entries_sheet(ws, invoices, config)),
     ]
     for name, writer in sheets:
         ws = wb.create_sheet(name)
@@ -724,14 +729,14 @@ async def write_workbook(
     await _write_daily_reconciliation_sheet(ws_recon, session, invoices, tenant_id=tenant_id)
 
     ws_exp = wb.create_sheet(SHEET_EXPENSE_SUMMARY)
-    _write_expense_summary_sheet(ws_exp, invoices)
+    _write_expense_summary_sheet(ws_exp, invoices, config)
 
     audit_flags = await _audit_flags(session, [inv.id for inv in invoices])
     ws_status = wb.create_sheet(SHEET_PROCESSING_STATUS)
     _write_processing_status_sheet(ws_status, invoices, audit_flags)
 
     ws_rules = wb.create_sheet(SHEET_RULE_BOOK)
-    _write_rule_book_sheet(ws_rules, tenant_id)
+    _write_rule_book_sheet(ws_rules, config)
 
     filename = workbook_filename(tenant_slug, date_from, date_to)
     dest = _reports_dir() / filename

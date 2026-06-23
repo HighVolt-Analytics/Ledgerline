@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,12 @@ from app.schemas.auth import (
     UserResponse,
     VerifyOtpRequest,
     VerifyOtpResponse,
+)
+from app.schemas.tenant_member import (
+    InviteAcceptRequest,
+    InviteAcceptResponse,
+    InvitePreviewResponse,
+    PermissionsResponse,
 )
 from app.schemas.common import ApiEnvelope
 from app.services.auth_account_service import resolve_login_account
@@ -49,10 +55,17 @@ from app.services.auth_session_service import (
     validate_refresh_jti,
     verify_otp,
 )
-from app.services.membership_enumeration import list_memberships_for_auth_account
+from app.services.membership_enumeration import (
+    filter_switchable_memberships,
+    list_memberships_for_auth_account,
+    membership_is_switchable,
+)
 from app.services.membership_service import ensure_membership, user_has_tenant_access
+from app.services.privilege_service import matrix_role_for_context, permissions_for_context
 from app.services.tenant_context_service import get_tenant_slug
+from app.services.tenant_members_service import accept_invite, preview_invite
 from app.tenant_ids import parse_tenant_id
+from app.tenant_settings import tenant_locale, tenant_timezone
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
@@ -67,6 +80,8 @@ def _user_response(user: User, tenant: Tenant, *, role: str | None = None) -> Us
         tenant_id=tenant.id,
         tenant_name=tenant.name,
         tenant_slug=tenant.slug,
+        tenant_timezone=tenant_timezone(tenant),
+        tenant_locale=tenant_locale(tenant),
     )
 
 
@@ -86,7 +101,8 @@ async def _membership_summaries_for_account(
     db: AsyncSession, *, auth_account_id: int
 ) -> list[TenantAccountSummary]:
     memberships = await list_memberships_for_auth_account(db, auth_account_id=auth_account_id)
-    return [_account_summary_from_membership(m) for m in memberships]
+    switchable = filter_switchable_memberships(memberships)
+    return [_account_summary_from_membership(m) for m in switchable]
 
 
 async def _resolve_switch_target(
@@ -99,6 +115,8 @@ async def _resolve_switch_target(
     match = next((m for m in memberships if m.tenant_id == target_tenant_id), None)
     if not match:
         raise HTTPException(403, "You do not have access to this tenant")
+    if not membership_is_switchable(match):
+        raise HTTPException(403, "Platform tenant access requires super admin")
 
     user = await db.get(User, match.user_id)
     tenant = await db.get(Tenant, match.tenant_id)
@@ -201,7 +219,9 @@ async def verify_otp_endpoint(
         raise HTTPException(401, "Invalid verification code")
 
     await clear_otp(auth_account_id=account.id, email=email)
-    memberships = await list_memberships_for_auth_account(db, auth_account_id=account.id)
+    memberships = filter_switchable_memberships(
+        await list_memberships_for_auth_account(db, auth_account_id=account.id)
+    )
     if not memberships:
         raise HTTPException(403, "No tenant access for this account")
 
@@ -266,7 +286,9 @@ async def select_tenant(
 ) -> ApiEnvelope[TokenResponse]:
     payload = _require_token_type(creds, TOKEN_TYPE_TENANT_SELECT)
     auth_account_id = int(payload["sub"])
-    memberships = await list_memberships_for_auth_account(db, auth_account_id=auth_account_id)
+    memberships = filter_switchable_memberships(
+        await list_memberships_for_auth_account(db, auth_account_id=auth_account_id)
+    )
     match = next((m for m in memberships if m.tenant_id == body.tenant_id), None)
     if not match:
         raise HTTPException(403, "You do not have access to this tenant")
@@ -395,6 +417,8 @@ async def me(
                 tenant_id=tenant.id,
                 tenant_name=tenant.name,
                 tenant_slug=tenant.slug,
+                tenant_timezone=tenant_timezone(tenant),
+                tenant_locale=tenant_locale(tenant),
             )
         )
     user = await db.get(User, ctx.user_id)
@@ -413,9 +437,77 @@ async def my_memberships(
     user = await db.get(User, ctx.user_id)
     if not user or not user.auth_account_id:
         raise HTTPException(401, "Session invalid")
-    memberships = await list_memberships_for_auth_account(
-        db, auth_account_id=user.auth_account_id
+    memberships = filter_switchable_memberships(
+        await list_memberships_for_auth_account(
+            db, auth_account_id=user.auth_account_id
+        )
     )
     return ApiEnvelope(
         data=[_account_summary_from_membership(m) for m in memberships],
+    )
+
+
+@router.get("/me/permissions", response_model=ApiEnvelope[PermissionsResponse])
+async def my_permissions(
+    ctx: AuthContext = Depends(require_user),
+) -> ApiEnvelope[PermissionsResponse]:
+    return ApiEnvelope(
+        data=PermissionsResponse(
+            role=ctx.role,
+            matrix_role=matrix_role_for_context(ctx),
+            permissions=permissions_for_context(ctx),
+        )
+    )
+
+
+@router.get("/invite/preview", response_model=ApiEnvelope[InvitePreviewResponse])
+async def invite_preview(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[InvitePreviewResponse]:
+    preview = await preview_invite(db, token=token)
+    return ApiEnvelope(
+        data=InvitePreviewResponse(
+            email=preview.email,
+            full_name=preview.full_name,
+            role=preview.role,
+            tenant_name=preview.tenant_name,
+            tenant_slug=preview.tenant_slug,
+            expired=preview.expired,
+            accepted=preview.accepted,
+        )
+    )
+
+
+@router.post("/invite/accept", response_model=ApiEnvelope[InviteAcceptResponse])
+async def invite_accept(
+    body: InviteAcceptRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[InviteAcceptResponse]:
+    from app.services.audit_service import log_event
+
+    user, tenant, role = await accept_invite(
+        db,
+        token=body.token,
+        password=body.password,
+        full_name=body.full_name,
+    )
+    client_ip = request.client.host if request.client else None
+    await log_event(
+        db,
+        "tenant_member_invite_accepted",
+        tenant_id=tenant.id,
+        detail={"user_id": user.id, "email": user.email, "role": role},
+        actor_name=user.full_name,
+        actor_email=user.email,
+        client_ip=client_ip,
+    )
+    return ApiEnvelope(
+        data=InviteAcceptResponse(
+            message="Invitation accepted. You can sign in with your email and password.",
+            tenant_id=tenant.id,
+            tenant_name=tenant.name,
+            email=user.email,
+        )
     )

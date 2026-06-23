@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.vendor import VendorRegistry
+from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.rule_book_mapper import load_classification_config
 
 UNKNOWN_SLUG = "unknown"
@@ -116,11 +117,14 @@ def slug_for_parsed_vendor(vendor_name: str | None) -> str:
     return slugify_vendor_name(vendor_name)
 
 
-def match_rule_book_vendor_name(vendor_name: str | None, *, tenant_id: int) -> str | None:
+def match_rule_book_vendor_name(
+    vendor_name: str | None,
+    *,
+    config: RuleBookConfigPayload,
+) -> str | None:
     """Return canonical vendor master name when parsed text matches."""
     if not vendor_name or not vendor_name.strip():
         return None
-    config = load_classification_config(tenant_id)
     vendor_l = vendor_name.lower()
     for master in config.vendor_masters:
         names = [master.name, *master.aliases]
@@ -144,7 +148,8 @@ async def resolve_storage_slug_for_parsed_vendor(
     if not is_plausible_vendor_name(parsed_vendor):
         return UNKNOWN_SLUG
 
-    canonical = match_rule_book_vendor_name(parsed_vendor, tenant_id=tenant_id)
+    config = await load_classification_config(session, tenant_id)
+    canonical = match_rule_book_vendor_name(parsed_vendor, config=config)
     search_name = canonical or parsed_vendor
     search_l = search_name.lower()
 

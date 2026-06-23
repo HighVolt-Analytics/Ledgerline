@@ -30,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
+import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
 import { queryClient, queryKeys } from "@/lib/queryClient";
 import { cn } from "@/lib/cn";
 
@@ -122,6 +123,7 @@ export function Layout() {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { data: badges } = useNavBadges();
+  const { permissions } = usePermissions();
   const counts = {
     upload: badges?.inbox_count ?? 0,
     approvals: badges?.pending_approval ?? 0,
@@ -190,9 +192,11 @@ export function Layout() {
                 {group.label}
               </p>
               <div className="space-y-0.5">
-                {group.items.map(({ to, label, icon: Icon, badge }) =>
-                  renderNavLink(to, label, Icon, badge)
-                )}
+                {group.items
+                  .filter(({ to }) => canAccessNavPath(to, permissions))
+                  .map(({ to, label, icon: Icon, badge }) =>
+                    renderNavLink(to, label, Icon, badge)
+                  )}
               </div>
             </div>
           ))}
@@ -217,8 +221,7 @@ export function Layout() {
           <div className="md:hidden text-primary">
             <LogoBlock collapsed />
           </div>
-          <TenantSwitcher variant="header" showManageActions />
-          <TenantSwitcher variant="sidebar" />
+          <TenantSwitcher />
           <button
             type="button"
             className="hidden md:flex items-center gap-2 h-9 px-3 rounded-md border border-border bg-card text-sm text-muted-foreground hover-elevate flex-1 max-w-md"
@@ -294,16 +297,6 @@ export function Layout() {
                   </button>
                   <button
                     type="button"
-                    className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent"
-                    onClick={() => {
-                      setUserMenuOpen(false);
-                      navigate("/settings?tab=orgs");
-                    }}
-                  >
-                    Manage organisations
-                  </button>
-                  <button
-                    type="button"
                     className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent text-destructive"
                     onClick={() => {
                       setUserMenuOpen(false);
@@ -336,7 +329,7 @@ export function Layout() {
         </footer>
 
         <nav className="md:hidden flex items-center gap-1 overflow-x-auto border-t border-border bg-background px-2 py-2 shrink-0">
-          {MOBILE_NAV.map(({ to, label, icon: Icon, badge }) => {
+          {MOBILE_NAV.filter(({ to }) => canAccessNavPath(to, permissions)).map(({ to, label, icon: Icon, badge }) => {
             const active = pathname === to || (to !== "/" && pathname.startsWith(to));
             return (
               <NavLink

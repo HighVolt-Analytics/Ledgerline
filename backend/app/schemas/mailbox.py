@@ -1,6 +1,7 @@
 """Connected mailbox schemas."""
 
 from datetime import date, datetime
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -18,7 +19,7 @@ class MailboxConnectionRequestCreate(BaseModel):
 
 class MailboxConnectionRequestResponse(BaseModel):
     id: int
-    tenant_id: int
+    tenant_id: UUID
     requested_email: str
     display_name: str | None
     message: str | None
@@ -61,7 +62,7 @@ class MailboxAdminConsentResponse(BaseModel):
 
 class MailboxResponse(BaseModel):
     id: int
-    tenant_id: int
+    tenant_id: UUID
     email: str
     display_name: str | None
     is_active: bool
@@ -82,7 +83,7 @@ class MailboxBackfillCreate(BaseModel):
 
 class MailboxBackfillResponse(BaseModel):
     id: int
-    tenant_id: int
+    tenant_id: UUID
     mailbox_id: int
     from_date: date
     to_date: date

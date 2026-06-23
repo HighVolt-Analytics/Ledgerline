@@ -52,12 +52,12 @@ async def register_refresh_session(
     *,
     jti: str,
     user_id: int,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     ttl_days: int,
 ) -> None:
     r = _redis()
     try:
-        payload = json.dumps({"user_id": user_id, "tenant_id": tenant_id})
+        payload = json.dumps({"user_id": user_id, "tenant_id": str(tenant_id)})
         await r.setex(f"{_REFRESH_PREFIX}{jti}", timedelta(days=ttl_days), payload)
     finally:
         await r.aclose()

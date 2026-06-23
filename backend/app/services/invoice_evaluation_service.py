@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,7 @@ from app.services.master_data_service import (
     create_pending_vendor,
     list_pending_vendors,
 )
-from app.services.rule_book_config_io import load_rule_book_config_dict
+from app.services.rule_book_config_io import load_rule_book_config_with_masters
 from app.services.rule_book_evaluate_service import invoice_to_eval_document
 from app.services.rule_book_mapper import (
     FALLBACK_RULE_TYPE,
@@ -205,7 +206,7 @@ async def apply_invoice_evaluation(
 ) -> InvoiceEvaluationResult:
     """Evaluate and persist routing fields; optionally enqueue unknown vendors."""
     if config is None:
-        config = load_classification_config(invoice.tenant_id)
+        config = await load_classification_config(session, invoice.tenant_id)
     config = await classification_config_with_db_masters(session, invoice.tenant_id, config)
 
     existing_ids = parse_matched_rule_ids(invoice.matched_rule_ids)
@@ -224,7 +225,7 @@ async def apply_invoice_evaluation(
         and float(invoice.document_type_confidence or 0.0) >= dt_min_confidence
     )
 
-    mapping_detail = map_invoice_with_details(invoice)
+    mapping_detail = map_invoice_with_details(invoice, config=config)
     result = evaluate_invoice_routing(
         invoice,
         config,
@@ -340,6 +341,18 @@ async def _maybe_enqueue_pending_vendor(
         return
 
 
-def load_config_for_tenant(tenant_id: int) -> RuleBookConfigPayload:
-    raw = load_rule_book_config_dict(tenant_id)
-    return validate_rule_book_config_payload(raw)
+async def load_config_for_tenant(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> RuleBookConfigPayload:
+    return await load_classification_config(session, tenant_id)
+
+
+async def load_posting_config_for_tenant(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> RuleBookConfigPayload:
+    """Rule book for dossier/matrix reads — document types only, no vendor/employee masters."""
+    from app.services.rule_book_config_io import load_posting_config_payload
+
+    return await load_posting_config_payload(session, tenant_id)

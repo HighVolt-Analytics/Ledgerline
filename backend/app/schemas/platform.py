@@ -40,3 +40,7 @@ class UpdatePlatformTenantRequest(BaseModel):
     lifecycle_status: str | None = Field(default=None, pattern=r"^(active|suspended|trial)$")
     settings_json: dict[str, Any] | None = None
     modules: list[PlatformTenantModule] | None = None
+
+
+class DeletePlatformTenantRequest(BaseModel):
+    confirm_slug: str = Field(min_length=1, max_length=100)

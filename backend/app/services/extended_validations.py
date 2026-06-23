@@ -84,15 +84,15 @@ def vr10_tax_invoice_au(data: InvoiceData) -> ValidationResult:
     return ValidationResult("VR10", True, "Tax invoice rule not applicable")
 
 
-def vr11_date_sanity(data: InvoiceData) -> ValidationResult:
+def vr11_date_sanity(data: InvoiceData, *, today: date | None = None) -> ValidationResult:
     if data.invoice_date is None:
         return ValidationResult("VR11", False, "invoice_date required for date sanity")
 
-    today = date.today()
-    if data.invoice_date > today:
+    anchor = today or date.today()
+    if data.invoice_date > anchor:
         return ValidationResult("VR11", False, "Invoice date cannot be in the future")
 
-    age_days = (today - data.invoice_date).days
+    age_days = (anchor - data.invoice_date).days
     if age_days > 365:
         return ValidationResult(
             "VR11",
@@ -274,14 +274,18 @@ async def run_extended_validations(
 ) -> ValidationResult | None:
     from app.services.invoice_evaluation_service import load_config_for_tenant
 
-    rule_config = load_config_for_tenant(tenant_id) if config is None else config
+    rule_config = await load_config_for_tenant(session, tenant_id) if config is None else config
 
     if code == "VR09":
         return vr09_line_arithmetic(data)
     if code == "VR10":
         return vr10_tax_invoice_au(data)
     if code == "VR11":
-        return vr11_date_sanity(data)
+        from app.models.tenant import Tenant
+        from app.tenant_settings import tenant_today
+
+        tenant = await session.get(Tenant, tenant_id)
+        return vr11_date_sanity(data, today=tenant_today(tenant))
     if code == "VR12":
         return vr12_vendor_master(data, vendor_masters=rule_config.vendor_masters)
     if code == "VR14":

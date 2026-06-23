@@ -124,6 +124,7 @@ _REMEDIATION: dict[str, str] = {
     "VENDOR_HOLD": "Approve the vendor in Vendor Masters or clear the registration hold.",
     "VALIDATION_FAILED": "Correct the document or override failed validation rules in the exception queue.",
     "ROUTING_REVIEW": "Confirm document type classification or adjust rule-book routing.",
+    "DOCUMENT_UNCLASSIFIED": "Classify the document type in Rule Book or reclassify from the exception queue.",
     "MATCH_FAILED": "Link PO/GRN, approve variance, or update purchase register lines.",
     "APPROVAL_REQUIRED": "Route to the approver named in the playbook policy.",
     "MAP_SUSPENSE": "Map to a real GL account in the rule book or approve suspense mapping.",
@@ -236,6 +237,48 @@ def _mapping_checks(detail: dict[str, object], account: str) -> list[DossierPipe
         ),
     ]
     return checks
+
+
+def _routing_review_detail(log: AuditLog | None) -> dict[str, object]:
+    if log is None or not isinstance(log.detail, dict):
+        return {}
+    return log.detail
+
+
+def _routing_review_gate(log: AuditLog | None) -> str:
+    return str(_routing_review_detail(log).get("gate") or "").strip().lower()
+
+
+def _classification_routing_review(logs: list[AuditLog]) -> AuditLog | None:
+    routing = _latest_log(logs, "routing_review_required")
+    if routing is None:
+        return None
+    validate_pass = _latest_log(logs, "validation_passed")
+    if validate_pass and validate_pass.created_at > routing.created_at:
+        return None
+    gate = _routing_review_gate(routing)
+    detail = _routing_review_detail(routing)
+    if gate == "classification":
+        return routing
+    if gate == "playbook":
+        return None
+    if detail.get("no_classifier_match"):
+        return routing
+    if gate == "" and validate_pass is None:
+        return routing
+    return None
+
+
+def _playbook_routing_review(logs: list[AuditLog]) -> AuditLog | None:
+    routing = _latest_log(logs, "routing_review_required")
+    if routing is None:
+        return None
+    if _routing_review_gate(routing) != "playbook":
+        return None
+    validate_pass = _latest_log(logs, "validation_passed")
+    if validate_pass and validate_pass.created_at > routing.created_at:
+        return None
+    return routing
 
 
 def _confidence_label(value: float | int | None) -> str | None:
@@ -381,6 +424,21 @@ def _resolve_extract(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 
 
 def _resolve_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    classification_review = _classification_routing_review(logs)
+    if classification_review:
+        detail = _detail_from_log(classification_review, fallback="Document type not classified")
+        detail_dict = _routing_review_detail(classification_review)
+        reason = str(detail_dict.get("reason") or detail).strip() or "Document type not classified"
+        return _step(
+            "classify",
+            state="fail",
+            detail=reason,
+            at=classification_review.created_at,
+            exception_code="DOCUMENT_UNCLASSIFIED",
+            failure_reason=reason,
+            remediation=_REMEDIATION["DOCUMENT_UNCLASSIFIED"],
+        )
+
     classify_log = _latest_log(logs, "document_classified")
     code = (inv.document_type_code or "").strip()
     if classify_log:
@@ -396,6 +454,29 @@ def _resolve_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPip
 
 
 def _resolve_bundle(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    playbook_review = _playbook_routing_review(logs)
+    if playbook_review:
+        detail_dict = _routing_review_detail(playbook_review)
+        missing = detail_dict.get("missing_bundle_mandatory") or []
+        if not missing and isinstance(detail_dict.get("playbook"), dict):
+            missing = detail_dict["playbook"].get("missing_bundle_mandatory") or []
+        reason = _detail_from_log(playbook_review, fallback="Playbook blocks posting")
+        failure = (
+            f"Mandatory bundle missing: {', '.join(str(m) for m in missing)}"
+            if missing
+            else reason
+        )
+        return _step(
+            "bundle",
+            state="fail",
+            detail=reason,
+            at=playbook_review.created_at,
+            exception_code="BUNDLE_INCOMPLETE",
+            failure_reason=failure,
+            remediation=_REMEDIATION["BUNDLE_INCOMPLETE"],
+            checks=_bundle_checks(detail_dict if detail_dict else {"blocks_posting": True}),
+        )
+
     bundle_log = _latest_log(logs, "playbook_evaluated")
     if bundle_log:
         detail_dict = bundle_log.detail if isinstance(bundle_log.detail, dict) else {}
@@ -463,7 +544,7 @@ def _resolve_validate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPip
     routing_review = _latest_log(logs, "routing_review_required")
     failed_checks = [c for c in checks if c.state == "fail"]
 
-    if routing_review and (
+    if routing_review and _classification_routing_review(logs) is None and _playbook_routing_review(logs) is None and (
         inv.status == InvoiceStatus.EXCEPTION
         or validate_pass is None
         or routing_review.created_at >= (validate_pass.created_at if validate_pass else routing_review.created_at)

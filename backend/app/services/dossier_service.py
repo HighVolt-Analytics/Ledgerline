@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -13,14 +14,16 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.dossier import DossierSummaryResponse
+from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.document_ref_service import display_document_ref, dossier_public_id, parse_dossier_id_token
 from app.services.document_type_playbook_service import resolve_definition_for_invoice
 from app.services.dossier_approval_service import build_dossier_approval_chain
 from app.services.dossier_linked_documents_service import build_dossier_linked_documents
 from app.services.dossier_pipeline_service import build_dossier_pipeline, first_pipeline_failure
-from app.services.invoice_evaluation_service import load_config_for_tenant
+from app.services.invoice_evaluation_service import load_posting_config_for_tenant
 from app.services.matrix_service import derive_matrix_payment_status
 from app.services.pipeline_stages import _actor_name, _latest_log, _source_label
+from app.tenant_settings import tenant_today
 
 
 def dossier_capture_channel(invoice: Invoice) -> str:
@@ -50,10 +53,9 @@ def _confidence_pct(value: float | None) -> int:
     return int(round(value))
 
 
-def _document_type_title(code: str, tenant_id: int) -> str:
-    config = load_config_for_tenant(tenant_id)
+def _document_type_title(code: str, document_types) -> str:
     token = (code or "").strip().upper()
-    for row in config.document_types:
+    for row in document_types:
         if row.code.upper() == token:
             return row.title or row.short_title or token
     return token or "Document"
@@ -77,14 +79,14 @@ def _fraud_risk(invoice: Invoice) -> str:
     return "low"
 
 
-def _sla(invoice: Invoice) -> tuple[str, bool]:
+def _sla(invoice: Invoice, *, today: date) -> tuple[str, bool]:
     if invoice.status == InvoiceStatus.PROCESSED:
         return "Posted", False
     if invoice.status == InvoiceStatus.EXCEPTION:
         return "Blocked", True
     if invoice.status == InvoiceStatus.DUPLICATE_SKIPPED:
         return "Blocked", False
-    if invoice.due_date and invoice.due_date < date.today():
+    if invoice.due_date and invoice.due_date < today:
         return "Overdue", True
     return "In progress", False
 
@@ -140,8 +142,12 @@ async def build_dossier_summary(
     payment: Payment | None = None,
     tenant_name: str | None = None,
     compact: bool = False,
+    config: RuleBookConfigPayload | None = None,
 ) -> DossierSummaryResponse:
-    config = load_config_for_tenant(invoice.tenant_id)
+    if config is None:
+        config = await load_posting_config_for_tenant(session, invoice.tenant_id)
+    tenant = await session.get(Tenant, invoice.tenant_id)
+    institution_today = tenant_today(tenant)
     definition = resolve_definition_for_invoice(invoice, config.document_types)
     published = any(log.event == "invoice_published_to_ledger" for log in logs)
     pay_key, pay_detail = _payment_status_key(invoice, payment)
@@ -167,25 +173,32 @@ async def build_dossier_summary(
         outcome = "manual_posted"
         banner = banner or "Manual post — approved before ledger publish"
 
-    linked = await build_dossier_linked_documents(session, invoice, definition=definition)
-    approval = await build_dossier_approval_chain(
-        session,
-        invoice,
-        logs,
-        definition=definition,
-        payment=payment,
-        published=published,
+    linked, approval = await asyncio.gather(
+        build_dossier_linked_documents(
+            session,
+            invoice,
+            definition=definition,
+            document_types=config.document_types,
+        ),
+        build_dossier_approval_chain(
+            session,
+            invoice,
+            logs,
+            definition=definition,
+            payment=payment,
+            published=published,
+        ),
     )
 
     code = (invoice.document_type_code or "").strip().upper()
-    sla_label, sla_breached = _sla(invoice)
+    sla_label, sla_breached = _sla(invoice, today=institution_today)
     inv_date = invoice.invoice_date.isoformat() if invoice.invoice_date else ""
 
     return DossierSummaryResponse(
         id=dossier_public_id(invoice),
         invoice_id=invoice.id,
         document_type_code=code,
-        document_type_title=_document_type_title(code, invoice.tenant_id),
+        document_type_title=_document_type_title(code, config.document_types),
         vendor=(invoice.vendor or "Unknown vendor").strip(),
         buyer=(tenant_name or "Tenant").strip(),
         invoice_ref=(invoice.invoice_no or display_document_ref(invoice)).strip(),

@@ -135,6 +135,7 @@ async def _release_hold_when_po_vendor_matches(
         invoice.abn,
         po.vendor,
         None,
+        config=await load_config_for_tenant(session, invoice.tenant_id),
     ):
         return False
 

@@ -54,7 +54,7 @@ async def apply_ingest_capture(
 ) -> EmailCaptureRule | None:
     """Record a matched ingestion rule; routing is applied after OCR, not here."""
     if config is None:
-        config = load_config_for_tenant(invoice.tenant_id)
+        config = await load_config_for_tenant(session, invoice.tenant_id)
 
     rule = evaluate_ingest_capture(email, attachment, config)
     if not rule:

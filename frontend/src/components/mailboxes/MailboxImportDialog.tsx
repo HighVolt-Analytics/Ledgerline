@@ -2,17 +2,9 @@ import { useState } from "react";
 import { Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useTenantTime } from "@/hooks/useTenantTime";
 import { cn } from "@/lib/cn";
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function daysAgoIso(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
+import { shiftDateOnly, tenantTodayIso } from "@/lib/tenantTime";
 
 export function MailboxImportDialog({
   open,
@@ -31,8 +23,10 @@ export function MailboxImportDialog({
     mark_processed: boolean;
   }) => void;
 }) {
-  const [fromDate, setFromDate] = useState(daysAgoIso(30));
-  const [toDate, setToDate] = useState(todayIso());
+  const { timeZone } = useTenantTime();
+  const today = tenantTodayIso(timeZone);
+  const [fromDate, setFromDate] = useState(() => shiftDateOnly(today, -30));
+  const [toDate, setToDate] = useState(() => today);
   const [markProcessed, setMarkProcessed] = useState(false);
 
   if (!open) return null;
@@ -72,7 +66,7 @@ export function MailboxImportDialog({
               type="date"
               value={toDate}
               min={fromDate}
-              max={todayIso()}
+              max={today}
               onChange={(e) => setToDate(e.target.value)}
               data-testid="input-import-to-date"
             />

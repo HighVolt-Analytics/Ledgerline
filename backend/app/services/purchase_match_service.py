@@ -285,7 +285,7 @@ async def list_purchase_orders(
         )
     ).scalars().all()
 
-    config = load_classification_config(tenant_id)
+    config = await load_classification_config(db, tenant_id)
     responses: list[PurchaseOrderResponse] = []
     seen_pairs: set[tuple[int, int]] = set()
     pos_with_rows: set[int] = set()
@@ -374,6 +374,7 @@ async def record_goods_receipt(
         raise LookupError("Purchase order not found")
 
     grn = GoodsReceipt(
+        tenant_id=po.tenant_id,
         purchase_order_id=po.id,
         grn_qty=body.grn_qty,
         grn_date=body.grn_date or date.today(),
@@ -395,7 +396,7 @@ async def record_goods_receipt(
         ).scalar_one_or_none()
 
     await persist_three_way_match_audit(db, po, inv, invoice_id_for_audit=po.invoice_id)
-    config = load_classification_config(tenant_id)
+    config = await load_classification_config(db, tenant_id)
     return purchase_order_to_response(po, inv, config=config)
 
 
@@ -429,5 +430,5 @@ async def approve_purchase_variance(
         ).scalar_one_or_none()
 
     await persist_three_way_match_audit(db, po, inv, invoice_id_for_audit=po.invoice_id)
-    config = load_classification_config(tenant_id)
+    config = await load_classification_config(db, tenant_id)
     return purchase_order_to_response(po, inv, config=config)

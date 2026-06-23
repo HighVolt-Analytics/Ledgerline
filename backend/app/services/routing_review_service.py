@@ -8,7 +8,6 @@ from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.document_type_catalog import get_document_type_definition
 from app.services.document_type_classifier import DocumentTypeClassification
-from app.schemas.document_type import DocumentTypeDefinition
 from app.services.document_type_playbook_profile_service import should_enforce_bundle_mandatory
 from app.services.document_type_playbook_service import PlaybookGateResult
 from app.services.rule_book_mapper import FALLBACK_RULE_TYPE, MappingDetail
@@ -53,6 +52,18 @@ def requires_playbook_review(
     return True
 
 
+def requires_classification_review(
+    invoice: Invoice,
+    classification: DocumentTypeClassification,
+) -> bool:
+    """Block downstream pipeline until document type and route are confident."""
+    if classification_unmatched(classification):
+        return True
+    if classification.needs_review:
+        return True
+    return routing_target_missing(invoice)
+
+
 def requires_routing_review(
     invoice: Invoice,
     classification: DocumentTypeClassification,
@@ -62,11 +73,7 @@ def requires_routing_review(
 ) -> bool:
     if requires_playbook_review(playbook, definition=definition):
         return True
-    if classification_unmatched(classification):
-        return True
-    if classification.needs_review:
-        return True
-    return routing_target_missing(invoice)
+    return requires_classification_review(invoice, classification)
 
 
 def requires_gl_mapping_review(

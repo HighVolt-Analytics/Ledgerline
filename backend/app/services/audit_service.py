@@ -1,5 +1,6 @@
 """Audit log helpers — actor attribution on human actions."""
 
+import uuid
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +32,7 @@ async def log_event(
     event: str,
     *,
     invoice_id: int | None = None,
-    tenant_id: int | None = None,
+    tenant_id: uuid.UUID | int | None = None,
     detail: dict[str, Any] | None = None,
     actor_name: str | None = None,
     actor_email: str | None = None,
@@ -62,7 +63,7 @@ async def log_event(
         merged_detail["client_ip"] = client_ip
     if resolved_tenant_id is not None:
         merged_detail = dict(merged_detail or {})
-        merged_detail.setdefault("tenant_id", resolved_tenant_id)
+        merged_detail.setdefault("tenant_id", str(resolved_tenant_id))
 
     entry = AuditLog(
         event=event,

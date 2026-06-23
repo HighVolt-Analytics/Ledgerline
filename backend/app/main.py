@@ -21,6 +21,7 @@ from app.api import (
     invoices,
     mailboxes,
     tenants,
+    tenant_members,
     platform,
     payments,
     pending_vendors,
@@ -122,6 +123,7 @@ app.include_router(dossiers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
+app.include_router(tenant_members.router, prefix="/api", dependencies=_api_deps)
 app.include_router(platform.router, prefix="/api", dependencies=[Depends(require_super_admin)])
 app.include_router(vault.router, prefix="/api", dependencies=_api_deps)
 

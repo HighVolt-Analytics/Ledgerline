@@ -55,14 +55,11 @@ async def reconcile_daily(
         count = int(count or 0) + 1
         inv_sum += current_invoice.total
 
-    journal_org = JournalEntry.invoice_id == Invoice.id
-
     ap_q = (
         select(func.coalesce(func.sum(JournalEntry.credit), 0))
         .select_from(JournalEntry)
-        .join(Invoice, journal_org)
         .where(
-            Invoice.tenant_id == tenant_id,
+            JournalEntry.tenant_id == tenant_id,
             JournalEntry.account_code == AP_CODE,
             JournalEntry.date == recon_date,
             JournalEntry.entry_type == EntryType.CREDIT,
@@ -73,14 +70,12 @@ async def reconcile_daily(
     dr_q = (
         select(func.coalesce(func.sum(JournalEntry.debit), 0))
         .select_from(JournalEntry)
-        .join(Invoice, journal_org)
-        .where(Invoice.tenant_id == tenant_id, JournalEntry.date == recon_date)
+        .where(JournalEntry.tenant_id == tenant_id, JournalEntry.date == recon_date)
     )
     cr_q = (
         select(func.coalesce(func.sum(JournalEntry.credit), 0))
         .select_from(JournalEntry)
-        .join(Invoice, journal_org)
-        .where(Invoice.tenant_id == tenant_id, JournalEntry.date == recon_date)
+        .where(JournalEntry.tenant_id == tenant_id, JournalEntry.date == recon_date)
     )
     debits = Decimal(str((await session.execute(dr_q)).scalar() or 0))
     credits = Decimal(str((await session.execute(cr_q)).scalar() or 0))

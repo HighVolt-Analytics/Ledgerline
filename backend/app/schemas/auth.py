@@ -44,6 +44,8 @@ class UserResponse(BaseModel):
     tenant_id: UUID
     tenant_name: str
     tenant_slug: str
+    tenant_timezone: str = "Australia/Sydney"
+    tenant_locale: str = "en-AU"
 
     model_config = {"from_attributes": True}
 

@@ -53,8 +53,8 @@ from app.services.document_type_playbook_service import (
 from app.services.field_extraction_confidence import compute_extraction_field_confidence
 from app.services.ingest_fanout_service import DuplicateUploadError, ingest_upload_file
 from app.services.purchase_dossier_service import build_purchase_dossier
-from app.services.rule_book_config_io import load_rule_book_config_dict
-from app.schemas.rule_book_config import validate_rule_book_config_payload
+from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
+from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.workers.tasks import process_invoice_background, process_invoices_batch_background
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
@@ -62,8 +62,10 @@ router = APIRouter(prefix="/invoices", tags=["invoices"])
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
-def _document_type_extraction_fields(tenant_id: int, inv: Invoice) -> list[str]:
-    config = validate_rule_book_config_payload(load_rule_book_config_dict(tenant_id))
+async def _document_type_extraction_fields(
+    db: AsyncSession, tenant_id: int, inv: Invoice
+) -> list[str]:
+    config = await load_config_for_tenant(db, tenant_id)
     code = effective_document_type_code(inv, list(config.document_types))
     if not code:
         return []
@@ -268,7 +270,7 @@ async def get_invoice(
     published = await is_published_to_ledger(db, inv.id)
     base = _to_response(
         inv,
-        document_type_extraction_fields=_document_type_extraction_fields(ctx.tenant_id, inv),
+        document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
         published_to_ledger=published,
     )
@@ -321,7 +323,7 @@ async def patch_invoice(
     ).scalar_one()
     base = _to_response(
         inv,
-        document_type_extraction_fields=_document_type_extraction_fields(ctx.tenant_id, inv),
+        document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
     )
     return ApiEnvelope(
@@ -369,7 +371,9 @@ async def get_line_items(
 ) -> ApiEnvelope[list[LineItemResponse]]:
     await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     rows = (
-        await db.execute(select(LineItem).where(LineItem.invoice_id == invoice_id))
+        await db.execute(
+            select(LineItem).where(*line_items_for_invoice(ctx.tenant_id, invoice_id))
+        )
     ).scalars().all()
     return ApiEnvelope(data=[LineItemResponse.model_validate(r) for r in rows])
 
@@ -386,7 +390,9 @@ async def get_journal_entries(
     await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     rows = (
         await db.execute(
-            select(JournalEntry).where(JournalEntry.invoice_id == invoice_id)
+            select(JournalEntry).where(
+                *journal_entries_for_invoice(ctx.tenant_id, invoice_id),
+            )
         )
     ).scalars().all()
     return ApiEnvelope(data=[JournalEntryResponse.model_validate(r) for r in rows])

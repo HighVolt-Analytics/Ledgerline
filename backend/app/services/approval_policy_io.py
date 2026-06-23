@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
+import uuid
 from typing import Any
 
 from app.config import get_settings
@@ -95,14 +96,16 @@ def _save_store(data: dict[str, Any]) -> None:
         fh.write("\n")
 
 
-def load_policy_for_tenant(tenant_id: int) -> ApprovalPolicyPayload:
+def load_policy_for_tenant(tenant_id: uuid.UUID | int) -> ApprovalPolicyPayload:
     store = _load_store()
     orgs = store.get("orgs") or {}
     raw = orgs.get(str(tenant_id)) or default_policy_dict()
     return ApprovalPolicyPayload.model_validate(raw)
 
 
-def save_policy_for_tenant(tenant_id: int, payload: ApprovalPolicyPayload) -> ApprovalPolicyPayload:
+def save_policy_for_tenant(
+    tenant_id: uuid.UUID | int, payload: ApprovalPolicyPayload
+) -> ApprovalPolicyPayload:
     store = _load_store()
     orgs = store.setdefault("orgs", {})
     orgs[str(tenant_id)] = payload.model_dump()
@@ -110,7 +113,7 @@ def save_policy_for_tenant(tenant_id: int, payload: ApprovalPolicyPayload) -> Ap
     return payload
 
 
-def unlock_policy(tenant_id: int, code: str) -> ApprovalPolicyPayload:
+def unlock_policy(tenant_id: uuid.UUID | int, code: str) -> ApprovalPolicyPayload:
     settings = get_settings()
     expected = settings.approval_policy_unlock_code.strip()
     if code != expected:
@@ -118,6 +121,17 @@ def unlock_policy(tenant_id: int, code: str) -> ApprovalPolicyPayload:
     policy = load_policy_for_tenant(tenant_id)
     policy.locked = False
     return save_policy_for_tenant(tenant_id, policy)
+
+
+def remove_policy_for_tenant(tenant_id: uuid.UUID | int) -> None:
+    store = _load_store()
+    orgs = store.get("orgs") or {}
+    key = str(tenant_id)
+    if key not in orgs:
+        return
+    del orgs[key]
+    store["orgs"] = orgs
+    _save_store(store)
 
 
 def validate_policy_payload(raw: dict[str, Any]) -> ApprovalPolicyPayload:

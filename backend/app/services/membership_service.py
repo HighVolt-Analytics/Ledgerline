@@ -14,7 +14,7 @@ async def ensure_membership(
     *,
     user_id: int,
     tenant_id: uuid.UUID,
-    role: str = "member",
+    role: str = "approver",
 ) -> None:
     existing = (
         await session.execute(

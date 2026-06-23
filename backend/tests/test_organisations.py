@@ -1,11 +1,11 @@
-"""Tenant membership and demo multi-org APIs."""
+"""Tenant membership and org switching APIs."""
 
 import pytest
 from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_create_list_and_switch_org(client: AsyncClient) -> None:
+async def test_list_tenants_and_switch_denied_for_extra_org(client: AsyncClient) -> None:
     reg = await client.post(
         "/api/auth/register",
         json={
@@ -29,16 +29,4 @@ async def test_create_list_and_switch_org(client: AsyncClient) -> None:
         headers=headers,
         json={"name": "Demo Child Co", "slug": "demo-child"},
     )
-    assert created.status_code == 201
-    child_id = created.json()["data"]["id"]
-
-    listed2 = await client.get("/api/tenants", headers=headers)
-    assert len(listed2.json()["data"]) == 2
-
-    switched = await client.post(
-        "/api/auth/switch-tenant",
-        headers=headers,
-        json={"org_id": child_id},
-    )
-    assert switched.status_code == 200
-    assert switched.json()["data"]["user"]["tenant_slug"] == "demo-child"
+    assert created.status_code == 403
