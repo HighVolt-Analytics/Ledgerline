@@ -1,5 +1,5 @@
 import { api } from "@/api/client";
-import type { Invoice, MatrixRow } from "@/api/types";
+import type { MatrixRow } from "@/api/types";
 import { MATRIX_STAGES, type MatrixCell, type MatrixStage } from "@/lib/matrix";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
 

@@ -1,7 +1,5 @@
 import type { ConditionOperator } from "./v4RuleBookTypes";
 import {
-  emptyApprovalPolicy,
-  emptyMatchPolicy,
   inferPlaybookProfileFromDefinition,
   playbookPresetForProfile,
 } from "./documentPlaybookConfig";
