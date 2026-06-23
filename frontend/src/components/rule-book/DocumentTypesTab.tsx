@@ -45,7 +45,6 @@ import {
   normalizeExtractionFieldKeys,
   sanitizeExtractionFieldKey,
 } from "@/lib/documentExtractionFields";
-import { defaultValidationRulesForProfile } from "@/lib/documentValidationChecks";
 import {
   documentTypeFromTemplate,
   inferTemplateIdFromDefinition,

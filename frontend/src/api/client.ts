@@ -25,7 +25,6 @@ import type {
   InvoiceDetails,
   LedgerLinkResponse,
   InvoiceUpdatePayload,
-  Organisation,
   Tenant,
   PlatformTenantSummary,
   PlatformTenantDetail,
