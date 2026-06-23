@@ -191,8 +191,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       try {
         await refreshAccessTokenSingleFlight();
+        const access = getAccessToken();
         const stored = getStoredUser();
-        if (stored) setUser(stored);
+        const tokenProfile = access ? userFromToken(access) : null;
+        const initial =
+          tokenProfile && stored
+            ? { ...stored, ...tokenProfile, tenant_id: tokenProfile.tenant_id }
+            : tokenProfile ?? stored;
+        if (initial) {
+          setUser(initial);
+          setAuthUser(initial);
+        }
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           logout();
@@ -230,10 +239,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setAuthToken(access);
+      const tokenProfile = userFromToken(access);
       const storedUser = getStoredUser();
-      if (storedUser) {
-        setAuthUser(storedUser);
-        setUser(storedUser);
+      const initialUser =
+        tokenProfile && storedUser
+          ? { ...storedUser, ...tokenProfile, tenant_id: tokenProfile.tenant_id }
+          : tokenProfile ?? storedUser;
+      if (initialUser) {
+        setAuthUser(initialUser);
+        setUser(initialUser);
       }
 
       try {
@@ -250,7 +264,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch {
         const fallback = userFromToken(access);
-        if (!cancelled && fallback) setUser(fallback);
+        if (!cancelled && fallback) {
+          setUser(fallback);
+          setAuthUser(fallback);
+        }
       }
     }
 

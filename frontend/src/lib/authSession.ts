@@ -15,11 +15,9 @@ export function rememberLastTenant(tenantId: string) {
   localStorage.setItem(LAST_TENANT_KEY, String(tenantId));
 }
 
-export function getLastTenantId(): number | null {
-  const raw = localStorage.getItem(LAST_TENANT_KEY);
-  if (!raw) return null;
-  const id = Number(raw);
-  return Number.isFinite(id) ? id : null;
+export function getLastTenantId(): string | null {
+  const raw = localStorage.getItem(LAST_TENANT_KEY)?.trim();
+  return raw || null;
 }
 
 export function getAccessToken(): string | null {

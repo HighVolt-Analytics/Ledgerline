@@ -55,6 +55,7 @@ import type {
 } from "./types";
 
 import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
+import { tenantIdFromToken } from "@/lib/authToken";
 
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE =
@@ -132,7 +133,8 @@ export function setAuthUser(user: AuthUser | null) {
 
 function getScopedAuthHeaders(init?: RequestInit): Headers {
   const headers = withAuthHeaders(init);
-  const tid = authUser?.tenant_id;
+  // JWT is the source of truth — cached authUser can lag after tenant UUID migration.
+  const tid = tenantIdFromToken(authToken) ?? authUser?.tenant_id;
   if (tid) {
     headers.set("X-Tenant-Id", String(tid));
   }
