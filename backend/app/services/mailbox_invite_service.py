@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import smtplib
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
@@ -24,6 +25,7 @@ from app.models.user import User
 from app.services.audit_service import log_event
 from app.services.graph_mail_sender import graph_mail_send_configured, send_graph_mail
 from app.services.public_app_url import build_public_app_path
+from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -46,24 +48,27 @@ class InviteActionResult:
     email_error: str | None = None
 
 
-def create_invite_token(*, request_id: int, tenant_id: int) -> str:
+def create_invite_token(*, request_id: int, tenant_id: uuid.UUID) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS)
     payload = {
         "typ": INVITE_TYP,
         "request_id": request_id,
-        "org_id": tenant_id,
+        "org_id": str(tenant_id),
         "exp": expire,
     }
     return jwt.encode(payload, get_settings().jwt_secret, algorithm="HS256")
 
 
-def parse_invite_token(token: str) -> dict[str, int]:
+def parse_invite_token(token: str) -> dict[str, int | uuid.UUID]:
     payload = jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"])
     if payload.get("typ") != INVITE_TYP:
         raise ValueError("Invalid invite token")
+    tenant_id = parse_tenant_id(payload.get("org_id"))
+    if tenant_id is None:
+        raise ValueError("Invalid invite token")
     return {
         "request_id": int(payload["request_id"]),
-        "org_id": int(payload["org_id"]),
+        "org_id": tenant_id,
     }
 
 
@@ -73,7 +78,7 @@ def invite_connect_url(token: str) -> str:
     return build_public_app_path(f"/connect-mailbox?{urlencode({'token': token})}")
 
 
-def build_connect_url_for_request(*, request_id: int, tenant_id: int) -> str:
+def build_connect_url_for_request(*, request_id: int, tenant_id: uuid.UUID) -> str:
     token = create_invite_token(request_id=request_id, tenant_id=tenant_id)
     return invite_connect_url(token)
 
@@ -100,7 +105,7 @@ async def get_invite_request(
     session: AsyncSession,
     *,
     request_id: int,
-    tenant_id: int | None = None,
+    tenant_id: uuid.UUID | None = None,
 ) -> MailboxConnectionRequest:
     row = await session.get(MailboxConnectionRequest, request_id)
     if not row:
@@ -207,7 +212,7 @@ def send_invite_email(
 async def create_mailbox_connection_request(
     session: AsyncSession,
     *,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     requested_email: str,
     display_name: str | None,
     message: str | None,
@@ -286,7 +291,7 @@ async def resend_mailbox_connection_request(
     session: AsyncSession,
     *,
     request_id: int,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     actor_name: str | None = None,
     actor_email: str | None = None,
 ) -> InviteActionResult:
@@ -334,7 +339,7 @@ async def mark_invite_connected(
     session: AsyncSession,
     *,
     request_id: int,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     mailbox_id: int,
     actor_email: str | None = None,
 ) -> None:

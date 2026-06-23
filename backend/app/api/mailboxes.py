@@ -1,5 +1,6 @@
 """Connected Outlook mailboxes for the organisation."""
 
+import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
@@ -49,6 +50,7 @@ from app.services.mailbox_oauth_service import (
     parse_oauth_state,
 )
 from app.services.public_app_url import build_public_app_path
+from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -65,7 +67,7 @@ def _append_query(url: str, params: dict[str, str]) -> str:
 
 def _invite_context_from_state(
     state: str | None,
-) -> tuple[str | None, int | None, int | None]:
+) -> tuple[str | None, int | None, uuid.UUID | None]:
     if not state:
         return None, None, None
     try:
@@ -75,11 +77,11 @@ def _invite_context_from_state(
     if str(payload.get("flow") or "") != "invite":
         return None, None, None
     invite_request_id = payload.get("invite_request_id")
-    tenant_id = payload.get("org_id")
+    tenant_id = parse_tenant_id(payload.get("org_id"))
     return (
         "invite",
         int(invite_request_id) if invite_request_id is not None else None,
-        int(tenant_id) if tenant_id is not None else None,
+        tenant_id,
     )
 
 
@@ -87,7 +89,7 @@ def _oauth_return_url(
     *,
     flow: str | None,
     invite_request_id: int | None,
-    tenant_id: int | None,
+    tenant_id: uuid.UUID | None,
     settings,
 ) -> str:
     if flow == "invite":

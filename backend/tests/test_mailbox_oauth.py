@@ -14,6 +14,7 @@ from app.services.mailbox_oauth_service import (
     resolve_delegated_access_token,
 )
 from app.services.token_vault import decrypt_secret, encrypt_secret
+from app.tenant_ids import TESTING_TENANT_UUID
 
 
 @pytest.fixture(autouse=True)
@@ -31,15 +32,15 @@ def _settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_oauth_state_roundtrip() -> None:
-    state = create_oauth_state(tenant_id=1, user_id=7)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=7)
     payload = parse_oauth_state(state)
-    assert payload["org_id"] == 1
+    assert payload["org_id"] == str(TESTING_TENANT_UUID)
     assert payload["user_id"] == 7
     assert payload["typ"] == "mailbox_oauth"
 
 
 def test_oauth_state_rejects_tampering() -> None:
-    state = create_oauth_state(tenant_id=1, user_id=7)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=7)
     bad = f"{state}tampered"
     with pytest.raises(jwt.PyJWTError):
         parse_oauth_state(bad)
@@ -55,7 +56,7 @@ def test_token_vault_roundtrip() -> None:
 @pytest.mark.asyncio
 async def test_resolve_delegated_access_token_uses_cached_access() -> None:
     mailbox = ConnectedMailbox(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         email="user@example.com",
         auth_type=AUTH_DELEGATED,
         connection_status="connected",
@@ -68,7 +69,7 @@ async def test_resolve_delegated_access_token_uses_cached_access() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_oauth_callback_rejects_invalid_user(db_session) -> None:
-    state = create_oauth_state(tenant_id=1, user_id=999_999)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=999_999)
     with pytest.raises(RuntimeError, match="OAuth session invalid"):
         await complete_oauth_callback(
             db_session,
@@ -89,7 +90,7 @@ async def test_mailbox_oauth_callback_sanitizes_internal_errors(
         "app.api.mailboxes.complete_oauth_callback",
         _boom,
     )
-    state = create_oauth_state(tenant_id=1, user_id=1)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=1)
     res = await client.get(
         "/api/mailboxes/oauth/callback",
         params={"code": "code", "state": state},
@@ -138,7 +139,7 @@ async def test_mailbox_oauth_authorize_returns_url(client) -> None:
 @pytest.mark.asyncio
 async def test_mailbox_oauth_callback_does_not_require_auth(client) -> None:
     """Microsoft redirect must not hit require_user (401)."""
-    state = create_oauth_state(tenant_id=1, user_id=1)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=1)
     res = await client.get(
         "/api/mailboxes/oauth/callback",
         params={"code": "invalid-code", "state": state},

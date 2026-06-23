@@ -5,6 +5,7 @@ import pytest
 from app.config import get_settings
 from app.services.mailbox_invite_service import create_invite_token
 from app.services.mailbox_oauth_service import create_oauth_state
+from app.tenant_ids import parse_tenant_id
 
 
 @pytest.fixture(autouse=True)
@@ -99,7 +100,8 @@ async def test_preview_and_authorize_invite(client, mock_invite_email) -> None:
     )
     assert create.status_code == 201
     request_id = create.json()["data"]["id"]
-    tenant_id = create.json()["data"]["org_id"]
+    tenant_id = parse_tenant_id(create.json()["data"]["org_id"])
+    assert tenant_id is not None
     invite_token = create_invite_token(request_id=request_id, tenant_id=tenant_id)
 
     preview = await client.get(
@@ -205,7 +207,9 @@ async def test_invite_oauth_error_redirects_to_connect_mailbox(
     )
     assert create.status_code == 201
     body = create.json()["data"]
-    state = create_oauth_state(tenant_id=body["org_id"], invite_request_id=body["id"])
+    tenant_id = parse_tenant_id(body["org_id"])
+    assert tenant_id is not None
+    state = create_oauth_state(tenant_id=tenant_id, invite_request_id=body["id"])
 
     res = await client.get(
         "/api/mailboxes/oauth/callback",

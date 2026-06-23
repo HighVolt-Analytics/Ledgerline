@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
@@ -21,6 +22,7 @@ from app.models.connected_mailbox import (
     ConnectedMailbox,
 )
 from app.services.token_vault import decrypt_secret, encrypt_secret
+from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -54,14 +56,14 @@ def _authority() -> str:
 
 def create_oauth_state(
     *,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     user_id: int | None = None,
     invite_request_id: int | None = None,
 ) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=STATE_TTL_MINUTES)
     payload: dict[str, Any] = {
         "typ": STATE_TYP,
-        "org_id": tenant_id,
+        "org_id": str(tenant_id),
         "exp": expire,
     }
     if invite_request_id is not None:
@@ -82,14 +84,14 @@ def parse_oauth_state(state: str) -> dict[str, Any]:
     return payload
 
 
-def build_authorize_url(*, tenant_id: int, user_id: int) -> str:
+def build_authorize_url(*, tenant_id: uuid.UUID, user_id: int) -> str:
     return _build_authorize_url(
         tenant_id=tenant_id,
         state=create_oauth_state(tenant_id=tenant_id, user_id=user_id),
     )
 
 
-def build_invite_authorize_url(*, tenant_id: int, invite_request_id: int) -> str:
+def build_invite_authorize_url(*, tenant_id: uuid.UUID, invite_request_id: int) -> str:
     return _build_authorize_url(
         tenant_id=tenant_id,
         state=create_oauth_state(tenant_id=tenant_id, invite_request_id=invite_request_id),
@@ -111,7 +113,7 @@ def build_admin_consent_url() -> str:
     return f"{_authority()}/v2.0/adminconsent?{urlencode(params)}"
 
 
-def _build_authorize_url(*, tenant_id: int, state: str) -> str:
+def _build_authorize_url(*, tenant_id: uuid.UUID, state: str) -> str:
     settings = get_settings()
     if not oauth_configured():
         raise RuntimeError("Microsoft OAuth is not configured")
@@ -205,7 +207,9 @@ async def complete_oauth_callback(
 ) -> tuple[ConnectedMailbox, str]:
     """Exchange auth code, upsert connected mailbox. Returns (mailbox, flow)."""
     payload = parse_oauth_state(state)
-    tenant_id = int(payload["org_id"])
+    tenant_id = parse_tenant_id(payload.get("org_id"))
+    if tenant_id is None:
+        raise RuntimeError("Invalid OAuth session")
     flow = str(payload.get("flow") or "direct")
     invite_request_id = payload.get("invite_request_id")
     user_id = payload.get("user_id")

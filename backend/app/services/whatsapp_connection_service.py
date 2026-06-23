@@ -27,6 +27,7 @@ from app.services.whatsapp_graph_client import (
     exchange_long_lived_token,
     subscribe_waba_webhooks,
 )
+from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -39,11 +40,11 @@ def oauth_configured() -> bool:
     return get_settings().whatsapp_configured
 
 
-def create_oauth_state(*, tenant_id: int, user_id: int) -> str:
+def create_oauth_state(*, tenant_id: uuid.UUID, user_id: int) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=STATE_TTL_MINUTES)
     payload: dict[str, Any] = {
         "typ": STATE_TYP,
-        "org_id": tenant_id,
+        "org_id": str(tenant_id),
         # PyJWT requires sub to be a string (RFC 7519).
         "sub": str(user_id),
         "exp": expire,
@@ -61,7 +62,7 @@ def parse_oauth_state(state: str) -> dict[str, Any]:
 async def list_connections(
     session: AsyncSession,
     *,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
 ) -> list[ConnectedWhatsapp]:
     rows = (
         await session.execute(
@@ -135,7 +136,7 @@ def resolve_access_token(connection: ConnectedWhatsapp) -> str:
 async def upsert_phone_connection(
     session: AsyncSession,
     *,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     phone: WhatsappPhoneNumber,
     access_token: str,
     token_expires_at: datetime | None,
@@ -174,7 +175,7 @@ async def complete_oauth_and_store_connections(
     session: AsyncSession,
     *,
     code: str,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     user_id: int,
 ) -> list[ConnectedWhatsapp]:
     logger.info("whatsapp_oauth_start", tenant_id=tenant_id, user_id=user_id)
