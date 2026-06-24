@@ -1,4 +1,4 @@
-"""Microsoft 365 delegated OAuth for mailbox connection (authorization code flow)."""
+"""Google Gmail delegated OAuth for mailbox connection."""
 
 from __future__ import annotations
 
@@ -14,9 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.connected_mailbox import (
-    AUTH_APPLICATION,
     AUTH_DELEGATED,
-    MAIL_PROVIDER_MICROSOFT,
+    MAIL_PROVIDER_GOOGLE,
     STATUS_CONNECTED,
     STATUS_DISCONNECTED,
     STATUS_ERROR,
@@ -28,47 +27,32 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Delegated permissions — user consent in Microsoft login (Mail.ReadWrite includes read).
-GRAPH_DELEGATED_SCOPES = [
-    "https://graph.microsoft.com/Mail.ReadWrite",
-    "https://graph.microsoft.com/User.Read",
-    "offline_access",
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/userinfo.email",
     "openid",
-    "profile",
 ]
-
-STATE_TYP = "mailbox_oauth"
+STATE_TYP = "gmail_mailbox_oauth"
 STATE_TTL_MINUTES = 15
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 
-def oauth_configured() -> bool:
+def gmail_oauth_configured() -> bool:
     settings = get_settings()
     return bool(
-        settings.azure_tenant_id.strip()
-        and settings.azure_client_id.strip()
-        and settings.azure_client_secret.strip()
-        and settings.graph_oauth_redirect_uri.strip()
+        settings.google_client_id.strip()
+        and settings.google_client_secret.strip()
+        and settings.gmail_oauth_redirect_uri.strip()
     )
-
-
-def _oauth_multi_tenant() -> bool:
-    return get_settings().graph_oauth_multi_tenant
-
-
-def _authority(*, multi_tenant: bool | None = None) -> str:
-    if multi_tenant if multi_tenant is not None else _oauth_multi_tenant():
-        return "https://login.microsoftonline.com/common"
-    tenant = get_settings().azure_tenant_id.strip()
-    if not tenant:
-        raise RuntimeError("Microsoft OAuth is not configured")
-    return f"https://login.microsoftonline.com/{tenant}"
 
 
 def create_oauth_state(
     *,
     tenant_id: uuid.UUID | str | int,
-    user_id: int | None = None,
     invite_request_id: int | None = None,
+    user_id: int | None = None,
 ) -> str:
     org_id = parse_tenant_id(tenant_id)
     if org_id is None:
@@ -78,7 +62,7 @@ def create_oauth_state(
         "typ": STATE_TYP,
         "org_id": str(org_id),
         "exp": expire,
-        "provider": MAIL_PROVIDER_MICROSOFT,
+        "provider": MAIL_PROVIDER_GOOGLE,
     }
     if invite_request_id is not None:
         payload["invite_request_id"] = invite_request_id
@@ -98,72 +82,37 @@ def parse_oauth_state(state: str) -> dict[str, Any]:
     return payload
 
 
-def build_authorize_url(*, tenant_id: uuid.UUID | str | int, user_id: int) -> str:
-    return _build_authorize_url(
-        tenant_id=tenant_id,
-        state=create_oauth_state(tenant_id=tenant_id, user_id=user_id),
-    )
-
-
 def build_invite_authorize_url(*, tenant_id: uuid.UUID | str | int, invite_request_id: int) -> str:
-    return _build_authorize_url(
-        tenant_id=tenant_id,
-        state=create_oauth_state(tenant_id=tenant_id, invite_request_id=invite_request_id),
-    )
-
-
-def build_admin_consent_url() -> str:
-    """One-time org-wide consent URL for a Global Admin (fixes 'Need admin approval')."""
     settings = get_settings()
-    if not settings.azure_tenant_id.strip() or not settings.azure_client_id.strip():
-        raise RuntimeError("Microsoft OAuth is not configured")
+    if not gmail_oauth_configured():
+        raise RuntimeError("Google OAuth is not configured")
+    state = create_oauth_state(tenant_id=tenant_id, invite_request_id=invite_request_id)
     params = {
-        "client_id": settings.azure_client_id,
-        "scope": " ".join(GRAPH_DELEGATED_SCOPES),
-    }
-    redirect = settings.graph_oauth_redirect_uri.strip()
-    if redirect:
-        params["redirect_uri"] = redirect
-    return f"{_authority(multi_tenant=False)}/v2.0/adminconsent?{urlencode(params)}"
-
-
-def _build_authorize_url(*, tenant_id: int, state: str, multi_tenant: bool | None = None) -> str:
-    settings = get_settings()
-    if not oauth_configured():
-        raise RuntimeError("Microsoft OAuth is not configured")
-
-    params = {
-        "client_id": settings.azure_client_id,
+        "client_id": settings.google_client_id,
         "response_type": "code",
-        "redirect_uri": settings.graph_oauth_redirect_uri,
-        "response_mode": "query",
-        "scope": " ".join(GRAPH_DELEGATED_SCOPES),
+        "redirect_uri": settings.gmail_oauth_redirect_uri,
+        "scope": " ".join(GMAIL_SCOPES),
         "state": state,
-        # select_account — after IT grants admin consent once, users sign in without
-        # re-triggering the "Need admin approval" wall that prompt=consent can show.
-        "prompt": "select_account",
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
     }
-    return f"{_authority(multi_tenant=multi_tenant)}/oauth2/v2.0/authorize?{urlencode(params)}"
-
-
-def _token_endpoint() -> str:
-    return f"{_authority()}/oauth2/v2.0/token"
+    return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
 
 async def _exchange_code(code: str) -> dict[str, Any]:
     settings = get_settings()
     data = {
-        "client_id": settings.azure_client_id,
-        "client_secret": settings.azure_client_secret,
+        "client_id": settings.google_client_id,
+        "client_secret": settings.google_client_secret,
         "code": code,
-        "redirect_uri": settings.graph_oauth_redirect_uri,
+        "redirect_uri": settings.gmail_oauth_redirect_uri,
         "grant_type": "authorization_code",
-        "scope": " ".join(GRAPH_DELEGATED_SCOPES),
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(_token_endpoint(), data=data)
+        response = await client.post(GOOGLE_TOKEN_URL, data=data)
         if response.is_error:
-            logger.error("oauth_code_exchange_failed", body=response.text[:500])
+            logger.error("gmail_oauth_code_exchange_failed", body=response.text[:500])
             response.raise_for_status()
         return response.json()
 
@@ -171,26 +120,24 @@ async def _exchange_code(code: str) -> dict[str, Any]:
 async def _refresh_tokens(refresh_token: str) -> dict[str, Any]:
     settings = get_settings()
     data = {
-        "client_id": settings.azure_client_id,
-        "client_secret": settings.azure_client_secret,
+        "client_id": settings.google_client_id,
+        "client_secret": settings.google_client_secret,
         "refresh_token": refresh_token,
         "grant_type": "refresh_token",
-        "scope": " ".join(GRAPH_DELEGATED_SCOPES),
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(_token_endpoint(), data=data)
+        response = await client.post(GOOGLE_TOKEN_URL, data=data)
         if response.is_error:
-            logger.error("oauth_refresh_failed", body=response.text[:500])
+            logger.error("gmail_oauth_refresh_failed", body=response.text[:500])
             response.raise_for_status()
         return response.json()
 
 
-async def _fetch_graph_profile(access_token: str) -> dict[str, Any]:
+async def _fetch_profile(access_token: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
-            "https://graph.microsoft.com/v1.0/me",
+            GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"},
-            params={"$select": "id,mail,userPrincipalName,displayName"},
         )
         response.raise_for_status()
         return response.json()
@@ -211,7 +158,7 @@ def _apply_token_response(mailbox: ConnectedMailbox, token_data: dict[str, Any])
     mailbox.connection_status = STATUS_CONNECTED
     mailbox.last_error = None
     mailbox.auth_type = AUTH_DELEGATED
-    mailbox.mail_provider = MAIL_PROVIDER_MICROSOFT
+    mailbox.mail_provider = MAIL_PROVIDER_GOOGLE
 
 
 async def complete_oauth_callback(
@@ -220,7 +167,6 @@ async def complete_oauth_callback(
     code: str,
     state: str,
 ) -> tuple[ConnectedMailbox, str]:
-    """Exchange auth code, upsert connected mailbox. Returns (mailbox, flow)."""
     payload = parse_oauth_state(state)
     tenant_id = parse_tenant_id(payload.get("org_id"))
     if tenant_id is None:
@@ -251,23 +197,18 @@ async def complete_oauth_callback(
 
     token_data = await _exchange_code(code)
     access_token = str(token_data["access_token"])
-    profile = await _fetch_graph_profile(access_token)
-
-    email = (
-        str(profile.get("mail") or profile.get("userPrincipalName") or "")
-        .strip()
-        .lower()
-    )
+    profile = await _fetch_profile(access_token)
+    email = str(profile.get("email") or "").strip().lower()
     if not email:
-        raise RuntimeError("Could not resolve mailbox email from Microsoft profile")
+        raise RuntimeError("Could not resolve mailbox email from Google profile")
 
     if invite_row is not None and email != invite_row.requested_email.lower():
         raise RuntimeError(
             f"Sign in with {invite_row.requested_email} — the invited mailbox account"
         )
 
-    oauth_user_id = str(profile.get("id") or "")
-    display_name = str(profile.get("displayName") or email)
+    oauth_user_id = str(profile.get("sub") or "")
+    display_name = str(profile.get("name") or email)
     if invite_row and invite_row.display_name:
         display_name = invite_row.display_name
 
@@ -288,7 +229,7 @@ async def complete_oauth_callback(
             email=email,
             display_name=display_name,
             is_active=True,
-            mail_provider=MAIL_PROVIDER_MICROSOFT,
+            mail_provider=MAIL_PROVIDER_GOOGLE,
         )
         session.add(mailbox)
 
@@ -310,7 +251,7 @@ async def complete_oauth_callback(
         )
 
     logger.info(
-        "mailbox_oauth_connected",
+        "gmail_oauth_connected",
         mailbox=email,
         tenant_id=tenant_id,
         flow=flow,
@@ -319,8 +260,9 @@ async def complete_oauth_callback(
     return mailbox, flow
 
 
-async def resolve_delegated_access_token(mailbox: ConnectedMailbox) -> str:
-    """Return a valid delegated access token, refreshing when needed."""
+async def resolve_gmail_access_token(mailbox: ConnectedMailbox) -> str:
+    if mailbox.mail_provider != MAIL_PROVIDER_GOOGLE:
+        raise RuntimeError("Mailbox is not Gmail-connected")
     if mailbox.auth_type != AUTH_DELEGATED:
         raise RuntimeError("Mailbox is not OAuth-connected")
 
@@ -344,60 +286,3 @@ async def resolve_delegated_access_token(mailbox: ConnectedMailbox) -> str:
         mailbox.last_error = "Failed to decrypt refreshed access token"
         raise RuntimeError(mailbox.last_error)
     return access
-
-
-async def resolve_mailbox_access_token(
-    session: AsyncSession,
-    mailbox: ConnectedMailbox,
-) -> str:
-    """Delegated token for OAuth mailboxes; application token for service mailboxes."""
-    from app.models.connected_mailbox import MAIL_PROVIDER_GOOGLE
-    from app.services.gmail_oauth_service import resolve_gmail_access_token
-    from app.services.graph_client import get_application_access_token
-
-    if mailbox.auth_type == AUTH_DELEGATED:
-        row = mailbox
-        try:
-            row = (
-                await session.execute(
-                    select(ConnectedMailbox)
-                    .where(ConnectedMailbox.id == mailbox.id)
-                    .with_for_update()
-                )
-            ).scalar_one()
-            if row.mail_provider == MAIL_PROVIDER_GOOGLE:
-                token = await resolve_gmail_access_token(row)
-            else:
-                token = await resolve_delegated_access_token(row)
-            await session.flush()
-            return token
-        except Exception as exc:
-            row.connection_status = STATUS_ERROR
-            row.last_error = str(exc)[:500]
-            await session.flush()
-            raise
-
-    if mailbox.auth_type == AUTH_APPLICATION:
-        return get_application_access_token()
-
-    raise RuntimeError(f"Unsupported mailbox auth_type: {mailbox.auth_type}")
-
-
-def mark_application_mailbox(mailbox: ConnectedMailbox) -> None:
-    mailbox.auth_type = AUTH_APPLICATION
-    mailbox.connection_status = STATUS_CONNECTED
-    mailbox.access_token_encrypted = None
-    mailbox.refresh_token_encrypted = None
-    mailbox.token_expires_at = None
-    mailbox.oauth_user_id = None
-    mailbox.oauth_connected_at = None
-    mailbox.last_error = None
-
-
-def disconnect_oauth_mailbox(mailbox: ConnectedMailbox) -> None:
-    mailbox.connection_status = STATUS_DISCONNECTED
-    mailbox.access_token_encrypted = None
-    mailbox.refresh_token_encrypted = None
-    mailbox.token_expires_at = None
-    mailbox.last_error = None
-    mailbox.is_active = False

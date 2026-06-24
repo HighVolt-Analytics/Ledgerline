@@ -41,6 +41,7 @@ from app.services.whatsapp_graph_client import (
     verify_webhook_signature,
 )
 from app.services.whatsapp_ingest_service import ingest_whatsapp_message
+from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
 from app.workers.tasks import process_invoice_background
 
@@ -169,7 +170,9 @@ async def whatsapp_oauth_callback(
 
     try:
         payload = parse_oauth_state(state)
-        tenant_id = int(payload["org_id"])
+        tenant_id = parse_tenant_id(payload["org_id"])
+        if tenant_id is None:
+            raise ValueError("Invalid OAuth session")
         user_id = int(payload["sub"])
     except Exception as exc:
         logger.warning("whatsapp_oauth_state_invalid", error=str(exc))

@@ -11,6 +11,9 @@ from app.database import Base
 AUTH_APPLICATION = "application"
 AUTH_DELEGATED = "delegated"
 
+MAIL_PROVIDER_MICROSOFT = "microsoft"
+MAIL_PROVIDER_GOOGLE = "google"
+
 STATUS_CONNECTED = "connected"
 STATUS_DISCONNECTED = "disconnected"
 STATUS_ERROR = "error"
@@ -26,6 +29,7 @@ class ConnectedMailbox(Base):
     display_name: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     auth_type: Mapped[str] = mapped_column(String(32), default=AUTH_APPLICATION)
+    mail_provider: Mapped[str] = mapped_column(String(32), default=MAIL_PROVIDER_MICROSOFT)
     connection_status: Mapped[str] = mapped_column(String(32), default=STATUS_CONNECTED)
     oauth_user_id: Mapped[str | None] = mapped_column(String(128))
     access_token_encrypted: Mapped[str | None] = mapped_column(Text)

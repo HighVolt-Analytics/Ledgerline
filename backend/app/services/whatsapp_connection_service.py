@@ -39,11 +39,16 @@ def oauth_configured() -> bool:
     return get_settings().whatsapp_configured
 
 
-def create_oauth_state(*, tenant_id: int, user_id: int) -> str:
+def create_oauth_state(*, tenant_id: uuid.UUID | str | int, user_id: int) -> str:
+    from app.tenant_ids import parse_tenant_id
+
+    org_id = parse_tenant_id(tenant_id)
+    if org_id is None:
+        raise ValueError("Invalid tenant id")
     expire = datetime.now(timezone.utc) + timedelta(minutes=STATE_TTL_MINUTES)
     payload: dict[str, Any] = {
         "typ": STATE_TYP,
-        "org_id": tenant_id,
+        "org_id": str(org_id),
         # PyJWT requires sub to be a string (RFC 7519).
         "sub": str(user_id),
         "exp": expire,

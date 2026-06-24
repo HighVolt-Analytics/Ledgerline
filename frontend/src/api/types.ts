@@ -131,12 +131,15 @@ export interface TokenResponse {
   memberships?: TenantMembership[];
 }
 
+export type MailProvider = "google" | "microsoft";
+
 export interface ConnectedMailbox {
   id: number;
   tenant_id: string;
   email: string;
   display_name: string | null;
   is_active: boolean;
+  mail_provider?: MailProvider | string;
   auth_type: "application" | "delegated" | string;
   connection_status: "connected" | "disconnected" | "error" | string;
   oauth_connected_at: string | null;
@@ -193,6 +196,10 @@ export interface MailboxInvitePreview {
   display_name: string | null;
   message: string | null;
   expires_at: string | null;
+  mail_provider?: MailProvider | null;
+  available_providers?: MailProvider[];
+  google_oauth_configured?: boolean;
+  microsoft_oauth_configured?: boolean;
 }
 
 export interface ProcessingStatus {

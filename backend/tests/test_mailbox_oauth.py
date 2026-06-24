@@ -14,6 +14,7 @@ from app.services.mailbox_oauth_service import (
     resolve_delegated_access_token,
 )
 from app.services.token_vault import decrypt_secret, encrypt_secret
+from app.tenant_ids import TESTING_TENANT_UUID, parse_tenant_id
 
 
 @pytest.fixture(autouse=True)
@@ -31,15 +32,15 @@ def _settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_oauth_state_roundtrip() -> None:
-    state = create_oauth_state(tenant_id=1, user_id=7)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=7)
     payload = parse_oauth_state(state)
-    assert payload["org_id"] == 1
+    assert parse_tenant_id(payload["org_id"]) == TESTING_TENANT_UUID
     assert payload["user_id"] == 7
     assert payload["typ"] == "mailbox_oauth"
 
 
 def test_oauth_state_rejects_tampering() -> None:
-    state = create_oauth_state(tenant_id=1, user_id=7)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=7)
     bad = f"{state}tampered"
     with pytest.raises(jwt.PyJWTError):
         parse_oauth_state(bad)

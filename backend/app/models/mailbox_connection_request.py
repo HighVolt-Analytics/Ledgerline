@@ -22,6 +22,7 @@ class MailboxConnectionRequest(Base):
     requested_email: Mapped[str] = mapped_column(String(255), index=True)
     display_name: Mapped[str | None] = mapped_column(String(255))
     message: Mapped[str | None] = mapped_column(Text)
+    mail_provider: Mapped[str | None] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), default=STATUS_PENDING, index=True)
     requested_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),

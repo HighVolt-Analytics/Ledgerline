@@ -81,6 +81,8 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 function mailboxProvider(mb: ConnectedMailbox): string {
+  if (mb.mail_provider === "google") return "Gmail";
+  if (mb.mail_provider === "microsoft") return "Outlook";
   const label = `${mb.display_name ?? ""} ${mb.email}`.toLowerCase();
   if (label.includes("imap")) return "IMAP";
   if (
@@ -226,8 +228,12 @@ export function UploadPage() {
     display_name?: string;
     message?: string;
   }) {
-    await api.createMailboxConnectionRequest(body);
-    setFetchNotice(`Invitation sent to ${body.email}`);
+    const result = await api.createMailboxConnectionRequest(body);
+    setFetchNotice(
+      result.email_sent
+        ? `Invitation sent to ${body.email}`
+        : `Invitation link refreshed for ${body.email}. Copy the link from Integrations if email delivery failed.`
+    );
   }
 
   function applyMailboxUpdate(updated: ConnectedMailbox) {

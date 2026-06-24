@@ -14,7 +14,8 @@
     .message { border-left: 3px solid #e4e4e7; padding-left: .75rem; font-style: italic; }
     .error { color: #dc2626; }
     .success { color: #16a34a; }
-    button { margin-top: 1rem; width: 100%; padding: .625rem 1rem; font-size: .875rem; border: 0; border-radius: 8px; background: #18181b; color: #fff; cursor: pointer; }
+    button { margin-top: 0.5rem; width: 100%; padding: .625rem 1rem; font-size: .875rem; border: 0; border-radius: 8px; background: #18181b; color: #fff; cursor: pointer; }
+    button + button { margin-top: 0.5rem; }
     button:disabled { opacity: .6; cursor: wait; }
     @media (prefers-color-scheme: dark) {
       body { background: #09090b; color: #fafafa; }
@@ -53,20 +54,55 @@
       app.innerHTML = html;
     }
 
-    async function connectWithMicrosoft() {
-      const btn = document.getElementById("connect-btn");
-      if (btn) btn.disabled = true;
+    async function connectWithProvider(provider) {
       try {
-        const data = await apiGet("/api/mailboxes/invites/authorize?token=" + encodeURIComponent(token));
+        const data = await apiGet(
+          "/api/mailboxes/invites/authorize?token=" +
+            encodeURIComponent(token) +
+            "&provider=" +
+            encodeURIComponent(provider)
+        );
         location.assign(data.authorize_url);
       } catch (err) {
         render(
           '<h1 class="error">Connection failed</h1>' +
-          '<p class="error">' + (err.message || "Failed to start Microsoft sign-in") + '</p>' +
-          '<button id="connect-btn" type="button">Try again</button>'
+          '<p class="error">' + (err.message || "Failed to start sign-in") + "</p>"
         );
-        document.getElementById("connect-btn").onclick = connectWithMicrosoft;
       }
+    }
+
+    function renderConnectButtons(preview) {
+      const providers =
+        preview.available_providers && preview.available_providers.length
+          ? preview.available_providers
+          : preview.mail_provider
+            ? [preview.mail_provider]
+            : ["google", "microsoft"];
+      let html =
+        "<h1>Connect your mailbox</h1>" +
+        "<p><strong>" +
+        (preview.tenant_name || preview.org_name || "Your organisation") +
+        "</strong> has requested access to read invoice attachments from:</p>" +
+        "<p class='email'>" +
+        preview.requested_email +
+        "</p>";
+      if (preview.message) {
+        html += "<p class='message'>" + preview.message + "</p>";
+      }
+      html +=
+        "<p>Sign in with the provider that hosts this mailbox using the invited email address.</p>";
+      if (providers.indexOf("google") >= 0) {
+        html +=
+          '<button type="button" class="provider-btn" data-provider="google">Connect with Google</button>';
+      }
+      if (providers.indexOf("microsoft") >= 0) {
+        html +=
+          '<button type="button" class="provider-btn" data-provider="microsoft">Connect with Microsoft</button>';
+      }
+      render(html);
+      document.querySelectorAll(".provider-btn").forEach((btn) => {
+        btn.addEventListener("click", () => connectWithProvider(btn.getAttribute("data-provider")));
+      });
     }
 
     if (oauth === "success") {
@@ -80,27 +116,23 @@
     } else if (oauth === "error") {
       render(
         '<h1 class="error">Connection failed</h1>' +
-        '<p>' + (oauthMessage || "Microsoft sign-in was cancelled or failed.") + '</p>' +
-        (token ? '<button id="connect-btn" type="button">Try again</button>' : "")
+        '<p>' + (oauthMessage || "Sign-in was cancelled or failed.") + "</p>" +
+        (token
+          ? '<button type="button" class="provider-btn" data-provider="google">Try Google</button>' +
+            '<button type="button" class="provider-btn" data-provider="microsoft">Try Microsoft</button>'
+          : "")
       );
-      if (token) document.getElementById("connect-btn").onclick = connectWithMicrosoft;
+      if (token) {
+        document.querySelectorAll(".provider-btn").forEach((btn) => {
+          btn.addEventListener("click", () => connectWithProvider(btn.getAttribute("data-provider")));
+        });
+      }
     } else if (!token) {
       render("<p>Missing invitation link.</p>");
     } else {
       apiGet("/api/mailboxes/invites/preview?token=" + encodeURIComponent(token))
         .then((preview) => {
-          let html =
-            "<h1>Connect your mailbox</h1>" +
-            "<p><strong>" + preview.org_name + "</strong> has requested access to read invoice attachments from:</p>" +
-            "<p class='email'>" + preview.requested_email + "</p>";
-          if (preview.message) {
-            html += "<p class='message'>" + preview.message + "</p>";
-          }
-          html +=
-            "<p>You will sign in with Microsoft and grant LedgerLink permission to read mail for automated invoice processing.</p>" +
-            '<button id="connect-btn" type="button">Connect with Microsoft</button>';
-          render(html);
-          document.getElementById("connect-btn").onclick = connectWithMicrosoft;
+          renderConnectButtons(preview);
         })
         .catch((err) => {
           render('<p class="error">' + (err.message || "Invitation not found") + "</p>");

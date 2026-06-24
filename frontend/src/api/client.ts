@@ -12,6 +12,7 @@ import type {
   MailboxConnectionRequest,
   MailboxConnectionRequestAction,
   MailboxInvitePreview,
+  MailProvider,
   DailyReconciliation,
   NavBadges,
   PaymentApi,
@@ -517,9 +518,11 @@ export const api = {
     request<MailboxInvitePreview>(
       `/api/mailboxes/invites/preview?token=${encodeURIComponent(token)}`
     ),
-  startMailboxInviteOAuth: (token: string) =>
-    request<{ authorize_url: string }>(
-      `/api/mailboxes/invites/authorize?token=${encodeURIComponent(token)}`
+  startMailboxInviteOAuth: (token: string, provider?: MailProvider) =>
+    request<{ authorize_url: string; mail_provider?: MailProvider }>(
+      `/api/mailboxes/invites/authorize?token=${encodeURIComponent(token)}${
+        provider ? `&provider=${encodeURIComponent(provider)}` : ""
+      }`
     ),
   getMailboxAdminConsentUrl: () =>
     request<{ admin_consent_url: string; instructions: string }>(
