@@ -108,9 +108,12 @@ export function AcceptInvitePage() {
         {done && (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Your account is ready. Sign in with your email and password.
+              Your account is ready. Sign in to complete organisation setup.
             </p>
-            <Button className="w-full" onClick={() => navigate("/login")}>
+            <Button
+              className="w-full"
+              onClick={() => navigate("/login", { state: { fromInvite: true } })}
+            >
               Go to sign in
             </Button>
           </div>

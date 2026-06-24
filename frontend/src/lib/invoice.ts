@@ -136,6 +136,17 @@ export function invoiceFailedValidations(inv: Invoice) {
   return (inv.validation_results ?? []).filter((r) => !r.skipped && !r.passed);
 }
 
+/** Processed invoices with journal lines that can be published to the workbook. */
+export function invoiceCanPublishToLedger(inv: Invoice): boolean {
+  if (inv.status !== "processed") return false;
+  if (inv.published_to_ledger) return false;
+  const route = (inv.route_target ?? "").trim().toLowerCase();
+  if (route === "vault") return false;
+  const docType = (inv.purchase_document_type ?? "").trim().toLowerCase();
+  if (docType === "po" || docType === "grn") return false;
+  return Boolean(inv.invoice_date);
+}
+
 export type InvoiceSource = "email" | "upload" | "onedrive" | "vault";
 export type InvoiceDocType = "invoice" | "credit_note" | "po" | "grn";
 

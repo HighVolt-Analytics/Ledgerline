@@ -17,6 +17,10 @@ import {
 } from "@/lib/v5DocumentTypes";
 import { DocumentConditionBuilder } from "@/components/rule-book/DocumentConditionBuilder";
 import { DocumentTypeSamplesSection } from "@/components/rule-book/DocumentTypeSamplesSection";
+import {
+  buildSampleAnalysisRecord,
+  markSampleAnalysisApplied,
+} from "@/lib/documentTypeSampleAnalysis";
 import { DocumentTypeTemplateDialog } from "@/components/rule-book/DocumentTypeTemplateDialog";
 import { SimpleClassifierSection } from "@/components/rule-book/SimpleClassifierSection";
 import {
@@ -900,12 +904,25 @@ function DocumentTypeEditDialog({
 
           <DetailCard
             title="Sample files"
-            hint="Upload examples — we suggest recognition, fields, and processing settings"
+            hint={
+              draft.sampleAnalysis
+                ? "Sample analysis on record — upload new files to re-analyze"
+                : "Detect recognition signals and extraction fields from examples"
+            }
           >
             <DocumentTypeSamplesSection
               draft={draft}
               templateId={templateId}
-              onApply={(next) => onChange(next)}
+              sampleAnalysis={draft.sampleAnalysis}
+              onRecordAnalysis={(sampleAnalysis) => onChange({ ...draft, sampleAnalysis })}
+              onApply={(next, proposal, filenames) => {
+                onChange({
+                  ...next,
+                  sampleAnalysis: markSampleAnalysisApplied(
+                    buildSampleAnalysisRecord(filenames, proposal)
+                  ),
+                });
+              }}
             />
           </DetailCard>
 
@@ -1337,6 +1354,9 @@ export function DocumentTypesTab({
                 <ToneBadge tone={cardPostingTone(docType.posting)}>
                   Post: {docType.posting}
                 </ToneBadge>
+                {docType.sampleAnalysis ? (
+                  <ToneBadge tone="primary">Samples analyzed</ToneBadge>
+                ) : null}
                 {!docType.enabled ? <ToneBadge tone="fail">Off</ToneBadge> : null}
               </div>
             </button>

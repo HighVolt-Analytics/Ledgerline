@@ -37,19 +37,34 @@ export type DossierPipelineStepApi = {
   evidence?: Array<{ label: string; ref: string }>;
 };
 
+export type DossierManualLinkInfoApi = {
+  id: number;
+  invoice_id: number;
+  linked_dossier_id: string;
+  document_ref?: string | null;
+  label: string;
+  document_type_code: string;
+  has_file: boolean;
+};
+
 export type DossierLinkedDocumentApi = {
   id: string;
   document_type_code: string;
   label: string;
   document_ref?: string | null;
+  invoice_no?: string | null;
   present: boolean;
   requirement: string;
   purchase_bundle_role?: string | null;
   source?: string | null;
   linked_dossier_id?: string | null;
+  invoice_id?: number | null;
   is_anchor?: boolean;
   has_file?: boolean;
   linkage_detail?: string | null;
+  link_kind?: string;
+  manual_link_id?: number | null;
+  manual_link?: DossierManualLinkInfoApi | null;
 };
 
 export type DossierLinkedDocumentsApi = {
@@ -155,20 +170,41 @@ function mapPipelineStep(step: DossierPipelineStepApi): DossierPipelineStep {
   };
 }
 
+function mapManualLinkInfo(info: DossierManualLinkInfoApi): import("@/lib/dossierLinkedDocuments").DossierManualLinkInfo {
+  return {
+    id: info.id,
+    invoiceId: info.invoice_id,
+    linkedDossierId: info.linked_dossier_id,
+    documentRef: info.document_ref ?? null,
+    label: info.label,
+    documentTypeCode: info.document_type_code,
+    hasFile: info.has_file,
+  };
+}
+
 function mapLinkedDocument(doc: DossierLinkedDocumentApi): DossierLinkedDocument {
   return {
     id: doc.id,
     documentTypeCode: doc.document_type_code,
     label: doc.label,
     documentRef: doc.document_ref ?? null,
+    invoiceNo: doc.invoice_no ?? null,
     present: doc.present,
     requirement: doc.requirement as DossierLinkedDocument["requirement"],
     purchaseBundleRole: (doc.purchase_bundle_role ?? undefined) as DossierLinkedDocument["purchaseBundleRole"],
     source: doc.source as DossierLinkedDocument["source"],
     linkedDossierId: doc.linked_dossier_id ?? null,
+    invoiceId: doc.invoice_id ?? null,
     isAnchor: doc.is_anchor,
     hasFile: doc.has_file,
     linkageDetail: doc.linkage_detail ?? undefined,
+    linkKind: (doc.link_kind === "manual"
+      ? "manual"
+      : doc.link_kind === "invoice_no"
+        ? "invoice_no"
+        : "system") as DossierLinkedDocument["linkKind"],
+    manualLinkId: doc.manual_link_id ?? null,
+    manualLink: doc.manual_link ? mapManualLinkInfo(doc.manual_link) : null,
   };
 }
 
@@ -247,8 +283,12 @@ export function mapDossierFromApi(row: DossierSummaryApi): DossierSummary {
 
 export type DossierSummaryWithInvoiceId = DossierSummary & { invoiceId: number };
 
-export function mapDossierDetailFromApi(row: DossierSummaryApi): DossierSummaryWithInvoiceId {
+export function mapDossierListRowFromApi(row: DossierSummaryApi): DossierSummaryWithInvoiceId {
   return { ...mapDossierFromApi(row), invoiceId: row.invoice_id };
+}
+
+export function mapDossierDetailFromApi(row: DossierSummaryApi): DossierSummaryWithInvoiceId {
+  return mapDossierListRowFromApi(row);
 }
 
 const DEFAULT_PAGE_SIZE = "12";
@@ -260,7 +300,7 @@ export async function fetchDossiersPage(params: {
   q?: string;
   fresh?: boolean;
 }): Promise<{
-  rows: DossierSummary[];
+  rows: DossierSummaryWithInvoiceId[];
   total: number;
   pages: number;
   page: number;
@@ -277,7 +317,7 @@ export async function fetchDossiersPage(params: {
   }
   const res = await api.listDossiersWithMeta(query, { fresh: params.fresh });
   return {
-    rows: res.data.map(mapDossierFromApi),
+    rows: res.data.map(mapDossierListRowFromApi),
     total: res.meta.total ?? res.data.length,
     pages: res.meta.pages ?? 1,
     page: res.meta.page ?? params.page,
@@ -295,4 +335,23 @@ export async function fetchDossierById(
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;
   }
+}
+
+export async function addDossierManualLink(
+  dossierId: string,
+  body: { linkedInvoiceId: number; slotId?: string | null }
+): Promise<DossierSummaryWithInvoiceId> {
+  const row = await api.addDossierManualLink(dossierId, {
+    linked_invoice_id: body.linkedInvoiceId,
+    slot_id: body.slotId ?? null,
+  });
+  return mapDossierDetailFromApi(row);
+}
+
+export async function removeDossierManualLink(
+  dossierId: string,
+  linkId: number
+): Promise<DossierSummaryWithInvoiceId> {
+  const row = await api.removeDossierManualLink(dossierId, linkId);
+  return mapDossierDetailFromApi(row);
 }

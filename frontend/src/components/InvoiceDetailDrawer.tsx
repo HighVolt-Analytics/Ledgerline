@@ -9,7 +9,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import type { InvoiceDetails, InvoiceClassificationAudit, InvoiceUpdatePayload, LineItem, PipelineAuditStep, PurchaseDossier } from "@/api/types";
 import {
   InvoiceDocumentViewer,
@@ -31,6 +31,7 @@ import {
   reprocessAndWatch,
 } from "@/lib/invoiceActions";
 import {
+  invoiceCanPublishToLedger,
   invoiceFieldConfidence,
 } from "@/lib/invoice";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
@@ -817,14 +818,18 @@ export function InvoiceDetailDrawer({
   }
 
   async function publish() {
-    if (!inv || inv.status !== "processed" || inv.published_to_ledger) return;
+    if (!inv || !invoiceCanPublishToLedger(inv)) return;
     setActionBusy(true);
     try {
       await api.publishInvoice(inv.id);
       onUpdated?.();
       await reloadInvoice();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Publish failed");
+      if (e instanceof ApiError && e.status === 402) {
+        alert("Not enough credits to publish — top up billing or contact an admin.");
+      } else {
+        alert(e instanceof Error ? e.message : "Publish failed");
+      }
     } finally {
       setActionBusy(false);
     }
@@ -1284,7 +1289,7 @@ export function InvoiceDetailDrawer({
                         Approve &amp; process
                       </Button>
                     )}
-                    {inv.status === "processed" && !inv.published_to_ledger && (
+                    {invoiceCanPublishToLedger(inv) && (
                       <Button
                         size="sm"
                         data-testid="button-publish"

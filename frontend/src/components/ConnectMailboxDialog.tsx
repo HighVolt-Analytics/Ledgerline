@@ -97,7 +97,7 @@ export function ConnectMailboxDialog({
           <div className="space-y-4 py-2 text-sm">
             <p className="text-muted-foreground">
               Invitation sent to <span className="font-medium text-foreground">{email}</span>.
-              They will receive an email with a link to connect with Microsoft.
+              They will receive an email with a link to connect their mailbox.
             </p>
             <Button type="button" onClick={onClose}>
               Done

@@ -65,13 +65,20 @@ from app.services.privilege_service import matrix_role_for_context, permissions_
 from app.services.tenant_context_service import get_tenant_slug
 from app.services.tenant_members_service import accept_invite, preview_invite
 from app.tenant_ids import parse_tenant_id
-from app.tenant_settings import tenant_locale, tenant_timezone
+from app.tenant_settings import tenant_locale, tenant_onboarding_completed, tenant_timezone
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _user_response(user: User, tenant: Tenant, *, role: str | None = None) -> UserResponse:
+def _user_response(
+    user: User,
+    tenant: Tenant,
+    *,
+    role: str | None = None,
+    is_support_session: bool = False,
+    onboarding_completed: bool | None = None,
+) -> UserResponse:
     return UserResponse(
         id=user.id,
         email=user.email,
@@ -82,6 +89,12 @@ def _user_response(user: User, tenant: Tenant, *, role: str | None = None) -> Us
         tenant_slug=tenant.slug,
         tenant_timezone=tenant_timezone(tenant),
         tenant_locale=tenant_locale(tenant),
+        is_support_session=is_support_session,
+        onboarding_completed=(
+            tenant_onboarding_completed(tenant)
+            if onboarding_completed is None
+            else onboarding_completed
+        ),
     )
 
 
@@ -133,6 +146,7 @@ async def _mint_session_tokens(
     user: User,
     tenant: Tenant,
     role: str,
+    is_support_session: bool = False,
 ) -> tuple[str, str]:
     from app.config import get_settings
 
@@ -145,6 +159,7 @@ async def _mint_session_tokens(
         tenant_slug=slug,
         email=user.email,
         role=role,
+        is_support_session=is_support_session,
     )
     refresh = create_refresh_token(
         user_id=user.id,
@@ -153,6 +168,7 @@ async def _mint_session_tokens(
         email=user.email,
         role=role,
         jti=jti,
+        is_support_session=is_support_session,
     )
     await register_refresh_session(
         jti=jti,
@@ -380,12 +396,17 @@ async def refresh_session(
 
     await revoke_refresh_jti(jti)
     role = str(payload.get("role", user.role.value))
-    access, refresh = await _mint_session_tokens(db, user=user, tenant=tenant, role=role)
+    is_support = bool(payload.get("is_support_session"))
+    access, refresh = await _mint_session_tokens(
+        db, user=user, tenant=tenant, role=role, is_support_session=is_support
+    )
     return ApiEnvelope(
         data=TokenResponse(
             access_token=access,
             refresh_token=refresh,
-            user=_user_response(user, tenant, role=role),
+            user=_user_response(
+                user, tenant, role=role, is_support_session=is_support
+            ),
         )
     )
 
@@ -424,7 +445,14 @@ async def me(
     user = await db.get(User, ctx.user_id)
     if not user:
         raise HTTPException(401, "Session invalid")
-    return ApiEnvelope(data=_user_response(user, tenant, role=ctx.role))
+    return ApiEnvelope(
+        data=_user_response(
+            user,
+            tenant,
+            role=ctx.role,
+            is_support_session=ctx.is_support_session,
+        )
+    )
 
 
 @router.get("/me/memberships", response_model=ApiEnvelope[list[TenantAccountSummary]])

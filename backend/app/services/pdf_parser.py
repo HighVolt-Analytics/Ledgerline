@@ -611,3 +611,57 @@ def parse_invoice(file_path: str | Path) -> ParseResult:
         confidence=confidence,
         text_length=len(body_text),
     )
+
+
+def _build_parse_result(
+    path: Path,
+    text: str,
+    final: InvoiceData,
+    *,
+    source: ParseSource,
+    confidence: ParseConfidence,
+) -> ParseResult:
+    ensure_line_items(final)
+    final = _finalize_vendor(final, text)
+    body_text = _resolved_body_text(text, final)
+    final = _attach_document_text(final, body_text)
+    final = post_process_parsed_data(final, body_text)
+    final.raw_fields["parse_source"] = source
+    final.raw_fields["parse_confidence"] = confidence
+    final.raw_fields["text_length"] = len(body_text)
+    return ParseResult(
+        data=final,
+        source=source,
+        confidence=confidence,
+        text_length=len(body_text),
+    )
+
+
+def parse_invoice_for_sample(file_path: str | Path) -> ParseResult:
+    """
+    Rule-book sample uploads: prefer fast local text extraction.
+
+    Azure Document Intelligence runs only when local text is too thin (scanned PDFs,
+    images). Recognition-signal analysis does not need full invoice field confidence.
+    """
+    path = Path(file_path)
+    suffix = path.suffix.lower()
+    min_chars = get_settings().parse_min_text_chars
+
+    if suffix == ".docx":
+        text = _parse_docx_text(path)
+        local = parse_local_text(text)
+        if len(text.strip()) >= min_chars:
+            confidence: ParseConfidence = "high" if local_parse_confident(local) else "low"
+            return _build_parse_result(path, text, local, source="local", confidence=confidence)
+        return parse_invoice(path)
+
+    if suffix in {".jpg", ".jpeg", ".png"}:
+        return parse_invoice(path)
+
+    text = extract_pdf_text(path)
+    local = parse_local_text(text)
+    if len(text.strip()) >= min_chars:
+        confidence = "high" if local_parse_confident(local) else "low"
+        return _build_parse_result(path, text, local, source="local", confidence=confidence)
+    return parse_invoice(path)

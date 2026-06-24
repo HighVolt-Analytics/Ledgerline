@@ -33,18 +33,39 @@ export function KpiCard({
   delta,
   spark,
   testid,
+  onClick,
 }: {
   label: string;
   value: string | number;
   delta?: { dir: "up" | "down" | "flat"; text: string; good?: boolean };
   spark?: number[];
   testid?: string;
+  onClick?: () => void;
 }) {
   const Icon = delta?.dir === "up" ? TrendingUp : delta?.dir === "down" ? TrendingDown : Minus;
   const positive = delta?.good ?? delta?.dir === "up";
 
   return (
-    <Card className="p-4 flex flex-col gap-2 min-w-0" data-testid={testid}>
+    <Card
+      className={cn(
+        "p-4 flex flex-col gap-2 min-w-0",
+        onClick && "cursor-pointer hover-elevate transition-shadow"
+      )}
+      data-testid={testid}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+    >
       <span className="text-xs text-muted-foreground font-medium uppercase tracking-wide truncate">
         {label}
       </span>

@@ -44,10 +44,60 @@ export type DossierApprovalChain = {
 };
 
 export function approvalStepStateLabel(state: DossierApprovalStepState): string {
-  if (state === "done") return "approved";
-  if (state === "not_required") return "n/a";
-  if (state === "fail") return "failed";
+  if (state === "done") return "Complete";
+  if (state === "pending") return "Waiting";
+  if (state === "waived") return "Not required";
+  if (state === "not_required") return "N/A";
+  if (state === "blocked") return "Blocked";
+  if (state === "fail") return "Failed";
+  if (state === "skipped") return "Skipped";
   return state;
+}
+
+const APPROVAL_DETAIL_HUMAN: Record<string, string> = {
+  invoice_approved: "Approved in Approvals",
+  "approval_required cleared": "Approval gate cleared",
+  approval_required: "Waiting for approver",
+  "Opens in /approvals when required": "Will appear in Approvals if needed",
+};
+
+export function approvalStepDetailHuman(detail?: string | null): string | undefined {
+  if (!detail?.trim()) return undefined;
+  const token = detail.trim();
+  if (APPROVAL_DETAIL_HUMAN[token]) return APPROVAL_DETAIL_HUMAN[token];
+  if (token.toLowerCase() === "invoice_approved") return APPROVAL_DETAIL_HUMAN.invoice_approved;
+  if (token.toLowerCase().includes("approval_required") && token.toLowerCase().includes("cleared")) {
+    return APPROVAL_DETAIL_HUMAN["approval_required cleared"];
+  }
+  return token;
+}
+
+export function approvalChainProgress(chain: DossierApprovalChain): {
+  complete: number;
+  total: number;
+} {
+  const total = chain.steps.length;
+  const complete = chain.steps.filter(
+    (step) =>
+      step.state === "done" ||
+      step.state === "waived" ||
+      step.state === "not_required" ||
+      step.state === "skipped"
+  ).length;
+  return { complete, total };
+}
+
+export function formatApprovalTimestamp(at: string | null): string | null {
+  if (!at?.trim()) return null;
+  const parsed = new Date(at.replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return at;
+  return parsed.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export function paymentTierDetail(amount: number, currency: string): string {

@@ -13,6 +13,7 @@ from app.services.pdf_parser import (
     count_present_fields,
     local_parse_confident,
     parse_invoice,
+    parse_invoice_for_sample,
     parse_local_text,
     parse_text_fields,
     post_process_parsed_data,
@@ -95,6 +96,36 @@ def test_parse_invoice_local_only_without_di(
     assert result.source == "local"
     assert result.data.invoice_no == "AWS-AU-204815"
     assert local_parse_confident(result.data)
+
+
+def test_parse_invoice_for_sample_skips_di_with_sufficient_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("PARSE_MIN_TEXT_CHARS", "50")
+    monkeypatch.setenv("AZURE_DI_ENDPOINT", "https://test.cognitiveservices.azure.com")
+    monkeypatch.setenv("AZURE_DI_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    pdf_path = tmp_path / "invoice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 minimal")
+
+    monkeypatch.setattr(
+        "app.services.pdf_parser.extract_pdf_text",
+        lambda _path: SAMPLE_TEXT,
+    )
+
+    def fail_di(*_args, **_kwargs):
+        raise AssertionError("Azure DI should not run for text-based sample PDFs")
+
+    monkeypatch.setattr(
+        "app.services.pdf_parser.parse_with_document_intelligence",
+        fail_di,
+    )
+
+    result = parse_invoice_for_sample(pdf_path)
+    assert result.source == "local"
+    assert result.data.invoice_no == "AWS-AU-204815"
 
 
 PO_TEXT = """

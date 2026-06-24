@@ -11,6 +11,7 @@ from app.schemas.purchase import PurchaseDossierMember, PurchaseDossierResponse,
 from app.services.file_storage import has_stored_path, stored_file_available
 from app.services.document_ref_service import dossier_public_id
 from app.services.po_reference import is_plausible_po_reference
+from app.services.purchase_linking_service import find_grn_invoices_by_invoice_no
 from app.services.purchase_match_service import (
     _latest_grn,
     compute_three_way_match,
@@ -176,10 +177,23 @@ async def build_purchase_dossier(
     elif current_role == PurchaseDocumentType.INVOICE.value and commercial_id is None:
         commercial_id = invoice.id
 
-    invoice_ids = {i for i in (po_doc_id, grn_doc_id, commercial_id) if i is not None}
     commercial_match_id = commercial_id
     if commercial_match_id is None and current_role == PurchaseDocumentType.INVOICE.value:
         commercial_match_id = invoice.id
+
+    if grn_doc_id is None and commercial_match_id is not None:
+        loaded_commercial = await _invoice_by_id(session, commercial_match_id)
+        if loaded_commercial and loaded_commercial.invoice_no:
+            grn_matches = await find_grn_invoices_by_invoice_no(
+                session,
+                tenant_id=invoice.tenant_id,
+                invoice_no=loaded_commercial.invoice_no,
+                purchase_order_id=po_row.id if po_row is not None else None,
+            )
+            if grn_matches:
+                grn_doc_id = grn_matches[0].id
+
+    invoice_ids = {i for i in (po_doc_id, grn_doc_id, commercial_id) if i is not None}
     if commercial_match_id is not None:
         invoice_ids.add(commercial_match_id)
 

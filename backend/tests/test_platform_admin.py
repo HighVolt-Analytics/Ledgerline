@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth_account import AuthAccount
 from app.models.tenant import Tenant
+from app.models.tenant_member_invite import TenantMemberInvite
 from app.models.user import User, UserRole
 from app.models.user_tenant_mapping import UserTenantMapping
 from app.schemas.platform import CreatePlatformTenantRequest, DeletePlatformTenantRequest
@@ -23,8 +24,6 @@ from app.tenant_roles import TenantRole
 
 @pytest.mark.asyncio
 async def test_list_client_tenants_excludes_platform_tenant(db_session: AsyncSession) -> None:
-    import uuid
-
     db_session.add(
         Tenant(id=uuid.uuid4(), name="Acme Client", slug="acme-client", is_platform=False)
     )
@@ -41,9 +40,14 @@ async def test_list_client_tenants_excludes_platform_tenant(db_session: AsyncSes
 
 @pytest.mark.asyncio
 async def test_create_client_tenant_seeds_modules(db_session: AsyncSession) -> None:
-    tenant = await create_client_tenant(
+    tenant, _invite = await create_client_tenant(
         db_session,
-        CreatePlatformTenantRequest(name="New Client", slug="new-client"),
+        CreatePlatformTenantRequest(
+            name="New Client",
+            slug="new-client",
+            first_admin_email="admin@example.com",
+            first_admin_name="New Admin",
+        ),
     )
     assert tenant.slug == "new-client"
     assert len(tenant.modules) == 5
@@ -51,7 +55,9 @@ async def test_create_client_tenant_seeds_modules(db_session: AsyncSession) -> N
 
 
 @pytest.mark.asyncio
-async def test_create_client_tenant_provisions_operator_admin(db_session: AsyncSession) -> None:
+async def test_create_client_tenant_invites_admin_without_shadow_user(
+    db_session: AsyncSession,
+) -> None:
     platform_id = uuid.uuid4()
     db_session.add(
         Tenant(
@@ -80,28 +86,75 @@ async def test_create_client_tenant_provisions_operator_admin(db_session: AsyncS
     db_session.add(operator)
     await db_session.flush()
 
-    tenant = await create_client_tenant(
+    tenant, invite = await create_client_tenant(
         db_session,
-        CreatePlatformTenantRequest(name="Acme", slug="acme"),
-        operator_user_id=operator.id,
+        CreatePlatformTenantRequest(
+            name="Acme",
+            slug="acme",
+            first_admin_email="client@example.com",
+            first_admin_name="Client Admin",
+        ),
+        invited_by_user_id=operator.id,
     )
-    assert tenant.user_count == 1
+    assert tenant.user_count == 0
+    assert tenant.pending_invite_count == 1
+    assert invite.email == "client@example.com"
 
-    client_user = (
+    users = (
         await db_session.execute(select(User).where(User.tenant_id == tenant.id))
-    ).scalar_one()
-    assert client_user.email == account.email
-    assert client_user.role == UserRole.ADMIN
+    ).scalars().all()
+    assert len(users) == 0
 
-    mapping = (
+    pending = (
         await db_session.execute(
-            select(UserTenantMapping).where(
-                UserTenantMapping.user_id == client_user.id,
-                UserTenantMapping.tenant_id == tenant.id,
-            )
+            select(TenantMemberInvite).where(TenantMemberInvite.tenant_id == tenant.id)
         )
     ).scalar_one()
-    assert mapping.role == TenantRole.ADMIN.value
+    assert pending.email == "client@example.com"
+    assert pending.role == TenantRole.ADMIN.value
+
+
+@pytest.mark.asyncio
+async def test_shadow_user_excluded_from_user_count(db_session: AsyncSession) -> None:
+    platform_id = uuid.uuid4()
+    client_id = uuid.uuid4()
+    db_session.add_all(
+        [
+            Tenant(id=platform_id, name="Platform", slug="platform", is_platform=True),
+            Tenant(id=client_id, name="Client", slug="client", is_platform=False),
+        ]
+    )
+    account = AuthAccount(
+        email="ops@ledgerlink.test",
+        password_hash=hash_password("password123"),
+    )
+    db_session.add(account)
+    await db_session.flush()
+
+    operator = User(
+        tenant_id=platform_id,
+        auth_account_id=account.id,
+        email=account.email,
+        password_hash=account.password_hash,
+        full_name="Platform Ops",
+        role=UserRole.SUPER_ADMIN,
+        is_active=True,
+    )
+    db_session.add(operator)
+    await db_session.flush()
+
+    await provision_client_tenant_access(
+        db_session, tenant_id=client_id, operator_user_id=operator.id
+    )
+
+    tenants = await list_client_tenants(db_session)
+    client = next(t for t in tenants if t.slug == "client")
+    assert client.user_count == 0
+
+    shadow = (
+        await db_session.execute(select(User).where(User.tenant_id == client_id))
+    ).scalar_one()
+    assert shadow.is_platform_shadow is True
 
 
 @pytest.mark.asyncio
@@ -140,6 +193,7 @@ async def test_provision_client_tenant_access_is_idempotent(db_session: AsyncSes
         db_session, tenant_id=client_id, operator_user_id=operator.id
     )
     assert first.id == second.id
+    assert first.is_platform_shadow is True
 
     user_count = (
         await db_session.execute(

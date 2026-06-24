@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.models.invoice import Invoice, InvoiceStatus
+from app.services.invoice_data import InvoiceData
 from app.schemas.document_type_sample_analysis import (
     DocumentTypeSampleFileResult,
     DocumentTypeSampleProposal,
@@ -14,20 +17,21 @@ from app.schemas.document_type_sample_analysis import (
 from app.services.document_type_recognition_signals import (
     detect_recognition_signals,
     infer_absent_fields,
-    infer_classifier_layout,
     infer_document_metadata,
     infer_playbook_profile,
     infer_purchase_bundle_role,
+    merge_signals_for_classifier_profiles,
     suggest_bundle_members,
     suggest_one_line,
     suggest_title_from_heading,
 )
-from app.services.pdf_parser import parse_invoice
+from app.services.pdf_parser import parse_invoice_for_sample
 from app.services.playbook_profile_catalog import preset_for_profile
 from app.services.validation_rule_catalog import default_validation_rules_for_profile
 
 _ALLOWED_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".docx"}
 _MAX_SAMPLES = 10
+_PARSE_WORKERS = 4
 
 _FIELD_ORDER = (
     "vendor",
@@ -59,7 +63,15 @@ def _union_strings(profiles: list, attr: str) -> list[str]:
     return sorted(merged)
 
 
-def _parse_sample(filename: str, content: bytes) -> tuple[Invoice, object, str | None]:
+@dataclass(frozen=True)
+class ParsedDocumentSample:
+    filename: str
+    invoice: Invoice
+    parsed: InvoiceData
+    confidence: str | None
+
+
+def _parse_sample(filename: str, content: bytes) -> tuple[Invoice, InvoiceData, str | None]:
     suffix = Path(filename or "sample.pdf").suffix.lower() or ".pdf"
     if suffix not in _ALLOWED_SUFFIXES:
         raise ValueError(f"Unsupported file type: {suffix or 'unknown'}")
@@ -69,7 +81,7 @@ def _parse_sample(filename: str, content: bytes) -> tuple[Invoice, object, str |
         tmp_path = Path(tmp.name)
 
     try:
-        result = parse_invoice(tmp_path)
+        result = parse_invoice_for_sample(tmp_path)
         parsed = result.data
         confidence = str(result.confidence or "low")
     finally:
@@ -99,6 +111,59 @@ def _parse_sample(filename: str, content: bytes) -> tuple[Invoice, object, str |
     return invoice, parsed, confidence
 
 
+def parse_document_samples(
+    files: list[tuple[str, bytes]],
+) -> tuple[list[ParsedDocumentSample], list[str]]:
+    """Parse uploads once; returns successful samples and per-file warning notes."""
+    if not files:
+        raise ValueError("At least one sample file is required")
+    if len(files) > _MAX_SAMPLES:
+        raise ValueError(f"At most {_MAX_SAMPLES} sample files allowed")
+
+    parsed_samples: list[ParsedDocumentSample] = []
+    notes: list[str] = []
+    workers = min(_PARSE_WORKERS, len(files))
+
+    def _parse_one(filename: str, content: bytes) -> ParsedDocumentSample:
+        if not content:
+            raise ValueError(f"Empty file: {filename or 'upload'}")
+        invoice, parsed, confidence = _parse_sample(filename, content)
+        return ParsedDocumentSample(
+            filename=filename,
+            invoice=invoice,
+            parsed=parsed,
+            confidence=confidence,
+        )
+
+    if workers <= 1:
+        for filename, content in files:
+            try:
+                parsed_samples.append(_parse_one(filename, content))
+            except ValueError:
+                raise
+            except Exception as exc:
+                notes.append(f"Could not parse {filename}: {exc}")
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_map = {
+                pool.submit(_parse_one, filename, content): filename
+                for filename, content in files
+            }
+            for future in as_completed(future_map):
+                filename = future_map[future]
+                try:
+                    parsed_samples.append(future.result())
+                except ValueError:
+                    raise
+                except Exception as exc:
+                    notes.append(f"Could not parse {filename}: {exc}")
+
+    parsed_samples.sort(key=lambda row: row.filename.lower())
+    if not parsed_samples:
+        raise ValueError("No sample files could be parsed")
+    return parsed_samples, notes
+
+
 def _validation_profile_for_playbook(playbook: str) -> str:
     if playbook in {"supporting", "non_actionable", "informational", "reconciliation"}:
         return "non_actionable"
@@ -115,63 +180,54 @@ def _min_route_confidence(playbook: str) -> float:
     return 0.65
 
 
-def analyze_document_type_samples(
-    files: list[tuple[str, bytes]],
+def analyze_parsed_document_samples(
+    parsed_samples: list[ParsedDocumentSample],
     *,
     purchase_bundle_role: str = "",
+    parse_notes: list[str] | None = None,
 ) -> DocumentTypeSampleProposal:
     """
-    Parse each sample file and merge recognition / field settings.
+    Merge recognition / field settings from already-parsed samples.
 
     Uses deterministic OCR + heuristics (no external AI).
     Fields and signals use union across all samples so nothing is dropped.
     """
-    if not files:
-        raise ValueError("At least one sample file is required")
-    if len(files) > _MAX_SAMPLES:
-        raise ValueError(f"At most {_MAX_SAMPLES} sample files allowed")
+    if not parsed_samples:
+        raise ValueError("No sample files could be parsed")
 
     profiles = []
     sample_rows: list[DocumentTypeSampleFileResult] = []
-    notes: list[str] = []
+    notes: list[str] = list(parse_notes or [])
     headings: list[str] = []
 
-    for filename, content in files:
-        if not content:
-            raise ValueError(f"Empty file: {filename or 'upload'}")
-        try:
-            invoice, parsed, confidence = _parse_sample(filename, content)
-            profile = detect_recognition_signals(
-                filename=filename,
-                invoice=invoice,
-                parsed=parsed,
+    for sample in parsed_samples:
+        profile = detect_recognition_signals(
+            filename=sample.filename,
+            invoice=sample.invoice,
+            parsed=sample.parsed,
+        )
+        profiles.append(profile)
+        if profile.document_heading:
+            headings.append(profile.document_heading)
+        sample_rows.append(
+            DocumentTypeSampleFileResult(
+                filename=profile.filename,
+                recognition_signals=sorted(profile.signals),
+                extraction_fields=sorted(profile.extraction_fields),
+                document_heading=profile.document_heading,
+                parse_confidence=sample.confidence,
             )
-            profiles.append(profile)
-            if profile.document_heading:
-                headings.append(profile.document_heading)
-            sample_rows.append(
-                DocumentTypeSampleFileResult(
-                    filename=profile.filename,
-                    recognition_signals=sorted(profile.signals),
-                    extraction_fields=sorted(profile.extraction_fields),
-                    document_heading=profile.document_heading,
-                    parse_confidence=confidence,
-                )
-            )
-        except ValueError:
-            raise
-        except Exception as exc:
-            notes.append(f"Could not parse {filename}: {exc}")
+        )
 
-    if not profiles:
-        raise ValueError("No sample files could be parsed")
-
-    merged_signals = frozenset(_union_strings(profiles, "signals"))
+    merged_signals, layout = merge_signals_for_classifier_profiles(
+        profiles,
+        purchase_bundle_role=(purchase_bundle_role or "").strip().lower()
+        or infer_purchase_bundle_role(frozenset(_union_strings(profiles, "signals"))),
+    )
     merged_fields = _union_strings(profiles, "extraction_fields")
     bundle_role = (purchase_bundle_role or "").strip().lower() or infer_purchase_bundle_role(
         merged_signals
     )
-    layout = infer_classifier_layout(merged_signals, purchase_bundle_role=bundle_role)
     playbook = infer_playbook_profile(merged_signals)
     absent = infer_absent_fields(merged_signals)
     klass, posting, route_target = infer_document_metadata(playbook, bundle_role=bundle_role)
@@ -191,7 +247,7 @@ def analyze_document_type_samples(
     if len(profiles) > 1:
         notes.insert(
             0,
-            f"Combined {len(profiles)} samples — all detected signals and fields are included.",
+            f"Combined {len(profiles)} samples — classifier uses signals shared by all files when possible, otherwise any matching signal.",
         )
     if not merged_signals:
         notes.append("No recognition signals detected — check OCR quality or add clearer samples.")
@@ -239,4 +295,17 @@ def analyze_document_type_samples(
         min_route_confidence=_min_route_confidence(playbook),
         samples=sample_rows,
         notes=notes,
+    )
+
+
+def analyze_document_type_samples(
+    files: list[tuple[str, bytes]],
+    *,
+    purchase_bundle_role: str = "",
+) -> DocumentTypeSampleProposal:
+    parsed_samples, parse_notes = parse_document_samples(files)
+    return analyze_parsed_document_samples(
+        parsed_samples,
+        purchase_bundle_role=purchase_bundle_role,
+        parse_notes=parse_notes,
     )

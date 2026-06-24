@@ -25,10 +25,6 @@ function relativeTime(iso: string | null | undefined): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function latestLog(logs: AuditLogEntry[], ...events: string[]): AuditLogEntry | undefined {
-  return latestEventLog(logs, events);
-}
-
 function latestEventLog(logs: AuditLogEntry[], events: string[]): AuditLogEntry | undefined {
   let best: AuditLogEntry | undefined;
   for (const entry of logs) {
@@ -38,6 +34,27 @@ function latestEventLog(logs: AuditLogEntry[], events: string[]): AuditLogEntry 
     }
   }
   return best;
+}
+
+function latestLog(logs: AuditLogEntry[], ...events: string[]): AuditLogEntry | undefined {
+  return latestEventLog(logs, events);
+}
+
+function isPublishedFromAuditLogs(logs: AuditLogEntry[]): boolean {
+  const latestPublish = Math.max(
+    0,
+    ...logs.filter((l) => l.event === "invoice_published_to_ledger").map((l) => l.id)
+  );
+  if (latestPublish === 0) return false;
+  const latestProcessed = Math.max(
+    0,
+    ...logs
+      .filter(
+        (l) => l.event === "invoice_processed" || l.event === "purchase_document_processed"
+      )
+      .map((l) => l.id)
+  );
+  return latestPublish > latestProcessed;
 }
 
 function isAfter(entry: AuditLogEntry | undefined, pivot: AuditLogEntry | undefined): boolean {
@@ -219,8 +236,11 @@ export function buildPipelineAuditSteps(
   let publishedDetail = "Pending";
   let publishedState: PipelineAuditStep["state"] = "pending";
   let publishedWhen = "—";
-  if (publishedLog?.event === "invoice_published_to_ledger") {
-    publishedWhen = relativeTime(publishedLog.created_at);
+  const ledgerPublished =
+    inv.published_to_ledger ?? isPublishedFromAuditLogs(logs);
+  if (ledgerPublished) {
+    const publishLog = latestLog(logs, "invoice_published_to_ledger");
+    publishedWhen = relativeTime(publishLog?.created_at ?? inv.created_at);
     publishedDetail = inv.invoice_no ?? invId(inv.id);
     publishedState = "done";
   } else if (inv.status === "processed") {

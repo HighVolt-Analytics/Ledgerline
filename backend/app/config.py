@@ -103,6 +103,17 @@ class Settings(BaseSettings):
         default="http://localhost:5173/integrations",
         validation_alias="GRAPH_OAUTH_FRONTEND_RETURN_URL",
     )
+    graph_oauth_multi_tenant: bool = Field(
+        default=False,
+        validation_alias="GRAPH_OAUTH_MULTI_TENANT",
+        description="Use login.microsoftonline.com/common for mailbox invites (requires multi-tenant Entra app)",
+    )
+    google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", validation_alias="GOOGLE_CLIENT_SECRET")
+    gmail_oauth_redirect_uri: str = Field(
+        default="http://localhost:8001/api/mailboxes/gmail/oauth/callback",
+        validation_alias="GMAIL_OAUTH_REDIRECT_URI",
+    )
     graph_max_messages: int = 50
     graph_backfill_max_messages: int = Field(
         default=500,
@@ -301,6 +312,10 @@ class Settings(BaseSettings):
         redirect = self.graph_oauth_redirect_uri.strip()
         if not redirect or "localhost" in redirect or "127.0.0.1" in redirect:
             self.graph_oauth_redirect_uri = f"{tunnel}/api/mailboxes/oauth/callback"
+
+        gmail_redirect = self.gmail_oauth_redirect_uri.strip()
+        if not gmail_redirect or "localhost" in gmail_redirect or "127.0.0.1" in gmail_redirect:
+            self.gmail_oauth_redirect_uri = f"{tunnel}/api/mailboxes/gmail/oauth/callback"
 
         origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
         if tunnel not in origins:

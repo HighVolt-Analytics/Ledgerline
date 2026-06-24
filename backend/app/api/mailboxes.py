@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlencode
+import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
@@ -35,14 +36,24 @@ from app.services.mailbox_backfill_service import (
 )
 from app.services.mailbox_invite_service import (
     build_connect_url_for_request,
+    build_invite_oauth_url,
     create_mailbox_connection_request,
     get_invite_request,
     load_invite_for_token,
     resend_mailbox_connection_request,
 )
+from app.services.mailbox_provider import (
+    PROVIDER_UNKNOWN,
+    available_providers_for_email,
+    resolve_invite_provider,
+)
+from app.services.gmail_oauth_service import (
+    complete_oauth_callback as complete_gmail_oauth_callback,
+    gmail_oauth_configured,
+    parse_oauth_state as parse_gmail_oauth_state,
+)
 from app.services.mailbox_oauth_service import (
     build_admin_consent_url,
-    build_invite_authorize_url,
     complete_oauth_callback,
     disconnect_oauth_mailbox,
     mark_application_mailbox,
@@ -70,9 +81,14 @@ def _invite_context_from_state(
 ) -> tuple[str | None, int | None, uuid.UUID | None]:
     if not state:
         return None, None, None
-    try:
-        payload = parse_oauth_state(state)
-    except Exception:
+    payload = None
+    for parser in (parse_oauth_state, parse_gmail_oauth_state):
+        try:
+            payload = parser(state)
+            break
+        except Exception:
+            continue
+    if not payload:
         return None, None, None
     if str(payload.get("flow") or "") != "invite":
         return None, None, None
@@ -181,11 +197,11 @@ async def create_mailbox_connection_invite(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_admin),
 ) -> ApiEnvelope[MailboxConnectionRequestActionResponse]:
-    if not oauth_configured():
+    if not oauth_configured() and not gmail_oauth_configured():
         raise HTTPException(
             503,
-            "Microsoft OAuth is not configured. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, "
-            "AZURE_CLIENT_SECRET, and GRAPH_OAUTH_REDIRECT_URI.",
+            "Mailbox OAuth is not configured. Set Microsoft (AZURE_*) and/or Google "
+            "(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GMAIL_OAUTH_REDIRECT_URI) credentials.",
         )
     if ctx.user_id is None:
         raise HTTPException(401, "Sign in to send invitations")
@@ -289,6 +305,18 @@ async def preview_mailbox_invite(
             display_name=row.display_name,
             message=row.message,
             expires_at=row.expires_at,
+            mail_provider=(
+                resolved
+                if (resolved := resolve_invite_provider(
+                    row.requested_email,
+                    stored=row.mail_provider,
+                ))
+                != PROVIDER_UNKNOWN
+                else None
+            ),
+            available_providers=available_providers_for_email(row.requested_email),
+            google_oauth_configured=gmail_oauth_configured(),
+            microsoft_oauth_configured=oauth_configured(),
         )
     )
 
@@ -299,18 +327,36 @@ async def preview_mailbox_invite(
 )
 async def authorize_mailbox_invite(
     token: str = Query(..., min_length=10),
+    provider: str | None = Query(None, description="google or microsoft"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[MailboxAuthorizeResponse]:
-    if not oauth_configured():
-        raise HTTPException(503, "Microsoft OAuth is not configured")
     try:
         row, _org = await load_invite_for_token(db, token)
-        url = build_invite_authorize_url(tenant_id=row.tenant_id, invite_request_id=row.id)
+        resolved = resolve_invite_provider(
+            row.requested_email,
+            stored=row.mail_provider,
+            requested=provider,
+        )
+        if resolved != PROVIDER_UNKNOWN and row.mail_provider != resolved:
+            row.mail_provider = resolved
+            await db.flush()
+        url = build_invite_oauth_url(
+            tenant_id=row.tenant_id,
+            invite_request_id=row.id,
+            requested_email=row.requested_email,
+            stored_provider=row.mail_provider,
+            provider=provider,
+        )
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
-    return ApiEnvelope(data=MailboxAuthorizeResponse(authorize_url=url))
+    return ApiEnvelope(
+        data=MailboxAuthorizeResponse(
+            authorize_url=url,
+            mail_provider=resolved,
+        )
+    )
 
 
 @oauth_public_router.get("/oauth/callback")
@@ -357,6 +403,56 @@ async def mailbox_oauth_callback(
     except Exception as exc:
         await db.rollback()
         logger.exception("mailbox_oauth_callback_failed", error=str(exc))
+        params["mailbox_oauth"] = "error"
+        params["message"] = _user_facing_oauth_error(exc, flow=flow)
+
+    return RedirectResponse(_append_query(return_url(), params))
+
+
+@oauth_public_router.get("/gmail/oauth/callback")
+async def gmail_mailbox_oauth_callback(
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    error_description: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Google OAuth redirect target for Gmail mailbox connection."""
+    settings = get_settings()
+    flow, invite_request_id, tenant_id = _invite_context_from_state(state)
+    params: dict[str, str] = {}
+
+    def return_url() -> str:
+        return _oauth_return_url(
+            flow=flow,
+            invite_request_id=invite_request_id,
+            tenant_id=tenant_id,
+            settings=settings,
+        )
+
+    if error:
+        params["mailbox_oauth"] = "error"
+        params["message"] = (error_description or error)[:200]
+        return RedirectResponse(_append_query(return_url(), params))
+
+    if not code or not state:
+        params["mailbox_oauth"] = "error"
+        params["message"] = "Missing authorization code"
+        return RedirectResponse(_append_query(return_url(), params))
+
+    try:
+        mailbox, completed_flow = await complete_gmail_oauth_callback(
+            db, code=code, state=state
+        )
+        await db.commit()
+        params["mailbox_oauth"] = "success"
+        params["email"] = mailbox.email
+        if completed_flow == "invite":
+            flow = "invite"
+            _, invite_request_id, tenant_id = _invite_context_from_state(state)
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("gmail_mailbox_oauth_callback_failed", error=str(exc))
         params["mailbox_oauth"] = "error"
         params["message"] = _user_facing_oauth_error(exc, flow=flow)
 
@@ -457,7 +553,7 @@ async def start_mailbox_backfill(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[MailboxBackfillQueuedResponse]:
-    """Queue historical import for messages with attachments in a date range."""
+    """Queue historical import for messages with attachments from a starting date through today."""
     from datetime import date as date_type
 
     settings = get_settings()

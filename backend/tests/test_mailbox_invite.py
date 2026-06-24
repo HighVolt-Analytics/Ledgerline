@@ -3,9 +3,9 @@
 import pytest
 
 from app.config import get_settings
-from app.services.mailbox_invite_service import create_invite_token
+from app.services.mailbox_invite_service import create_invite_token, parse_invite_token
 from app.services.mailbox_oauth_service import create_oauth_state
-from app.tenant_ids import parse_tenant_id
+from app.tenant_ids import TESTING_TENANT_UUID, parse_tenant_id
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +34,13 @@ def mock_invite_email(monkeypatch: pytest.MonkeyPatch) -> None:
         "app.services.mailbox_invite_service.send_invite_email",
         _ok,
     )
+
+
+def test_invite_token_uuid_roundtrip() -> None:
+    token = create_invite_token(request_id=42, tenant_id=TESTING_TENANT_UUID)
+    parsed = parse_invite_token(token)
+    assert parsed["request_id"] == 42
+    assert parsed["org_id"] == TESTING_TENANT_UUID
 
 
 async def _register_admin(client) -> str:
@@ -72,22 +79,39 @@ async def test_create_mailbox_invite(client, mock_invite_email) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_mailbox_invite_rejects_duplicate(client, mock_invite_email) -> None:
+async def test_create_mailbox_invite_resends_when_pending(client, mock_invite_email) -> None:
     token = await _register_admin(client)
-    payload = {"email": "dup@company.com"}
+    payload = {
+        "email": "dup@company.com",
+        "display_name": "First",
+        "message": "First message",
+    }
     first = await client.post(
         "/api/mailboxes/requests",
         headers={"Authorization": f"Bearer {token}"},
         json=payload,
     )
     assert first.status_code == 201
+    first_url = first.json()["data"]["connect_url"]
+    first_id = first.json()["data"]["id"]
+
     second = await client.post(
         "/api/mailboxes/requests",
         headers={"Authorization": f"Bearer {token}"},
-        json=payload,
+        json={
+            "email": "dup@company.com",
+            "display_name": "Updated",
+            "message": "Updated message",
+        },
     )
-    assert second.status_code == 422
-    assert "pending invitation" in second.json()["detail"].lower()
+    assert second.status_code == 201
+    body = second.json()["data"]
+    assert body["id"] == first_id
+    assert body["status"] == "pending"
+    assert body["email_sent"] is True
+    assert body["connect_url"] != first_url
+    assert body["display_name"] == "Updated"
+    assert body["message"] == "Updated message"
 
 
 @pytest.mark.asyncio
@@ -100,8 +124,7 @@ async def test_preview_and_authorize_invite(client, mock_invite_email) -> None:
     )
     assert create.status_code == 201
     request_id = create.json()["data"]["id"]
-    tenant_id = parse_tenant_id(create.json()["data"]["org_id"])
-    assert tenant_id is not None
+    tenant_id = create.json()["data"]["org_id"]
     invite_token = create_invite_token(request_id=request_id, tenant_id=tenant_id)
 
     preview = await client.get(
@@ -207,9 +230,7 @@ async def test_invite_oauth_error_redirects_to_connect_mailbox(
     )
     assert create.status_code == 201
     body = create.json()["data"]
-    tenant_id = parse_tenant_id(body["org_id"])
-    assert tenant_id is not None
-    state = create_oauth_state(tenant_id=tenant_id, invite_request_id=body["id"])
+    state = create_oauth_state(tenant_id=body["org_id"], invite_request_id=body["id"])
 
     res = await client.get(
         "/api/mailboxes/oauth/callback",

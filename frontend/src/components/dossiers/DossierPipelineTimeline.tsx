@@ -21,10 +21,10 @@ import {
 import { cn } from "@/lib/cn";
 
 function stageStatusLabel(state: DossierPipelineStep["state"]): string {
-  if (state === "pass") return "PASS";
-  if (state === "fail") return "FAIL";
-  if (state === "waived") return "WAIVED";
-  return "PENDING";
+  if (state === "pass") return "Complete";
+  if (state === "fail") return "Failed";
+  if (state === "waived") return "Skipped";
+  return "Waiting";
 }
 
 function stageStatusTone(state: DossierPipelineStep["state"]): string {
@@ -43,7 +43,11 @@ function checkStatusTone(state: DossierPipelineCheck["state"]): string {
 }
 
 function checkStatusLabel(state: DossierPipelineCheck["state"]): string {
-  return state.toUpperCase();
+  if (state === "pass") return "Pass";
+  if (state === "fail") return "Fail";
+  if (state === "waived") return "Skipped";
+  if (state === "skipped") return "Skipped";
+  return "Waiting";
 }
 
 function formatDuration(ms?: number): string | null {
@@ -287,21 +291,21 @@ export function DossierPipelineOverview({
       <div className="dossier-pipeline-overview__row">
         <div className="dossier-pipeline-overview__stats">
           <span className="dossier-pipeline-overview__stat dossier-pipeline-overview__stat--pass">
-            {counts.pass} pass
+            {counts.pass} complete
           </span>
           {counts.fail > 0 ? (
             <span className="dossier-pipeline-overview__stat dossier-pipeline-overview__stat--fail">
-              {counts.fail} fail
+              {counts.fail} failed
             </span>
           ) : null}
           {counts.waived > 0 ? (
             <span className="dossier-pipeline-overview__stat dossier-pipeline-overview__stat--waived">
-              {counts.waived} waived
+              {counts.waived} skipped
             </span>
           ) : null}
           {pending > 0 ? (
             <span className="dossier-pipeline-overview__stat dossier-pipeline-overview__stat--pending">
-              {pending} not run
+              {pending} waiting
             </span>
           ) : null}
         </div>

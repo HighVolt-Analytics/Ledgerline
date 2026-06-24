@@ -1,5 +1,6 @@
 import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { OnboardingGate } from "@/components/OnboardingGate";
 import { Layout } from "@/components/Layout";
 import { SuperAdminLayout } from "@/components/SuperAdminLayout";
 import { SuperAdminRoute } from "@/components/SuperAdminRoute";
@@ -10,6 +11,7 @@ import { getRouterBasename } from "@/lib/routerBasename";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
+import { OnboardingPage } from "@/pages/OnboardingPage";
 import { SetupPage } from "@/pages/SetupPage";
 
 const ApprovalsPage = lazy(() =>
@@ -113,6 +115,8 @@ export default function App() {
         {/* Tenant app — hidden from super admins */}
         <Route path="/" element={<ProtectedRoute />}>
           <Route element={<TenantRoute />}>
+            <Route path="onboarding" element={<OnboardingPage />} />
+            <Route element={<OnboardingGate />}>
             <Route element={<Layout />}>
             <Route index element={<DashboardPage />} />
             <Route path="inbox" element={<Navigate to="/upload" replace />} />
@@ -276,6 +280,7 @@ export default function App() {
                 </LazyPage>
               }
             />
+          </Route>
           </Route>
           </Route>
         </Route>

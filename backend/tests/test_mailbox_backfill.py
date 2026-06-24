@@ -87,3 +87,56 @@ async def test_start_backfill_api(client, db_session) -> None:
     )
     assert status.status_code == 200
     assert status.json()["data"]["id"] == body["job"]["id"]
+
+
+@pytest.mark.asyncio
+async def test_start_backfill_from_date_only_defaults_to_today(client, db_session) -> None:
+    from app.models.connected_mailbox import ConnectedMailbox
+
+    reg = await client.post(
+        "/api/auth/register",
+        json={
+            "email": "backfill-start@example.com",
+            "password": "securepass1",
+            "full_name": "Backfill Start User",
+            "tenant_name": "Backfill Start Org",
+            "tenant_slug": "backfill-start-org",
+        },
+    )
+    assert reg.status_code == 201
+    reg_body = reg.json()["data"]
+    token = reg_body["access_token"]
+    tenant_id = reg_body["user"]["org_id"]
+
+    mb = ConnectedMailbox(
+        tenant_id=tenant_id,
+        email="start@company.com",
+        display_name="Start Inbox",
+        is_active=True,
+        auth_type="delegated",
+        connection_status="connected",
+        refresh_token_encrypted="enc",
+    )
+    db_session.add(mb)
+    await db_session.flush()
+
+    from_day = date.today() - timedelta(days=14)
+
+    with patch(
+        "app.workers.tasks.mailbox_backfill_task.delay",
+        side_effect=RuntimeError("no celery"),
+    ):
+        res = await client.post(
+            f"/api/mailboxes/{mb.id}/backfill",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "from_date": from_day.isoformat(),
+                "mark_processed": True,
+            },
+        )
+
+    assert res.status_code == 202
+    job = res.json()["data"]["job"]
+    assert job["from_date"] == from_day.isoformat()
+    assert job["to_date"] == date.today().isoformat()
+    assert job["mark_processed"] is True

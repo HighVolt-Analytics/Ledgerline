@@ -33,6 +33,18 @@ def _empty_classifier_root() -> dict[str, Any]:
     return {"type": "group", "operator": "AND", "children": []}
 
 
+class DocumentTypeSampleAnalysis(BaseModel):
+    """Record that sample files were analyzed in the Rule Book editor (metadata only)."""
+
+    analyzed_at: str = Field(alias="analyzedAt")
+    filenames: list[str] = Field(default_factory=list)
+    file_count: int = Field(default=0, ge=0, alias="fileCount")
+    applied_at: str | None = Field(default=None, alias="appliedAt")
+    recognition_signals: list[str] = Field(default_factory=list, alias="recognitionSignals")
+
+    model_config = {"populate_by_name": True}
+
+
 class DocumentTypeClassifier(BaseModel):
     """User-defined conditions that classify documents to this DT code."""
 
@@ -102,6 +114,10 @@ class DocumentTypeDefinition(BaseModel):
     bundle_mandatory: list[str] = Field(default_factory=list, alias="bundleMandatory")
     bundle_conditional: list[str] = Field(default_factory=list, alias="bundleConditional")
     purchase_bundle_role: PurchaseBundleRole = Field(default="", alias="purchaseBundleRole")
+    sample_analysis: DocumentTypeSampleAnalysis | None = Field(
+        default=None,
+        alias="sampleAnalysis",
+    )
 
     model_config = {"populate_by_name": True}
 

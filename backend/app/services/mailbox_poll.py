@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.tenant import Tenant
-from app.services.email_ingestion import poll_inbox
+from app.services.mailbox_inbox_poll import poll_connected_mailbox
 from app.services.mailbox_oauth_service import resolve_mailbox_access_token
 from app.services.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.pipeline import EmailIngestResult, ingest_email_attachments
@@ -52,7 +52,11 @@ async def poll_all_and_ingest(
             logger.warning("poll_mailbox_token_failed", mailbox=mb.email, error=str(exc))
             continue
 
-        emails = poll_inbox(mb.email, access_token=access_token)
+        emails = poll_connected_mailbox(
+            mb.email,
+            access_token=access_token,
+            mail_provider=mb.mail_provider,
+        )
         result = await ingest_email_attachments(
             session,
             emails,
@@ -79,14 +83,18 @@ async def poll_mailbox_and_ingest(
     if not mb or mb.tenant_id != tenant_id or not mb.is_active:
         raise ValueError("Mailbox not found or inactive")
     if not mb.is_pollable:
-        raise ValueError("Mailbox is not connected — sign in with Microsoft to authorize access")
+        raise ValueError("Mailbox is not connected — complete OAuth to authorize access")
 
     org = await session.get(Tenant, mb.tenant_id)
     if not org:
         raise ValueError("Tenant not found")
 
     access_token = await resolve_mailbox_access_token(session, mb)
-    emails = poll_inbox(mb.email, access_token=access_token)
+    emails = poll_connected_mailbox(
+        mb.email,
+        access_token=access_token,
+        mail_provider=mb.mail_provider,
+    )
     result = await ingest_email_attachments(
         session,
         emails,

@@ -48,6 +48,7 @@ class AuthContext:
     tenant_slug: str
     email: str
     role: str
+    is_support_session: bool = False
 
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
@@ -110,6 +111,7 @@ async def _context_from_token(
         tenant_slug=tenant_slug,
         email=str(payload.get("email", "")),
         role=role,
+        is_support_session=bool(payload.get("is_support_session")),
     )
 
 

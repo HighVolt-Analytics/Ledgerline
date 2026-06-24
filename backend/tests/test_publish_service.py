@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
-from app.services.billing_io import load_billing_for_org
+from app.services.billing_io import load_billing_for_tenant, save_billing_for_tenant
 from app.services.publish_service import (
     PUBLISH_CREDIT_COST,
     InsufficientCreditsError,
@@ -132,6 +132,53 @@ async def test_publish_is_idempotent(db_session: AsyncSession, tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_reprocess_invalidates_stale_publish_flag(
+    db_session: AsyncSession,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    from app.config import get_settings
+    from app.services.audit_service import log_event
+
+    get_settings.cache_clear()
+
+    inv = Invoice(
+        tenant_id=1,
+        vendor="Acme",
+        invoice_date=date(2026, 6, 4),
+        total=Decimal("75.00"),
+        status=InvoiceStatus.PROCESSED,
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        JournalEntry(
+            invoice_id=inv.id,
+            date=date(2026, 6, 4),
+            account_code="6100",
+            account_name="Office Expenses",
+            debit=Decimal("75.00"),
+            credit=Decimal("0"),
+            entry_type=EntryType.DEBIT,
+        )
+    )
+    await db_session.commit()
+
+    assert await publish_invoice_to_ledger(db_session, inv) is True
+    await db_session.commit()
+    assert await is_published_to_ledger(db_session, inv.id) is True
+
+    await log_event(db_session, "invoice_processed", invoice_id=inv.id, detail={"status": "processed"})
+    await db_session.commit()
+
+    assert await is_published_to_ledger(db_session, inv.id) is False
+    assert await publish_invoice_to_ledger(db_session, inv) is True
+    await db_session.commit()
+    assert await is_published_to_ledger(db_session, inv.id) is True
+
+
+@pytest.mark.asyncio
 async def test_manual_publish_fails_without_credits(
     db_session: AsyncSession,
     tmp_path,
@@ -139,7 +186,6 @@ async def test_manual_publish_fails_without_credits(
 ) -> None:
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     from app.config import get_settings
-    from app.services.billing_io import save_billing_for_org
 
     get_settings.cache_clear()
     state = load_billing_for_tenant(1)

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
+import uuid
 
 import httpx
 import jwt
@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.models.connected_mailbox import (
     AUTH_APPLICATION,
     AUTH_DELEGATED,
+    MAIL_PROVIDER_MICROSOFT,
     STATUS_CONNECTED,
     STATUS_DISCONNECTED,
     STATUS_ERROR,
@@ -50,21 +51,34 @@ def oauth_configured() -> bool:
     )
 
 
-def _authority() -> str:
-    return f"https://login.microsoftonline.com/{get_settings().azure_tenant_id}"
+def _oauth_multi_tenant() -> bool:
+    return get_settings().graph_oauth_multi_tenant
+
+
+def _authority(*, multi_tenant: bool | None = None) -> str:
+    if multi_tenant if multi_tenant is not None else _oauth_multi_tenant():
+        return "https://login.microsoftonline.com/common"
+    tenant = get_settings().azure_tenant_id.strip()
+    if not tenant:
+        raise RuntimeError("Microsoft OAuth is not configured")
+    return f"https://login.microsoftonline.com/{tenant}"
 
 
 def create_oauth_state(
     *,
-    tenant_id: uuid.UUID,
+    tenant_id: uuid.UUID | str | int,
     user_id: int | None = None,
     invite_request_id: int | None = None,
 ) -> str:
+    org_id = parse_tenant_id(tenant_id)
+    if org_id is None:
+        raise ValueError("Invalid tenant id")
     expire = datetime.now(timezone.utc) + timedelta(minutes=STATE_TTL_MINUTES)
     payload: dict[str, Any] = {
         "typ": STATE_TYP,
-        "org_id": str(tenant_id),
+        "org_id": str(org_id),
         "exp": expire,
+        "provider": MAIL_PROVIDER_MICROSOFT,
     }
     if invite_request_id is not None:
         payload["invite_request_id"] = invite_request_id
@@ -84,14 +98,14 @@ def parse_oauth_state(state: str) -> dict[str, Any]:
     return payload
 
 
-def build_authorize_url(*, tenant_id: uuid.UUID, user_id: int) -> str:
+def build_authorize_url(*, tenant_id: uuid.UUID | str | int, user_id: int) -> str:
     return _build_authorize_url(
         tenant_id=tenant_id,
         state=create_oauth_state(tenant_id=tenant_id, user_id=user_id),
     )
 
 
-def build_invite_authorize_url(*, tenant_id: uuid.UUID, invite_request_id: int) -> str:
+def build_invite_authorize_url(*, tenant_id: uuid.UUID | str | int, invite_request_id: int) -> str:
     return _build_authorize_url(
         tenant_id=tenant_id,
         state=create_oauth_state(tenant_id=tenant_id, invite_request_id=invite_request_id),
@@ -110,10 +124,10 @@ def build_admin_consent_url() -> str:
     redirect = settings.graph_oauth_redirect_uri.strip()
     if redirect:
         params["redirect_uri"] = redirect
-    return f"{_authority()}/v2.0/adminconsent?{urlencode(params)}"
+    return f"{_authority(multi_tenant=False)}/v2.0/adminconsent?{urlencode(params)}"
 
 
-def _build_authorize_url(*, tenant_id: uuid.UUID, state: str) -> str:
+def _build_authorize_url(*, tenant_id: int, state: str, multi_tenant: bool | None = None) -> str:
     settings = get_settings()
     if not oauth_configured():
         raise RuntimeError("Microsoft OAuth is not configured")
@@ -129,7 +143,7 @@ def _build_authorize_url(*, tenant_id: uuid.UUID, state: str) -> str:
         # re-triggering the "Need admin approval" wall that prompt=consent can show.
         "prompt": "select_account",
     }
-    return f"{_authority()}/oauth2/v2.0/authorize?{urlencode(params)}"
+    return f"{_authority(multi_tenant=multi_tenant)}/oauth2/v2.0/authorize?{urlencode(params)}"
 
 
 def _token_endpoint() -> str:
@@ -197,6 +211,7 @@ def _apply_token_response(mailbox: ConnectedMailbox, token_data: dict[str, Any])
     mailbox.connection_status = STATUS_CONNECTED
     mailbox.last_error = None
     mailbox.auth_type = AUTH_DELEGATED
+    mailbox.mail_provider = MAIL_PROVIDER_MICROSOFT
 
 
 async def complete_oauth_callback(
@@ -273,6 +288,7 @@ async def complete_oauth_callback(
             email=email,
             display_name=display_name,
             is_active=True,
+            mail_provider=MAIL_PROVIDER_MICROSOFT,
         )
         session.add(mailbox)
 
@@ -335,6 +351,8 @@ async def resolve_mailbox_access_token(
     mailbox: ConnectedMailbox,
 ) -> str:
     """Delegated token for OAuth mailboxes; application token for service mailboxes."""
+    from app.models.connected_mailbox import MAIL_PROVIDER_GOOGLE
+    from app.services.gmail_oauth_service import resolve_gmail_access_token
     from app.services.graph_client import get_application_access_token
 
     if mailbox.auth_type == AUTH_DELEGATED:
@@ -347,7 +365,10 @@ async def resolve_mailbox_access_token(
                     .with_for_update()
                 )
             ).scalar_one()
-            token = await resolve_delegated_access_token(row)
+            if row.mail_provider == MAIL_PROVIDER_GOOGLE:
+                token = await resolve_gmail_access_token(row)
+            else:
+                token = await resolve_delegated_access_token(row)
             await session.flush()
             return token
         except Exception as exc:

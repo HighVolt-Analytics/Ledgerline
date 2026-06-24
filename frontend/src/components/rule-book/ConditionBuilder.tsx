@@ -194,12 +194,25 @@ function GroupEditor({
         <span className="text-xs text-muted-foreground">
           {group.operator === "AND" ? "all conditions must match" : "any condition matches"}
         </span>
+        {!readOnly && path.length > 0 ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+            onClick={() => setRoot(removeAtPath(root, path))}
+            aria-label="Remove group"
+            data-testid={`group-delete-${pathKey}`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
       </div>
 
       <div className="space-y-2 pl-3 border-l-2 border-border/60 overflow-x-auto">
         {group.children.length === 0 && (
           <p className="text-xs text-muted-foreground italic py-1">
-            No conditions yet — add one below.
+            No conditions yet - add one below.
           </p>
         )}
         {group.children.map((child, idx) => {

@@ -18,37 +18,16 @@ import {
 
 import { getDocumentTypeTemplate, type DocumentTypeTemplateId } from "@/lib/documentTypeTemplates";
 
-import {
-
-  approvalModeLabel,
-
-  matchModeLabel,
-
-  playbookProfileLabel,
-
-  type ApprovalMode,
-
-  type MatchMode,
-
-  type PlaybookProfile,
-
-} from "@/lib/documentPlaybookConfig";
-
-import {
-
-  normalizeValidationRules,
-
-  validationCheckLabel,
-
-  type ValidationRuleConfig,
-
-} from "@/lib/documentValidationChecks";
-
 import { normalizeExtractionFieldKeys, extractionFieldLabel } from "@/lib/documentExtractionFields";
 
-import type { DocumentTypeClass, DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import type { ApprovalMode, MatchMode } from "@/lib/documentPlaybookConfig";
 
-import { api } from "@/api/client";
+import type {
+  DocumentTypeDefinition,
+  DocumentTypeSampleAnalysis,
+} from "@/lib/v5DocumentTypes";
+
+import { api, ApiError } from "@/api/client";
 
 
 
@@ -182,6 +161,10 @@ const RECOGNITION_SIGNALS = new Set<string>([
 
   "heading_invoice",
 
+  "text_invoice",
+
+  "filename_invoice",
+
   "text_credit_note",
 
   "filename_credit_note",
@@ -266,29 +249,39 @@ const RECOGNITION_SIGNALS = new Set<string>([
 
 
 
-function normalizeSignals(values: string[]): RecognitionSignalId[] {
-
-  return values.filter((id): id is RecognitionSignalId => RECOGNITION_SIGNALS.has(id));
-
+export function buildSampleAnalysisRecord(
+  filenames: string[],
+  proposal: DocumentTypeSampleProposal
+): DocumentTypeSampleAnalysis {
+  return {
+    analyzedAt: new Date().toISOString(),
+    filenames,
+    fileCount: filenames.length,
+    recognitionSignals: proposal.recognition_signals ?? [],
+  };
 }
 
 
 
-function mapValidationRules(rules: ValidationRuleProposal[]): ValidationRuleConfig[] {
+export function markSampleAnalysisApplied(
+  record: DocumentTypeSampleAnalysis
+): DocumentTypeSampleAnalysis {
+  return { ...record, appliedAt: new Date().toISOString() };
+}
 
-  return normalizeValidationRules(
 
-    rules.map((row) => ({
 
-      code: row.code,
+export function formatSampleAnalysisWhen(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
 
-      enabled: row.enabled,
 
-      severity: row.severity,
 
-    }))
+function normalizeSignals(values: string[]): RecognitionSignalId[] {
 
-  );
+  return values.filter((id): id is RecognitionSignalId => RECOGNITION_SIGNALS.has(id));
 
 }
 
@@ -340,18 +333,6 @@ export function mergeSampleProposalIntoDraft(
 
 
 
-  const playbookProfile = (proposal.playbook_profile || draft.playbookProfile) as PlaybookProfile;
-
-  const validationRules =
-
-    proposal.validation_rules.length > 0
-
-      ? mapValidationRules(proposal.validation_rules)
-
-      : draft.validationRules;
-
-
-
   return {
 
     ...draft,
@@ -372,51 +353,11 @@ export function mergeSampleProposalIntoDraft(
 
         : draft.shortTitle,
 
-    oneLine: proposal.one_line.trim() || draft.oneLine,
-
-    klass: (proposal.klass || draft.klass) as DocumentTypeClass,
-
-    posting: proposal.posting || draft.posting,
-
-    routeTarget: proposal.route_target || draft.routeTarget,
-
     extractionFields: normalizeExtractionFieldKeys(proposal.extraction_fields),
 
     requiredFields: normalizeExtractionFieldKeys(proposal.required_fields),
 
     absentFields: normalizeExtractionFieldKeys(proposal.absent_fields),
-
-    playbookProfile,
-
-    matchPolicy: { mode: proposal.match_mode || draft.matchPolicy?.mode || "none" },
-
-    approvalPolicy: {
-
-      mode: proposal.approval_mode || draft.approvalPolicy?.mode || "touchless_on_clean_match",
-
-    },
-
-    purchaseBundleRole: (proposal.purchase_bundle_role ||
-
-      draft.purchaseBundleRole) as DocumentTypeDefinition["purchaseBundleRole"],
-
-    validationProfile: proposal.validation_profile || draft.validationProfile,
-
-    validationRules,
-
-    bundleMandatory: proposal.bundle_mandatory.length
-
-      ? [...proposal.bundle_mandatory]
-
-      : draft.bundleMandatory,
-
-    bundleConditional: proposal.bundle_conditional.length
-
-      ? [...proposal.bundle_conditional]
-
-      : draft.bundleConditional,
-
-    minRouteConfidence: proposal.min_route_confidence ?? draft.minRouteConfidence,
 
     classifier: {
 
@@ -424,9 +365,16 @@ export function mergeSampleProposalIntoDraft(
 
       enabled: signalIds.length > 0 ? true : classifier.enabled,
 
+      confidence: signalIds.length > 0 ? 0.8 : classifier.confidence,
+
     },
 
     classifierCustomized: false,
+
+    minRouteConfidence:
+      signalIds.length > 0
+        ? Math.min(draft.minRouteConfidence, 0.55)
+        : draft.minRouteConfidence,
 
   };
 
@@ -441,16 +389,6 @@ export function formatProposalSummary(proposal: DocumentTypeSampleProposal): Arr
   value: string;
 
 }> {
-
-  const enabledChecks = proposal.validation_rules
-
-    .filter((row) => row.enabled)
-
-    .map((row) => validationCheckLabel(row.code))
-
-    .join(", ");
-
-
 
   return [
 
@@ -502,70 +440,6 @@ export function formatProposalSummary(proposal: DocumentTypeSampleProposal): Arr
 
     },
 
-    { label: "Summary", value: proposal.one_line || "—" },
-
-    { label: "Class", value: proposal.klass },
-
-    { label: "Posting", value: proposal.posting },
-
-    { label: "Route", value: proposal.route_target },
-
-    {
-
-      label: "Playbook",
-
-      value: playbookProfileLabel(proposal.playbook_profile as PlaybookProfile),
-
-    },
-
-    {
-
-      label: "Match",
-
-      value: matchModeLabel(proposal.match_mode),
-
-    },
-
-    {
-
-      label: "Approval",
-
-      value: approvalModeLabel(proposal.approval_mode),
-
-    },
-
-    {
-
-      label: "Bundle required",
-
-      value: proposal.bundle_mandatory.length ? proposal.bundle_mandatory.join(", ") : "None",
-
-    },
-
-    {
-
-      label: "Bundle advisory",
-
-      value: proposal.bundle_conditional.length ? proposal.bundle_conditional.join(", ") : "None",
-
-    },
-
-    {
-
-      label: "Validation checks",
-
-      value: enabledChecks || "None",
-
-    },
-
-    {
-
-      label: "Min route confidence",
-
-      value: `${Math.round(proposal.min_route_confidence * 100)}%`,
-
-    },
-
   ];
 
 }
@@ -602,8 +476,46 @@ export async function analyzeDocumentTypeSamples(
 
   }
 
-  return api.analyzeDocumentTypeSamples(fd);
-
+  return api.analyzeDocumentTypeSamples(fd, {
+    timeoutMs: Math.min(600_000, 90_000 + files.length * 60_000),
+  });
 }
 
+
+
+export function analyzeSamplesErrorMessage(err: unknown): string {
+
+  if (err instanceof ApiError) {
+
+    if (err.status === 403) {
+
+      return "You need the Edit Policy permission to analyze samples.";
+
+    }
+
+    if (err.status === 408) {
+
+      return err.message;
+
+    }
+
+    if (err.status === 413) {
+
+      return "One or more files are too large (max 25 MB each).";
+
+    }
+
+    return err.message;
+
+  }
+
+  if (err instanceof TypeError && /fetch|network/i.test(String(err.message))) {
+
+    return "Network error — check the API is running and try fewer files.";
+
+  }
+
+  return err instanceof Error ? err.message : "Analysis failed";
+
+}
 

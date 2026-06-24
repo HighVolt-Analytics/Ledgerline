@@ -17,14 +17,44 @@ from app.services.audit_export_service import (
     PurchaseVaultLinks,
     audit_rows_to_csv,
     dedupe_high_churn_audit_rows,
+    excel_hyperlink,
+    excel_hyperlinks_joined,
+    fetch_linked_docs_for_invoices,
     flatten_audit_detail,
     format_audit_timestamp,
+    format_linked_docs_export,
     purchase_vault_links_for_po,
     vault_view_path,
 )
 from app.services.public_app_url import resolve_public_app_base_url
 from app.services.audit_change_summary import summarize_audit_change
 from app.services.audit_detail_helpers import truncate_audit_error
+
+
+def assert_csv_hyperlink(cell: str, *, url: str, label: str | None = None) -> None:
+    assert cell.startswith("=HYPERLINK("), cell
+    assert url in cell
+    if label is not None:
+        assert label in cell
+
+
+def test_excel_hyperlink_wraps_url_with_label() -> None:
+    cell = excel_hyperlink("https://app.example/vault?invoice=9", "Open invoice")
+    assert_csv_hyperlink(cell, url="https://app.example/vault?invoice=9", label="Open invoice")
+
+
+def test_excel_hyperlinks_joined_stacks_multiple_links() -> None:
+    cell = excel_hyperlinks_joined(
+        [
+            ("https://app.example/vault?invoice=1", "DT-26:DOC-1"),
+            ("https://app.example/vault?invoice=2", "DT-03:DOC-2"),
+        ]
+    )
+    assert cell.startswith("=")
+    assert "HYPERLINK(" in cell
+    assert "CHAR(10)" in cell
+    assert "DT-26:DOC-1" in cell
+    assert "DT-03:DOC-2" in cell
 
 
 def test_format_audit_timestamp_utc() -> None:
@@ -85,6 +115,7 @@ def test_audit_rows_to_csv_column_order_and_flattening() -> None:
         "po_vault_url",
         "grn_vault_url",
         "invoice_vault_url",
+        "linked_docs",
         "invoice_no",
         "route_target",
         "document_status",
@@ -105,17 +136,18 @@ def test_audit_rows_to_csv_column_order_and_flattening() -> None:
     assert data[1] == "10 Jun 2026, 11:38 UTC"
     assert data[2] == "mapping_applied"
     assert data[3] == "7"
-    assert data[4] == vault_view_path(7)
+    assert_csv_hyperlink(data[4], url=vault_view_path(7), label="View in Vault")
     assert data[5] == ""
     assert data[6] == ""
     assert data[7] == ""
-    assert data[12] == "corr-abc"
-    assert data[13] == "Telstra"
-    assert data[15] == "99"
-    assert data[17] == "Telecom"
-    assert data[20] == "System"
-    assert data[21] == "system@org.test"
-    assert data[22] == "Mapped to Telecom"
+    assert data[8] == ""
+    assert data[13] == "corr-abc"
+    assert data[14] == "Telstra"
+    assert data[16] == "99"
+    assert data[18] == "Telecom"
+    assert data[21] == "System"
+    assert data[22] == "system@org.test"
+    assert data[23] == "Mapped to Telecom"
 
 
 def test_reconciliation_skipped_clears_hold_reason() -> None:
@@ -165,12 +197,13 @@ def test_purchase_sync_enriches_vendor_and_amount_from_invoice() -> None:
     reader = csv.reader(io.StringIO(csv_text))
     next(reader)
     data = next(reader)
-    assert data[5] == vault_view_path(10)
-    assert data[6] == vault_view_path(11)
-    assert data[7] == vault_view_path(9)
-    assert data[13] == "Sysco Australia"
-    assert data[15] == "1420.00"
-    assert data[22] == "PO-MKT-2026-014 invoice linked"
+    assert_csv_hyperlink(data[5], url=vault_view_path(10), label="Open PO")
+    assert_csv_hyperlink(data[6], url=vault_view_path(11), label="Open GRN")
+    assert_csv_hyperlink(data[7], url=vault_view_path(9), label="Open invoice")
+    assert data[8] == ""
+    assert data[14] == "Sysco Australia"
+    assert data[16] == "1420.00"
+    assert data[23] == "PO-MKT-2026-014 invoice linked"
 
 
 def test_vault_view_path_full_url_from_public_app_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -373,9 +406,23 @@ def test_three_way_match_csv_includes_all_vault_urls() -> None:
     header = next(reader)
     data = next(reader)
     assert header.index("po_vault_url") == 5
-    assert data[header.index("po_vault_url")] == vault_view_path(10)
-    assert data[header.index("grn_vault_url")] == vault_view_path(20)
-    assert data[header.index("invoice_vault_url")] == vault_view_path(30)
+    assert header.index("linked_docs") == 8
+    assert_csv_hyperlink(
+        data[header.index("po_vault_url")],
+        url=vault_view_path(10),
+        label="Open PO",
+    )
+    assert_csv_hyperlink(
+        data[header.index("grn_vault_url")],
+        url=vault_view_path(20),
+        label="Open GRN",
+    )
+    assert_csv_hyperlink(
+        data[header.index("invoice_vault_url")],
+        url=vault_view_path(30),
+        label="Open invoice",
+    )
+    assert data[header.index("linked_docs")] == ""
     assert "PO-MKT-2026-014" in data[header.index("change_summary")]
 
 
@@ -404,9 +451,11 @@ def test_parse_completed_summary() -> None:
 
 @pytest.mark.asyncio
 async def test_audit_export_csv(client: AsyncClient, db_session: AsyncSession) -> None:
+    from app.tenant_ids import TESTING_TENANT_UUID
+
     db_session.add(
         AuditLog(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             event="invoice_processed",
             invoice_id=None,
             detail={"actor_name": "Auditor"},
@@ -423,6 +472,66 @@ async def test_audit_export_csv(client: AsyncClient, db_session: AsyncSession) -
     assert "po_vault_url" in header
     assert "grn_vault_url" in header
     assert "invoice_vault_url" in header
+    assert "linked_docs" in header
     assert header.endswith("change_summary")
     assert "invoice_processed" in body
     assert "Auditor" in body
+
+
+@pytest.mark.asyncio
+async def test_audit_export_linked_docs_column(db_session: AsyncSession) -> None:
+    from app.services.dossier_linked_documents_service import build_dossier_linked_documents
+    from tests.conftest import TESTING_TENANT_UUID
+
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Importer",
+        status=InvoiceStatus.MAPPING,
+        document_type_code="DT-01",
+        invoice_no="260671582",
+        file_hash="audit-export-anchor",
+    )
+    coo = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Carrier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-26",
+        invoice_no="260671582",
+        file_hash="audit-export-coo",
+    )
+    db_session.add_all([anchor, coo])
+    await db_session.flush()
+
+    linked = await build_dossier_linked_documents(
+        db_session,
+        anchor,
+        definition=None,
+        document_types=[],
+    )
+    export_value = format_linked_docs_export(anchor.id, linked)
+    assert "DT-26" in export_value
+    assert_csv_hyperlink(export_value, url=vault_view_path(coo.id), label="DT-26")
+
+    linked_map = await fetch_linked_docs_for_invoices(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_map={anchor.id: anchor},
+    )
+    assert linked_map[anchor.id] == export_value
+
+    row = AuditLog(
+        id=99,
+        tenant_id=TESTING_TENANT_UUID,
+        event="validation_passed",
+        invoice_id=anchor.id,
+    )
+    csv_text = audit_rows_to_csv(
+        [row],
+        invoice_map={anchor.id: anchor},
+        linked_docs_by_invoice=linked_map,
+    )
+    reader = csv.reader(io.StringIO(csv_text))
+    header = next(reader)
+    data = next(reader)
+    assert data[header.index("linked_docs")] == export_value
+    assert_csv_hyperlink(data[header.index("linked_docs")], url=vault_view_path(coo.id))

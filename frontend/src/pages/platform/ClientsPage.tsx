@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
 import { api } from "@/api/client";
 import type { PlatformTenantSummary } from "@/api/types";
-import { CreateTenantDialog } from "@/components/platform/CreateTenantDialog";
+import { CreateTenantWizard } from "@/components/platform/CreateTenantWizard";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -98,7 +98,8 @@ export function ClientsPage() {
                 <th className="text-left font-medium px-4 py-3 hidden sm:table-cell">Slug</th>
                 <th className="text-left font-medium px-4 py-3">Status</th>
                 <th className="text-right font-medium px-4 py-3 hidden md:table-cell">Users</th>
-                <th className="text-right font-medium px-4 py-3 hidden md:table-cell">Invoices</th>
+                <th className="text-right font-medium px-4 py-3 hidden md:table-cell">Pending</th>
+                <th className="text-right font-medium px-4 py-3 hidden lg:table-cell">Invoices</th>
                 <th className="text-right font-medium px-4 py-3 hidden lg:table-cell">Credits</th>
               </tr>
             </thead>
@@ -135,6 +136,9 @@ export function ClientsPage() {
                     {tenant.user_count}
                   </td>
                   <td className="px-4 py-3 text-right tnum hidden md:table-cell">
+                    {tenant.pending_invite_count}
+                  </td>
+                  <td className="px-4 py-3 text-right tnum hidden lg:table-cell">
                     {tenant.invoice_count}
                   </td>
                   <td className="px-4 py-3 text-right tnum hidden lg:table-cell">
@@ -147,7 +151,7 @@ export function ClientsPage() {
         </div>
       )}
 
-      <CreateTenantDialog
+      <CreateTenantWizard
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={(tenantId) => {

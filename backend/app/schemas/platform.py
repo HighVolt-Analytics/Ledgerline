@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class PlatformTenantModule(BaseModel):
@@ -20,6 +20,7 @@ class PlatformTenantSummary(BaseModel):
     lifecycle_status: str
     created_at: datetime | None = None
     user_count: int = 0
+    pending_invite_count: int = 0
     invoice_count: int = 0
     credit_balance: int = 0
 
@@ -32,6 +33,24 @@ class PlatformTenantDetail(PlatformTenantSummary):
 class CreatePlatformTenantRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9-]+$")
+    country: str = Field(default="AU", min_length=2, max_length=2)
+    industry: str | None = Field(default=None, max_length=100)
+    first_admin_email: EmailStr
+    first_admin_name: str = Field(min_length=1, max_length=255)
+
+
+class PlatformInviteAdminRequest(BaseModel):
+    email: EmailStr
+    full_name: str = Field(min_length=1, max_length=255)
+
+
+class PlatformInviteAdminResponse(BaseModel):
+    invite_id: int
+    email: str
+    accept_url: str
+    expires_at: datetime
+    email_sent: bool = False
+    email_error: str | None = None
 
 
 class UpdatePlatformTenantRequest(BaseModel):

@@ -34,6 +34,10 @@ export function TenantSettingsPage() {
   const [confirmSlug, setConfirmSlug] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [inviteSent, setInviteSent] = useState(false);
 
   const [name, setName] = useState("");
   const [lifecycleStatus, setLifecycleStatus] = useState("active");
@@ -54,6 +58,10 @@ export function TenantSettingsPage() {
         setModules(
           Object.fromEntries(data.modules.map((m) => [m.module_key, m.is_active]))
         );
+        const onboardingDone = Boolean(data.settings_json?.onboarding_completed);
+        if (!onboardingDone && data.user_count === 0 && data.pending_invite_count > 0) {
+          setInviteSent(true);
+        }
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load tenant"))
       .finally(() => setLoading(false));
@@ -95,6 +103,29 @@ export function TenantSettingsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete tenant");
       setDeleting(false);
+    }
+  }
+
+  async function handleInviteAdmin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!tenant) return;
+    if (!inviteEmail.trim() || !inviteName.trim()) {
+      setError("Admin name and email are required.");
+      return;
+    }
+    setInviting(true);
+    setError(null);
+    try {
+      await api.invitePlatformTenantAdmin(tenant.id, {
+        email: inviteEmail.trim(),
+        full_name: inviteName.trim(),
+      });
+      setInviteSent(true);
+      loadTenant();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send invite");
+    } finally {
+      setInviting(false);
     }
   }
 
@@ -233,10 +264,14 @@ export function TenantSettingsPage() {
 
         <Card className="p-5 space-y-4">
           <h2 className="text-sm font-semibold">Usage</h2>
-          <dl className="grid sm:grid-cols-3 gap-4 text-sm">
+          <dl className="grid sm:grid-cols-4 gap-4 text-sm">
             <div>
               <dt className="text-muted-foreground">Users</dt>
               <dd className="text-lg font-semibold tnum">{tenant.user_count}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Pending invites</dt>
+              <dd className="text-lg font-semibold tnum">{tenant.pending_invite_count}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Invoices</dt>
@@ -255,6 +290,54 @@ export function TenantSettingsPage() {
             </p>
           )}
         </Card>
+
+        {(tenant.user_count === 0 || tenant.pending_invite_count > 0) && (
+          <Card className="p-5 space-y-4">
+            <h2 className="text-sm font-semibold">Client onboarding</h2>
+            <p className="text-xs text-muted-foreground">
+              The first client administrator must accept their invite and complete onboarding in
+              the tenant app. Super admins should not complete setup on the client&apos;s behalf.
+            </p>
+            {tenant.user_count === 0 && tenant.pending_invite_count > 0 && (
+              <Badge variant="outline" className="text-xs">
+                Waiting for first admin to accept invite ({tenant.pending_invite_count} pending)
+              </Badge>
+            )}
+            {tenant.user_count > 0 && tenant.settings_json?.onboarding_completed === false && (
+              <Badge variant="outline" className="text-xs">
+                First admin has not completed onboarding yet
+              </Badge>
+            )}
+            {tenant.user_count > 0 && tenant.settings_json?.onboarding_completed === true && (
+              <Badge variant="outline" className="text-xs text-[hsl(var(--chart-1))]">
+                Onboarding complete
+              </Badge>
+            )}
+            <form onSubmit={handleInviteAdmin} className="space-y-3 pt-1">
+              <p className="text-sm font-medium">
+                {inviteSent ? "Resend or invite another admin" : "Invite first admin"}
+              </p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <Input
+                  value={inviteName}
+                  onChange={(e) => setInviteName(e.target.value)}
+                  placeholder="Admin full name"
+                  required
+                />
+                <Input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="Admin email"
+                  required
+                />
+              </div>
+              <Button type="submit" size="sm" disabled={inviting}>
+                {inviting ? "Sending…" : inviteSent ? "Send invite" : "Invite admin"}
+              </Button>
+            </form>
+          </Card>
+        )}
 
         <Card className="p-5 space-y-4">
           <h2 className="text-sm font-semibold">Modules</h2>

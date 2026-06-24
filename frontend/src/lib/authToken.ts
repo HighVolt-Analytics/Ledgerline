@@ -13,6 +13,7 @@ type JwtPayload = {
   role?: string;
   exp?: number;
   type?: string;
+  is_support_session?: boolean;
 };
 
 export function decodeJwtPayload(token: string): JwtPayload | null {
@@ -61,5 +62,7 @@ export function userFromToken(token: string): AuthUser | null {
     tenant_slug: String(payload.tenant_slug ?? ""),
     tenant_timezone: DEFAULT_TENANT_TIMEZONE,
     tenant_locale: DEFAULT_TENANT_LOCALE,
+    is_support_session: Boolean(payload.is_support_session),
+    onboarding_completed: undefined,
   };
 }

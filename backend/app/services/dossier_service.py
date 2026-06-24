@@ -13,16 +13,18 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus
-from app.schemas.dossier import DossierSummaryResponse
+from app.schemas.dossier import DossierLinkedDocumentResponse, DossierLinkedDocumentsResponse, DossierSummaryResponse
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.document_ref_service import display_document_ref, dossier_public_id, parse_dossier_id_token
 from app.services.document_type_playbook_service import resolve_definition_for_invoice
 from app.services.dossier_approval_service import build_dossier_approval_chain
 from app.services.dossier_linked_documents_service import build_dossier_linked_documents
 from app.services.dossier_pipeline_service import build_dossier_pipeline, first_pipeline_failure
+from app.services.file_storage import has_stored_path
 from app.services.invoice_evaluation_service import load_posting_config_for_tenant
 from app.services.matrix_service import derive_matrix_payment_status
 from app.services.pipeline_stages import _actor_name, _latest_log, _source_label
+from app.services.publish_service import is_published_from_audit_logs
 from app.tenant_settings import tenant_today
 
 
@@ -126,12 +128,135 @@ def _derive_outcome(
     if (invoice.route_target or "").strip().lower() == "vault":
         if any(log.event == "vault_stored" for log in logs) or invoice.status == InvoiceStatus.PROCESSED:
             return "in_progress", "Stored in document vault"
+    doc_type = (invoice.purchase_document_type or "").strip().lower()
+    if doc_type in ("po", "grn") and invoice.status == InvoiceStatus.PROCESSED:
+        return "auto_posted", "Purchase document processed"
     if invoice.status == InvoiceStatus.PROCESSED:
         approved = any(log.event == "invoice_approved" for log in logs)
         if published:
             return ("manual_posted" if approved else "auto_posted"), "Posted to ledger"
         return "in_progress", "Processed — ready to publish"
     return "in_progress", "Processing"
+
+
+def _linked_doc_dt_label(code: str, document_types) -> str:
+    token = (code or "").strip().upper()
+    for row in document_types:
+        if row.code.upper() == token:
+            return row.short_title or row.title or token
+    return token or "Document"
+
+
+async def fetch_linked_invoices_by_invoice_no(
+    session: AsyncSession,
+    anchor: Invoice,
+) -> list[Invoice]:
+    """Sibling invoices sharing the same invoice_no as the anchor dossier."""
+    token = (anchor.invoice_no or "").strip()
+    if not token:
+        return []
+    rows = (
+        await session.execute(
+            select(Invoice)
+            .where(
+                Invoice.tenant_id == anchor.tenant_id,
+                Invoice.invoice_no == token,
+                Invoice.id != anchor.id,
+            )
+            .order_by(Invoice.id.asc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+def _linked_invoice_ids(response: DossierLinkedDocumentsResponse) -> set[int]:
+    ids: set[int] = set()
+    for doc in response.documents:
+        if doc.invoice_id is not None:
+            ids.add(doc.invoice_id)
+        if doc.manual_link is not None:
+            ids.add(doc.manual_link.invoice_id)
+    return ids
+
+
+def _invoice_no_linked_document(
+    row: Invoice,
+    *,
+    invoice_no: str,
+    document_types,
+) -> DossierLinkedDocumentResponse:
+    code = (row.document_type_code or "").strip().upper()
+    return DossierLinkedDocumentResponse(
+        id=f"invoice-no-{row.id}",
+        document_type_code=code,
+        label=_linked_doc_dt_label(code, document_types),
+        document_ref=display_document_ref(row),
+        invoice_no=(row.invoice_no or invoice_no).strip() or None,
+        present=True,
+        requirement="advisory",
+        linked_dossier_id=dossier_public_id(row),
+        invoice_id=row.id,
+        is_anchor=False,
+        has_file=has_stored_path(row.raw_file_path),
+        linkage_detail=f"Linked on invoice no {invoice_no}",
+        link_kind="invoice_no",
+    )
+
+
+async def append_invoice_no_linked_documents(
+    session: AsyncSession,
+    anchor: Invoice,
+    response: DossierLinkedDocumentsResponse,
+    *,
+    document_types=None,
+) -> DossierLinkedDocumentsResponse:
+    """
+    Append invoices that share anchor.invoice_no (additive; dedupe by invoice id).
+
+    Does not replace bundle / po_reference linked docs.
+    """
+    invoice_no = (anchor.invoice_no or "").strip()
+    if not invoice_no:
+        return response
+
+    if document_types is None:
+        document_types = (
+            await load_posting_config_for_tenant(session, anchor.tenant_id)
+        ).document_types
+
+    siblings = await fetch_linked_invoices_by_invoice_no(session, anchor)
+    if not siblings:
+        return response
+
+    seen = _linked_invoice_ids(response)
+    extra: list[DossierLinkedDocumentResponse] = []
+    for row in siblings:
+        if row.id in seen:
+            continue
+        extra.append(
+            _invoice_no_linked_document(
+                row,
+                invoice_no=invoice_no,
+                document_types=document_types,
+            )
+        )
+        seen.add(row.id)
+
+    if not extra:
+        return response
+
+    linkage_key = response.linkage_key or invoice_no
+    linkage_label = response.linkage_label
+    if response.linkage_kind == "standalone":
+        linkage_label = f"Invoice no {invoice_no}"
+
+    return response.model_copy(
+        update={
+            "linkage_key": linkage_key,
+            "linkage_label": linkage_label,
+            "documents": list(response.documents) + extra,
+        }
+    )
 
 
 async def build_dossier_summary(
@@ -149,7 +274,7 @@ async def build_dossier_summary(
     tenant = await session.get(Tenant, invoice.tenant_id)
     institution_today = tenant_today(tenant)
     definition = resolve_definition_for_invoice(invoice, config.document_types)
-    published = any(log.event == "invoice_published_to_ledger" for log in logs)
+    published = is_published_from_audit_logs(logs)
     pay_key, pay_detail = _payment_status_key(invoice, payment)
 
     pipeline = build_dossier_pipeline(

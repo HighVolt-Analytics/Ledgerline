@@ -36,6 +36,15 @@ export type DocumentTypeClassifier = {
   root: DocumentRuleConditionGroup;
 };
 
+/** Persisted metadata when sample files were analyzed in the Rule Book editor. */
+export type DocumentTypeSampleAnalysis = {
+  analyzedAt: string;
+  filenames: string[];
+  fileCount: number;
+  appliedAt?: string;
+  recognitionSignals: string[];
+};
+
 export type V5DocumentType = {
   code: string;
   title: string;
@@ -67,6 +76,7 @@ export type V5DocumentType = {
   bundleConditional: string[];
   purchaseBundleRole: import("@/lib/documentBundleConfig").PurchaseBundleRole;
   classifierCustomized?: boolean;
+  sampleAnalysis?: DocumentTypeSampleAnalysis;
   /** Shipped matrix template this org type was created from (e.g. DT-07). Org code is separate. */
   matrixTemplateCode?: string;
 };

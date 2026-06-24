@@ -1,5 +1,6 @@
 """Rule book config CRUD and evaluation."""
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -25,7 +26,11 @@ from app.schemas.rule_book_evaluate import (
     RuleBookEvaluateRequest,
     RuleBookEvaluateResponse,
 )
-from app.services.document_type_sample_analyzer import analyze_document_type_samples
+from app.services.document_type_sample_analyzer import (
+    ParsedDocumentSample,
+    analyze_parsed_document_samples,
+    parse_document_samples,
+)
 from app.services.document_type_classify_preview import (
     classify_samples_against_catalog,
     merge_draft_document_type,
@@ -34,6 +39,10 @@ from app.services.master_data_service import attach_masters_to_config_dict
 from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.rule_book_evaluate_service import evaluate_rule_book
+from app.services.rule_book_ingest_stats import (
+    attach_email_capture_ingest_stats,
+    strip_email_capture_volatile_stats,
+)
 from app.services.rule_book_save_buffer import (
     get_buffered_rule_book_raw,
     schedule_rule_book_save,
@@ -71,7 +80,11 @@ async def _load_rule_book_response_dict(
         except (ValidationError, ValueError):
             pass
 
-    return await attach_masters_to_config_dict(db, tenant_id, data)
+    return await attach_email_capture_ingest_stats(
+        db,
+        tenant_id,
+        await attach_masters_to_config_dict(db, tenant_id, data),
+    )
 
 
 @router.get("/config", response_model=ApiEnvelope[dict[str, Any]])
@@ -98,6 +111,7 @@ async def put_rule_book_config(
         raw = body.model_dump()
         raw["vendor_masters"] = []
         raw["employee_masters"] = []
+        strip_email_capture_volatile_stats(raw)
         payload = validate_rule_book_config_payload(raw)
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
@@ -116,7 +130,11 @@ async def put_rule_book_config(
         db=db,
     )
 
-    data = await attach_masters_to_config_dict(db, ctx.tenant_id, after_raw)
+    data = await attach_email_capture_ingest_stats(
+        db,
+        ctx.tenant_id,
+        await attach_masters_to_config_dict(db, ctx.tenant_id, after_raw),
+    )
     return ApiEnvelope(data=data)
 
 
@@ -194,11 +212,17 @@ async def analyze_document_type_samples_endpoint(
     for upload in files:
         uploads.append(await _read_sample_upload(upload))
 
-    try:
-        proposal = analyze_document_type_samples(
-            uploads,
+    def _parse_and_propose() -> tuple[DocumentTypeSampleProposal, list[ParsedDocumentSample]]:
+        parsed_samples, parse_notes = parse_document_samples(uploads)
+        proposal = analyze_parsed_document_samples(
+            parsed_samples,
             purchase_bundle_role=purchase_bundle_role,
+            parse_notes=parse_notes,
         )
+        return proposal, parsed_samples
+
+    try:
+        proposal, parsed_samples = await asyncio.to_thread(_parse_and_propose)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -224,6 +248,7 @@ async def analyze_document_type_samples_endpoint(
             document_types=catalogue,
             unclassified=config.document_classification,
             expected_code=expected or None,
+            parsed_samples=parsed_samples,
         )
         preview_by_name = {item.filename: item for item in previews}
         enriched_samples = []

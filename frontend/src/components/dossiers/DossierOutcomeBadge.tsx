@@ -27,6 +27,14 @@ export function DossierOutcomeBadge({
 }
 
 export function DossierTypeBadge({ code, title, className }: { code: string; title?: string; className?: string }) {
+  const token = (code ?? "").trim();
+  if (!token) {
+    return (
+      <span title={title ?? "Document type not classified"}>
+        <StatusPill className={cn(pillTones.muted, className)}>Unclassified</StatusPill>
+      </span>
+    );
+  }
   return (
     <span title={title}>
       <StatusPill
@@ -35,7 +43,7 @@ export function DossierTypeBadge({ code, title, className }: { code: string; tit
           className
         )}
       >
-        {code}
+        {token}
       </StatusPill>
     </span>
   );

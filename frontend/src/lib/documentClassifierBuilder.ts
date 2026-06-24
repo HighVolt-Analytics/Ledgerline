@@ -23,6 +23,8 @@ export type RecognitionSignalId =
   | "text_governing_law"
   | "text_signed_behalf"
   | "heading_invoice"
+  | "text_invoice"
+  | "filename_invoice"
   | "text_credit_note"
   | "filename_credit_note"
   | "text_debit_note"
@@ -132,6 +134,18 @@ export function signalToCondition(signalId: RecognitionSignalId): DocumentRuleCo
       return cond("document_text", "contains", "signed for and on behalf");
     case "heading_invoice":
       return cond("has_heading_invoice", "equals", "true");
+    case "text_invoice":
+      return cond(
+        "document_text",
+        "regex",
+        "(?i)\\b(tax\\s+invoice|commercial\\s+invoice)\\b"
+      );
+    case "filename_invoice":
+      return cond(
+        "attachment_name",
+        "regex",
+        "(?i)(?:^|[-_/])(?:inv|invoice|tax[_-]?inv)(?:[-_.]|$)"
+      );
     case "text_credit_note":
       return cond("document_text", "regex", "(?i)(credit\\s+note|creditmemo|credit_memo)");
     case "filename_credit_note":

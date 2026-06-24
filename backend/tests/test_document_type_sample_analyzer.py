@@ -8,8 +8,12 @@ from app.services.document_type_recognition_signals import (
     detect_recognition_signals,
     infer_classifier_layout,
     infer_playbook_profile,
+    merge_signals_for_classifier_profiles,
 )
-from app.services.document_type_sample_analyzer import analyze_document_type_samples
+from app.services.document_type_sample_analyzer import (
+    analyze_document_type_samples,
+    parse_document_samples,
+)
 from app.services.invoice_data import InvoiceData, ParsedLineItem
 
 
@@ -94,6 +98,7 @@ def test_merge_multiple_samples_majority(monkeypatch) -> None:
     )
     assert proposal.recognition_signals
     assert "vendor" in proposal.extraction_fields
+    assert proposal.classifier_layout == "any_signal"
     assert proposal.playbook_profile
     assert proposal.match_mode
     assert proposal.approval_mode
@@ -110,3 +115,70 @@ def test_analyze_rejects_empty_file_list() -> None:
         assert "At least one" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_parse_document_samples_parallel(monkeypatch) -> None:
+    import time
+
+    parsed = _parsed()
+    invoice = _invoice(email_attachment_name="sample.pdf")
+
+    def slow_parse(filename: str, content: bytes):
+        _ = content
+        time.sleep(0.05)
+        return invoice, parsed, "high"
+
+    monkeypatch.setattr(
+        "app.services.document_type_sample_analyzer._parse_sample",
+        slow_parse,
+    )
+    started = time.perf_counter()
+    samples, _notes = parse_document_samples(
+        [
+            ("a.pdf", b"1"),
+            ("b.pdf", b"2"),
+            ("c.pdf", b"3"),
+        ]
+    )
+    elapsed = time.perf_counter() - started
+    assert len(samples) == 3
+    assert elapsed < 0.14
+
+
+def test_detect_text_invoice_in_body_without_title_line() -> None:
+    profile = detect_recognition_signals(
+        filename="scan.pdf",
+        invoice=_invoice(email_attachment_name="scan.pdf"),
+        parsed=_parsed(
+            document_text="Please remit payment.\nTAX INVOICE\nVendor: Acme",
+            document_heading="",
+        ),
+    )
+    assert "text_invoice" in profile.signals
+
+
+def test_merge_signals_uses_intersection_for_multi_sample() -> None:
+    from app.services.document_type_recognition_signals import SampleSignalProfile
+
+    profiles = [
+        SampleSignalProfile(
+            filename="a.pdf",
+            signals=frozenset({"heading_invoice", "has_invoice_number", "has_po_reference"}),
+            extraction_fields=frozenset({"vendor"}),
+            document_heading="TAX INVOICE",
+        ),
+        SampleSignalProfile(
+            filename="b.pdf",
+            signals=frozenset({"heading_invoice", "has_invoice_number", "has_total_amount"}),
+            extraction_fields=frozenset({"vendor"}),
+            document_heading="TAX INVOICE",
+        ),
+    ]
+    signals, layout = merge_signals_for_classifier_profiles(profiles)
+    assert layout == "any_signal"
+    assert signals == frozenset({"heading_invoice", "has_invoice_number"})
+
+
+def test_sample_analysis_layout_is_any_signal_for_invoices() -> None:
+    signals = frozenset({"has_po_reference", "has_invoice_number", "has_total_amount"})
+    assert infer_classifier_layout(signals, for_sample_analysis=True) == "any_signal"

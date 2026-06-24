@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mail } from "lucide-react";
 import { api } from "@/api/client";
-import type { MailboxInvitePreview } from "@/api/types";
+import type { MailboxInvitePreview, MailProvider } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+
+function providerLabel(provider: MailProvider): string {
+  return provider === "google" ? "Google" : "Microsoft";
+}
 
 export function ConnectMailboxPage() {
   const [searchParams] = useSearchParams();
@@ -15,7 +19,18 @@ export function ConnectMailboxPage() {
 
   const [preview, setPreview] = useState<MailboxInvitePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyProvider, setBusyProvider] = useState<MailProvider | null>(null);
+
+  const providers = useMemo<MailProvider[]>(() => {
+    if (!preview) return [];
+    if (preview.available_providers?.length) {
+      return preview.available_providers as MailProvider[];
+    }
+    if (preview.mail_provider === "google" || preview.mail_provider === "microsoft") {
+      return [preview.mail_provider];
+    }
+    return ["google", "microsoft"];
+  }, [preview]);
 
   useEffect(() => {
     if (!token || oauth) return;
@@ -26,16 +41,16 @@ export function ConnectMailboxPage() {
       .catch((e) => setError(e instanceof Error ? e.message : "Invitation not found"));
   }, [token, oauth]);
 
-  async function connectWithMicrosoft() {
+  async function connectWithProvider(provider: MailProvider) {
     if (!token) return;
-    setBusy(true);
+    setBusyProvider(provider);
     setError(null);
     try {
-      const { authorize_url } = await api.startMailboxInviteOAuth(token);
+      const { authorize_url } = await api.startMailboxInviteOAuth(token, provider);
       window.location.assign(authorize_url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to start Microsoft sign-in");
-      setBusy(false);
+      setError(e instanceof Error ? e.message : `Failed to start ${providerLabel(provider)} sign-in`);
+      setBusyProvider(null);
     }
   }
 
@@ -65,12 +80,20 @@ export function ConnectMailboxPage() {
         <Card className="max-w-md w-full p-8 text-center space-y-4">
           <h1 className="text-lg font-semibold text-destructive">Connection failed</h1>
           <p className="text-sm text-muted-foreground">
-            {oauthMessage || "Microsoft sign-in was cancelled or failed."}
+            {oauthMessage || "Sign-in was cancelled or failed."}
           </p>
-          {token && (
-            <Button onClick={() => void connectWithMicrosoft()} disabled={busy}>
-              Try again
-            </Button>
+          {token && providers.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {providers.map((provider) => (
+                <Button
+                  key={provider}
+                  onClick={() => void connectWithProvider(provider)}
+                  disabled={busyProvider != null}
+                >
+                  Try {providerLabel(provider)} again
+                </Button>
+              ))}
+            </div>
           )}
         </Card>
       </div>
@@ -105,6 +128,8 @@ export function ConnectMailboxPage() {
     );
   }
 
+  const singleProvider = providers.length === 1 ? providers[0] : null;
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-background">
       <Card className="max-w-md w-full p-8 space-y-5">
@@ -125,15 +150,35 @@ export function ConnectMailboxPage() {
         )}
 
         <p className="text-xs text-muted-foreground">
-          You will sign in with Microsoft and grant LedgerLink permission to read mail
-          for automated invoice processing.
+          {singleProvider
+            ? `Sign in with ${providerLabel(singleProvider)} using the invited email address.`
+            : "Choose the provider that hosts this mailbox, then sign in with the invited email address."}
         </p>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <Button className="w-full" onClick={() => void connectWithMicrosoft()} disabled={busy}>
-          {busy ? "Redirecting…" : "Connect with Microsoft"}
-        </Button>
+        <div className="flex flex-col gap-2">
+          {providers.includes("google") && (
+            <Button
+              className="w-full"
+              variant={singleProvider === "google" ? "default" : "outline"}
+              onClick={() => void connectWithProvider("google")}
+              disabled={busyProvider != null || preview.google_oauth_configured === false}
+            >
+              {busyProvider === "google" ? "Redirecting…" : "Connect with Google"}
+            </Button>
+          )}
+          {providers.includes("microsoft") && (
+            <Button
+              className="w-full"
+              variant={singleProvider === "microsoft" ? "default" : "outline"}
+              onClick={() => void connectWithProvider("microsoft")}
+              disabled={busyProvider != null || preview.microsoft_oauth_configured === false}
+            >
+              {busyProvider === "microsoft" ? "Redirecting…" : "Connect with Microsoft"}
+            </Button>
+          )}
+        </div>
       </Card>
     </div>
   );

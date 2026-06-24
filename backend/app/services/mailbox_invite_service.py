@@ -24,6 +24,14 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.audit_service import log_event
 from app.services.graph_mail_sender import graph_mail_send_configured, send_graph_mail
+from app.services.mailbox_provider import (
+    PROVIDER_GOOGLE,
+    PROVIDER_MICROSOFT,
+    PROVIDER_UNKNOWN,
+    available_providers_for_email,
+    detect_mailbox_provider,
+    resolve_invite_provider,
+)
 from app.services.public_app_url import build_public_app_path
 from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
@@ -48,12 +56,15 @@ class InviteActionResult:
     email_error: str | None = None
 
 
-def create_invite_token(*, request_id: int, tenant_id: uuid.UUID) -> str:
+def create_invite_token(*, request_id: int, tenant_id: uuid.UUID | str | int) -> str:
+    org_id = parse_tenant_id(tenant_id)
+    if org_id is None:
+        raise ValueError("Invalid tenant id")
     expire = datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS)
     payload = {
         "typ": INVITE_TYP,
         "request_id": request_id,
-        "org_id": str(tenant_id),
+        "org_id": str(org_id),
         "exp": expire,
     }
     return jwt.encode(payload, get_settings().jwt_secret, algorithm="HS256")
@@ -63,12 +74,12 @@ def parse_invite_token(token: str) -> dict[str, int | uuid.UUID]:
     payload = jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"])
     if payload.get("typ") != INVITE_TYP:
         raise ValueError("Invalid invite token")
-    tenant_id = parse_tenant_id(payload.get("org_id"))
-    if tenant_id is None:
+    org_id = parse_tenant_id(payload.get("org_id"))
+    if org_id is None:
         raise ValueError("Invalid invite token")
     return {
         "request_id": int(payload["request_id"]),
-        "org_id": tenant_id,
+        "org_id": org_id,
     }
 
 
@@ -78,7 +89,7 @@ def invite_connect_url(token: str) -> str:
     return build_public_app_path(f"/connect-mailbox?{urlencode({'token': token})}")
 
 
-def build_connect_url_for_request(*, request_id: int, tenant_id: uuid.UUID) -> str:
+def build_connect_url_for_request(*, request_id: int, tenant_id: uuid.UUID | str | int) -> str:
     token = create_invite_token(request_id=request_id, tenant_id=tenant_id)
     return invite_connect_url(token)
 
@@ -105,13 +116,15 @@ async def get_invite_request(
     session: AsyncSession,
     *,
     request_id: int,
-    tenant_id: uuid.UUID | None = None,
+    tenant_id: uuid.UUID | str | int | None = None,
 ) -> MailboxConnectionRequest:
     row = await session.get(MailboxConnectionRequest, request_id)
     if not row:
         raise ValueError("Invitation not found")
-    if tenant_id is not None and row.tenant_id != tenant_id:
-        raise ValueError("Invitation not found")
+    if tenant_id is not None:
+        expected = parse_tenant_id(tenant_id)
+        if expected is None or row.tenant_id != expected:
+            raise ValueError("Invitation not found")
     if _is_expired(row) and row.status == STATUS_PENDING:
         row.status = STATUS_EXPIRED
         await session.flush()
@@ -157,7 +170,7 @@ def send_invite_email(
     if personal_message and personal_message.strip():
         body_text += f"Message from your team:\n{personal_message.strip()}\n\n"
     body_text += (
-        f"Open this link to review and connect with Microsoft:\n{connect_url}\n\n"
+        f"Open this link to review and connect your mailbox:\n{connect_url}\n\n"
         f"This invitation expires on {expiry_label}.\n\n"
         f"If you did not expect this email, you can ignore it.\n"
     )
@@ -234,10 +247,24 @@ async def create_mailbox_connection_request(
         )
     ).scalar_one_or_none()
     if pending and not _is_expired(pending):
-        raise ValueError("A pending invitation already exists for this email")
+        if display_name is not None:
+            pending.display_name = (display_name or "").strip() or None
+        if message is not None:
+            pending.message = (message or "").strip() or None
+        detected = detect_mailbox_provider(email)
+        if detected != PROVIDER_UNKNOWN:
+            pending.mail_provider = detected
+        return await resend_mailbox_connection_request(
+            session,
+            request_id=pending.id,
+            tenant_id=tenant_id,
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
 
     org = await session.get(Tenant, tenant_id)
     tenant_name = org.name if org else "Your organisation"
+    detected_provider = detect_mailbox_provider(email)
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(days=INVITE_TTL_DAYS)
 
@@ -246,6 +273,7 @@ async def create_mailbox_connection_request(
         requested_email=email,
         display_name=(display_name or "").strip() or None,
         message=(message or "").strip() or None,
+        mail_provider=detected_provider if detected_provider != PROVIDER_UNKNOWN else None,
         status=STATUS_PENDING,
         requested_by_user_id=requested_by_user_id,
         invite_sent_at=now,
@@ -332,6 +360,42 @@ async def resend_mailbox_connection_request(
         connect_url=url,
         email_sent=delivery.sent,
         email_error=delivery.error,
+    )
+
+
+def build_invite_oauth_url(
+    *,
+    tenant_id: uuid.UUID,
+    invite_request_id: int,
+    requested_email: str,
+    stored_provider: str | None,
+    provider: str | None = None,
+) -> str:
+    from app.services import gmail_oauth_service, mailbox_oauth_service
+
+    resolved = resolve_invite_provider(
+        requested_email,
+        stored=stored_provider,
+        requested=provider,
+    )
+    if resolved == PROVIDER_GOOGLE:
+        if not gmail_oauth_service.gmail_oauth_configured():
+            raise RuntimeError(
+                "Google OAuth is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, "
+                "and GMAIL_OAUTH_REDIRECT_URI."
+            )
+        return gmail_oauth_service.build_invite_authorize_url(
+            tenant_id=tenant_id,
+            invite_request_id=invite_request_id,
+        )
+    if not mailbox_oauth_service.oauth_configured():
+        raise RuntimeError(
+            "Microsoft OAuth is not configured. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, "
+            "AZURE_CLIENT_SECRET, and GRAPH_OAUTH_REDIRECT_URI."
+        )
+    return mailbox_oauth_service.build_invite_authorize_url(
+        tenant_id=tenant_id,
+        invite_request_id=invite_request_id,
     )
 
 

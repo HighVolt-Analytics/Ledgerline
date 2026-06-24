@@ -81,6 +81,8 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 function mailboxProvider(mb: ConnectedMailbox): string {
+  if (mb.mail_provider === "google") return "Gmail";
+  if (mb.mail_provider === "microsoft") return "Outlook";
   const label = `${mb.display_name ?? ""} ${mb.email}`.toLowerCase();
   if (label.includes("imap")) return "IMAP";
   if (
@@ -226,8 +228,12 @@ export function UploadPage() {
     display_name?: string;
     message?: string;
   }) {
-    await api.createMailboxConnectionRequest(body);
-    setFetchNotice(`Invitation sent to ${body.email}`);
+    const result = await api.createMailboxConnectionRequest(body);
+    setFetchNotice(
+      result.email_sent
+        ? `Invitation sent to ${body.email}`
+        : `Invitation link refreshed for ${body.email}. Copy the link from Integrations if email delivery failed.`
+    );
   }
 
   function applyMailboxUpdate(updated: ConnectedMailbox) {
@@ -293,7 +299,6 @@ export function UploadPage() {
 
   async function startHistoricalImport(payload: {
     from_date: string;
-    to_date: string;
     mark_processed: boolean;
   }) {
     if (!importMailbox) return;
@@ -456,7 +461,7 @@ export function UploadPage() {
 
       {importJob && (importJob.status === "queued" || importJob.status === "running") && (
         <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">
-          Importing mail from {importJob.from_date} to {importJob.to_date}…{" "}
+          Importing mail from {importJob.from_date} through today…{" "}
           {importJob.messages_scanned > 0
             ? `${importJob.messages_scanned} message(s) scanned`
             : "scanning mailbox"}

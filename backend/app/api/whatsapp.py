@@ -170,9 +170,9 @@ async def whatsapp_oauth_callback(
 
     try:
         payload = parse_oauth_state(state)
-        tenant_id = parse_tenant_id(payload.get("org_id"))
+        tenant_id = parse_tenant_id(payload["org_id"])
         if tenant_id is None:
-            raise ValueError("invalid tenant")
+            raise ValueError("Invalid OAuth session")
         user_id = int(payload["sub"])
     except Exception as exc:
         logger.warning("whatsapp_oauth_state_invalid", error=str(exc))
@@ -271,13 +271,13 @@ async def process_whatsapp_payload(payload: dict) -> None:
                 for invoice_id in result.invoice_ids or []:
                     asyncio.create_task(process_invoice_background(invoice_id))
 
-                logger.info(
-                    "whatsapp_message_processed",
-                    message_id=msg.message_id,
-                    ingested=result.ingested_count,
-                    skipped=result.skipped_reason,
-                    tenant_id=connection.tenant_id,
-                )
+            logger.info(
+                "whatsapp_message_processed",
+                message_id=msg.message_id,
+                ingested=result.ingested_count,
+                skipped=result.skipped_reason,
+                tenant_id=connection.tenant_id,
+            )
     except Exception as exc:
         logger.exception("whatsapp_webhook_processing_failed", error=str(exc))
 

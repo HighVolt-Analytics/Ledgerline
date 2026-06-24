@@ -5,26 +5,42 @@
 
 export type DossierLinkageKind = "po_reference" | "shipment_ref" | "contract_ref" | "standalone";
 
-export type DossierDocumentSource = "erp_register" | "upload" | "email_capture" | "edi";
+export type DossierDocumentSource = "erp_register" | "upload" | "email_capture" | "edi" | "manual";
 
 export type DossierBundleRequirement = "mandatory" | "conditional" | "advisory";
 
 export type DossierPurchaseBundleRole = "" | "po" | "grn" | "invoice";
+
+export type DossierManualLinkInfo = {
+  id: number;
+  invoiceId: number;
+  linkedDossierId: string;
+  documentRef: string | null;
+  label: string;
+  documentTypeCode: string;
+  hasFile: boolean;
+};
 
 export type DossierLinkedDocument = {
   id: string;
   documentTypeCode: string;
   label: string;
   documentRef: string | null;
+  invoiceNo?: string | null;
   present: boolean;
   requirement: DossierBundleRequirement;
   purchaseBundleRole?: DossierPurchaseBundleRole;
   source?: DossierDocumentSource;
   /** Sibling dossier when the doc is on file (mock id until API). */
   linkedDossierId?: string | null;
+  /** Invoice row for opening the upload-style detail drawer. */
+  invoiceId?: number | null;
   isAnchor?: boolean;
   hasFile?: boolean;
   linkageDetail?: string;
+  linkKind?: "system" | "manual" | "invoice_no";
+  manualLinkId?: number | null;
+  manualLink?: DossierManualLinkInfo | null;
 };
 
 export type DossierMatchSummary = {
@@ -57,6 +73,7 @@ export function documentSourceLabel(source: DossierDocumentSource): string {
   if (source === "erp_register") return "ERP register";
   if (source === "upload") return "Upload";
   if (source === "email_capture") return "Email capture";
+  if (source === "manual") return "Manual link";
   return "EDI";
 }
 

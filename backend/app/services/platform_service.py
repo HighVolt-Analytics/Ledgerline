@@ -1,5 +1,7 @@
 """Platform super-admin tenant management."""
 
+from datetime import datetime, timezone
+
 from sqlalchemy import delete, func, select
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +16,7 @@ from app.models.payment import Payment
 from app.models.purchase_order import PurchaseOrder
 from app.models.reconciliation import DailyReconciliation
 from app.models.tenant import Tenant
+from app.models.tenant_member_invite import TenantMemberInvite
 from app.models.tenant_module import TenantModule
 from app.models.user import User, UserRole
 from app.models.user_tenant_mapping import UserTenantMapping
@@ -29,7 +32,8 @@ from app.services.billing_io import load_billing_for_tenant, remove_billing_for_
 from app.services.membership_service import ensure_membership
 from app.services.rule_book_config_io import _legacy_file_paths_for_tenant
 from app.services.rule_book_config_repository import ensure_default_config
-from app.tenant_settings import default_institution_settings
+from app.services.tenant_members_service import InviteCreated, create_invite
+from app.tenant_settings import build_tenant_settings
 from app.schemas.platform import (
     CreatePlatformTenantRequest,
     DeletePlatformTenantRequest,
@@ -43,10 +47,20 @@ from app.tenant_roles import TenantRole
 _DEFAULT_MODULES = ("purchase", "expenses", "team_expenses", "vault", "rule_book")
 
 
-async def _tenant_counts(session: AsyncSession, tenant_id: uuid.UUID) -> tuple[int, int]:
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _tenant_counts(session: AsyncSession, tenant_id: uuid.UUID) -> tuple[int, int, int]:
     user_count = (
         await session.execute(
-            select(func.count()).select_from(User).where(User.tenant_id == tenant_id)
+            select(func.count())
+            .select_from(User)
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_platform_shadow.is_(False),
+                User.is_active.is_(True),
+            )
         )
     ).scalar_one()
     invoice_count = (
@@ -54,7 +68,19 @@ async def _tenant_counts(session: AsyncSession, tenant_id: uuid.UUID) -> tuple[i
             select(func.count()).select_from(Invoice).where(Invoice.tenant_id == tenant_id)
         )
     ).scalar_one()
-    return int(user_count), int(invoice_count)
+    now = _utc_now()
+    pending_invite_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(TenantMemberInvite)
+            .where(
+                TenantMemberInvite.tenant_id == tenant_id,
+                TenantMemberInvite.accepted_at.is_(None),
+                TenantMemberInvite.expires_at > now,
+            )
+        )
+    ).scalar_one()
+    return int(user_count), int(invoice_count), int(pending_invite_count)
 
 
 async def _modules_for_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> list[PlatformTenantModule]:
@@ -73,6 +99,7 @@ def _to_summary(
     *,
     user_count: int,
     invoice_count: int,
+    pending_invite_count: int,
 ) -> PlatformTenantSummary:
     billing = load_billing_for_tenant(tenant.id)
     return PlatformTenantSummary(
@@ -83,6 +110,7 @@ def _to_summary(
         lifecycle_status=tenant.lifecycle_status,
         created_at=tenant.created_at,
         user_count=user_count,
+        pending_invite_count=pending_invite_count,
         invoice_count=invoice_count,
         credit_balance=billing.balance,
     )
@@ -99,9 +127,14 @@ async def list_client_tenants(session: AsyncSession) -> list[PlatformTenantSumma
 
     results: list[PlatformTenantSummary] = []
     for tenant in tenants:
-        user_count, invoice_count = await _tenant_counts(session, tenant.id)
+        user_count, invoice_count, pending_invite_count = await _tenant_counts(session, tenant.id)
         results.append(
-            _to_summary(tenant, user_count=user_count, invoice_count=invoice_count)
+            _to_summary(
+                tenant,
+                user_count=user_count,
+                invoice_count=invoice_count,
+                pending_invite_count=pending_invite_count,
+            )
         )
     return results
 
@@ -113,8 +146,13 @@ async def get_client_tenant(
     if not tenant or tenant.is_platform:
         return None
 
-    user_count, invoice_count = await _tenant_counts(session, tenant.id)
-    summary = _to_summary(tenant, user_count=user_count, invoice_count=invoice_count)
+    user_count, invoice_count, pending_invite_count = await _tenant_counts(session, tenant.id)
+    summary = _to_summary(
+        tenant,
+        user_count=user_count,
+        invoice_count=invoice_count,
+        pending_invite_count=pending_invite_count,
+    )
     modules = await _modules_for_tenant(session, tenant.id)
     return PlatformTenantDetail(
         **summary.model_dump(),
@@ -145,7 +183,7 @@ async def provision_client_tenant_access(
     tenant_id: uuid.UUID,
     operator_user_id: int,
 ) -> User:
-    """Give a platform operator an admin user + membership on a client tenant."""
+    """Give a platform operator a shadow admin user + membership on a client tenant."""
     tenant = await session.get(Tenant, tenant_id)
     if not tenant or tenant.is_platform:
         raise ValueError("Client tenant not found")
@@ -171,12 +209,14 @@ async def provision_client_tenant_access(
             full_name=operator.full_name,
             role=UserRole.ADMIN,
             is_active=True,
+            is_platform_shadow=True,
         )
         session.add(client_user)
         await session.flush()
     else:
         client_user.is_active = True
         client_user.role = UserRole.ADMIN
+        client_user.is_platform_shadow = True
 
     mapping = (
         await session.execute(
@@ -203,33 +243,60 @@ async def provision_client_tenant_access(
     return client_user
 
 
+async def invite_tenant_admin(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    email: str,
+    full_name: str,
+    invited_by_user_id: int | None,
+) -> InviteCreated:
+    """Create an admin invite for a client tenant (platform or tenant context)."""
+    return await create_invite(
+        session,
+        tenant_id=tenant_id,
+        email=email,
+        full_name=full_name,
+        role=TenantRole.ADMIN.value,
+        invited_by_user_id=invited_by_user_id,
+    )
+
+
 async def create_client_tenant(
     session: AsyncSession,
     body: CreatePlatformTenantRequest,
     *,
-    operator_user_id: int | None = None,
-) -> PlatformTenantDetail:
+    invited_by_user_id: int | None = None,
+) -> tuple[PlatformTenantDetail, InviteCreated]:
+    settings_json = build_tenant_settings(
+        country=body.country,
+        industry=body.industry,
+        onboarding_completed=False,
+    )
     tenant = Tenant(
         name=body.name.strip(),
         slug=body.slug.strip().lower(),
         is_active=True,
         is_platform=False,
         lifecycle_status="active",
-        settings_json=default_institution_settings(),
+        settings_json=settings_json,
     )
     session.add(tenant)
     await session.flush()
     await _seed_modules(session, tenant.id)
     await ensure_default_config(session, tenant.id)
-    if operator_user_id is not None:
-        await provision_client_tenant_access(
-            session,
-            tenant_id=tenant.id,
-            operator_user_id=operator_user_id,
-        )
+
+    invite = await invite_tenant_admin(
+        session,
+        tenant_id=tenant.id,
+        email=str(body.first_admin_email),
+        full_name=body.first_admin_name,
+        invited_by_user_id=invited_by_user_id,
+    )
+
     detail = await get_client_tenant(session, tenant_id=tenant.id)
     assert detail is not None
-    return detail
+    return detail, invite
 
 
 async def update_client_tenant(

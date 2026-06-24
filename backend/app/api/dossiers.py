@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, get_auth_context, get_db
 from app.api.matrix import _payments_for_invoices
 from app.schemas.common import ApiEnvelope, ResponseMeta
-from app.schemas.dossier import DossierSummaryResponse
+from app.schemas.dossier import DossierManualLinkCreateRequest, DossierSummaryResponse
+from app.services.dossier_manual_link_service import create_manual_link, delete_manual_link
 from app.services.dossier_audit import (
     fetch_dossier_audit_logs,
     fetch_dossier_audit_logs_for_invoices,
@@ -78,6 +79,76 @@ async def get_dossier(
 
     logs, payments, buyer, config = await _load_dossier_detail_context(db, ctx.tenant_id, inv.id)
 
+    return ApiEnvelope(
+        data=await build_dossier_summary(
+            db,
+            inv,
+            logs,
+            payment=payments.get(inv.id),
+            tenant_name=buyer,
+            compact=False,
+            config=config,
+        )
+    )
+
+
+@router.post("/{dossier_id}/manual-links", response_model=ApiEnvelope[DossierSummaryResponse])
+async def add_dossier_manual_link(
+    dossier_id: str,
+    body: DossierManualLinkCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[DossierSummaryResponse]:
+    inv = await resolve_invoice_for_dossier(db, ctx.tenant_id, dossier_id)
+    if inv is None:
+        raise HTTPException(404, "Dossier not found")
+
+    await create_manual_link(
+        db,
+        tenant_id=ctx.tenant_id,
+        anchor_invoice_id=inv.id,
+        linked_invoice_id=body.linked_invoice_id,
+        slot_id=body.slot_id,
+        created_by_user_id=ctx.user_id,
+    )
+    await db.commit()
+
+    logs, payments, buyer, config = await _load_dossier_detail_context(db, ctx.tenant_id, inv.id)
+    return ApiEnvelope(
+        data=await build_dossier_summary(
+            db,
+            inv,
+            logs,
+            payment=payments.get(inv.id),
+            tenant_name=buyer,
+            compact=False,
+            config=config,
+        )
+    )
+
+
+@router.delete("/{dossier_id}/manual-links/{link_id}", response_model=ApiEnvelope[DossierSummaryResponse])
+async def remove_dossier_manual_link(
+    dossier_id: str,
+    link_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[DossierSummaryResponse]:
+    inv = await resolve_invoice_for_dossier(db, ctx.tenant_id, dossier_id)
+    if inv is None:
+        raise HTTPException(404, "Dossier not found")
+
+    removed = await delete_manual_link(
+        db,
+        tenant_id=ctx.tenant_id,
+        anchor_invoice_id=inv.id,
+        link_id=link_id,
+    )
+    if not removed:
+        raise HTTPException(404, "Manual link not found")
+    await db.commit()
+
+    logs, payments, buyer, config = await _load_dossier_detail_context(db, ctx.tenant_id, inv.id)
     return ApiEnvelope(
         data=await build_dossier_summary(
             db,

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.document_ref_service import display_document_ref
+from app.services.publish_service import is_published_from_audit_logs
 
 MATRIX_STAGES = ("Received", "Parsed", "Validated", "Mapped", "Approved", "Published")
 StageState = Literal["done", "pending", "fail", "skipped"]
@@ -237,9 +238,10 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     published_detail = "Pending"
     published_state: StageState = "pending"
     doc_ref = display_document_ref(inv)
-    if published_log and published_log.event == "invoice_published_to_ledger":
-        published_at = published_log.created_at
-        actor = _actor_name(published_log.detail)
+    if is_published_from_audit_logs(logs):
+        published_log = _latest_log(logs, "invoice_published_to_ledger")
+        published_at = published_log.created_at if published_log else None
+        actor = _actor_name(published_log.detail if published_log else None)
         published_detail = f"{actor} · {doc_ref}" if actor else doc_ref
         published_state = "done"
     elif inv.status == InvoiceStatus.PROCESSED:

@@ -49,10 +49,15 @@ class MailboxInvitePreviewResponse(BaseModel):
     display_name: str | None
     message: str | None
     expires_at: datetime | None
+    mail_provider: str | None = None
+    available_providers: list[str] = Field(default_factory=list)
+    google_oauth_configured: bool = False
+    microsoft_oauth_configured: bool = False
 
 
 class MailboxAuthorizeResponse(BaseModel):
     authorize_url: str
+    mail_provider: str | None = None
 
 
 class MailboxAdminConsentResponse(BaseModel):
@@ -66,6 +71,7 @@ class MailboxResponse(BaseModel):
     email: str
     display_name: str | None
     is_active: bool
+    mail_provider: str = "microsoft"
     auth_type: str = "application"
     connection_status: str = "connected"
     oauth_connected_at: datetime | None = None

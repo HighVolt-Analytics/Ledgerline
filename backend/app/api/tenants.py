@@ -13,12 +13,16 @@ from app.schemas.institution_settings import (
     InstitutionSettingsResponse,
     UpdateInstitutionSettingsRequest,
 )
+from app.schemas.onboarding import OnboardingStatusResponse, UpdateOnboardingRequest
 from app.schemas.tenant import CreateTenantRequest, TenantResponse
 from app.services.membership_service import ensure_membership, list_user_tenants
 from app.tenant_settings import (
     default_institution_settings,
     institution_settings_view,
     merge_institution_settings,
+    merge_onboarding_settings,
+    tenant_industry,
+    tenant_onboarding_completed,
 )
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
@@ -83,6 +87,73 @@ async def get_institution_settings(
         raise HTTPException(404, "Tenant not found")
     view = institution_settings_view(tenant)
     return ApiEnvelope(data=InstitutionSettingsResponse(**view))
+
+
+def _onboarding_steps(*, completed: bool, has_industry: bool) -> list[str]:
+    steps = ["profile"]
+    if not has_industry:
+        steps.append("industry")
+    if not completed:
+        steps.append("complete")
+    return steps
+
+
+@router.get("/current/onboarding", response_model=ApiEnvelope[OnboardingStatusResponse])
+async def get_onboarding_status(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[OnboardingStatusResponse]:
+    tenant = await db.get(Tenant, ctx.tenant_id)
+    if not tenant:
+        raise HTTPException(404, "Tenant not found")
+
+    completed = tenant_onboarding_completed(tenant)
+    industry = tenant_industry(tenant)
+    view = institution_settings_view(tenant)
+    return ApiEnvelope(
+        data=OnboardingStatusResponse(
+            completed=completed,
+            country=view["country"],
+            industry=industry,
+            steps=_onboarding_steps(completed=completed, has_industry=industry is not None),
+        )
+    )
+
+
+@router.patch("/current/onboarding", response_model=ApiEnvelope[OnboardingStatusResponse])
+async def update_onboarding(
+    body: UpdateOnboardingRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[OnboardingStatusResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot complete tenant onboarding")
+
+    tenant = await db.get(Tenant, ctx.tenant_id)
+    if not tenant:
+        raise HTTPException(404, "Tenant not found")
+
+    if body.country is not None:
+        tenant.settings_json = merge_institution_settings(tenant.settings_json, country=body.country)
+    tenant.settings_json = merge_onboarding_settings(
+        tenant.settings_json,
+        industry=body.industry,
+        onboarding_completed=True if body.complete else None,
+    )
+    await db.commit()
+    await db.refresh(tenant)
+
+    completed = tenant_onboarding_completed(tenant)
+    industry = tenant_industry(tenant)
+    view = institution_settings_view(tenant)
+    return ApiEnvelope(
+        data=OnboardingStatusResponse(
+            completed=completed,
+            country=view["country"],
+            industry=industry,
+            steps=_onboarding_steps(completed=completed, has_industry=industry is not None),
+        )
+    )
 
 
 @router.patch("/current/institution", response_model=ApiEnvelope[InstitutionSettingsResponse])

@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice
 from app.models.purchase_order import PurchaseOrder
+from app.schemas.dossier import DossierLinkedDocumentsResponse
 from app.services.audit_change_summary import summarize_audit_change
 from app.services.audit_detail_helpers import _latest_grn, truncate_audit_error
 from app.services.public_app_url import build_public_app_path
@@ -77,6 +78,7 @@ _CSV_COLUMNS = [
     "po_vault_url",
     "grn_vault_url",
     "invoice_vault_url",
+    "linked_docs",
     "invoice_no",
     "route_target",
     "document_status",
@@ -267,6 +269,123 @@ def vault_view_path(invoice_id: int | None) -> str:
     return build_public_app_path(f"/vault?invoice={invoice_id}")
 
 
+def _excel_csv_escape(value: str) -> str:
+    return value.replace('"', '""')
+
+
+def _absolute_vault_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if url.startswith(("http://", "https://")):
+        return url
+    if url.startswith("/"):
+        return build_public_app_path(url)
+    return build_public_app_path(f"/{url}")
+
+
+def excel_hyperlink(url: str, label: str) -> str:
+    """Excel CSV cell formula — one clickable link with a short label."""
+    url = _absolute_vault_url(url)
+    if not url:
+        return ""
+    text = (label or "Open").strip() or "Open"
+    return (
+        f'=HYPERLINK("{_excel_csv_escape(url)}","{_excel_csv_escape(text)}")'
+    )
+
+
+def excel_hyperlinks_joined(entries: list[tuple[str, str]]) -> str:
+    """Excel CSV cell with multiple clickable links (one per line in the cell)."""
+    parts: list[str] = []
+    for url, label in entries:
+        url = _absolute_vault_url(url)
+        if not url:
+            continue
+        text = (label or "Open").strip() or "Open"
+        parts.append(
+            f'HYPERLINK("{_excel_csv_escape(url)}","{_excel_csv_escape(text)}")'
+        )
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return f"={parts[0]}"
+    return "=" + "&CHAR(10)&".join(parts)
+
+
+def vault_csv_link(invoice_id: int | None, *, label: str = "View in Vault") -> str:
+    return excel_hyperlink(vault_view_path(invoice_id), label)
+
+
+def format_linked_docs_export(
+    anchor_invoice_id: int,
+    linked: DossierLinkedDocumentsResponse,
+) -> str:
+    """
+    Excel-friendly linked dossier documents (bundle, invoice_no, manual).
+
+    One clickable link per document; multiple links stack on separate lines in the cell.
+    """
+    link_entries: list[tuple[str, str]] = []
+    seen: set[int] = {anchor_invoice_id}
+
+    def add_entry(inv_id: int, dt_code: str, doc_ref: str | None) -> None:
+        if inv_id in seen:
+            return
+        seen.add(inv_id)
+        code = (dt_code or "").strip() or "?"
+        ref = (doc_ref or "").strip()
+        label = f"{code}:{ref}" if ref else code
+        link_entries.append((vault_view_path(inv_id), label))
+
+    for doc in linked.documents:
+        if doc.is_anchor:
+            continue
+        if doc.manual_link is not None:
+            ml = doc.manual_link
+            add_entry(ml.invoice_id, ml.document_type_code, ml.document_ref)
+            continue
+        if doc.link_kind == "manual" and doc.invoice_id is not None:
+            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref)
+            continue
+        if doc.link_kind == "invoice_no" and doc.invoice_id is not None:
+            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref)
+            continue
+        if doc.present and doc.invoice_id is not None:
+            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref)
+
+    return excel_hyperlinks_joined(link_entries)
+
+
+async def fetch_linked_docs_for_invoices(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    invoice_map: dict[int, Invoice],
+) -> dict[int, str]:
+    """Build linked-docs export labels for each anchor invoice (same as dossier panel)."""
+    if not invoice_map:
+        return {}
+
+    from app.services.document_type_playbook_service import resolve_definition_for_invoice
+    from app.services.dossier_linked_documents_service import build_dossier_linked_documents
+    from app.services.invoice_evaluation_service import load_posting_config_for_tenant
+
+    config = await load_posting_config_for_tenant(db, tenant_id)
+    document_types = config.document_types
+    out: dict[int, str] = {}
+    for inv_id, inv in invoice_map.items():
+        definition = resolve_definition_for_invoice(inv, document_types)
+        linked = await build_dossier_linked_documents(
+            db,
+            inv,
+            definition=definition,
+            document_types=document_types,
+        )
+        out[inv_id] = format_linked_docs_export(inv_id, linked)
+    return out
+
+
 def _invoice_amount_label(invoice: Invoice) -> str:
     if invoice.total is not None:
         return str(invoice.total)
@@ -387,6 +506,7 @@ async def fetch_audit_rows_for_export(
     dict[int, Invoice],
     dict[int, PurchaseVaultLinks],
     dict[str, PurchaseVaultLinks],
+    dict[int, str],
 ]:
     org_filter = or_(
         AuditLog.tenant_id == tenant_id,
@@ -431,7 +551,12 @@ async def fetch_audit_rows_for_export(
         tenant_id=tenant_id,
         rows=rows,
     )
-    return rows, invoice_map, by_po_id, by_po_number
+    linked_docs = await fetch_linked_docs_for_invoices(
+        db,
+        tenant_id=tenant_id,
+        invoice_map=invoice_map,
+    )
+    return rows, invoice_map, by_po_id, by_po_number, linked_docs
 
 
 def audit_rows_to_csv(
@@ -440,10 +565,12 @@ def audit_rows_to_csv(
     invoice_map: dict[int, Invoice] | None = None,
     purchase_vault_by_po_id: dict[int, PurchaseVaultLinks] | None = None,
     purchase_vault_by_po_number: dict[str, PurchaseVaultLinks] | None = None,
+    linked_docs_by_invoice: dict[int, str] | None = None,
 ) -> str:
     invoices = invoice_map or {}
     by_po_id = purchase_vault_by_po_id or {}
     by_po_number = purchase_vault_by_po_number or {}
+    linked_docs_map = linked_docs_by_invoice or {}
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(_CSV_COLUMNS)
@@ -458,16 +585,20 @@ def audit_rows_to_csv(
             by_po_id=by_po_id,
             by_po_number=by_po_number,
         )
+        linked_docs = ""
+        if row.invoice_id is not None:
+            linked_docs = linked_docs_map.get(row.invoice_id, "")
         writer.writerow(
             [
                 row.id,
                 format_audit_timestamp(row.created_at),
                 row.event,
                 row.invoice_id if row.invoice_id is not None else "",
-                vault_view_path(row.invoice_id),
-                purchase_links.po_vault_url,
-                purchase_links.grn_vault_url,
-                purchase_links.invoice_vault_url,
+                vault_csv_link(row.invoice_id),
+                excel_hyperlink(purchase_links.po_vault_url, "Open PO"),
+                excel_hyperlink(purchase_links.grn_vault_url, "Open GRN"),
+                excel_hyperlink(purchase_links.invoice_vault_url, "Open invoice"),
+                linked_docs,
                 flat["invoice_no"],
                 flat["route_target"],
                 flat["document_status"],
