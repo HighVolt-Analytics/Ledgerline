@@ -46,6 +46,8 @@ class UserResponse(BaseModel):
     tenant_slug: str
     tenant_timezone: str = "Australia/Sydney"
     tenant_locale: str = "en-AU"
+    is_support_session: bool = False
+    onboarding_completed: bool = True
 
     model_config = {"from_attributes": True}
 

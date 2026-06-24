@@ -14,14 +14,18 @@ from app.schemas.common import ApiEnvelope
 from app.schemas.platform import (
     CreatePlatformTenantRequest,
     DeletePlatformTenantRequest,
+    PlatformInviteAdminRequest,
+    PlatformInviteAdminResponse,
     PlatformTenantDetail,
     PlatformTenantSummary,
     UpdatePlatformTenantRequest,
 )
+from app.services.auth_email_service import send_tenant_invite_email
 from app.services.platform_service import (
     create_client_tenant,
     delete_client_tenant,
     get_client_tenant,
+    invite_tenant_admin,
     list_client_tenants,
     provision_client_tenant_access,
     update_client_tenant,
@@ -56,8 +60,67 @@ async def create_tenant(
     if taken:
         raise HTTPException(409, f"Tenant slug '{slug}' is already taken")
 
-    tenant = await create_client_tenant(db, body, operator_user_id=ctx.user_id)
+    tenant, invite = await create_client_tenant(db, body, invited_by_user_id=ctx.user_id)
+    tenant_row = await db.get(Tenant, tenant.id)
+    if tenant_row:
+        await send_tenant_invite_email(
+            to_email=invite.email,
+            tenant_name=tenant_row.name,
+            role=TenantRole.ADMIN.value,
+            accept_url=invite.accept_url,
+        )
     return ApiEnvelope(data=tenant)
+
+
+@router.post(
+    "/tenants/{tenant_id}/invite-admin",
+    response_model=ApiEnvelope[PlatformInviteAdminResponse],
+    status_code=201,
+)
+async def invite_admin(
+    tenant_id: uuid.UUID,
+    body: PlatformInviteAdminRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_super_admin),
+) -> ApiEnvelope[PlatformInviteAdminResponse]:
+    if ctx.user_id is None:
+        raise HTTPException(401, "Sign in to invite an admin")
+
+    tenant = await get_client_tenant(db, tenant_id=tenant_id)
+    if not tenant:
+        raise HTTPException(404, "Tenant not found")
+
+    created = await invite_tenant_admin(
+        db,
+        tenant_id=tenant_id,
+        email=str(body.email),
+        full_name=body.full_name,
+        invited_by_user_id=ctx.user_id,
+    )
+
+    tenant_row = await db.get(Tenant, tenant_id)
+    email_sent = False
+    email_error: str | None = None
+    if tenant_row:
+        delivery = await send_tenant_invite_email(
+            to_email=created.email,
+            tenant_name=tenant_row.name,
+            role=TenantRole.ADMIN.value,
+            accept_url=created.accept_url,
+        )
+        email_sent = delivery.sent
+        email_error = delivery.error
+
+    return ApiEnvelope(
+        data=PlatformInviteAdminResponse(
+            invite_id=created.invite_id,
+            email=created.email,
+            accept_url=created.accept_url,
+            expires_at=created.expires_at,
+            email_sent=email_sent,
+            email_error=email_error,
+        )
+    )
 
 
 @router.post("/tenants/{tenant_id}/enter-workspace", response_model=ApiEnvelope[TokenResponse])
@@ -66,7 +129,7 @@ async def enter_client_workspace(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_super_admin),
 ) -> ApiEnvelope[TokenResponse]:
-    """Provision admin access if needed, then mint a tenant-app session."""
+    """Provision shadow admin access if needed, then mint a support-mode tenant session."""
     if ctx.user_id is None:
         raise HTTPException(401, "Sign in to open workspace")
 
@@ -93,13 +156,14 @@ async def enter_client_workspace(
         _mint_session_tokens,
         _user_response,
     )
+    from app.tenant_settings import tenant_onboarding_completed
 
     operator = await db.get(User, ctx.user_id)
     if not operator or not operator.auth_account_id:
         raise HTTPException(401, "Session invalid")
 
     access, refresh = await _mint_session_tokens(
-        db, user=client_user, tenant=tenant_row, role=role
+        db, user=client_user, tenant=tenant_row, role=role, is_support_session=True
     )
     memberships = await _membership_summaries_for_account(
         db, auth_account_id=operator.auth_account_id
@@ -108,7 +172,13 @@ async def enter_client_workspace(
         data=TokenResponse(
             access_token=access,
             refresh_token=refresh,
-            user=_user_response(client_user, tenant_row, role=role),
+            user=_user_response(
+                client_user,
+                tenant_row,
+                role=role,
+                is_support_session=True,
+                onboarding_completed=tenant_onboarding_completed(tenant_row),
+            ),
             memberships=memberships,
         )
     )

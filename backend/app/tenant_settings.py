@@ -85,6 +85,35 @@ def institution_settings_view(tenant: Tenant | None) -> dict[str, str]:
     }
 
 
+def tenant_industry(tenant: Tenant | None) -> str | None:
+    settings = _settings(tenant)
+    industry = settings.get("industry")
+    if isinstance(industry, str) and industry.strip():
+        return industry.strip()
+    return None
+
+
+def tenant_onboarding_completed(tenant: Tenant | None) -> bool:
+    settings = _settings(tenant)
+    if "onboarding_completed" not in settings:
+        return True
+    return bool(settings.get("onboarding_completed"))
+
+
+def build_tenant_settings(
+    *,
+    country: str = DEFAULT_COUNTRY,
+    industry: str | None = None,
+    onboarding_completed: bool = False,
+) -> dict[str, Any]:
+    """Initial settings_json for a new client tenant."""
+    settings = merge_institution_settings(None, country=country)
+    if industry:
+        settings["industry"] = industry.strip()
+    settings["onboarding_completed"] = onboarding_completed
+    return settings
+
+
 def merge_institution_settings(
     current: dict[str, Any] | None,
     *,
@@ -111,4 +140,19 @@ def merge_institution_settings(
     if locale is not None:
         out["locale"] = locale.strip()
 
+    return out
+
+
+def merge_onboarding_settings(
+    current: dict[str, Any] | None,
+    *,
+    industry: str | None = None,
+    onboarding_completed: bool | None = None,
+) -> dict[str, Any]:
+    """Apply onboarding profile updates to settings_json."""
+    out: dict[str, Any] = dict(current or {})
+    if industry is not None:
+        out["industry"] = industry.strip() or None
+    if onboarding_completed is not None:
+        out["onboarding_completed"] = onboarding_completed
     return out

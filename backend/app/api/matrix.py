@@ -98,11 +98,9 @@ async def document_matrix(
     invoice_ids = [inv.id for inv in invoices]
     audit_by_id = await _audit_logs_for_invoices(db, invoice_ids)
     payments_by_id = await _payments_for_invoices(db, ctx.tenant_id, invoice_ids)
-    published_ids = {
-        inv_id
-        for inv_id, logs in audit_by_id.items()
-        if any(log.event == "invoice_published_to_ledger" for log in logs)
-    }
+    from app.services.publish_service import published_invoice_ids
+
+    published_ids = await published_invoice_ids(db, invoice_ids)
 
     data: list[MatrixRowResponse] = []
     for inv in invoices:

@@ -231,11 +231,15 @@ export function DashboardPage() {
           data-testid="text-welcome"
         >
           <h1 className="text-xl font-semibold tracking-tight">
-            Welcome back, {firstName(user.full_name)} — {user.tenant_name}
+            {user.is_support_session
+              ? `Support view — ${user.tenant_name}`
+              : `Welcome back, ${firstName(user.full_name)} — ${user.tenant_name}`}
           </h1>
-          <Badge variant="outline" className="mt-2 text-xs font-normal text-muted-foreground tnum" data-testid="chip-userid">
-            {user.email}
-          </Badge>
+          {!user.is_support_session && (
+            <Badge variant="outline" className="mt-2 text-xs font-normal text-muted-foreground tnum" data-testid="chip-userid">
+              {user.email}
+            </Badge>
+          )}
         </Card>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold">Overview</h2>
@@ -377,15 +381,19 @@ export function DashboardPage() {
         className="p-5 mb-6 bg-gradient-to-r from-primary/5 to-transparent border-primary/15"
       >
         <h1 className="text-xl font-semibold tracking-tight" data-testid="text-welcome">
-          Welcome back, {firstName(user.full_name)} — {user.tenant_name}
+          {user.is_support_session
+            ? `Support view — ${user.tenant_name}`
+            : `Welcome back, ${firstName(user.full_name)} — ${user.tenant_name}`}
         </h1>
-        <Badge
-          variant="outline"
-          className="mt-2 text-xs font-normal text-muted-foreground tnum"
-          data-testid="chip-userid"
-        >
-          {user.email}
-        </Badge>
+        {!user.is_support_session && (
+          <Badge
+            variant="outline"
+            className="mt-2 text-xs font-normal text-muted-foreground tnum"
+            data-testid="chip-userid"
+          >
+            {user.email}
+          </Badge>
+        )}
       </Card>
 
       <div className="flex items-center justify-between mb-4">

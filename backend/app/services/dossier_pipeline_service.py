@@ -23,6 +23,7 @@ from app.services.pipeline_stages import (
     _source_label,
     _validation_results,
 )
+from app.services.publish_service import is_published_from_audit_logs
 
 DossierStageState = Literal["pass", "fail", "waived", "pending"]
 
@@ -782,18 +783,35 @@ def _resolve_post(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelin
     if _is_vault_route(inv):
         return _step("post", state="waived", detail="Not required — vault route")
 
-    processed_log = _latest_log(logs, "invoice_processed", "purchase_document_processed")
-    published_log = _latest_log(logs, "invoice_published_to_ledger")
-    if processed_log or inv.status == InvoiceStatus.PROCESSED or wm >= 12:
-        evidence: list[DossierPipelineEvidenceResponse] = []
-        if published_log:
-            evidence.append(DossierPipelineEvidenceResponse(label="Published", ref="yes"))
+    doc_type = (inv.purchase_document_type or "").strip().lower()
+    if doc_type in ("po", "grn"):
+        purchase_log = _latest_log(logs, "purchase_document_processed")
+        if purchase_log or inv.status == InvoiceStatus.PROCESSED:
+            return _step(
+                "post",
+                state="pass",
+                detail=_detail_from_log(purchase_log, fallback="Supporting document processed"),
+                at=purchase_log.created_at if purchase_log else None,
+            )
+        return _step("post", state="pending", detail="—")
+
+    if is_published_from_audit_logs(logs):
+        published_log = _latest_log(logs, "invoice_published_to_ledger")
         return _step(
             "post",
             state="pass",
-            detail=_detail_from_log(processed_log, fallback="invoice_processed"),
+            detail=_detail_from_log(published_log, fallback="invoice_published_to_ledger"),
+            at=published_log.created_at if published_log else None,
+            evidence=[DossierPipelineEvidenceResponse(label="Published", ref="yes")],
+        )
+
+    processed_log = _latest_log(logs, "invoice_processed")
+    if processed_log or inv.status == InvoiceStatus.PROCESSED or wm >= 12:
+        return _step(
+            "post",
+            state="pending",
+            detail="Ready to publish to ledger",
             at=processed_log.created_at if processed_log else None,
-            evidence=evidence,
         )
     return _step("post", state="pending", detail="—")
 

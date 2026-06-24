@@ -9,7 +9,7 @@ import type {
   VendorMaster,
 } from "@/lib/v4RuleBookTypes";
 import { INGEST_ACTION_ROUTE_PLACEHOLDER, ROUTE_TARGETS } from "@/lib/v4RuleBookTypes";
-import { emptyDocumentClassifier, type DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import { emptyDocumentClassifier, type DocumentTypeDefinition, type DocumentTypeSampleAnalysis } from "@/lib/v5DocumentTypes";
 import type { ApprovalMode, MatchMode, PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import {
   inferPlaybookProfileFromDefinition,
@@ -276,6 +276,29 @@ function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProf
   });
 }
 
+function mapSampleAnalysis(
+  raw: Record<string, unknown> | undefined
+): DocumentTypeSampleAnalysis | undefined {
+  const row = (raw?.sample_analysis ?? raw?.sampleAnalysis) as Record<string, unknown> | undefined;
+  if (!row || typeof row !== "object") return undefined;
+  const analyzedAt = String(row.analyzed_at ?? row.analyzedAt ?? "").trim();
+  if (!analyzedAt) return undefined;
+  const filenames = (row.filenames ?? []) as string[];
+  return {
+    analyzedAt,
+    filenames: Array.isArray(filenames) ? filenames.map(String) : [],
+    fileCount: Number(row.file_count ?? row.fileCount ?? filenames.length) || 0,
+    appliedAt: row.applied_at
+      ? String(row.applied_at)
+      : row.appliedAt
+        ? String(row.appliedAt)
+        : undefined,
+    recognitionSignals: (
+      (row.recognition_signals ?? row.recognitionSignals ?? []) as string[]
+    ).map(String),
+  };
+}
+
 function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
   const extractionFields = normalizeExtractionFieldKeys(
     (raw.extraction_fields ?? raw.extractionFields ?? []) as string[]
@@ -325,6 +348,7 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     ),
     bundleConditional: (raw.bundle_conditional ?? raw.bundleConditional ?? []) as string[],
     purchaseBundleRole: mapPurchaseBundleRole(raw),
+    sampleAnalysis: mapSampleAnalysis(raw),
   };
 }
 
@@ -385,6 +409,19 @@ function documentTypeToApi(
     ...(docType.purchaseBundleRole
       ? { purchase_bundle_role: docType.purchaseBundleRole }
       : {}),
+    ...(docType.sampleAnalysis
+      ? {
+          sample_analysis: {
+            analyzed_at: docType.sampleAnalysis.analyzedAt,
+            filenames: docType.sampleAnalysis.filenames,
+            file_count: docType.sampleAnalysis.fileCount,
+            ...(docType.sampleAnalysis.appliedAt
+              ? { applied_at: docType.sampleAnalysis.appliedAt }
+              : {}),
+            recognition_signals: docType.sampleAnalysis.recognitionSignals,
+          },
+        }
+      : {}),
   };
 }
 
@@ -411,8 +448,8 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
         routeTo: rule.action.route_to,
         tags: rule.action.tags,
       },
-      matchedCount: rule.matched_count,
-      lastMatched: rule.last_matched,
+      matchedCount: rule.matched_count ?? 0,
+      lastMatched: rule.last_matched ?? "—",
     })),
     purchaseRules: api.purchase_rules.map((rule, index) => ({
       id: rule.id,
@@ -494,8 +531,6 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
         route_to: rule.action.routeTo || INGEST_ACTION_ROUTE_PLACEHOLDER,
         tags: rule.action.tags,
       },
-      matched_count: rule.matchedCount,
-      last_matched: rule.lastMatched,
     })),
     purchase_rules: state.purchaseRules.map((rule) => ({
       id: rule.id,

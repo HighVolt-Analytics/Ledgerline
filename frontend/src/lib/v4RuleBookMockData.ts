@@ -7,7 +7,6 @@ import type {
   EmployeeMaster,
   PurchaseRule,
   RuleConditionGroup,
-  SampleEmail,
   TeamExpenseRule,
   RuleBookConfigState,
   VendorMaster,
@@ -25,45 +24,6 @@ export function ruleCond(field: EmailField, operator: ConditionOperator, value: 
 
 const and = ruleGroup;
 const cond = ruleCond;
-
-export const SAMPLE_EMAILS: SampleEmail[] = [
-  {
-    id: "se1",
-    from: "billing@amazon.aws.com",
-    to: "accounts@acme-hospitality.com.au",
-    subject: "Your AWS invoice for May 2026",
-    body: "Please find attached your AWS invoice.",
-    attachment_name: "aws-invoice-may-2026.pdf",
-    attachment_mime: "application/pdf",
-  },
-  {
-    id: "se2",
-    from: "ar@sysco.com.au",
-    to: "accounts@acme-hospitality.com.au",
-    subject: "Sysco statement",
-    body: "Monthly statement attached.",
-    attachment_name: "SYSCO-INV-88210.pdf",
-    attachment_mime: "application/pdf",
-  },
-  {
-    id: "se3",
-    from: "priya@acme-hospitality.com.au",
-    to: "expenses@acme-hospitality.com.au",
-    subject: "Fwd: receipt for site lunch",
-    body: "Receipt photo attached.",
-    attachment_name: "IMG_4821.jpg",
-    attachment_mime: "image/jpeg",
-  },
-  {
-    id: "se4",
-    from: "newsletter@randomvendor.com",
-    to: "accounts@acme-hospitality.com.au",
-    subject: "Weekly deals",
-    body: "Check our specials.",
-    attachment_name: "",
-    attachment_mime: "",
-  },
-];
 
 export const EVAL_DOCUMENTS: EvalDocument[] = [
   {

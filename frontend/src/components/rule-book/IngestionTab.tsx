@@ -1,17 +1,12 @@
 import { useState } from "react";
-import { createPortal } from "react-dom";
 import {
   Activity,
-  Check,
   ChevronDown,
   ChevronRight,
-  FlaskConical,
   GripVertical,
   Inbox,
-  Paperclip,
   Plus,
   Trash2,
-  X,
 } from "lucide-react";
 import { nextRulePriority } from "@/lib/rulePriority";
 import { Badge } from "@/components/ui/badge";
@@ -19,12 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { cn } from "@/lib/cn";
-import { evalConditionGroup } from "@/lib/v4RuleBookLogic";
-import { DEFAULT_MAILBOX, SAMPLE_EMAILS } from "@/lib/v4RuleBookMockData";
+import { DEFAULT_MAILBOX } from "@/lib/v4RuleBookMockData";
 import type { EmailCaptureRule } from "@/lib/v4RuleBookTypes";
 import { INGEST_ACTION_ROUTE_PLACEHOLDER } from "@/lib/v4RuleBookTypes";
-import { ConditionBuilder } from "./ConditionBuilder";
+import { ConditionBuilder } from "@/components/rule-book/ConditionBuilder";
 
 export function IngestionTab({
   rules,
@@ -34,7 +27,6 @@ export function IngestionTab({
   onChange: (rules: EmailCaptureRule[]) => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [testRule, setTestRule] = useState<EmailCaptureRule | null>(null);
 
   const updateRule = (id: string, patch: Partial<EmailCaptureRule>) => {
     onChange(rules.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -137,18 +129,9 @@ export function IngestionTab({
                       data-testid={`enable-email-${rule.id}`}
                     />
                   </div>
-                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <span>last matched {rule.lastMatched}</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-[11px]"
-                      onClick={() => setTestRule(rule)}
-                      data-testid={`test-email-${rule.id}`}
-                    >
-                      <FlaskConical className="h-3 w-3 mr-1" /> Test
-                    </Button>
-                  </div>
+                  <span className="text-[11px] text-muted-foreground">
+                    last matched {rule.lastMatched}
+                  </span>
                 </div>
               </div>
 
@@ -219,102 +202,6 @@ export function IngestionTab({
           </Card>
         )}
       </div>
-
-      {testRule &&
-        createPortal(
-          <div className="app-modal-root" role="presentation">
-            <button
-              type="button"
-              className="app-modal-backdrop"
-              aria-label="Close dialog"
-              onClick={() => setTestRule(null)}
-            />
-            <div
-              role="dialog"
-              aria-modal="true"
-              className="app-modal-panel max-w-lg p-6 space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold leading-none">
-                    Test &ldquo;{testRule.name}&rdquo;
-                  </h3>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Each sample email is evaluated against this rule&apos;s condition tree. A match
-                    means the attachment would be ingested — not routed to a workspace.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTestRule(null)}
-                  aria-label="Close"
-                  className="rounded-sm opacity-70 hover:opacity-100 shrink-0"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {SAMPLE_EMAILS.map((email) => {
-                  const fires = testRule.enabled && evalConditionGroup(email, testRule.root);
-                  return (
-                    <div
-                      key={email.id}
-                      className={cn(
-                        "rounded-lg border p-3",
-                        fires ? "border-primary/30 bg-primary/10" : "border-border bg-card"
-                      )}
-                      data-testid={`test-result-${email.id}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium truncate">
-                            {email.subject || (
-                              <span className="text-muted-foreground italic">(no subject)</span>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground font-mono truncate">
-                            {email.from}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground mt-0.5">
-                            {email.attachment_name ? (
-                              <span className="inline-flex items-center gap-1">
-                                <Paperclip className="h-3 w-3 shrink-0" />
-                                {email.attachment_name}
-                                <span className="opacity-70">· {email.attachment_mime}</span>
-                              </span>
-                            ) : (
-                              "no attachment"
-                            )}
-                          </div>
-                        </div>
-                        <Badge
-                          className={cn(
-                            "shrink-0 border-0",
-                            fires
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted text-muted-foreground"
-                          )}
-                        >
-                          {fires ? (
-                            <>
-                              <Check className="h-3 w-3 mr-1" /> Would ingest
-                            </>
-                          ) : (
-                            <>
-                              <X className="h-3 w-3 mr-1" /> Skip
-                            </>
-                          )}
-                        </Badge>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
     </div>
   );
 }

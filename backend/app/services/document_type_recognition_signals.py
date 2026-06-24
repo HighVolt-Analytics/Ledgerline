@@ -19,6 +19,7 @@ from app.services.purchase_document_service import (
 RecognitionSignalId = str
 
 _FILENAME_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
+    ("filename_invoice", re.compile(r"(?i)(?:^|[-_/])(?:inv|invoice|tax[_-]?inv)(?:[-_.]|$)")),
     ("filename_po", re.compile(r"(^|[-_/])po([-_.]|$)|purchase[_-]?order", re.I)),
     ("filename_grn", re.compile(r"(^|[-_/])grn([-_.]|$)|goods[_-]?receipt|delivery[_-]?note", re.I)),
     ("filename_contract", re.compile(r"contract|agreement|sow|msa", re.I)),
@@ -32,6 +33,7 @@ _FILENAME_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
 ]
 
 _TEXT_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
+    ("text_invoice", re.compile(r"(?i)\b(tax\s+invoice|commercial\s+invoice)\b")),
     ("text_po", re.compile(r"(?i)purchase\s+order")),
     ("text_grn", re.compile(r"(?i)(goods\s+receipt|delivery\s+(note|docket)|\bGRN\b)")),
     ("text_contract", re.compile(r"(?i)(\bcontract\b|master service agreement|docusign)")),
@@ -159,6 +161,11 @@ def detect_recognition_signals(
         signals.add("filename_po")
     if name and _attachment_suggests_grn(name):
         signals.add("filename_grn")
+
+    subject = (invoice.email_subject or "").strip()
+    if subject and re.search(r"(?i)\binvoice\b", subject):
+        signals.add("text_invoice")
+
     extraction = _field_keys_from_sample(invoice=invoice, parsed=parsed, ctx=ctx)
     heading = (parsed.document_heading or ctx.document_heading or "").strip() or None
     return SampleSignalProfile(
@@ -173,13 +180,49 @@ def infer_classifier_layout(
     signals: frozenset[RecognitionSignalId],
     *,
     purchase_bundle_role: str = "",
+    for_sample_analysis: bool = False,
 ) -> str:
     role = (purchase_bundle_role or "").strip().lower()
     if role in {"po", "grn"}:
         return "supporting_doc"
+    if for_sample_analysis:
+        # Sample-derived rules must tolerate variation across uploads of the same type.
+        return "any_signal"
     if {"has_po_reference", "has_invoice_number", "has_total_amount"}.issubset(signals):
         return "all_signals"
     return "any_signal"
+
+
+def merge_signals_for_classifier_profiles(
+    profiles: list[SampleSignalProfile],
+    *,
+    purchase_bundle_role: str = "",
+) -> tuple[frozenset[RecognitionSignalId], str]:
+    """
+    Build classifier signals + layout from one or more parsed samples.
+
+    Multi-sample: prefer signals present on every file (intersection). If none overlap,
+    fall back to union with OR matching so variants of the same type still route.
+    """
+    role = (purchase_bundle_role or "").strip().lower()
+    if not profiles:
+        return frozenset(), "any_signal"
+
+    union: set[RecognitionSignalId] = set()
+    for profile in profiles:
+        union.update(profile.signals)
+
+    if role in {"po", "grn"}:
+        return frozenset(union), "supporting_doc"
+
+    if len(profiles) == 1:
+        return frozenset(union), "any_signal"
+
+    per_file = [set(profile.signals) for profile in profiles]
+    common = set.intersection(*per_file) if per_file else set()
+    if common:
+        return frozenset(common), "any_signal"
+    return frozenset(union), "any_signal"
 
 
 def infer_playbook_profile(signals: frozenset[RecognitionSignalId]) -> str:

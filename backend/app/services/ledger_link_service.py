@@ -19,6 +19,7 @@ from app.services.invoice_evaluation_service import (
     ROUTE_PURCHASE,
     ROUTE_TEAM,
 )
+from app.services.publish_service import is_published_from_audit_logs
 from app.services.reconciliation_overview import build_reconciliation_overview
 
 _ROUTE_EXPENSES_MGMT = ROUTE_EXPENSES
@@ -27,14 +28,19 @@ _ROUTE_PURCHASE = ROUTE_PURCHASE
 
 
 def _export_status(logs: list[AuditLog]) -> str:
-    for entry in logs:
-        if entry.event == "invoice_published_to_ledger":
-            detail = entry.detail or {}
-            target = str(detail.get("target", "")).strip()
-            if target:
-                return f"Pushed to {target}"
-            return "Exported"
-    return "Pending Export"
+    if not is_published_from_audit_logs(logs):
+        return "Pending Export"
+    latest = max(
+        (log for log in logs if log.event == "invoice_published_to_ledger"),
+        key=lambda log: log.id,
+        default=None,
+    )
+    if latest:
+        detail = latest.detail or {}
+        target = str(detail.get("target", "")).strip()
+        if target:
+            return f"Pushed to {target}"
+    return "Exported"
 
 
 def _primary_debit_credit(postings: list[tuple[str, Decimal, Decimal]]) -> tuple[str, str]:

@@ -1,10 +1,10 @@
 import { useRef, useState } from "react";
 
-import { FileUp, Loader2, Sparkles } from "lucide-react";
+import { CheckCircle2, FileUp, Loader2, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
-import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import type { DocumentTypeDefinition, DocumentTypeSampleAnalysis } from "@/lib/v5DocumentTypes";
 
 import type { DocumentTypeTemplateId } from "@/lib/documentTypeTemplates";
 
@@ -12,8 +12,9 @@ import {
 
   analyzeDocumentTypeSamples,
   analyzeSamplesErrorMessage,
+  buildSampleAnalysisRecord,
   formatProposalSummary,
-
+  formatSampleAnalysisWhen,
   mergeSampleProposalIntoDraft,
 
   type DocumentTypeSampleProposal,
@@ -28,7 +29,15 @@ type DocumentTypeSamplesSectionProps = {
 
   templateId: DocumentTypeTemplateId;
 
-  onApply: (next: DocumentTypeDefinition, proposal: DocumentTypeSampleProposal) => void;
+  sampleAnalysis?: DocumentTypeSampleAnalysis;
+
+  onRecordAnalysis: (record: DocumentTypeSampleAnalysis) => void;
+
+  onApply: (
+    next: DocumentTypeDefinition,
+    proposal: DocumentTypeSampleProposal,
+    filenames: string[]
+  ) => void;
 
   disabled?: boolean;
 
@@ -49,6 +58,10 @@ export function DocumentTypeSamplesSection({
   draft,
 
   templateId,
+
+  sampleAnalysis,
+
+  onRecordAnalysis,
 
   onApply,
 
@@ -155,6 +168,7 @@ export function DocumentTypeSamplesSection({
       }
 
       setProposal(result);
+      onRecordAnalysis(buildSampleAnalysisRecord(files.map((file) => file.name), result));
 
     } catch (err) {
 
@@ -175,7 +189,9 @@ export function DocumentTypeSamplesSection({
 
     if (!proposal) return;
 
-    onApply(mergeSampleProposalIntoDraft(draft, proposal, templateId), proposal);
+    const filenames = files.map((file) => file.name);
+
+    onApply(mergeSampleProposalIntoDraft(draft, proposal, templateId), proposal, filenames);
 
   };
 
@@ -194,14 +210,45 @@ export function DocumentTypeSamplesSection({
         <p className="text-sm text-foreground font-medium">Sample files</p>
 
         <p className="mt-1 text-xs text-muted-foreground">
-
-          Upload up to {MAX_FILES} examples. Text-based PDFs analyze in seconds; scanned pages
-
-          use OCR and take longer. Multiple files are parsed in parallel.
-
+          Upload examples to detect recognition signals and extraction fields. Class, routing,
+          playbook, bundle, and validation stay under your manual settings.
         </p>
 
       </div>
+
+
+
+      {sampleAnalysis ? (
+        <div
+          className="rounded-md border border-border/80 bg-muted/25 p-3 text-xs space-y-1.5"
+          data-testid="document-type-samples-history"
+        >
+          <p className="font-medium text-foreground inline-flex items-center gap-1.5">
+            <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+            Sample analysis on record
+          </p>
+          <p className="text-muted-foreground">
+            {sampleAnalysis.fileCount} file{sampleAnalysis.fileCount === 1 ? "" : "s"} analyzed{" "}
+            {formatSampleAnalysisWhen(sampleAnalysis.analyzedAt)}
+            {sampleAnalysis.appliedAt
+              ? ` · suggestions applied ${formatSampleAnalysisWhen(sampleAnalysis.appliedAt)}`
+              : " · suggestions not applied yet"}
+          </p>
+          {sampleAnalysis.filenames.length ? (
+            <p className="text-muted-foreground break-words">
+              {sampleAnalysis.filenames.join(", ")}
+            </p>
+          ) : null}
+          {sampleAnalysis.recognitionSignals.length ? (
+            <p className="text-muted-foreground">
+              Signals: {sampleAnalysis.recognitionSignals.join(", ")}
+            </p>
+          ) : null}
+          <p className="text-[11px] text-muted-foreground/90">
+            Save this document type to keep the analysis record.
+          </p>
+        </div>
+      ) : null}
 
 
 
@@ -343,7 +390,7 @@ export function DocumentTypeSamplesSection({
 
         <div className="space-y-3 rounded-md border border-primary/25 bg-primary/5 p-3">
 
-          <p className="text-sm font-medium text-foreground">Suggested settings</p>
+          <p className="text-sm font-medium text-foreground">Recognition & extraction</p>
 
           {proposal.notes.map((note) => (
 
@@ -474,9 +521,7 @@ export function DocumentTypeSamplesSection({
 
 
           <Button type="button" size="sm" onClick={apply} disabled={disabled}>
-
-            Apply all suggestions to this document type
-
+            Apply recognition & extraction
           </Button>
 
         </div>

@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -22,9 +22,10 @@ import {
   useImportEmployeeMasters,
   useUpdateEmployeeMaster,
 } from "@/hooks/useMasterData";
+import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { cn } from "@/lib/cn";
+import { recentClaimValidationsFromInvoices } from "@/lib/routePageAdapters";
 import { fmtAud } from "@/lib/v4MockData";
-import { RECENT_CLAIM_VALIDATIONS } from "@/lib/v4RuleBookMockData";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
 import { ChannelBadge } from "@/components/team-expenses/ExpenseBadges";
 import { BudgetProgressBar } from "./BudgetProgressBar";
@@ -54,6 +55,11 @@ export function EmployeesTab() {
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
 
   const { data: employees = [], isLoading } = useEmployeeMasters();
+  const { data: teamClaims = [], isLoading: claimsLoading } = useRoutedInvoices("Team Expenses");
+  const recentClaimValidations = useMemo(
+    () => recentClaimValidationsFromInvoices(teamClaims, employees, 10),
+    [teamClaims, employees]
+  );
   const createMutation = useCreateEmployeeMaster();
   const updateMutation = useUpdateEmployeeMaster();
   const deleteMutation = useDeleteEmployeeMaster();
@@ -372,14 +378,23 @@ export function EmployeesTab() {
               </tr>
             </thead>
             <tbody>
-              {RECENT_CLAIM_VALIDATIONS.length === 0 ? (
+              {claimsLoading ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Loading recent claims…
+                    </span>
+                  </td>
+                </tr>
+              ) : recentClaimValidations.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">
                     No recent claims for this organisation.
                   </td>
                 </tr>
               ) : (
-                RECENT_CLAIM_VALIDATIONS.map((claim) => (
+                recentClaimValidations.map((claim) => (
                   <tr key={claim.id} className="row-band border-b border-border/60">
                     <td className="px-3 py-2 font-medium">{claim.employee}</td>
                     <td className="px-3 py-2 text-right tnum">{fmtAud(claim.amount)}</td>

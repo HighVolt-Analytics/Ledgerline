@@ -67,19 +67,20 @@ def create_access_token(
     tenant_slug: str,
     email: str,
     role: str,
+    is_support_session: bool = False,
 ) -> str:
     settings = get_settings()
-    return _encode(
-        {
-            "sub": str(user_id),
-            "tenant_id": str(tenant_id),
-            "tenant_slug": tenant_slug,
-            "email": email,
-            "role": role,
-            "type": TOKEN_TYPE_ACCESS,
-        },
-        minutes=settings.access_token_expire_minutes,
-    )
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "tenant_id": str(tenant_id),
+        "tenant_slug": tenant_slug,
+        "email": email,
+        "role": role,
+        "type": TOKEN_TYPE_ACCESS,
+    }
+    if is_support_session:
+        payload["is_support_session"] = True
+    return _encode(payload, minutes=settings.access_token_expire_minutes)
 
 
 def create_refresh_token(
@@ -90,20 +91,21 @@ def create_refresh_token(
     email: str,
     role: str,
     jti: str,
+    is_support_session: bool = False,
 ) -> str:
     settings = get_settings()
-    return _encode(
-        {
-            "sub": str(user_id),
-            "tenant_id": str(tenant_id),
-            "tenant_slug": tenant_slug,
-            "email": email,
-            "role": role,
-            "type": TOKEN_TYPE_REFRESH,
-            "jti": jti,
-        },
-        days=settings.refresh_token_expire_days,
-    )
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "tenant_id": str(tenant_id),
+        "tenant_slug": tenant_slug,
+        "email": email,
+        "role": role,
+        "jti": jti,
+        "type": TOKEN_TYPE_REFRESH,
+    }
+    if is_support_session:
+        payload["is_support_session"] = True
+    return _encode(payload, days=settings.refresh_token_expire_days)
 
 
 def decode_token(token: str) -> dict[str, Any] | None:

@@ -18,6 +18,7 @@ from app.services.rule_book_config_repository import (
     fetch_config_dict,
     upsert_config,
 )
+from app.services.rule_book_ingest_stats import strip_email_capture_volatile_stats
 from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID, parse_tenant_id
 
 _LEGACY_FILE_TENANT_MAP: dict[str, uuid.UUID] = {
@@ -118,6 +119,7 @@ async def save_rule_book_config(
     data = payload.model_dump()
     data.pop("vendor_masters", None)
     data.pop("employee_masters", None)
+    strip_email_capture_volatile_stats(data)
     await upsert_config(
         session,
         tid,

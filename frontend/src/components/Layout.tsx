@@ -312,6 +312,16 @@ export function Layout() {
           </div>
         </header>
 
+        {user?.is_support_session && (
+          <div
+            className="shrink-0 border-b border-[hsl(43_74%_49%/0.5)] bg-[hsl(43_74%_49%/0.08)] px-4 md:px-6 py-2 text-sm text-[hsl(36_80%_28%)] dark:text-[hsl(43_74%_72%)]"
+            data-testid="banner-support-mode"
+          >
+            Platform support mode — viewing <strong>{user.tenant_name}</strong>. Actions are
+            audited.
+          </div>
+        )}
+
         <main
           className="flex-1 overflow-y-auto min-h-0 px-4 md:px-6 py-6"
           style={{ overscrollBehavior: "contain" }}
@@ -321,7 +331,7 @@ export function Layout() {
 
         <footer className="shrink-0 border-t border-border bg-background/95 backdrop-blur px-4 md:px-6 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
           <span className="font-medium text-foreground/70">Ledgerline v4</span>
-          {user?.email && <span>{user.email}</span>}
+          {user?.email && !user.is_support_session && <span>{user.email}</span>}
           {TRUST.map((t) => (
             <span key={t}>{t}</span>
           ))}

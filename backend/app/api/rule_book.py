@@ -39,6 +39,10 @@ from app.services.master_data_service import attach_masters_to_config_dict
 from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.rule_book_evaluate_service import evaluate_rule_book
+from app.services.rule_book_ingest_stats import (
+    attach_email_capture_ingest_stats,
+    strip_email_capture_volatile_stats,
+)
 from app.services.rule_book_save_buffer import (
     get_buffered_rule_book_raw,
     schedule_rule_book_save,
@@ -76,7 +80,11 @@ async def _load_rule_book_response_dict(
         except (ValidationError, ValueError):
             pass
 
-    return await attach_masters_to_config_dict(db, tenant_id, data)
+    return await attach_email_capture_ingest_stats(
+        db,
+        tenant_id,
+        await attach_masters_to_config_dict(db, tenant_id, data),
+    )
 
 
 @router.get("/config", response_model=ApiEnvelope[dict[str, Any]])
@@ -103,6 +111,7 @@ async def put_rule_book_config(
         raw = body.model_dump()
         raw["vendor_masters"] = []
         raw["employee_masters"] = []
+        strip_email_capture_volatile_stats(raw)
         payload = validate_rule_book_config_payload(raw)
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
@@ -121,7 +130,11 @@ async def put_rule_book_config(
         db=db,
     )
 
-    data = await attach_masters_to_config_dict(db, ctx.tenant_id, after_raw)
+    data = await attach_email_capture_ingest_stats(
+        db,
+        ctx.tenant_id,
+        await attach_masters_to_config_dict(db, ctx.tenant_id, after_raw),
+    )
     return ApiEnvelope(data=data)
 
 

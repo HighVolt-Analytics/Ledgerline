@@ -16,6 +16,24 @@ from app.services.workbook_writer import write_workbook_for_invoice
 
 PUBLISH_CREDIT_COST = 5
 PUBLISH_TARGET = "workbook"
+PROCESSED_LEDGER_EVENTS = frozenset(
+    {"invoice_processed", "purchase_document_processed"},
+)
+
+
+def is_published_from_audit_logs(logs: list[AuditLog]) -> bool:
+    """True when the latest ledger publish is newer than the latest process cycle."""
+    latest_publish = max(
+        (log.id for log in logs if log.event == "invoice_published_to_ledger"),
+        default=0,
+    )
+    if latest_publish == 0:
+        return False
+    latest_processed = max(
+        (log.id for log in logs if log.event in PROCESSED_LEDGER_EVENTS),
+        default=0,
+    )
+    return latest_publish > latest_processed
 
 
 class InsufficientCreditsError(Exception):
@@ -33,13 +51,37 @@ async def published_invoice_ids(
         return set()
     rows = (
         await session.execute(
-            select(AuditLog.invoice_id).where(
+            select(AuditLog.invoice_id, AuditLog.event, func.max(AuditLog.id))
+            .where(
                 AuditLog.invoice_id.in_(invoice_ids),
-                AuditLog.event == "invoice_published_to_ledger",
+                AuditLog.event.in_(
+                    [
+                        "invoice_published_to_ledger",
+                        *PROCESSED_LEDGER_EVENTS,
+                    ]
+                ),
             )
+            .group_by(AuditLog.invoice_id, AuditLog.event)
         )
-    ).scalars().all()
-    return {row for row in rows if row is not None}
+    ).all()
+    by_invoice: dict[int, dict[str, int]] = {}
+    for invoice_id, event, max_id in rows:
+        if invoice_id is None:
+            continue
+        by_invoice.setdefault(invoice_id, {})[event] = max_id
+    published: set[int] = set()
+    for invoice_id in invoice_ids:
+        events = by_invoice.get(invoice_id, {})
+        publish_id = events.get("invoice_published_to_ledger", 0)
+        if publish_id == 0:
+            continue
+        processed_id = max(
+            events.get("invoice_processed", 0),
+            events.get("purchase_document_processed", 0),
+        )
+        if publish_id > processed_id:
+            published.add(invoice_id)
+    return published
 
 
 async def is_published_to_ledger(session: AsyncSession, invoice_id: int) -> bool:
@@ -89,6 +131,22 @@ async def publish_invoice_to_ledger(
     if journal_count == 0:
         raise ValueError("No journal entries to publish")
 
+    if not invoice.invoice_date:
+        if auto:
+            await log_event(
+                session,
+                "publish_skipped",
+                invoice_id=invoice.id,
+                detail={
+                    "reason": "missing_invoice_date",
+                    "document_ref": display_document_ref(invoice),
+                },
+                actor_name=actor_name or "System",
+                actor_email=actor_email,
+            )
+            return False
+        raise ValueError("Invoice date is required before publishing to ledger")
+
     credits_charged = _deduct_publish_credits(
         invoice.tenant_id,
         skip_if_insufficient=auto and skip_if_insufficient_credits,
@@ -108,7 +166,22 @@ async def publish_invoice_to_ledger(
         )
         return False
 
-    await write_workbook_for_invoice(session, invoice)
+    workbook_path = await write_workbook_for_invoice(session, invoice)
+    if workbook_path is None:
+        if auto:
+            await log_event(
+                session,
+                "publish_skipped",
+                invoice_id=invoice.id,
+                detail={
+                    "reason": "workbook_export_failed",
+                    "document_ref": display_document_ref(invoice),
+                },
+                actor_name=actor_name or "System",
+                actor_email=actor_email,
+            )
+            return False
+        raise ValueError("Workbook export failed — check invoice date and journal lines")
 
     doc_ref = display_document_ref(invoice)
     await log_event(

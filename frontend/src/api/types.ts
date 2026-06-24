@@ -8,6 +8,8 @@ export interface AuthUser {
   tenant_slug: string;
   tenant_timezone: string;
   tenant_locale: string;
+  is_support_session?: boolean;
+  onboarding_completed?: boolean;
 }
 
 export type ApprovalActionKey =
@@ -104,6 +106,7 @@ export interface PlatformTenantSummary {
   lifecycle_status: string;
   created_at: string | null;
   user_count: number;
+  pending_invite_count: number;
   invoice_count: number;
   credit_balance: number;
 }
@@ -111,6 +114,27 @@ export interface PlatformTenantSummary {
 export interface PlatformTenantDetail extends PlatformTenantSummary {
   settings_json: Record<string, unknown> | null;
   modules: PlatformTenantModule[];
+}
+
+export interface CreatePlatformTenantBody {
+  name: string;
+  slug: string;
+  country?: string;
+  industry?: string;
+  first_admin_email: string;
+  first_admin_name: string;
+}
+
+export interface PlatformInviteAdminBody {
+  email: string;
+  full_name: string;
+}
+
+export interface OnboardingStatus {
+  completed: boolean;
+  country: string;
+  industry: string | null;
+  steps: string[];
 }
 
 export interface TenantMembership {
@@ -678,8 +702,8 @@ export interface RuleBookConfig {
       route_to: string;
       tags: string[];
     };
-    matched_count: number;
-    last_matched: string;
+    matched_count?: number;
+    last_matched?: string;
   }>;
   purchase_rules: Array<{
     id: string;

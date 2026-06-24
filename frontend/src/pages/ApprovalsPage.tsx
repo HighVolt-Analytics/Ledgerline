@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
@@ -14,6 +14,7 @@ import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef, money } from "@/lib/format";
 import { fetchAllApprovals, fetchAllInvoices } from "@/lib/invoices";
 import { approveAndProcess, watchProcessingUntilIdle } from "@/lib/invoiceActions";
+import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { cn } from "@/lib/cn";
 
@@ -233,12 +234,14 @@ export function ApprovalsPage() {
   };
 
   const publish = async (inv: Invoice) => {
-    if (inv.status !== "processed") {
-      setToast("Publish is available for processed invoices only.");
-      return;
-    }
-    if (inv.published_to_ledger) {
-      setToast(`${documentDisplayRef(inv)} is already published.`);
+    if (!invoiceCanPublishToLedger(inv)) {
+      if (inv.published_to_ledger) {
+        setToast(`${documentDisplayRef(inv)} is already published.`);
+      } else if (inv.status !== "processed") {
+        setToast("Publish is available for processed invoices only.");
+      } else {
+        setToast("This document type is not eligible for ledger publish.");
+      }
       return;
     }
     setBusyId(inv.id);
@@ -247,7 +250,11 @@ export function ApprovalsPage() {
       setToast(`Published · ${documentDisplayRef(inv)}`);
       await load({ silent: true, fresh: true });
     } catch (e) {
-      setToast(e instanceof Error ? e.message : "Publish failed");
+      if (e instanceof ApiError && e.status === 402) {
+        setToast("Not enough credits to publish — top up billing or contact an admin.");
+      } else {
+        setToast(e instanceof Error ? e.message : "Publish failed");
+      }
     } finally {
       setBusyId(null);
     }
@@ -442,7 +449,7 @@ export function ApprovalsPage() {
                             Reject
                           </Button>
                         )}
-                        {col.key === "approved" && !inv.published_to_ledger && (
+                        {col.key === "approved" && invoiceCanPublishToLedger(inv) && (
                           <Button
                             variant="ghost"
                             size="sm"

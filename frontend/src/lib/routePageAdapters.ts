@@ -1,5 +1,7 @@
 import type { Invoice } from "@/api/types";
 import { documentDisplayRef } from "@/lib/format";
+import { invoiceFailedValidations } from "@/lib/invoice";
+import { sortInvoicesNewestFirst } from "@/lib/invoices";
 import { purchaseActionRequiredInvoices } from "@/lib/purchaseRegisterQueue";
 import {
   isDueWithinDays,
@@ -111,7 +113,9 @@ const PIPELINE_IN_REVIEW = new Set([
 
 export function invoiceToExpenseState(inv: Invoice): ExpenseState {
   if (inv.status === "rejected") return "Rejected";
-  if (inv.status === "processed") return "Posted to Ledger";
+  if (inv.status === "processed") {
+    return inv.published_to_ledger ? "Posted to Ledger" : "Approved";
+  }
   if (PIPELINE_IN_REVIEW.has(inv.status)) return "In Review";
   if (
     inv.status === "exception" ||
@@ -155,6 +159,104 @@ export function invoiceToTeamClaim(inv: Invoice): ExpenseClaim {
     budgetGroup: inv.account_name ?? "Team",
     approvers: [],
   };
+}
+
+export type RecentClaimValidation = {
+  id: string;
+  employee: string;
+  amount: number;
+  channel: string;
+  outcome: "approved" | "warning" | "rejected";
+  reason: string;
+};
+
+function normalizePhone(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function matchEmployeeForSender(
+  sender: string | null | undefined,
+  employees: EmployeeMaster[]
+): EmployeeMaster | undefined {
+  if (!sender?.trim()) return undefined;
+  const key = sender.trim().toLowerCase();
+  const phone = normalizePhone(sender);
+  for (const emp of employees) {
+    const email = (emp.email ?? "").trim().toLowerCase();
+    if (email && email === key) return emp;
+    for (const field of [emp.whatsappNumber, emp.viberNumber ?? ""]) {
+      const digits = normalizePhone(field);
+      if (digits && phone && digits === phone) return emp;
+    }
+  }
+  return undefined;
+}
+
+function teamValidationRules(inv: Invoice) {
+  return (inv.validation_results ?? []).filter((r) => r.rule.startsWith("VR-TE"));
+}
+
+function claimValidationReason(inv: Invoice): string {
+  const teamRules = teamValidationRules(inv);
+  const failed = teamRules.filter((r) => !r.skipped && !r.passed);
+  if (failed.length) return failed[0]!.message;
+
+  const allFailed = invoiceFailedValidations(inv);
+  if (allFailed.length) return allFailed[0]!.message;
+
+  const passed = teamRules.filter((r) => !r.skipped && r.passed);
+  if (passed.length) return passed[passed.length - 1]!.message;
+
+  if (inv.status === "processed") return "Posted to ledger";
+  if (inv.status === "rejected") return "Claim rejected";
+  if (inv.evaluation_status === "needs_review") return "Needs manual review";
+  if (inv.status === "exception") return "Validation exception";
+  return "Pending validation";
+}
+
+function claimValidationOutcome(inv: Invoice): RecentClaimValidation["outcome"] {
+  if (inv.status === "rejected" || inv.status === "exception") return "rejected";
+  if (inv.status === "processed") return "approved";
+
+  const failed = invoiceFailedValidations(inv);
+  if (failed.some((r) => r.rule.startsWith("VR-TE"))) return "rejected";
+  if (failed.length) return "warning";
+
+  if (
+    inv.evaluation_status === "needs_review" ||
+    inv.evaluation_status === "pending_vendor" ||
+    PIPELINE_IN_REVIEW.has(inv.status)
+  ) {
+    return "warning";
+  }
+
+  return "approved";
+}
+
+export function invoiceToRecentClaimValidation(
+  inv: Invoice,
+  employees: EmployeeMaster[] = []
+): RecentClaimValidation {
+  const matched = matchEmployeeForSender(inv.email_sender, employees);
+  const claim = invoiceToTeamClaim(inv);
+  return {
+    id: String(inv.id),
+    employee: matched?.name ?? claim.submitter,
+    amount: claim.amount,
+    channel: claim.channel,
+    outcome: claimValidationOutcome(inv),
+    reason: claimValidationReason(inv),
+  };
+}
+
+export function recentClaimValidationsFromInvoices(
+  invoices: Invoice[],
+  employees: EmployeeMaster[],
+  limit = 10
+): RecentClaimValidation[] {
+  return sortInvoicesNewestFirst(invoices)
+    .slice(0, limit)
+    .map((inv) => invoiceToRecentClaimValidation(inv, employees));
 }
 
 export function employeeBudgetRows(employees: EmployeeMaster[]): ExpenseBudget[] {

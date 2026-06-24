@@ -24,6 +24,7 @@ from app.services.file_storage import has_stored_path
 from app.services.invoice_evaluation_service import load_posting_config_for_tenant
 from app.services.matrix_service import derive_matrix_payment_status
 from app.services.pipeline_stages import _actor_name, _latest_log, _source_label
+from app.services.publish_service import is_published_from_audit_logs
 from app.tenant_settings import tenant_today
 
 
@@ -127,6 +128,9 @@ def _derive_outcome(
     if (invoice.route_target or "").strip().lower() == "vault":
         if any(log.event == "vault_stored" for log in logs) or invoice.status == InvoiceStatus.PROCESSED:
             return "in_progress", "Stored in document vault"
+    doc_type = (invoice.purchase_document_type or "").strip().lower()
+    if doc_type in ("po", "grn") and invoice.status == InvoiceStatus.PROCESSED:
+        return "auto_posted", "Purchase document processed"
     if invoice.status == InvoiceStatus.PROCESSED:
         approved = any(log.event == "invoice_approved" for log in logs)
         if published:
@@ -270,7 +274,7 @@ async def build_dossier_summary(
     tenant = await session.get(Tenant, invoice.tenant_id)
     institution_today = tenant_today(tenant)
     definition = resolve_definition_for_invoice(invoice, config.document_types)
-    published = any(log.event == "invoice_published_to_ledger" for log in logs)
+    published = is_published_from_audit_logs(logs)
     pay_key, pay_detail = _payment_status_key(invoice, payment)
 
     pipeline = build_dossier_pipeline(

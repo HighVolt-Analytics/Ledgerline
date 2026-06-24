@@ -56,11 +56,16 @@ export function ExpensesManagementPage() {
 
   const kpis = useMemo(() => {
     const open = claims.filter((e) => e.state === "New" || e.state === "In Review").length;
-    const postedRows = claims.filter((e) => e.state === "Posted to Ledger");
-    const postedTotal = postedRows.reduce((s, e) => s + e.amount, 0);
+    const postedInvoices = routed.filter(
+      (inv) => inv.status === "processed" && inv.published_to_ledger
+    );
+    const postedTotal = postedInvoices.reduce(
+      (s, inv) => s + (parseFloat(String(inv.total ?? 0)) || 0),
+      0
+    );
     const pending = claims.filter((e) => e.state === "In Review").length;
-    return { open, postedCount: postedRows.length, postedTotal, pending };
-  }, [claims]);
+    return { open, postedCount: postedInvoices.length, postedTotal, pending };
+  }, [claims, routed]);
 
   const selected = claims.find((e) => e.id === selectedId) ?? claims[0] ?? null;
   const filteredClaims = useMemo(

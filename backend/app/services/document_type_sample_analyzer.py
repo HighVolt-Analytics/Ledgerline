@@ -17,10 +17,10 @@ from app.schemas.document_type_sample_analysis import (
 from app.services.document_type_recognition_signals import (
     detect_recognition_signals,
     infer_absent_fields,
-    infer_classifier_layout,
     infer_document_metadata,
     infer_playbook_profile,
     infer_purchase_bundle_role,
+    merge_signals_for_classifier_profiles,
     suggest_bundle_members,
     suggest_one_line,
     suggest_title_from_heading,
@@ -219,12 +219,15 @@ def analyze_parsed_document_samples(
             )
         )
 
-    merged_signals = frozenset(_union_strings(profiles, "signals"))
+    merged_signals, layout = merge_signals_for_classifier_profiles(
+        profiles,
+        purchase_bundle_role=(purchase_bundle_role or "").strip().lower()
+        or infer_purchase_bundle_role(frozenset(_union_strings(profiles, "signals"))),
+    )
     merged_fields = _union_strings(profiles, "extraction_fields")
     bundle_role = (purchase_bundle_role or "").strip().lower() or infer_purchase_bundle_role(
         merged_signals
     )
-    layout = infer_classifier_layout(merged_signals, purchase_bundle_role=bundle_role)
     playbook = infer_playbook_profile(merged_signals)
     absent = infer_absent_fields(merged_signals)
     klass, posting, route_target = infer_document_metadata(playbook, bundle_role=bundle_role)
@@ -244,7 +247,7 @@ def analyze_parsed_document_samples(
     if len(profiles) > 1:
         notes.insert(
             0,
-            f"Combined {len(profiles)} samples — all detected signals and fields are included.",
+            f"Combined {len(profiles)} samples — classifier uses signals shared by all files when possible, otherwise any matching signal.",
         )
     if not merged_signals:
         notes.append("No recognition signals detected — check OCR quality or add clearer samples.")

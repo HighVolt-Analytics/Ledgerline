@@ -48,6 +48,7 @@ import type {
   InvitePreview,
   InviteAcceptResult,
   InstitutionSettings,
+  OnboardingStatus,
   UserPermissions,
   Vendor,
   VaultTreeResponse,
@@ -393,6 +394,13 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  getOnboardingStatus: () => request<OnboardingStatus>("/api/tenants/current/onboarding"),
+  updateOnboarding: (body: { country?: string; industry?: string; complete?: boolean }) =>
+    request<OnboardingStatus>("/api/tenants/current/onboarding", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   getMyPermissions: () => request<UserPermissions>("/api/auth/me/permissions"),
   listTenantMembers: () => request<TenantMembersList>("/api/tenants/current/members"),
   inviteTenantMember: (body: { email: string; full_name: string; role: string }) =>
@@ -453,8 +461,14 @@ export const api = {
   listPlatformTenants: () => request<PlatformTenantSummary[]>("/api/platform/tenants"),
   getPlatformTenant: (tenantId: string) =>
     request<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}`),
-  createPlatformTenant: (body: { name: string; slug: string }) =>
+  createPlatformTenant: (body: import("@/api/types").CreatePlatformTenantBody) =>
     request<PlatformTenantDetail>("/api/platform/tenants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  invitePlatformTenantAdmin: (tenantId: string, body: import("@/api/types").PlatformInviteAdminBody) =>
+    request<TenantInviteCreated>(`/api/platform/tenants/${tenantId}/invite-admin`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
