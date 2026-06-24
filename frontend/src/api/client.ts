@@ -185,7 +185,14 @@ async function parseErrorResponse(res: Response): Promise<string> {  /* Convert 
     if (typeof detail === "string") {
       msg = detail;
     } else if (Array.isArray(detail)) {
-      msg = detail.map((d: { msg?: string }) => d.msg ?? JSON.stringify(d)).join("; ");
+      const parts = detail.map((d: { msg?: string; loc?: unknown[] }) => {
+        const field = Array.isArray(d.loc)
+          ? d.loc.filter((x) => x !== "body").join(".")
+          : "";
+        const reason = d.msg ?? JSON.stringify(d);
+        return field ? `${field} — ${reason}` : reason;
+      });
+      msg = parts.length ? `Validation error: ${parts.join("; ")}` : res.statusText;
     } else if (detail != null) {
       msg = JSON.stringify(detail);
     }
