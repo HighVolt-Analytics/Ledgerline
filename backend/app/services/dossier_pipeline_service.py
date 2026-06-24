@@ -659,9 +659,9 @@ def _resolve_approve(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 
     if approved_log:
         actor = _actor_name(approved_log.detail if isinstance(approved_log.detail, dict) else None)
-        detail = _detail_from_log(approved_log, fallback="invoice_approved")
+        detail = _detail_from_log(approved_log, fallback="Approved")
         if actor and actor not in detail:
-            detail = f"{detail} · {actor}"
+            detail = f"Approved by {actor}"
         return _step(
             "approve",
             state="pass",
@@ -676,7 +676,7 @@ def _resolve_approve(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
         return _step(
             "approve",
             state="pending",
-            detail=reason or "approval_required",
+            detail=reason or "Waiting for approver",
             at=approval_required.created_at,
             remediation=_REMEDIATION["APPROVAL_REQUIRED"],
         )

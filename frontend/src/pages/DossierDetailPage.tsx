@@ -11,8 +11,9 @@ import {
   DossierOutcomeBanner,
   DossierSummaryStrip,
 } from "@/components/dossiers/DossierSummaryStrip";
+import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageEyebrowHeader } from "@/components/PageEyebrowHeader";
-import { fetchDossierById } from "@/lib/dossierApi";
+import { fetchDossierById, addDossierManualLink, removeDossierManualLink } from "@/lib/dossierApi";
 import { isLegacyMockDossierId, type DossierSummary } from "@/lib/dossiers";
 
 function captureLabel(channel: string): string {
@@ -24,6 +25,28 @@ export function DossierDetailPage() {
   const { dossierId } = useParams<{ dossierId: string }>();
   const [dossier, setDossier] = useState<DossierSummary | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [drawerId, setDrawerId] = useState<number | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const openLinkedDocument = (invoiceId: number) => {
+    setDrawerId(invoiceId);
+    setDrawerOpen(true);
+  };
+
+  const handleAddManualLink = async (body: {
+    linkedInvoiceId: number;
+    slotId?: string | null;
+  }) => {
+    if (!dossierId) return;
+    const row = await addDossierManualLink(dossierId, body);
+    setDossier(row);
+  };
+
+  const handleRemoveManualLink = async (linkId: number) => {
+    if (!dossierId) return;
+    const row = await removeDossierManualLink(dossierId, linkId);
+    setDossier(row);
+  };
 
   useEffect(() => {
     if (!dossierId) {
@@ -108,12 +131,23 @@ export function DossierDetailPage() {
         <DossierPipelinePanel pipeline={dossier.pipeline} />
         <div className="dossier-detail-rail">
           <DossierLinkedDocumentsPanel
-            dossierId={dossier.id}
             linked={dossier.linkedDocuments}
+            anchorInvoiceId={dossier.invoiceId}
+            dossierId={dossier.id}
+            onOpenDocument={openLinkedDocument}
+            onAddManualLink={handleAddManualLink}
+            onRemoveManualLink={handleRemoveManualLink}
           />
           <DossierApprovalPanel chain={dossier.approvalChain} />
         </div>
       </div>
+
+      <InvoiceDetailDrawer
+        invoiceId={drawerId}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        initialTab="fields"
+      />
     </div>
   );
 }

@@ -35,19 +35,39 @@ class DossierPipelineStepResponse(BaseModel):
     evidence: list[DossierPipelineEvidenceResponse] = Field(default_factory=list)
 
 
+class DossierManualLinkInfoResponse(BaseModel):
+    id: int
+    invoice_id: int
+    linked_dossier_id: str
+    document_ref: str | None = None
+    label: str
+    document_type_code: str
+    has_file: bool = False
+
+
+class DossierManualLinkCreateRequest(BaseModel):
+    linked_invoice_id: int
+    slot_id: str | None = None
+
+
 class DossierLinkedDocumentResponse(BaseModel):
     id: str
     document_type_code: str
     label: str
     document_ref: str | None = None
+    invoice_no: str | None = None
     present: bool
     requirement: str
     purchase_bundle_role: str | None = None
     source: str | None = None
     linked_dossier_id: str | None = None
+    invoice_id: int | None = None
     is_anchor: bool = False
     has_file: bool = False
     linkage_detail: str | None = None
+    link_kind: str = "system"
+    manual_link_id: int | None = None
+    manual_link: DossierManualLinkInfoResponse | None = None
 
 
 class DossierMatchSummaryResponse(BaseModel):

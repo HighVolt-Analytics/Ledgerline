@@ -3,6 +3,7 @@ from app.models.auth_account import AuthAccount
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.connected_whatsapp import ConnectedWhatsapp
 from app.models.meta_webhook_dedupe import MetaWebhookDedupe
+from app.models.dossier_manual_link import DossierManualLink
 from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice
 from app.models.journal import JournalEntry
@@ -32,6 +33,7 @@ __all__ = [
     "ConnectedWhatsapp",
     "MetaWebhookDedupe",
     "DailyReconciliation",
+    "DossierManualLink",
     "EmployeeMasterRecord",
     "GoodsReceipt",
     "Invoice",

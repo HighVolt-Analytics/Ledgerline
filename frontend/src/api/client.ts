@@ -164,6 +164,8 @@ function bustGetCache(path: string, method = "GET") {
 
 export type FreshRequestOptions = { fresh?: boolean };
 
+export type ApiRequestOptions = RequestInit & { timeoutMs?: number };
+
 function withAuthHeaders(init?: RequestInit): Headers {
   const headers = new Headers(init?.headers);
   if (authToken) {
@@ -245,27 +247,49 @@ async function requestBlob(
   };
 }
 
-async function fetchEnvelope<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
-  if (!res.ok) {
-    const msg = await parseErrorResponse(res);
-    if (
-      res.status === 401 &&
-      authToken &&
-      path !== "/api/auth/me" &&
-      path !== "/api/auth/refresh"
-    ) {
-      void notifyUnauthorized();
+async function fetchEnvelope<T>(path: string, init?: ApiRequestOptions): Promise<T> {
+  const { timeoutMs, ...fetchInit } = init ?? {};
+  const controller = timeoutMs != null && timeoutMs > 0 ? new AbortController() : null;
+  const timer =
+    controller != null
+      ? window.setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      ...fetchInit,
+      signal: controller?.signal,
+      headers: getScopedAuthHeaders(fetchInit),
+    });
+    if (!res.ok) {
+      const msg = await parseErrorResponse(res);
+      if (
+        res.status === 401 &&
+        authToken &&
+        path !== "/api/auth/me" &&
+        path !== "/api/auth/refresh"
+      ) {
+        void notifyUnauthorized();
+      }
+      throw new ApiError(msg, res.status);
     }
-    throw new ApiError(msg, res.status);
+    if (res.status === 204) return undefined as T;
+    const json = (await res.json()) as ApiEnvelope<T>;
+    if (json.error) throw new Error(json.error.message);
+    return json.data;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(
+        "The request took too long. Try fewer files or use text-based PDFs.",
+        408
+      );
+    }
+    throw err;
+  } finally {
+    if (timer != null) window.clearTimeout(timer);
   }
-  if (res.status === 204) return undefined as T;
-  const json = (await res.json()) as ApiEnvelope<T>;
-  if (json.error) throw new Error(json.error.message);
-  return json.data;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
   if (method !== "GET") {
     invalidateGetCache();               /** Invalidate cache for non-GET requests */
@@ -517,7 +541,7 @@ export const api = {
     request<ConnectedMailbox>(`/api/mailboxes/${id}/toggle`, { method: "PATCH" }),
   startMailboxBackfill: (
     mailboxId: number,
-    body: { from_date: string; to_date: string; mark_processed?: boolean }
+    body: { from_date: string; to_date?: string; mark_processed?: boolean }
   ) =>
     request<MailboxBackfillQueued>(`/api/mailboxes/${mailboxId}/backfill`, {
       method: "POST",
@@ -616,6 +640,23 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<import("@/lib/dossierApi").DossierSummaryApi>(path);
   },
+  addDossierManualLink: (
+    dossierId: string,
+    body: { linked_invoice_id: number; slot_id?: string | null }
+  ) =>
+    request<import("@/lib/dossierApi").DossierSummaryApi>(
+      `/api/dossiers/${encodeURIComponent(dossierId)}/manual-links`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ),
+  removeDossierManualLink: (dossierId: string, linkId: number) =>
+    request<import("@/lib/dossierApi").DossierSummaryApi>(
+      `/api/dossiers/${encodeURIComponent(dossierId)}/manual-links/${linkId}`,
+      { method: "DELETE" }
+    ),
   uploadInvoice: async (
     file: File,
     purchaseDocumentType?: "po" | "grn" | "invoice",
@@ -855,10 +896,13 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  analyzeDocumentTypeSamples: (formData: FormData) =>
+  analyzeDocumentTypeSamples: (
+    formData: FormData,
+    options?: { timeoutMs?: number }
+  ) =>
     request<import("@/lib/documentTypeSampleAnalysis").DocumentTypeSampleProposal>(
       "/api/rule-book/document-types/analyze-samples",
-      { method: "POST", body: formData }
+      { method: "POST", body: formData, timeoutMs: options?.timeoutMs }
     ),
   getRuleBookChangelog: (limit = 20) =>
     request<RuleBookChangelogEntry[]>(`/api/rule-book/changelog?limit=${limit}`),

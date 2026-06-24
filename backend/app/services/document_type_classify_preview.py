@@ -16,7 +16,7 @@ from app.services.document_type_classifier import (
 )
 from app.services.document_type_conflicts import detect_signal_conflicts
 from app.services.document_type_rule_engine import build_document_classifier_context
-from app.services.document_type_sample_analyzer import _parse_sample
+from app.services.document_type_sample_analyzer import ParsedDocumentSample, _parse_sample
 from app.services.invoice_data import ParseConfidence
 
 
@@ -74,22 +74,20 @@ def _candidate_from_classification(
     )
 
 
-def classify_sample_against_catalog(
-    filename: str,
-    content: bytes,
+def classify_parsed_sample_against_catalog(
+    sample: ParsedDocumentSample,
     *,
     document_types: Sequence[DocumentTypeDefinition],
     unclassified: DocumentClassificationConfig | None = None,
     expected_code: str | None = None,
 ) -> ClassifyPreviewResult:
-    invoice, parsed, parse_confidence_raw = _parse_sample(filename, content)
-    parse_confidence = _parse_confidence(parse_confidence_raw)
-    ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
+    parse_confidence = _parse_confidence(sample.confidence)
+    ctx = build_document_classifier_context(invoice=sample.invoice, parsed=sample.parsed)
     conflicts = detect_signal_conflicts(ctx)
 
     result = classify_document_type(
-        invoice=invoice,
-        parsed=parsed,
+        invoice=sample.invoice,
+        parsed=sample.parsed,
         document_types=document_types,
         parse_confidence=parse_confidence,
         unclassified=unclassified,
@@ -97,8 +95,8 @@ def classify_sample_against_catalog(
 
     ranked = rank_document_type_candidates(
         document_types=document_types,
-        invoice=invoice,
-        parsed=parsed,
+        invoice=sample.invoice,
+        parsed=sample.parsed,
         parse_confidence=parse_confidence,
         limit=5,
     )
@@ -122,7 +120,7 @@ def classify_sample_against_catalog(
         matches_expected = result.code.strip().upper() == expected
 
     return ClassifyPreviewResult(
-        filename=filename,
+        filename=sample.filename,
         routed_code=result.code,
         routed_confidence=result.confidence,
         needs_review=result.needs_review or bool(conflicts),
@@ -133,13 +131,66 @@ def classify_sample_against_catalog(
     )
 
 
+def classify_sample_against_catalog(
+    filename: str,
+    content: bytes,
+    *,
+    document_types: Sequence[DocumentTypeDefinition],
+    unclassified: DocumentClassificationConfig | None = None,
+    expected_code: str | None = None,
+) -> ClassifyPreviewResult:
+    invoice, parsed, parse_confidence_raw = _parse_sample(filename, content)
+    return classify_parsed_sample_against_catalog(
+        ParsedDocumentSample(
+            filename=filename,
+            invoice=invoice,
+            parsed=parsed,
+            confidence=parse_confidence_raw,
+        ),
+        document_types=document_types,
+        unclassified=unclassified,
+        expected_code=expected_code,
+    )
+
+
+def classify_parsed_samples_against_catalog(
+    parsed_samples: Sequence[ParsedDocumentSample],
+    *,
+    document_types: Sequence[DocumentTypeDefinition],
+    unclassified: DocumentClassificationConfig | None = None,
+    expected_code: str | None = None,
+) -> list[ClassifyPreviewResult]:
+    results: list[ClassifyPreviewResult] = []
+    for sample in parsed_samples:
+        try:
+            results.append(
+                classify_parsed_sample_against_catalog(
+                    sample,
+                    document_types=document_types,
+                    unclassified=unclassified,
+                    expected_code=expected_code,
+                )
+            )
+        except Exception:
+            continue
+    return results
+
+
 def classify_samples_against_catalog(
     files: list[tuple[str, bytes]],
     *,
     document_types: Sequence[DocumentTypeDefinition],
     unclassified: DocumentClassificationConfig | None = None,
     expected_code: str | None = None,
+    parsed_samples: Sequence[ParsedDocumentSample] | None = None,
 ) -> list[ClassifyPreviewResult]:
+    if parsed_samples is not None:
+        return classify_parsed_samples_against_catalog(
+            parsed_samples,
+            document_types=document_types,
+            unclassified=unclassified,
+            expected_code=expected_code,
+        )
     results: list[ClassifyPreviewResult] = []
     for filename, content in files:
         try:

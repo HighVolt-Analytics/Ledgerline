@@ -11,7 +11,7 @@ import type { DocumentTypeTemplateId } from "@/lib/documentTypeTemplates";
 import {
 
   analyzeDocumentTypeSamples,
-
+  analyzeSamplesErrorMessage,
   formatProposalSummary,
 
   mergeSampleProposalIntoDraft,
@@ -37,8 +37,12 @@ type DocumentTypeSamplesSectionProps = {
 
 
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,.docx";
+const MAX_FILES = 10;
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
-
+function fileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
 
 export function DocumentTypeSamplesSection({
 
@@ -57,7 +61,7 @@ export function DocumentTypeSamplesSection({
   const [files, setFiles] = useState<File[]>([]);
 
   const [busy, setBusy] = useState(false);
-
+  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [proposal, setProposal] = useState<DocumentTypeSampleProposal | null>(null);
@@ -72,13 +76,31 @@ export function DocumentTypeSamplesSection({
 
     setProposal(null);
 
+    const rejected: string[] = [];
+
     setFiles((prev) => {
 
       const merged = [...prev];
 
+      const seen = new Set(merged.map(fileKey));
+
       for (const file of Array.from(incoming)) {
 
-        if (merged.length >= 10) break;
+        if (merged.length >= MAX_FILES) break;
+
+        if (file.size > MAX_FILE_BYTES) {
+
+          rejected.push(`${file.name} (too large)`);
+
+          continue;
+
+        }
+
+        const key = fileKey(file);
+
+        if (seen.has(key)) continue;
+
+        seen.add(key);
 
         merged.push(file);
 
@@ -87,6 +109,12 @@ export function DocumentTypeSamplesSection({
       return merged;
 
     });
+
+    if (rejected.length) {
+
+      setError(`Skipped: ${rejected.join(", ")}. Max ${MAX_FILE_BYTES / (1024 * 1024)} MB per file.`);
+
+    }
 
   };
 
@@ -103,7 +131,11 @@ export function DocumentTypeSamplesSection({
     }
 
     setBusy(true);
-
+    setStatus(
+      files.length === 1
+        ? "Analyzing sample (local text first, OCR if needed)…"
+        : `Analyzing ${files.length} samples in parallel…`
+    );
     setError(null);
 
     try {
@@ -116,15 +148,22 @@ export function DocumentTypeSamplesSection({
 
       });
 
+      if (!result?.samples?.length && !result?.recognition_signals?.length) {
+        setError("Analysis finished but no fields or signals were detected. Try a clearer PDF.");
+        setProposal(null);
+        return;
+      }
+
       setProposal(result);
 
     } catch (err) {
 
-      setError(err instanceof Error ? err.message : "Analysis failed");
+      setError(analyzeSamplesErrorMessage(err));
 
     } finally {
 
       setBusy(false);
+      setStatus(null);
 
     }
 
@@ -156,9 +195,9 @@ export function DocumentTypeSamplesSection({
 
         <p className="mt-1 text-xs text-muted-foreground">
 
-          Upload one or more real examples of this document type. We parse every file and suggest
+          Upload up to {MAX_FILES} examples. Text-based PDFs analyze in seconds; scanned pages
 
-          recognition, fields, validation, match, approval, and bundle settings.
+          use OCR and take longer. Multiple files are parsed in parallel.
 
         </p>
 
@@ -202,7 +241,7 @@ export function DocumentTypeSamplesSection({
 
           size="sm"
 
-          disabled={disabled || busy || files.length >= 10}
+          disabled={disabled || busy || files.length >= MAX_FILES}
 
           onClick={() => inputRef.current?.click()}
 
@@ -280,7 +319,7 @@ export function DocumentTypeSamplesSection({
 
           {files.map((file) => (
 
-            <li key={`${file.name}-${file.size}`} className="truncate text-foreground">
+            <li key={fileKey(file)} className="truncate text-foreground">
 
               {file.name}
 
@@ -295,6 +334,8 @@ export function DocumentTypeSamplesSection({
 
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
+
+      {status ? <p className="text-xs text-muted-foreground">{status}</p> : null}
 
 
 

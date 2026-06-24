@@ -293,7 +293,6 @@ export function UploadPage() {
 
   async function startHistoricalImport(payload: {
     from_date: string;
-    to_date: string;
     mark_processed: boolean;
   }) {
     if (!importMailbox) return;
@@ -456,7 +455,7 @@ export function UploadPage() {
 
       {importJob && (importJob.status === "queued" || importJob.status === "running") && (
         <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">
-          Importing mail from {importJob.from_date} to {importJob.to_date}…{" "}
+          Importing mail from {importJob.from_date} through today…{" "}
           {importJob.messages_scanned > 0
             ? `${importJob.messages_scanned} message(s) scanned`
             : "scanning mailbox"}

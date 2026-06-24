@@ -120,7 +120,7 @@ async def export_audit_log_csv(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    rows, invoice_map, purchase_by_po_id, purchase_by_po_number = (
+    rows, invoice_map, purchase_by_po_id, purchase_by_po_number, linked_docs = (
         await fetch_audit_rows_for_export(
             db,
             tenant_id=ctx.tenant_id,
@@ -135,6 +135,7 @@ async def export_audit_log_csv(
         invoice_map=invoice_map,
         purchase_vault_by_po_id=purchase_by_po_id,
         purchase_vault_by_po_number=purchase_by_po_number,
+        linked_docs_by_invoice=linked_docs,
     )
     filename = _audit_export_filename(month=month, date_from=d_from, date_to=d_to)
     return Response(

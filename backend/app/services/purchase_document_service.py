@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import re
-from datetime import date
-from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.models.purchase_order import PurchaseOrder
 from app.services.audit_service import log_event
@@ -27,6 +24,12 @@ from app.services.purchase_match_service import (
     _invoice_qty_and_price,
     load_purchase_order_for_invoice,
     persist_three_way_match_audit,
+)
+from app.services.purchase_linking_service import (
+    attach_grn_invoice_to_po,
+    bridge_orphan_grns_via_commercial_invoice,
+    grn_has_po_ref,
+    po_ref_for_invoice,
 )
 from app.services.rule_book_mapper import load_classification_config
 
@@ -265,17 +268,7 @@ async def _sync_grn_document(db: AsyncSession, invoice: Invoice, po_number: str)
         return None
 
     invoice = await _load_invoice_with_lines(db, invoice)
-    qty, _, _ = _invoice_qty_and_price(invoice)
-    grn = GoodsReceipt(
-        tenant_id=po.tenant_id,
-        purchase_order_id=po.id,
-        grn_qty=qty,
-        grn_date=invoice.invoice_date or date.today(),
-        receiver=None,
-        condition_note="From uploaded GRN document",
-        grn_invoice_id=invoice.id,
-    )
-    db.add(grn)
+    await attach_grn_invoice_to_po(db, grn_invoice=invoice, po=po)
     inherit_po_coding_to_invoice(po, invoice)
 
     commercial: Invoice | None = None
@@ -304,12 +297,29 @@ async def _sync_grn_document(db: AsyncSession, invoice: Invoice, po_number: str)
             "purchase_order_id": po.id,
             "three_way_status": new_status,
             "match_status": match.status,
+            "link_mode": "po_ref",
         },
     )
     await reconcile_dossier_vendor(
         db, invoice, po, document_type=PurchaseDocumentType.GRN.value
     )
     return po
+
+
+async def _sync_orphan_grn_document(db: AsyncSession, invoice: Invoice) -> None:
+    """GRN without po_ref_no — wait for commercial invoice to bridge via invoice_no."""
+    invoice = await _load_invoice_with_lines(db, invoice)
+    await log_event(
+        db,
+        "purchase_grn_unlinked",
+        invoice_id=invoice.id,
+        detail={
+            "document_type": PurchaseDocumentType.GRN.value,
+            "invoice_no": invoice.invoice_no,
+            "reason": "No PO reference on GRN — will link when matching invoice arrives",
+        },
+    )
+    await db.flush()
 
 
 async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number: str) -> PurchaseOrder | None:
@@ -330,6 +340,12 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
     po.invoice_id = invoice.id
     inherit_po_coding_to_invoice(po, invoice)
 
+    bridged = await bridge_orphan_grns_via_commercial_invoice(
+        db, commercial=invoice, po=po
+    )
+    if bridged:
+        await db.refresh(po, attribute_names=["goods_receipts"])
+
     new_status, match = await persist_three_way_match_audit(
         db,
         po,
@@ -347,6 +363,7 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
             "purchase_order_id": po.id,
             "three_way_status": new_status,
             "match_status": match.status,
+            "bridged_grn_invoice_ids": [row.id for row in bridged],
         },
     )
     await reconcile_dossier_vendor(
@@ -365,22 +382,29 @@ async def sync_purchase_document(
     if invoice.route_target != ROUTE_PURCHASE:
         return None
 
-    po_number = (invoice.po_reference or "").strip()
-    if not po_number or not is_plausible_po_reference(po_number):
-        return None
-
     doc_type = resolve_purchase_document_type(invoice, explicit=explicit_document_type)
     if doc_type:
         invoice.purchase_document_type = doc_type
         await db.flush()
 
+    po_number = po_ref_for_invoice(invoice)
+
     if doc_type == PurchaseDocumentType.PO.value:
+        if not po_number:
+            return None
         return await _sync_po_document(db, invoice, po_number)
     if doc_type == PurchaseDocumentType.GRN.value:
-        return await _sync_grn_document(db, invoice, po_number)
+        if grn_has_po_ref(invoice) and po_number:
+            return await _sync_grn_document(db, invoice, po_number)
+        await _sync_orphan_grn_document(db, invoice)
+        return None
     if doc_type == PurchaseDocumentType.INVOICE.value:
+        if not po_number:
+            return None
         return await _sync_commercial_invoice(db, invoice, po_number)
 
+    if not po_number:
+        return None
     return await _sync_commercial_invoice(db, invoice, po_number)
 
 

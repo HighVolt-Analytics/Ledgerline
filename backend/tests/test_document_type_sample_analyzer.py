@@ -9,7 +9,10 @@ from app.services.document_type_recognition_signals import (
     infer_classifier_layout,
     infer_playbook_profile,
 )
-from app.services.document_type_sample_analyzer import analyze_document_type_samples
+from app.services.document_type_sample_analyzer import (
+    analyze_document_type_samples,
+    parse_document_samples,
+)
 from app.services.invoice_data import InvoiceData, ParsedLineItem
 
 
@@ -110,3 +113,31 @@ def test_analyze_rejects_empty_file_list() -> None:
         assert "At least one" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_parse_document_samples_parallel(monkeypatch) -> None:
+    import time
+
+    parsed = _parsed()
+    invoice = _invoice(email_attachment_name="sample.pdf")
+
+    def slow_parse(filename: str, content: bytes):
+        _ = content
+        time.sleep(0.05)
+        return invoice, parsed, "high"
+
+    monkeypatch.setattr(
+        "app.services.document_type_sample_analyzer._parse_sample",
+        slow_parse,
+    )
+    started = time.perf_counter()
+    samples, _notes = parse_document_samples(
+        [
+            ("a.pdf", b"1"),
+            ("b.pdf", b"2"),
+            ("c.pdf", b"3"),
+        ]
+    )
+    elapsed = time.perf_counter() - started
+    assert len(samples) == 3
+    assert elapsed < 0.14

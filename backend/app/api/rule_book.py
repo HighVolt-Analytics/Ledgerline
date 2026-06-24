@@ -1,5 +1,6 @@
 """Rule book config CRUD and evaluation."""
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -25,7 +26,11 @@ from app.schemas.rule_book_evaluate import (
     RuleBookEvaluateRequest,
     RuleBookEvaluateResponse,
 )
-from app.services.document_type_sample_analyzer import analyze_document_type_samples
+from app.services.document_type_sample_analyzer import (
+    ParsedDocumentSample,
+    analyze_parsed_document_samples,
+    parse_document_samples,
+)
 from app.services.document_type_classify_preview import (
     classify_samples_against_catalog,
     merge_draft_document_type,
@@ -194,11 +199,17 @@ async def analyze_document_type_samples_endpoint(
     for upload in files:
         uploads.append(await _read_sample_upload(upload))
 
-    try:
-        proposal = analyze_document_type_samples(
-            uploads,
+    def _parse_and_propose() -> tuple[DocumentTypeSampleProposal, list[ParsedDocumentSample]]:
+        parsed_samples, parse_notes = parse_document_samples(uploads)
+        proposal = analyze_parsed_document_samples(
+            parsed_samples,
             purchase_bundle_role=purchase_bundle_role,
+            parse_notes=parse_notes,
         )
+        return proposal, parsed_samples
+
+    try:
+        proposal, parsed_samples = await asyncio.to_thread(_parse_and_propose)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -224,6 +235,7 @@ async def analyze_document_type_samples_endpoint(
             document_types=catalogue,
             unclassified=config.document_classification,
             expected_code=expected or None,
+            parsed_samples=parsed_samples,
         )
         preview_by_name = {item.filename: item for item in previews}
         enriched_samples = []

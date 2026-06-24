@@ -9,8 +9,8 @@ export { DossierPipelineTimeline };
 export function DossierPipelinePanel({ pipeline }: { pipeline: DossierSummary["pipeline"] }) {
   return (
     <SectionBlock
-      label="Full pipeline"
-      description="15 stages in Ledgerline order — duplicate file hash immediately after ingest, then parse through archive. Expand any stage for audit-level checks."
+      label="Processing pipeline"
+      description="15 steps from upload to archive. Expand a step for validation checks and audit detail."
       className="dossier-detail-grid__main"
     >
       <DossierPipelineTimeline pipeline={pipeline} />

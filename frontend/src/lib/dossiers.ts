@@ -275,22 +275,21 @@ export function pipelineBlockedFromStageId(
 
 export function dossierStageDescription(stageId: DossierPipelineStageId): string {
   const descriptions: Record<DossierPipelineStageId, string> = {
-    ingest: "email_ingested / invoice_uploaded — capture channel rules; store file and assign document ref.",
-    duplicate:
-      "SHA-256 file-hash check right after ingest. duplicate_skipped / duplicate_in_progress before parse runs.",
-    extract: "parse_completed — OCR / EDI extraction; sets PARSING → field population.",
-    classify: "document_classified — DT code + confidence; unclassified or low-confidence types halt the pipeline here.",
-    bundle: "playbook_evaluated — mandatory bundle members and playbook gates (VR-PB01/02).",
-    vendor_hold: "vendor_registration_hold — unapproved vendor blocks pipeline before validation.",
-    validate: "validation_passed — VR01–VR16 incl. VR02 business duplicate.",
-    match: "VR15 / three_way_match_evaluated — PO, GRN, and invoice lines; variance vs PO caps.",
-    approve: "document_type_approval_gate — touchless or invoice_approved before mapping.",
-    map_gl: "mapping_applied — rule book cascade → account_code; mapping_review_required on suspense.",
-    journal: "generate_entries — balanced journal lines while status is JOURNALING.",
-    reconcile: "reconcile_daily — sub-ledger tie-out; reconciliation_halted blocks non-expense routes.",
-    post: "invoice_processed — purchase register sync; invoice_published_to_ledger when published.",
-    pay: "ensure_payment_for_invoice — payment queue for commercial purchase invoices.",
-    archive: "Retention seal and audit pack (vault_stored for vault-routed documents).",
+    ingest: "Document received and stored.",
+    duplicate: "Checked for duplicate uploads.",
+    extract: "Fields extracted from the file.",
+    classify: "Document type assigned from the rule book.",
+    bundle: "Required supporting documents checked.",
+    vendor_hold: "Vendor registration status verified.",
+    validate: "Business rules and validation checks run.",
+    match: "PO, GRN, and invoice amounts compared.",
+    approve: "Approval policy applied.",
+    map_gl: "General ledger account assigned.",
+    journal: "Journal entries generated.",
+    reconcile: "Sub-ledger reconciliation run.",
+    post: "Posted to the ledger.",
+    pay: "Payment queue prepared.",
+    archive: "Archived for retention.",
   };
   return descriptions[stageId];
 }

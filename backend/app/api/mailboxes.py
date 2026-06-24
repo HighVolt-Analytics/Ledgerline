@@ -455,7 +455,7 @@ async def start_mailbox_backfill(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[MailboxBackfillQueuedResponse]:
-    """Queue historical import for messages with attachments in a date range."""
+    """Queue historical import for messages with attachments from a starting date through today."""
     from datetime import date as date_type
 
     settings = get_settings()

@@ -48,7 +48,7 @@ import { normalizeExtractionFieldKeys, extractionFieldLabel } from "@/lib/docume
 
 import type { DocumentTypeClass, DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 
 
 
@@ -602,8 +602,46 @@ export async function analyzeDocumentTypeSamples(
 
   }
 
-  return api.analyzeDocumentTypeSamples(fd);
-
+  return api.analyzeDocumentTypeSamples(fd, {
+    timeoutMs: Math.min(600_000, 90_000 + files.length * 60_000),
+  });
 }
 
+
+
+export function analyzeSamplesErrorMessage(err: unknown): string {
+
+  if (err instanceof ApiError) {
+
+    if (err.status === 403) {
+
+      return "You need the Edit Policy permission to analyze samples.";
+
+    }
+
+    if (err.status === 408) {
+
+      return err.message;
+
+    }
+
+    if (err.status === 413) {
+
+      return "One or more files are too large (max 25 MB each).";
+
+    }
+
+    return err.message;
+
+  }
+
+  if (err instanceof TypeError && /fetch|network/i.test(String(err.message))) {
+
+    return "Network error — check the API is running and try fewer files.";
+
+  }
+
+  return err instanceof Error ? err.message : "Analysis failed";
+
+}
 

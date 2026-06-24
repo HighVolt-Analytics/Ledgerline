@@ -1,5 +1,6 @@
 import type { Invoice } from "@/api/types";
 import { documentDisplayRef } from "@/lib/format";
+import { purchaseActionRequiredInvoices } from "@/lib/purchaseRegisterQueue";
 import {
   isDueWithinDays,
   isOverdueDate,
@@ -237,6 +238,7 @@ export function purchaseKpisFromRegister(rows: PurchaseOrderApi[], routed: Invoi
   const variancesAwaiting = rows.filter((r) =>
     purchaseNeedsVarianceApproval(r.match.status, r.variance_approved)
   ).length;
+  const needsAction = purchaseActionRequiredInvoices(routed, rows).length;
   const withoutPoRef = routed.filter((inv) => !inv.po_reference?.trim()).length;
 
   return {
@@ -244,6 +246,7 @@ export function purchaseKpisFromRegister(rows: PurchaseOrderApi[], routed: Invoi
     missingGrn,
     matchPct,
     variancesAwaiting,
+    needsAction,
     withoutPoRef,
   };
 }

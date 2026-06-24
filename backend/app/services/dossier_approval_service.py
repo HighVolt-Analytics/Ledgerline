@@ -22,6 +22,61 @@ _APPROVAL_LABELS = {
     "variance_workflow": "Variance workflow",
 }
 
+_DETAIL_HUMAN: dict[str, str] = {
+    "invoice_approved": "Approved in Approvals",
+    "approval_required": "Waiting for approver",
+    "approval_required cleared": "Approval gate cleared",
+    "Opens in /approvals when required": "Will appear in Approvals if needed",
+}
+
+_POLICY_REF_HUMAN: dict[str, str | None] = {
+    "DOA-01": "Buyer authority",
+    "PAY-tier": "Payment tier",
+    "Publish": None,
+    "invoice_approved": None,
+    "touchless_on_clean_match": None,
+    "full_doa": "Full DOA",
+    "supervisor_on_exception": "Supervisor gate",
+    "never_touchless": "Always manual",
+    "manager_gate": "Manager gate",
+    "variance_workflow": "Variance policy",
+    "no_posting": None,
+}
+
+
+def _human_detail(text: str | None) -> str | None:
+    if not text:
+        return None
+    token = text.strip()
+    if not token:
+        return None
+    if token in _DETAIL_HUMAN:
+        return _DETAIL_HUMAN[token]
+    lowered = token.lower()
+    if lowered == "invoice_approved":
+        return _DETAIL_HUMAN["invoice_approved"]
+    if "approval_required" in lowered and "cleared" in lowered:
+        return _DETAIL_HUMAN["approval_required cleared"]
+    return token
+
+
+def _human_policy_ref(ref: str | None) -> str | None:
+    if not ref:
+        return None
+    token = ref.strip()
+    if not token:
+        return None
+    mapped = _POLICY_REF_HUMAN.get(token)
+    if mapped is None and token in _POLICY_REF_HUMAN:
+        return None
+    if mapped:
+        return mapped
+    if token in _APPROVAL_LABELS:
+        return None
+    if "_" in token and token == token.lower():
+        return None
+    return token
+
 
 def _fmt_at(log: AuditLog | None) -> str | None:
     if log is None:
@@ -50,8 +105,8 @@ def _step(
         actor=actor,
         state=state,
         at=at,
-        detail=detail,
-        policy_ref=policy_ref,
+        detail=_human_detail(detail),
+        policy_ref=_human_policy_ref(policy_ref),
         sod_note=sod_note,
     )
 
@@ -109,16 +164,20 @@ async def build_dossier_approval_chain(
 
     gate_state = "waived"
     gate_actor = "Policy engine"
-    gate_detail: str | None = "Clean match — touchless policy"
+    gate_detail: str | None = "Clean match — no manual approval needed"
     if approval_required and not approved:
         gate_state = "pending"
         gate_actor = "—"
         detail = approval_required.detail if isinstance(approval_required.detail, dict) else {}
-        gate_detail = str(detail.get("reason", "")).strip() or "approval_required"
+        gate_detail = str(detail.get("reason", "")).strip() or "Waiting for approver"
     elif approved:
         gate_state = "done"
         gate_actor = approved_actor
-        gate_detail = "approval_required cleared"
+        gate_detail = (
+            f"Approved by {approved_actor}"
+            if approved_actor and approved_actor != "—"
+            else "Approved"
+        )
 
     if mode not in {"no_posting"}:
         steps.append(
@@ -131,7 +190,7 @@ async def build_dossier_approval_chain(
                 state=gate_state,
                 at=_fmt_at(approved_log),
                 detail=gate_detail,
-                policy_ref=mode,
+                policy_ref="Playbook policy",
             )
         )
 
@@ -153,8 +212,8 @@ async def build_dossier_approval_chain(
             actor=queue_actor,
             state=queue_state,
             at=_fmt_at(approved_log),
-            detail="invoice_approved" if approved else "Opens in /approvals when required",
-            policy_ref="invoice_approved",
+            detail="Approved in Approvals" if approved else "Will appear in Approvals if needed",
+            policy_ref=None,
         )
     )
 
@@ -169,7 +228,8 @@ async def build_dossier_approval_chain(
             actor=publish_actor,
             state=publish_state,
             at=_fmt_at(published_log),
-            policy_ref="Publish",
+            detail="Posted to general ledger" if published else "Waiting to publish",
+            policy_ref=None,
         )
     )
 

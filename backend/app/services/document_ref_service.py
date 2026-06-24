@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,14 @@ _DOC_REF_LOCK_NAMESPACE = 8_700_421
 
 def format_document_ref(sequence: int) -> str:
     return f"DOC-{sequence}"
+
+
+def _tenant_advisory_lock_key(tenant_id: uuid.UUID | int) -> int:
+    """Map tenant id to a signed int32 for pg_advisory_xact_lock(key1, key2)."""
+    if isinstance(tenant_id, int):
+        return tenant_id & 0x7FFFFFFF
+    # Stable per-tenant key from UUID (fits PostgreSQL advisory lock int4 range).
+    return (tenant_id.int % 0x7FFFFFFF) or 1
 
 
 def display_document_ref(invoice: Invoice) -> str:
@@ -76,17 +85,20 @@ def _session_supports_advisory_lock(session: AsyncSession) -> bool:
     return bind is not None and bind.dialect.name == "postgresql"
 
 
-async def _acquire_document_ref_lock(session: AsyncSession, tenant_id: int) -> None:
+async def _acquire_document_ref_lock(session: AsyncSession, tenant_id: uuid.UUID | int) -> None:
     """Serialize DOC-n allocation per org (bulk upload runs concurrent requests)."""
     if not _session_supports_advisory_lock(session):
         return
     await session.execute(
         text("SELECT pg_advisory_xact_lock(:namespace, :tenant_id)"),
-        {"namespace": _DOC_REF_LOCK_NAMESPACE, "tenant_id": tenant_id},
+        {
+            "namespace": _DOC_REF_LOCK_NAMESPACE,
+            "tenant_id": _tenant_advisory_lock_key(tenant_id),
+        },
     )
 
 
-async def next_document_ref(session: AsyncSession, tenant_id: int) -> str:
+async def next_document_ref(session: AsyncSession, tenant_id: uuid.UUID | int) -> str:
     rows = await session.execute(
         select(Invoice.document_ref).where(Invoice.tenant_id == tenant_id)
     )
@@ -100,7 +112,7 @@ async def next_document_ref(session: AsyncSession, tenant_id: int) -> str:
     return format_document_ref(max_seq + 1)
 
 
-async def allocate_next_document_ref(session: AsyncSession, tenant_id: int) -> str:
+async def allocate_next_document_ref(session: AsyncSession, tenant_id: uuid.UUID | int) -> str:
     """Reserve the next org document ref under an advisory lock."""
     await _acquire_document_ref_lock(session, tenant_id)
     return await next_document_ref(session, tenant_id)

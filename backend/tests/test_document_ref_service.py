@@ -5,18 +5,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.document_ref_service import (
+    _tenant_advisory_lock_key,
     assign_document_ref,
     display_document_ref,
     dossier_public_id,
     next_document_ref,
     parse_dossier_id_token,
 )
+from app.tenant_ids import TESTING_TENANT_UUID
+
+
+def test_tenant_advisory_lock_key_fits_int32() -> None:
+    key = _tenant_advisory_lock_key(TESTING_TENANT_UUID)
+    assert 0 < key < 2**31
+    assert _tenant_advisory_lock_key(1) == 1
 
 
 @pytest.mark.asyncio
 async def test_assign_document_ref_increments_per_org(db_session: AsyncSession) -> None:
-    first = Invoice(tenant_id=1, status=InvoiceStatus.PENDING, currency="AUD")
-    second = Invoice(tenant_id=1, status=InvoiceStatus.PENDING, currency="AUD")
+    first = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING, currency="AUD")
+    second = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING, currency="AUD")
     db_session.add(first)
     await db_session.flush()
     await assign_document_ref(db_session, first)
@@ -31,7 +39,7 @@ async def test_assign_document_ref_increments_per_org(db_session: AsyncSession) 
 @pytest.mark.asyncio
 async def test_next_document_ref_ignores_deleted_gaps(db_session: AsyncSession) -> None:
     existing = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.PROCESSED,
         currency="AUD",
         document_ref="DOC-3",
@@ -39,7 +47,7 @@ async def test_next_document_ref_ignores_deleted_gaps(db_session: AsyncSession) 
     db_session.add(existing)
     await db_session.flush()
 
-    nxt = await next_document_ref(db_session, tenant_id=1)
+    nxt = await next_document_ref(db_session, tenant_id=TESTING_TENANT_UUID)
     assert nxt == "DOC-4"
 
 
