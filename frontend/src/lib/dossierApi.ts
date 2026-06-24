@@ -255,6 +255,7 @@ function mapApprovalChain(chain: DossierApprovalChainApi): DossierApprovalChain 
 export function mapDossierFromApi(row: DossierSummaryApi): DossierSummary {
   return {
     id: row.id,
+    invoiceId: row.invoice_id,
     documentTypeCode: row.document_type_code,
     documentTypeTitle: row.document_type_title,
     vendor: row.vendor,

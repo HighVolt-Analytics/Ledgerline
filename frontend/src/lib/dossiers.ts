@@ -140,6 +140,7 @@ export type DossierPipelineStep = {
 
 export type DossierSummary = {
   id: string;
+  invoiceId?: number;
   documentTypeCode: string;
   documentTypeTitle: string;
   vendor: string;
