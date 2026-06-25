@@ -11,6 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/cn";
+import {
+  MODULE_GROUP_ORDER,
+  TENANT_MODULE_CATALOG,
+  modulesFromApi,
+} from "@/lib/tenantModules";
 
 const LIFECYCLE_OPTIONS = [
   { value: "active", label: "Active" },
@@ -55,9 +60,7 @@ export function TenantSettingsPage() {
         setName(data.name);
         setLifecycleStatus(data.lifecycle_status);
         setIsActive(data.is_active);
-        setModules(
-          Object.fromEntries(data.modules.map((m) => [m.module_key, m.is_active]))
-        );
+        setModules(modulesFromApi(data.modules));
         const onboardingDone = Boolean(data.settings_json?.onboarding_completed);
         if (!onboardingDone && data.user_count === 0 && data.pending_invite_count > 0) {
           setInviteSent(true);
@@ -106,8 +109,7 @@ export function TenantSettingsPage() {
     }
   }
 
-  async function handleInviteAdmin(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleInviteAdmin() {
     if (!tenant) return;
     if (!inviteEmail.trim() || !inviteName.trim()) {
       setError("Admin name and email are required.");
@@ -139,9 +141,9 @@ export function TenantSettingsPage() {
         name: name.trim(),
         lifecycle_status: lifecycleStatus,
         is_active: isActive,
-        modules: Object.entries(modules).map(([module_key, is_active]) => ({
-          module_key,
-          is_active,
+        modules: TENANT_MODULE_CATALOG.map((mod) => ({
+          module_key: mod.key,
+          is_active: modules[mod.key] ?? true,
         })),
       });
       setTenant(updated);
@@ -313,7 +315,7 @@ export function TenantSettingsPage() {
                 Onboarding complete
               </Badge>
             )}
-            <form onSubmit={handleInviteAdmin} className="space-y-3 pt-1">
+            <div className="space-y-3 pt-1">
               <p className="text-sm font-medium">
                 {inviteSent ? "Resend or invite another admin" : "Invite first admin"}
               </p>
@@ -322,48 +324,68 @@ export function TenantSettingsPage() {
                   value={inviteName}
                   onChange={(e) => setInviteName(e.target.value)}
                   placeholder="Admin full name"
-                  required
                 />
                 <Input
                   type="email"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
                   placeholder="Admin email"
-                  required
                 />
               </div>
-              <Button type="submit" size="sm" disabled={inviting}>
+              <Button
+                type="button"
+                size="sm"
+                disabled={inviting}
+                onClick={() => void handleInviteAdmin()}
+              >
                 {inviting ? "Sending…" : inviteSent ? "Send invite" : "Invite admin"}
               </Button>
-            </form>
+            </div>
           </Card>
         )}
 
         <Card className="p-5 space-y-4">
           <h2 className="text-sm font-semibold">Modules</h2>
           <p className="text-xs text-muted-foreground">
-            Enable or disable product modules for this client tenant.
+            Enable or disable product modules for this client tenant. Disabled modules are hidden
+            from navigation and blocked at the API.
           </p>
-          <div className="space-y-2">
-            {Object.entries(modules).map(([key, active]) => (
-              <label
-                key={key}
-                className={cn(
-                  "flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm",
-                  !active && "opacity-70"
-                )}
-              >
-                <span className="capitalize">{key.replace(/_/g, " ")}</span>
-                <input
-                  type="checkbox"
-                  checked={active}
-                  onChange={(e) =>
-                    setModules((prev) => ({ ...prev, [key]: e.target.checked }))
-                  }
-                  className="h-4 w-4"
-                />
-              </label>
-            ))}
+          <div className="space-y-4">
+            {MODULE_GROUP_ORDER.map((group) => {
+              const items = TENANT_MODULE_CATALOG.filter((m) => m.group === group);
+              if (items.length === 0) return null;
+              return (
+                <div key={group} className="space-y-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {group}
+                  </p>
+                  {items.map((mod) => (
+                    <label
+                      key={mod.key}
+                      className={cn(
+                        "flex items-start justify-between gap-3 rounded-md border border-border px-3 py-2.5 text-sm",
+                        !modules[mod.key] && "opacity-70"
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="font-medium">{mod.label}</span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {mod.description}
+                        </span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={modules[mod.key] ?? true}
+                        onChange={(e) =>
+                          setModules((prev) => ({ ...prev, [mod.key]: e.target.checked }))
+                        }
+                        className="mt-1 h-4 w-4 shrink-0"
+                      />
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </Card>
 

@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,14 +29,17 @@ from app.schemas.rule_book_evaluate import (
 from app.services.document_type_sample_analyzer import (
     ParsedDocumentSample,
     analyze_parsed_document_samples,
+    apply_sample_proposal_to_draft,
+    compute_apply_ready,
     parse_document_samples,
 )
 from app.services.document_type_classify_preview import (
-    classify_samples_against_catalog,
+    classify_parsed_samples_for_proposal_preview,
     merge_draft_document_type,
 )
 from app.services.master_data_service import attach_masters_to_config_dict
 from app.services.invoice_evaluation_service import load_config_for_tenant
+from app.services.remap_service import remap_tenant_invoices_background
 from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.rule_book_evaluate_service import evaluate_rule_book
 from app.services.rule_book_ingest_stats import (
@@ -44,6 +47,7 @@ from app.services.rule_book_ingest_stats import (
     strip_email_capture_volatile_stats,
 )
 from app.services.rule_book_save_buffer import (
+    flush_rule_book_save_buffer,
     get_buffered_rule_book_raw,
     schedule_rule_book_save,
 )
@@ -112,7 +116,9 @@ async def put_rule_book_config(
         raw["vendor_masters"] = []
         raw["employee_masters"] = []
         strip_email_capture_volatile_stats(raw)
-        payload = validate_rule_book_config_payload(raw)
+        from app.services.document_type_lifecycle import scrub_document_type_references
+
+        payload = scrub_document_type_references(validate_rule_book_config_payload(raw))
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
 
@@ -135,6 +141,69 @@ async def put_rule_book_config(
         ctx.tenant_id,
         await attach_masters_to_config_dict(db, ctx.tenant_id, after_raw),
     )
+    return ApiEnvelope(data=data)
+
+
+@router.delete("/document-types/{code}", response_model=ApiEnvelope[dict[str, Any]])
+async def delete_document_type(
+    code: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[dict[str, Any]]:
+    """Remove a document type from the tenant catalogue and persist immediately."""
+    require_privilege(ctx, "Edit Policy")
+
+    from app.services.document_type_lifecycle import remove_document_type_from_payload
+
+    # Commit any buffered PUT first so delete runs on the latest tenant catalogue.
+    await flush_rule_book_save_buffer(
+        tenant_id=ctx.tenant_id,
+        db=db,
+        remap_invoices=False,
+    )
+
+    before_raw = await load_rule_book_config_dict(db, ctx.tenant_id)
+    try:
+        before_payload = validate_rule_book_config_payload(before_raw)
+    except (ValidationError, ValueError) as exc:
+        raise _validation_http_error(exc) from exc
+
+    try:
+        payload = remove_document_type_from_payload(before_payload, code)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    after_raw = payload.model_dump()
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    client_ip = request.client.host if request.client else None
+
+    from app.services.rule_book_save_buffer import PendingRuleBookSave, commit_rule_book_save
+
+    pending = PendingRuleBookSave(
+        tenant_id=ctx.tenant_id,
+        payload=payload,
+        after_raw=after_raw,
+        before_raw=before_raw,
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+    )
+    await commit_rule_book_save(pending, db=db, remap_invoices=False)
+    await db.commit()
+
+    background_tasks.add_task(
+        remap_tenant_invoices_background,
+        ctx.tenant_id,
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
+    )
+
+    data = await attach_masters_to_config_dict(db, ctx.tenant_id, after_raw)
     return ApiEnvelope(data=data)
 
 
@@ -238,18 +307,44 @@ async def analyze_document_type_samples_endpoint(
     except FileNotFoundError:
         config = None
 
+    has_catalogue_preview = False
     if config is not None:
+        has_catalogue_preview = True
         catalogue = merge_draft_document_type(config.document_types, draft_type)
+        preview_catalogue = catalogue
+        proposed_draft = draft_type
+        if draft_type is not None and proposal.recognition_signals:
+            proposed_draft = apply_sample_proposal_to_draft(
+                draft_type,
+                proposal,
+                for_preview=True,
+            )
+            preview_catalogue = merge_draft_document_type(
+                config.document_types,
+                proposed_draft,
+            )
         expected = expected_document_type_code.strip() or (
             draft_type.code.strip() if draft_type else ""
         )
-        previews = classify_samples_against_catalog(
-            uploads,
-            document_types=catalogue,
-            unclassified=config.document_classification,
-            expected_code=expected or None,
-            parsed_samples=parsed_samples,
-        )
+        if proposed_draft is not None and proposal.recognition_signals and expected:
+            previews = classify_parsed_samples_for_proposal_preview(
+                parsed_samples,
+                document_types=preview_catalogue,
+                proposed_draft=proposed_draft,
+                unclassified=config.document_classification,
+                expected_code=expected,
+            )
+        else:
+            from app.services.document_type_classify_preview import (
+                classify_parsed_samples_against_catalog,
+            )
+
+            previews = classify_parsed_samples_against_catalog(
+                parsed_samples,
+                document_types=preview_catalogue,
+                unclassified=config.document_classification,
+                expected_code=expected or None,
+            )
         preview_by_name = {item.filename: item for item in previews}
         enriched_samples = []
         for sample in proposal.samples:
@@ -286,10 +381,21 @@ async def analyze_document_type_samples_endpoint(
         ]
         if mismatched:
             proposal.notes.append(
-                "Catalogue routing mismatch for: "
+                "Proposed classifier does not match: "
                 + ", ".join(mismatched)
-                + ". Apply suggestions, save, and re-analyze if needed."
+                + ". Upload clearer samples or adjust identity signals before applying."
             )
+
+    apply_ready, apply_block_reason = compute_apply_ready(
+        proposal,
+        has_catalogue_preview=has_catalogue_preview,
+    )
+    proposal = proposal.model_copy(
+        update={
+            "apply_ready": apply_ready,
+            "apply_block_reason": apply_block_reason,
+        }
+    )
 
     return ApiEnvelope(data=proposal)
 

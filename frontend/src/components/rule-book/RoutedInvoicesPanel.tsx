@@ -8,7 +8,7 @@ import {
   RouteTargetBadge,
 } from "@/components/inbox/EvaluationStatusBadge";
 import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
-import { StageBadge, inboxStage } from "@/components/StageBadge";
+import { StageBadge, invoiceStageBadgeProps } from "@/components/StageBadge";
 import { Card } from "@/components/ui/card";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { documentDisplayRef, money } from "@/lib/format";
@@ -86,7 +86,7 @@ function InvoiceTable({
                 <InboxGlAccountBadge account={inv.account_name} />
               </td>
               <td className="px-3 py-2.5">
-                <StageBadge stage={inboxStage(inv)} />
+                <StageBadge {...invoiceStageBadgeProps(inv)} />
               </td>
               <td className="px-3 py-2.5 text-right">
                 <InboxConfidenceBadge value={invoiceVendorConfidence(inv)} />

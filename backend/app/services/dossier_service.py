@@ -135,7 +135,7 @@ def _derive_outcome(
         approved = any(log.event == "invoice_approved" for log in logs)
         if published:
             return ("manual_posted" if approved else "auto_posted"), "Posted to ledger"
-        return "in_progress", "Processed — ready to publish"
+        return "in_progress", "Processed — ready to post"
     return "in_progress", "Processing"
 
 
@@ -296,7 +296,7 @@ async def build_dossier_summary(
     )
     if invoice.status == InvoiceStatus.PROCESSED and published and approved_human:
         outcome = "manual_posted"
-        banner = banner or "Manual post — approved before ledger publish"
+        banner = banner or "Manual post — approved before ledger posting"
 
     linked, approval = await asyncio.gather(
         build_dossier_linked_documents(

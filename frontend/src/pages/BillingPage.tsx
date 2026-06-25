@@ -12,7 +12,7 @@ import { cn } from "@/lib/cn";
 const USAGE = [
   { action: "OCR Parse a document", credits: 3 },
   { action: "GST Input Credit validation", credits: 1 },
-  { action: "Publish to Ledger", credits: 5 },
+  { action: "Post to Ledger", credits: 5 },
   { action: "Vault storage per GB/month", credits: 2 },
 ];
 

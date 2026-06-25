@@ -66,7 +66,40 @@ export type RecognitionSignalId =
   | "has_invoice_number"
   | "has_total_amount";
 
-export type ClassifierLayout = "any_signal" | "all_signals" | "supporting_doc";
+export type ClassifierLayout = "any_signal" | "all_signals" | "supporting_doc" | "grouped";
+
+const WEAK_SIGNALS = new Set<RecognitionSignalId>([
+  "has_po_reference",
+  "has_invoice_number",
+  "has_total_amount",
+]);
+
+/** OR within each channel; AND across channels and weak field checks. */
+const SIGNAL_PICK_GROUPS: RecognitionSignalId[][] = [
+  ["heading_invoice", "text_invoice", "filename_invoice"],
+  ["heading_po", "text_po", "filename_po"],
+  ["heading_grn", "text_grn", "filename_grn"],
+  ["heading_contract", "text_contract", "filename_contract"],
+  ["text_credit_note", "filename_credit_note"],
+  ["text_debit_note", "filename_debit_note"],
+  ["text_proforma", "filename_proforma"],
+  ["text_claim", "filename_claim"],
+  ["text_quote", "filename_quote"],
+  ["text_tax_notice", "filename_tax_notice"],
+  ["text_bank_change", "filename_bank_change"],
+  ["text_freight", "filename_freight"],
+  ["text_import", "filename_import"],
+  ["text_intercompany", "filename_intercompany"],
+  ["text_recurring", "filename_recurring"],
+  ["text_utility", "filename_utility"],
+  ["text_statement", "filename_statement"],
+  ["text_timesheet", "filename_timesheet"],
+  ["text_remittance", "filename_remittance"],
+  ["text_rcti", "filename_rcti"],
+  ["text_consignment", "filename_consignment"],
+  ["text_dunning", "filename_dunning"],
+  ["text_terms", "text_governing_law", "text_signed_behalf"],
+];
 
 const cond = (
   field: string,
@@ -300,6 +333,53 @@ const SUPPORTING_GUARDS: DocumentRuleCondition[] = [
   cond("is_commercial_invoice", "equals", "false"),
 ];
 
+function buildGroupedIdentityTree(
+  signalIds: RecognitionSignalId[]
+): DocumentRuleConditionGroup | DocumentRuleCondition | null {
+  const available = new Set(signalIds);
+  const andChildren: Array<DocumentRuleCondition | DocumentRuleConditionGroup> = [];
+  const used = new Set<RecognitionSignalId>();
+
+  for (const group of SIGNAL_PICK_GROUPS) {
+    const matched = group.filter((id) => available.has(id));
+    if (matched.length === 0) continue;
+    matched.forEach((id) => used.add(id));
+    if (matched.length === 1) {
+      andChildren.push(signalToCondition(matched[0]));
+    } else {
+      andChildren.push(orGroup(matched.map(signalToCondition)));
+    }
+  }
+
+  const ungrouped = signalIds.filter((id) => !used.has(id) && !WEAK_SIGNALS.has(id));
+  if (ungrouped.length === 1) {
+    andChildren.push(signalToCondition(ungrouped[0]));
+  } else if (ungrouped.length > 1) {
+    andChildren.push(orGroup(ungrouped.map(signalToCondition)));
+  }
+
+  for (const id of signalIds) {
+    if (WEAK_SIGNALS.has(id)) {
+      andChildren.push(signalToCondition(id));
+    }
+  }
+
+  if (andChildren.length === 0) return null;
+  if (andChildren.length === 1) return andChildren[0];
+  return andGroup(andChildren);
+}
+
+export function buildClassifierRootGrouped(
+  signalIds: RecognitionSignalId[]
+): DocumentRuleConditionGroup {
+  const tree = buildGroupedIdentityTree(signalIds);
+  return tree?.type === "group"
+    ? tree
+    : tree
+      ? andGroup([tree])
+      : { type: "group", operator: "AND", children: [] };
+}
+
 export function buildClassifierRoot(
   signalIds: RecognitionSignalId[],
   layout: ClassifierLayout
@@ -309,12 +389,23 @@ export function buildClassifierRoot(
     return { type: "group", operator: "AND", children: [] };
   }
 
+  if (layout === "grouped") {
+    return buildClassifierRootGrouped(signalIds);
+  }
+
   if (layout === "all_signals") {
     return andGroup(leaves);
   }
 
   if (layout === "supporting_doc") {
-    return andGroup([orGroup(leaves), ...SUPPORTING_GUARDS]);
+    const grouped = buildGroupedIdentityTree(signalIds);
+    const identity =
+      grouped?.type === "group"
+        ? grouped
+        : grouped
+          ? orGroup([grouped])
+          : orGroup(leaves);
+    return andGroup([identity, ...SUPPORTING_GUARDS]);
   }
 
   return orGroup(leaves);

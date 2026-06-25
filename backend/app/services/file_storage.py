@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import uuid
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
@@ -11,6 +12,10 @@ from typing import Iterator
 
 from app.config import get_settings
 from app.services import blob_storage, vault_paths
+from app.services.tenant_storage_paths import (
+    blob_name_from_stored,
+    resolve_blob_candidates,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -21,8 +26,51 @@ def _local_vault_path(blob_name: str) -> Path:
     return Path(settings.upload_dir) / blob_name
 
 
+def _stored_uri_for_blob_name(blob_name: str) -> str:
+    if blob_storage.is_blob_enabled():
+        return blob_storage.to_stored_uri(blob_name)
+    return str(_local_vault_path(blob_name))
+
+
+def _resolve_readable_stored(
+    stored_path: str | None,
+    *,
+    tenant_id: uuid.UUID | int | str | None = None,
+) -> str | None:
+    """Return first stored path / blob name that exists (supports legacy layouts)."""
+    if not stored_path or not stored_path.strip():
+        return None
+
+    if blob_storage.is_blob_enabled() and stored_path.startswith(blob_storage.BLOB_URI_PREFIX):
+        for name in resolve_blob_candidates(stored_path, tenant_id=tenant_id):
+            uri = blob_storage.to_stored_uri(name)
+            if blob_storage.blob_exists(uri):
+                return uri
+        return None
+
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for name in resolve_blob_candidates(stored_path, tenant_id=tenant_id):
+        path = _local_vault_path(name)
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            candidates.append(path)
+    raw = Path(stored_path)
+    if str(raw) not in seen:
+        candidates.append(raw)
+
+    for path in candidates:
+        if path.is_file():
+            if blob_storage.is_blob_enabled():
+                return blob_storage.to_stored_uri(blob_name_from_stored(str(path)) or path.name)
+            return str(path)
+    return None
+
+
 def store_invoice_pdf(
     data: bytes,
+    tenant_id: uuid.UUID,
     tenant_slug: str,
     vendor_slug: str,
     invoice_id: int,
@@ -42,6 +90,7 @@ def store_invoice_pdf(
     document_type_folder: str | None = None,
 ) -> str:
     blob_name = blob_storage.build_blob_name(
+        tenant_id,
         tenant_slug,
         vendor_slug,
         invoice_id,
@@ -92,6 +141,7 @@ def relocate_stored_pdf(stored_path: str, new_blob_name: str) -> str:
 
 def relocate_invoice_to_rejected(
     stored_path: str,
+    tenant_id: uuid.UUID,
     tenant_slug: str,
     invoice_id: int,
     filename: str,
@@ -108,6 +158,7 @@ def relocate_invoice_to_rejected(
     document_type_folder: str | None = None,
 ) -> str:
     new_name = vault_paths.build_rejected_blob_name(
+        tenant_id,
         tenant_slug,
         tenant_name=tenant_name,
         route_target=route_target,
@@ -127,6 +178,7 @@ def relocate_invoice_to_rejected(
 
 def relocate_rejected_to_vault(
     stored_path: str,
+    tenant_id: uuid.UUID,
     tenant_slug: str,
     vendor_slug: str,
     invoice_id: int,
@@ -145,6 +197,7 @@ def relocate_rejected_to_vault(
 ) -> str:
     _ = file_hash
     new_name = blob_storage.build_blob_name(
+        tenant_id,
         tenant_slug,
         vendor_slug,
         invoice_id,
@@ -165,6 +218,7 @@ def relocate_rejected_to_vault(
 
 def relocate_invoice_pdf(
     stored_path: str,
+    tenant_id: uuid.UUID,
     tenant_slug: str,
     new_vendor_slug: str,
     invoice_id: int,
@@ -184,6 +238,7 @@ def relocate_invoice_pdf(
     document_type_folder: str | None = None,
 ) -> str:
     new_name = blob_storage.build_blob_name(
+        tenant_id,
         tenant_slug,
         new_vendor_slug,
         invoice_id,
@@ -210,13 +265,19 @@ def _suffix_from_stored(stored_path: str) -> str:
 
 
 @contextmanager
-def open_pdf_for_reading(stored_path: str) -> Iterator[Path]:
+def open_pdf_for_reading(
+    stored_path: str,
+    *,
+    tenant_id: uuid.UUID | int | str | None = None,
+) -> Iterator[Path]:
     """Download or open a stored invoice attachment for parsing."""
-    suffix = _suffix_from_stored(stored_path)
-    if blob_storage.is_blob_enabled() and stored_path.startswith(
-        blob_storage.BLOB_URI_PREFIX
-    ):
-        data = blob_storage.download_bytes(stored_path)
+    resolved = _resolve_readable_stored(stored_path, tenant_id=tenant_id)
+    if resolved is None:
+        raise FileNotFoundError(stored_path)
+
+    suffix = _suffix_from_stored(resolved)
+    if blob_storage.is_blob_enabled() and resolved.startswith(blob_storage.BLOB_URI_PREFIX):
+        data = blob_storage.download_bytes(resolved)
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(data)
             tmp_path = Path(tmp.name)
@@ -226,7 +287,7 @@ def open_pdf_for_reading(stored_path: str) -> Iterator[Path]:
             tmp_path.unlink(missing_ok=True)
         return
 
-    path = Path(stored_path)
+    path = Path(resolved)
     if not path.is_file():
         raise FileNotFoundError(stored_path)
     yield path
@@ -249,15 +310,13 @@ def has_stored_path(stored_path: str | None) -> bool:
     return bool(stored_path and stored_path.strip())
 
 
-def stored_file_available(stored_path: str | None) -> bool:
+def stored_file_available(
+    stored_path: str | None,
+    *,
+    tenant_id: uuid.UUID | int | str | None = None,
+) -> bool:
     """True if raw_file_path is set and the blob or local file exists."""
-    if not has_stored_path(stored_path):
-        return False
-    if blob_storage.is_blob_enabled() and stored_path.startswith(
-        blob_storage.BLOB_URI_PREFIX
-    ):
-        return blob_storage.blob_exists(stored_path)
-    return Path(stored_path).is_file()
+    return _resolve_readable_stored(stored_path, tenant_id=tenant_id) is not None
 
 
 async def repair_invoice_stored_path(session, invoice) -> bool:
@@ -266,7 +325,7 @@ async def repair_invoice_stored_path(session, invoice) -> bool:
 
     Returns True when raw_file_path was repaired to an existing blob/file.
     """
-    if stored_file_available(invoice.raw_file_path):
+    if stored_file_available(invoice.raw_file_path, tenant_id=invoice.tenant_id):
         return False
 
     from sqlalchemy import select
@@ -296,21 +355,28 @@ async def repair_invoice_stored_path(session, invoice) -> bool:
         if not isinstance(detail, dict):
             detail = {}
         to_path = detail.get("to_path")
-        if isinstance(to_path, str) and stored_file_available(to_path):
+        resolved = _resolve_readable_stored(to_path, tenant_id=invoice.tenant_id)
+        if resolved:
             old_path = invoice.raw_file_path
-            invoice.raw_file_path = to_path
+            invoice.raw_file_path = resolved
             await log_event(
                 session,
                 "blob_path_repaired",
                 invoice_id=invoice.id,
-                detail={"from_path": old_path, "to_path": to_path, "source": "audit"},
+                detail={"from_path": old_path, "to_path": resolved, "source": "audit"},
             )
             return True
 
     org = await session.get(Tenant, invoice.tenant_id)
     tenant_slug = org.slug if org else get_settings().default_tenant_slug
-    found = blob_storage.find_blob_uri_for_invoice(invoice.id, tenant_slug=tenant_slug)
-    if found and stored_file_available(found):
+    tenant_name = org.name if org else None
+    found = blob_storage.find_blob_uri_for_invoice(
+        invoice.id,
+        tenant_id=invoice.tenant_id,
+        tenant_slug=tenant_slug,
+        tenant_name=tenant_name,
+    )
+    if found and stored_file_available(found, tenant_id=invoice.tenant_id):
         old_path = invoice.raw_file_path
         invoice.raw_file_path = found
         await log_event(
@@ -339,21 +405,27 @@ def delete_stored_file(stored_path: str | None) -> None:
         logger.info("pdf_deleted_local", path=str(path))
 
 
-def read_invoice_file(stored_path: str) -> tuple[bytes, str, str]:
+def read_invoice_file(
+    stored_path: str,
+    *,
+    tenant_id: uuid.UUID | int | str | None = None,
+) -> tuple[bytes, str, str]:
     """Return file bytes, media type, and suggested download filename."""
-    suffix = _suffix_from_stored(stored_path)
+    resolved = _resolve_readable_stored(stored_path, tenant_id=tenant_id)
+    if resolved is None:
+        raise FileNotFoundError(stored_path)
+
+    suffix = _suffix_from_stored(resolved)
     media_type, default_name = _MEDIA_BY_SUFFIX.get(
         suffix, ("application/octet-stream", "invoice.bin")
     )
 
-    if blob_storage.is_blob_enabled() and stored_path.startswith(
-        blob_storage.BLOB_URI_PREFIX
-    ):
-        data = blob_storage.download_bytes(stored_path)
-        name = vault_paths.filename_from_stored(stored_path)
+    if blob_storage.is_blob_enabled() and resolved.startswith(blob_storage.BLOB_URI_PREFIX):
+        data = blob_storage.download_bytes(resolved)
+        name = vault_paths.filename_from_stored(resolved)
         return data, media_type, name or default_name
 
-    path = Path(stored_path)
+    path = Path(resolved)
     if not path.is_file():
         raise FileNotFoundError(stored_path)
     return path.read_bytes(), media_type, path.name or default_name

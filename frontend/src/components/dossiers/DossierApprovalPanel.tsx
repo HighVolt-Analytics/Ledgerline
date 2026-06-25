@@ -41,7 +41,7 @@ export function DossierApprovalPanel({ chain }: { chain: DossierApprovalChain })
   return (
     <SectionBlock
       label="Approval chain"
-      description="Policy checks, manual approvals, ledger publish, and payment."
+      description="Policy checks, manual approvals, ledger posting, and payment."
     >
       <div className="dossier-panel">
         <div className="dossier-approval-policy">

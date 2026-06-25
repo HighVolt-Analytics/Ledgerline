@@ -1,4 +1,4 @@
-"""Migrate billing.json org keys from legacy integer tenant ids to UUIDs."""
+"""Split legacy billing.json org keys into per-tenant tenants/{uuid}/billing.json files."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from app.config import get_settings
+from app.services.billing_io import _billing_path, _legacy_billing_path, _save_tenant_state
 from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 
 _LEGACY_MAP = {
@@ -15,23 +16,32 @@ _LEGACY_MAP = {
 
 
 def migrate_billing_json() -> None:
-    path = Path(get_settings().upload_dir) / "billing.json"
-    if not path.is_file():
+    legacy = _legacy_billing_path()
+    if not legacy.is_file():
         print("No billing.json found — nothing to migrate.")
         return
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(legacy.read_text(encoding="utf-8"))
     orgs = data.get("orgs") or {}
     migrated = 0
-    for legacy, uuid_key in _LEGACY_MAP.items():
-        if legacy in orgs and uuid_key not in orgs:
-            orgs[uuid_key] = orgs.pop(legacy)
-            migrated += 1
+    for key, state in list(orgs.items()):
+        tid = _LEGACY_MAP.get(key, key)
+        if _billing_path(tid).is_file():
+            continue
+        _save_tenant_state(
+            tid,
+            {
+                "balance": int(state.get("balance", 500)),
+                "current_pack": str(state.get("current_pack", "starter")),
+                "auto_recharge": bool(state.get("auto_recharge", False)),
+                "threshold": int(state.get("threshold", 100)),
+            },
+        )
+        migrated += 1
+        print(f"Migrated billing for tenant {tid}")
     if migrated:
-        data["orgs"] = orgs
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        print(f"Migrated {migrated} billing org key(s) in {path}")
+        print(f"Split {migrated} tenant billing record(s) from {legacy}")
     else:
-        print("billing.json already uses UUID keys or has no legacy entries.")
+        print("billing.json already split or has no org entries.")
 
 
 if __name__ == "__main__":

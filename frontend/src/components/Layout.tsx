@@ -8,7 +8,6 @@ import {
   Coins,
   CreditCard,
   FolderKanban,
-  Grid3x3,
   Upload,
   LayoutDashboard,
   Link2,
@@ -31,6 +30,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
+import { canAccessModulePath } from "@/lib/tenantModules";
 import { queryClient, queryKeys } from "@/lib/queryClient";
 import { cn } from "@/lib/cn";
 
@@ -39,6 +39,7 @@ type NavItem = {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: "upload" | "approvals" | "team_expenses" | "business_expenses" | "payments";
+  moduleKey?: string;
 };
 
 type NavGroup = {
@@ -52,28 +53,27 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard },
       { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses" },
-      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses" },
-      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart },
-      { to: "/matrix", label: "Document Matrix", icon: Grid3x3 },
+      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses" },
+      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses" },
+      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart, moduleKey: "purchase" },
     ],
   },
   {
     label: "Operations",
     items: [
       { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
-      { to: "/dossiers", label: "Dossiers", icon: FolderKanban },
+      { to: "/dossiers", label: "Dossiers", icon: FolderKanban, moduleKey: "dossiers" },
       { to: "/vendors", label: "Vendors", icon: Users },
-      { to: "/rules", label: "Rule Book", icon: BookOpen },
+      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
     ],
   },
   {
     label: "Finance",
     items: [
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments" },
-      { to: "/ledger-link", label: "Ledger Link", icon: Link2 },
-      { to: "/vault", label: "Vault", icon: Vault },
-      { to: "/reports", label: "Reports", icon: BarChart3 },
+      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
+      { to: "/ledger-link", label: "Ledger Link", icon: Link2, moduleKey: "ledger_link" },
+      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
+      { to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" },
     ],
   },
   {
@@ -89,7 +89,6 @@ const NAV_GROUPS: NavGroup[] = [
 const MOBILE_NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-  { to: "/matrix", label: "Matrix", icon: Grid3x3 },
   { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -124,6 +123,10 @@ export function Layout() {
   const { theme, toggleTheme } = useTheme();
   const { data: badges } = useNavBadges();
   const { permissions } = usePermissions();
+  const enabledModules = permissions?.enabled_modules;
+  const canShowNavItem = (item: NavItem) =>
+    canAccessModulePath(item.to, enabledModules, item.moduleKey) &&
+    canAccessNavPath(item.to, permissions);
   const counts = {
     upload: badges?.inbox_count ?? 0,
     approvals: badges?.pending_approval ?? 0,
@@ -193,7 +196,7 @@ export function Layout() {
               </p>
               <div className="space-y-0.5">
                 {group.items
-                  .filter(({ to }) => canAccessNavPath(to, permissions))
+                  .filter(canShowNavItem)
                   .map(({ to, label, icon: Icon, badge }) =>
                     renderNavLink(to, label, Icon, badge)
                   )}
@@ -339,7 +342,7 @@ export function Layout() {
         </footer>
 
         <nav className="md:hidden flex items-center gap-1 overflow-x-auto border-t border-border bg-background px-2 py-2 shrink-0">
-          {MOBILE_NAV.filter(({ to }) => canAccessNavPath(to, permissions)).map(({ to, label, icon: Icon, badge }) => {
+          {MOBILE_NAV.filter(canShowNavItem).map(({ to, label, icon: Icon, badge }) => {
             const active = pathname === to || (to !== "/" && pathname.startsWith(to));
             return (
               <NavLink

@@ -54,7 +54,7 @@ function columnForInvoice(inv: Invoice): ColumnKey {
 }
 
 function docNumber(inv: Invoice): string {
-  return inv.invoice_no ?? `DOC-${String(inv.id).padStart(4, "0")}`;
+  return documentDisplayRef(inv);
 }
 
 async function fetchBoardInvoices(fresh: boolean): Promise<Invoice[]> {
@@ -236,24 +236,24 @@ export function ApprovalsPage() {
   const publish = async (inv: Invoice) => {
     if (!invoiceCanPublishToLedger(inv)) {
       if (inv.published_to_ledger) {
-        setToast(`${documentDisplayRef(inv)} is already published.`);
+        setToast(`${documentDisplayRef(inv)} is already posted.`);
       } else if (inv.status !== "processed") {
-        setToast("Publish is available for processed invoices only.");
+        setToast("Posting is available for processed invoices only.");
       } else {
-        setToast("This document type is not eligible for ledger publish.");
+        setToast("This document type is not eligible for ledger posting.");
       }
       return;
     }
     setBusyId(inv.id);
     try {
       await api.publishInvoice(inv.id);
-      setToast(`Published · ${documentDisplayRef(inv)}`);
+      setToast(`Posted · ${documentDisplayRef(inv)}`);
       await load({ silent: true, fresh: true });
     } catch (e) {
       if (e instanceof ApiError && e.status === 402) {
-        setToast("Not enough credits to publish — top up billing or contact an admin.");
+        setToast("Not enough credits to post — top up billing or contact an admin.");
       } else {
-        setToast(e instanceof Error ? e.message : "Publish failed");
+        setToast(e instanceof Error ? e.message : "Posting failed");
       }
     } finally {
       setBusyId(null);
@@ -458,7 +458,7 @@ export function ApprovalsPage() {
                             data-testid={`publish-${inv.id}`}
                           >
                             <Send className="h-3 w-3 mr-0.5" />
-                            Publish
+                            Post
                           </Button>
                         )}
                         {col.key === "rejected" && PERMANENTLY_DELETABLE.has(inv.status) && (

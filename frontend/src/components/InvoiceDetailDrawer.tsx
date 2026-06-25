@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { formatQty, documentDisplayRef } from "@/lib/format";
+import { formatQty, documentDisplayRef, vendorInvoiceNo } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
@@ -412,7 +412,7 @@ function InvoiceHtmlPreview({
   taxRate: number;
   sourceKind: string;
 }) {
-  const docRef = `DOC-${inv.id}`;
+  const docRef = documentDisplayRef(inv);
 
   return (
     <div className="invoice-preview-card relative bg-card border border-border rounded-md shadow-sm">
@@ -690,7 +690,7 @@ export function InvoiceDetailDrawer({
   const fmt = (v: string | null | undefined) =>
     inv ? formatMoney(v, inv.currency) : "—";
   const sourceKind = inv?.email_sender ? "email" : "upload";
-  const docNumber = inv?.invoice_no ?? (inv ? `DOC-${inv.id}` : "—");
+  const docNumber = inv ? (vendorInvoiceNo(inv) ?? documentDisplayRef(inv)) : "—";
 
   async function reloadInvoice() {
     if (!inv) return;
@@ -826,9 +826,9 @@ export function InvoiceDetailDrawer({
       await reloadInvoice();
     } catch (e) {
       if (e instanceof ApiError && e.status === 402) {
-        alert("Not enough credits to publish — top up billing or contact an admin.");
+        alert("Not enough credits to post — top up billing or contact an admin.");
       } else {
-        alert(e instanceof Error ? e.message : "Publish failed");
+        alert(e instanceof Error ? e.message : "Posting failed");
       }
     } finally {
       setActionBusy(false);
@@ -1297,7 +1297,7 @@ export function InvoiceDetailDrawer({
                         onClick={() => void publish()}
                       >
                         <Send className="h-4 w-4 mr-1" />
-                        Publish to ledger
+                        Post to ledger
                       </Button>
                     )}
                   </div>

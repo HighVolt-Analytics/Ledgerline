@@ -73,6 +73,7 @@ async def get_vault_tree_for_tenant(
             po_reference=inv.po_reference,
         )
         virtual_path = build_virtual_path(
+            tenant_id,
             tenant_slug,
             tenant_name=tenant_name,
             route_target=inv.route_target,

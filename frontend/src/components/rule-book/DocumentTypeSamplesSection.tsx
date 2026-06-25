@@ -210,8 +210,8 @@ export function DocumentTypeSamplesSection({
         <p className="text-sm text-foreground font-medium">Sample files</p>
 
         <p className="mt-1 text-xs text-muted-foreground">
-          Upload examples to detect recognition signals and extraction fields. Class, routing,
-          playbook, bundle, and validation stay under your manual settings.
+          Upload examples to detect recognition signals, extraction fields, playbook, and routing.
+          Apply is blocked until every sample routes cleanly to this document type.
         </p>
 
       </div>
@@ -390,7 +390,7 @@ export function DocumentTypeSamplesSection({
 
         <div className="space-y-3 rounded-md border border-primary/25 bg-primary/5 p-3">
 
-          <p className="text-sm font-medium text-foreground">Recognition & extraction</p>
+          <p className="text-sm font-medium text-foreground">Suggested settings</p>
 
           {proposal.notes.map((note) => (
 
@@ -520,8 +520,19 @@ export function DocumentTypeSamplesSection({
 
 
 
-          <Button type="button" size="sm" onClick={apply} disabled={disabled}>
-            Apply recognition & extraction
+          {proposal.apply_block_reason ? (
+            <p className="text-xs text-destructive">{proposal.apply_block_reason}</p>
+          ) : null}
+
+
+
+          <Button
+            type="button"
+            size="sm"
+            onClick={apply}
+            disabled={disabled || proposal.apply_ready === false}
+          >
+            Apply suggested settings
           </Button>
 
         </div>

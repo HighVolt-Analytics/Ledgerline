@@ -1,11 +1,14 @@
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
+
+PipelineStageState = Literal["done", "pending", "fail", "skipped"]
 
 
 class InvoiceStatus(str, Enum):
@@ -80,6 +83,8 @@ class InvoiceResponse(BaseModel):
     created_at: datetime
     has_stored_file: bool = False
     published_to_ledger: bool = False
+    current_stage: str = "Received"
+    current_stage_state: PipelineStageState = "pending"
 
 
 class InvoiceWithDetails(InvoiceResponse):

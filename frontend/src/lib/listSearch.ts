@@ -1,5 +1,5 @@
 import type { Invoice } from "@/api/types";
-import { documentDisplayRef, invId, vaultDocLabel } from "@/lib/format";
+import { documentDisplayRef, vendorInvoiceNo } from "@/lib/format";
 
 export function normalizeListSearchQuery(raw: string): string {
   return raw.trim().toLowerCase();
@@ -37,7 +37,6 @@ export function invoiceMatchesListSearch(inv: Invoice, query: string): boolean {
     inv.email_attachment_name,
     inv.email_subject,
     documentDisplayRef(inv),
-    invId(inv.id),
-    vaultDocLabel(inv.id)
+    vendorInvoiceNo(inv),
   );
 }

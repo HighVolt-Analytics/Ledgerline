@@ -182,13 +182,13 @@ export function poTouchlessApprovalChain(opts: {
     }),
     step({
       kind: "publish",
-      label: "Publish to ledger",
-      role: "Publish",
+      label: "Post to ledger",
+      role: "Post",
       actor: published ? "System" : "—",
       state: published ? "done" : "pending",
       at: publishedAt ?? null,
-      detail: published ? "invoice_published_to_ledger" : "Awaiting publish from Approvals / Ledger",
-      policyRef: "Publish",
+      detail: published ? "Posted to general ledger" : "Awaiting post from Approvals / Ledger",
+      policyRef: "Post",
     }),
     step({
       kind: "payment",
@@ -253,12 +253,12 @@ export function poVarianceApprovalChain(opts: {
     }),
     step({
       kind: "publish",
-      label: "Publish to ledger",
-      role: "Publish",
+      label: "Post to ledger",
+      role: "Post",
       actor: "—",
       state: "blocked",
       at: null,
-      policyRef: "Publish",
+      policyRef: "Post",
     }),
     step({
       kind: "payment",
@@ -288,7 +288,7 @@ export function approvalChainBlocked(opts: {
     blocked("po_buyer", "PO buyer authorization", "Buyer"),
     blocked("document_gate", "Document-type approval gate", "Approver"),
     blocked("exception_queue", "Exception queue approval", "Approver"),
-    blocked("publish", "Publish to ledger", "Publish"),
+    blocked("publish", "Post to ledger", "Post"),
     blocked("payment", "Payment disbursement", "Approver"),
   ]);
 }
@@ -332,12 +332,12 @@ export function importDossierApprovalChain(opts: {
     }),
     step({
       kind: "publish",
-      label: "Publish to ledger",
-      role: "Publish",
+      label: "Post to ledger",
+      role: "Post",
       actor: "—",
       state: "blocked",
       at: null,
-      policyRef: "Publish",
+      policyRef: "Post",
     }),
     step({
       kind: "payment",
@@ -398,12 +398,12 @@ export function nonPoDoaApprovalChain(opts: {
     }),
     step({
       kind: "publish",
-      label: "Publish to ledger",
-      role: "Publish",
+      label: "Post to ledger",
+      role: "Post",
       actor: opts.published ? "System" : "—",
       state: opts.published ? "done" : "pending",
       at: opts.publishedAt ?? null,
-      policyRef: "Publish",
+      policyRef: "Post",
     }),
     step({
       kind: "payment",
@@ -455,13 +455,13 @@ export function suspenseMappingApprovalChain(opts: {
     }),
     step({
       kind: "publish",
-      label: "Publish to ledger",
-      role: "Publish",
+      label: "Post to ledger",
+      role: "Post",
       actor: "—",
       state: "blocked",
       at: null,
       detail: "After GL mapping resolved",
-      policyRef: "Publish",
+      policyRef: "Post",
     }),
     step({
       kind: "payment",
@@ -515,12 +515,12 @@ export function postedPaymentHoldChain(opts: {
     }),
     step({
       kind: "publish",
-      label: "Publish to ledger",
-      role: "Publish",
+      label: "Post to ledger",
+      role: "Post",
       actor: "System",
       state: "done",
       at: "2026-02-03 09:40:50",
-      policyRef: "Publish",
+      policyRef: "Post",
     }),
     step({
       kind: "payment",

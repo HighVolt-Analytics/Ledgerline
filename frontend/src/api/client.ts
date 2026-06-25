@@ -921,6 +921,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  deleteRuleBookDocumentType: (code: string) =>
+    request<RuleBookConfig>(
+      `/api/rule-book/document-types/${encodeURIComponent(code.trim())}`,
+      { method: "DELETE" }
+    ),
   analyzeDocumentTypeSamples: (
     formData: FormData,
     options?: { timeoutMs?: number }

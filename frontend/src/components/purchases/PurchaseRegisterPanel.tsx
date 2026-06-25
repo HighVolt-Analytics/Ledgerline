@@ -6,7 +6,7 @@ import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
 import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageTabs } from "@/components/PageTabs";
-import { inboxStage, StageBadge } from "@/components/StageBadge";
+import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { MatchStatusBadge } from "@/components/purchases/MatchStatusBadge";
 import { ThreeWayAuditBadge } from "@/components/purchases/ThreeWayAuditBadge";
 import { ListPaginationFooter } from "@/components/purchases/ListPaginationFooter";
@@ -446,7 +446,7 @@ export function PurchaseRegisterPanel({
                           {purchaseActionIssue(inv, coverage)}
                         </td>
                         <td className="px-3 py-2.5">
-                          <StageBadge stage={inboxStage(inv)} />
+                          <StageBadge {...invoiceStageBadgeProps(inv)} />
                         </td>
                         <td className="px-3 py-2.5">
                           <EvaluationStatusBadge status={inv.evaluation_status} />

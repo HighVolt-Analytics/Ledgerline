@@ -30,7 +30,7 @@ from app.services.invoice_evaluation_service import parse_matched_rule_ids
 from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
 from app.schemas.purchase import PurchaseDossierResponse
-from app.services.audit_service import log_event
+from app.services.audit_service import audit_logs_for_invoices, log_event
 from app.services.file_storage import (
     has_stored_path,
     read_invoice_file,
@@ -41,6 +41,7 @@ from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.schemas.pipeline import PipelineStepsResponse
 from app.services.pipeline_stages import (
     build_pipeline_stages,
+    derive_current_stage,
     pipeline_steps_for_api,
 )
 from app.services.remap_service import remap_invoices_for_tenant
@@ -107,12 +108,19 @@ def _to_response(
     document_type_extraction_fields: list[str] | None = None,
     include_extraction_field_confidence: bool = False,
     published_to_ledger: bool = False,
+    audit_logs: list[AuditLog] | None = None,
+    current_stage: str | None = None,
+    current_stage_state: str | None = None,
 ) -> InvoiceResponse:
     stored_ok = (
         has_stored_file
         if has_stored_file is not None
         else has_stored_path(inv.raw_file_path)
     )
+    if current_stage is None or current_stage_state is None:
+        stage_label, stage_state = derive_current_stage(inv, audit_logs or [])
+        current_stage = current_stage or stage_label
+        current_stage_state = current_stage_state or stage_state
     return InvoiceResponse(
         id=inv.id,
         document_ref=inv.document_ref,
@@ -163,7 +171,55 @@ def _to_response(
         created_at=inv.created_at,
         has_stored_file=stored_ok,
         published_to_ledger=published_to_ledger,
+        current_stage=current_stage,
+        current_stage_state=current_stage_state,
     )
+
+
+async def _responses_for_invoices(
+    db: AsyncSession,
+    rows: list[Invoice],
+    *,
+    published_ids: set[int] | None = None,
+) -> list[InvoiceResponse]:
+    if not rows:
+        return []
+    invoice_ids = [row.id for row in rows]
+    if published_ids is None:
+        from app.services.publish_service import published_invoice_ids
+
+        published_ids = await published_invoice_ids(db, invoice_ids)
+    audit_by_id = await audit_logs_for_invoices(db, invoice_ids)
+    return [
+        _to_response(
+            row,
+            published_to_ledger=row.id in published_ids,
+            audit_logs=audit_by_id.get(row.id, []),
+        )
+        for row in rows
+    ]
+
+
+async def _response_for_invoice(
+    db: AsyncSession,
+    inv: Invoice,
+    **kwargs,
+) -> InvoiceResponse:
+    logs = list(
+        (
+            await db.execute(
+                select(AuditLog)
+                .where(AuditLog.invoice_id == inv.id)
+                .order_by(AuditLog.created_at.desc())
+            )
+        ).scalars().all()
+    )
+    published = kwargs.pop("published_to_ledger", None)
+    if published is None:
+        from app.services.publish_service import is_published_to_ledger
+
+        published = await is_published_to_ledger(db, inv.id)
+    return _to_response(inv, published_to_ledger=published, audit_logs=logs, **kwargs)
 
 
 @router.get("", response_model=ApiEnvelope[list[InvoiceResponse]])
@@ -235,14 +291,8 @@ async def list_invoices(
         await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
     ).scalars().all()
 
-    from app.services.publish_service import published_invoice_ids
-
-    published_ids = await published_invoice_ids(db, [r.id for r in rows])
-
     return ApiEnvelope(
-        data=[
-            _to_response(r, published_to_ledger=r.id in published_ids) for r in rows
-        ],
+        data=await _responses_for_invoices(db, list(rows)),
         meta=ResponseMeta(page=page, total=total, pages=pages),
     )
 
@@ -265,14 +315,11 @@ async def get_invoice(
     if not inv:
         raise HTTPException(404, "Invoice not found")
 
-    from app.services.publish_service import is_published_to_ledger
-
-    published = await is_published_to_ledger(db, inv.id)
-    base = _to_response(
+    base = await _response_for_invoice(
+        db,
         inv,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
-        published_to_ledger=published,
     )
     return ApiEnvelope(
         data=InvoiceWithDetails(
@@ -321,7 +368,8 @@ async def patch_invoice(
     inv = (
         await db.execute(stmt.execution_options(populate_existing=True))
     ).scalar_one()
-    base = _to_response(
+    base = await _response_for_invoice(
+        db,
         inv,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
@@ -345,14 +393,17 @@ async def download_invoice_file(
 ) -> Response:
     """Download the stored invoice attachment (PDF, image, or DOCX)."""
     inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
-    if not stored_file_available(inv.raw_file_path):
+    if not stored_file_available(inv.raw_file_path, tenant_id=ctx.tenant_id):
         raise HTTPException(
             404,
             "Invoice has no stored file. Upload a PDF via POST /api/invoices/{id}/attach.",
         )
 
     try:
-        data, media_type, filename = read_invoice_file(inv.raw_file_path)  # type: ignore[arg-type]
+        data, media_type, filename = read_invoice_file(
+            inv.raw_file_path,  # type: ignore[arg-type]
+            tenant_id=ctx.tenant_id,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(404, "Stored file not found on disk or blob") from exc
 
@@ -517,7 +568,10 @@ async def upload_invoice(
         segment_count=result.segment_count,
         segment_invoice_ids=result.invoice_ids if result.segment_count > 1 else None,
     )
-    return ApiEnvelope(data=_to_response(primary, has_stored_file=True), meta=meta)
+    return ApiEnvelope(
+        data=await _response_for_invoice(db, primary, has_stored_file=True),
+        meta=meta,
+    )
 
 
 _ALLOWED_ATTACH = (".pdf", ".jpg", ".jpeg", ".png", ".docx")
@@ -560,6 +614,7 @@ async def attach_invoice_file(
     vendor_slug = inv.storage_vendor_slug or UNKNOWN_SLUG
     stored = store_invoice_pdf(
         data,
+        ctx.tenant_id,
         tenant_slug,
         vendor_slug,
         inv.id,
@@ -584,7 +639,7 @@ async def attach_invoice_file(
         invoice_id=inv.id,
         detail={"path": stored, "filename": file.filename},
     )
-    return ApiEnvelope(data=_to_response(inv, has_stored_file=True))
+    return ApiEnvelope(data=await _response_for_invoice(db, inv, has_stored_file=True))
 
 
 _REPROCESSABLE = frozenset(
@@ -609,7 +664,7 @@ async def reprocess_invoice(
     Resets status to pending and clears extracted fields, then runs the pipeline.
     """
     inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
-    if not stored_file_available(inv.raw_file_path):
+    if not stored_file_available(inv.raw_file_path, tenant_id=ctx.tenant_id):
         raise HTTPException(
             400,
             "Invoice has no stored file. Upload via POST /api/invoices/{id}/attach first.",
@@ -629,7 +684,7 @@ async def reprocess_invoice(
         detail={"previous_status": previous_status},
     )
     background_tasks.add_task(process_invoice_background, inv.id)
-    return ApiEnvelope(data=_to_response(inv))
+    return ApiEnvelope(data=await _response_for_invoice(db, inv))
 
 
 @router.get("/{invoice_id}/pipeline", response_model=ApiEnvelope[PipelineStepsResponse])
@@ -725,19 +780,19 @@ async def publish_invoice(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
-    """Export processed invoice journals to the workbook and record ledger publish."""
+    """Export processed invoice journals to the workbook and record ledger posting."""
     from app.services.privilege_service import require_privilege
     from app.services.publish_service import (
         InsufficientCreditsError,
         publish_invoice_to_ledger,
     )
 
-    require_privilege(ctx, "Publish")
+    require_privilege(ctx, "Post")
     inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     if inv.status != InvoiceStatus.PROCESSED:
         raise HTTPException(
             400,
-            f"Only processed invoices can be published (current: {inv.status.value})",
+            f"Only processed invoices can be posted (current: {inv.status.value})",
         )
     actor_name, actor_email = await actor_from_context(db, ctx)
     try:
@@ -750,13 +805,9 @@ async def publish_invoice(
     except InsufficientCreditsError as exc:
         raise HTTPException(
             402,
-            f"Insufficient credits to publish (need {exc.required}, balance {exc.balance})",
+            f"Insufficient credits to post (need {exc.required}, balance {exc.balance})",
         ) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    from app.services.publish_service import is_published_to_ledger
-
-    return ApiEnvelope(
-        data=_to_response(inv, published_to_ledger=await is_published_to_ledger(db, inv.id))
-    )
+    return ApiEnvelope(data=await _response_for_invoice(db, inv))

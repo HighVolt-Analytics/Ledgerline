@@ -168,7 +168,7 @@ export function ApprovalPolicyPrivileges() {
 
       <Card className="p-3 border-primary/30 bg-primary/5 text-xs text-muted-foreground">
         Policy and privilege matrix are saved per organisation. Edits are audited; approve,
-        reject, and publish actions enforce the matrix for each role.
+        reject, and post actions enforce the matrix for each role.
       </Card>
 
       <Card className="p-4">

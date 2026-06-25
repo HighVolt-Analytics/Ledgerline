@@ -18,10 +18,19 @@ def matrix_role_for_context(ctx: AuthContext) -> str:
     return matrix_row_for_role(ctx.role)
 
 
+def _matrix_row_permissions(row: dict[str, bool]) -> dict[str, bool]:
+    return {
+        action: bool(
+            row.get(action, row.get("Publish") if action == "Post" else False)
+        )
+        for action in APPROVAL_ACTIONS
+    }
+
+
 def permissions_for_role(tenant_id: uuid.UUID, role: str) -> dict[str, bool]:
     policy = load_policy_for_tenant(tenant_id)
     row = policy.matrix.get(matrix_row_for_role(role)) or {}
-    return {action: bool(row.get(action, False)) for action in APPROVAL_ACTIONS}
+    return _matrix_row_permissions(row)
 
 
 def permissions_for_context(ctx: AuthContext) -> dict[str, bool]:

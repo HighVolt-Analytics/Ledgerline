@@ -64,6 +64,7 @@ async def flush_rule_book_save_buffer(
     tenant_id: uuid.UUID,
     *,
     db: AsyncSession | None = None,
+    remap_invoices: bool = True,
 ) -> None:
     """Commit any pending save immediately (used by tests and shutdown hooks)."""
     async with _buffer_lock:
@@ -71,7 +72,7 @@ async def flush_rule_book_save_buffer(
         if pending is not None and pending.timer_handle is not None:
             pending.timer_handle.cancel()
     if pending is not None:
-        await commit_rule_book_save(pending, db=db)
+        await commit_rule_book_save(pending, db=db, remap_invoices=remap_invoices)
 
 
 async def schedule_rule_book_save(
@@ -143,6 +144,7 @@ async def _commit_rule_book_db_side_effects(
     changes: dict[str, Any],
     before_norm: dict[str, Any],
     after_norm: dict[str, Any],
+    remap_invoices: bool = True,
 ) -> None:
     if await is_duplicate_rule_book_update(session, pending.tenant_id, after_norm):
         logger.info(
@@ -172,6 +174,9 @@ async def _commit_rule_book_db_side_effects(
             client_ip=pending.client_ip,
         )
 
+    if not remap_invoices:
+        return
+
     remap_result = await remap_invoices_for_tenant(session, tenant_id=pending.tenant_id)
     if remap_result.updated:
         await log_event(
@@ -194,6 +199,7 @@ async def commit_rule_book_save(
     pending: PendingRuleBookSave,
     *,
     db: AsyncSession | None = None,
+    remap_invoices: bool = True,
 ) -> bool:
     """Persist config, audit real changes, and remap invoices once. Returns True if committed."""
     before_norm = normalize_rule_book_for_diff(pending.before_raw)
@@ -216,6 +222,7 @@ async def commit_rule_book_save(
             changes=changes,
             before_norm=before_norm,
             after_norm=after_norm,
+            remap_invoices=remap_invoices,
         )
         return True
 
@@ -227,6 +234,7 @@ async def commit_rule_book_save(
             changes=changes,
             before_norm=before_norm,
             after_norm=after_norm,
+            remap_invoices=remap_invoices,
         )
         await session.commit()
     return True

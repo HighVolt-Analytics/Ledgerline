@@ -18,6 +18,87 @@ from app.services.purchase_document_service import (
 
 RecognitionSignalId = str
 
+WEAK_SIGNALS: frozenset[RecognitionSignalId] = frozenset(
+    {"has_po_reference", "has_invoice_number", "has_total_amount"}
+)
+
+NO_SHARED_IDENTITY_NOTE = (
+    "No shared document identity signals across samples — upload files of the same type "
+    "(e.g. all expense receipts, all GRNs) or analyze one file at a time."
+)
+
+PURCHASE_MATCH_PLAYBOOKS = frozenset(
+    {
+        "po_goods",
+        "po_services",
+        "import_dossier",
+        "freight_logistics",
+        "credit_adjustment",
+        "debit_note",
+        "standard_transactional",
+    }
+)
+
+SUPPORTING_PO_SIGNALS = frozenset({"heading_po", "text_po", "filename_po"})
+SUPPORTING_GRN_SIGNALS = frozenset({"heading_grn", "text_grn", "filename_grn"})
+SUPPORTING_CONTRACT_SIGNALS = frozenset(
+    {
+        "heading_contract",
+        "text_contract",
+        "filename_contract",
+        "text_terms",
+        "text_governing_law",
+        "text_signed_behalf",
+    }
+)
+
+CONTRACT_IDENTITY_SIGNALS = frozenset(
+    {"heading_contract", "text_contract", "filename_contract"}
+)
+
+# OR channels — structural only (how classifier trees group conditions).
+SIGNAL_PICK_GROUPS: tuple[tuple[RecognitionSignalId, ...], ...] = (
+    ("heading_invoice", "text_invoice", "filename_invoice"),
+    ("heading_po", "text_po", "filename_po"),
+    ("heading_grn", "text_grn", "filename_grn"),
+    ("heading_contract", "text_contract", "filename_contract"),
+    ("text_credit_note", "filename_credit_note"),
+    ("text_debit_note", "filename_debit_note"),
+    ("text_proforma", "filename_proforma"),
+    ("text_claim", "filename_claim"),
+    ("text_quote", "filename_quote"),
+    ("text_tax_notice", "filename_tax_notice"),
+    ("text_bank_change", "filename_bank_change"),
+    ("text_freight", "filename_freight"),
+    ("text_import", "filename_import"),
+    ("text_intercompany", "filename_intercompany"),
+    ("text_terms", "text_governing_law", "text_signed_behalf"),
+)
+
+# Group indices for conflict resolution (same order as SIGNAL_PICK_GROUPS).
+_GRP_INVOICE = 0
+_GRP_PO = 1
+_GRP_GRN = 2
+_GRP_CONTRACT = 3
+
+_GRP_TAX_NOTICE = 9
+_GRP_PROFORMA = 6
+_GRP_QUOTE = 8
+
+INCOMPATIBLE_GROUP_SETS: tuple[frozenset[int], ...] = (
+    frozenset({_GRP_INVOICE, _GRP_CONTRACT}),
+    frozenset({_GRP_INVOICE, _GRP_PO}),
+    frozenset({_GRP_INVOICE, _GRP_GRN}),
+    frozenset({_GRP_PO, _GRP_GRN}),
+    frozenset({_GRP_CONTRACT, _GRP_PO}),
+    frozenset({_GRP_CONTRACT, _GRP_GRN}),
+    frozenset({_GRP_CONTRACT, _GRP_INVOICE}),
+    frozenset({_GRP_CONTRACT, _GRP_TAX_NOTICE}),
+    frozenset({_GRP_CONTRACT, _GRP_PROFORMA}),
+    frozenset({_GRP_CONTRACT, _GRP_QUOTE}),
+    frozenset({_GRP_INVOICE, _GRP_TAX_NOTICE}),
+)
+
 _FILENAME_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
     ("filename_invoice", re.compile(r"(?i)(?:^|[-_/])(?:inv|invoice|tax[_-]?inv)(?:[-_.]|$)")),
     ("filename_po", re.compile(r"(^|[-_/])po([-_.]|$)|purchase[_-]?order", re.I)),
@@ -150,12 +231,23 @@ def detect_recognition_signals(
         signals.add("has_total_amount")
 
     body = ctx.document_text or ""
+    has_contract_cue = (
+        ctx.has_heading_contract == "true"
+        or (body and re.search(r"(?i)(\bcontract\b|master service agreement|docusign)", body))
+    )
     for signal_id, pattern in _FILENAME_PATTERNS:
         if name and pattern.search(name):
             signals.add(signal_id)
     for signal_id, pattern in _TEXT_PATTERNS:
-        if body and pattern.search(body):
-            signals.add(signal_id)
+        if not body or not pattern.search(body):
+            continue
+        if signal_id == "text_invoice" and has_contract_cue:
+            if not re.search(r"(?i)\b(tax\s+invoice|commercial\s+invoice)\b", body):
+                continue
+        if signal_id == "text_tax_notice" and has_contract_cue:
+            if not re.search(r"(?i)\b(ato|tax\s+office)\b", body):
+                continue
+        signals.add(signal_id)
 
     if name and _attachment_suggests_po(name):
         signals.add("filename_po")
@@ -176,21 +268,170 @@ def detect_recognition_signals(
     )
 
 
+def identity_signals(signals: frozenset[RecognitionSignalId]) -> frozenset[RecognitionSignalId]:
+    return frozenset(s for s in signals if s not in WEAK_SIGNALS)
+
+
+def _grouped_signal_ids() -> frozenset[RecognitionSignalId]:
+    grouped: set[RecognitionSignalId] = set()
+    for group in SIGNAL_PICK_GROUPS:
+        grouped.update(group)
+    return frozenset(grouped)
+
+
+def _active_group_indices(signals: set[RecognitionSignalId]) -> set[int]:
+    active: set[int] = set()
+    for index, group in enumerate(SIGNAL_PICK_GROUPS):
+        if signals & set(group):
+            active.add(index)
+    return active
+
+
+def _group_score(group_index: int, per_file: list[set[RecognitionSignalId]]) -> int:
+    group = set(SIGNAL_PICK_GROUPS[group_index])
+    return sum(len(file_signals & group) for file_signals in per_file)
+
+
+def _resolve_winning_groups(per_file: list[set[RecognitionSignalId]]) -> set[int]:
+    if not per_file:
+        return set()
+    if len(per_file) == 1:
+        return _active_group_indices(per_file[0])
+
+    common = set.intersection(*[_active_group_indices(file_signals) for file_signals in per_file])
+    winners = common if common else set.union(*[_active_group_indices(s) for s in per_file])
+    if not winners:
+        return set()
+
+    for pair in INCOMPATIBLE_GROUP_SETS:
+        present = pair & winners
+        if len(present) < 2:
+            continue
+        scores = {index: _group_score(index, per_file) for index in present}
+        best = max(scores, key=lambda index: (scores[index], -index))
+        winners -= present - {best}
+    return winners
+
+
+def _profiles_compatible(per_file: list[set[RecognitionSignalId]]) -> bool:
+    if len(per_file) <= 1:
+        return True
+    common_identity = set.intersection(
+        *(set(identity_signals(frozenset(s))) for s in per_file)
+    )
+    if common_identity:
+        return True
+    common_groups = set.intersection(*[_active_group_indices(s) for s in per_file])
+    return bool(common_groups)
+
+
+def _collect_merged_signals(
+    per_file: list[set[RecognitionSignalId]],
+    kept_groups: set[int],
+) -> frozenset[RecognitionSignalId]:
+    if not per_file or not kept_groups:
+        return frozenset()
+
+    merged: set[RecognitionSignalId] = set()
+    file_union = set().union(*per_file)
+
+    for group_index, group in enumerate(SIGNAL_PICK_GROUPS):
+        if group_index not in kept_groups:
+            continue
+        group_set = set(group)
+        if len(per_file) == 1 or all(file_signals & group_set for file_signals in per_file):
+            merged |= file_union & group_set
+
+    if all(file_signals & WEAK_SIGNALS for file_signals in per_file):
+        merged |= set().union(*(file_signals & WEAK_SIGNALS for file_signals in per_file))
+
+    grouped = _grouped_signal_ids()
+    ungrouped_on_all = set.intersection(
+        *(file_signals - grouped - WEAK_SIGNALS for file_signals in per_file)
+    )
+    merged |= ungrouped_on_all
+    return frozenset(merged)
+
+
+def _merge_detected_signals(profiles: list[SampleSignalProfile]) -> frozenset[RecognitionSignalId]:
+    per_file = [set(profile.signals) for profile in profiles]
+    if not per_file:
+        return frozenset()
+    if len(per_file) > 1 and not _profiles_compatible(per_file):
+        return frozenset()
+    kept_groups = _resolve_winning_groups(per_file)
+    return _collect_merged_signals(per_file, kept_groups)
+
+
+def _uses_supporting_guards(signals: frozenset[RecognitionSignalId]) -> bool:
+    available = set(signals)
+    if available & (SUPPORTING_PO_SIGNALS | SUPPORTING_GRN_SIGNALS):
+        if not WEAK_SIGNALS.issubset(available):
+            return True
+    if available & CONTRACT_IDENTITY_SIGNALS:
+        if "has_invoice_number" not in available or "has_total_amount" not in available:
+            return True
+    return False
+
+
+def _is_contract_signal_set(signals: frozenset[RecognitionSignalId]) -> bool:
+    return bool(signals & SUPPORTING_CONTRACT_SIGNALS)
+
+
+def infer_document_family(playbook: str) -> str:
+    pb = (playbook or "").strip().lower()
+    if pb in PURCHASE_MATCH_PLAYBOOKS:
+        return "purchase_match"
+    if pb == "direct_expense":
+        return "direct_expense"
+    if pb == "employee_claim":
+        return "employee_claim"
+    if pb in {"supporting", "informational", "reconciliation"}:
+        return "supporting"
+    if pb in {"pre_transactional", "non_actionable"}:
+        return "pre_transactional"
+    if pb in {"compliance_route", "master_data"}:
+        return "compliance_master"
+    return "purchase_match"
+
+
+def infer_classifier_layout_for_samples(
+    signals: frozenset[RecognitionSignalId],
+    *,
+    purchase_bundle_role: str = "",
+) -> str:
+    """Infer AND/OR layout from detected signal shape (not from a playbook template)."""
+    role = (purchase_bundle_role or "").strip().lower()
+    if role in {"po", "grn"}:
+        return "supporting_doc"
+    if _uses_supporting_guards(signals):
+        return "supporting_doc"
+    return "grouped"
+
+
 def infer_classifier_layout(
     signals: frozenset[RecognitionSignalId],
     *,
     purchase_bundle_role: str = "",
+    playbook: str = "",
     for_sample_analysis: bool = False,
 ) -> str:
     role = (purchase_bundle_role or "").strip().lower()
     if role in {"po", "grn"}:
         return "supporting_doc"
     if for_sample_analysis:
-        # Sample-derived rules must tolerate variation across uploads of the same type.
-        return "any_signal"
-    if {"has_po_reference", "has_invoice_number", "has_total_amount"}.issubset(signals):
+        return infer_classifier_layout_for_samples(signals, purchase_bundle_role=role)
+    profile = (playbook or "").strip().lower() or infer_playbook_profile(signals)
+    family = infer_document_family(profile)
+    if family == "supporting":
+        return "supporting_doc"
+    if family == "purchase_match" and WEAK_SIGNALS.issubset(signals):
         return "all_signals"
     return "any_signal"
+
+
+def _union_detected_signals(profiles: list[SampleSignalProfile]) -> frozenset[RecognitionSignalId]:
+    return frozenset().union(*(profile.signals for profile in profiles))
 
 
 def merge_signals_for_classifier_profiles(
@@ -199,30 +440,29 @@ def merge_signals_for_classifier_profiles(
     purchase_bundle_role: str = "",
 ) -> tuple[frozenset[RecognitionSignalId], str]:
     """
-    Build classifier signals + layout from one or more parsed samples.
+    Build classifier signals purely from what was detected in the uploaded samples.
 
-    Multi-sample: prefer signals present on every file (intersection). If none overlap,
-    fall back to union with OR matching so variants of the same type still route.
+    Uses per-file agreement and OR-channel grouping — no playbook palette or template defaults.
     """
     role = (purchase_bundle_role or "").strip().lower()
     if not profiles:
         return frozenset(), "any_signal"
 
-    union: set[RecognitionSignalId] = set()
-    for profile in profiles:
-        union.update(profile.signals)
+    if role == "po":
+        kept = {_GRP_PO}
+        merged = _collect_merged_signals([set(p.signals) for p in profiles], kept)
+        return merged, "supporting_doc"
+    if role == "grn":
+        kept = {_GRP_GRN}
+        merged = _collect_merged_signals([set(p.signals) for p in profiles], kept)
+        return merged, "supporting_doc"
 
-    if role in {"po", "grn"}:
-        return frozenset(union), "supporting_doc"
+    merged = _merge_detected_signals(profiles)
+    if not merged:
+        return frozenset(), "any_signal"
 
-    if len(profiles) == 1:
-        return frozenset(union), "any_signal"
-
-    per_file = [set(profile.signals) for profile in profiles]
-    common = set.intersection(*per_file) if per_file else set()
-    if common:
-        return frozenset(common), "any_signal"
-    return frozenset(union), "any_signal"
+    layout = infer_classifier_layout_for_samples(merged, purchase_bundle_role=role)
+    return merged, layout
 
 
 def infer_playbook_profile(signals: frozenset[RecognitionSignalId]) -> str:
@@ -241,12 +481,12 @@ def infer_playbook_profile(signals: frozenset[RecognitionSignalId]) -> str:
         return "employee_claim"
     if signals & {"text_bank_change", "filename_bank_change"}:
         return "master_data"
+    if signals & {"heading_contract", "text_contract", "text_governing_law", "filename_contract"}:
+        return "supporting"
     if signals & {"text_quote", "filename_quote"}:
         return "non_actionable"
     if signals & {"text_tax_notice", "filename_tax_notice"}:
         return "compliance_route"
-    if signals & {"heading_contract", "text_contract", "text_governing_law", "filename_contract"}:
-        return "supporting"
     if {"has_po_reference", "has_invoice_number", "has_total_amount"}.issubset(signals):
         return "po_goods"
     if "has_invoice_number" in signals and "has_po_reference" not in signals:
@@ -263,13 +503,52 @@ def infer_purchase_bundle_role(signals: frozenset[RecognitionSignalId]) -> str:
     return ""
 
 
-def infer_absent_fields(signals: frozenset[RecognitionSignalId]) -> list[str]:
+def infer_absent_fields(
+    signals: frozenset[RecognitionSignalId],
+    *,
+    playbook: str = "",
+) -> list[str]:
     absent: list[str] = []
+    profile = (playbook or "").strip().lower() or infer_playbook_profile(signals)
+    family = infer_document_family(profile)
+
     if signals & {"heading_po", "text_po", "filename_po", "heading_grn", "text_grn", "filename_grn"}:
         absent.append("invoice_no")
-    if signals & {"text_quote", "filename_quote"}:
+    if signals & {"text_quote", "filename_quote", "text_proforma", "filename_proforma"}:
         absent.extend(["invoice_no", "total"])
+    if family == "direct_expense" and "has_po_reference" not in signals:
+        absent.append("po_reference")
+    if profile == "credit_adjustment" and "has_po_reference" not in signals:
+        absent.append("po_reference")
+    if family == "supporting" and signals & {
+        "heading_contract",
+        "text_contract",
+        "text_governing_law",
+        "filename_contract",
+    }:
+        absent.extend(["invoice_no", "total"])
+
     return list(dict.fromkeys(absent))
+
+
+def default_required_field_candidates(
+    family: str,
+    signals: frozenset[RecognitionSignalId],
+) -> frozenset[str]:
+    """Legacy hook — required fields now come from extraction majority in sample analyzer."""
+    _ = (family, signals)
+    return frozenset()
+
+
+def detect_mixed_family_note(profiles: list[SampleSignalProfile]) -> str | None:
+    if len(profiles) < 2:
+        return None
+    per_file = [set(profile.signals) for profile in profiles]
+    if not _profiles_compatible(per_file):
+        return (
+            "Mixed document cues across samples — use files of the same type for a reliable classifier."
+        )
+    return None
 
 
 def infer_document_metadata(playbook: str, *, bundle_role: str = "") -> tuple[str, str, str]:

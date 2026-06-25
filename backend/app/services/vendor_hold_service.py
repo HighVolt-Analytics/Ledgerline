@@ -14,23 +14,36 @@ from app.services.bundle_vendor_service import (
     vendors_align_to_same_master,
 )
 from app.services.expense_vendor_policy import is_unmatched_expense_vendor_status
-from app.services.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_PENDING_VENDOR, ROUTE_PURCHASE, ROUTE_TEAM, ROUTE_VAULT
+from app.services.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_PENDING_VENDOR, ROUTE_PURCHASE
 from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.services.master_data_service import list_pending_vendors
+from app.services.rule_book_mapper import load_classification_config
+from app.services.vendor_registration_policy import (
+    resolve_document_type_definition,
+    vendor_registration_required,
+)
 
 
-def _is_team_expense_route(invoice: Invoice) -> bool:
-    return (invoice.route_target or "").strip() == ROUTE_TEAM
-
-
-def _is_vault_route(invoice: Invoice) -> bool:
-    return (invoice.route_target or "").strip() == ROUTE_VAULT
+async def _registration_required_for_invoice(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    config = await load_classification_config(session, invoice.tenant_id)
+    definition = resolve_document_type_definition(
+        invoice.document_type_code,
+        document_types=config.document_types,
+    )
+    return vendor_registration_required(
+        route_target=invoice.route_target,
+        document_type=definition,
+        purchase_document_type=invoice.purchase_document_type,
+    )
 
 
 async def invoice_is_vendor_held(session: AsyncSession, invoice: Invoice) -> bool:
-    if _is_team_expense_route(invoice):
-        return False
     if is_unmatched_expense_vendor_status(invoice.evaluation_status):
+        return False
+    if not await _registration_required_for_invoice(session, invoice):
         return False
     if await purchase_invoice_trusts_po_register(session, invoice):
         return False
@@ -151,7 +164,10 @@ async def apply_vendor_hold_if_needed(
     invoice: Invoice,
 ) -> bool:
     """Set exception + pending_vendor when registration is required. Returns True if held."""
-    if _is_purchase_supporting_document(invoice) or _is_team_expense_route(invoice) or _is_vault_route(invoice):
+    if not await _registration_required_for_invoice(session, invoice):
+        return False
+
+    if _is_purchase_supporting_document(invoice):
         return False
 
     if await _release_hold_when_po_linked_purchase_invoice(session, invoice):

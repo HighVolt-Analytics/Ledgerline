@@ -16,15 +16,15 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8002",
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8001",
         changeOrigin: true,
       },
       "/health": {
-        target: process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8002",
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8001",
         changeOrigin: true,
       },
       "/connect-mailbox": {
-        target: process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8002",
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8001",
         changeOrigin: true,
       },
     },

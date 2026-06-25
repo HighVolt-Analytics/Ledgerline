@@ -7,6 +7,8 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.tenant_ids import TESTING_TENANT_UUID
+
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.blob_storage import _blob_name_matches_invoice, find_blob_uri_for_invoice
 from app.services.file_storage import repair_invoice_stored_path, stored_file_available
@@ -36,7 +38,7 @@ async def test_repair_invoice_stored_path_from_blob_search(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
         file_hash="abc",
@@ -52,7 +54,7 @@ async def test_repair_invoice_stored_path_from_blob_search(
     with (
         patch(
             "app.services.file_storage.stored_file_available",
-            side_effect=lambda path: path == repaired_uri,
+            side_effect=lambda path, tenant_id=None: path == repaired_uri,
         ),
         patch(
             "app.services.blob_storage.find_blob_uri_for_invoice",
@@ -72,7 +74,7 @@ async def test_repair_invoice_stored_path_from_audit(
     from app.models.audit import AuditLog
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
         file_hash="abc",
@@ -92,8 +94,8 @@ async def test_repair_invoice_stored_path_from_audit(
     await db_session.flush()
 
     with patch(
-        "app.services.file_storage.stored_file_available",
-        side_effect=lambda path: path == repaired_uri,
+        "app.services.file_storage._resolve_readable_stored",
+        side_effect=lambda stored, tenant_id=None: repaired_uri if stored == repaired_uri else None,
     ):
         repaired = await repair_invoice_stored_path(db_session, inv)
 

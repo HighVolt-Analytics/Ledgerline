@@ -1,10 +1,10 @@
 import { Link } from "react-router-dom";
 import { CalendarClock } from "lucide-react";
 import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
-import { StageBadge, inboxStage } from "@/components/StageBadge";
+import { StageBadge, invoiceStageBadgeProps } from "@/components/StageBadge";
 import { Card } from "@/components/ui/card";
 import type { Invoice } from "@/api/types";
-import { invId, money } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
 
 export function PayableInvoiceRow({ invoice }: { invoice: Invoice }) {
   const dueLabel = invoice.due_date
@@ -24,7 +24,7 @@ export function PayableInvoiceRow({ invoice }: { invoice: Invoice }) {
               to={`/upload?doc=${invoice.id}`}
               className="font-medium text-sm hover:text-primary"
             >
-              {invId(invoice.id)}
+              {documentDisplayRef(invoice)}
             </Link>
             <span className="text-muted-foreground text-sm truncate">
               {invoice.vendor ?? "—"}
@@ -44,7 +44,7 @@ export function PayableInvoiceRow({ invoice }: { invoice: Invoice }) {
         </div>
       </div>
       <div className="mt-2.5 flex flex-wrap gap-2">
-        <StageBadge stage={inboxStage(invoice)} />
+        <StageBadge {...invoiceStageBadgeProps(invoice)} />
         <EvaluationStatusBadge status={invoice.evaluation_status} />
       </div>
     </Card>

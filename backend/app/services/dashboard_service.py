@@ -642,6 +642,7 @@ def _activity_item_from_row(
     log: AuditLog,
     vendor: str | None,
     status: InvoiceStatus | None,
+    document_ref: str | None,
 ) -> ActivityItem:
     from app.services.audit_change_summary import summarize_audit_change
 
@@ -649,9 +650,13 @@ def _activity_item_from_row(
         InvoiceStatusSchema(status.value) if status is not None else None
     )
     detail = log.detail if isinstance(log.detail, dict) else {}
+    ref = (document_ref or "").strip() or None
+    if not ref and log.invoice_id is not None:
+        ref = f"DOC-{log.invoice_id}"
     return ActivityItem(
         id=log.id,
         invoice_id=log.invoice_id,
+        document_ref=ref,
         event=log.event,
         detail=log.detail,
         created_at=log.created_at,
@@ -666,7 +671,7 @@ async def fetch_activity(
 ) -> list[ActivityItem]:
     """Recent org activity for dashboard — always surfaces duplicate detections."""
     base = (
-        select(AuditLog, Invoice.vendor, Invoice.status)
+        select(AuditLog, Invoice.vendor, Invoice.status, Invoice.document_ref)
         .join(Invoice, Invoice.id == AuditLog.invoice_id)
         .where(
             AuditLog.invoice_id.isnot(None),
@@ -692,11 +697,11 @@ async def fetch_activity(
 
     merged: list[ActivityItem] = []
     seen_ids: set[int] = set()
-    for log, vendor, status in (*duplicate_rows, *general_rows):
+    for log, vendor, status, document_ref in (*duplicate_rows, *general_rows):
         if log.id in seen_ids:
             continue
         seen_ids.add(log.id)
-        merged.append(_activity_item_from_row(log, vendor, status))
+        merged.append(_activity_item_from_row(log, vendor, status, document_ref))
         if len(merged) >= limit:
             break
 

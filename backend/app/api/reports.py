@@ -13,6 +13,7 @@ from app.schemas.common import ApiEnvelope
 from app.schemas.reports import ReportDocumentRow, ReportsAnalytics
 from app.services import blob_storage
 from app.services.reports_service import build_analytics, list_documents
+from app.services.tenant_storage_paths import tenant_blob_name, tenant_local_dir
 from app.services.workbook_writer import workbook_filename, write_workbook
 from app.utils.logger import get_logger
 
@@ -21,8 +22,8 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-def _reports_dir() -> Path:
-    return Path(get_settings().upload_dir) / "reports"
+def _reports_dir(tenant_id) -> Path:
+    return tenant_local_dir(tenant_id, "reports")
 
 
 def _resolve_date_filter(
@@ -41,12 +42,12 @@ def _resolve_date_filter(
     return date_from, date_to
 
 
-def _upload_workbook_blob(path: Path) -> None:
+def _upload_workbook_blob(tenant_id, path: Path) -> None:
     """Upload workbook to blob storage without blocking the HTTP response."""
     if not blob_storage.is_blob_enabled():
         return
     try:
-        blob_name = f"reports/{path.name}"
+        blob_name = tenant_blob_name(tenant_id, f"reports/{path.name}")
         blob_storage.upload_bytes(blob_name, path.read_bytes())
         logger.info("workbook_uploaded_blob", blob_name=blob_name)
     except Exception as exc:
@@ -111,7 +112,7 @@ async def generate_report(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    background_tasks.add_task(_upload_workbook_blob, path)
+    background_tasks.add_task(_upload_workbook_blob, ctx.tenant_id, path)
     return ApiEnvelope(data={"path": str(path), "filename": path.name})
 
 
@@ -124,13 +125,17 @@ async def download_report(
 ) -> FileResponse:
     """Download the generated workbook file."""
     d_from, d_to = _resolve_date_filter(workbook_date, date_from, date_to)
-    path = _reports_dir() / workbook_filename(ctx.tenant_slug, d_from, d_to)
+    path = _reports_dir(ctx.tenant_id) / workbook_filename(ctx.tenant_slug, d_from, d_to)
 
     if not path.is_file():
-        raise HTTPException(
-            404,
-            "Workbook not found. Run POST /api/reports/generate first.",
-        )
+        legacy = Path(get_settings().upload_dir) / "reports" / path.name
+        if legacy.is_file():
+            path = legacy
+        else:
+            raise HTTPException(
+                404,
+                "Workbook not found. Run POST /api/reports/generate first.",
+            )
     return FileResponse(
         path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

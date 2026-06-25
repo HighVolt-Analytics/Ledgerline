@@ -90,6 +90,7 @@ type Tone = keyof typeof TONE_CLASSES;
 type DocumentTypesTabProps = {
   documentTypes: DocumentTypeDefinition[];
   onChange: (documentTypes: DocumentTypeDefinition[]) => void;
+  onDeleteType?: (code: string) => void | Promise<void>;
   canEdit?: boolean;
 };
 
@@ -1183,6 +1184,7 @@ function DocumentTypeEditDialog({
 export function DocumentTypesTab({
   documentTypes,
   onChange,
+  onDeleteType,
   canEdit = false,
 }: DocumentTypesTabProps) {
   const [classFilter, setClassFilter] = useState<"all" | DocumentTypeClass>("all");
@@ -1222,15 +1224,34 @@ export function DocumentTypesTab({
     [documentTypes, validationViewCode]
   );
 
-  const removeType = (code: string) => {
-    const target = documentTypes.find((dt) => dt.code === code);
+  const removeType = async (code: string) => {
+    const target = documentTypes.find(
+      (dt) => dt.code.trim().toUpperCase() === code.trim().toUpperCase()
+    );
     const label = target ? `${target.code} · ${target.title}` : code;
     const message = `Do you want to delete this document type?\n\n${label}`;
     const confirmed = window.confirm(message);
     if (!confirmed) return;
 
-    onChange(documentTypes.filter((dt) => dt.code !== code));
     setSelectedCode(null);
+    setValidationViewCode((current) =>
+      current?.trim().toUpperCase() === code.trim().toUpperCase() ? null : current
+    );
+    if (editing?.code.trim().toUpperCase() === code.trim().toUpperCase()) {
+      setEditing(null);
+      setIsNew(false);
+    }
+
+    if (onDeleteType) {
+      onDeleteType(code);
+      return;
+    }
+
+    onChange(
+      documentTypes.filter(
+        (dt) => dt.code.trim().toUpperCase() !== code.trim().toUpperCase()
+      )
+    );
   };
 
   const saveEdit = () => {

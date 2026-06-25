@@ -11,7 +11,7 @@ APPROVAL_ACTIONS: tuple[str, ...] = (
     "Comment",
     "Approve",
     "Reject",
-    "Publish",
+    "Post",
     "Edit Policy",
     "Manage Users",
 )

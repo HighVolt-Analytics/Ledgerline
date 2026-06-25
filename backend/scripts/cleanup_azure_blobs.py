@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select
 
@@ -11,11 +15,12 @@ from app.config import get_settings
 from app.database import async_session_factory
 from app.models.invoice import Invoice
 from app.services import blob_storage
+from app.services.tenant_storage_paths import blob_name_from_stored, is_legacy_blob_path
 
 # Only the `invoices` container is configured in the backend.
 UNUSED_CONTAINERS = ("exports", "incoming-pdfs", "processed")
 
-# Inside `invoices`: keep invoice/ (vault) and reports/ (workbooks).
+# Inside container: tenant-prefixed vault/reports; legacy roots optional after migration.
 UNUSED_BLOB_PREFIXES = ("_healthcheck/", "hv-org/")
 
 
@@ -24,22 +29,6 @@ def _service_client():
 
     settings = get_settings()
     return BlobServiceClient.from_connection_string(settings.azure_storage_connection_string)
-
-
-def _blob_name_from_stored(stored: str | None) -> str | None:
-    if not stored:
-        return None
-    parsed = blob_storage.parse_stored_uri(stored.strip())
-    if parsed:
-        return parsed[1]
-    path = stored.strip().replace("\\", "/")
-    marker = "/invoice/"
-    idx = path.find(marker)
-    if idx >= 0:
-        return path[idx + 1 :]
-    if path.startswith("invoice/") or path.startswith("rejected/"):
-        return path
-    return None
 
 
 async def _referenced_blob_names() -> set[str]:
@@ -51,10 +40,43 @@ async def _referenced_blob_names() -> set[str]:
         ).scalars().all()
     keep: set[str] = set()
     for stored in rows:
-        name = _blob_name_from_stored(stored)
+        name = blob_name_from_stored(stored)
         if name:
             keep.add(name)
     return keep
+
+
+def clear_legacy_prefix_blobs(*, dry_run: bool = False) -> int:
+    """Delete pre-migration root blobs (invoice/, rejected/, reports/) not in DB."""
+    if not blob_storage.is_blob_enabled():
+        print("blob storage disabled — nothing to clear")
+        return 0
+
+    keep = asyncio.run(_referenced_blob_names())
+    settings = get_settings()
+    client = _service_client()
+    container = client.get_container_client(settings.azure_storage_container)
+
+    to_delete: list[str] = []
+    for blob in container.list_blobs():
+        if blob.name in keep:
+            continue
+        if is_legacy_blob_path(blob.name) or blob.name.startswith("reports/"):
+            to_delete.append(blob.name)
+
+    if dry_run:
+        print(f"would delete {len(to_delete)} legacy/orphan blob(s); keeping {len(keep)}")
+        for name in to_delete:
+            print(f"  {name}")
+        return len(to_delete)
+
+    deleted = 0
+    for name in to_delete:
+        container.delete_blob(name)
+        deleted += 1
+        print(f"deleted blob: {name}")
+    print(f"removed {deleted} legacy/orphan blob(s); kept {len(keep)} linked to invoices")
+    return deleted
 
 
 def clear_orphan_blobs(*, dry_run: bool = False, include_reports: bool = False) -> int:
@@ -72,9 +94,10 @@ def clear_orphan_blobs(*, dry_run: bool = False, include_reports: bool = False) 
     for blob in container.list_blobs():
         if blob.name in keep:
             continue
-        if blob.name.startswith("reports/") and not include_reports:
-            continue
-        to_delete.append(blob.name)
+        if is_legacy_blob_path(blob.name):
+            to_delete.append(blob.name)
+        elif include_reports and blob.name.startswith("reports/"):
+            to_delete.append(blob.name)
 
     if dry_run:
         print(f"would delete {len(to_delete)} orphan blob(s); keeping {len(keep)}")
@@ -197,6 +220,11 @@ if __name__ == "__main__":
         help="Delete only reports/ workbook exports",
     )
     parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Delete legacy invoice/, rejected/, reports/ blobs not referenced in DB",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="List blobs that would be deleted",
@@ -208,6 +236,8 @@ if __name__ == "__main__":
         clear_orphan_blobs(dry_run=args.dry_run, include_reports=args.reports)
     elif args.reports_only:
         clear_reports_prefix(dry_run=args.dry_run)
+    elif args.legacy:
+        clear_legacy_prefix_blobs(dry_run=args.dry_run)
     else:
         result = cleanup_unused_blobs()
         print("done", result)

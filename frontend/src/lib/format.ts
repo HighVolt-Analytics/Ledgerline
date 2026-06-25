@@ -43,11 +43,7 @@ export function money(
   }
 }
 
-export function invId(id: number): string {
-  return `INV-${String(id).padStart(3, "0")}`;
-}
-
-/** Stable org document label shown in lists and drawers. */
+/** Stable org document label (document register ref). */
 export function documentDisplayRef(inv: {
   id: number;
   document_ref?: string | null;
@@ -57,9 +53,31 @@ export function documentDisplayRef(inv: {
   return `DOC-${inv.id}`;
 }
 
-/** Human-readable vault document id (matches inbox / matrix list style). */
-export function vaultDocLabel(id: number): string {
-  return `DOC-2026-${String(id).padStart(4, "0")}`;
+/** Supplier invoice number when present (AP / three-way match). */
+export function vendorInvoiceNo(inv: {
+  invoice_no?: string | null;
+}): string | null {
+  const no = inv.invoice_no?.trim();
+  return no || null;
+}
+
+/** List row: org ref primary, vendor invoice no when different. */
+export function documentListLabel(inv: {
+  id: number;
+  document_ref?: string | null;
+  invoice_no?: string | null;
+}): string {
+  const ref = documentDisplayRef(inv);
+  const vendorNo = vendorInvoiceNo(inv);
+  if (vendorNo && vendorNo !== ref) {
+    return `${ref} · ${vendorNo}`;
+  }
+  return ref;
+}
+
+/** @deprecated Use documentDisplayRef — kept for search/back-compat only. */
+export function vaultDocLabel(inv: { id: number; document_ref?: string | null }): string {
+  return documentDisplayRef(inv);
 }
 
 export function vaultDocSubtitle(inv: {

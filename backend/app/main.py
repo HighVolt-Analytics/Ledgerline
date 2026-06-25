@@ -46,6 +46,7 @@ from app.services.inline_mailbox_poller import (
     stop_inline_mailbox_poller,
 )
 from app.services.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
+from app.services.tenant_module_service import require_module
 from app.telemetry import setup_application_insights
 from app.utils.logger import configure_logging, get_logger
 
@@ -100,6 +101,12 @@ app.include_router(whatsapp.public_router)
 app.include_router(whatsapp.webhook_router)
 
 _api_deps = [Depends(require_user)]
+
+
+def _module_deps(key: str) -> list:
+    return [*_api_deps, Depends(require_module(key))]
+
+
 app.include_router(invoices.router, prefix="/api", dependencies=_api_deps)
 app.include_router(dashboard.router, prefix="/api", dependencies=_api_deps)
 app.include_router(processing.router, prefix="/api", dependencies=_api_deps)
@@ -107,25 +114,25 @@ app.include_router(reconciliation.router, prefix="/api", dependencies=_api_deps)
 app.include_router(audit.router, prefix="/api", dependencies=_api_deps)
 app.include_router(vendors.router, prefix="/api", dependencies=_api_deps)
 app.include_router(vendor_masters.router, prefix="/api", dependencies=_api_deps)
-app.include_router(employee_masters.router, prefix="/api", dependencies=_api_deps)
+app.include_router(employee_masters.router, prefix="/api", dependencies=_module_deps("team_expenses"))
 app.include_router(pending_vendors.router, prefix="/api", dependencies=_api_deps)
-app.include_router(reports.router, prefix="/api", dependencies=_api_deps)
-app.include_router(rule_book.router, prefix="/api", dependencies=_api_deps)
+app.include_router(reports.router, prefix="/api", dependencies=_module_deps("reports"))
+app.include_router(rule_book.router, prefix="/api", dependencies=_module_deps("rule_book"))
 app.include_router(settings_api.router, prefix="/api", dependencies=_api_deps)
 app.include_router(approvals.router, prefix="/api", dependencies=_api_deps)
 app.include_router(approval_policy.router, prefix="/api", dependencies=_api_deps)
-app.include_router(purchases.router, prefix="/api", dependencies=_api_deps)
-app.include_router(payments.router, prefix="/api", dependencies=_api_deps)
-app.include_router(ledger_link.router, prefix="/api", dependencies=_api_deps)
+app.include_router(purchases.router, prefix="/api", dependencies=_module_deps("purchase"))
+app.include_router(payments.router, prefix="/api", dependencies=_module_deps("payments"))
+app.include_router(ledger_link.router, prefix="/api", dependencies=_module_deps("ledger_link"))
 app.include_router(billing.router, prefix="/api", dependencies=_api_deps)
 app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
-app.include_router(dossiers.router, prefix="/api", dependencies=_api_deps)
+app.include_router(dossiers.router, prefix="/api", dependencies=_module_deps("dossiers"))
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenant_members.router, prefix="/api", dependencies=_api_deps)
 app.include_router(platform.router, prefix="/api", dependencies=[Depends(require_super_admin)])
-app.include_router(vault.router, prefix="/api", dependencies=_api_deps)
+app.include_router(vault.router, prefix="/api", dependencies=_module_deps("vault"))
 
 _CONNECT_MAILBOX_HTML = (
     Path(__file__).resolve().parent / "static" / "connect_mailbox.html"

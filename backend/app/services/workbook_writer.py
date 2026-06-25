@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
+from app.services.tenant_storage_paths import tenant_local_dir
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
@@ -664,9 +665,8 @@ async def _load_invoices(
     return list((await session.execute(stmt)).scalars().all())
 
 
-def _reports_dir() -> Path:
-    settings = get_settings()
-    path = Path(settings.upload_dir) / "reports"
+def _reports_dir(tenant_id: int) -> Path:
+    path = tenant_local_dir(tenant_id, "reports")
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -739,7 +739,7 @@ async def write_workbook(
     _write_rule_book_sheet(ws_rules, config)
 
     filename = workbook_filename(tenant_slug, date_from, date_to)
-    dest = _reports_dir() / filename
+    dest = _reports_dir(tenant_id) / filename
     wb.save(dest)
     logger.info("workbook_written", path=str(dest), invoices=len(invoices))
 
