@@ -4,7 +4,7 @@ import { queryKeys } from "@/lib/queryClient";
 
 export function usePayments(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.payments,
+    queryKey: queryKeys.payments(),
     queryFn: () => api.listPayments(),
     enabled,
   });
@@ -14,8 +14,8 @@ export function usePaymentMutations() {
   const queryClient = useQueryClient();
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: queryKeys.payments });
-    queryClient.invalidateQueries({ queryKey: queryKeys.navBadges });
+    queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+    queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
   };
 
   return {

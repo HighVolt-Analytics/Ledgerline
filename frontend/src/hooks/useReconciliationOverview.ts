@@ -4,7 +4,7 @@ import { queryKeys } from "@/lib/queryClient";
 
 export function useReconciliationOverview(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.reconciliationOverview,
+    queryKey: queryKeys.reconciliationOverview(),
     queryFn: () => api.getReconciliationOverview(),
     enabled,
   });

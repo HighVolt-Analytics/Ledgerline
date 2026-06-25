@@ -1,11 +1,16 @@
 """Shared types for invoice field extraction."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
-ParseSource = Literal["local", "azure_di"]
+if TYPE_CHECKING:
+    from app.schemas.document_layout import DocumentLayoutResult
+
+ParseSource = Literal["local", "azure_di", "azure_layout"]
 ParseConfidence = Literal["high", "low"]
 
 
@@ -46,6 +51,8 @@ class ParseResult:
     source: ParseSource
     confidence: ParseConfidence
     text_length: int = 0
+    layout_hint: str | None = None
+    layout: DocumentLayoutResult | None = None
 
 
 def _line_items_from_invoice(invoice: object) -> list[ParsedLineItem]:

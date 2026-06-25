@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { queryKeys } from "@/lib/queryClient";
+import { queryKeys, tenantQueryKey } from "@/lib/queryClient";
 import { ruleBookConfigFromApi, ruleBookConfigToApi } from "@/lib/ruleBookConfigApi";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 
 export function useRuleBookConfig(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.ruleBookConfig,
+    queryKey: queryKeys.ruleBookConfig(),
     queryFn: async () => ruleBookConfigFromApi(await api.getRuleBookConfig()),
     enabled,
   });
@@ -24,12 +24,12 @@ export function useSaveRuleBookConfig() {
       return { config: ruleBookConfigFromApi(saved) };
     },
     onSuccess: ({ config }) => {
-      queryClient.setQueryData(queryKeys.ruleBookConfig, config);
-      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.purchases });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges });
+      queryClient.setQueryData(queryKeys.ruleBookConfig(), config);
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey(["invoices"]) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboardOverview("", 10) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookChangelog });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookChangelog() });
     },
   });
 }
@@ -42,12 +42,12 @@ export function useDeleteRuleBookDocumentType() {
       return ruleBookConfigFromApi(saved);
     },
     onSuccess: (config) => {
-      queryClient.setQueryData(queryKeys.ruleBookConfig, config);
-      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.purchases });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges });
+      queryClient.setQueryData(queryKeys.ruleBookConfig(), config);
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey(["invoices"]) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.purchases() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboardOverview("", 10) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookChangelog });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookChangelog() });
     },
   });
 }

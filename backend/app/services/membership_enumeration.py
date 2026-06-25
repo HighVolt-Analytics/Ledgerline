@@ -21,10 +21,13 @@ class TenantMembershipAccount:
     role: str
     default_tenant: bool
     is_platform: bool = False
+    is_platform_shadow: bool = False
 
 
 def membership_is_switchable(m: TenantMembershipAccount) -> bool:
-    """Client tenants are always listed; platform tenant only for super admins."""
+    """Client tenants are listed for real users only; platform tenant for super admins."""
+    if m.is_platform_shadow:
+        return False
     if not m.is_platform:
         return True
     return m.role == SUPER_ADMIN_ROLE
@@ -51,6 +54,7 @@ async def list_memberships_for_auth_account(
             .where(
                 User.auth_account_id == auth_account_id,
                 User.is_active.is_(True),
+                User.is_platform_shadow.is_(False),
                 UserTenantMapping.is_active.is_(True),
                 UserTenantMapping.status == "active",
                 Tenant.is_active.is_(True),
@@ -69,6 +73,7 @@ async def list_memberships_for_auth_account(
             role=mapping.role or user.role.value,
             default_tenant=mapping.default_tenant,
             is_platform=tenant.is_platform,
+            is_platform_shadow=user.is_platform_shadow,
         )
 
     # Email pivot: same human may have per-tenant user rows before full mapping backfill.
@@ -79,6 +84,7 @@ async def list_memberships_for_auth_account(
             .where(
                 User.email.ilike(account.email),
                 User.is_active.is_(True),
+                User.is_platform_shadow.is_(False),
                 Tenant.is_active.is_(True),
             )
             .order_by(Tenant.name)
@@ -105,6 +111,7 @@ async def list_memberships_for_auth_account(
             role=(mapping.role if mapping else None) or user.role.value,
             default_tenant=bool(mapping.default_tenant) if mapping else False,
             is_platform=tenant.is_platform,
+            is_platform_shadow=user.is_platform_shadow,
         )
 
     return sorted(by_tenant.values(), key=lambda item: item.tenant_name)

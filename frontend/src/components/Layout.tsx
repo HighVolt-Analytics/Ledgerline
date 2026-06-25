@@ -138,7 +138,7 @@ export function Layout() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   const refreshCounts = () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
   };
 
   const renderNavLink = (to: string, label: string, Icon: NavItem["icon"], badge?: NavItem["badge"]) => {
@@ -284,7 +284,9 @@ export function Layout() {
                   <div className="px-2 py-1.5">
                     <div className="font-medium">{user?.full_name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {user?.role} · {user?.tenant_name}
+                      {user?.is_support_session
+                        ? `Platform support · ${user.tenant_name}`
+                        : `${user?.role} · ${user?.tenant_name}`}
                     </div>
                   </div>
                   <div className="my-1 h-px bg-border" />
@@ -329,7 +331,7 @@ export function Layout() {
           className="flex-1 overflow-y-auto min-h-0 px-4 md:px-6 py-6"
           style={{ overscrollBehavior: "contain" }}
         >
-          <Outlet context={{ refreshCounts }} />
+          <Outlet key={user?.tenant_id ?? "anon"} context={{ refreshCounts }} />
         </main>
 
         <footer className="shrink-0 border-t border-border bg-background/95 backdrop-blur px-4 md:px-6 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">

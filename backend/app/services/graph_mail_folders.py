@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.tenant_ids import parse_tenant_id
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.audit_service import log_event
 from app.services.email_ingestion import mailbox_api_path, mark_message_read
@@ -142,6 +143,7 @@ async def finalize_graph_messages(
     session: AsyncSession,
     message_ids: list[str],
     *,
+    tenant_id: str | int | None = None,
     preskip_exceptions: dict[str, str] | None = None,
 ) -> int:
     """
@@ -155,6 +157,7 @@ async def finalize_graph_messages(
     preskip = preskip_exceptions or {}
     moved = 0
     settings = get_settings()
+    scoped_tenant_id = parse_tenant_id(tenant_id)
 
     from app.models.connected_mailbox import ConnectedMailbox
     from app.services.mailbox_oauth_service import resolve_mailbox_access_token
@@ -168,13 +171,10 @@ async def finalize_graph_messages(
             invoice_ids: list[int] = []
             mailbox_email = get_settings().graph_mailbox.strip()
         else:
-            rows = list(
-                (
-                    await session.execute(
-                        select(Invoice).where(Invoice.email_message_id == message_id)
-                    )
-                ).scalars().all()
-            )
+            stmt = select(Invoice).where(Invoice.email_message_id == message_id)
+            if scoped_tenant_id is not None:
+                stmt = stmt.where(Invoice.tenant_id == scoped_tenant_id)
+            rows = list((await session.execute(stmt)).scalars().all())
             invoice_ids = [r.id for r in rows]
             statuses = [r.status for r in rows]
             outcome = classify_message_outcome(statuses)

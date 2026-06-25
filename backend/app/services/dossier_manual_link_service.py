@@ -47,11 +47,18 @@ async def list_manual_links(
 async def _load_invoices(
     session: AsyncSession,
     invoice_ids: set[int],
+    *,
+    tenant_id: uuid.UUID,
 ) -> dict[int, Invoice]:
     if not invoice_ids:
         return {}
     rows = (
-        await session.execute(select(Invoice).where(Invoice.id.in_(invoice_ids)))
+        await session.execute(
+            select(Invoice).where(
+                Invoice.id.in_(invoice_ids),
+                Invoice.tenant_id == tenant_id,
+            )
+        )
     ).scalars().all()
     return {row.id: row for row in rows}
 
@@ -123,7 +130,7 @@ async def apply_manual_links(
         return response
 
     linked_ids = {link.linked_invoice_id for link in links}
-    invoices = await _load_invoices(session, linked_ids)
+    invoices = await _load_invoices(session, linked_ids, tenant_id=tenant_id)
 
     slot_links = {link.slot_id: link for link in links if link.slot_id}
     ad_hoc: list[DossierLinkedDocumentResponse] = []
@@ -182,6 +189,7 @@ async def create_manual_link(
     existing = (
         await session.execute(
             select(DossierManualLink).where(
+                DossierManualLink.tenant_id == tenant_id,
                 DossierManualLink.anchor_invoice_id == anchor_invoice_id,
                 DossierManualLink.linked_invoice_id == linked_invoice_id,
             )

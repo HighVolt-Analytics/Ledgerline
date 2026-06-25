@@ -6,11 +6,14 @@ import re
 from dataclasses import dataclass
 
 from app.models.invoice import Invoice
+from app.schemas.document_layout import DocumentLayoutResult
+from app.services.document_heading_utils import extract_document_heading_signals
 from app.services.document_type_rule_engine import (
     DocumentClassifierContext,
     build_document_classifier_context,
 )
 from app.services.invoice_data import InvoiceData
+from app.services.layout_field_extractor import extract_document_heading_from_layout
 from app.services.purchase_document_service import (
     _attachment_suggests_grn,
     _attachment_suggests_po,
@@ -80,10 +83,43 @@ _GRP_INVOICE = 0
 _GRP_PO = 1
 _GRP_GRN = 2
 _GRP_CONTRACT = 3
-
-_GRP_TAX_NOTICE = 9
+_GRP_CREDIT = 4
+_GRP_DEBIT = 5
 _GRP_PROFORMA = 6
+_GRP_CLAIM = 7
 _GRP_QUOTE = 8
+_GRP_TAX_NOTICE = 9
+_GRP_BANK = 10
+_GRP_FREIGHT = 11
+_GRP_IMPORT = 12
+_GRP_INTERCOMPANY = 13
+_GRP_TERMS = 14
+
+# Groups whose documents are normally matched to transactional playbooks (invoice-like).
+TRANSACTIONAL_GROUP_INDICES: frozenset[int] = frozenset(
+    {_GRP_INVOICE, _GRP_CREDIT, _GRP_DEBIT, _GRP_PROFORMA, _GRP_CLAIM}
+)
+
+# Groups whose documents are supporting / pre-transactional / compliance (not invoice-like).
+SUPPORTING_GROUP_INDICES: frozenset[int] = frozenset(
+    {
+        _GRP_PO,
+        _GRP_GRN,
+        _GRP_CONTRACT,
+        _GRP_QUOTE,
+        _GRP_TAX_NOTICE,
+        _GRP_BANK,
+        _GRP_FREIGHT,
+        _GRP_IMPORT,
+        _GRP_INTERCOMPANY,
+        _GRP_TERMS,
+    }
+)
+
+# Families that use supporting_doc layout (invoice-absence guards in classifier tree).
+SUPPORTING_DOC_LAYOUT_GROUPS: frozenset[int] = frozenset(
+    {_GRP_PO, _GRP_GRN, _GRP_CONTRACT, _GRP_TERMS}
+)
 
 INCOMPATIBLE_GROUP_SETS: tuple[frozenset[int], ...] = (
     frozenset({_GRP_INVOICE, _GRP_CONTRACT}),
@@ -115,6 +151,7 @@ _FILENAME_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
 
 _TEXT_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
     ("text_invoice", re.compile(r"(?i)\b(tax\s+invoice|commercial\s+invoice)\b")),
+    ("text_invoice", re.compile(r"(?i)\b(?:billing\s+summary|invoice\s+no|invoice\s+number)\b")),
     ("text_po", re.compile(r"(?i)purchase\s+order")),
     ("text_grn", re.compile(r"(?i)(goods\s+receipt|delivery\s+(note|docket)|\bGRN\b)")),
     ("text_contract", re.compile(r"(?i)(\bcontract\b|master service agreement|docusign)")),
@@ -127,7 +164,7 @@ _TEXT_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
     ("text_quote", re.compile(r"(?i)\b(quote|quotation|estimate|proposal)\b")),
     ("text_claim", re.compile(r"(?i)(expense claim|reimbursement|employee expense)")),
     ("text_bank_change", re.compile(r"(?i)(bank\s+detail|change of bank)")),
-    ("text_tax_notice", re.compile(r"(?i)(ato|tax office|compliance notice)")),
+    ("text_tax_notice", re.compile(r"(?i)\b(ato|tax[_-]?office|tax[_-]?notice|compliance[_-]?notice)\b")),
 ]
 
 
@@ -205,15 +242,44 @@ def _field_keys_from_sample(
     return present
 
 
+def _signals_from_stored_heading(heading: str) -> set[RecognitionSignalId]:
+    """Map extracted document_heading field to identity signals (looser than body scan)."""
+    cleaned = (heading or "").strip()
+    if not cleaned:
+        return set()
+    found: set[RecognitionSignalId] = set()
+    heading_signals = extract_document_heading_signals(cleaned)
+    if heading_signals.has_heading_invoice:
+        found.add("heading_invoice")
+    if heading_signals.has_heading_po:
+        found.add("heading_po")
+    if heading_signals.has_heading_grn:
+        found.add("heading_grn")
+    if heading_signals.has_heading_contract:
+        found.add("heading_contract")
+    if heading_signals.has_heading_credit_note:
+        found.add("text_credit_note")
+    if heading_signals.has_heading_quote:
+        found.add("text_quote")
+    if not found and re.search(r"(?i)\b(tax\s+invoice|commercial\s+invoice)\b", cleaned):
+        found.add("heading_invoice")
+    elif not found and re.search(r"(?i)\binvoice\b", cleaned):
+        if not re.search(r"(?i)credit|debit|pro[\s-]?forma", cleaned):
+            found.add("heading_invoice")
+    return found
+
+
 def detect_recognition_signals(
     *,
     filename: str,
     invoice: Invoice,
     parsed: InvoiceData,
+    layout: DocumentLayoutResult | None = None,
 ) -> SampleSignalProfile:
     ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
     signals: set[RecognitionSignalId] = set()
     name = (filename or "").strip()
+    layout_heading = extract_document_heading_from_layout(layout)
 
     if ctx.has_heading_po == "true":
         signals.add("heading_po")
@@ -258,8 +324,40 @@ def detect_recognition_signals(
     if subject and re.search(r"(?i)\binvoice\b", subject):
         signals.add("text_invoice")
 
+    heading_label = (
+        layout_heading or (parsed.document_heading or ctx.document_heading or "").strip()
+    )
+    if heading_label:
+        heading_signals = extract_document_heading_signals(heading_label)
+        if heading_signals.has_heading_invoice:
+            signals.add("heading_invoice")
+        if heading_signals.has_heading_po:
+            signals.add("heading_po")
+        if heading_signals.has_heading_grn:
+            signals.add("heading_grn")
+        if heading_signals.has_heading_contract:
+            signals.add("heading_contract")
+    signals |= _signals_from_stored_heading(heading_label)
+
+    if parsed.line_items and (parsed.total is not None or invoice.total is not None):
+        signals.add("has_total_amount")
+    elif parsed.line_items and len(parsed.line_items) >= 1:
+        signals.add("has_total_amount")
+
+    layout_hint = (parsed.raw_fields.get("layout_hint") or "").strip().lower()
+    if layout_hint == "po" and not signals & SUPPORTING_PO_SIGNALS:
+        if heading_label and re.search(r"(?i)purchase\s+order", heading_label):
+            signals.add("heading_po")
+    if layout_hint == "grn" and not signals & SUPPORTING_GRN_SIGNALS:
+        if heading_label and re.search(r"(?i)(goods\s+receipt|delivery)", heading_label):
+            signals.add("heading_grn")
+
+    signals = set(refine_recognition_signals(frozenset(signals), ctx=ctx))
+
     extraction = _field_keys_from_sample(invoice=invoice, parsed=parsed, ctx=ctx)
-    heading = (parsed.document_heading or ctx.document_heading or "").strip() or None
+    if layout is not None and layout.has_tables and "line_items" not in extraction and parsed.line_items:
+        extraction.add("line_items")
+    heading = heading_label or None
     return SampleSignalProfile(
         filename=name,
         signals=frozenset(signals),
@@ -270,6 +368,71 @@ def detect_recognition_signals(
 
 def identity_signals(signals: frozenset[RecognitionSignalId]) -> frozenset[RecognitionSignalId]:
     return frozenset(s for s in signals if s not in WEAK_SIGNALS)
+
+
+def _signal_channel_rank(signal_id: RecognitionSignalId) -> int:
+    """Higher = stronger identity cue (heading beats filename beats body text)."""
+    if signal_id.startswith("heading_"):
+        return 3
+    if signal_id.startswith("filename_"):
+        return 2
+    if signal_id in WEAK_SIGNALS:
+        return 0
+    return 1
+
+
+def _single_file_group_strength(group_index: int, signals: set[RecognitionSignalId]) -> int:
+    group = set(SIGNAL_PICK_GROUPS[group_index])
+    matched = signals & group
+    if not matched:
+        return 0
+    return max(_signal_channel_rank(signal_id) for signal_id in matched)
+
+
+def _compatible_weak_signals(
+    refined: set[RecognitionSignalId],
+    verified: set[RecognitionSignalId],
+) -> set[RecognitionSignalId]:
+    """Keep field-presence signals only when consistent with the winning document family."""
+    weak = verified & WEAK_SIGNALS
+    if not weak:
+        return set()
+    active = _active_group_indices(refined)
+    if not active:
+        return set(weak)
+    if active & TRANSACTIONAL_GROUP_INDICES:
+        return set(weak)
+    kept = set(weak)
+    kept.discard("has_invoice_number")
+    if active & {_GRP_CONTRACT, _GRP_QUOTE, _GRP_TERMS, _GRP_PROFORMA}:
+        kept.discard("has_total_amount")
+    return kept
+
+
+def refine_recognition_signals(
+    signals: frozenset[RecognitionSignalId] | set[RecognitionSignalId],
+    *,
+    ctx: DocumentClassifierContext,
+) -> frozenset[RecognitionSignalId]:
+    """
+    Type-agnostic signal cleanup: verify cues, resolve cross-family conflicts, keep
+    the strongest identity per channel group, and attach compatible weak signals.
+    """
+    from app.services.document_classifier_builder import eval_recognition_signal
+
+    verified = {signal_id for signal_id in signals if eval_recognition_signal(ctx, signal_id)}
+    if not verified:
+        return frozenset()
+
+    kept_groups = _resolve_winning_groups([verified])
+    if not kept_groups:
+        return frozenset(_compatible_weak_signals(set(), verified))
+
+    refined: set[RecognitionSignalId] = set()
+    for group_index in kept_groups:
+        refined |= verified & set(SIGNAL_PICK_GROUPS[group_index])
+    refined |= _compatible_weak_signals(refined, verified)
+    return frozenset(refined)
 
 
 def _grouped_signal_ids() -> frozenset[RecognitionSignalId]:
@@ -296,10 +459,14 @@ def _resolve_winning_groups(per_file: list[set[RecognitionSignalId]]) -> set[int
     if not per_file:
         return set()
     if len(per_file) == 1:
-        return _active_group_indices(per_file[0])
-
-    common = set.intersection(*[_active_group_indices(file_signals) for file_signals in per_file])
-    winners = common if common else set.union(*[_active_group_indices(s) for s in per_file])
+        winners = _active_group_indices(per_file[0])
+    else:
+        common = set.intersection(
+            *[_active_group_indices(file_signals) for file_signals in per_file]
+        )
+        winners = common if common else set.union(
+            *[_active_group_indices(s) for s in per_file]
+        )
     if not winners:
         return set()
 
@@ -307,7 +474,12 @@ def _resolve_winning_groups(per_file: list[set[RecognitionSignalId]]) -> set[int
         present = pair & winners
         if len(present) < 2:
             continue
-        scores = {index: _group_score(index, per_file) for index in present}
+        if len(per_file) == 1:
+            scores = {
+                index: _single_file_group_strength(index, per_file[0]) for index in present
+            }
+        else:
+            scores = {index: _group_score(index, per_file) for index in present}
         best = max(scores, key=lambda index: (scores[index], -index))
         winners -= present - {best}
     return winners
@@ -329,7 +501,14 @@ def _collect_merged_signals(
     per_file: list[set[RecognitionSignalId]],
     kept_groups: set[int],
 ) -> frozenset[RecognitionSignalId]:
-    if not per_file or not kept_groups:
+    if not per_file:
+        return frozenset()
+    if not kept_groups:
+        if len(per_file) == 1:
+            only = per_file[0]
+            weak = only & WEAK_SIGNALS
+            if weak:
+                return frozenset(weak)
         return frozenset()
 
     merged: set[RecognitionSignalId] = set()
@@ -400,11 +579,17 @@ def infer_classifier_layout_for_samples(
     *,
     purchase_bundle_role: str = "",
 ) -> str:
-    """Infer AND/OR layout from detected signal shape (not from a playbook template)."""
+    """Infer AND/OR layout from detected signal shape (works for any document family)."""
     role = (purchase_bundle_role or "").strip().lower()
     if role in {"po", "grn"}:
         return "supporting_doc"
     if _uses_supporting_guards(signals):
+        return "supporting_doc"
+    identity = identity_signals(signals)
+    if not identity:
+        return "any_signal"
+    active = _active_group_indices(set(signals))
+    if active & SUPPORTING_DOC_LAYOUT_GROUPS:
         return "supporting_doc"
     return "grouped"
 
@@ -485,6 +670,12 @@ def infer_playbook_profile(signals: frozenset[RecognitionSignalId]) -> str:
         return "supporting"
     if signals & {"text_quote", "filename_quote"}:
         return "non_actionable"
+    if signals & {"heading_invoice", "text_invoice", "filename_invoice"}:
+        if "has_po_reference" in signals:
+            return "po_goods"
+        if "has_invoice_number" in signals and "has_po_reference" not in signals:
+            return "direct_expense"
+        return "standard_transactional"
     if signals & {"text_tax_notice", "filename_tax_notice"}:
         return "compliance_route"
     if {"has_po_reference", "has_invoice_number", "has_total_amount"}.issubset(signals):

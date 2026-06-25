@@ -194,6 +194,7 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
                 moved = await finalize_graph_messages(
                     session,
                     message_ids,
+                    tenant_id=job.tenant_id,
                     preskip_exceptions=preskip,
                 )
                 logger.info(

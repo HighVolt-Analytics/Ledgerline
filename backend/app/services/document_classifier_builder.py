@@ -75,7 +75,7 @@ _SIGNAL_CONDITIONS: dict[RecognitionSignalId, dict[str, Any]] = {
     "text_invoice": {
         "field": "document_text",
         "operator": "regex",
-        "value": "(?i)\\b(tax\\s+invoice|commercial\\s+invoice)\\b",
+        "value": "(?i)\\b(tax\\s+invoice|commercial\\s+invoice|billing\\s+summary|invoice\\s+no|invoice\\s+number)\\b",
     },
     "filename_invoice": {
         "field": "attachment_name",
@@ -237,3 +237,28 @@ def build_classifier_from_signals(
         confidence=confidence,
         root=build_classifier_root(signal_ids, layout),
     )
+
+
+def eval_recognition_signal(ctx: object, signal_id: RecognitionSignalId) -> bool:
+    """True when a single recognition signal's classifier condition matches the sample."""
+    from app.services.document_type_rule_engine import _document_field
+    from app.services.rule_engine import _match_value
+
+    spec = _SIGNAL_CONDITIONS.get(signal_id)
+    if spec is None:
+        return False
+    haystack = _document_field(ctx, str(spec["field"]))
+    return _match_value(
+        haystack,
+        str(spec["operator"]),
+        str(spec["value"]),
+    )
+
+
+def filter_verified_recognition_signals(
+    ctx: object,
+    signals: frozenset[RecognitionSignalId] | set[RecognitionSignalId],
+) -> frozenset[RecognitionSignalId]:
+    """Drop detection-only false positives before building a sample classifier."""
+    verified = {signal_id for signal_id in signals if eval_recognition_signal(ctx, signal_id)}
+    return frozenset(verified)

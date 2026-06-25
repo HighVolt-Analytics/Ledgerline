@@ -17,6 +17,7 @@ from app.services.pdf_parser import (
     parse_local_text,
     parse_text_fields,
     post_process_parsed_data,
+    sample_parse_confident,
     should_use_document_intelligence,
 )
 from app.services.vendor_name_utils import is_plausible_vendor_name, pick_best_vendor_name
@@ -98,7 +99,7 @@ def test_parse_invoice_local_only_without_di(
     assert local_parse_confident(result.data)
 
 
-def test_parse_invoice_for_sample_skips_di_with_sufficient_text(
+def test_parse_invoice_for_sample_uses_di_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -115,17 +116,103 @@ def test_parse_invoice_for_sample_skips_di_with_sufficient_text(
         lambda _path: SAMPLE_TEXT,
     )
 
-    def fail_di(*_args, **_kwargs):
-        raise AssertionError("Azure DI should not run for text-based sample PDFs")
+    def fake_di(_path, *, content_type="application/pdf"):
+        assert content_type == "application/pdf"
+        from app.services.invoice_data import InvoiceData
+
+        return InvoiceData(
+            invoice_no="DI-9001",
+            document_text=SAMPLE_TEXT,
+            raw_fields={"azure_di": {"InvoiceId": "DI-9001"}},
+        )
 
     monkeypatch.setattr(
         "app.services.pdf_parser.parse_with_document_intelligence",
-        fail_di,
+        fake_di,
+    )
+    monkeypatch.setattr(
+        "app.services.pdf_parser.read_pdf_page_texts_via_di",
+        lambda _path: None,
+    )
+    monkeypatch.setattr(
+        "app.services.pdf_parser.analyze_layout_via_di",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = parse_invoice_for_sample(pdf_path)
+    assert result.source == "azure_di"
+    assert result.data.invoice_no == "DI-9001"
+
+
+def test_parse_invoice_for_sample_falls_back_to_local_when_di_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("AZURE_DI_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_DI_KEY", raising=False)
+    get_settings.cache_clear()
+
+    pdf_path = tmp_path / "invoice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 minimal")
+
+    monkeypatch.setattr(
+        "app.services.pdf_parser.extract_pdf_text",
+        lambda _path: SAMPLE_TEXT,
+    )
+    monkeypatch.setattr(
+        "app.services.pdf_parser.is_di_enabled",
+        lambda: False,
     )
 
     result = parse_invoice_for_sample(pdf_path)
     assert result.source == "local"
     assert result.data.invoice_no == "AWS-AU-204815"
+
+
+def test_parse_invoice_for_sample_uses_read_ocr_when_invoice_di_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AZURE_DI_ENDPOINT", "https://test.cognitiveservices.azure.com")
+    monkeypatch.setenv("AZURE_DI_KEY", "fake-key")
+    get_settings.cache_clear()
+
+    pdf_path = tmp_path / "po.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 minimal")
+
+    monkeypatch.setattr(
+        "app.services.pdf_parser.extract_pdf_text",
+        lambda _path: "",
+    )
+    monkeypatch.setattr(
+        "app.services.pdf_parser.parse_with_document_intelligence",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.pdf_parser.read_pdf_page_texts_via_di",
+        lambda _path: [(0, PO_TEXT)],
+    )
+    monkeypatch.setattr(
+        "app.services.pdf_parser.analyze_layout_via_di",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = parse_invoice_for_sample(pdf_path)
+    assert result.source == "azure_di"
+    assert "PURCHASE ORDER" in (result.data.document_text or "")
+    assert result.data.document_heading == "PURCHASE ORDER"
+
+
+def test_sample_parse_confident_for_po_layout_hint() -> None:
+    data = parse_local_text(PO_TEXT)
+    data.document_heading = "PURCHASE ORDER"
+    data.raw_fields["layout_hint"] = "po"
+    assert sample_parse_confident(data, "po")
+
+
+def test_sample_parse_confident_for_invoice() -> None:
+    data = parse_local_text(SAMPLE_TEXT)
+    assert sample_parse_confident(data, "invoice")
 
 
 PO_TEXT = """

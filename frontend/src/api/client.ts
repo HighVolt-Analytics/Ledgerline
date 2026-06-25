@@ -148,7 +148,8 @@ export function clearGetCache() {
 }
 
 function getRequestKey(path: string, method: string) {
-  return `${method}:${path}`;
+  const tid = tenantIdFromToken(authToken) ?? authUser?.tenant_id ?? "anon";
+  return `${tid}:${method}:${path}`;
 }
 
 function invalidateGetCache() {

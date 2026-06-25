@@ -4,7 +4,7 @@ import { queryKeys } from "@/lib/queryClient";
 
 export function useBilling(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.billing,
+    queryKey: queryKeys.billing(),
     queryFn: () => api.getBilling(),
     enabled,
   });
@@ -14,7 +14,7 @@ export function useBillingMutations() {
   const queryClient = useQueryClient();
 
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: queryKeys.billing });
+    queryClient.invalidateQueries({ queryKey: queryKeys.billing() });
 
   return {
     updateSettings: async (body: { auto_recharge?: boolean; threshold?: number }) => {

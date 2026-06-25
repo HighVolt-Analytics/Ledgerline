@@ -69,4 +69,5 @@ export function clearAuthSession() {
   sessionStorage.removeItem(REFRESH_KEY);
   sessionStorage.removeItem(USER_KEY);
   sessionStorage.removeItem(MEMBERSHIPS_KEY);
+  localStorage.removeItem(LAST_TENANT_KEY);
 }

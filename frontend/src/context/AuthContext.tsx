@@ -79,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     const refresh = getRefreshToken();
+    queryClient.clear();
     clearAuthSession();
     setAuthToken(null);
     setAuthUser(null);
@@ -112,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error("Invalid login response");
       }
       applySession(data.access_token, data.refresh_token, data.user);
+      queryClient.clear();
       return "done" as const;
     },
     [applySession, challengeToken]
@@ -130,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         data.memberships
       );
       rememberLastTenant(tenantId);
+      queryClient.clear();
     },
     [applySession, tenantSelectToken]
   );

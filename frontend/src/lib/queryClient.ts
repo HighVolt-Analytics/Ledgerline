@@ -1,4 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
+import { getAccessToken } from "@/lib/authSession";
+import { tenantIdFromToken } from "@/lib/authToken";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -11,7 +13,20 @@ export const queryClient = new QueryClient({
   },
 });
 
-export const queryKeys = {
+/** Active tenant from JWT — prefixes every query key to prevent cross-tenant cache bleed. */
+export function tenantScope(): string {
+  const token = getAccessToken();
+  if (!token) return "signed-out";
+  return tenantIdFromToken(token) ?? "unknown";
+}
+
+export function tenantQueryKey<const T extends readonly unknown[]>(
+  parts: T
+): readonly [string, ...T] {
+  return [tenantScope(), ...parts];
+}
+
+const baseKeys = {
   navBadges: ["dashboard", "badges"] as const,
   dashboardOverview: (month: string, activityLimit: number) =>
     ["dashboard", "overview", month, activityLimit] as const,
@@ -31,4 +46,26 @@ export const queryKeys = {
   walletSummary: ["payments", "wallet-summary"] as const,
   ledgerLink: ["ledger-link"] as const,
   billing: ["billing"] as const,
+};
+
+export const queryKeys = {
+  navBadges: () => tenantQueryKey(baseKeys.navBadges),
+  dashboardOverview: (month: string, activityLimit: number) =>
+    tenantQueryKey(baseKeys.dashboardOverview(month, activityLimit)),
+  reportsAnalytics: (month: string) => tenantQueryKey(baseKeys.reportsAnalytics(month)),
+  reportDocuments: (dateFrom?: string, dateTo?: string) =>
+    tenantQueryKey(baseKeys.reportDocuments(dateFrom, dateTo)),
+  reconciliationOverview: () => tenantQueryKey(baseKeys.reconciliationOverview),
+  ruleBookConfig: () => tenantQueryKey(baseKeys.ruleBookConfig),
+  ruleBookChangelog: () => tenantQueryKey(baseKeys.ruleBookChangelog),
+  vendorMasters: () => tenantQueryKey(baseKeys.vendorMasters),
+  employeeMasters: () => tenantQueryKey(baseKeys.employeeMasters),
+  pendingVendors: () => tenantQueryKey(baseKeys.pendingVendors),
+  routedInvoices: (routeTarget: string) => tenantQueryKey(baseKeys.routedInvoices(routeTarget)),
+  payablesQueue: () => tenantQueryKey(baseKeys.payablesQueue),
+  purchases: () => tenantQueryKey(baseKeys.purchases),
+  payments: () => tenantQueryKey(baseKeys.payments),
+  walletSummary: () => tenantQueryKey(baseKeys.walletSummary),
+  ledgerLink: () => tenantQueryKey(baseKeys.ledgerLink),
+  billing: () => tenantQueryKey(baseKeys.billing),
 };
