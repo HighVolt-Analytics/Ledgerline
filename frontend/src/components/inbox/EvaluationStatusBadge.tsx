@@ -27,13 +27,11 @@ export function EvaluationStatusBadge({
           ? "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
           : "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]";
   return (
-    <Badge
-      variant="outline"
-      className={cn("text-xs font-medium", tone)}
-      title={title}
-    >
-      {label}
-    </Badge>
+    <span title={title}>
+      <Badge variant="outline" className={cn("text-xs font-medium", tone)}>
+        {label}
+      </Badge>
+    </span>
   );
 }
 
