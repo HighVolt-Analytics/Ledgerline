@@ -16,12 +16,12 @@ export const lifecycleSteps = [
 ];
 
 export const controls = [
-  { code: 'C1', title: 'Duplicate Prevention', desc: 'Fingerprints every inbound document against the last 18 months.', blocks: 'Blocks duplicate invoices' },
-  { code: 'C2', title: 'Approved-Only Payment', desc: 'Only invoices with status=approved AND flag=clear can enter the payment queue.', blocks: 'Blocks payments to unapproved invoices' },
-  { code: 'C3', title: 'Three-Way Match', desc: 'PO + GRN + Invoice must reconcile on quantity and price within tolerance.', blocks: 'Blocks variance fraud' },
-  { code: 'C4', title: 'Multi-Tier Approval', desc: 'Approver count scales with amount: 1 (<$1k), 2 ($1k–$10k), 3 ($10k–$50k), 4 (>$50k).', blocks: 'Blocks unilateral high-value payments' },
-  { code: 'C5', title: 'Segregation of Duties', desc: 'The user who approves an invoice cannot also approve its payment.', blocks: 'Blocks self-dealing' },
-  { code: 'C6', title: 'Append-Only Audit', desc: 'Every state change is signed, timestamped, and immutable.', blocks: 'Blocks evidence tampering' },
+  { code: 'C1', title: 'Duplicate Prevention', desc: 'Fingerprints every inbound document against the last 18 months.', blocks: 'Blocks duplicate invoices', accent: 'blue' },
+  { code: 'C2', title: 'Approved-Only Payment', desc: 'Only invoices with status=approved AND flag=clear can enter the payment queue.', blocks: 'Blocks payments to unapproved invoices', accent: 'sky' },
+  { code: 'C3', title: 'Three-Way Match', desc: 'PO + GRN + Invoice must reconcile on quantity and price within tolerance.', blocks: 'Blocks variance fraud', accent: 'indigo' },
+  { code: 'C4', title: 'Multi-Tier Approval', desc: 'Approver count scales with amount: 1 (<$1k), 2 ($1k–$10k), 3 ($10k–$50k), 4 (>$50k).', blocks: 'Blocks unilateral high-value payments', accent: 'blue' },
+  { code: 'C5', title: 'Segregation of Duties', desc: 'The user who approves an invoice cannot also approve its payment.', blocks: 'Blocks self-dealing', accent: 'cyan' },
+  { code: 'C6', title: 'Append-Only Audit', desc: 'Every state change is signed, timestamped, and immutable.', blocks: 'Blocks evidence tampering', accent: 'sky' },
 ];
 
 export const captureChannels = [
@@ -32,17 +32,75 @@ export const captureChannels = [
 ];
 
 export const procurementRules = [
-  { name: 'Match · Quantity', rule: 'IF |grn.qty - invoice.qty| / po.qty ≤ 0.02 → match', opacity: 1 },
-  { name: 'Match · Price', rule: 'IF |invoice.price - po.price| / po.price ≤ 0.03 → match', opacity: 0.75 },
-  { name: 'Variance · Routing', rule: 'ELSE → flag = "variance" AND route = "buyer + finance"', opacity: 0.5 },
+  {
+    id: 'quantity',
+    name: 'Match · Quantity',
+    desc: 'PO, GRN, and invoice quantities compared within 2% tolerance. A mismatch stops payment cold.',
+    rule: 'IF |grn.qty - invoice.qty| / po.qty ≤ 0.02 → match',
+    opacity: 1,
+  },
+  {
+    id: 'price',
+    name: 'Match · Price',
+    desc: 'Unit price variance checked against the PO within 3%. Over-tolerance lines are flagged before approval.',
+    rule: 'IF |invoice.price - po.price| / po.price ≤ 0.03 → match',
+    opacity: 0.75,
+  },
+  {
+    id: 'variance',
+    name: 'Variance · Routing',
+    desc: 'When quantity or price fails tolerance, the document routes to buyer and finance — never auto-approved.',
+    rule: 'ELSE → flag = "variance" AND route = "buyer + finance"',
+    opacity: 0.5,
+  },
 ];
 
 export const ruleBookBands = [
-  { n: '1', name: 'Exact vendor override', rule: 'IF vendor.id = "AWS-AU" → ledger = "Cloud Infrastructure"', opacity: 1 },
-  { n: '2', name: 'Alias contains', rule: 'IF vendor.aliases CONTAINS "Telstra" → ledger = "Telecommunications"', opacity: 0.8 },
-  { n: '3', name: 'Category keyword', rule: 'IF line.text MATCHES /freight|courier/ → ledger = "Logistics"', opacity: 0.62 },
-  { n: '4', name: 'Amount threshold', rule: 'IF total > 10000 AUD → route = "CFO approval"', opacity: 0.46 },
-  { n: '5', name: 'Fallback band', rule: 'ELSE → ledger = "Suspense" AND flag = "review"', opacity: 0.34 },
+  {
+    n: '1',
+    name: 'Exact vendor override',
+    rule: 'IF vendor.id = "AWS-AU" → ledger = "Cloud Infrastructure"',
+    headerLabel: 'Priority band',
+    headerValue: 'Highest',
+    points: ['Vendor ID exact match', 'Overrides all lower bands', 'Ledger assigned instantly'],
+    opacity: 1,
+  },
+  {
+    n: '2',
+    name: 'Alias contains',
+    rule: 'IF vendor.aliases CONTAINS "Telstra" → ledger = "Telecommunications"',
+    headerLabel: 'Priority band',
+    headerValue: 'High',
+    points: ['Fuzzy alias lookup', 'Contains-text matching', 'Handles subsidiaries'],
+    opacity: 0.8,
+  },
+  {
+    n: '3',
+    name: 'Category keyword',
+    rule: 'IF line.text MATCHES /freight|courier/ → ledger = "Logistics"',
+    headerLabel: 'Priority band',
+    headerValue: 'Medium',
+    points: ['Line-item text scan', 'Regex pattern match', 'Freight & logistics default'],
+    opacity: 0.62,
+  },
+  {
+    n: '4',
+    name: 'Amount threshold',
+    rule: 'IF total > 10000 AUD → route = "CFO approval"',
+    headerLabel: 'Priority band',
+    headerValue: 'Conditional',
+    points: ['Total amount check', 'Routes to CFO approval', 'AUD threshold enforced'],
+    opacity: 0.46,
+  },
+  {
+    n: '5',
+    name: 'Fallback band',
+    rule: 'ELSE → ledger = "Suspense" AND flag = "review"',
+    headerLabel: 'Priority band',
+    headerValue: 'Fallback',
+    points: ['Catch-all ELSE rule', 'Suspense ledger assign', 'Flags for manual review'],
+    opacity: 0.34,
+  },
 ];
 
 export const paymentFeatures = [

@@ -43,7 +43,6 @@ export default function LandingPage() {
         <PricingSection />
         <SectionDivider />
         <FaqSection />
-        <SectionDivider />
         <Footer />
       </main>
     </div>

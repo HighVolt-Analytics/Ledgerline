@@ -2,6 +2,7 @@ import { Check } from 'lucide-react';
 import FadeIn from '../ui/FadeIn';
 import SectionLabel from '../ui/SectionLabel';
 import SectionTitle from '../ui/SectionTitle';
+import PaymentInvoiceCard from './PaymentInvoiceCard';
 import { paymentFeatures } from '../../data/sections';
 
 export default function PaymentsSection() {
@@ -29,35 +30,9 @@ export default function PaymentsSection() {
         </FadeIn>
 
         <FadeIn delay={0.1}>
-          <div className="rounded-2xl border border-card-border bg-card p-6 shadow-md">
-            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-              Stripe Wallet · org-1 Acme Hospitality
-            </div>
-            <div className="mt-5 font-mono text-4xl font-medium tabular text-foreground sm:text-5xl">
-              <span className="whitespace-nowrap">A$ 24,580.00</span>
-            </div>
-            <div className="mt-1 text-sm text-muted-foreground">available for payment</div>
-            <div className="mt-6 h-px w-full ledgerline-gradient opacity-60" />
-            <div className="mt-6 space-y-3 font-mono text-[12px]">
-              <WalletRow label="Awaiting approval: 7" value="A$ 18,420.00" />
-              <WalletRow label="Approved · ready: 4" value="A$ 6,150.00" accent />
-              <WalletRow label="Paid this month: 23" value="A$ 41,230.00" />
-            </div>
-            <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-border bg-card/40 px-3.5 py-1.5 font-mono text-[11px] text-muted-foreground">
-              Top up · Withdraw
-            </div>
-          </div>
+          <PaymentInvoiceCard />
         </FadeIn>
       </div>
     </section>
-  );
-}
-
-function WalletRow({ label, value, accent = false }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={`tabular whitespace-nowrap ${accent ? 'text-primary' : 'text-foreground'}`}>{value}</span>
-    </div>
   );
 }

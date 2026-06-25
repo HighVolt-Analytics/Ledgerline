@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Menu, X } from 'lucide-react';
 import Logo from '../ui/Logo';
-import ThemeToggle from '../ui/ThemeToggle';
 import { navLinks } from '../../data/navigation';
 import { scrollToSection } from '../../utils/scroll';
 
@@ -31,10 +30,13 @@ export default function Header() {
         <nav className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-5 sm:px-8">
           <button
             onClick={() => goTo('top')}
-            className="hover-elevate rounded-md px-1 -mx-1"
+            className="hover-elevate -mx-1 inline-flex items-center gap-2 rounded-md px-1"
             aria-label="Ledgerline home"
           >
-            <Logo />
+            <Logo className="h-8 sm:h-9" />
+            <span className="hidden text-base font-semibold tracking-tight text-foreground sm:inline-flex md:text-lg">
+              Quantum Ledgerlink
+            </span>
           </button>
 
           <div className="hidden items-center gap-8 md:flex">
@@ -51,7 +53,6 @@ export default function Header() {
           </div>
 
           <div className="flex items-center gap-2">
-            <ThemeToggle />
             <button
               onClick={() => goTo('pricing')}
               className="hidden rounded-lg px-3.5 py-2 text-sm text-muted-foreground hover-elevate active-elevate-2 sm:inline-flex"

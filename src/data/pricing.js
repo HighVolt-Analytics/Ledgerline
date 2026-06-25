@@ -5,8 +5,9 @@ export const pricingPlans = [
     price: 'Free',
     per: '—',
     best: 'Trying it on real invoices',
-    cta: 'Start free',
+    cta: 'Get it now',
     popular: false,
+    features: ['500 credits included', 'Invoice capture & OCR', 'Basic approval flows', 'Email support'],
   },
   {
     name: 'Professional',
@@ -14,8 +15,9 @@ export const pricingPlans = [
     price: '$249',
     per: '$0.05 / doc',
     best: 'Growing finance teams',
-    cta: 'Choose Professional',
+    cta: 'Get it now',
     popular: true,
+    features: ['5,000 credits included', '$0.05 per document', 'Multi-currency payments', 'Priority support'],
   },
   {
     name: 'Business',
@@ -23,8 +25,9 @@ export const pricingPlans = [
     price: '$999',
     per: '$0.04 / doc',
     best: 'Multi-entity operators',
-    cta: 'Choose Business',
+    cta: 'Get it now',
     popular: false,
+    features: ['25,000 credits included', '$0.04 per document', 'Multi-entity support', 'Dedicated onboarding'],
   },
   {
     name: 'Enterprise',
@@ -32,7 +35,8 @@ export const pricingPlans = [
     price: 'Custom',
     per: 'Volume pricing',
     best: 'Groups and franchises',
-    cta: 'Talk to sales',
+    cta: 'Get it now',
     popular: false,
+    features: ['Unlimited credits', 'Volume pricing', 'Custom integrations', 'SLA & dedicated CSM'],
   },
 ];

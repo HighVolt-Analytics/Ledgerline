@@ -1,13 +1,10 @@
 import { motion } from 'framer-motion';
 import { ArrowRight, Play } from 'lucide-react';
-import { useTheme } from '../../context/ThemeContext';
-import { themeAssets } from '../../data/assets';
+import { assets } from '../../data/assets';
 
 const EASE = [0.16, 1, 0.3, 1];
 
 export default function HeroSection() {
-  const { theme } = useTheme();
-
   return (
     <section id="top" className="relative overflow-hidden px-5 pb-16 pt-28 sm:px-8 sm:pb-20 sm:pt-36">
       <div className="hero-mesh pointer-events-none absolute inset-0 -z-10" aria-hidden="true" />
@@ -30,19 +27,9 @@ export default function HeroSection() {
             transition={{ duration: 0.7, ease: EASE, delay: 0.06 }}
             className="mt-5 text-4xl font-medium leading-[0.95] tracking-[-0.04em] text-foreground sm:text-5xl md:text-6xl lg:text-7xl"
           >
-            Invoices in.
-            <br />
-            <span className="text-glow">Ledgers out.</span>
+            Invoice to pay,{' '}
+            <span className="text-glow">fully automated.</span>
           </motion.h1>
-
-          <motion.p
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, ease: EASE, delay: 0.1 }}
-            className="mt-3 text-xl font-medium leading-[1.05] tracking-[-0.03em] text-muted-foreground sm:text-2xl md:text-3xl"
-          >
-            Payments approved. Books reconciled.
-          </motion.p>
 
           <motion.p
             initial={{ opacity: 0, y: 10 }}
@@ -50,9 +37,8 @@ export default function HeroSection() {
             transition={{ duration: 0.7, ease: EASE, delay: 0.14 }}
             className="mt-6 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg"
           >
-            The deterministic AI workflow that captures expenses from any channel, runs three-way match on every PO,
-            enforces multi-tier approvals, and pays approved invoices from a single Stripe wallet — then posts the
-            journal to your accounting platform.
+            Ledgerline captures every invoice, routes approvals, pays vendors in 130+ currencies, and reconciles to your
+            ledger — so finance teams close the books faster with zero manual data entry.
           </motion.p>
 
           <motion.div
@@ -93,13 +79,9 @@ export default function HeroSection() {
             style={{ background: 'radial-gradient(60% 60% at 50% 50%, hsl(var(--primary) / 0.25), transparent 70%)' }}
             aria-hidden="true"
           />
-          <div
-            className={`relative aspect-[16/9] w-full overflow-hidden rounded-2xl ${
-              theme === 'light' ? 'bg-background' : 'bg-black'
-            }`}
-          >
+          <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl bg-black">
             <img
-              src={themeAssets[theme].heroBg}
+              src={assets.heroBg}
               alt="Invoice capture to ledger posted — automated workflow"
               className="absolute inset-0 h-full w-full scale-[1.18] object-cover object-center"
             />
