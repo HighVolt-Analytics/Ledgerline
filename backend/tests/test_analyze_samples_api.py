@@ -35,7 +35,7 @@ async def test_analyze_samples_with_pdf(
 
     def fake_parse(filename: str, content: bytes):
         _ = content
-        return invoice, parsed, "high"
+        return invoice, parsed, "high", None, None
 
     monkeypatch.setattr(
         "app.services.document_type_sample_analyzer._parse_sample",

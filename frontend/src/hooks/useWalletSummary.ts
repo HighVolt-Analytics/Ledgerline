@@ -4,7 +4,7 @@ import { queryKeys } from "@/lib/queryClient";
 
 export function useWalletSummary(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.walletSummary,
+    queryKey: queryKeys.walletSummary(),
     queryFn: () => api.getWalletSummary(),
     enabled,
   });

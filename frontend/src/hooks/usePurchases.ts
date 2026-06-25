@@ -4,7 +4,7 @@ import { queryKeys } from "@/lib/queryClient";
 
 export function usePurchases(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.purchases,
+    queryKey: queryKeys.purchases(),
     queryFn: () => api.listPurchases(),
     enabled,
   });

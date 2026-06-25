@@ -13,6 +13,15 @@ from app.services.amount_sanity import plausible_money
 from app.services.document_intelligence import (
     is_di_enabled,
     parse_with_document_intelligence,
+    read_pdf_page_texts_via_di,
+)
+from app.services.document_layout_service import analyze_layout_via_di
+from app.services.layout_field_extractor import (
+    extract_document_heading_from_layout,
+    extract_key_value_fields,
+    extract_line_items_from_tables,
+    infer_doc_family_hint,
+    layout_hint_suggests_invoice,
 )
 from app.services.document_text import cap_document_text
 from app.services.invoice_data import (
@@ -425,6 +434,68 @@ def local_parse_confident(data: InvoiceData) -> bool:
     return True
 
 
+def sample_parse_confident(data: InvoiceData, layout_hint: str | None) -> bool:
+    """Document-type-aware confidence for rule-book sample uploads."""
+    hint = (layout_hint or data.raw_fields.get("layout_hint") or "").strip().lower()
+    if hint in {"", "invoice", "credit_note"}:
+        return local_parse_confident(data)
+    if hint in {"po", "grn", "contract", "quote", "claim"}:
+        heading = (data.document_heading or "").strip()
+        if not heading:
+            return False
+        domain_count = sum(
+            1
+            for value in (
+                data.vendor,
+                data.po_reference,
+                data.invoice_no,
+                data.total,
+                data.abn,
+            )
+            if value
+        )
+        return domain_count >= 2
+    return local_parse_confident(data)
+
+
+def _apply_layout_fields(
+    data: InvoiceData,
+    *,
+    layout,
+    body_text: str,
+) -> InvoiceData:
+    kv = extract_key_value_fields(layout, body_text)
+    heading = extract_document_heading_from_layout(layout)
+    if heading and not data.document_heading:
+        data.document_heading = heading
+
+    if kv.get("vendor") and not data.vendor:
+        data.vendor = normalize_vendor_name(kv["vendor"]) or kv["vendor"]
+    if kv.get("abn") and not data.abn:
+        data.abn = _normalize_abn(kv["abn"])
+    if kv.get("invoice_no") and not data.invoice_no:
+        data.invoice_no = kv["invoice_no"].strip()
+    if kv.get("po_reference") and not data.po_reference:
+        data.po_reference = kv["po_reference"].strip()
+    if kv.get("invoice_date") and not data.invoice_date:
+        data.invoice_date = _date(kv["invoice_date"])
+    if kv.get("due_date") and not data.due_date:
+        data.due_date = _date(kv["due_date"])
+    for money_key in ("subtotal", "gst", "total"):
+        if kv.get(money_key) and getattr(data, money_key) is None:
+            setattr(data, money_key, _money(kv[money_key]))
+
+    table_items = extract_line_items_from_tables(layout)
+    if table_items and not data.line_items:
+        data.line_items = table_items
+
+    if layout is not None:
+        data.raw_fields["azure_layout"] = layout.raw
+    if kv:
+        data.raw_fields["layout_kv"] = kv
+    return data
+
+
 def should_use_document_intelligence(text: str, local: InvoiceData) -> bool:
     settings = get_settings()
     if not is_di_enabled():
@@ -620,6 +691,8 @@ def _build_parse_result(
     *,
     source: ParseSource,
     confidence: ParseConfidence,
+    layout_hint: str | None = None,
+    layout=None,
 ) -> ParseResult:
     ensure_line_items(final)
     final = _finalize_vendor(final, text)
@@ -629,39 +702,124 @@ def _build_parse_result(
     final.raw_fields["parse_source"] = source
     final.raw_fields["parse_confidence"] = confidence
     final.raw_fields["text_length"] = len(body_text)
+    if layout_hint:
+        final.raw_fields["layout_hint"] = layout_hint
     return ParseResult(
         data=final,
         source=source,
         confidence=confidence,
         text_length=len(body_text),
+        layout_hint=layout_hint,
+        layout=layout,
     )
+
+
+def _richest_sample_body_text(*parts: str) -> str:
+    """Pick the longest non-empty text chunk (usually the most complete OCR extract)."""
+    candidates = [part.strip() for part in parts if part and part.strip()]
+    if not candidates:
+        return ""
+    return max(candidates, key=len)
+
+
+def _read_body_text_via_di(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix not in {".pdf", ".jpg", ".jpeg", ".png"}:
+        return ""
+    pages = read_pdf_page_texts_via_di(path)
+    if not pages:
+        return ""
+    return "\n".join(text for _, text in pages if text).strip()
 
 
 def parse_invoice_for_sample(file_path: str | Path) -> ParseResult:
     """
-    Rule-book sample uploads: prefer fast local text extraction.
+    Rule-book sample uploads: layout OCR + targeted invoice DI when appropriate.
 
-    Azure Document Intelligence runs only when local text is too thin (scanned PDFs,
-    images). Recognition-signal analysis does not need full invoice field confidence.
+    Runs prebuilt-layout for structure, prebuilt-read for full text, and
+    prebuilt-invoice only when the document looks invoice-like. Falls back to
+    local extraction when Azure DI is unavailable.
     """
     path = Path(file_path)
     suffix = path.suffix.lower()
-    min_chars = get_settings().parse_min_text_chars
 
+    local_extracted = ""
     if suffix == ".docx":
-        text = _parse_docx_text(path)
-        local = parse_local_text(text)
-        if len(text.strip()) >= min_chars:
-            confidence: ParseConfidence = "high" if local_parse_confident(local) else "low"
-            return _build_parse_result(path, text, local, source="local", confidence=confidence)
-        return parse_invoice(path)
+        local_extracted = _parse_docx_text(path)
+    elif suffix not in {".jpg", ".jpeg", ".png"}:
+        local_extracted = extract_pdf_text(path)
 
-    if suffix in {".jpg", ".jpeg", ".png"}:
-        return parse_invoice(path)
+    layout = None
+    di_data: InvoiceData | None = None
+    read_text = ""
+    used_di = False
+    layout_drove_fields = False
 
-    text = extract_pdf_text(path)
-    local = parse_local_text(text)
-    if len(text.strip()) >= min_chars:
-        confidence = "high" if local_parse_confident(local) else "low"
-        return _build_parse_result(path, text, local, source="local", confidence=confidence)
-    return parse_invoice(path)
+    if is_di_enabled():
+        content_type = (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            if suffix == ".docx"
+            else _content_type_for_path(path)
+        )
+        layout = analyze_layout_via_di(path, content_type=content_type)
+        if layout is not None:
+            used_di = True
+            if layout.content:
+                read_text = layout.content
+        if not read_text:
+            read_text = _read_body_text_via_di(path) or ""
+            if read_text:
+                used_di = True
+
+        preliminary_hint = infer_doc_family_hint(
+            layout,
+            extract_document_heading_from_layout(layout),
+            read_text or local_extracted,
+        )
+        if layout_hint_suggests_invoice(preliminary_hint):
+            di_data = parse_with_document_intelligence(path, content_type=content_type)
+            if di_data is not None:
+                used_di = True
+
+    di_body = (di_data.document_text or "") if di_data is not None else ""
+    layout_body = (layout.content or "") if layout is not None else ""
+    body_text = _richest_sample_body_text(local_extracted, read_text, layout_body, di_body)
+    local = parse_local_text(body_text) if body_text.strip() else InvoiceData(currency="AUD")
+
+    if layout is not None:
+        before_count = count_present_fields(local)
+        local = _apply_layout_fields(local, layout=layout, body_text=body_text)
+        if count_present_fields(local) > before_count:
+            layout_drove_fields = True
+
+    if di_data is not None:
+        final = _merge_prefer_complete(di_data, local)
+    else:
+        final = local
+
+    layout_hint = infer_doc_family_hint(
+        layout,
+        final.document_heading or extract_document_heading_from_layout(layout),
+        body_text,
+    )
+    if layout_hint:
+        final.raw_fields["layout_hint"] = layout_hint
+
+    if layout_drove_fields:
+        source: ParseSource = "azure_layout"
+    elif used_di:
+        source = "azure_di"
+    else:
+        source = "local"
+    confidence: ParseConfidence = (
+        "high" if sample_parse_confident(final, layout_hint) else "low"
+    )
+    return _build_parse_result(
+        path,
+        body_text,
+        final,
+        source=source,
+        confidence=confidence,
+        layout_hint=layout_hint,
+        layout=layout,
+    )

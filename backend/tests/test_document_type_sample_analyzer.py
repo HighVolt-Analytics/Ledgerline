@@ -58,6 +58,112 @@ def test_detect_po_goods_invoice_signals() -> None:
     assert infer_classifier_layout(profile.signals) == "all_signals"
 
 
+def test_tax_notice_not_triggered_by_ato_substring() -> None:
+    profile = detect_recognition_signals(
+        filename="EP -Spex1.pdf",
+        invoice=_invoice(email_attachment_name="EP -Spex1.pdf"),
+        parsed=_parsed(
+            invoice_no="EP-001",
+            po_reference=None,
+            document_text="Automated billing summary\nVendor: Acme\nInvoice No EP-001",
+            document_heading="TAX INVOICE",
+        ),
+    )
+    assert "text_tax_notice" not in profile.signals
+    assert "heading_invoice" in profile.signals
+    assert infer_playbook_profile(profile.signals) == "direct_expense"
+
+
+def test_billing_summary_triggers_text_invoice() -> None:
+    profile = detect_recognition_signals(
+        filename="EP -Spex1.pdf",
+        invoice=_invoice(email_attachment_name="EP -Spex1.pdf"),
+        parsed=_parsed(
+            invoice_no="EP-001",
+            po_reference=None,
+            document_text="Automated billing summary\nInvoice No EP-001\nVendor: Acme",
+            document_heading="Billing Summary",
+        ),
+    )
+    assert "text_invoice" in profile.signals
+    assert "has_invoice_number" in profile.signals
+
+
+def test_suggest_missing_signals_for_weak_profile() -> None:
+    from app.services.recognition_signal_catalog import suggest_missing_identity_signals
+
+    suggested = suggest_missing_identity_signals(
+        frozenset({"has_invoice_number"}),
+        playbook="direct_expense",
+        document_heading="Billing Summary",
+    )
+    assert suggested
+    assert any(row["signal_id"] == "heading_invoice" for row in suggested)
+    profile = detect_recognition_signals(
+        filename="EP -Spex1.pdf",
+        invoice=_invoice(email_attachment_name="EP -Spex1.pdf"),
+        parsed=_parsed(
+            invoice_no="EP-001",
+            po_reference=None,
+            document_text="Automated billing summary\nVendor: Acme\nInvoice No EP-001",
+            document_heading="TAX INVOICE",
+        ),
+    )
+    assert "text_tax_notice" not in profile.signals
+    assert "heading_invoice" in profile.signals
+    assert infer_playbook_profile(profile.signals) == "direct_expense"
+
+
+def test_refine_credit_note_single_file() -> None:
+    profile = detect_recognition_signals(
+        filename="credit-2026.pdf",
+        invoice=_invoice(email_attachment_name="credit-2026.pdf"),
+        parsed=_parsed(
+            invoice_no="CN-100",
+            po_reference=None,
+            document_text="CREDIT NOTE\nVendor: Acme\nCredit Note CN-100\nTotal -50.00",
+            document_heading="CREDIT NOTE",
+        ),
+    )
+    assert "text_credit_note" in profile.signals
+    assert "text_invoice" not in profile.signals
+    assert "text_po" not in profile.signals
+    assert infer_playbook_profile(profile.signals) == "credit_adjustment"
+
+
+def test_refine_quote_single_file() -> None:
+    profile = detect_recognition_signals(
+        filename="quote-99.pdf",
+        invoice=_invoice(email_attachment_name="quote-99.pdf"),
+        parsed=_parsed(
+            invoice_no=None,
+            po_reference=None,
+            total=None,
+            subtotal=None,
+            gst=None,
+            document_text="QUOTATION\nEstimate for services\nValid 30 days",
+            document_heading="QUOTATION",
+        ),
+    )
+    assert "text_quote" in profile.signals
+    assert "has_invoice_number" not in profile.signals
+    assert infer_playbook_profile(profile.signals) == "non_actionable"
+
+
+def test_refine_claim_single_file() -> None:
+    profile = detect_recognition_signals(
+        filename="expense-claim.pdf",
+        invoice=_invoice(email_attachment_name="expense-claim.pdf"),
+        parsed=_parsed(
+            po_reference=None,
+            document_text="EXPENSE CLAIM\nEmployee: Jane\nReimbursement total 45.00",
+            document_heading="EXPENSE CLAIM",
+        ),
+    )
+    assert "text_claim" in profile.signals
+    assert infer_playbook_profile(profile.signals) == "employee_claim"
+
+
 def test_detect_grn_supporting_signals() -> None:
     profile = detect_recognition_signals(
         filename="GRN-PO-99.pdf",
@@ -84,7 +190,7 @@ def test_merge_multiple_samples_majority(monkeypatch) -> None:
             invoice=invoice,
             parsed=parsed,
         )
-        return invoice, parsed, "high"
+        return invoice, parsed, "high", None, None
 
     monkeypatch.setattr(
         "app.services.document_type_sample_analyzer._parse_sample",
@@ -128,7 +234,7 @@ def test_parse_document_samples_parallel(monkeypatch) -> None:
     def slow_parse(filename: str, content: bytes):
         _ = content
         time.sleep(0.05)
-        return invoice, parsed, "high"
+        return invoice, parsed, "high", None, None
 
     monkeypatch.setattr(
         "app.services.document_type_sample_analyzer._parse_sample",

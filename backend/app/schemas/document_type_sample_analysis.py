@@ -11,6 +11,16 @@ class ValidationRuleProposal(BaseModel):
     severity: str = "block"
 
 
+class RecognitionSignalDetail(BaseModel):
+    signal_id: str
+    label: str
+    hint: str = ""
+    channel: str = ""
+    strength: str = "strong"
+    example: str = ""
+    detected: bool = True
+
+
 class DocumentTypeSampleFileResult(BaseModel):
     filename: str
     recognition_signals: list[str] = Field(default_factory=list)
@@ -23,6 +33,8 @@ class DocumentTypeSampleFileResult(BaseModel):
     route_conflicts: list[str] = Field(default_factory=list)
     matches_expected: bool | None = None
     route_alternatives: list[dict[str, object]] = Field(default_factory=list)
+    signal_details: list[RecognitionSignalDetail] = Field(default_factory=list)
+    suggested_signals: list[RecognitionSignalDetail] = Field(default_factory=list)
 
 
 class DocumentTypeClassifyPreviewCandidate(BaseModel):
@@ -31,6 +43,13 @@ class DocumentTypeClassifyPreviewCandidate(BaseModel):
     reason: str
     needs_review: bool = False
     priority: int = 100
+
+
+class CatalogueMatchCandidate(BaseModel):
+    code: str
+    title: str
+    similarity: float
+    reason: str = ""
 
 
 class DocumentTypeSampleProposal(BaseModel):
@@ -58,5 +77,10 @@ class DocumentTypeSampleProposal(BaseModel):
     min_route_confidence: float = 0.65
     samples: list[DocumentTypeSampleFileResult] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    catalogue_matches: list[CatalogueMatchCandidate] = Field(default_factory=list)
+    recognition_signal_details: list[RecognitionSignalDetail] = Field(default_factory=list)
+    suggested_signals: list[RecognitionSignalDetail] = Field(default_factory=list)
+    proposal_source: str = "heuristic"
+    reasoning: str | None = None
     apply_ready: bool = False
     apply_block_reason: str | None = None

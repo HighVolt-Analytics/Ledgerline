@@ -18,7 +18,7 @@ export function useExpenseClaimActions(routeTarget: string) {
   const refresh = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.routedInvoices(routeTarget) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.navBadges }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
     ]);
   }, [queryClient, routeTarget]);
 

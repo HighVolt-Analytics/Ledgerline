@@ -78,6 +78,10 @@ export type DocumentTypeSampleFileResult = {
 
   }>;
 
+  signal_details?: RecognitionSignalDetail[];
+
+  suggested_signals?: RecognitionSignalDetail[];
+
 };
 
 
@@ -93,6 +97,23 @@ export type ValidationRuleProposal = {
 };
 
 
+
+export type RecognitionSignalDetail = {
+  signal_id: string;
+  label: string;
+  hint?: string;
+  channel?: string;
+  strength?: string;
+  example?: string;
+  detected?: boolean;
+};
+
+export type CatalogueMatchCandidate = {
+  code: string;
+  title: string;
+  similarity: number;
+  reason?: string;
+};
 
 export type DocumentTypeSampleProposal = {
 
@@ -139,6 +160,16 @@ export type DocumentTypeSampleProposal = {
   notes: string[];
 
   validation_profile: string;
+
+  catalogue_matches?: CatalogueMatchCandidate[];
+
+  recognition_signal_details?: RecognitionSignalDetail[];
+
+  suggested_signals?: RecognitionSignalDetail[];
+
+  proposal_source?: string;
+
+  reasoning?: string | null;
 
   apply_ready?: boolean;
 
@@ -491,6 +522,14 @@ export function formatProposalSummary(proposal: DocumentTypeSampleProposal): Arr
 }> {
 
   return [
+
+    {
+
+      label: "Proposal source",
+
+      value: proposal.proposal_source ?? "heuristic",
+
+    },
 
     {
 

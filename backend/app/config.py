@@ -168,6 +168,53 @@ class Settings(BaseSettings):
         default="prebuilt-read",
         validation_alias="AZURE_DI_READ_MODEL_ID",
     )
+    azure_di_layout_model_id: str = Field(
+        default="prebuilt-layout",
+        validation_alias="AZURE_DI_LAYOUT_MODEL_ID",
+    )
+    azure_openai_endpoint: str = Field(
+        default="",
+        validation_alias="AZURE_OPENAI_ENDPOINT",
+    )
+    azure_openai_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AZURE_OPENAI_KEY",
+            "AZURE_OPENAI_API_KEY",
+        ),
+    )
+    azure_openai_api_version: str = Field(
+        default="2024-02-15-preview",
+        validation_alias="AZURE_OPENAI_API_VERSION",
+    )
+    azure_openai_deployment: str = Field(
+        default="gpt-4o-mini",
+        validation_alias=AliasChoices(
+            "AZURE_OPENAI_DEPLOYMENT",
+            "AZURE_OPENAI_DEPLOYMENT_NAME",
+        ),
+    )
+    azure_openai_fast_deployment: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AZURE_OPENAI_FAST_DEPLOYMENT",
+            "AZURE_OPENAI_FAST_DEPLOYMENT_NAME",
+        ),
+    )
+    azure_openai_embedding_deployment: str = Field(
+        default="text-embedding-3-small",
+        validation_alias="AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
+    )
+    sample_proposal_llm_enabled: bool = Field(
+        default=False,
+        validation_alias="SAMPLE_PROPOSAL_LLM_ENABLED",
+    )
+    sample_proposal_llm_timeout_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        validation_alias="SAMPLE_PROPOSAL_LLM_TIMEOUT_SECONDS",
+    )
     abn_validation_mode: str = Field(default="format")
     duplicate_invoice_check_enabled: bool = Field(
         default=True,
@@ -378,6 +425,21 @@ class Settings(BaseSettings):
     @property
     def azure_di_enabled(self) -> bool:
         return bool(self.azure_di_endpoint and self.azure_di_key)
+
+    @property
+    def azure_openai_configured(self) -> bool:
+        return bool(self.azure_openai_endpoint.strip() and self.azure_openai_key.strip())
+
+    @property
+    def azure_openai_chat_deployment(self) -> str:
+        fast = self.azure_openai_fast_deployment.strip()
+        if fast:
+            return fast
+        return self.azure_openai_deployment.strip() or "gpt-4o-mini"
+
+    @property
+    def azure_openai_enabled(self) -> bool:
+        return bool(self.sample_proposal_llm_enabled and self.azure_openai_configured)
 
     @property
     def azure_postgres_enabled(self) -> bool:

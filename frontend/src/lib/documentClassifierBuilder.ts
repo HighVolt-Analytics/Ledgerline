@@ -171,7 +171,7 @@ export function signalToCondition(signalId: RecognitionSignalId): DocumentRuleCo
       return cond(
         "document_text",
         "regex",
-        "(?i)\\b(tax\\s+invoice|commercial\\s+invoice)\\b"
+        "(?i)\\b(tax\\s+invoice|commercial\\s+invoice|billing\\s+summary|invoice\\s+no|invoice\\s+number)\\b"
       );
     case "filename_invoice":
       return cond(

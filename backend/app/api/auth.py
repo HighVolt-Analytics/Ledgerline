@@ -66,6 +66,8 @@ from app.services.tenant_module_service import enabled_modules_map
 from app.services.tenant_context_service import get_tenant_slug
 from app.services.tenant_members_service import accept_invite, preview_invite
 from app.tenant_ids import parse_tenant_id
+from app.tenant_context import set_jwt_tenant_id, set_request_tenant_id
+from app.tenant_rls import apply_rls_session_context
 from app.tenant_settings import tenant_locale, tenant_onboarding_completed, tenant_timezone
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -136,6 +138,11 @@ async def _resolve_switch_target(
     tenant = await db.get(Tenant, match.tenant_id)
     if not user or not tenant or not user.is_active:
         raise HTTPException(403, "Account inactive")
+    if user.is_platform_shadow:
+        raise HTTPException(
+            403,
+            "Client tenant support access must be opened from the platform console",
+        )
     if not tenant.is_active or tenant.lifecycle_status != "active":
         raise HTTPException(403, "Tenant access suspended")
     return user, tenant, match.role
@@ -384,6 +391,9 @@ async def refresh_session(
     tenant_id = parse_tenant_id(payload.get("tenant_id"))
     if tenant_id is None:
         raise HTTPException(401, "Invalid refresh token")
+    set_jwt_tenant_id(tenant_id)
+    set_request_tenant_id(tenant_id)
+    await apply_rls_session_context(db, tenant_id)
     if await is_user_revoked(user_id):
         raise HTTPException(401, "Session revoked")
 

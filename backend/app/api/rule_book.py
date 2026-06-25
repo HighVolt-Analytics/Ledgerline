@@ -26,13 +26,13 @@ from app.schemas.rule_book_evaluate import (
     RuleBookEvaluateRequest,
     RuleBookEvaluateResponse,
 )
+from app.services.document_type_sample_types import ParsedDocumentSample
 from app.services.document_type_sample_analyzer import (
-    ParsedDocumentSample,
-    analyze_parsed_document_samples,
     apply_sample_proposal_to_draft,
     compute_apply_ready,
     parse_document_samples,
 )
+from app.services.sample_proposal_engine import build_sample_proposal
 from app.services.document_type_classify_preview import (
     classify_parsed_samples_for_proposal_preview,
     merge_draft_document_type,
@@ -270,7 +270,7 @@ async def analyze_document_type_samples_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[DocumentTypeSampleProposal]:
-    """Parse sample PDFs/images and propose document-type settings (deterministic OCR)."""
+    """Parse sample PDFs/images and propose document-type settings (Azure DI + OCR)."""
     require_privilege(ctx, "Edit Policy")
     if not files:
         raise HTTPException(400, "At least one sample file is required")
@@ -283,15 +283,10 @@ async def analyze_document_type_samples_endpoint(
 
     def _parse_and_propose() -> tuple[DocumentTypeSampleProposal, list[ParsedDocumentSample]]:
         parsed_samples, parse_notes = parse_document_samples(uploads)
-        proposal = analyze_parsed_document_samples(
-            parsed_samples,
-            purchase_bundle_role=purchase_bundle_role,
-            parse_notes=parse_notes,
-        )
-        return proposal, parsed_samples
+        return parsed_samples, parse_notes
 
     try:
-        proposal, parsed_samples = await asyncio.to_thread(_parse_and_propose)
+        parsed_samples, parse_notes = await asyncio.to_thread(_parse_and_propose)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -306,6 +301,21 @@ async def analyze_document_type_samples_endpoint(
         config = await load_config_for_tenant(db, ctx.tenant_id)
     except FileNotFoundError:
         config = None
+
+    catalogue = config.document_types if config is not None else []
+
+    def _build_proposal() -> DocumentTypeSampleProposal:
+        return build_sample_proposal(
+            parsed_samples,
+            catalogue=catalogue,
+            purchase_bundle_role=purchase_bundle_role,
+            parse_notes=parse_notes,
+        )
+
+    try:
+        proposal = await asyncio.to_thread(_build_proposal)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     has_catalogue_preview = False
     if config is not None:
@@ -327,12 +337,17 @@ async def analyze_document_type_samples_endpoint(
             draft_type.code.strip() if draft_type else ""
         )
         if proposed_draft is not None and proposal.recognition_signals and expected:
+            profile_signals_by_filename = {
+                row.filename: frozenset(row.recognition_signals)
+                for row in proposal.samples
+            }
             previews = classify_parsed_samples_for_proposal_preview(
                 parsed_samples,
                 document_types=preview_catalogue,
                 proposed_draft=proposed_draft,
                 unclassified=config.document_classification,
                 expected_code=expected,
+                profile_signals_by_filename=profile_signals_by_filename,
             )
         else:
             from app.services.document_type_classify_preview import (

@@ -6,15 +6,17 @@ import math
 import tempfile
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from pathlib import Path
 
 from app.models.invoice import Invoice, InvoiceStatus
+from app.schemas.document_layout import DocumentLayoutResult
+from app.services.document_type_sample_types import ParsedDocumentSample
 from app.services.invoice_data import InvoiceData
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.document_type_sample_analysis import (
     DocumentTypeSampleFileResult,
     DocumentTypeSampleProposal,
+    RecognitionSignalDetail,
     ValidationRuleProposal,
 )
 from app.services.document_type_recognition_signals import (
@@ -34,6 +36,11 @@ from app.services.document_type_recognition_signals import (
 )
 from app.services.pdf_parser import parse_invoice_for_sample
 from app.services.playbook_profile_catalog import preset_for_profile
+from app.services.recognition_signal_catalog import (
+    describe_signals,
+    suggest_missing_identity_signals,
+)
+from app.services.sample_cluster_service import select_primary_cluster_samples
 from app.services.validation_rule_catalog import default_validation_rules_for_profile
 
 _ALLOWED_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".docx"}
@@ -70,15 +77,9 @@ def _union_strings(profiles: list, attr: str) -> list[str]:
     return sorted(merged)
 
 
-@dataclass(frozen=True)
-class ParsedDocumentSample:
-    filename: str
-    invoice: Invoice
-    parsed: InvoiceData
-    confidence: str | None
-
-
-def _parse_sample(filename: str, content: bytes) -> tuple[Invoice, InvoiceData, str | None]:
+def _parse_sample(
+    filename: str, content: bytes
+) -> tuple[Invoice, InvoiceData, str | None, DocumentLayoutResult | None, str | None]:
     suffix = Path(filename or "sample.pdf").suffix.lower() or ".pdf"
     if suffix not in _ALLOWED_SUFFIXES:
         raise ValueError(f"Unsupported file type: {suffix or 'unknown'}")
@@ -91,6 +92,8 @@ def _parse_sample(filename: str, content: bytes) -> tuple[Invoice, InvoiceData, 
         result = parse_invoice_for_sample(tmp_path)
         parsed = result.data
         confidence = str(result.confidence or "low")
+        layout = result.layout
+        layout_hint = result.layout_hint
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -115,7 +118,7 @@ def _parse_sample(filename: str, content: bytes) -> tuple[Invoice, InvoiceData, 
         bank_account=parsed.bank_account,
         cost_centre=parsed.cost_centre,
     )
-    return invoice, parsed, confidence
+    return invoice, parsed, confidence, layout, layout_hint
 
 
 def parse_document_samples(
@@ -134,12 +137,14 @@ def parse_document_samples(
     def _parse_one(filename: str, content: bytes) -> ParsedDocumentSample:
         if not content:
             raise ValueError(f"Empty file: {filename or 'upload'}")
-        invoice, parsed, confidence = _parse_sample(filename, content)
+        invoice, parsed, confidence, layout, layout_hint = _parse_sample(filename, content)
         return ParsedDocumentSample(
             filename=filename,
             invoice=invoice,
             parsed=parsed,
             confidence=confidence,
+            layout=layout,
+            layout_hint=layout_hint,
         )
 
     if workers <= 1:
@@ -252,6 +257,22 @@ def _min_route_confidence(playbook: str) -> float:
     return 0.65
 
 
+def _absent_fields_from_profiles(
+    profiles: list,
+    merged_signals: frozenset[str],
+    playbook: str,
+) -> list[str]:
+    from_playbook = infer_absent_fields(merged_signals, playbook=playbook)
+    if not profiles:
+        return from_playbook
+    absent: list[str] = []
+    for field_key in from_playbook:
+        count = sum(1 for profile in profiles if field_key in profile.extraction_fields)
+        if count == 0:
+            absent.append(field_key)
+    return list(dict.fromkeys(absent))
+
+
 def analyze_parsed_document_samples(
     parsed_samples: list[ParsedDocumentSample],
     *,
@@ -267,16 +288,19 @@ def analyze_parsed_document_samples(
     if not parsed_samples:
         raise ValueError("No sample files could be parsed")
 
+    working_samples, cluster_notes = select_primary_cluster_samples(parsed_samples)
+    notes: list[str] = list(parse_notes or []) + cluster_notes
+
     profiles = []
     sample_rows: list[DocumentTypeSampleFileResult] = []
-    notes: list[str] = list(parse_notes or [])
     headings: list[str] = []
 
-    for sample in parsed_samples:
+    for sample in working_samples:
         profile = detect_recognition_signals(
             filename=sample.filename,
             invoice=sample.invoice,
             parsed=sample.parsed,
+            layout=sample.layout,
         )
         profiles.append(profile)
         if profile.document_heading:
@@ -288,6 +312,10 @@ def analyze_parsed_document_samples(
                 extraction_fields=sorted(profile.extraction_fields),
                 document_heading=profile.document_heading,
                 parse_confidence=sample.confidence,
+                signal_details=[
+                    RecognitionSignalDetail.model_validate(row)
+                    for row in describe_signals(sorted(profile.signals))
+                ],
             )
         )
 
@@ -301,7 +329,12 @@ def analyze_parsed_document_samples(
         merged_signals
     )
     playbook = infer_playbook_profile(merged_signals)
-    absent = infer_absent_fields(merged_signals, playbook=playbook)
+    absent = _absent_fields_from_profiles(profiles, merged_signals, playbook)
+    suggested = suggest_missing_identity_signals(
+        frozenset(merged_signals),
+        playbook=playbook,
+        document_heading=headings[0] if headings else None,
+    )
     klass, posting, route_target = infer_document_metadata(playbook, bundle_role=bundle_role)
     preset = preset_for_profile(playbook)
     validation_profile = _validation_profile_for_playbook(playbook)
@@ -327,6 +360,11 @@ def analyze_parsed_document_samples(
             notes.append("No recognition signals detected — check OCR quality or add clearer samples.")
     elif not merged_fields:
         notes.append("No extraction fields detected — document text may be empty or unreadable.")
+    if suggested:
+        notes.append(
+            "Add stronger identity signals (see Suggested signals below) — "
+            "has_invoice_number alone matches many document types."
+        )
 
     apply_ready, apply_block_reason = compute_apply_ready(
         DocumentTypeSampleProposal(
@@ -367,6 +405,13 @@ def analyze_parsed_document_samples(
         min_route_confidence=_min_route_confidence(playbook),
         samples=sample_rows,
         notes=notes,
+        recognition_signal_details=[
+            RecognitionSignalDetail.model_validate(row)
+            for row in describe_signals(sorted(merged_signals))
+        ],
+        suggested_signals=[
+            RecognitionSignalDetail.model_validate(row) for row in suggested
+        ],
         apply_ready=apply_ready,
         apply_block_reason=apply_block_reason,
     )

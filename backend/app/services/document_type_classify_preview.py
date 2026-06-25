@@ -10,6 +10,7 @@ from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.rule_book_config import DocumentClassificationConfig
 from typing import Any
 
+from app.services.document_classifier_builder import eval_recognition_signal
 from app.services.document_type_classifier import (
     CONFIG_RULE_STRENGTH,
     DocumentTypeClassification,
@@ -22,7 +23,8 @@ from app.services.document_type_rule_engine import (
     _document_field,
     build_document_classifier_context,
 )
-from app.services.document_type_sample_analyzer import ParsedDocumentSample, _parse_sample
+from app.services.document_type_sample_types import ParsedDocumentSample
+from app.services.document_type_sample_analyzer import _parse_sample
 from app.services.document_type_scoring_service import score_document_type_definition
 from app.services.invoice_data import ParseConfidence
 from app.services.rule_engine import eval_condition_group_generic
@@ -103,6 +105,8 @@ def _supporting_doc_identity_subtree(root: dict[str, Any]) -> dict[str, Any] | N
 def proposed_classifier_matches_sample(
     proposed_draft: DocumentTypeDefinition,
     sample: ParsedDocumentSample,
+    *,
+    profile_signals: frozenset[str] | None = None,
 ) -> bool:
     """True when the sample satisfies the proposed draft classifier (identity-only for supporting_doc)."""
     classifier = proposed_draft.classifier
@@ -114,7 +118,10 @@ def proposed_classifier_matches_sample(
         return True
     identity = _supporting_doc_identity_subtree(root)
     if identity is not None:
-        return _eval_classifier_root(identity, ctx)
+        if _eval_classifier_root(identity, ctx):
+            return True
+    if profile_signals:
+        return all(eval_recognition_signal(ctx, signal_id) for signal_id in profile_signals)
     return False
 
 
@@ -125,6 +132,7 @@ def classify_parsed_sample_for_proposal_preview(
     proposed_draft: DocumentTypeDefinition,
     unclassified: DocumentClassificationConfig | None = None,
     expected_code: str | None = None,
+    profile_signals: frozenset[str] | None = None,
 ) -> ClassifyPreviewResult:
     """Catalogue preview for sample analysis: gate Apply on proposed classifier, not catalogue winner."""
     base = classify_parsed_sample_against_catalog(
@@ -137,7 +145,11 @@ def classify_parsed_sample_for_proposal_preview(
     if not expected:
         return base
 
-    proposed_match = proposed_classifier_matches_sample(proposed_draft, sample)
+    proposed_match = proposed_classifier_matches_sample(
+        proposed_draft,
+        sample,
+        profile_signals=profile_signals,
+    )
     if not proposed_match:
         return ClassifyPreviewResult(
             filename=base.filename,
@@ -180,8 +192,10 @@ def classify_parsed_samples_for_proposal_preview(
     proposed_draft: DocumentTypeDefinition,
     unclassified: DocumentClassificationConfig | None = None,
     expected_code: str | None = None,
+    profile_signals_by_filename: dict[str, frozenset[str]] | None = None,
 ) -> list[ClassifyPreviewResult]:
     results: list[ClassifyPreviewResult] = []
+    signals_by_name = profile_signals_by_filename or {}
     for sample in parsed_samples:
         try:
             results.append(
@@ -191,6 +205,7 @@ def classify_parsed_samples_for_proposal_preview(
                     proposed_draft=proposed_draft,
                     unclassified=unclassified,
                     expected_code=expected_code,
+                    profile_signals=signals_by_name.get(sample.filename),
                 )
             )
         except Exception:
@@ -263,7 +278,7 @@ def classify_sample_against_catalog(
     unclassified: DocumentClassificationConfig | None = None,
     expected_code: str | None = None,
 ) -> ClassifyPreviewResult:
-    invoice, parsed, parse_confidence_raw = _parse_sample(filename, content)
+    invoice, parsed, parse_confidence_raw, _layout, _layout_hint = _parse_sample(filename, content)
     return classify_parsed_sample_against_catalog(
         ParsedDocumentSample(
             filename=filename,

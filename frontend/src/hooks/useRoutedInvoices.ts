@@ -23,7 +23,7 @@ export function filterPayables(invoices: Invoice[]): Invoice[] {
 
 export function usePayablesQueue(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.payablesQueue,
+    queryKey: queryKeys.payablesQueue(),
     queryFn: async () => {
       const rows = await fetchAllInvoices(true, { status: "processed" });
       return filterPayables(rows);

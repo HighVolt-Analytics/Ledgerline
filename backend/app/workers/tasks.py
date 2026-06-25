@@ -195,6 +195,7 @@ async def run_pipeline(
             moved = await finalize_graph_messages(
                 session,
                 message_ids,
+                tenant_id=tenant_id,
                 preskip_exceptions=preskip,
             )
             await session.commit()

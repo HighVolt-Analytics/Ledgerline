@@ -36,6 +36,21 @@ def test_platform_tenant_only_for_super_admin() -> None:
     assert membership_is_switchable(platform_super) is True
 
 
+def test_platform_shadow_membership_not_switchable() -> None:
+    shadow = TenantMembershipAccount(
+        user_id=2,
+        tenant_id=uuid.uuid4(),
+        tenant_name="Dhiren",
+        tenant_slug="dhiren",
+        role="admin",
+        default_tenant=False,
+        is_platform=False,
+        is_platform_shadow=True,
+    )
+    assert membership_is_switchable(shadow) is False
+    assert filter_switchable_memberships([shadow]) == []
+
+
 def test_filter_drops_stray_platform_memberships() -> None:
     rows = [
         _membership(is_platform=False, role="admin"),

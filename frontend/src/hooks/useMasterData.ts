@@ -14,7 +14,7 @@ import type { EmployeeMaster, VendorMaster } from "@/lib/v4RuleBookTypes";
 
 export function useVendorMasters(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.vendorMasters,
+    queryKey: queryKeys.vendorMasters(),
     queryFn: async () => {
       const rows = await api.listVendorMasters();
       return rows.map((row) => vendorMasterFromApi(row as Record<string, unknown>));
@@ -25,7 +25,7 @@ export function useVendorMasters(enabled = true) {
 
 export function useEmployeeMasters(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.employeeMasters,
+    queryKey: queryKeys.employeeMasters(),
     queryFn: async () => {
       const rows = await api.listEmployeeMasters();
       return rows.map((row) => employeeMasterFromApi(row as Record<string, unknown>));
@@ -36,7 +36,7 @@ export function useEmployeeMasters(enabled = true) {
 
 export function usePendingVendors(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.pendingVendors,
+    queryKey: queryKeys.pendingVendors(),
     queryFn: async () => {
       const rows = await api.listPendingVendors();
       return rows.map((row) => mapPendingVendor(row as Record<string, unknown>));
@@ -49,25 +49,25 @@ function patchVendorInCache(
   queryClient: ReturnType<typeof useQueryClient>,
   updated: VendorMaster
 ) {
-  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters, (rows) =>
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(), (rows) =>
     rows?.map((row) => (row.id === updated.id ? updated : row)) ?? [updated]
   );
 }
 
 function appendVendorInCache(queryClient: ReturnType<typeof useQueryClient>, created: VendorMaster) {
-  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters, (rows) =>
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(), (rows) =>
     rows ? [...rows, created] : [created]
   );
 }
 
 function removeVendorFromCache(queryClient: ReturnType<typeof useQueryClient>, id: string) {
-  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters, (rows) =>
+  queryClient.setQueryData<VendorMaster[]>(queryKeys.vendorMasters(), (rows) =>
     rows?.filter((row) => row.id !== id)
   );
 }
 
 function invalidatePendingVendors(queryClient: ReturnType<typeof useQueryClient>) {
-  void queryClient.invalidateQueries({ queryKey: queryKeys.pendingVendors });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.pendingVendors() });
 }
 
 export function useCreateVendorMaster() {
@@ -115,7 +115,7 @@ export function useCreateEmployeeMaster() {
       return employeeMasterFromApi(raw as Record<string, unknown>);
     },
     onSuccess: (created) => {
-      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters, (rows) =>
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(), (rows) =>
         rows ? [...rows, created] : [created]
       );
     },
@@ -130,7 +130,7 @@ export function useUpdateEmployeeMaster() {
       return employeeMasterFromApi(raw as Record<string, unknown>);
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters, (rows) =>
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(), (rows) =>
         rows?.map((row) => (row.id === updated.id ? updated : row))
       );
     },
@@ -142,7 +142,7 @@ export function useDeleteEmployeeMaster() {
   return useMutation({
     mutationFn: (id: string) => api.deleteEmployeeMaster(id),
     onSuccess: (_data, id) => {
-      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters, (rows) =>
+      queryClient.setQueryData<EmployeeMaster[]>(queryKeys.employeeMasters(), (rows) =>
         rows?.filter((row) => row.id !== id)
       );
     },
@@ -163,7 +163,7 @@ export function useImportEmployeeMasters() {
     }) => api.importEmployeeMasters(mode, file, dryRun),
     onSuccess: (result: EmployeeImportResult) => {
       if (!result.dry_run) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.employeeMasters() });
       }
     },
   });

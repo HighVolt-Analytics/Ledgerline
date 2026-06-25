@@ -4,7 +4,7 @@ import { queryKeys } from "@/lib/queryClient";
 
 export function useLedgerLink(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.ledgerLink,
+    queryKey: queryKeys.ledgerLink(),
     queryFn: () => api.getLedgerLink(),
     enabled,
   });

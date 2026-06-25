@@ -146,8 +146,8 @@ export function DocumentTypeSamplesSection({
     setBusy(true);
     setStatus(
       files.length === 1
-        ? "Analyzing sample (local text first, OCR if needed)…"
-        : `Analyzing ${files.length} samples in parallel…`
+        ? "Analyzing sample with layout OCR…"
+        : `Analyzing ${files.length} samples with layout OCR…`
     );
     setError(null);
 
@@ -211,6 +211,7 @@ export function DocumentTypeSamplesSection({
 
         <p className="mt-1 text-xs text-muted-foreground">
           Upload examples to detect recognition signals, extraction fields, playbook, and routing.
+          Samples are parsed with Azure layout OCR when configured.
           Apply is blocked until every sample routes cleanly to this document type.
         </p>
 
@@ -391,6 +392,91 @@ export function DocumentTypeSamplesSection({
         <div className="space-y-3 rounded-md border border-primary/25 bg-primary/5 p-3">
 
           <p className="text-sm font-medium text-foreground">Suggested settings</p>
+
+          {proposal.reasoning ? (
+            <p className="text-xs text-foreground">
+              Suggested because: {proposal.reasoning}
+            </p>
+          ) : null}
+
+          {proposal.catalogue_matches?.length ? (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Similar catalogue types
+              </p>
+              {proposal.catalogue_matches.map((match) => (
+                <p key={match.code} className="text-xs text-muted-foreground">
+                  {match.code} — {match.title} ({Math.round(match.similarity * 100)}%)
+                </p>
+              ))}
+            </div>
+          ) : null}
+
+          {proposal.apply_block_reason ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {proposal.apply_block_reason}
+            </p>
+          ) : null}
+
+          {proposal.recognition_signal_details?.length ? (
+            <div className="space-y-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Detected signals (detail)
+              </p>
+              <div className="overflow-x-auto rounded-md border border-border/70">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-muted/40 text-muted-foreground">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">Signal</th>
+                      <th className="px-2 py-1.5 font-medium">Channel</th>
+                      <th className="px-2 py-1.5 font-medium">Strength</th>
+                      <th className="px-2 py-1.5 font-medium">What it means</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {proposal.recognition_signal_details.map((row) => (
+                      <tr key={row.signal_id} className="border-t border-border/50">
+                        <td className="px-2 py-1.5 font-medium text-foreground">{row.label}</td>
+                        <td className="px-2 py-1.5 text-muted-foreground">{row.channel}</td>
+                        <td className="px-2 py-1.5 text-muted-foreground">{row.strength}</td>
+                        <td className="px-2 py-1.5 text-muted-foreground">
+                          {row.hint}
+                          {row.example ? (
+                            <span className="block text-[10px] opacity-80">e.g. {row.example}</span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          {proposal.suggested_signals?.length ? (
+            <div className="space-y-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                Suggested signals to add (stronger identification)
+              </p>
+              <ul className="space-y-1.5 text-xs">
+                {proposal.suggested_signals.map((row) => (
+                  <li
+                    key={row.signal_id}
+                    className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5"
+                  >
+                    <span className="font-medium text-foreground">{row.label}</span>
+                    <span className="text-muted-foreground"> — {row.hint}</span>
+                    {row.example ? (
+                      <span className="block text-[10px] text-muted-foreground">e.g. {row.example}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[10px] text-muted-foreground">
+                After Apply, open Recognition and tick these signals, or rename files / use clearer scans.
+              </p>
+            </div>
+          ) : null}
 
           {proposal.notes.map((note) => (
 
