@@ -8,7 +8,8 @@ from typing import Any
 from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.capture_channel import infer_capture_channel
-from app.services.document_heading_utils import extract_document_heading_signals
+from app.services.document_heading_utils import extract_document_heading_signals, infer_page_document_kind
+from app.services.heading_kind_recognition import NON_INVOICE_NUMBER_KINDS
 from app.services.document_text import cap_document_text
 from app.services.invoice_data import InvoiceData
 from app.services.po_reference import is_plausible_po_reference
@@ -78,18 +79,27 @@ def build_document_classifier_context(
     line_text = " ".join((line.description or "") for line in parsed.line_items)
     document_text = _resolved_document_text(invoice=invoice, parsed=parsed)
     channel = infer_capture_channel(invoice.email_sender)
+    heading_label = (parsed.document_heading or "").strip()
+    if heading_label and heading_label.lower() not in document_text.lower():
+        document_text = f"{heading_label}\n{document_text}"
     heading_signals = extract_document_heading_signals(document_text)
     if parsed.document_heading and not heading_signals.primary_label:
         heading_signals = extract_document_heading_signals(
             f"{parsed.document_heading}\n{document_text}"
         )
 
+    primary_kind = heading_signals.primary_kind
+    if primary_kind is None and parsed.document_heading:
+        primary_kind = infer_page_document_kind(f"{parsed.document_heading}\n{document_text}")
+
     has_invoice_number = bool(invoice_no)
-    if not has_invoice_number and heading_signals.has_heading_invoice:
+    if primary_kind in NON_INVOICE_NUMBER_KINDS:
+        has_invoice_number = False
+    elif not has_invoice_number and heading_signals.has_heading_invoice:
         has_invoice_number = True
-    if not has_invoice_number and commercial:
+    elif not has_invoice_number and commercial:
         has_invoice_number = True
-    if not has_invoice_number and _parsed_fields_suggest_commercial_invoice(invoice):
+    elif not has_invoice_number and _parsed_fields_suggest_commercial_invoice(invoice):
         has_invoice_number = True
 
     return DocumentClassifierContext(

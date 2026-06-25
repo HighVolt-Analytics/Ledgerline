@@ -24,6 +24,11 @@ export function canRejectClaim(status: string): boolean {
   return status === "exception" || status === "processed";
 }
 
+/** Processed invoices can re-run the full pipeline; queue items use Approve. */
+export function canQueuePipeline(status: string): boolean {
+  return status === "processed";
+}
+
 export function canRequestInfo(status: string): boolean {
   return !(APPROVAL_QUEUE_STATUSES as readonly string[]).includes(status);
 }
@@ -63,7 +68,7 @@ export async function watchInvoiceUntilSettled(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await refresh();
-    const inv = await api.getInvoice(invoiceId);
+    const inv = await api.getInvoice(invoiceId, { fresh: true });
     if (!PIPELINE_ACTIVE.has(inv.status)) {
       return;
     }

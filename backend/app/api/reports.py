@@ -128,14 +128,10 @@ async def download_report(
     path = _reports_dir(ctx.tenant_id) / workbook_filename(ctx.tenant_slug, d_from, d_to)
 
     if not path.is_file():
-        legacy = Path(get_settings().upload_dir) / "reports" / path.name
-        if legacy.is_file():
-            path = legacy
-        else:
-            raise HTTPException(
-                404,
-                "Workbook not found. Run POST /api/reports/generate first.",
-            )
+        raise HTTPException(
+            404,
+            "Workbook not found. Run POST /api/reports/generate first.",
+        )
     return FileResponse(
         path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

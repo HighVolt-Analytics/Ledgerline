@@ -95,15 +95,33 @@ def test_classify_po_goods_invoice(capture_config) -> None:
     assert result.route_confident
 
 
-def test_classify_non_po_vendor_invoice_purchase_fallback(capture_config) -> None:
+def test_classify_non_po_vendor_invoice_via_rule_book(capture_config) -> None:
+    from app.schemas.document_type import DocumentTypeClassifier
+    from app.services.document_type_classifier_templates import classifier_template_for_code
+
+    template = classifier_template_for_code("DT-21")
+    assert template is not None
+    types = [
+        item.model_copy(
+            update={"classifier": DocumentTypeClassifier.model_validate(template)}
+        )
+        if item.code == "DT-21"
+        else item
+        for item in capture_config.document_types
+    ]
     result = classify_document_type(
         invoice=_invoice(email_attachment_name="tax-invoice-mkt.pdf"),
-        parsed=_parsed(po_reference=None),
-        document_types=capture_config.document_types,
+        parsed=_parsed(
+            po_reference=None,
+            document_text="TAX INVOICE\nMarketing Co\nInvoice No INV-1001",
+            document_heading="TAX INVOICE",
+        ),
+        document_types=types,
         parse_confidence="high",
     )
-    assert result.code in {"DT-01", "DT-04", "DT-21"}
+    assert result.code == "DT-21"
     assert result.confidence >= 0.65
+    assert "Rule book classifier matched" in result.reason
 
 
 def test_classify_quote_low_confidence(capture_config) -> None:
@@ -288,7 +306,7 @@ def test_classify_invoice_heading_without_invoice_number() -> None:
     assert result.confidence >= 0.65
 
 
-def test_classify_purchase_kind_fallback_when_classifier_misses() -> None:
+def test_no_purchase_kind_fallback_when_classifier_misses() -> None:
     from app.schemas.document_type import DocumentTypeDefinition
 
     catalogue = [
@@ -320,13 +338,37 @@ def test_classify_purchase_kind_fallback_when_classifier_misses() -> None:
     result = classify_document_type(
         invoice=_invoice(
             purchase_document_type="grn",
+            email_attachment_name="GRN-PO-2025.pdf",
             document_text="GOODS RECEIPT NOTE\nPO-2025-0101",
         ),
         parsed=_parsed(invoice_no=None, total=None),
         document_types=catalogue,
     )
-    assert result.code == "DT-03"
-    assert "Purchase document role inferred" in result.reason
+    assert result.code == ""
+    assert "No classifier matched" in result.reason
+
+
+def test_grn_filename_requires_classifier_rule_not_purchase_fallback(capture_config) -> None:
+    """GRN must match a Rule Book classifier — purchase-kind inference is not used."""
+    disabled = capture_config.model_copy(
+        update={
+            "document_types": [
+                item.model_copy(
+                    update={
+                        "classifier": item.classifier.model_copy(update={"enabled": False})
+                    }
+                )
+                for item in capture_config.document_types
+            ]
+        }
+    )
+    result = classify_document_type(
+        invoice=_invoice(email_attachment_name="GRN-PO-44871.pdf"),
+        parsed=_parsed(invoice_no=None, due_date=None),
+        document_types=disabled.document_types,
+    )
+    assert result.code == ""
+    assert "No classifier matched" in result.reason
 
 
 def test_effective_document_type_code_uses_purchase_role() -> None:

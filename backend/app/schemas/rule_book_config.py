@@ -440,6 +440,37 @@ def _merge_document_type_fields(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
+    """Persist structural playbook inference once when saving — not at runtime."""
+    from app.services.playbook_profile_catalog import (
+        default_playbook_profile_for_code,
+        infer_playbook_profile_from_definition,
+    )
+
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        explicit = str(row.get("playbook_profile") or row.get("playbookProfile") or "").strip()
+        if explicit:
+            merged.append(row)
+            continue
+        code = str(row.get("code") or "").strip().upper()
+        try:
+            definition = DocumentTypeDefinition.model_validate(row)
+            inferred = infer_playbook_profile_from_definition(definition)
+        except Exception:
+            inferred = default_playbook_profile_for_code(code) if code else "standard_transactional"
+        merged.append({**row, "playbook_profile": inferred})
+    data["document_types"] = merged
+    return data
+
+
 def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPayload:
     if isinstance(data, dict):
         data = _migrate_root_legacy_fields(dict(data))
@@ -447,4 +478,5 @@ def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPay
         data = _backfill_document_types(data)
         data = _merge_document_type_classifiers(data)
         data = _merge_document_type_fields(data)
+        data = _backfill_playbook_profiles(data)
     return RuleBookConfigPayload.model_validate(data)

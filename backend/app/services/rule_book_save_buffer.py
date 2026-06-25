@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import async_session_factory
+from app.database import db_session_with_rls
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.audit_service import log_event
 from app.services.remap_service import remap_invoices_for_tenant
@@ -96,7 +96,7 @@ async def schedule_rule_book_save(
             if db is not None:
                 before_raw = await load_rule_book_config_dict(db, tenant_id)
             else:
-                async with async_session_factory() as session:
+                async with db_session_with_rls(tenant_id) as session:
                     before_raw = await load_rule_book_config_dict(session, tenant_id)
 
         pending = PendingRuleBookSave(
@@ -129,9 +129,8 @@ async def _flush_from_timer(tenant_id: uuid.UUID) -> None:
     if pending is None:
         return
     try:
-        async with async_session_factory() as session:
+        async with db_session_with_rls(pending.tenant_id) as session:
             await commit_rule_book_save(pending, db=session)
-            await session.commit()
     except Exception:
         logger.exception("rule_book_save_flush_failed", tenant_id=str(tenant_id))
 
@@ -226,7 +225,7 @@ async def commit_rule_book_save(
         )
         return True
 
-    async with async_session_factory() as session:
+    async with db_session_with_rls(pending.tenant_id) as session:
         await _commit_rule_book_db_side_effects(
             session,
             pending,
@@ -236,5 +235,4 @@ async def commit_rule_book_save(
             after_norm=after_norm,
             remap_invoices=remap_invoices,
         )
-        await session.commit()
     return True

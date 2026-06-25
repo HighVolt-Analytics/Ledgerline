@@ -37,10 +37,16 @@ def _catalogue_text(defn: DocumentTypeDefinition) -> str:
 
 
 def _sample_text(sample: ParsedDocumentSample) -> str:
+    from app.services.heading_kind_recognition import infer_heading_kind
+
     heading = (sample.parsed.document_heading or "").strip()
     hint = (sample.layout_hint or sample.parsed.raw_fields.get("layout_hint") or "").strip()
     body = (sample.parsed.document_text or "")[:500]
-    return " ".join(part for part in [sample.filename, heading, hint, body] if part).strip()
+    kind = infer_heading_kind(heading=heading, document_text=body)
+    kind_label = kind.replace("_", " ") if kind else ""
+    return " ".join(
+        part for part in [sample.filename, heading, kind_label, hint, body] if part
+    ).strip()
 
 
 def _fallback_similarity(

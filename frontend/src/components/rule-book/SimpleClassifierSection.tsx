@@ -11,6 +11,7 @@ import {
   type DocumentTypeTemplateId,
   type RouteConfidencePreset,
 } from "@/lib/documentTypeTemplates";
+import { allRecognitionSignalOptions } from "@/lib/documentTypeTemplateMeta";
 import {
   parseSignalsFromClassifier,
   type RecognitionSignalId,
@@ -37,7 +38,11 @@ export function SimpleClassifierSection({
   onOpenAdvanced,
 }: SimpleClassifierSectionProps) {
   const template = getDocumentTypeTemplate(templateId);
-  const allowedIds = useMemo(() => template.signals.map((s) => s.id), [template]);
+  const signalOptions = useMemo(
+    () => (template.signals.length > 0 ? template.signals : allRecognitionSignalOptions()),
+    [template]
+  );
+  const allowedIds = useMemo(() => signalOptions.map((s) => s.id), [signalOptions]);
 
   const selectedSignals = useMemo(
     () => parseSignalsFromClassifier(draft.classifier.root, allowedIds),
@@ -92,13 +97,13 @@ export function SimpleClassifierSection({
                   ? " is enough, and the document must not look like a tax invoice."
                   : " is enough to classify."}
             </p>
-            {template.signals.length === 0 ? (
+            {signalOptions.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Choose a template with recognition signals, or switch to advanced mode.
               </p>
             ) : (
               <ul className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
-                {template.signals.map((signal) => {
+                {signalOptions.map((signal) => {
                   const checked = selectedSignals.includes(signal.id);
                   return (
                     <li key={signal.id}>

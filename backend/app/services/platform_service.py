@@ -51,15 +51,77 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+async def _batch_tenant_counts(
+    session: AsyncSession, tenant_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[int, int, int]]:
+    if not tenant_ids:
+        return {}
+
+    user_rows = (
+        await session.execute(
+            select(UserTenantMapping.tenant_id, func.count(func.distinct(User.id)))
+            .select_from(UserTenantMapping)
+            .join(User, UserTenantMapping.user_id == User.id)
+            .where(
+                UserTenantMapping.tenant_id.in_(tenant_ids),
+                UserTenantMapping.is_active.is_(True),
+                UserTenantMapping.status == "active",
+                User.is_active.is_(True),
+                User.is_platform_shadow.is_(False),
+            )
+            .group_by(UserTenantMapping.tenant_id)
+        )
+    ).all()
+    user_by_tenant = {row[0]: int(row[1]) for row in user_rows}
+
+    invoice_rows = (
+        await session.execute(
+            select(Invoice.tenant_id, func.count())
+            .where(Invoice.tenant_id.in_(tenant_ids))
+            .group_by(Invoice.tenant_id)
+        )
+    ).all()
+    invoice_by_tenant = {row[0]: int(row[1]) for row in invoice_rows}
+
+    now = _utc_now()
+    invite_rows = (
+        await session.execute(
+            select(TenantMemberInvite.tenant_id, func.count())
+            .where(
+                TenantMemberInvite.tenant_id.in_(tenant_ids),
+                TenantMemberInvite.accepted_at.is_(None),
+                TenantMemberInvite.expires_at > now,
+            )
+            .group_by(TenantMemberInvite.tenant_id)
+        )
+    ).all()
+    invite_by_tenant = {row[0]: int(row[1]) for row in invite_rows}
+
+    return {
+        tenant_id: (
+            user_by_tenant.get(tenant_id, 0),
+            invoice_by_tenant.get(tenant_id, 0),
+            invite_by_tenant.get(tenant_id, 0),
+        )
+        for tenant_id in tenant_ids
+    }
+
+
 async def _tenant_counts(session: AsyncSession, tenant_id: uuid.UUID) -> tuple[int, int, int]:
     user_count = (
         await session.execute(
-            select(func.count())
+            select(func.count(func.distinct(User.id)))
             .select_from(User)
+            .join(
+                UserTenantMapping,
+                (UserTenantMapping.user_id == User.id)
+                & (UserTenantMapping.tenant_id == tenant_id),
+            )
             .where(
-                User.tenant_id == tenant_id,
-                User.is_platform_shadow.is_(False),
+                UserTenantMapping.is_active.is_(True),
+                UserTenantMapping.status == "active",
                 User.is_active.is_(True),
+                User.is_platform_shadow.is_(False),
             )
         )
     ).scalar_one()
@@ -125,18 +187,16 @@ async def list_client_tenants(session: AsyncSession) -> list[PlatformTenantSumma
         )
     ).scalars().all()
 
-    results: list[PlatformTenantSummary] = []
-    for tenant in tenants:
-        user_count, invoice_count, pending_invite_count = await _tenant_counts(session, tenant.id)
-        results.append(
-            _to_summary(
-                tenant,
-                user_count=user_count,
-                invoice_count=invoice_count,
-                pending_invite_count=pending_invite_count,
-            )
+    counts = await _batch_tenant_counts(session, [tenant.id for tenant in tenants])
+    return [
+        _to_summary(
+            tenant,
+            user_count=counts.get(tenant.id, (0, 0, 0))[0],
+            invoice_count=counts.get(tenant.id, (0, 0, 0))[1],
+            pending_invite_count=counts.get(tenant.id, (0, 0, 0))[2],
         )
-    return results
+        for tenant in tenants
+    ]
 
 
 async def get_client_tenant(
@@ -192,7 +252,7 @@ async def provision_client_tenant_access(
     tenant_id: uuid.UUID,
     operator_user_id: int,
 ) -> User:
-    """Give a platform operator a shadow admin user + membership on a client tenant."""
+    """Legacy shadow-user helper — no longer exposed via API (org data isolation)."""
     tenant = await session.get(Tenant, tenant_id)
     if not tenant or tenant.is_platform:
         raise ValueError("Client tenant not found")
@@ -224,8 +284,10 @@ async def provision_client_tenant_access(
         await session.flush()
     else:
         client_user.is_active = True
-        client_user.role = UserRole.ADMIN
-        client_user.is_platform_shadow = True
+        if client_user.is_platform_shadow:
+            client_user.role = UserRole.ADMIN
+        # Reuse the tenant's real member row for support sessions — never mark
+        # an existing non-shadow user as a platform shadow (breaks user counts).
 
     mapping = (
         await session.execute(
@@ -404,3 +466,32 @@ async def delete_client_tenant(
     remove_policy_for_tenant(tid)
     _remove_tenant_files(tid)
     return True
+
+
+async def repair_misclassified_platform_shadow_users(session: AsyncSession) -> int:
+    """Unset shadow flag on real tenant owners incorrectly marked by migration 036."""
+    from sqlalchemy import text
+
+    rows = (
+        await session.execute(
+            text(
+                """
+                UPDATE users AS u
+                SET is_platform_shadow = FALSE
+                FROM (
+                    SELECT tenant_id, MIN(id) AS first_user_id
+                    FROM users
+                    WHERE tenant_id IN (
+                        SELECT id FROM tenants WHERE is_platform = FALSE
+                    )
+                    GROUP BY tenant_id
+                ) AS first_per_tenant
+                WHERE u.id = first_per_tenant.first_user_id
+                  AND u.is_platform_shadow = TRUE
+                RETURNING u.id
+                """
+            )
+        )
+    ).fetchall()
+    await session.flush()
+    return len(rows)

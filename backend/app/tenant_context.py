@@ -5,6 +5,7 @@ from contextvars import ContextVar
 
 _request_tenant_id: ContextVar[uuid.UUID | None] = ContextVar("request_tenant_id", default=None)
 _jwt_tenant_id: ContextVar[uuid.UUID | None] = ContextVar("jwt_tenant_id", default=None)
+_rls_tenant_id: ContextVar[uuid.UUID | None] = ContextVar("rls_tenant_id", default=None)
 
 
 def get_request_tenant_id() -> uuid.UUID | None:
@@ -23,6 +24,15 @@ def set_jwt_tenant_id(tenant_id: uuid.UUID | None) -> None:
     _jwt_tenant_id.set(tenant_id)
 
 
+def get_rls_tenant_id() -> uuid.UUID | None:
+    return _rls_tenant_id.get()
+
+
+def set_rls_tenant_id(tenant_id: uuid.UUID | None) -> None:
+    _rls_tenant_id.set(tenant_id)
+
+
 def clear_tenant_context() -> None:
     _request_tenant_id.set(None)
     _jwt_tenant_id.set(None)
+    _rls_tenant_id.set(None)

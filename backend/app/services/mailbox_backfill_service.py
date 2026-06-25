@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import async_session_factory
+from app.database import db_session_with_rls, platform_lookup_session
+from app.tenant_scoped import get_for_tenant
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.invoice import Invoice
 from app.models.mailbox_sync_job import (
@@ -120,14 +122,29 @@ async def create_mailbox_backfill_job(
     return job
 
 
-async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
+async def run_mailbox_backfill_job(
+    job_id: int,
+    *,
+    tenant_id: uuid.UUID | None = None,
+) -> MailboxSyncJob:
     """Execute one historical import job (Celery / inline worker entry)."""
-    async with async_session_factory() as session:
-        job = await session.get(MailboxSyncJob, job_id)
+    from app.tenant_scoped import coerce_tenant_uuid
+
+    resolved_tid = coerce_tenant_uuid(tenant_id)
+    async with platform_lookup_session() as lookup:
+        job_peek = await lookup.get(MailboxSyncJob, job_id)
+        if job_peek is None:
+            raise ValueError("Import job not found")
+        if resolved_tid is not None and job_peek.tenant_id != resolved_tid:
+            raise ValueError("Import job not found")
+        resolved_tid = job_peek.tenant_id
+
+    async with db_session_with_rls(resolved_tid) as session:
+        job = await get_for_tenant(session, MailboxSyncJob, job_id, resolved_tid)
         if job is None:
             raise ValueError("Import job not found")
 
-        mb = await session.get(ConnectedMailbox, job.mailbox_id)
+        mb = await get_for_tenant(session, ConnectedMailbox, job.mailbox_id, resolved_tid)
         org = await session.get(Tenant, job.tenant_id)
         if not mb or not org or mb.tenant_id != job.tenant_id:
             job.status = STATUS_FAILED
@@ -186,7 +203,8 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
                 from app.workers.tasks import _fetch_pending_ids, _process_pending
 
                 job.invoices_processed = await _process_pending(
-                    await _fetch_pending_ids(tenant_id=job.tenant_id)
+                    await _fetch_pending_ids(tenant_id=job.tenant_id),
+                    tenant_id=job.tenant_id,
                 )
                 await session.commit()
 
@@ -222,7 +240,7 @@ async def run_mailbox_backfill_job(job_id: int) -> MailboxSyncJob:
             await session.commit()
         except Exception as exc:
             await session.rollback()
-            job = await session.get(MailboxSyncJob, job_id)
+            job = await get_for_tenant(session, MailboxSyncJob, job_id, resolved_tid)
             if job:
                 job.status = STATUS_FAILED
                 job.error_message = str(exc)[:2000]

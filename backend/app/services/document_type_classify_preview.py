@@ -12,7 +12,6 @@ from typing import Any
 
 from app.services.document_classifier_builder import eval_recognition_signal
 from app.services.document_type_classifier import (
-    CONFIG_RULE_STRENGTH,
     DocumentTypeClassification,
     classify_document_type,
     classification_audit_detail,
@@ -168,7 +167,7 @@ def classify_parsed_sample_for_proposal_preview(
         proposed_draft,
         invoice=sample.invoice,
         parsed=sample.parsed,
-        rule_strength=CONFIG_RULE_STRENGTH,
+        rule_strength=float(proposed_draft.classifier.confidence),
         parse_confidence=parse_confidence,
         ctx=ctx,
     )

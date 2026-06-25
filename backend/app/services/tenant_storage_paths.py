@@ -76,7 +76,7 @@ def legacy_to_tenant_path(tenant_id: uuid.UUID | int | str, legacy_name: str) ->
 
 
 def _path_name_variants(name: str) -> list[str]:
-    """Alternate blob paths (e.g. vendor folder ``Inc.`` vs ``Inc``)."""
+    """Alternate blob paths (vendor punctuation, document-type folder encoding)."""
     variants = [name]
     parts = name.split("/")
     for idx, part in enumerate(parts):
@@ -85,7 +85,26 @@ def _path_name_variants(name: str) -> list[str]:
         alt_parts = parts.copy()
         alt_parts[idx] = part[:-1]
         variants.append("/".join(alt_parts))
-    return variants
+
+    for sep in ("\u00b7", "\ufffd"):
+        if sep in name:
+            variants.append(name.replace(sep, " - "))
+            collapsed = name.replace(sep, " - ").replace("  ", " ")
+            if collapsed != name.replace(sep, " - "):
+                variants.append(collapsed)
+            variants.append(name.replace(sep, "\u00b7 "))
+            variants.append(name.replace(sep, "\u00b7"))
+    if " - " in name:
+        variants.append(name.replace(" - ", "\u00b7 "))
+        variants.append(name.replace(" - ", "\u00b7"))
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for variant in variants:
+        if variant not in seen:
+            seen.add(variant)
+            unique.append(variant)
+    return unique
 
 
 def resolve_blob_candidates(

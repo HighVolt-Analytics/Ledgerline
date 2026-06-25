@@ -198,6 +198,7 @@ def find_blob_uri_for_invoice(
     tenant_slug: str | None = None,
     tenant_name: str | None = None,
     include_legacy: bool = True,
+    prefer_rejected: bool = False,
 ) -> str | None:
     """Locate a relocated invoice blob when raw_file_path is stale (tenant-scoped)."""
     if not is_blob_enabled():
@@ -206,7 +207,13 @@ def find_blob_uri_for_invoice(
     client = _service_client()
     container = client.get_container_client(settings.azure_storage_container)
 
-    prefixes: list[str] = [f"{tenant_root(tenant_id)}/invoice/"]
+    prefixes: list[str] = []
+    tenant_invoice = f"{tenant_root(tenant_id)}/invoice/"
+    tenant_rejected = f"{tenant_root(tenant_id)}/rejected/"
+    if prefer_rejected:
+        prefixes.extend([tenant_rejected, tenant_invoice])
+    else:
+        prefixes.extend([tenant_invoice, tenant_rejected])
     if tenant_slug:
         org_folder = vault_paths.vault_tenant_folder(tenant_slug, tenant_name)
         prefixes.append(f"{tenant_root(tenant_id)}/invoice/{org_folder}/")
@@ -227,7 +234,12 @@ def find_blob_uri_for_invoice(
     if tenant_slug:
         org_folder = vault_paths.vault_tenant_folder(tenant_slug, tenant_name)
         legacy_prefixes.append(f"invoice/{org_folder}/")
-    legacy_prefixes.append(f"invoice/")
+    if prefer_rejected:
+        legacy_prefixes.append("rejected/")
+        legacy_prefixes.append("invoice/")
+    else:
+        legacy_prefixes.append("invoice/")
+        legacy_prefixes.append("rejected/")
 
     for prefix in legacy_prefixes:
         if prefix in seen:

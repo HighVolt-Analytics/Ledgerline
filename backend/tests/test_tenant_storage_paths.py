@@ -36,6 +36,15 @@ def test_resolve_blob_candidates_includes_legacy_and_tenant() -> None:
     assert legacy_to_tenant_path(TESTING_TENANT_UUID, legacy) in names
 
 
+def test_resolve_blob_candidates_includes_document_type_folder_encoding_variants() -> None:
+    stored = (
+        f"tenants/{TESTING_TENANT_UUID}/invoice/Vault/DT-03 \ufffd Cargo Clearance Permit/x.pdf"
+    )
+    names = resolve_blob_candidates(stored, tenant_id=TESTING_TENANT_UUID)
+    assert any("DT-03 - Cargo Clearance Permit" in name for name in names)
+    assert any("DT-03 \u00b7 Cargo Clearance Permit" in name for name in names)
+
+
 def test_billing_lazy_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path))
     from app.config import get_settings

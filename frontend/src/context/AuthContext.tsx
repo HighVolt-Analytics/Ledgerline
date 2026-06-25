@@ -41,7 +41,6 @@ type AuthContextValue = {
   logout: () => void;
   switchTenant: (tenantId: string) => Promise<void>;
   switchOrganisation: (tenantId: string) => Promise<void>;
-  enterClientWorkspace: (tenantId: string) => Promise<void>;
   refreshUser: () => Promise<void>;
   challengeToken: string | null;
   tenantPicker: TenantAccountSummary[];
@@ -159,22 +158,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession]
   );
 
-  const enterClientWorkspace = useCallback(
-    async (tenantId: string) => {
-      const data = await api.enterClientWorkspace(tenantId);
-      applySession(
-        data.access_token,
-        data.refresh_token,
-        data.user,
-        data.memberships
-      );
-      rememberLastTenant(tenantId);
-      queryClient.clear();
-      window.location.assign("/");
-    },
-    [applySession]
-  );
-
   const refreshUser = useCallback(async () => {
     const me = await api.me();
     setUser(me);
@@ -277,7 +260,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       switchTenant,
       switchOrganisation: switchTenant,
-      enterClientWorkspace,
       refreshUser,
       challengeToken,
       tenantPicker,
@@ -292,7 +274,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resendOtp,
       logout,
       switchTenant,
-      enterClientWorkspace,
       refreshUser,
       challengeToken,
       tenantPicker,

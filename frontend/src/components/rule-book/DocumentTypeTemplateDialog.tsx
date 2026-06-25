@@ -114,8 +114,8 @@ export function DocumentTypeTemplateDialog({
               Add document type
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Pick a template — recognition rules and recommended fields are pre-filled. Your org
-              gets the next catalogue code when you save.
+              Upload sample PDFs first to auto-detect recognition rules, or pick a shipped template
+              to start with pre-filled settings.
             </p>
           </div>
           <button
@@ -126,6 +126,21 @@ export function DocumentTypeTemplateDialog({
           >
             <X className="h-4 w-4" />
           </button>
+        </div>
+
+        <div className="flex flex-col gap-2 border-b border-border px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">
+            Recommended: upload 3–5 example files of the same document type, then apply suggested
+            settings.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => onSelect("custom")}
+            data-testid="template-start-from-samples"
+          >
+            Start from sample files
+          </Button>
         </div>
 
         <div className="space-y-3 border-b border-border px-5 py-3">
@@ -176,10 +191,10 @@ export function DocumentTypeTemplateDialog({
 
         <div className="flex items-center justify-between gap-2 border-t border-border px-5 py-3">
           <p className="text-xs text-muted-foreground">
-            Showing {templates.length} of {DOCUMENT_TYPE_TEMPLATES.length - 1} templates.
+            Or choose a template below ({templates.length} shown).
           </p>
           <Button type="button" size="sm" variant="ghost" onClick={() => onSelect("custom")}>
-            Start blank instead
+            Blank type
           </Button>
         </div>
       </div>

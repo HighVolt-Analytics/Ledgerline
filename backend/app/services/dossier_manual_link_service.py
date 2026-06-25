@@ -202,6 +202,7 @@ async def create_manual_link(
         slot_taken = (
             await session.execute(
                 select(DossierManualLink).where(
+                    DossierManualLink.tenant_id == tenant_id,
                     DossierManualLink.anchor_invoice_id == anchor_invoice_id,
                     DossierManualLink.slot_id == slot_id,
                 )

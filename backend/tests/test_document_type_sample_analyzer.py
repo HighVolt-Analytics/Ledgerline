@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.models.invoice import Invoice, InvoiceStatus
+from app.schemas.document_type_sample_analysis import DocumentTypeSampleProposal
 from app.services.document_type_recognition_signals import (
     detect_recognition_signals,
     infer_classifier_layout,
@@ -412,3 +413,58 @@ def test_merge_supporting_po_keeps_all_channel_signals() -> None:
 def test_classifier_layout_expense_uses_any_signal() -> None:
     signals = frozenset({"has_invoice_number", "heading_invoice"})
     assert infer_classifier_layout(signals, playbook="direct_expense") == "any_signal"
+
+
+def test_effective_proposal_signals_use_suggested_when_weak_only() -> None:
+    from app.schemas.document_type_sample_analysis import RecognitionSignalDetail
+    from app.services.document_type_sample_analyzer import effective_proposal_signal_ids
+
+    proposal = DocumentTypeSampleProposal(
+        recognition_signals=["has_invoice_number"],
+        suggested_signals=[
+            RecognitionSignalDetail.model_validate(
+                {
+                    "signal_id": "text_import",
+                    "label": "Import",
+                    "hint": "",
+                    "channel": "body",
+                    "strength": "strong",
+                    "example": "",
+                    "detected": False,
+                }
+            )
+        ],
+        samples=[],
+    )
+    assert effective_proposal_signal_ids(proposal) == ["has_invoice_number", "text_import"]
+
+
+def test_cargo_clearance_permit_detects_import_not_invoice_number() -> None:
+    profile = detect_recognition_signals(
+        filename="EP - Walton.pdf",
+        invoice=_invoice(email_attachment_name="EP - Walton.pdf"),
+        parsed=_parsed(
+            invoice_no="PERMIT-7781",
+            po_reference=None,
+            total=Decimal("50.00"),
+            document_text="Permit details\nLine items for customs",
+            document_heading="CARGO CLEARANCE PERMIT",
+        ),
+    )
+    assert "text_import" in profile.signals
+    assert "has_invoice_number" not in profile.signals
+    assert infer_playbook_profile(profile.signals) == "import_dossier"
+
+
+def test_cargo_clearance_suggests_import_signals_not_invoice() -> None:
+    from app.services.recognition_signal_catalog import suggest_missing_identity_signals
+
+    suggested = suggest_missing_identity_signals(
+        frozenset(),
+        playbook="standard_transactional",
+        document_heading="CARGO CLEARANCE PERMIT",
+        document_text="CARGO CLEARANCE PERMIT\nPermit 1",
+    )
+    assert suggested
+    assert any(row["signal_id"] == "text_import" for row in suggested)
+    assert not any(row["signal_id"] == "heading_invoice" for row in suggested)

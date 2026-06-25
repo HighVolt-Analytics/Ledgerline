@@ -1,12 +1,21 @@
 """Tenant membership helpers."""
 
+from dataclasses import dataclass
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant import Tenant
+from app.models.user import User
 from app.models.user_tenant_mapping import UserTenantMapping
+
+
+@dataclass(frozen=True)
+class AuthPrincipals:
+    user: User
+    tenant: Tenant
+    role: str
 
 
 async def ensure_membership(
@@ -38,20 +47,40 @@ async def ensure_membership(
     await session.flush()
 
 
-async def user_has_tenant_access(
+async def resolve_auth_principals(
     session: AsyncSession, *, user_id: int, tenant_id: uuid.UUID
-) -> bool:
+) -> AuthPrincipals | None:
+    """One round-trip: active membership, user, tenant, and role."""
     row = (
         await session.execute(
-            select(UserTenantMapping.id).where(
-                UserTenantMapping.user_id == user_id,
-                UserTenantMapping.tenant_id == tenant_id,
+            select(User, Tenant, UserTenantMapping.role)
+            .join(
+                UserTenantMapping,
+                (UserTenantMapping.user_id == User.id)
+                & (UserTenantMapping.tenant_id == tenant_id),
+            )
+            .join(Tenant, Tenant.id == tenant_id)
+            .where(
+                User.id == user_id,
+                User.is_active.is_(True),
                 UserTenantMapping.is_active.is_(True),
                 UserTenantMapping.status == "active",
             )
         )
-    ).scalar_one_or_none()
-    return row is not None
+    ).first()
+    if not row:
+        return None
+    user, tenant, role = row
+    return AuthPrincipals(user=user, tenant=tenant, role=str(role))
+
+
+async def user_has_tenant_access(
+    session: AsyncSession, *, user_id: int, tenant_id: uuid.UUID
+) -> bool:
+    principals = await resolve_auth_principals(
+        session, user_id=user_id, tenant_id=tenant_id
+    )
+    return principals is not None
 
 
 async def list_user_tenants(
@@ -83,13 +112,7 @@ async def list_user_tenants(
 async def get_membership_role(
     session: AsyncSession, *, user_id: int, tenant_id: uuid.UUID
 ) -> str | None:
-    row = (
-        await session.execute(
-            select(UserTenantMapping.role).where(
-                UserTenantMapping.user_id == user_id,
-                UserTenantMapping.tenant_id == tenant_id,
-                UserTenantMapping.is_active.is_(True),
-            )
-        )
-    ).scalar_one_or_none()
-    return row
+    principals = await resolve_auth_principals(
+        session, user_id=user_id, tenant_id=tenant_id
+    )
+    return principals.role if principals else None

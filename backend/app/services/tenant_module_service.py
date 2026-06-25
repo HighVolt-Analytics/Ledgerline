@@ -41,10 +41,17 @@ async def is_module_enabled(
         return True
     if mod.always_on:
         return True
-    db_active = await _module_rows(session, tenant_id)
-    if key not in db_active:
+    row = (
+        await session.execute(
+            select(TenantModule.is_active).where(
+                TenantModule.tenant_id == tenant_id,
+                TenantModule.module_key == key,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
         return mod.default_active
-    return db_active[key]
+    return bool(row)
 
 
 async def ensure_module_rows(session: AsyncSession, tenant_id: uuid.UUID) -> None:

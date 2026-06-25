@@ -32,7 +32,7 @@ def _definition(**kwargs) -> DocumentTypeDefinition:
 
 
 def test_dt01_default_playbook_profile() -> None:
-    definition = _definition()
+    definition = _definition(playbookProfile="po_goods")
     assert effective_playbook_profile(definition) == "po_goods"
     assert effective_match_policy(definition).mode == "three_way_po_grn"
     assert effective_approval_policy(definition).mode == "touchless_on_clean_match"
@@ -75,7 +75,7 @@ def test_playbook_review_skipped_when_bundle_not_enforced() -> None:
     )
     definition = _definition(code="DT-03", playbookProfile="direct_expense")
     assert requires_playbook_review(playbook, definition=definition) is False
-    assert requires_playbook_review(playbook, definition=_definition()) is True
+    assert requires_playbook_review(playbook, definition=_definition(playbookProfile="po_goods")) is True
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_direct_expense_approval_gate_holds_without_approval(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_po_goods_touchless_passes_clean_match() -> None:
-    definition = _definition()
+    definition = _definition(playbookProfile="po_goods")
     invoice = MagicMock()
     invoice.id = 7
     invoice.route_target = "Purchase Management"
@@ -119,3 +119,25 @@ async def test_po_goods_touchless_passes_clean_match() -> None:
         validation_results=[ValidationResult("VR15", True, "3-Way Match")],
     )
     assert held is False
+
+
+def test_backfill_playbook_profile_on_save() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_payload
+
+    payload = validate_rule_book_config_payload(
+        {
+            "document_types": [
+                {
+                    "code": "DT-01",
+                    "title": "PO goods invoice",
+                    "shortTitle": "PO goods",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "fraudRisk": "low",
+                    "oneLine": "test",
+                    "routeTarget": "Purchase Management",
+                }
+            ]
+        }
+    )
+    assert payload.document_types[0].playbook_profile == "standard_transactional"

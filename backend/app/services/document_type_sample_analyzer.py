@@ -36,9 +36,11 @@ from app.services.document_type_recognition_signals import (
 )
 from app.services.pdf_parser import parse_invoice_for_sample
 from app.services.playbook_profile_catalog import preset_for_profile
+from app.services.heading_kind_recognition import resolve_playbook_profile
 from app.services.recognition_signal_catalog import (
     describe_signals,
     suggest_missing_identity_signals,
+    weak_signal_warning,
 )
 from app.services.sample_cluster_service import select_primary_cluster_samples
 from app.services.validation_rule_catalog import default_validation_rules_for_profile
@@ -202,7 +204,8 @@ def compute_apply_ready(
     *,
     has_catalogue_preview: bool,
 ) -> tuple[bool, str | None]:
-    if not proposal.recognition_signals:
+    effective_signals = effective_proposal_signal_ids(proposal)
+    if not effective_signals:
         if any(NO_SHARED_IDENTITY_NOTE in note for note in proposal.notes):
             return False, (
                 "Upload samples of the same document type — no shared identity signals."
@@ -294,6 +297,7 @@ def analyze_parsed_document_samples(
     profiles = []
     sample_rows: list[DocumentTypeSampleFileResult] = []
     headings: list[str] = []
+    sample_bodies: list[str] = []
 
     for sample in working_samples:
         profile = detect_recognition_signals(
@@ -305,6 +309,9 @@ def analyze_parsed_document_samples(
         profiles.append(profile)
         if profile.document_heading:
             headings.append(profile.document_heading)
+        body = (sample.parsed.document_text or "").strip()
+        if body:
+            sample_bodies.append(body)
         sample_rows.append(
             DocumentTypeSampleFileResult(
                 filename=profile.filename,
@@ -328,12 +335,18 @@ def analyze_parsed_document_samples(
     bundle_role = (purchase_bundle_role or "").strip().lower() or infer_purchase_bundle_role(
         merged_signals
     )
-    playbook = infer_playbook_profile(merged_signals)
+    primary_body = sample_bodies[0] if sample_bodies else ""
+    playbook = resolve_playbook_profile(
+        frozenset(merged_signals),
+        heading=headings[0] if headings else None,
+        document_text=primary_body,
+    )
     absent = _absent_fields_from_profiles(profiles, merged_signals, playbook)
     suggested = suggest_missing_identity_signals(
         frozenset(merged_signals),
         playbook=playbook,
         document_heading=headings[0] if headings else None,
+        document_text=primary_body,
     )
     klass, posting, route_target = infer_document_metadata(playbook, bundle_role=bundle_role)
     preset = preset_for_profile(playbook)
@@ -361,10 +374,9 @@ def analyze_parsed_document_samples(
     elif not merged_fields:
         notes.append("No extraction fields detected — document text may be empty or unreadable.")
     if suggested:
-        notes.append(
-            "Add stronger identity signals (see Suggested signals below) — "
-            "has_invoice_number alone matches many document types."
-        )
+        warning = weak_signal_warning(frozenset(merged_signals))
+        if warning:
+            notes.append(warning)
 
     apply_ready, apply_block_reason = compute_apply_ready(
         DocumentTypeSampleProposal(
@@ -417,6 +429,22 @@ def analyze_parsed_document_samples(
     )
 
 
+def effective_proposal_signal_ids(proposal: DocumentTypeSampleProposal) -> list[str]:
+    """Detected signals, plus suggested strong identity when none were detected."""
+    from app.services.document_type_recognition_signals import identity_signals
+    from app.services.recognition_signal_catalog import WEAK_SIGNAL_IDS
+
+    detected = list(proposal.recognition_signals or [])
+    if identity_signals(frozenset(detected)):
+        return detected
+    suggested = [
+        row.signal_id
+        for row in proposal.suggested_signals or []
+        if row.strength != "weak" and row.signal_id not in WEAK_SIGNAL_IDS
+    ]
+    return list(dict.fromkeys([*detected, *suggested]))
+
+
 def apply_sample_proposal_to_draft(
     draft: DocumentTypeDefinition,
     proposal: DocumentTypeSampleProposal,
@@ -426,7 +454,7 @@ def apply_sample_proposal_to_draft(
     """Merge analyzed sample proposal into a draft type (for catalogue preview / apply)."""
     from app.services.document_classifier_builder import build_classifier_from_signals
 
-    signals = list(proposal.recognition_signals or [])
+    signals = effective_proposal_signal_ids(proposal)
     layout = proposal.classifier_layout or "grouped"
     if for_preview:
         priority = 1
@@ -441,7 +469,7 @@ def apply_sample_proposal_to_draft(
     )
     updates: dict[str, object] = {
         "classifier": classifier,
-        "classifier_customized": layout in {"grouped", "supporting_doc"},
+        "classifier_customized": False,
         "extraction_fields": proposal.extraction_fields,
         "required_fields": proposal.required_fields,
         "absent_fields": proposal.absent_fields,
@@ -454,11 +482,16 @@ def apply_sample_proposal_to_draft(
         "describe how this document type is identified and processed.",
     }:
         updates["one_line"] = proposal.one_line
-    if proposal.suggested_title and draft.title.strip().lower() in {"new document type", "new type"}:
+    if proposal.suggested_title and draft.title.strip().lower() in {
+        "new document type",
+        "new type",
+        "custom type",
+    }:
         updates["title"] = proposal.suggested_title
     if proposal.suggested_short_title and draft.short_title.strip().lower() in {
         "new document type",
         "new type",
+        "custom type",
     }:
         updates["short_title"] = proposal.suggested_short_title
     return draft.model_copy(update=updates)

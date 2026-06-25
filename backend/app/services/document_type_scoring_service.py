@@ -20,11 +20,14 @@ from app.services.document_type_rule_engine import (
 from app.services.document_heading_utils import (
     extract_document_heading_signals,
     heading_alignment_score,
+    infer_page_document_kind,
 )
 from app.services.document_type_conflicts import (
     conflict_confidence_penalty,
     detect_signal_conflicts,
 )
+from app.services.document_type_playbook_profile_service import effective_playbook_profile
+from app.services.heading_kind_recognition import HEADING_KIND_PLAYBOOK
 from app.services.invoice_data import InvoiceData, ParseConfidence
 
 WEIGHT_RULE = 0.45
@@ -49,8 +52,42 @@ class DocumentTypeScoreBreakdown:
     min_route_confidence: float
 
 
-def parse_quality_score(parse_confidence: ParseConfidence | None) -> float:
-    return 1.0 if parse_confidence == "high" else 0.6
+def parse_quality_score(
+    parse_confidence: ParseConfidence | None,
+    *,
+    parsed: InvoiceData | None = None,
+    definition: DocumentTypeDefinition | None = None,
+) -> float:
+    if parse_confidence == "high":
+        return 1.0
+    if parsed is not None:
+        layout_hint = parsed.raw_fields.get("layout_hint")
+        from app.services.pdf_parser import sample_parse_confident
+
+        if sample_parse_confident(parsed, layout_hint):
+            return 1.0
+        if definition is not None:
+            corpus = "\n".join(
+                part
+                for part in [
+                    parsed.document_heading or "",
+                    (parsed.document_text or "")[:4000],
+                ]
+                if part
+            )
+            kind = infer_page_document_kind(corpus)
+            kind_playbook = HEADING_KIND_PLAYBOOK.get(kind) if kind else None
+            doc_playbook = effective_playbook_profile(definition)
+            if kind_playbook and kind_playbook == doc_playbook and len(corpus.strip()) >= 80:
+                return 1.0
+            if kind is not None and len(corpus.strip()) >= 80:
+                from app.services.segment_heading_classification import (
+                    score_document_type_for_heading,
+                )
+
+                if score_document_type_for_heading(definition, kind) >= 0.82:
+                    return 1.0
+    return 0.6
 
 
 def effective_min_route_confidence(definition: DocumentTypeDefinition) -> float:
@@ -99,12 +136,17 @@ def compute_document_type_confidence(
     field_completeness: float,
     parse_confidence: ParseConfidence | None,
     heading_alignment: float,
+    parse_score: float | None = None,
 ) -> float:
-    parse_score = parse_quality_score(parse_confidence)
+    resolved_parse = (
+        parse_score
+        if parse_score is not None
+        else parse_quality_score(parse_confidence)
+    )
     blended = (
         WEIGHT_RULE * rule_strength
         + WEIGHT_FIELDS * field_completeness
-        + WEIGHT_PARSE * parse_score
+        + WEIGHT_PARSE * resolved_parse
         + WEIGHT_HEADING * heading_alignment
     )
     return round(min(1.0, max(0.0, blended)), 4)
@@ -138,11 +180,17 @@ def score_document_type_definition(
         definition=definition,
     )
     conflicts = detect_signal_conflicts(context)
+    parse_score = parse_quality_score(
+        parse_confidence,
+        parsed=parsed,
+        definition=definition,
+    )
     confidence = compute_document_type_confidence(
         rule_strength=rule_strength,
         field_completeness=field_score,
         parse_confidence=parse_confidence,
         heading_alignment=heading_score,
+        parse_score=parse_score,
     )
     confidence = round(
         max(0.0, confidence - conflict_confidence_penalty(conflicts)),
@@ -151,7 +199,7 @@ def score_document_type_definition(
     return DocumentTypeScoreBreakdown(
         rule_strength=rule_strength,
         field_completeness=round(field_score, 4),
-        parse_score=parse_quality_score(parse_confidence),
+        parse_score=parse_score,
         heading_alignment=round(heading_score, 4),
         confidence=confidence,
         required_present=req_present,

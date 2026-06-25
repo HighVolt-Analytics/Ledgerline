@@ -26,6 +26,7 @@ import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
   canApproveClaim,
+  canQueuePipeline,
   canRejectClaim,
   canRequestInfo,
   reprocessAndWatch,
@@ -513,6 +514,7 @@ type InvoiceDetailDrawerProps = {
   open: boolean;
   onClose: () => void;
   onUpdated?: () => void;
+  onPipelineStart?: (invoice: InvoiceDetails) => void;
   startInEditMode?: boolean;
   initialTab?: Tab;
 };
@@ -522,6 +524,7 @@ export function InvoiceDetailDrawer({
   open,
   onClose,
   onUpdated,
+  onPipelineStart,
   startInEditMode = false,
   initialTab = "fields",
 }: InvoiceDetailDrawerProps) {
@@ -583,7 +586,7 @@ export function InvoiceDetailDrawer({
     }
     setLoading(true);
     api
-      .getInvoice(activeInvoiceId)
+      .getInvoice(activeInvoiceId, { fresh: true })
       .then(setInv)
       .catch(() => setInv(null))
       .finally(() => setLoading(false));
@@ -757,7 +760,11 @@ export function InvoiceDetailDrawer({
       onUpdated?.();
       onClose();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Reject failed");
+      if (e instanceof ApiError && e.status === 403) {
+        alert("Your role does not have permission to reject documents.");
+      } else {
+        alert(e instanceof Error ? e.message : "Reject failed");
+      }
     } finally {
       setActionBusy(false);
     }
@@ -778,11 +785,13 @@ export function InvoiceDetailDrawer({
   }
 
   async function handleReprocess() {
-    if (!inv?.has_stored_file) {
+    if (!inv || !canQueuePipeline(inv.status)) return;
+    if (!inv.has_stored_file) {
       alert("Upload a PDF before reprocessing this invoice.");
       return;
     }
     setActionBusy(true);
+    onPipelineStart?.(inv);
     try {
       await reprocessAndWatch(inv.id, async () => {
         onUpdated?.();
@@ -790,19 +799,30 @@ export function InvoiceDetailDrawer({
       });
       onUpdated?.();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Reprocess failed");
+      alert(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Reprocess failed");
     } finally {
       setActionBusy(false);
     }
   }
 
   async function handleApproveAndProcess() {
-    if (!inv || !canApproveClaim(inv.status)) return;
-    if (!inv.has_stored_file) {
+    if (!inv) return;
+    const fresh = await api.getInvoice(inv.id, { fresh: true });
+    setInv(fresh);
+    if (!canApproveClaim(fresh.status)) {
+      alert(
+        fresh.status === "processed"
+          ? "This invoice is already processed. Use Reprocess to run the pipeline again."
+          : "This invoice is not in the approval queue."
+      );
+      return;
+    }
+    if (!fresh.has_stored_file) {
       alert("Upload a PDF before approving this invoice.");
       return;
     }
     setActionBusy(true);
+    onPipelineStart?.(fresh);
     try {
       await approveAndProcess(inv.id, async () => {
         onUpdated?.();
@@ -909,22 +929,28 @@ export function InvoiceDetailDrawer({
                     />
                   </div>
                 )}
-                {editing && !inv.has_stored_file && (
-                  <label className="mt-3 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm hover:bg-muted/50">
-                    <input
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png,.docx"
-                      className="sr-only"
-                      disabled={attachBusy}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) void handleAttachPdf(file);
-                        e.target.value = "";
-                      }}
-                    />
-                    <FileText className="h-4 w-4" />
-                    {attachBusy ? "Uploading…" : "Attach PDF"}
-                  </label>
+                {!inv.has_stored_file && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      No stored file is linked to this document. Attach a PDF to reprocess or
+                      approve.
+                    </p>
+                    <label className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-dashed border-input bg-background px-3 py-2 text-sm shadow-sm hover:bg-muted/50">
+                      <input
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png,.docx"
+                        className="sr-only"
+                        disabled={attachBusy}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) void handleAttachPdf(file);
+                          e.target.value = "";
+                        }}
+                      />
+                      <FileText className="h-4 w-4" />
+                      {attachBusy ? "Uploading…" : "Attach document"}
+                    </label>
+                  </div>
                 )}
               </div>
 
@@ -1244,13 +1270,12 @@ export function InvoiceDetailDrawer({
                     Reject
                   </Button>
                   <div className="flex gap-2">
-                    {["exception", "duplicate_skipped", "processed"].includes(inv.status) &&
-                      inv.has_stored_file && (
+                    {canQueuePipeline(inv.status) && (
                         <Button
                           variant="outline"
                           size="sm"
                           data-testid="button-reprocess"
-                          disabled={actionBusy}
+                          disabled={actionBusy || !inv.has_stored_file}
                           onClick={() => void handleReprocess()}
                         >
                           Reprocess

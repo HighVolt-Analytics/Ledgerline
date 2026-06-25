@@ -68,6 +68,8 @@ const BASE =
 const GET_CACHE_MS = 30_000;
 const inflightGets = new Map<string, Promise<unknown>>();
 const getCache = new Map<string, { data: unknown; at: number }>();
+/** Bumped on mutation so in-flight GETs cannot repopulate cache with stale rows. */
+let getCacheGeneration = 0;
 
 let authToken: string | null = null;
 let authUser: AuthUser | null = null;
@@ -143,6 +145,7 @@ function getScopedAuthHeaders(init?: RequestInit): Headers {
 }
 
 export function clearGetCache() {
+  getCacheGeneration += 1;
   getCache.clear();
   inflightGets.clear();
 }
@@ -153,16 +156,34 @@ function getRequestKey(path: string, method: string) {
 }
 
 function invalidateGetCache() {
+  getCacheGeneration += 1;
   getCache.clear();
+  inflightGets.clear();
 }
 
 function bustGetCache(path: string, method = "GET") {
+  getCacheGeneration += 1;
   const key = getRequestKey(path, method);
   getCache.delete(key);
   inflightGets.delete(key);
   const metaKey = getRequestKey(`${path}#meta`, method);
   getCache.delete(metaKey);
   inflightGets.delete(metaKey);
+}
+
+function bustGetCacheByPrefix(pathPrefix: string, method = "GET") {
+  getCacheGeneration += 1;
+  const needle = `:${method}:${pathPrefix}`;
+  for (const key of Array.from(getCache.keys())) {
+    if (key.includes(needle)) getCache.delete(key);
+  }
+  for (const key of Array.from(inflightGets.keys())) {
+    if (key.includes(needle)) inflightGets.delete(key);
+  }
+}
+
+function rememberGetCache(key: string, data: unknown) {
+  getCache.set(key, { data, at: Date.now() });
 }
 
 export type FreshRequestOptions = { fresh?: boolean };
@@ -308,9 +329,12 @@ async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   const inflight = inflightGets.get(key);
   if (inflight) return inflight as Promise<T>;
 
+  const cacheGeneration = getCacheGeneration;
   const promise = fetchEnvelope<T>(path, init)
     .then((data) => {
-      getCache.set(key, { data, at: Date.now() });
+      if (cacheGeneration === getCacheGeneration) {
+        rememberGetCache(key, data);
+      }
       return data;
     })
     .finally(() => {
@@ -356,10 +380,13 @@ async function requestWithMeta<T>(
   })();
 
   if (method === "GET") {
+    const cacheGeneration = getCacheGeneration;
     inflightGets.set(
       key,
       promise.then((payload) => {
-        getCache.set(key, { data: payload, at: Date.now() });
+        if (cacheGeneration === getCacheGeneration) {
+          rememberGetCache(key, payload);
+        }
         return payload;
       })
     );
@@ -488,10 +515,6 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  enterClientWorkspace: (tenantId: string) =>
-    request<TokenResponse>(`/api/platform/tenants/${tenantId}/enter-workspace`, {
-      method: "POST",
-    }),
   deletePlatformTenant: (tenantId: string, confirmSlug: string) =>
     request<{ status: string }>(`/api/platform/tenants/${tenantId}/delete-permanently`, {
       method: "POST",
@@ -619,7 +642,11 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return requestWithMeta<Invoice[]>(path);
   },
-  getInvoice: (id: number) => request<InvoiceDetails>(`/api/invoices/${id}`),
+  getInvoice: (id: number, options?: FreshRequestOptions) => {
+    const path = `/api/invoices/${id}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<InvoiceDetails>(path);
+  },
   updateInvoice: (id: number, body: InvoiceUpdatePayload) =>
     request<InvoiceDetails>(`/api/invoices/${id}`, {
       method: "PATCH",
@@ -719,8 +746,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ invoice_ids: invoiceIds }),
     }),
-  reprocess: (id: number) =>
-    request<Invoice>(`/api/invoices/${id}/reprocess`, { method: "POST" }),
+  reprocess: (id: number) => {
+    bustGetCacheByPrefix("/api/invoices");
+    bustGetCacheByPrefix("/api/approvals");
+    return request<Invoice>(`/api/invoices/${id}/reprocess`, { method: "POST" });
+  },
   attachInvoiceFile: (id: number, file: File) => {
     const fd = new FormData();
     fd.append("file", file);
@@ -766,10 +796,21 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return requestWithMeta<Invoice[]>(path);
   },
-  approve: (id: number) =>
-    request<Invoice>(`/api/approvals/${id}/approve`, { method: "POST" }),
-  reject: (id: number) =>
-    request<Invoice>(`/api/approvals/${id}/reject`, { method: "POST" }),
+  listApprovalsBoard: (options?: FreshRequestOptions) => {
+    const path = "/api/approvals/board";
+    if (options?.fresh) bustGetCache(path);
+    return request<Invoice[]>(path);
+  },
+  approve: (id: number) => {
+    bustGetCacheByPrefix("/api/approvals");
+    bustGetCacheByPrefix("/api/invoices");
+    return request<Invoice>(`/api/approvals/${id}/approve`, { method: "POST" });
+  },
+  reject: (id: number) => {
+    bustGetCacheByPrefix("/api/approvals");
+    bustGetCacheByPrefix("/api/invoices");
+    return request<Invoice>(`/api/approvals/${id}/reject`, { method: "POST" });
+  },
   requestApproval: (id: number) =>
     request<Invoice>(`/api/approvals/${id}/request`, { method: "POST" }),
   publishInvoice: (id: number) =>
@@ -798,8 +839,8 @@ export const api = {
       body: JSON.stringify({ code }),
     }),
   deleteApprovalPermanently: (id: number) => {
-    bustGetCache("/api/approvals");
-    bustGetCache("/api/invoices");
+    bustGetCacheByPrefix("/api/approvals");
+    bustGetCacheByPrefix("/api/invoices");
     return request<void>(`/api/approvals/${id}`, { method: "DELETE" });
   },
   listVendors: (options?: FreshRequestOptions) => {
@@ -895,6 +936,22 @@ export const api = {
   dismissPendingVendor: (pendingId: number) =>
     request<void>(`/api/pending-vendors/${pendingId}/dismiss`, { method: "POST" }),
   getRuleBookConfig: () => request<RuleBookConfig>("/api/rule-book/config"),
+  getRecognitionSignalCatalog: () =>
+    request<{
+      weak_signal_ids: string[];
+      pick_groups: string[][];
+      supporting_guards: Array<Record<string, unknown>>;
+      signals: Array<{
+        id: string;
+        label: string;
+        hint: string;
+        channel: string;
+        strength: string;
+        example: string;
+        condition: { field: string; operator: string; value: string };
+      }>;
+      playbook_recommended_identity: Record<string, string[]>;
+    }>("/api/rule-book/recognition-signals"),
   evaluateRuleBook: (body: RuleBookEvaluateRequest = {}) =>
     request<RuleBookEvaluateResult>("/api/rule-book/evaluate", {
       method: "POST",

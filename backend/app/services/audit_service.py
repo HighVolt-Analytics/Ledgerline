@@ -44,9 +44,16 @@ async def log_event(
     resolved_tenant_id = tenant_id
     invoice_for_snapshot: Invoice | None = None
     if invoice_id is not None:
-        invoice_for_snapshot = await session.get(Invoice, invoice_id)
-        if invoice_for_snapshot is not None and resolved_tenant_id is None:
-            resolved_tenant_id = invoice_for_snapshot.tenant_id
+        if resolved_tenant_id is not None:
+            from app.tenant_scoped import get_for_tenant
+
+            invoice_for_snapshot = await get_for_tenant(
+                session, Invoice, invoice_id, resolved_tenant_id
+            )
+        else:
+            invoice_for_snapshot = await session.get(Invoice, invoice_id)
+            if invoice_for_snapshot is not None and resolved_tenant_id is None:
+                resolved_tenant_id = invoice_for_snapshot.tenant_id
 
     merged_detail = merge_actor_detail(
         detail,
@@ -86,19 +93,25 @@ async def log_event(
 async def audit_logs_for_invoices(
     session: AsyncSession,
     invoice_ids: list[int],
+    *,
+    tenant_id: uuid.UUID | int | None = None,
 ) -> dict[int, list[AuditLog]]:
     """Batch-load audit logs grouped by invoice id (newest first per invoice)."""
     if not invoice_ids:
         return {}
     from sqlalchemy import select
 
-    rows = (
-        await session.execute(
-            select(AuditLog)
-            .where(AuditLog.invoice_id.in_(invoice_ids))
-            .order_by(AuditLog.created_at.desc())
-        )
-    ).scalars().all()
+    from app.tenant_scoped import coerce_tenant_uuid
+
+    stmt = (
+        select(AuditLog)
+        .where(AuditLog.invoice_id.in_(invoice_ids))
+        .order_by(AuditLog.created_at.desc())
+    )
+    tid = coerce_tenant_uuid(tenant_id)
+    if tid is not None:
+        stmt = stmt.where(AuditLog.tenant_id == tid)
+    rows = (await session.execute(stmt)).scalars().all()
     grouped: dict[int, list[AuditLog]] = {invoice_id: [] for invoice_id in invoice_ids}
     for row in rows:
         if row.invoice_id is not None:

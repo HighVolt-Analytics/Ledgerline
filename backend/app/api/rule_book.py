@@ -22,6 +22,7 @@ from app.schemas.rule_book_config import (
 )
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.document_type_sample_analysis import DocumentTypeSampleProposal
+from app.schemas.recognition_signal_catalog import RecognitionSignalCatalogResponse
 from app.schemas.rule_book_evaluate import (
     RuleBookEvaluateRequest,
     RuleBookEvaluateResponse,
@@ -30,6 +31,7 @@ from app.services.document_type_sample_types import ParsedDocumentSample
 from app.services.document_type_sample_analyzer import (
     apply_sample_proposal_to_draft,
     compute_apply_ready,
+    effective_proposal_signal_ids,
     parse_document_samples,
 )
 from app.services.sample_proposal_engine import build_sample_proposal
@@ -39,6 +41,7 @@ from app.services.document_type_classify_preview import (
 )
 from app.services.master_data_service import attach_masters_to_config_dict
 from app.services.invoice_evaluation_service import load_config_for_tenant
+from app.services.recognition_signal_registry import catalog_payload
 from app.services.remap_service import remap_tenant_invoices_background
 from app.services.rule_book_config_io import load_rule_book_config_dict
 from app.services.rule_book_evaluate_service import evaluate_rule_book
@@ -98,6 +101,15 @@ async def get_rule_book_config(
 ) -> ApiEnvelope[dict[str, Any]]:
     """Return the rule book config for the current organisation."""
     return ApiEnvelope(data=await _load_rule_book_response_dict(db, ctx.tenant_id))
+
+
+@router.get("/recognition-signals", response_model=ApiEnvelope[RecognitionSignalCatalogResponse])
+async def get_recognition_signal_catalog(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[RecognitionSignalCatalogResponse]:
+    """Return the platform recognition signal registry for Rule Book UI."""
+    _ = ctx
+    return ApiEnvelope(data=RecognitionSignalCatalogResponse.model_validate(catalog_payload()))
 
 
 @router.put("/config", response_model=ApiEnvelope[dict[str, Any]])
@@ -323,7 +335,8 @@ async def analyze_document_type_samples_endpoint(
         catalogue = merge_draft_document_type(config.document_types, draft_type)
         preview_catalogue = catalogue
         proposed_draft = draft_type
-        if draft_type is not None and proposal.recognition_signals:
+        preview_signals = effective_proposal_signal_ids(proposal)
+        if draft_type is not None and preview_signals:
             proposed_draft = apply_sample_proposal_to_draft(
                 draft_type,
                 proposal,
@@ -336,7 +349,7 @@ async def analyze_document_type_samples_endpoint(
         expected = expected_document_type_code.strip() or (
             draft_type.code.strip() if draft_type else ""
         )
-        if proposed_draft is not None and proposal.recognition_signals and expected:
+        if proposed_draft is not None and preview_signals and expected:
             profile_signals_by_filename = {
                 row.filename: frozenset(row.recognition_signals)
                 for row in proposal.samples

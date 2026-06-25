@@ -32,12 +32,14 @@ from app.schemas.line_item import LineItemResponse
 from app.schemas.purchase import PurchaseDossierResponse
 from app.services.audit_service import audit_logs_for_invoices, log_event
 from app.services.file_storage import (
+    ensure_invoice_stored_file,
     has_stored_path,
     read_invoice_file,
+    repair_invoice_stored_path,
     store_invoice_pdf,
     stored_file_available,
 )
-from app.services.invoice_reset import reset_invoice_for_reprocess
+from app.services.approval_service import restore_rejected_invoice_file_if_needed
 from app.schemas.pipeline import PipelineStepsResponse
 from app.services.pipeline_stages import (
     build_pipeline_stages,
@@ -55,6 +57,7 @@ from app.services.field_extraction_confidence import compute_extraction_field_co
 from app.services.ingest_fanout_service import DuplicateUploadError, ingest_upload_file
 from app.services.purchase_dossier_service import build_purchase_dossier
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
+from app.tenant_scoped import get_for_tenant
 from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.workers.tasks import process_invoice_background, process_invoices_batch_background
 
@@ -84,10 +87,10 @@ async def _read_upload_file(file: UploadFile, *, max_bytes: int = _MAX_UPLOAD_BY
 
 
 async def _get_invoice_for_tenant(
-    db: AsyncSession, invoice_id: int, tenant_id: int
+    db: AsyncSession, invoice_id: int, tenant_id
 ) -> Invoice:
-    inv = await db.get(Invoice, invoice_id)
-    if not inv or inv.tenant_id != tenant_id:
+    inv = await get_for_tenant(db, Invoice, invoice_id, tenant_id)
+    if not inv:
         raise HTTPException(404, "Invoice not found")
     return inv
 
@@ -185,11 +188,12 @@ async def _responses_for_invoices(
     if not rows:
         return []
     invoice_ids = [row.id for row in rows]
+    tenant_id = rows[0].tenant_id
     if published_ids is None:
         from app.services.publish_service import published_invoice_ids
 
-        published_ids = await published_invoice_ids(db, invoice_ids)
-    audit_by_id = await audit_logs_for_invoices(db, invoice_ids)
+        published_ids = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
+    audit_by_id = await audit_logs_for_invoices(db, invoice_ids, tenant_id=tenant_id)
     return [
         _to_response(
             row,
@@ -203,13 +207,25 @@ async def _responses_for_invoices(
 async def _response_for_invoice(
     db: AsyncSession,
     inv: Invoice,
+    *,
+    verify_stored_file: bool = False,
     **kwargs,
 ) -> InvoiceResponse:
+    if verify_stored_file:
+        await repair_invoice_stored_path(db, inv)
+        if "has_stored_file" not in kwargs:
+            kwargs["has_stored_file"] = stored_file_available(
+                inv.raw_file_path,
+                tenant_id=inv.tenant_id,
+            )
     logs = list(
         (
             await db.execute(
                 select(AuditLog)
-                .where(AuditLog.invoice_id == inv.id)
+                .where(
+                    AuditLog.invoice_id == inv.id,
+                    AuditLog.tenant_id == inv.tenant_id,
+                )
                 .order_by(AuditLog.created_at.desc())
             )
         ).scalars().all()
@@ -318,6 +334,7 @@ async def get_invoice(
     base = await _response_for_invoice(
         db,
         inv,
+        verify_stored_file=True,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
     )
@@ -393,11 +410,10 @@ async def download_invoice_file(
 ) -> Response:
     """Download the stored invoice attachment (PDF, image, or DOCX)."""
     inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
-    if not stored_file_available(inv.raw_file_path, tenant_id=ctx.tenant_id):
-        raise HTTPException(
-            404,
-            "Invoice has no stored file. Upload a PDF via POST /api/invoices/{id}/attach.",
-        )
+    try:
+        await ensure_invoice_stored_file(db, inv)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
     try:
         data, media_type, filename = read_invoice_file(
@@ -472,14 +488,18 @@ async def process_invoices_batch(
     ordered = [invoice_id for invoice_id in unique_ids if invoice_id in found]
     settings = get_settings()
     if settings.sync_processing:
-        background_tasks.add_task(process_invoices_batch_background, ordered)
+        background_tasks.add_task(
+            process_invoices_batch_background, ordered, tenant_id=ctx.tenant_id
+        )
     else:
         try:
             from app.workers.tasks import process_inbox_task
 
             process_inbox_task.delay(tenant_id=ctx.tenant_id)
         except Exception:
-            background_tasks.add_task(process_invoices_batch_background, ordered)
+            background_tasks.add_task(
+                process_invoices_batch_background, ordered, tenant_id=ctx.tenant_id
+            )
     return ApiEnvelope(data={"queued": len(ordered), "status": "running"})
 
 
@@ -495,25 +515,33 @@ async def _queue_upload_processing(
     settings = get_settings()
     if len(invoice_ids) == 1:
         if settings.sync_processing:
-            background_tasks.add_task(process_invoice_background, invoice_ids[0])
+            background_tasks.add_task(
+                process_invoice_background, invoice_ids[0], tenant_id=tenant_id
+            )
         else:
             try:
                 from app.workers.tasks import process_inbox_task
 
                 process_inbox_task.delay(tenant_id=tenant_id)
             except Exception:
-                background_tasks.add_task(process_invoice_background, invoice_ids[0])
+                background_tasks.add_task(
+                    process_invoice_background, invoice_ids[0], tenant_id=tenant_id
+                )
         return
 
     if settings.sync_processing:
-        background_tasks.add_task(process_invoices_batch_background, invoice_ids)
+        background_tasks.add_task(
+            process_invoices_batch_background, invoice_ids, tenant_id=tenant_id
+        )
         return
     try:
         from app.workers.tasks import process_inbox_task
 
         process_inbox_task.delay(tenant_id=tenant_id)
     except Exception:
-        background_tasks.add_task(process_invoices_batch_background, invoice_ids)
+        background_tasks.add_task(
+            process_invoices_batch_background, invoice_ids, tenant_id=tenant_id
+        )
 
 
 @router.post("/upload", response_model=ApiEnvelope[InvoiceResponse])
@@ -612,6 +640,16 @@ async def attach_invoice_file(
     tenant_slug = org.slug if org else "default"
     tenant_name = org.name if org else None
     vendor_slug = inv.storage_vendor_slug or UNKNOWN_SLUG
+    from app.services.invoice_evaluation_service import load_config_for_tenant
+    from app.services.vault_invoice_paths import (
+        vault_document_type_folder_for_invoice,
+        vault_document_type_titles_for_invoice,
+    )
+
+    config = await load_config_for_tenant(db, ctx.tenant_id)
+    doc_types = list(config.document_types)
+    short_title, title = vault_document_type_titles_for_invoice(inv, doc_types)
+    dt_folder = vault_document_type_folder_for_invoice(inv, doc_types)
     stored = store_invoice_pdf(
         data,
         ctx.tenant_id,
@@ -627,6 +665,10 @@ async def attach_invoice_file(
         route_target=inv.route_target,
         po_reference=inv.po_reference,
         purchase_document_type=inv.purchase_document_type,
+        document_type_code=inv.document_type_code,
+        document_type_short_title=short_title,
+        document_type_title=title,
+        document_type_folder=dt_folder,
     )
     inv.raw_file_path = stored
     inv.file_hash = file_hash
@@ -647,6 +689,7 @@ _REPROCESSABLE = frozenset(
         InvoiceStatus.EXCEPTION,
         InvoiceStatus.DUPLICATE_SKIPPED,
         InvoiceStatus.PROCESSED,
+        InvoiceStatus.REJECTED,
     }
 )
 
@@ -664,16 +707,17 @@ async def reprocess_invoice(
     Resets status to pending and clears extracted fields, then runs the pipeline.
     """
     inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
-    if not stored_file_available(inv.raw_file_path, tenant_id=ctx.tenant_id):
-        raise HTTPException(
-            400,
-            "Invoice has no stored file. Upload via POST /api/invoices/{id}/attach first.",
-        )
     if inv.status not in _REPROCESSABLE:
         raise HTTPException(
             400,
             f"Cannot reprocess invoice in status '{inv.status.value}'",
         )
+    try:
+        await repair_invoice_stored_path(db, inv)
+        await restore_rejected_invoice_file_if_needed(db, inv)
+        await ensure_invoice_stored_file(db, inv)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     previous_status = inv.status.value
     await reset_invoice_for_reprocess(db, inv)
@@ -683,8 +727,10 @@ async def reprocess_invoice(
         invoice_id=inv.id,
         detail={"previous_status": previous_status},
     )
-    background_tasks.add_task(process_invoice_background, inv.id)
-    return ApiEnvelope(data=await _response_for_invoice(db, inv))
+    background_tasks.add_task(process_invoice_background, inv.id, tenant_id=ctx.tenant_id)
+    return ApiEnvelope(
+        data=await _response_for_invoice(db, inv, verify_stored_file=True),
+    )
 
 
 @router.get("/{invoice_id}/pipeline", response_model=ApiEnvelope[PipelineStepsResponse])
@@ -698,7 +744,10 @@ async def invoice_pipeline(
     logs = (
         await db.execute(
             select(AuditLog)
-            .where(AuditLog.invoice_id == invoice_id)
+            .where(
+                AuditLog.invoice_id == invoice_id,
+                AuditLog.tenant_id == ctx.tenant_id,
+            )
             .order_by(AuditLog.created_at.desc())
         )
     ).scalars().all()
@@ -719,6 +768,7 @@ async def invoice_classification_audit(
             select(AuditLog)
             .where(
                 AuditLog.invoice_id == invoice_id,
+                AuditLog.tenant_id == ctx.tenant_id,
                 AuditLog.event == "document_classified",
             )
             .order_by(AuditLog.created_at.desc())

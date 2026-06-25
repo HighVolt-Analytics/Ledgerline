@@ -285,16 +285,27 @@ def heading_alignment_score(
     Uses org card metadata when available; neutral when unknown.
     """
     _ = document_type_code
-    expected = _expected_heading_kinds(definition)
     body = (document_text or "").lower()
 
-    if signals.primary_kind is None:
+    kind = signals.primary_kind
+    if kind is None and document_text.strip():
+        kind = infer_page_document_kind(document_text)
+
+    if kind is None:
         return 0.55
 
+    if definition is not None:
+        from app.services.segment_heading_classification import score_document_type_for_heading
+
+        metadata_score = score_document_type_for_heading(definition, kind)
+        if metadata_score > 0:
+            return metadata_score
+
+    expected = _expected_heading_kinds(definition)
     if expected is None:
         return 0.55
 
-    if signals.primary_kind in expected:
+    if kind in expected:
         return 1.0
 
     role = (definition.purchase_bundle_role or "").strip().lower() if definition else ""
@@ -303,7 +314,7 @@ def heading_alignment_score(
     if role == "grn" and signals.has_heading_invoice:
         return 0.35
 
-    if frozenset({"invoice", "tax_invoice"}) & expected and signals.primary_kind == "purchase_order":
+    if frozenset({"invoice", "tax_invoice"}) & expected and kind == "purchase_order":
         return 0.25
 
     if frozenset({"contract"}) & expected and signals.has_heading_invoice:

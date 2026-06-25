@@ -16,7 +16,7 @@ from sqlalchemy import JSON
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
-from app.database import Base, get_db
+from app.database import Base, get_db, get_preauth_db
 from app.main import app
 
 get_settings.cache_clear()
@@ -107,7 +107,12 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield db_session
         await db_session.commit()
 
+    async def override_get_preauth_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+        await db_session.commit()
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_preauth_db] = override_get_preauth_db
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
