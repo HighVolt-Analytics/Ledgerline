@@ -6,7 +6,7 @@ export const MATRIX_STAGES = [
   "Validated",
   "Mapped",
   "Approved",
-  "Published",
+  "Posted",
 ] as const;
 
 export type MatrixStage = (typeof MATRIX_STAGES)[number];
@@ -24,7 +24,7 @@ const STAGE_ACTORS: Record<MatrixStage, string> = {
   Validated: "Validator",
   Mapped: "Rule engine",
   Approved: "Approver",
-  Published: "Ledger",
+  Posted: "Ledger",
 };
 
 export function invoiceRoutedToSuspense(inv: Invoice): boolean {
@@ -102,7 +102,7 @@ export function buildMatrixCells(inv: Invoice): Record<MatrixStage, MatrixCell> 
       cells.Mapped = { state: "fail", ts: "—", actor: "—" };
     }
     cells.Approved = { state: "pending", ts: "—", actor: "—" };
-    cells.Published = { state: "pending", ts: "—", actor: "—" };
+    cells.Posted = { state: "pending", ts: "—", actor: "—" };
     return cells;
   }
 
@@ -126,7 +126,7 @@ export function enrichMatrixCells(
   for (const stage of MATRIX_STAGES) {
     const base = cells[stage];
     const actor =
-      stage === "Published"
+      stage === "Posted"
         ? "Ledger sync"
         : stage === "Approved" && rowIndex % 3 === 0 && base.state === "done"
           ? "Marcus Webb"
@@ -152,9 +152,9 @@ export function enrichMatrixCells(
       ts: enriched.Approved.ts,
       actor: "Marcus Webb",
     };
-    enriched.Published = {
+    enriched.Posted = {
       state: "done",
-      ts: enriched.Published.ts,
+      ts: enriched.Posted.ts,
       actor: "Ledger sync",
     };
   }

@@ -8,16 +8,24 @@ from collections.abc import Sequence
 
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.rule_book_config import DocumentClassificationConfig
+from typing import Any
+
 from app.services.document_type_classifier import (
+    CONFIG_RULE_STRENGTH,
     DocumentTypeClassification,
     classify_document_type,
     classification_audit_detail,
     rank_document_type_candidates,
 )
 from app.services.document_type_conflicts import detect_signal_conflicts
-from app.services.document_type_rule_engine import build_document_classifier_context
+from app.services.document_type_rule_engine import (
+    _document_field,
+    build_document_classifier_context,
+)
 from app.services.document_type_sample_analyzer import ParsedDocumentSample, _parse_sample
+from app.services.document_type_scoring_service import score_document_type_definition
 from app.services.invoice_data import ParseConfidence
+from app.services.rule_engine import eval_condition_group_generic
 
 
 @dataclass(frozen=True)
@@ -72,6 +80,122 @@ def _candidate_from_classification(
         needs_review=result.needs_review,
         priority=priority,
     )
+
+
+def _eval_classifier_root(root: dict[str, Any], ctx: object) -> bool:
+    return eval_condition_group_generic(
+        root,
+        field_resolver=lambda field, _ctx=ctx: _document_field(_ctx, field),
+    )
+
+
+def _supporting_doc_identity_subtree(root: dict[str, Any]) -> dict[str, Any] | None:
+    """First child of supporting_doc AND tree (identity OR-group before invoice guards)."""
+    if root.get("operator") != "AND":
+        return None
+    children = root.get("children") or []
+    if len(children) < 3:
+        return None
+    identity = children[0]
+    return identity if isinstance(identity, dict) else None
+
+
+def proposed_classifier_matches_sample(
+    proposed_draft: DocumentTypeDefinition,
+    sample: ParsedDocumentSample,
+) -> bool:
+    """True when the sample satisfies the proposed draft classifier (identity-only for supporting_doc)."""
+    classifier = proposed_draft.classifier
+    if not classifier.enabled:
+        return False
+    ctx = build_document_classifier_context(invoice=sample.invoice, parsed=sample.parsed)
+    root = classifier.root
+    if _eval_classifier_root(root, ctx):
+        return True
+    identity = _supporting_doc_identity_subtree(root)
+    if identity is not None:
+        return _eval_classifier_root(identity, ctx)
+    return False
+
+
+def classify_parsed_sample_for_proposal_preview(
+    sample: ParsedDocumentSample,
+    *,
+    document_types: Sequence[DocumentTypeDefinition],
+    proposed_draft: DocumentTypeDefinition,
+    unclassified: DocumentClassificationConfig | None = None,
+    expected_code: str | None = None,
+) -> ClassifyPreviewResult:
+    """Catalogue preview for sample analysis: gate Apply on proposed classifier, not catalogue winner."""
+    base = classify_parsed_sample_against_catalog(
+        sample,
+        document_types=document_types,
+        unclassified=unclassified,
+        expected_code=expected_code,
+    )
+    expected = (expected_code or "").strip().upper()
+    if not expected:
+        return base
+
+    proposed_match = proposed_classifier_matches_sample(proposed_draft, sample)
+    if not proposed_match:
+        return ClassifyPreviewResult(
+            filename=base.filename,
+            routed_code=base.routed_code,
+            routed_confidence=base.routed_confidence,
+            needs_review=base.needs_review,
+            reason=base.reason,
+            conflicts=base.conflicts,
+            alternatives=base.alternatives,
+            matches_expected=False,
+        )
+
+    parse_confidence = _parse_confidence(sample.confidence)
+    ctx = build_document_classifier_context(invoice=sample.invoice, parsed=sample.parsed)
+    breakdown = score_document_type_definition(
+        proposed_draft,
+        invoice=sample.invoice,
+        parsed=sample.parsed,
+        rule_strength=CONFIG_RULE_STRENGTH,
+        parse_confidence=parse_confidence,
+        ctx=ctx,
+    )
+    min_conf = proposed_draft.min_route_confidence or 0.65
+    return ClassifyPreviewResult(
+        filename=base.filename,
+        routed_code=expected,
+        routed_confidence=breakdown.confidence,
+        needs_review=breakdown.confidence < min_conf,
+        reason="Proposed classifier matches sample",
+        conflicts=base.conflicts,
+        alternatives=base.alternatives,
+        matches_expected=True,
+    )
+
+
+def classify_parsed_samples_for_proposal_preview(
+    parsed_samples: Sequence[ParsedDocumentSample],
+    *,
+    document_types: Sequence[DocumentTypeDefinition],
+    proposed_draft: DocumentTypeDefinition,
+    unclassified: DocumentClassificationConfig | None = None,
+    expected_code: str | None = None,
+) -> list[ClassifyPreviewResult]:
+    results: list[ClassifyPreviewResult] = []
+    for sample in parsed_samples:
+        try:
+            results.append(
+                classify_parsed_sample_for_proposal_preview(
+                    sample,
+                    document_types=document_types,
+                    proposed_draft=proposed_draft,
+                    unclassified=unclassified,
+                    expected_code=expected_code,
+                )
+            )
+        except Exception:
+            continue
+    return results
 
 
 def classify_parsed_sample_against_catalog(

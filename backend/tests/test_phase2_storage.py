@@ -117,10 +117,16 @@ async def test_resolve_vendor_slug_unknown(db_session: AsyncSession) -> None:
     assert slug == UNKNOWN_SLUG
 
 
+from app.tenant_ids import TESTING_TENANT_UUID
+
+_TID = TESTING_TENANT_UUID
+
+
 def test_build_blob_name() -> None:
     from datetime import date
 
     name = blob_storage.build_blob_name(
+        _TID,
         "hv-org",
         "atlassian",
         42,
@@ -132,15 +138,18 @@ def test_build_blob_name() -> None:
         invoice_date=date(2026, 5, 4),
         route_target="Expenses Management",
     )
+    from app.services.tenant_storage_paths import tenant_root
+
+    prefix = f"{tenant_root(_TID)}/"
     assert (
         name
-        == "invoice/HvOrg/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04_id42.pdf"
+        == f"{prefix}invoice/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04_id42.pdf"
     )
 
 
 def test_stored_uri_roundtrip() -> None:
     uri = blob_storage.to_stored_uri(
-        "invoice/HvOrg/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04_id42.pdf"
+        "invoice/Expenses Management/Atlassian Pty Ltd/2026/May/INV-042_2026-05-04_id42.pdf"
     )
     parsed = blob_storage.parse_stored_uri(uri)
     assert parsed is not None

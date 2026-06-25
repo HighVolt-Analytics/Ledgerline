@@ -116,7 +116,7 @@ async def publish_invoice_to_ledger(
     """
     if invoice.status != InvoiceStatus.PROCESSED:
         raise ValueError(
-            f"Only processed invoices can be published (current: {invoice.status.value})"
+            f"Only processed invoices can be posted (current: {invoice.status.value})"
         )
     if await is_published_to_ledger(session, invoice.id):
         return False
@@ -129,7 +129,7 @@ async def publish_invoice_to_ledger(
         )
     ).scalar() or 0
     if journal_count == 0:
-        raise ValueError("No journal entries to publish")
+        raise ValueError("No journal entries to post")
 
     if not invoice.invoice_date:
         if auto:
@@ -145,7 +145,7 @@ async def publish_invoice_to_ledger(
                 actor_email=actor_email,
             )
             return False
-        raise ValueError("Invoice date is required before publishing to ledger")
+        raise ValueError("Invoice date is required before posting to ledger")
 
     credits_charged = _deduct_publish_credits(
         invoice.tenant_id,

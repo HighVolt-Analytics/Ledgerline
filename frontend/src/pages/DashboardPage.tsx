@@ -81,10 +81,10 @@ function mailboxNickname(email: string, displayName: string | null): string {
 function activityLabel(
   event: string,
   vendor: string | null,
-  invoiceId: number | null,
+  documentRef: string | null,
   summary?: string | null
 ): string {
-  const id = invoiceId != null ? `INV-${String(invoiceId).padStart(3, "0")}` : "System";
+  const id = documentRef?.trim() || "System";
   const who = vendor ?? "Unknown vendor";
   let label = `${id} · ${who}`;
 
@@ -104,7 +104,7 @@ function activityLabel(
     return `${label} validation failed`;
   }
   if (event.includes("processed")) {
-    return `${label} published to ledger`;
+    return `${label} posted to ledger`;
   }
   if (event.includes("approved")) {
     return `${label} approved for reprocessing`;
@@ -371,7 +371,12 @@ export function DashboardPage() {
   const activityFeed = activity.slice(0, 10).map((a) => ({
     id: String(a.id),
     invoiceId: a.invoice_id,
-    label: activityLabel(a.event, a.vendor, a.invoice_id, a.summary),
+    label: activityLabel(
+      a.event,
+      a.vendor,
+      a.document_ref ?? (a.invoice_id != null ? `DOC-${a.invoice_id}` : null),
+      a.summary
+    ),
     time: relativePollTime(a.created_at),
   }));
 

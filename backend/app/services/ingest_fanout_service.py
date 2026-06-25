@@ -67,6 +67,7 @@ async def _create_invoice_from_bytes(
 
     stored = store_invoice_pdf(
         data,
+        tenant_id,
         tenant_slug,
         UNKNOWN_SLUG,
         inv.id,

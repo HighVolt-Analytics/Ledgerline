@@ -1,0 +1,141 @@
+"""Vendor registration policy — route, document type, and VR12 driven."""
+
+from decimal import Decimal
+
+from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
+from app.services.document_type_catalog import ROUTE_PURCHASE, ROUTE_VAULT
+from app.services.document_type_validation_service import PROFILE_NON_ACTIONABLE
+from app.services.expense_vendor_policy import vendor_detection_evaluation_status
+from app.services.invoice_evaluation_service import (
+    EVAL_NEEDS_REVIEW,
+    EVAL_PENDING_VENDOR,
+    evaluate_invoice_routing,
+)
+from app.services.vendor_registration_policy import (
+    vendor_master_check_enabled,
+    vendor_registration_required,
+)
+
+
+def _contract_type() -> DocumentTypeDefinition:
+    return DocumentTypeDefinition(
+        code="DT-CON",
+        title="Contract",
+        shortTitle="Contract",
+        klass="Supporting",
+        posting="No",
+        fraudRisk="low",
+        oneLine="Supporting contract",
+        routeTarget=ROUTE_VAULT,
+        validation_profile="non_actionable",
+        playbook_profile="supporting",
+        classifier=DocumentTypeClassifier(enabled=True, priority=5, confidence=0.85),
+    )
+
+
+def test_vendor_master_check_disabled_for_non_actionable() -> None:
+    assert vendor_master_check_enabled(_contract_type()) is False
+
+
+def test_vendor_registration_not_required_for_vault_contract() -> None:
+    definition = _contract_type()
+    assert (
+        vendor_registration_required(
+            route_target=ROUTE_VAULT,
+            document_type=definition,
+        )
+        is False
+    )
+
+
+def test_vendor_registration_required_for_purchase_when_vr12_on() -> None:
+    from app.schemas.validation_rule import ValidationRuleConfig
+
+    definition = DocumentTypeDefinition(
+        code="DT-INV",
+        title="Invoice",
+        shortTitle="Invoice",
+        klass="Transactional",
+        posting="Yes",
+        fraudRisk="medium",
+        oneLine="Tax invoice",
+        routeTarget=ROUTE_PURCHASE,
+        validation_rules=[
+            ValidationRuleConfig(code="VR12", enabled=True, severity="block"),
+        ],
+        classifier=DocumentTypeClassifier(enabled=True, priority=10, confidence=0.85),
+    )
+    assert (
+        vendor_registration_required(
+            route_target=ROUTE_PURCHASE,
+            document_type=definition,
+        )
+        is True
+    )
+
+
+def test_vendor_registration_not_required_when_vr12_disabled() -> None:
+    from app.schemas.validation_rule import ValidationRuleConfig
+
+    definition = DocumentTypeDefinition(
+        code="DT-INV",
+        title="Invoice",
+        shortTitle="Invoice",
+        klass="Transactional",
+        posting="Yes",
+        fraudRisk="medium",
+        oneLine="Tax invoice",
+        routeTarget=ROUTE_PURCHASE,
+        validation_rules=[
+            ValidationRuleConfig(code="VR12", enabled=False, severity="block"),
+            ValidationRuleConfig(code="VR03", enabled=True, severity="block"),
+        ],
+        classifier=DocumentTypeClassifier(enabled=True, priority=10, confidence=0.85),
+    )
+    assert (
+        vendor_registration_required(
+            route_target=ROUTE_PURCHASE,
+            document_type=definition,
+        )
+        is False
+    )
+
+
+def test_vendor_detection_skipped_when_registration_not_required() -> None:
+    assert (
+        vendor_detection_evaluation_status(
+            route_target=ROUTE_VAULT,
+            confidence=0,
+            threshold=70,
+            known_master=None,
+            amount=1000,
+            hold_above=500,
+            registration_required=False,
+        )
+        is None
+    )
+
+
+def test_evaluate_routing_vault_contract_needs_review_not_pending_vendor(
+    capture_config,
+) -> None:
+    from app.models.invoice import Invoice
+
+    contract = _contract_type()
+    config = capture_config.model_copy(
+        update={"document_types": [*capture_config.document_types, contract]}
+    )
+    inv = Invoice(
+        tenant_id=1,
+        vendor="Permagen Pty Ltd",
+        invoice_no="CON-001",
+        total=Decimal("4000"),
+        route_target=ROUTE_VAULT,
+        document_type_code="DT-CON",
+        document_type_confidence=0.9,
+        vendor_confidence=0.0,
+        currency="AUD",
+    )
+    result = evaluate_invoice_routing(inv, config, route_override=ROUTE_VAULT)
+    assert result.evaluation_status != EVAL_PENDING_VENDOR
+    assert result.evaluation_status in {EVAL_NEEDS_REVIEW, "auto_coded"}

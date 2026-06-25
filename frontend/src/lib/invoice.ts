@@ -123,6 +123,28 @@ export function evaluationStatusLabel(
   return "—";
 }
 
+/** Short hint for inbox Evaluation column tooltips. */
+export function evaluationStatusDescription(
+  status: Invoice["evaluation_status"]
+): string {
+  if (status === "auto_coded") {
+    return "Route and coding rules matched — no manual routing step needed.";
+  }
+  if (status === "needs_review") {
+    return "Document type, route, or GL mapping needs a human check before posting.";
+  }
+  if (status === "pending_vendor") {
+    return "Vendor is not in master (VR12 on) — register in Vendors before processing.";
+  }
+  if (status === "unmatched_expense_vendor") {
+    return "Small expense from an unknown vendor — advisory only, not held.";
+  }
+  if (status === "awaiting_po") {
+    return "Purchase invoice is waiting for a PO link.";
+  }
+  return "Not evaluated yet — still parsing or mapping.";
+}
+
 export function routeTargetShortLabel(route: string | null | undefined): string {
   if (!route) return "—";
   if (route === "Purchase Management") return "Purchase";
@@ -136,7 +158,7 @@ export function invoiceFailedValidations(inv: Invoice) {
   return (inv.validation_results ?? []).filter((r) => !r.skipped && !r.passed);
 }
 
-/** Processed invoices with journal lines that can be published to the workbook. */
+/** Processed invoices with journal lines that can be posted to the workbook. */
 export function invoiceCanPublishToLedger(inv: Invoice): boolean {
   if (inv.status !== "processed") return false;
   if (inv.published_to_ledger) return false;

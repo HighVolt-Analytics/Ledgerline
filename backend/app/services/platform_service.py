@@ -42,9 +42,9 @@ from app.schemas.platform import (
     PlatformTenantSummary,
     UpdatePlatformTenantRequest,
 )
+from app.services.tenant_module_service import ensure_module_rows, validate_module_keys
+from app.tenant_modules import CATALOG_BY_KEY, TOGGLEABLE_MODULE_KEYS
 from app.tenant_roles import TenantRole
-
-_DEFAULT_MODULES = ("purchase", "expenses", "team_expenses", "vault", "rule_book")
 
 
 def _utc_now() -> datetime:
@@ -146,6 +146,8 @@ async def get_client_tenant(
     if not tenant or tenant.is_platform:
         return None
 
+    await ensure_module_rows(session, tenant_id)
+
     user_count, invoice_count, pending_invite_count = await _tenant_counts(session, tenant.id)
     summary = _to_summary(
         tenant,
@@ -162,7 +164,7 @@ async def get_client_tenant(
 
 
 async def _seed_modules(session: AsyncSession, tenant_id: uuid.UUID) -> None:
-    for key in _DEFAULT_MODULES:
+    for key in TOGGLEABLE_MODULE_KEYS:
         existing = (
             await session.execute(
                 select(TenantModule).where(
@@ -173,7 +175,14 @@ async def _seed_modules(session: AsyncSession, tenant_id: uuid.UUID) -> None:
         ).scalar_one_or_none()
         if existing:
             continue
-        session.add(TenantModule(tenant_id=tenant_id, module_key=key, is_active=True))
+        mod = CATALOG_BY_KEY[key]
+        session.add(
+            TenantModule(
+                tenant_id=tenant_id,
+                module_key=key,
+                is_active=mod.default_active,
+            )
+        )
     await session.flush()
 
 
@@ -319,6 +328,7 @@ async def update_client_tenant(
         tenant.settings_json = body.settings_json
 
     if body.modules is not None:
+        validate_module_keys([mod.module_key for mod in body.modules])
         for mod in body.modules:
             row = (
                 await session.execute(

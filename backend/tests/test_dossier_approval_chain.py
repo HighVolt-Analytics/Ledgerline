@@ -25,7 +25,7 @@ def test_human_policy_ref_hides_internal_slugs() -> None:
     assert _human_policy_ref("DOA-01") == "Buyer authority"
     assert _human_policy_ref("touchless_on_clean_match") is None
     assert _human_policy_ref("invoice_approved") is None
-    assert _human_policy_ref("Publish") is None
+    assert _human_policy_ref("Post") is None
 
 
 @pytest.mark.asyncio
@@ -68,7 +68,7 @@ async def test_approval_chain_uses_plain_language(db_session: AsyncSession) -> N
     assert queue.policy_ref is None
 
     publish = next(step for step in chain.steps if step.id == "publish")
-    assert publish.detail == "Waiting to publish"
+    assert publish.detail == "Waiting to post"
     assert publish.policy_ref is None
 
     assert "invoice_approved" not in str(chain.model_dump())

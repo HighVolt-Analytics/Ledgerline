@@ -1,43 +1,58 @@
 import type { Invoice } from "@/api/types";
-import { invId } from "@/lib/format";
-import { invoiceFailedValidations } from "@/lib/invoice";
-import { invoiceRoutedToSuspense } from "@/lib/matrix";
 import { cn } from "@/lib/cn";
 
-/** v4 kanban column per demo document (`xA` in v4 bundle). */
-const V4_INBOX_KANBAN: Record<string, "pending" | "awaiting" | "approved" | "rejected"> = {
-  "INV-001": "approved",
-  "INV-002": "pending",
-  "INV-003": "awaiting",
-  "INV-004": "awaiting",
-  "INV-005": "approved",
-  "INV-006": "pending",
-  "INV-007": "pending",
-  "INV-008": "awaiting",
-  "INV-009": "rejected",
-  "INV-010": "pending",
+export type PipelineStageState = "done" | "pending" | "fail" | "skipped";
+
+const stylesByState: Record<PipelineStageState, string> = {
+  done: "bg-primary/15 text-primary",
+  pending: "bg-[hsl(43_74%_49%/0.18)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]",
+  fail: "bg-destructive/15 text-destructive",
+  skipped: "bg-muted text-muted-foreground",
 };
 
-const styles: Record<string, string> = {
+const stylesByStage: Record<string, string> = {
   Received: "bg-muted text-muted-foreground",
   Parsed: "bg-[hsl(var(--chart-3)/0.15)] text-[hsl(var(--chart-3))]",
   Validated: "bg-[hsl(var(--chart-3)/0.15)] text-[hsl(var(--chart-3))]",
   Mapped: "bg-accent text-accent-foreground",
-  "Awaiting Approval": "bg-[hsl(43_74%_49%/0.18)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]",
   Approved: "bg-primary/15 text-primary",
   Processed: "bg-primary/15 text-primary",
-  Published: "bg-primary text-primary-foreground",
+  Posted: "bg-primary text-primary-foreground",
   Rejected: "bg-destructive/15 text-destructive",
-  Suspense: "bg-destructive/15 text-destructive",
-  Exception: "bg-destructive/15 text-destructive",
+  Duplicate: "bg-destructive/15 text-destructive",
 };
 
-export function StageBadge({ stage }: { stage: string }) {
+export function invoiceCurrentStage(inv: Pick<Invoice, "current_stage">): string {
+  return inv.current_stage?.trim() || "Received";
+}
+
+export function invoiceCurrentStageState(
+  inv: Pick<Invoice, "current_stage_state">
+): PipelineStageState {
+  const state = inv.current_stage_state;
+  if (state === "done" || state === "pending" || state === "fail" || state === "skipped") {
+    return state;
+  }
+  return "pending";
+}
+
+export function StageBadge({
+  stage,
+  state,
+}: {
+  stage: string;
+  state?: PipelineStageState;
+}) {
+  const className =
+    (state && stylesByState[state]) ||
+    stylesByStage[stage] ||
+    "bg-muted text-muted-foreground";
+
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap",
-        styles[stage] ?? "bg-muted text-muted-foreground"
+        className
       )}
     >
       {stage}
@@ -45,38 +60,30 @@ export function StageBadge({ stage }: { stage: string }) {
   );
 }
 
-export function invoiceStage(status: string, inv?: Pick<Invoice, "account_name" | "status" | "published_to_ledger">): string {
+/** Status-only fallback when pipeline fields are unavailable (legacy lists). */
+export function invoiceStage(
+  status: string,
+  inv?: Pick<Invoice, "published_to_ledger">
+): string {
   const s = status.toLowerCase();
-  if (s === "processed") return inv?.published_to_ledger ? "Published" : "Processed";
-  if (s === "exception") {
-    if (inv && invoiceRoutedToSuspense(inv as Invoice)) return "Suspense";
-    return "Exception";
-  }
-  if (s === "duplicate_skipped") return "Rejected";
+  if (s === "processed") return inv?.published_to_ledger ? "Posted" : "Processed";
+  if (s === "duplicate_skipped") return "Duplicate";
   if (s === "rejected") return "Rejected";
   if (["parsing", "validating"].includes(s)) return "Parsed";
   if (["mapping", "journaling", "reconciling"].includes(s)) return "Mapped";
+  if (s === "exception") return "Validated";
   if (s === "pending") return "Received";
   return "Received";
 }
 
-/** Inbox table stage — matches v4 `M()` / `pde`. */
-export function inboxStage(inv: Invoice): string {
-  if (inv.status === "processed") return inv.published_to_ledger ? "Published" : "Processed";
-
-  const kanban = V4_INBOX_KANBAN[invId(inv.id)];
-  if (kanban === "approved") return "Approved";
-  if (kanban === "rejected") return "Rejected";
-  if (kanban === "awaiting") return "Awaiting Approval";
-
-  if (invoiceRoutedToSuspense(inv)) return "Suspense";
-  if (inv.status === "exception") {
-    if (inv.evaluation_status === "needs_review") return "Awaiting Approval";
-    if (invoiceFailedValidations(inv).length > 0) return "Exception";
-    return "Exception";
+export function invoiceStageBadgeProps(
+  inv: Pick<Invoice, "status" | "current_stage" | "current_stage_state" | "published_to_ledger">
+): { stage: string; state?: PipelineStageState } {
+  if (inv.current_stage) {
+    return {
+      stage: invoiceCurrentStage(inv),
+      state: invoiceCurrentStageState(inv),
+    };
   }
-  if (inv.status === "duplicate_skipped" || inv.status === "rejected") return "Rejected";
-  if (inv.status === "journaling" || inv.status === "reconciling") return "Awaiting Approval";
-
-  return "Mapped";
+  return { stage: invoiceStage(inv.status, inv) };
 }

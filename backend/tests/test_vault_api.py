@@ -53,8 +53,10 @@ async def test_vault_tree_uses_hv_org_folder(
     res = await client.get("/api/vault/tree")
     assert res.status_code == 200
     data = res.json()["data"]
+    virtual_path = data["files"][0]["virtual_path"]
     assert data["tree"][0]["label"] == "HvOrg"
-    assert data["files"][0]["virtual_path"].startswith("invoice/HvOrg/Purchase Management/")
+    assert "/invoice/Purchase Management/" in virtual_path
+    assert "/invoice/HvOrg/" not in virtual_path
 
 
 @pytest.mark.asyncio

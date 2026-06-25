@@ -58,3 +58,5 @@ class DocumentTypeSampleProposal(BaseModel):
     min_route_confidence: float = 0.65
     samples: list[DocumentTypeSampleFileResult] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    apply_ready: bool = False
+    apply_block_reason: str | None = None

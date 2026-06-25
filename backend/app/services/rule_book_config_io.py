@@ -120,6 +120,10 @@ async def save_rule_book_config(
     data.pop("vendor_masters", None)
     data.pop("employee_masters", None)
     strip_email_capture_volatile_stats(data)
+    from app.services.document_type_lifecycle import scrub_document_type_references
+
+    scrubbed = scrub_document_type_references(validate_rule_book_config_payload(data))
+    data = scrubbed.model_dump()
     await upsert_config(
         session,
         tid,

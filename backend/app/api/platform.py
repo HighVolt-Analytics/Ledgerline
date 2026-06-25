@@ -203,7 +203,10 @@ async def update_tenant(
     db: AsyncSession = Depends(get_db),
     _ctx: AuthContext = Depends(require_super_admin),
 ) -> ApiEnvelope[PlatformTenantDetail]:
-    tenant = await update_client_tenant(db, tenant_id=tenant_id, body=body)
+    try:
+        tenant = await update_client_tenant(db, tenant_id=tenant_id, body=body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if not tenant:
         raise HTTPException(404, "Tenant not found")
     return ApiEnvelope(data=tenant)

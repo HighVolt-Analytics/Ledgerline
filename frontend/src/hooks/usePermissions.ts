@@ -49,7 +49,7 @@ export function canAccessNavPath(
     return (
       permissions.permissions.Comment === true ||
       permissions.permissions.Approve === true ||
-      permissions.permissions.Publish === true
+      permissions.permissions.Post === true
     );
   }
   return permissions.permissions.View !== false;

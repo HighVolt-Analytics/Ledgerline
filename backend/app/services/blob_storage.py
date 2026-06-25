@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date
 
 from app.config import get_settings
 from app.services import vault_paths
+from app.services.tenant_storage_paths import (
+    is_legacy_blob_path,
+    legacy_to_tenant_path,
+    tenant_root,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,6 +40,7 @@ def _ensure_container() -> None:
 
 
 def build_blob_name(
+    tenant_id: uuid.UUID,
     tenant_slug: str,
     vendor_slug: str,
     invoice_id: int,
@@ -53,9 +60,10 @@ def build_blob_name(
     document_type_folder: str | None = None,
     day=None,
 ) -> str:
-    """Build vault blob path: invoice/{org}/{book}/[{dt}/]{vendor}/{year}/{month}/{file}."""
+    """Build tenant-scoped vault blob path."""
     _ = (file_hash, day)
     return vault_paths.build_vault_blob_name(
+        tenant_id,
         tenant_slug,
         tenant_name=tenant_name,
         route_target=route_target,
@@ -100,33 +108,43 @@ def upload_bytes(blob_name: str, data: bytes) -> str:
     return uri
 
 
-def blob_exists(stored: str) -> bool:
-    parsed = parse_stored_uri(stored)
-    if parsed is None:
-        return False
-    container, blob_name = parsed
+def blob_exists_for_name(blob_name: str) -> bool:
     try:
+        settings = get_settings()
         client = _service_client()
-        blob = client.get_blob_client(container, blob_name)
+        blob = client.get_blob_client(settings.azure_storage_container, blob_name)
         blob.get_blob_properties()
         return True
     except Exception:
         return False
 
 
-def download_bytes(stored: str) -> bytes:
+def blob_exists(stored: str) -> bool:
     parsed = parse_stored_uri(stored)
     if parsed is None:
-        raise FileNotFoundError(stored)
-    container, blob_name = parsed
+        return False
+    _, blob_name = parsed
+    return blob_exists_for_name(blob_name)
+
+
+def download_bytes_for_name(blob_name: str) -> bytes:
+    settings = get_settings()
     client = _service_client()
-    blob = client.get_blob_client(container, blob_name)
+    blob = client.get_blob_client(settings.azure_storage_container, blob_name)
     try:
         return blob.download_blob().readall()
     except Exception as exc:
         if "BlobNotFound" in str(exc) or exc.__class__.__name__ == "ResourceNotFoundError":
-            raise FileNotFoundError(stored) from exc
+            raise FileNotFoundError(blob_name) from exc
         raise
+
+
+def download_bytes(stored: str) -> bytes:
+    parsed = parse_stored_uri(stored)
+    if parsed is None:
+        raise FileNotFoundError(stored)
+    _, blob_name = parsed
+    return download_bytes_for_name(blob_name)
 
 
 def delete_blob(stored: str) -> bool:
@@ -134,10 +152,11 @@ def delete_blob(stored: str) -> bool:
     parsed = parse_stored_uri(stored)
     if parsed is None:
         return False
-    container, blob_name = parsed
+    _, blob_name = parsed
     try:
+        settings = get_settings()
         client = _service_client()
-        blob = client.get_blob_client(container, blob_name)
+        blob = client.get_blob_client(settings.azure_storage_container, blob_name)
         blob.delete_blob()
         logger.info("blob_deleted", blob_name=blob_name)
         return True
@@ -154,38 +173,72 @@ def _blob_name_matches_invoice(blob_name: str, invoice_id: int) -> bool:
     marker = _invoice_blob_marker(invoice_id)
     if filename.startswith(f"{marker}_") or filename.startswith(f"{marker}."):
         return True
-    # Relocated split dossier members: {doc_no}_{date}_id{invoice_id}.pdf
     stem = filename.rsplit(".", 1)[0] if "." in filename else filename
     return stem.endswith(f"_id{invoice_id}")
+
+
+def _search_prefix_for_invoice(
+    container,
+    prefix: str,
+    invoice_id: int,
+) -> str | None:
+    try:
+        for blob in container.list_blobs(name_starts_with=prefix):
+            if _blob_name_matches_invoice(blob.name, invoice_id):
+                return to_stored_uri(blob.name)
+    except Exception:
+        return None
+    return None
 
 
 def find_blob_uri_for_invoice(
     invoice_id: int,
     *,
+    tenant_id: uuid.UUID,
     tenant_slug: str | None = None,
+    tenant_name: str | None = None,
+    include_legacy: bool = True,
 ) -> str | None:
-    """Locate a relocated invoice blob when raw_file_path is stale."""
+    """Locate a relocated invoice blob when raw_file_path is stale (tenant-scoped)."""
     if not is_blob_enabled():
         return None
     settings = get_settings()
     client = _service_client()
     container = client.get_container_client(settings.azure_storage_container)
-    prefixes: list[str]
+
+    prefixes: list[str] = [f"{tenant_root(tenant_id)}/invoice/"]
     if tenant_slug:
-        prefixes = [f"invoice/{tenant_slug}/", "invoice/"]
-    else:
-        prefixes = ["invoice/"]
+        org_folder = vault_paths.vault_tenant_folder(tenant_slug, tenant_name)
+        prefixes.append(f"{tenant_root(tenant_id)}/invoice/{org_folder}/")
+
     seen: set[str] = set()
     for prefix in prefixes:
         if prefix in seen:
             continue
         seen.add(prefix)
-        try:
-            for blob in container.list_blobs(name_starts_with=prefix):
-                if _blob_name_matches_invoice(blob.name, invoice_id):
-                    return to_stored_uri(blob.name)
-        except Exception:
+        found = _search_prefix_for_invoice(container, prefix, invoice_id)
+        if found:
+            return found
+
+    if not include_legacy:
+        return None
+
+    legacy_prefixes: list[str] = []
+    if tenant_slug:
+        org_folder = vault_paths.vault_tenant_folder(tenant_slug, tenant_name)
+        legacy_prefixes.append(f"invoice/{org_folder}/")
+    legacy_prefixes.append(f"invoice/")
+
+    for prefix in legacy_prefixes:
+        if prefix in seen:
             continue
+        seen.add(prefix)
+        found = _search_prefix_for_invoice(container, prefix, invoice_id)
+        if found:
+            parsed = parse_stored_uri(found)
+            if parsed and is_legacy_blob_path(parsed[1]):
+                return to_stored_uri(legacy_to_tenant_path(tenant_id, parsed[1]))
+            return found
     return None
 
 

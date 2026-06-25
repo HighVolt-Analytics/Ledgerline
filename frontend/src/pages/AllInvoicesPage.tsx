@@ -3,9 +3,9 @@ import { Link } from "react-router-dom";
 import type { Invoice } from "@/api/types";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
-import { invoiceStage, StageBadge } from "@/components/StageBadge";
+import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { Card } from "@/components/ui/card";
-import { invId, money } from "@/lib/format";
+import { documentListLabel, money } from "@/lib/format";
 import { fetchAllInvoices } from "@/lib/invoices";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 
@@ -56,7 +56,7 @@ export function AllInvoicesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-muted-foreground bg-muted/50 border-b border-border">
-                <th className="px-3 py-2.5 font-medium">ID</th>
+                <th className="px-3 py-2.5 font-medium">Document</th>
                 <th className="px-3 py-2.5 font-medium">Vendor</th>
                 <th className="px-3 py-2.5 font-medium">Date</th>
                 <th className="px-3 py-2.5 font-medium text-right">Total</th>
@@ -74,12 +74,12 @@ export function AllInvoicesPage() {
               )}
               {filtered.map((r) => (
                 <tr key={r.id} className="row-band border-b border-border last:border-0 hover-elevate">
-                  <td className="px-3 py-2.5 font-medium">{invId(r.id)}</td>
+                  <td className="px-3 py-2.5 font-medium tnum">{documentListLabel(r)}</td>
                   <td className="px-3 py-2.5">{r.vendor ?? "—"}</td>
                   <td className="px-3 py-2.5 tnum text-muted-foreground">{r.invoice_date ?? "—"}</td>
                   <td className="px-3 py-2.5 tnum text-right font-medium">{money(r.total)}</td>
                   <td className="px-3 py-2.5">
-                    <StageBadge stage={invoiceStage(r.status)} />
+                    <StageBadge {...invoiceStageBadgeProps(r)} />
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     <Link to={`/invoices/${r.id}`} className="text-xs text-primary">

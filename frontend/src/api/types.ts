@@ -17,7 +17,7 @@ export type ApprovalActionKey =
   | "Comment"
   | "Approve"
   | "Reject"
-  | "Publish"
+  | "Post"
   | "Edit Policy"
   | "Manage Users";
 
@@ -25,6 +25,7 @@ export interface UserPermissions {
   role: string;
   matrix_role: string;
   permissions: Record<ApprovalActionKey, boolean>;
+  enabled_modules: Record<string, boolean>;
 }
 
 export interface TenantMember {
@@ -317,6 +318,8 @@ export interface Invoice {
   created_at: string;
   has_stored_file: boolean;
   published_to_ledger?: boolean;
+  current_stage?: string;
+  current_stage_state?: "done" | "pending" | "fail" | "skipped";
 }
 
 export interface LineItem {
@@ -490,6 +493,7 @@ export interface DashboardStats {
 export interface ActivityItem {
   id: number;
   invoice_id: number | null;
+  document_ref?: string | null;
   event: string;
   detail: Record<string, unknown> | null;
   created_at: string;

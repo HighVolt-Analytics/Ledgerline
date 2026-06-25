@@ -81,10 +81,11 @@ async def reject_invoice(
     previous_status = inv.status.value
     old_path = inv.raw_file_path
 
-    if inv.raw_file_path and stored_file_available(inv.raw_file_path):
+    if inv.raw_file_path and stored_file_available(inv.raw_file_path, tenant_id=inv.tenant_id):
         filename = filename_from_stored(inv.raw_file_path)
         new_path = relocate_invoice_to_rejected(
             inv.raw_file_path,
+            inv.tenant_id,
             tenant_slug,
             inv.id,
             filename,
@@ -140,7 +141,7 @@ async def approve_invoice_for_reprocess(
     ).scalar_one()
     await assert_team_expense_approvable(session, loaded)
     await repair_invoice_stored_path(session, inv)
-    if not stored_file_available(inv.raw_file_path):
+    if not stored_file_available(inv.raw_file_path, tenant_id=inv.tenant_id):
         raise ValueError("Invoice has no stored file to process")
 
     org = await session.get(Tenant, inv.tenant_id)
@@ -154,6 +155,7 @@ async def approve_invoice_for_reprocess(
         filename = filename_from_stored(inv.raw_file_path)
         inv.raw_file_path = relocate_rejected_to_vault(
             inv.raw_file_path,
+            inv.tenant_id,
             tenant_slug,
             inv.storage_vendor_slug or "unknown",
             inv.id,

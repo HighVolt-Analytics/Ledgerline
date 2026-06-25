@@ -20,11 +20,22 @@ import { getDocumentTypeTemplate, type DocumentTypeTemplateId } from "@/lib/docu
 
 import { normalizeExtractionFieldKeys, extractionFieldLabel } from "@/lib/documentExtractionFields";
 
-import type { ApprovalMode, MatchMode } from "@/lib/documentPlaybookConfig";
+import {
+  playbookPresetForProfile,
+  PLAYBOOK_PROFILE_OPTIONS,
+  type ApprovalMode,
+  type MatchMode,
+  type PlaybookProfile,
+} from "@/lib/documentPlaybookConfig";
+
+import type { PurchaseBundleRole } from "@/lib/documentBundleConfig";
+
+import type { ValidationRuleConfig } from "@/lib/documentValidationChecks";
 
 import type {
   DocumentTypeDefinition,
   DocumentTypeSampleAnalysis,
+  DocumentTypeClass,
 } from "@/lib/v5DocumentTypes";
 
 import { api, ApiError } from "@/api/client";
@@ -128,6 +139,10 @@ export type DocumentTypeSampleProposal = {
   notes: string[];
 
   validation_profile: string;
+
+  apply_ready?: boolean;
+
+  apply_block_reason?: string | null;
 
 };
 
@@ -297,6 +312,54 @@ function isPlaceholderTitle(value: string): boolean {
 
 
 
+function isPlaceholderOneLine(value: string): boolean {
+
+  const token = value.trim().toLowerCase();
+
+  return (
+
+    !token ||
+
+    token === "describe how this document type is identified and processed."
+
+  );
+
+}
+
+
+
+function asPlaybookProfile(value: string): PlaybookProfile {
+
+  const token = value.trim().toLowerCase();
+
+  if (PLAYBOOK_PROFILE_OPTIONS.some((option) => option.value === token)) {
+
+    return token as PlaybookProfile;
+
+  }
+
+  return "standard_transactional";
+
+}
+
+
+
+function proposalValidationRules(proposal: DocumentTypeSampleProposal): ValidationRuleConfig[] {
+
+  return (proposal.validation_rules ?? []).map((row) => ({
+
+    code: row.code,
+
+    enabled: row.enabled,
+
+    severity: row.severity,
+
+  }));
+
+}
+
+
+
 export function mergeSampleProposalIntoDraft(
 
   draft: DocumentTypeDefinition,
@@ -313,11 +376,17 @@ export function mergeSampleProposalIntoDraft(
 
   const layout = proposal.classifier_layout ?? template.classifierLayout;
 
+  const hasSignals = signalIds.length > 0;
+
+  const playbookProfile = asPlaybookProfile(proposal.playbook_profile);
+
+  const preset = playbookPresetForProfile(playbookProfile);
+
 
 
   const classifier =
 
-    signalIds.length > 0
+    hasSignals
 
       ? buildClassifierFromSignals(signalIds, layout, {
 
@@ -353,6 +422,40 @@ export function mergeSampleProposalIntoDraft(
 
         : draft.shortTitle,
 
+    oneLine:
+
+      hasSignals && proposal.one_line && isPlaceholderOneLine(draft.oneLine)
+
+        ? proposal.one_line
+
+        : draft.oneLine,
+
+    klass: hasSignals ? (proposal.klass as DocumentTypeClass) : draft.klass,
+
+    posting: hasSignals ? proposal.posting : draft.posting,
+
+    routeTarget: hasSignals ? proposal.route_target : draft.routeTarget,
+
+    playbookProfile: hasSignals ? playbookProfile : draft.playbookProfile,
+
+    matchPolicy: hasSignals ? { mode: proposal.match_mode as MatchMode } : draft.matchPolicy,
+
+    approvalPolicy: hasSignals
+
+      ? { mode: (proposal.approval_mode || preset.approvalMode) as ApprovalMode }
+
+      : draft.approvalPolicy,
+
+    purchaseBundleRole: (proposal.purchase_bundle_role || draft.purchaseBundleRole) as PurchaseBundleRole,
+
+    validationProfile: hasSignals ? proposal.validation_profile : draft.validationProfile,
+
+    validationRules: hasSignals ? proposalValidationRules(proposal) : draft.validationRules,
+
+    bundleMandatory: hasSignals ? proposal.bundle_mandatory : draft.bundleMandatory,
+
+    bundleConditional: hasSignals ? proposal.bundle_conditional : draft.bundleConditional,
+
     extractionFields: normalizeExtractionFieldKeys(proposal.extraction_fields),
 
     requiredFields: normalizeExtractionFieldKeys(proposal.required_fields),
@@ -363,18 +466,15 @@ export function mergeSampleProposalIntoDraft(
 
       ...classifier,
 
-      enabled: signalIds.length > 0 ? true : classifier.enabled,
+      enabled: hasSignals ? true : classifier.enabled,
 
-      confidence: signalIds.length > 0 ? 0.8 : classifier.confidence,
+      confidence: hasSignals ? 0.8 : classifier.confidence,
 
     },
 
-    classifierCustomized: false,
+    classifierCustomized: layout === "grouped" || layout === "supporting_doc",
 
-    minRouteConfidence:
-      signalIds.length > 0
-        ? Math.min(draft.minRouteConfidence, 0.55)
-        : draft.minRouteConfidence,
+    minRouteConfidence: hasSignals ? proposal.min_route_confidence : draft.minRouteConfidence,
 
   };
 

@@ -279,7 +279,7 @@ export function VaultPage() {
         file.purchase_document_type,
         file.po_folder,
         file.invoice_id,
-        doc ? vaultDocLabel(doc.id) : null
+        doc ? vaultDocLabel(doc) : null
       );
     });
   }, [visibleFiles, invoiceById, searchQuery]);
@@ -503,7 +503,7 @@ export function VaultPage() {
                         <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         <div className="min-w-0 flex-1 truncate">
                           <div className="text-sm font-medium truncate">
-                            {vaultDocLabel(doc.id)} · {doc.vendor ?? "Unknown vendor"}
+                            {vaultDocLabel(doc)} · {doc.vendor ?? "Unknown vendor"}
                           </div>
                           <div className="text-xs text-muted-foreground truncate tnum">
                             {vaultDocSubtitle(doc)}
@@ -588,7 +588,7 @@ export function VaultPage() {
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium truncate">
                           {doc
-                            ? `${vaultDocLabel(doc.id)} · ${doc.vendor ?? file.vendor}`
+                            ? `${vaultDocLabel(doc)} · ${doc.vendor ?? file.vendor}`
                             : file.vendor}
                         </div>
                         <div className="text-xs text-muted-foreground truncate tnum">

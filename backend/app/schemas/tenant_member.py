@@ -75,3 +75,4 @@ class PermissionsResponse(BaseModel):
     role: str
     matrix_role: str
     permissions: dict[str, bool]
+    enabled_modules: dict[str, bool] = Field(default_factory=dict)

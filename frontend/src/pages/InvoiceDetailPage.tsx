@@ -5,10 +5,10 @@ import { api } from "@/api/client";
 import type { InvoiceDetails } from "@/api/types";
 import { InvoiceDocumentViewer } from "@/components/InvoiceFilePreview";
 import { PageHeader } from "@/components/PageHeader";
-import { invoiceStage, StageBadge } from "@/components/StageBadge";
+import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { invId, money } from "@/lib/format";
+import { documentListLabel, money } from "@/lib/format";
 
 export function InvoiceDetailPage() {
   const { id } = useParams();
@@ -54,8 +54,8 @@ export function InvoiceDetailPage() {
   return (
     <div>
       <PageHeader
-        title={invId(inv.id)}
-        subtitle={inv.vendor ?? "Invoice detail"}
+        title={documentListLabel(inv)}
+        subtitle={inv.vendor ?? "Document detail"}
         actions={
           <>
             {canApprove && (
@@ -91,7 +91,7 @@ export function InvoiceDetailPage() {
       )}
 
       <div className="mb-4">
-        <StageBadge stage={invoiceStage(inv.status)} />
+        <StageBadge {...invoiceStageBadgeProps(inv)} />
       </div>
 
       {inv.has_stored_file && (

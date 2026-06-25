@@ -7,15 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
-from app.services.file_storage import relocate_invoice_pdf
-from app.services.invoice_evaluation_service import load_config_for_tenant
-from app.services.vault_invoice_paths import vault_document_type_titles_for_invoice
-from app.services.vault_paths import filename_from_stored
-from app.services.vendor_resolver import UNKNOWN_SLUG
+from app.services.vault_blob_sync import sync_invoice_blob_path
 
 
 async def migrate_org_blobs_to_vault(session: AsyncSession, tenant_id: int) -> tuple[int, int]:
-    """Move stored files for an org into invoice/{org}/{book}/[{dt}/]{vendor}/{year}/{month}/."""
+    """Move stored files for an org into invoice/{book}/[{dt}/]{vendor}/{year}/{month}/."""
     moved = 0
     skipped = 0
     org = await session.get(Tenant, tenant_id)
@@ -32,36 +28,12 @@ async def migrate_org_blobs_to_vault(session: AsyncSession, tenant_id: int) -> t
         )
     ).scalars().all()
 
-    config = await load_config_for_tenant(session, tenant_id)
-    document_types = list(config.document_types)
-
     for inv in rows:
         old = inv.raw_file_path
         if not old or not inv.file_hash:
             skipped += 1
             continue
-        filename = filename_from_stored(old)
-        short_title, title = vault_document_type_titles_for_invoice(inv, document_types)
-        new = relocate_invoice_pdf(
-            old,
-            org.slug,
-            inv.storage_vendor_slug or UNKNOWN_SLUG,
-            inv.id,
-            inv.file_hash,
-            filename,
-            tenant_name=org.name,
-            vendor_name=inv.vendor,
-            invoice_no=inv.invoice_no,
-            invoice_date=inv.invoice_date,
-            route_target=inv.route_target,
-            po_reference=inv.po_reference,
-            purchase_document_type=inv.purchase_document_type,
-            document_type_code=inv.document_type_code,
-            document_type_short_title=short_title,
-            document_type_title=title,
-        )
-        if new != old:
-            inv.raw_file_path = new
+        if await sync_invoice_blob_path(session, inv):
             moved += 1
         else:
             skipped += 1

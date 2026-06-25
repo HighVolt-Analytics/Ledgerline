@@ -81,3 +81,26 @@ async def log_event(
         actor_name=actor_name,
     )
     return entry
+
+
+async def audit_logs_for_invoices(
+    session: AsyncSession,
+    invoice_ids: list[int],
+) -> dict[int, list[AuditLog]]:
+    """Batch-load audit logs grouped by invoice id (newest first per invoice)."""
+    if not invoice_ids:
+        return {}
+    from sqlalchemy import select
+
+    rows = (
+        await session.execute(
+            select(AuditLog)
+            .where(AuditLog.invoice_id.in_(invoice_ids))
+            .order_by(AuditLog.created_at.desc())
+        )
+    ).scalars().all()
+    grouped: dict[int, list[AuditLog]] = {invoice_id: [] for invoice_id in invoice_ids}
+    for row in rows:
+        if row.invoice_id is not None:
+            grouped.setdefault(row.invoice_id, []).append(row)
+    return grouped

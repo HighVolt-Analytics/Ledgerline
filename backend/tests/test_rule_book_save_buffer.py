@@ -14,6 +14,7 @@ from app.services.rule_book_save_buffer import (
     clear_rule_book_save_buffers,
     flush_rule_book_save_buffer,
 )
+from app.tenant_ids import TESTING_TENANT_UUID
 
 
 @pytest.mark.asyncio
@@ -46,7 +47,7 @@ async def test_debounced_puts_commit_once(
     ).scalars().all()
     assert len(before_flush) == 0
 
-    await flush_rule_book_save_buffer(1, db=db_session)
+    await flush_rule_book_save_buffer(TESTING_TENANT_UUID, db=db_session)
     await db_session.commit()
 
     after_flush = (

@@ -287,6 +287,7 @@ async def ingest_whatsapp_message(
 
     stored = store_invoice_pdf(
         data,
+        org.id,
         org.slug,
         vendor_slug,
         inv.id,

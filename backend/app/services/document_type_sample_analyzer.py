@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
+import math
 import tempfile
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.invoice_data import InvoiceData
+from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.document_type_sample_analysis import (
     DocumentTypeSampleFileResult,
     DocumentTypeSampleProposal,
     ValidationRuleProposal,
 )
 from app.services.document_type_recognition_signals import (
+    NO_SHARED_IDENTITY_NOTE,
+    detect_mixed_family_note,
     detect_recognition_signals,
+    default_required_field_candidates,
     infer_absent_fields,
+    infer_document_family,
     infer_document_metadata,
     infer_playbook_profile,
     infer_purchase_bundle_role,
@@ -164,6 +171,71 @@ def parse_document_samples(
     return parsed_samples, notes
 
 
+def _required_fields_from_profiles(
+    profiles: list,
+    merged_signals: frozenset[str],
+    playbook: str,
+    *,
+    min_ratio: float = 0.8,
+) -> list[str]:
+    _ = (merged_signals, playbook)
+    if not profiles:
+        return []
+    threshold = max(1, math.ceil(len(profiles) * min_ratio))
+    field_counts: Counter[str] = Counter()
+    for profile in profiles:
+        for field_key in profile.extraction_fields:
+            field_counts[field_key] += 1
+    majority = {key for key, count in field_counts.items() if count >= threshold}
+    exclude = {"document_text", "attachment_name", "document_heading"}
+    order_index = {key: index for index, key in enumerate(_FIELD_ORDER)}
+    return sorted(majority - exclude, key=lambda key: (order_index.get(key, 999), key))
+
+
+def compute_apply_ready(
+    proposal: DocumentTypeSampleProposal,
+    *,
+    has_catalogue_preview: bool,
+) -> tuple[bool, str | None]:
+    if not proposal.recognition_signals:
+        if any(NO_SHARED_IDENTITY_NOTE in note for note in proposal.notes):
+            return False, (
+                "Upload samples of the same document type — no shared identity signals."
+            )
+        return False, "No recognition signals detected — add clearer samples."
+
+    if any(NO_SHARED_IDENTITY_NOTE in note for note in proposal.notes):
+        return False, (
+            "Samples do not share identity signals — use similar files or analyze one at a time."
+        )
+
+    if not has_catalogue_preview:
+        return True, None
+
+    for sample in proposal.samples:
+        if sample.matches_expected is False:
+            return False, (
+                f"Proposed classifier does not match {sample.filename} — "
+                "upload clearer samples or strengthen identity signals."
+            )
+        if sample.matches_expected is True:
+            continue
+        if sample.route_conflicts:
+            return False, f"Signal conflicts in {sample.filename}."
+        if sample.route_needs_review:
+            return False, f"Catalogue preview needs review for {sample.filename}."
+        top = sample.routed_confidence or 0.0
+        routed = (sample.routed_code or "").strip()
+        for alt in sample.route_alternatives or []:
+            alt_code = str(alt.get("code", "")).strip()
+            alt_conf = float(alt.get("confidence", 0) or 0)
+            if alt_code and alt_code != routed and abs(alt_conf - top) <= 0.05:
+                return False, (
+                    f"Ambiguous routing for {sample.filename} — tighten classifier signals."
+                )
+    return True, None
+
+
 def _validation_profile_for_playbook(playbook: str) -> str:
     if playbook in {"supporting", "non_actionable", "informational", "reconciliation"}:
         return "non_actionable"
@@ -229,41 +301,41 @@ def analyze_parsed_document_samples(
         merged_signals
     )
     playbook = infer_playbook_profile(merged_signals)
-    absent = infer_absent_fields(merged_signals)
+    absent = infer_absent_fields(merged_signals, playbook=playbook)
     klass, posting, route_target = infer_document_metadata(playbook, bundle_role=bundle_role)
     preset = preset_for_profile(playbook)
     validation_profile = _validation_profile_for_playbook(playbook)
     validation_rules = default_validation_rules_for_profile(validation_profile or "standard")
     bundle_mandatory, bundle_conditional = suggest_bundle_members(playbook)
 
-    required = [
-        key
-        for key in merged_fields
-        if key not in {"document_text", "attachment_name", "document_heading"}
-    ]
+    required = _required_fields_from_profiles(profiles, merged_signals, playbook)
     primary_heading = headings[0] if headings else None
     suggested_title, suggested_short_title = suggest_title_from_heading(primary_heading)
 
     if len(profiles) > 1:
         notes.insert(
             0,
-            f"Combined {len(profiles)} samples — classifier uses signals shared by all files when possible, otherwise any matching signal.",
+            f"Combined {len(profiles)} samples — classifier built from signals detected across your files (AND/OR by channel).",
         )
+    mixed_note = detect_mixed_family_note(profiles)
+    if mixed_note:
+        notes.append(mixed_note)
     if not merged_signals:
-        notes.append("No recognition signals detected — check OCR quality or add clearer samples.")
-    if not merged_fields:
+        if len(profiles) > 1:
+            notes.append(NO_SHARED_IDENTITY_NOTE)
+        else:
+            notes.append("No recognition signals detected — check OCR quality or add clearer samples.")
+    elif not merged_fields:
         notes.append("No extraction fields detected — document text may be empty or unreadable.")
 
-    per_file_signals = {row.filename: set(row.recognition_signals) for row in sample_rows}
-    if len(per_file_signals) > 1:
-        all_sets = list(per_file_signals.values())
-        common = set.intersection(*all_sets) if all_sets else set()
-        if common and common != merged_signals:
-            notes.append(
-                "Signals on every sample: "
-                + ", ".join(sorted(common))
-                + ". Others appear on some files only.",
-            )
+    apply_ready, apply_block_reason = compute_apply_ready(
+        DocumentTypeSampleProposal(
+            recognition_signals=sorted(merged_signals),
+            samples=sample_rows,
+            notes=notes,
+        ),
+        has_catalogue_preview=False,
+    )
 
     return DocumentTypeSampleProposal(
         recognition_signals=sorted(merged_signals),
@@ -295,7 +367,56 @@ def analyze_parsed_document_samples(
         min_route_confidence=_min_route_confidence(playbook),
         samples=sample_rows,
         notes=notes,
+        apply_ready=apply_ready,
+        apply_block_reason=apply_block_reason,
     )
+
+
+def apply_sample_proposal_to_draft(
+    draft: DocumentTypeDefinition,
+    proposal: DocumentTypeSampleProposal,
+    *,
+    for_preview: bool = False,
+) -> DocumentTypeDefinition:
+    """Merge analyzed sample proposal into a draft type (for catalogue preview / apply)."""
+    from app.services.document_classifier_builder import build_classifier_from_signals
+
+    signals = list(proposal.recognition_signals or [])
+    layout = proposal.classifier_layout or "grouped"
+    if for_preview:
+        priority = 1
+    else:
+        priority = draft.classifier.priority if draft.classifier.priority > 0 else 100
+    classifier = build_classifier_from_signals(
+        signals,
+        layout,
+        priority=priority,
+        confidence=0.85,
+        enabled=bool(signals),
+    )
+    updates: dict[str, object] = {
+        "classifier": classifier,
+        "classifier_customized": layout in {"grouped", "supporting_doc"},
+        "extraction_fields": proposal.extraction_fields,
+        "required_fields": proposal.required_fields,
+        "absent_fields": proposal.absent_fields,
+        "min_route_confidence": proposal.min_route_confidence,
+        "playbook_profile": proposal.playbook_profile or draft.playbook_profile,
+        "purchase_bundle_role": proposal.purchase_bundle_role or draft.purchase_bundle_role,
+    }
+    if proposal.one_line and draft.one_line.strip().lower() in {
+        "",
+        "describe how this document type is identified and processed.",
+    }:
+        updates["one_line"] = proposal.one_line
+    if proposal.suggested_title and draft.title.strip().lower() in {"new document type", "new type"}:
+        updates["title"] = proposal.suggested_title
+    if proposal.suggested_short_title and draft.short_title.strip().lower() in {
+        "new document type",
+        "new type",
+    }:
+        updates["short_title"] = proposal.suggested_short_title
+    return draft.model_copy(update=updates)
 
 
 def analyze_document_type_samples(

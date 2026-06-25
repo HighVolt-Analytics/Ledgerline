@@ -802,7 +802,7 @@ def _resolve_post(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelin
             state="pass",
             detail=_detail_from_log(published_log, fallback="invoice_published_to_ledger"),
             at=published_log.created_at if published_log else None,
-            evidence=[DossierPipelineEvidenceResponse(label="Published", ref="yes")],
+            evidence=[DossierPipelineEvidenceResponse(label="Posted", ref="yes")],
         )
 
     processed_log = _latest_log(logs, "invoice_processed")
@@ -810,7 +810,7 @@ def _resolve_post(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelin
         return _step(
             "post",
             state="pending",
-            detail="Ready to publish to ledger",
+            detail="Ready to post to ledger",
             at=processed_log.created_at if processed_log else None,
         )
     return _step("post", state="pending", detail="—")

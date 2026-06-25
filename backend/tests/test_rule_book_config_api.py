@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.services.account_mapper import clear_rule_book_cache
@@ -117,3 +118,54 @@ async def test_rule_book_config_validates_nested_conditions(client: AsyncClient)
     assert res.status_code == 200
 
     get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_delete_document_type_persists(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DELETE removes a catalogue row immediately even when a PUT is still buffered."""
+    from app.services.rule_book_save_buffer import clear_rule_book_save_buffers, flush_rule_book_save_buffer
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
+    catalog = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "document_types_test_catalog.json"
+    monkeypatch.setenv("RULE_BOOK_CONFIG_PATH", str(template))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("RULE_BOOK_SAVE_DEBOUNCE_MS", "200")
+    get_settings.cache_clear()
+    clear_rule_book_cache()
+    clear_rule_book_save_buffers()
+
+    body = (await client.get("/api/rule-book/config")).json()["data"]
+    types = json.loads(catalog.read_text(encoding="utf-8"))
+    custom = next(row for row in types if row["code"] == "DT-01")
+    extra = {**custom, "code": "DT-99", "title": "Disposable test type", "shortTitle": "Disposable"}
+    body["document_types"] = [*body.get("document_types", []), extra]
+
+    await client.put("/api/rule-book/config", json=body)
+    codes = {row["code"] for row in (await client.get("/api/rule-book/config")).json()["data"]["document_types"]}
+    assert "DT-99" in codes
+
+    res = await client.delete("/api/rule-book/document-types/DT-99")
+    assert res.status_code == 200
+    codes = {row["code"] for row in res.json()["data"]["document_types"]}
+    assert "DT-99" not in codes
+
+    res = await client.get("/api/rule-book/config")
+    codes = {row["code"] for row in res.json()["data"]["document_types"]}
+    assert "DT-99" not in codes
+
+    await flush_rule_book_save_buffer(TESTING_TENANT_UUID, db=db_session)
+    await db_session.commit()
+
+    res = await client.get("/api/rule-book/config")
+    codes = {row["code"] for row in res.json()["data"]["document_types"]}
+    assert "DT-99" not in codes
+
+    clear_rule_book_save_buffers()
+    get_settings.cache_clear()
+    clear_rule_book_cache()

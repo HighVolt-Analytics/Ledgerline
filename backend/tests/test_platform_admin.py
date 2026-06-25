@@ -50,7 +50,7 @@ async def test_create_client_tenant_seeds_modules(db_session: AsyncSession) -> N
         ),
     )
     assert tenant.slug == "new-client"
-    assert len(tenant.modules) == 5
+    assert len(tenant.modules) == 9
     assert all(m.is_active for m in tenant.modules)
 
 

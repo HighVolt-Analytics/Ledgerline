@@ -32,7 +32,7 @@ _DETAIL_HUMAN: dict[str, str] = {
 _POLICY_REF_HUMAN: dict[str, str | None] = {
     "DOA-01": "Buyer authority",
     "PAY-tier": "Payment tier",
-    "Publish": None,
+    "Post": None,
     "invoice_approved": None,
     "touchless_on_clean_match": None,
     "full_doa": "Full DOA",
@@ -223,12 +223,12 @@ async def build_dossier_approval_chain(
         _step(
             step_id="publish",
             kind="publish",
-            label="Publish to ledger",
-            role="Publish",
+            label="Post to ledger",
+            role="Post",
             actor=publish_actor,
             state=publish_state,
             at=_fmt_at(published_log),
-            detail="Posted to general ledger" if published else "Waiting to publish",
+            detail="Posted to general ledger" if published else "Waiting to post",
             policy_ref=None,
         )
     )

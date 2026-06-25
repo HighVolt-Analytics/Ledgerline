@@ -104,7 +104,7 @@ def _member(
     if invoice is None:
         return PurchaseDossierMember(role=role, label=label, present=False)
     has_file = (
-        stored_file_available(invoice.raw_file_path)
+        stored_file_available(invoice.raw_file_path, tenant_id=invoice.tenant_id)
         if verify_stored_file
         else has_stored_path(invoice.raw_file_path)
     )

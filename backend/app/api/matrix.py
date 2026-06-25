@@ -110,7 +110,9 @@ async def document_matrix(
         data.append(
             MatrixRowResponse(
                 invoice=_to_response(
-                    inv, published_to_ledger=inv.id in published_ids
+                    inv,
+                    published_to_ledger=inv.id in published_ids,
+                    audit_logs=audit_by_id.get(inv.id, []),
                 ),
                 stages=build_matrix_cells(inv, audit_by_id.get(inv.id, [])),
                 flag=flag,

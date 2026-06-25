@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 import type { ReconciliationDayDetail } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { invId, money } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
 type ReconciliationDetailDrawerProps = {
@@ -132,7 +132,13 @@ export function ReconciliationDetailDrawer({
                     className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm"
                   >
                     <div className="min-w-0">
-                      <span className="font-medium tnum">{invId(inv.id)}</span>
+                      <span className="font-medium tnum">{documentDisplayRef(inv)}</span>
+                      {inv.invoice_no ? (
+                        <>
+                          <span className="text-muted-foreground mx-1">·</span>
+                          <span className="tnum text-muted-foreground">{inv.invoice_no}</span>
+                        </>
+                      ) : null}
                       <span className="text-muted-foreground mx-1">·</span>
                       <span className="truncate">{inv.vendor ?? "—"}</span>
                     </div>

@@ -27,9 +27,10 @@ import { TeamExpensesRulesTab } from "@/components/rule-book/TeamExpensesRulesTa
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
-import { useRuleBookConfig, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRuleBookConfig, useDeleteRuleBookDocumentType, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useEmployeeMasters, useVendorMasters } from "@/hooks/useMasterData";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
+import { removeDocumentTypeFromCatalog } from "@/lib/documentTypeLifecycle";
 
 const RULEBOOK_TABS = [
   { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
@@ -58,6 +59,7 @@ export function RulesPage() {
   const { data: vendorMasters = [] } = useVendorMasters(Boolean(user));
   const { data: employeeMasters = [] } = useEmployeeMasters(Boolean(user));
   const saveMutation = useSaveRuleBookConfig();
+  const deleteDocumentTypeMutation = useDeleteRuleBookDocumentType();
 
   useEffect(() => {
     if (!data || hydratedRef.current) return;
@@ -72,6 +74,14 @@ export function RulesPage() {
     }
   }, [user]);
 
+  const cancelPendingSave = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    pendingSaveRef.current = null;
+  };
+
   const flushSave = (next: RuleBookConfigState) => {
     pendingSaveRef.current = next;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -80,7 +90,8 @@ export function RulesPage() {
       const payload = pendingSaveRef.current;
       if (!payload) return;
       saveMutation.mutate(payload, {
-        onSuccess: () => {
+        onSuccess: ({ config }) => {
+          setRuleBook(config);
           setSaveState("saved");
         },
         onError: (err) => {
@@ -136,7 +147,9 @@ export function RulesPage() {
   }
 
   const saveLabel =
-    saveState === "pending" || saveMutation.isPending
+    saveState === "pending" ||
+    saveMutation.isPending ||
+    deleteDocumentTypeMutation.isPending
       ? "Saving…"
       : saveState === "saved"
         ? "Saved"
@@ -199,6 +212,27 @@ export function RulesPage() {
         <DocumentTypesTab
           documentTypes={ruleBook.documentTypes}
           onChange={(documentTypes) => patch({ documentTypes })}
+          onDeleteType={(code) => {
+            if (!canEdit) return;
+            cancelPendingSave();
+            setRuleBook((prev) => (prev ? removeDocumentTypeFromCatalog(prev, code) : prev));
+            deleteDocumentTypeMutation.mutate(code, {
+              onSuccess: (config) => {
+                setRuleBook(config);
+                setSaveState("saved");
+                toast({ title: "Document type deleted" });
+              },
+              onError: (err) => {
+                if (data) setRuleBook(data);
+                setSaveState("error");
+                toast({
+                  title: "Could not delete document type",
+                  description: err instanceof Error ? err.message : "Delete failed",
+                  variant: "destructive",
+                });
+              },
+            });
+          }}
           canEdit={canEdit}
         />
       </PageTabPanel>

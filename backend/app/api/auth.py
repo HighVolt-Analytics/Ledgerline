@@ -62,6 +62,7 @@ from app.services.membership_enumeration import (
 )
 from app.services.membership_service import ensure_membership, user_has_tenant_access
 from app.services.privilege_service import matrix_role_for_context, permissions_for_context
+from app.services.tenant_module_service import enabled_modules_map
 from app.services.tenant_context_service import get_tenant_slug
 from app.services.tenant_members_service import accept_invite, preview_invite
 from app.tenant_ids import parse_tenant_id
@@ -478,12 +479,15 @@ async def my_memberships(
 @router.get("/me/permissions", response_model=ApiEnvelope[PermissionsResponse])
 async def my_permissions(
     ctx: AuthContext = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[PermissionsResponse]:
+    modules = await enabled_modules_map(db, ctx.tenant_id)
     return ApiEnvelope(
         data=PermissionsResponse(
             role=ctx.role,
             matrix_role=matrix_role_for_context(ctx),
             permissions=permissions_for_context(ctx),
+            enabled_modules=modules,
         )
     )
 

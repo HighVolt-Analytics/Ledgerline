@@ -70,11 +70,11 @@ from app.services.document_type_classifier import (
 from app.services.email_ingestion import RawEmail, mark_message_read
 from app.services.file_storage import (
     open_pdf_for_reading,
-    relocate_invoice_pdf,
     repair_invoice_stored_path,
     store_invoice_pdf,
     stored_file_available,
 )
+from app.services.vault_blob_sync import sync_invoice_blob_path
 from app.services.graph_mail_folders import folder_moves_enabled
 from app.services.journal_generator import generate_entries
 from app.services.notifier import send_notification
@@ -191,58 +191,7 @@ async def _post_parse_relocate(
     invoice: Invoice,
     parsed_vendor: str | None,
 ) -> None:
-    if not invoice.raw_file_path or not invoice.file_hash:
-        return
-
-    settings = get_settings()
-    if settings.blob_auto_relocate_unknown:
-        new_slug = await resolve_storage_slug_for_parsed_vendor(
-            session, parsed_vendor, tenant_id=invoice.tenant_id
-        )
-        old_slug = invoice.storage_vendor_slug or UNKNOWN_SLUG
-        if new_slug != old_slug:
-            if new_slug != UNKNOWN_SLUG or not is_valid_storage_slug(old_slug):
-                invoice.storage_vendor_slug = new_slug
-
-    org = await session.get(Tenant, invoice.tenant_id)
-    tenant_slug = org.slug if org else settings.default_tenant_slug
-    tenant_name = org.name if org else None
-    filename = _filename_from_stored(invoice.raw_file_path, invoice.id, invoice.file_hash)
-    config = await load_config_for_tenant(session, invoice.tenant_id)
-    from app.services.vault_invoice_paths import vault_document_type_titles_for_invoice
-
-    short_title, title = vault_document_type_titles_for_invoice(invoice, list(config.document_types))
-    new_path = relocate_invoice_pdf(
-        invoice.raw_file_path,
-        tenant_slug,
-        invoice.storage_vendor_slug or UNKNOWN_SLUG,
-        invoice.id,
-        invoice.file_hash,
-        filename,
-        tenant_name=tenant_name,
-        vendor_name=invoice.vendor or parsed_vendor,
-        invoice_no=invoice.invoice_no,
-        invoice_date=invoice.invoice_date,
-        route_target=invoice.route_target,
-        po_reference=invoice.po_reference,
-        purchase_document_type=invoice.purchase_document_type,
-        document_type_code=invoice.document_type_code,
-        document_type_short_title=short_title,
-        document_type_title=title,
-    )
-    if new_path != invoice.raw_file_path:
-        old_path = invoice.raw_file_path
-        invoice.raw_file_path = new_path
-        await log_event(
-            session,
-            "blob_relocated",
-            invoice_id=invoice.id,
-            detail={
-                "vendor_slug": invoice.storage_vendor_slug,
-                "from_path": old_path,
-                "to_path": new_path,
-            },
-        )
+    await sync_invoice_blob_path(session, invoice, parsed_vendor=parsed_vendor)
 
 
 async def _auto_learn_sender(session: AsyncSession, invoice: Invoice) -> None:
@@ -498,6 +447,7 @@ async def ingest_email_attachments(
 
             stored = store_invoice_pdf(
                 att.data,
+                tenant_id,
                 tenant_slug,
                 vendor_slug,
                 inv.id,
@@ -555,6 +505,9 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
     invoice.account_code = mapping.account_code
     invoice.account_name = mapping.account_name
     await apply_invoice_evaluation(session, loaded)
+    await sync_invoice_blob_path(session, loaded, parsed_vendor=loaded.vendor)
+    invoice.raw_file_path = loaded.raw_file_path
+    invoice.route_target = loaded.route_target
     await log_event(
         session,
         "mapping_applied",
@@ -621,7 +574,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     await repair_invoice_stored_path(session, invoice)
 
-    if not stored_file_available(invoice.raw_file_path):
+    if not stored_file_available(invoice.raw_file_path, tenant_id=invoice.tenant_id):
         invoice.status = InvoiceStatus.EXCEPTION
         await log_event(
             session,
@@ -639,7 +592,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.status = InvoiceStatus.PARSING
     await session.flush()
     try:
-        with open_pdf_for_reading(invoice.raw_file_path) as path:
+        with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
             parse_result = parse_invoice(path)
     except (OSError, FileNotFoundError) as exc:
         invoice.status = InvoiceStatus.EXCEPTION
@@ -733,6 +686,11 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     from app.services.purchase_document_service import apply_purchase_document_type_after_eval
 
     await apply_purchase_document_type_after_eval(session, loaded)
+
+    await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
+    invoice.raw_file_path = loaded.raw_file_path
+    invoice.storage_vendor_slug = loaded.storage_vendor_slug
+    invoice.route_target = loaded.route_target
 
     classifier_matches = list_heading_aware_document_type_matches(
         list(config.document_types),
@@ -864,6 +822,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
         loaded = (await session.execute(stmt)).scalar_one()
         await apply_invoice_evaluation(session, loaded)
+        await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
+        invoice.raw_file_path = loaded.raw_file_path
+        invoice.route_target = loaded.route_target
         if await apply_vendor_hold_if_needed(session, loaded):
             invoice.status = InvoiceStatus.EXCEPTION
             return
@@ -951,6 +912,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.account_code = mapping.account_code
     invoice.account_name = mapping.account_name
     await apply_invoice_evaluation(session, loaded)
+    await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
+    invoice.raw_file_path = loaded.raw_file_path
+    invoice.route_target = loaded.route_target
     await log_event(
         session,
         "mapping_applied",

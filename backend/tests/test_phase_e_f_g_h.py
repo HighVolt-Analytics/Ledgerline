@@ -538,7 +538,7 @@ async def test_member_cannot_publish_without_privilege(
             headers={"Authorization": f"Bearer {admin_token}"},
         )
     ).json()["data"]
-    policy["matrix"]["Approver"]["Publish"] = False
+    policy["matrix"]["Approver"]["Post"] = False
     await client.put(
         "/api/approval-policy",
         json=policy,

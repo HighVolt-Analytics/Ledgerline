@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from app.services.tenant_storage_paths import tenant_root
 from app.services.vault_paths import (
     ROUTE_PURCHASE,
     ROUTE_VAULT,
@@ -9,6 +10,8 @@ from app.services.vault_paths import (
     build_vault_blob_name,
     build_vault_tree,
     filename_from_stored,
+    insert_org_segment_into_blob_path,
+    strip_org_segment_from_blob_path,
     vault_book_folder,
     vault_document_type_folder,
     vault_file_name,
@@ -16,6 +19,12 @@ from app.services.vault_paths import (
     vault_tenant_folder,
     vault_vendor_folder,
 )
+
+
+from app.tenant_ids import TESTING_TENANT_UUID
+
+_TID = TESTING_TENANT_UUID
+_PREFIX = f"{tenant_root(_TID)}/"
 
 
 def test_vault_tenant_folder() -> None:
@@ -39,6 +48,7 @@ def test_vault_month_name_only() -> None:
 
 def test_build_vault_blob_name() -> None:
     path = build_vault_blob_name(
+        _TID,
         "hv-org",
         tenant_name="HV Org",
         route_target=ROUTE_PURCHASE,
@@ -51,12 +61,13 @@ def test_build_vault_blob_name() -> None:
     )
     assert (
         path
-        == "invoice/HvOrg/Purchase Management/James Patel Consulting/2026/May/INV-007_2026-05-12_id7.pdf"
+        == f"{_PREFIX}invoice/Purchase Management/James Patel Consulting/2026/May/INV-007_2026-05-12_id7.pdf"
     )
 
 
 def test_build_vault_blob_name_with_document_type() -> None:
     path = build_vault_blob_name(
+        _TID,
         "hv-org",
         route_target=ROUTE_VAULT,
         vendor_name="ATO",
@@ -69,7 +80,7 @@ def test_build_vault_blob_name_with_document_type() -> None:
     )
     assert (
         path
-        == "invoice/HvOrg/Vault/DT-25 · Tax authority notice/ATO/2026/April/GST-001_2026-04-01_id9.pdf"
+        == f"{_PREFIX}invoice/Vault/DT-25 · Tax authority notice/ATO/2026/April/GST-001_2026-04-01_id9.pdf"
     )
 
 
@@ -81,6 +92,7 @@ def test_vault_document_type_folder_label() -> None:
 
 def test_purchase_blob_name_flat_with_shared_po_in_filename() -> None:
     path = build_vault_blob_name(
+        _TID,
         "hv-org",
         route_target=ROUTE_PURCHASE,
         vendor_name="Sysco Australia",
@@ -129,6 +141,21 @@ def test_vault_file_name_unique_for_shared_invoice_no() -> None:
     assert b.endswith("_id22.pdf")
 
 
+def test_strip_org_segment_from_blob_path() -> None:
+    legacy = (
+        f"{_PREFIX}invoice/HvOrg/Purchase Management/Vendor/2026/May/INV-007_2026-05-12_id7.pdf"
+    )
+    flat = (
+        f"{_PREFIX}invoice/Purchase Management/Vendor/2026/May/INV-007_2026-05-12_id7.pdf"
+    )
+    assert strip_org_segment_from_blob_path(legacy) == flat
+    assert strip_org_segment_from_blob_path(flat) is None
+    assert (
+        insert_org_segment_into_blob_path(flat, "HvOrg")
+        == legacy
+    )
+
+
 def test_filename_from_stored_vault_path() -> None:
     assert (
         filename_from_stored(
@@ -143,6 +170,7 @@ def test_relocate_paths_unique_for_shared_invoice_no() -> None:
     shared = "260671582"
     paths = [
         build_vault_blob_name(
+            _TID,
             "hv-org",
             invoice_id=invoice_id,
             invoice_no=shared,

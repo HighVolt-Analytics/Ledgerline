@@ -33,3 +33,21 @@ export function useSaveRuleBookConfig() {
     },
   });
 }
+
+export function useDeleteRuleBookDocumentType() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (code: string): Promise<RuleBookConfigState> => {
+      const saved = await api.deleteRuleBookDocumentType(code);
+      return ruleBookConfigFromApi(saved);
+    },
+    onSuccess: (config) => {
+      queryClient.setQueryData(queryKeys.ruleBookConfig, config);
+      void queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.purchases });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboardOverview("", 10) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.ruleBookChangelog });
+    },
+  });
+}

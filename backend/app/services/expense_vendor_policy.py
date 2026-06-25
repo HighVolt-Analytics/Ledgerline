@@ -22,6 +22,7 @@ def vendor_detection_evaluation_status(
     known_master: object | None,
     amount: float | None,
     hold_above: float,
+    registration_required: bool = True,
 ) -> str | None:
     """
     Return evaluation_status from vendor detection, or None when vendor check passes.
@@ -30,9 +31,11 @@ def vendor_detection_evaluation_status(
     - confidence >= threshold → no vendor flag
     - confidence < threshold and amount <= hold_above → unmatched_expense_vendor
     - confidence < threshold and amount > hold_above → pending_vendor (hold)
-    Team Expenses: never vendor-flagged.
-    Other routes: pending_vendor when below threshold and unknown.
+    Team Expenses / Vault / non-actionable types: never vendor-flagged (registration_required=False).
+    Other payable routes: pending_vendor when below threshold and unknown.
     """
+    if not registration_required:
+        return None
     route = (route_target or "").strip()
     if known_master or confidence >= threshold:
         return None

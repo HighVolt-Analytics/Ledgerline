@@ -59,6 +59,7 @@ class DashboardStats(BaseModel):
 class ActivityItem(BaseModel):
     id: int
     invoice_id: int | None
+    document_ref: str | None = None
     event: str
     detail: dict[str, object] | None
     created_at: datetime

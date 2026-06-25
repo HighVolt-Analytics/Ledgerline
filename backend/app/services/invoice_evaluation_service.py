@@ -143,6 +143,15 @@ def evaluate_invoice_routing(
 
     known_master = find_matching_vendor_master(doc.vendor, doc.abn, config.vendor_masters)
 
+    from app.services.vendor_registration_policy import (
+        resolve_document_type_definition,
+        vendor_registration_required,
+    )
+
+    dt_definition = resolve_document_type_definition(
+        dt_code,
+        document_types=config.document_types,
+    )
     route_for_vendor = (route_override or route_target or "").strip()
     vendor_flag = vendor_detection_evaluation_status(
         route_target=route_for_vendor or None,
@@ -151,6 +160,11 @@ def evaluate_invoice_routing(
         known_master=known_master,
         amount=_invoice_amount(invoice),
         hold_above=expense_vendor_hold_above(config),
+        registration_required=vendor_registration_required(
+            route_target=route_for_vendor or route_target,
+            document_type=dt_definition,
+            purchase_document_type=invoice.purchase_document_type,
+        ),
     )
 
     if vendor_flag:
@@ -291,7 +305,7 @@ async def apply_invoice_evaluation(
         )
 
     if enqueue_pending and invoice.evaluation_status == EVAL_PENDING_VENDOR:
-        await _maybe_enqueue_pending_vendor(session, invoice, result)
+        await _maybe_enqueue_pending_vendor(session, invoice, result, config=config)
 
     from app.services.purchase_match_service import sync_purchase_order_from_invoice
 
@@ -305,8 +319,26 @@ async def _maybe_enqueue_pending_vendor(
     session: AsyncSession,
     invoice: Invoice,
     result: InvoiceEvaluationResult,
+    *,
+    config: RuleBookConfigPayload | None = None,
 ) -> None:
-    if (invoice.route_target or "").strip() == ROUTE_TEAM:
+    if config is None:
+        config = await load_classification_config(session, invoice.tenant_id)
+
+    from app.services.vendor_registration_policy import (
+        resolve_document_type_definition,
+        vendor_registration_required,
+    )
+
+    definition = resolve_document_type_definition(
+        invoice.document_type_code,
+        document_types=config.document_types,
+    )
+    if not vendor_registration_required(
+        route_target=invoice.route_target,
+        document_type=definition,
+        purchase_document_type=invoice.purchase_document_type,
+    ):
         return
 
     name = (invoice.vendor or "").strip()

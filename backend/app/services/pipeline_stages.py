@@ -13,7 +13,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.services.document_ref_service import display_document_ref
 from app.services.publish_service import is_published_from_audit_logs
 
-MATRIX_STAGES = ("Received", "Parsed", "Validated", "Mapped", "Approved", "Published")
+MATRIX_STAGES = ("Received", "Parsed", "Validated", "Mapped", "Approved", "Posted")
 StageState = Literal["done", "pending", "fail", "skipped"]
 
 
@@ -246,7 +246,7 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         published_state = "done"
     elif inv.status == InvoiceStatus.PROCESSED:
         published_at = published_log.created_at if published_log else inv.created_at
-        published_detail = f"{doc_ref} · ready to publish"
+        published_detail = f"{doc_ref} · ready to post"
         published_state = "pending"
 
     if inv.status == InvoiceStatus.REJECTED:
@@ -359,7 +359,7 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
             state=approved_state,
         ),
         PipelineStage(
-            stage="Published",
+            stage="Posted",
             at=published_at,
             detail=f"Ledger · {published_detail}",
             state=published_state,
@@ -383,6 +383,54 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         )
 
     return stages
+
+
+_SPECIAL_STAGE_LABELS: dict[str, str] = {
+    "Rejected": "Rejected",
+    "Duplicate skipped": "Duplicate",
+    "Duplicate detected": "Duplicate",
+}
+
+
+def derive_current_stage(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageState]:
+    """
+    Single inbox label for list UIs — first blocked pipeline step, or terminal outcome.
+    Uses the same rules as build_pipeline_stages / Doc. Matrix.
+    """
+    steps = build_pipeline_stages(inv, logs)
+
+    for step in steps:
+        if step.stage in _SPECIAL_STAGE_LABELS:
+            label = _SPECIAL_STAGE_LABELS[step.stage]
+            state: StageState = (
+                "fail" if step.state in ("fail", "skipped") else step.state
+            )
+            return label, state
+
+    by_name = {step.stage: step for step in steps}
+
+    posted = by_name.get("Posted")
+    if posted and posted.state == "done":
+        return "Posted", "done"
+
+    if inv.status == InvoiceStatus.PROCESSED:
+        return "Processed", posted.state if posted else "done"
+
+    last_done: tuple[str, StageState] | None = None
+    for name in MATRIX_STAGES:
+        step = by_name.get(name)
+        if not step or step.state == "skipped":
+            continue
+        if step.state == "fail":
+            return name, "fail"
+        if step.state == "pending":
+            return name, "pending"
+        if step.state == "done":
+            last_done = (name, "done")
+
+    if last_done:
+        return last_done
+    return "Received", "pending"
 
 
 def build_matrix_cells(inv: Invoice, logs: list[AuditLog]) -> list[dict[str, str]]:

@@ -98,8 +98,10 @@ def test_merge_multiple_samples_majority(monkeypatch) -> None:
     )
     assert proposal.recognition_signals
     assert "vendor" in proposal.extraction_fields
-    assert proposal.classifier_layout == "any_signal"
-    assert proposal.playbook_profile
+    assert proposal.classifier_layout in {"grouped", "all_signals"}
+    assert "vendor" in proposal.required_fields
+    assert "invoice_no" in proposal.required_fields
+    assert proposal.apply_ready is True
     assert proposal.match_mode
     assert proposal.approval_mode
     assert proposal.route_target
@@ -157,7 +159,33 @@ def test_detect_text_invoice_in_body_without_title_line() -> None:
     assert "text_invoice" in profile.signals
 
 
-def test_merge_signals_uses_intersection_for_multi_sample() -> None:
+def test_contract_merge_resolves_invoice_noise_by_channel_scores() -> None:
+    from app.services.document_type_recognition_signals import SampleSignalProfile
+
+    noisy = frozenset(
+        {
+            "filename_contract",
+            "heading_contract",
+            "text_contract",
+            "text_governing_law",
+            "text_signed_behalf",
+            "text_terms",
+            "text_invoice",
+            "text_tax_notice",
+        }
+    )
+    profiles = [
+        SampleSignalProfile("a.pdf", noisy, frozenset({"vendor"}), "CONTRACT"),
+        SampleSignalProfile("b.pdf", noisy, frozenset({"vendor"}), "CONTRACT"),
+    ]
+    signals, layout = merge_signals_for_classifier_profiles(profiles)
+    assert layout == "supporting_doc"
+    assert "text_contract" in signals
+    assert "text_invoice" not in signals
+    assert "text_tax_notice" not in signals
+
+
+def test_merge_signals_unions_channels_across_samples() -> None:
     from app.services.document_type_recognition_signals import SampleSignalProfile
 
     profiles = [
@@ -175,10 +203,106 @@ def test_merge_signals_uses_intersection_for_multi_sample() -> None:
         ),
     ]
     signals, layout = merge_signals_for_classifier_profiles(profiles)
+    assert layout == "grouped"
+    assert signals == frozenset(
+        {"heading_invoice", "has_invoice_number", "has_po_reference", "has_total_amount"}
+    )
+
+
+def test_detect_direct_expense_signals() -> None:
+    profile = detect_recognition_signals(
+        filename="receipt.pdf",
+        invoice=_invoice(email_attachment_name="receipt.pdf"),
+        parsed=_parsed(
+            po_reference=None,
+            document_text="TAX INVOICE\nTotal 110.00",
+            document_heading="TAX INVOICE",
+        ),
+    )
+    assert infer_playbook_profile(profile.signals) == "direct_expense"
+    assert infer_classifier_layout(profile.signals, playbook="direct_expense") == "any_signal"
+
+
+def test_detect_employee_claim_signals() -> None:
+    profile = detect_recognition_signals(
+        filename="expense-claim.pdf",
+        invoice=_invoice(email_attachment_name="expense-claim.pdf"),
+        parsed=_parsed(
+            po_reference=None,
+            invoice_no=None,
+            document_text="Employee expense claim\nTotal 45.00",
+            document_heading="Expense claim",
+        ),
+    )
+    assert "text_claim" in profile.signals or "filename_claim" in profile.signals
+    assert infer_playbook_profile(profile.signals) == "employee_claim"
+
+
+def test_merge_signals_blocks_when_no_shared_identity() -> None:
+    from app.services.document_type_recognition_signals import SampleSignalProfile
+
+    profiles = [
+        SampleSignalProfile(
+            filename="po.pdf",
+            signals=frozenset({"heading_po", "text_po", "filename_po"}),
+            extraction_fields=frozenset({"vendor"}),
+            document_heading="PURCHASE ORDER",
+        ),
+        SampleSignalProfile(
+            filename="invoice.pdf",
+            signals=frozenset({"heading_invoice", "has_invoice_number", "has_total_amount"}),
+            extraction_fields=frozenset({"vendor"}),
+            document_heading="TAX INVOICE",
+        ),
+    ]
+    signals, layout = merge_signals_for_classifier_profiles(profiles)
+    assert signals == frozenset()
     assert layout == "any_signal"
-    assert signals == frozenset({"heading_invoice", "has_invoice_number"})
 
 
-def test_sample_analysis_layout_is_any_signal_for_invoices() -> None:
-    signals = frozenset({"has_po_reference", "has_invoice_number", "has_total_amount"})
-    assert infer_classifier_layout(signals, for_sample_analysis=True) == "any_signal"
+def test_classifier_layout_po_goods_uses_all_signals() -> None:
+    signals = frozenset(
+        {"has_po_reference", "has_invoice_number", "has_total_amount", "heading_invoice"}
+    )
+    assert infer_classifier_layout(signals, playbook="po_goods") == "all_signals"
+
+
+def test_compliance_tax_notice_uses_grouped_layout() -> None:
+    from app.services.document_type_recognition_signals import SampleSignalProfile
+
+    profiles = [
+        SampleSignalProfile(
+            filename="ato-notice.pdf",
+            signals=frozenset({"text_tax_notice", "filename_tax_notice"}),
+            extraction_fields=frozenset({"vendor", "document_text"}),
+            document_heading="Tax compliance notice",
+        )
+    ]
+    signals, layout = merge_signals_for_classifier_profiles(profiles)
+    assert layout == "grouped"
+    assert "text_tax_notice" in signals
+    assert "filename_tax_notice" in signals
+    assert infer_playbook_profile(signals) == "compliance_route"
+
+
+def test_merge_supporting_po_keeps_all_channel_signals() -> None:
+    from app.services.document_type_recognition_signals import SampleSignalProfile
+
+    profiles = [
+        SampleSignalProfile(
+            filename="po.pdf",
+            signals=frozenset({"heading_po", "text_po", "filename_po"}),
+            extraction_fields=frozenset({"vendor"}),
+            document_heading="PURCHASE ORDER",
+        )
+    ]
+    signals, layout = merge_signals_for_classifier_profiles(
+        profiles, purchase_bundle_role="po"
+    )
+    assert layout == "supporting_doc"
+    assert signals == frozenset({"heading_po", "text_po", "filename_po"})
+
+
+def test_classifier_layout_expense_uses_any_signal() -> None:
+    signals = frozenset({"has_invoice_number", "heading_invoice"})
+    assert infer_classifier_layout(signals, playbook="direct_expense") == "any_signal"

@@ -5,7 +5,7 @@ import {
   invoiceSourceLabel,
   invoiceValidationConfidence,
 } from "@/lib/invoice";
-import { invId } from "@/lib/format";
+import { documentDisplayRef } from "@/lib/format";
 
 export type PipelineAuditStep = {
   stage: string;
@@ -241,11 +241,13 @@ export function buildPipelineAuditSteps(
   if (ledgerPublished) {
     const publishLog = latestLog(logs, "invoice_published_to_ledger");
     publishedWhen = relativeTime(publishLog?.created_at ?? inv.created_at);
-    publishedDetail = inv.invoice_no ?? invId(inv.id);
+    publishedDetail = inv.invoice_no
+      ? `${documentDisplayRef(inv)} · ${inv.invoice_no}`
+      : documentDisplayRef(inv);
     publishedState = "done";
   } else if (inv.status === "processed") {
     publishedWhen = relativeTime(publishedLog?.created_at ?? inv.created_at);
-    publishedDetail = `${invId(inv.id)} · ready to publish`;
+    publishedDetail = `${documentDisplayRef(inv)} · ready to post`;
     publishedState = "pending";
   }
 
@@ -303,7 +305,7 @@ export function buildPipelineAuditSteps(
       state: approvedState,
     },
     {
-      stage: "Published",
+      stage: "Posted",
       when: publishedWhen,
       detail: `Ledger · ${publishedDetail}`,
       state: publishedState,

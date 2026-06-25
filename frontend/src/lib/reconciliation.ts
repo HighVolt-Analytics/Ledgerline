@@ -1,5 +1,5 @@
 import type { InvoiceDetails, JournalEntry, ReconciliationOverview, RuleBook } from "@/api/types";
-import { invId } from "@/lib/format";
+import { documentDisplayRef } from "@/lib/format";
 import {
   tenantMonthKey,
   tenantZonedParts,
@@ -232,7 +232,7 @@ export function buildReconciliationFromApiInvoices(
   const rows = invoices
     .filter((inv) => inv.journal_entries.length > 0 && inv.invoice_date)
     .map((inv) => ({
-      id: inv.invoice_no?.trim() || invId(inv.id),
+      id: documentDisplayRef(inv),
       vendor: inv.vendor ?? "—",
       invoice_date: inv.invoice_date!,
       total: toNum(inv.total),

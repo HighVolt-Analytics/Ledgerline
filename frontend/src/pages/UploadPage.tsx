@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
@@ -15,8 +16,11 @@ import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
 import { InboxSourceBadge } from "@/components/inbox/InboxSourceBadge";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
-import { inboxStage, StageBadge } from "@/components/StageBadge";
+import { PageTabs } from "@/components/PageTabs";
+import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
+import { DocumentMatrixPanel } from "@/components/upload/DocumentMatrixPanel";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { documentDisplayRef, money } from "@/lib/format";
@@ -32,6 +36,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
 import { cn } from "@/lib/cn";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
+import { useNavBadges } from "@/hooks/useNavBadges";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
 import {
   BULK_UPLOAD_MAX_FILES,
@@ -105,6 +110,11 @@ function mailboxNickname(mb: ConnectedMailbox): string {
 }
 
 export function UploadPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const workspaceTab = searchParams.get("tab") === "matrix" ? "matrix" : "upload";
+  const { data: navBadges } = useNavBadges();
+  const [matrixFlagged, setMatrixFlagged] = useState(0);
+  const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const { data: ruleBook } = useRuleBookConfig();
   const [all, setAll] = useState<Invoice[]>([]);
@@ -222,6 +232,15 @@ export function UploadPage() {
     setDrawerId(id);
     setDrawerOpen(true);
   };
+
+  const setWorkspaceTab = (tab: "upload" | "matrix") => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === "matrix") next.set("tab", "matrix");
+    else next.delete("tab");
+    setSearchParams(next, { replace: true });
+  };
+
+  const inboxCount = navBadges?.inbox_count ?? 0;
 
   async function sendMailboxInvite(body: {
     email: string;
@@ -394,27 +413,93 @@ export function UploadPage() {
     await runUpload(selected);
   }
 
-  if (error) {
-    return (
+  const workspaceShell = (content: ReactNode) => (
+    <div>
+      <PageHeader
+        title="Documents"
+        subtitle={
+          workspaceTab === "upload"
+            ? "Documents captured from connected mailboxes, uploads and the vault."
+            : "Pipeline stage status, anomaly detection, and payment readiness. Flagged documents are blocked from progressing until cleared."
+        }
+        actions={
+          workspaceTab === "upload" ? (
+            <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Add mailbox
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="button-matrix-refresh"
+              onClick={() => matrixRefreshRef.current?.()}
+            >
+              <RefreshCw className="h-4 w-4 mr-1" />
+              Refresh
+            </Button>
+          )
+        }
+      />
+      <PageTabs
+        variant="pill"
+        className="mb-5"
+        value={workspaceTab}
+        onChange={(value) => setWorkspaceTab(value as "upload" | "matrix")}
+        data-testid="upload-workspace-tabs"
+        tabs={[
+          {
+            value: "upload",
+            testid: "tab-upload-inbox",
+            label: (
+              <>
+                Upload
+                {inboxCount > 0 ? (
+                  <Badge variant="secondary" className="ml-1.5 tnum font-normal">
+                    {inboxCount}
+                  </Badge>
+                ) : null}
+              </>
+            ),
+          },
+          {
+            value: "matrix",
+            testid: "tab-upload-matrix",
+            label: (
+              <>
+                Doc. Matrix
+                {matrixFlagged > 0 ? (
+                  <Badge variant="destructive" className="ml-1.5 tnum font-normal">
+                    {matrixFlagged}
+                  </Badge>
+                ) : null}
+              </>
+            ),
+          },
+        ]}
+      />
+      {content}
+    </div>
+  );
+
+  if (error && workspaceTab === "upload") {
+    return workspaceShell(
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
         {error}. Ensure the API is running on port 8001.
       </Card>
     );
   }
 
-  return (
-    <div>
-      <PageHeader
-        title="Upload"
-        subtitle="Documents captured from connected mailboxes, uploads and the vault."
-        actions={
-          <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-1" />
-            Add mailbox
-          </Button>
-        }
+  return workspaceShell(
+    workspaceTab === "matrix" ? (
+      <DocumentMatrixPanel
+        embedded
+        onFlaggedCount={setMatrixFlagged}
+        onGoUpload={() => setWorkspaceTab("upload")}
+        refreshRef={matrixRefreshRef}
       />
-
+    ) : (
+      <>
       <ConnectMailboxDialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
@@ -635,9 +720,11 @@ export function UploadPage() {
                   <th className="px-3 py-2 font-medium">Route</th>
                   <th className="px-3 py-2 font-medium">GL account</th>
                   <th className="px-3 py-2 font-medium">Stage</th>
-                  <th className="px-3 py-2 font-medium">Evaluation</th>
+                  <th className="px-3 py-2 font-medium" title="Routing outcome after rule book evaluation">
+                    Evaluation
+                  </th>
                   <th className="px-3 py-2 font-medium text-right">VR pass</th>
-                  <th className="px-3 py-2 font-medium text-right">Vendor</th>
+                  <th className="px-3 py-2 font-medium text-right">Vendor match</th>
                   <th className="px-3 py-2 font-medium text-right">Total</th>
                   <th className="px-4 py-2 font-medium text-right">Received</th>
                 </tr>
@@ -675,7 +762,7 @@ export function UploadPage() {
                       <InboxGlAccountBadge account={inv.account_name} />
                     </td>
                     <td className="px-3 py-2.5">
-                      <StageBadge stage={inboxStage(inv)} />
+                      <StageBadge {...invoiceStageBadgeProps(inv)} />
                     </td>
                     <td className="px-3 py-2.5">
                       <EvaluationStatusBadge status={inv.evaluation_status} />
@@ -742,6 +829,7 @@ export function UploadPage() {
         onClose={() => setDrawerOpen(false)}
         onUpdated={() => load({ fresh: true })}
       />
-    </div>
+      </>
+    )
   );
 }

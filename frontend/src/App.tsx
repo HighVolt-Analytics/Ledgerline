@@ -1,5 +1,6 @@
 import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ModuleRoute } from "@/components/ModuleRoute";
 import { OnboardingGate } from "@/components/OnboardingGate";
 import { Layout } from "@/components/Layout";
 import { SuperAdminLayout } from "@/components/SuperAdminLayout";
@@ -131,25 +132,31 @@ export default function App() {
             <Route
               path="team-expenses"
               element={
-                <LazyPage>
-                  <TeamExpensesPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="team_expenses">
+                  <LazyPage>
+                    <TeamExpensesPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
               path="expenses"
               element={
-                <LazyPage>
-                  <ExpensesManagementPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="expenses">
+                  <LazyPage>
+                    <ExpensesManagementPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
               path="purchases"
               element={
-                <LazyPage>
-                  <PurchaseManagementPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="purchase">
+                  <LazyPage>
+                    <PurchaseManagementPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
@@ -171,17 +178,21 @@ export default function App() {
             <Route
               path="dossiers"
               element={
-                <LazyPage>
-                  <DossiersPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="dossiers">
+                  <LazyPage>
+                    <DossiersPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
               path="dossiers/:dossierId"
               element={
-                <LazyPage>
-                  <DossierDetailPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="dossiers">
+                  <LazyPage>
+                    <DossierDetailPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
@@ -195,33 +206,41 @@ export default function App() {
             <Route
               path="rules"
               element={
-                <LazyPage>
-                  <RulesPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="rule_book">
+                  <LazyPage>
+                    <RulesPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
               path="vault"
               element={
-                <LazyPage>
-                  <VaultPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="vault">
+                  <LazyPage>
+                    <VaultPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
               path="payments"
               element={
-                <LazyPage>
-                  <PaymentsPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="payments">
+                  <LazyPage>
+                    <PaymentsPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
               path="ledger-link"
               element={
-                <LazyPage>
-                  <LedgerLinkPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="ledger_link">
+                  <LazyPage>
+                    <LedgerLinkPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route
@@ -235,9 +254,11 @@ export default function App() {
             <Route
               path="reports"
               element={
-                <LazyPage>
-                  <ReportsPage />
-                </LazyPage>
+                <ModuleRoute moduleKey="reports">
+                  <LazyPage>
+                    <ReportsPage />
+                  </LazyPage>
+                </ModuleRoute>
               }
             />
             <Route

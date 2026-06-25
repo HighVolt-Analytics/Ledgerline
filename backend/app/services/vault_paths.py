@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from app.services import blob_storage
+from app.services.tenant_storage_paths import tenant_blob_name
 from app.services.vendor_resolver import UNKNOWN_SLUG
 
 ROUTE_PURCHASE = "Purchase Management"
@@ -46,6 +48,8 @@ MONTH_NAMES = (
 VAULT_ROOT = "invoice"
 REJECTED_ROOT = "rejected"
 
+_STORAGE_ROOTS = frozenset({VAULT_ROOT, REJECTED_ROOT})
+
 
 def slug_to_pascal(slug: str) -> str:
     parts = [p for p in slug.replace("_", "-").split("-") if p]
@@ -61,6 +65,59 @@ def vault_tenant_folder(tenant_slug: str, tenant_name: str | None = None) -> str
         return slug_to_pascal(tenant_slug)
     cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", tenant_name or "Tenant").strip("_")
     return cleaned or "Tenant"
+
+
+def is_vault_book_segment(segment: str) -> bool:
+    """True when a path segment is a vault book (not a redundant org folder)."""
+    key = (segment or "").strip()
+    if not key:
+        return False
+    if key in _KNOWN_BOOKS:
+        return True
+    return " " in key
+
+
+def strip_org_segment_from_blob_path(name: str) -> str | None:
+    """Remove legacy org folder after invoice/ or rejected/ (tenant UUID already scopes data)."""
+    norm = name.strip().lstrip("/").replace("\\", "/")
+    if not norm:
+        return None
+    parts = norm.split("/")
+    for root_name in _STORAGE_ROOTS:
+        try:
+            idx = parts.index(root_name)
+        except ValueError:
+            continue
+        if idx + 2 >= len(parts):
+            return None
+        first_after = parts[idx + 1]
+        second_after = parts[idx + 2]
+        if is_vault_book_segment(first_after):
+            return None
+        if is_vault_book_segment(second_after) or second_after.startswith("DT-"):
+            return "/".join(parts[: idx + 1] + parts[idx + 2 :])
+    return None
+
+
+def insert_org_segment_into_blob_path(name: str, org_folder: str) -> str | None:
+    """Read fallback for blobs still stored with a legacy org folder segment."""
+    org = (org_folder or "").strip()
+    if not org:
+        return None
+    norm = name.strip().lstrip("/").replace("\\", "/")
+    parts = norm.split("/")
+    for root_name in _STORAGE_ROOTS:
+        try:
+            idx = parts.index(root_name)
+        except ValueError:
+            continue
+        if idx + 1 >= len(parts):
+            return None
+        first_after = parts[idx + 1]
+        if not is_vault_book_segment(first_after):
+            return None
+        return "/".join(parts[: idx + 1] + [org] + parts[idx + 1 :])
+    return None
 
 
 def vault_book_folder(route_target: str | None) -> str:
@@ -224,6 +281,7 @@ def vault_file_name(
 
 
 def build_vault_blob_name(
+    tenant_id: uuid.UUID,
     tenant_slug: str,
     *,
     tenant_name: str | None = None,
@@ -241,7 +299,7 @@ def build_vault_blob_name(
     document_type_title: str | None = None,
     document_type_folder: str | None = None,
 ) -> str:
-    """Azure blob path: invoice/{org}/{book}/[{dt}/]{vendor}/{year}/{month}/{file}."""
+    """Azure blob path: invoice/{book}/[{dt}/]{vendor}/{year}/{month}/{file}."""
     dt_folder = document_type_folder
     if dt_folder is None:
         dt_folder = vault_document_type_segment(
@@ -251,6 +309,7 @@ def build_vault_blob_name(
             title=document_type_title,
         )
     return _build_storage_blob_name(
+        tenant_id,
         VAULT_ROOT,
         tenant_slug,
         tenant_name=tenant_name,
@@ -268,6 +327,7 @@ def build_vault_blob_name(
 
 
 def build_rejected_blob_name(
+    tenant_id: uuid.UUID,
     tenant_slug: str,
     *,
     tenant_name: str | None = None,
@@ -283,7 +343,7 @@ def build_rejected_blob_name(
     document_type_title: str | None = None,
     document_type_folder: str | None = None,
 ) -> str:
-    """Azure blob path: rejected/{org}/{book}/[{dt}/]{vendor}/{year}/{month}/{file}."""
+    """Azure blob path: rejected/{book}/[{dt}/]{vendor}/{year}/{month}/{file}."""
     dt_folder = document_type_folder
     if dt_folder is None:
         dt_folder = vault_document_type_segment(
@@ -293,6 +353,7 @@ def build_rejected_blob_name(
             title=document_type_title,
         )
     return _build_storage_blob_name(
+        tenant_id,
         REJECTED_ROOT,
         tenant_slug,
         tenant_name=tenant_name,
@@ -308,6 +369,7 @@ def build_rejected_blob_name(
 
 
 def _build_storage_blob_name(
+    tenant_id: uuid.UUID,
     root: str,
     tenant_slug: str,
     *,
@@ -323,7 +385,6 @@ def _build_storage_blob_name(
     purchase_document_type: str | None = None,
     document_type_folder: str | None = None,
 ) -> str:
-    org = vault_tenant_folder(tenant_slug, tenant_name)
     book = vault_book_folder(route_target)
     vendor = vault_vendor_folder(vendor_name, storage_vendor_slug)
     year = vault_year(invoice_date)
@@ -336,14 +397,16 @@ def _build_storage_blob_name(
         purchase_document_type=purchase_document_type,
         po_reference=po_reference,
     )
-    segments = [root, org, book]
+    segments = [root, book]
     if document_type_folder:
         segments.append(document_type_folder)
     segments.extend([vendor, year, month, file_name])
-    return "/".join(segments)
+    relative = "/".join(segments)
+    return tenant_blob_name(tenant_id, relative)
 
 
 def build_virtual_path(
+    tenant_id: uuid.UUID,
     tenant_slug: str,
     *,
     tenant_name: str | None = None,
@@ -362,6 +425,7 @@ def build_virtual_path(
     document_type_folder: str | None = None,
 ) -> str:
     return build_vault_blob_name(
+        tenant_id,
         tenant_slug,
         tenant_name=tenant_name,
         route_target=route_target,
