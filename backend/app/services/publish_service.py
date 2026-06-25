@@ -46,21 +46,29 @@ class InsufficientCreditsError(Exception):
 async def published_invoice_ids(
     session: AsyncSession,
     invoice_ids: list[int],
+    *,
+    tenant_id=None,
 ) -> set[int]:
     if not invoice_ids:
         return set()
+    from app.tenant_scoped import coerce_tenant_uuid
+
+    filters = [
+        AuditLog.invoice_id.in_(invoice_ids),
+        AuditLog.event.in_(
+            [
+                "invoice_published_to_ledger",
+                *PROCESSED_LEDGER_EVENTS,
+            ]
+        ),
+    ]
+    tid = coerce_tenant_uuid(tenant_id)
+    if tid is not None:
+        filters.append(AuditLog.tenant_id == tid)
     rows = (
         await session.execute(
             select(AuditLog.invoice_id, AuditLog.event, func.max(AuditLog.id))
-            .where(
-                AuditLog.invoice_id.in_(invoice_ids),
-                AuditLog.event.in_(
-                    [
-                        "invoice_published_to_ledger",
-                        *PROCESSED_LEDGER_EVENTS,
-                    ]
-                ),
-            )
+            .where(*filters)
             .group_by(AuditLog.invoice_id, AuditLog.event)
         )
     ).all()

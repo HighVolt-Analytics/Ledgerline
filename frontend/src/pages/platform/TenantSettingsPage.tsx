@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ExternalLink, Save } from "lucide-react";
+import { ArrowLeft, Save } from "lucide-react";
 import { api } from "@/api/client";
 import type { PlatformTenantDetail } from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/cn";
 import {
   MODULE_GROUP_ORDER,
@@ -26,14 +25,12 @@ const LIFECYCLE_OPTIONS = [
 export function TenantSettingsPage() {
   const { tenantId } = useParams<{ tenantId: string }>();
   const navigate = useNavigate();
-  const { enterClientWorkspace } = useAuth();
   const id = tenantId?.trim() ?? "";
   const isValidId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
   const [tenant, setTenant] = useState<PlatformTenantDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [entering, setEntering] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirmSlug, setConfirmSlug] = useState("");
@@ -79,18 +76,6 @@ export function TenantSettingsPage() {
     const t = setTimeout(() => setSaved(false), 3000);
     return () => clearTimeout(t);
   }, [saved]);
-
-  async function handleEnterWorkspace() {
-    if (!tenant) return;
-    setEntering(true);
-    setError(null);
-    try {
-      await enterClientWorkspace(tenant.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open workspace");
-      setEntering(false);
-    }
-  }
 
   async function handleDeletePermanently() {
     if (!tenant) return;
@@ -192,23 +177,11 @@ export function TenantSettingsPage() {
         title={tenant.name}
         subtitle={`Tenant settings · ${tenant.slug}`}
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              data-testid="button-enter-workspace"
-              disabled={entering || !tenant.is_active}
-              onClick={() => void handleEnterWorkspace()}
-            >
-              <ExternalLink className="h-4 w-4 mr-1.5" />
-              {entering ? "Opening…" : "Open workspace"}
-            </Button>
-            {saved ? (
-              <Badge variant="outline" className="text-[hsl(var(--chart-1))]">
-                Saved
-              </Badge>
-            ) : null}
-          </div>
+          saved ? (
+            <Badge variant="outline" className="text-[hsl(var(--chart-1))]">
+              Saved
+            </Badge>
+          ) : null
         }
       />
 

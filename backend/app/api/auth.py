@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, get_db, require_user
+from app.api.deps import AuthContext, cross_tenant_db_lookup, get_db, get_preauth_db, require_user
 from app.models.auth_account import AuthAccount
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
@@ -228,7 +228,7 @@ async def login(
 @router.post("/verify-otp", response_model=ApiEnvelope[VerifyOtpResponse])
 async def verify_otp_endpoint(
     body: VerifyOtpRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_preauth_db),
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> ApiEnvelope[VerifyOtpResponse]:
     payload = _require_token_type(creds, TOKEN_TYPE_CHALLENGE)
@@ -305,7 +305,7 @@ async def resend_otp(
 @router.post("/select-tenant", response_model=ApiEnvelope[TokenResponse])
 async def select_tenant(
     body: SelectTenantRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_preauth_db),
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> ApiEnvelope[TokenResponse]:
     payload = _require_token_type(creds, TOKEN_TYPE_TENANT_SELECT)
@@ -355,14 +355,17 @@ async def switch_tenant(
     if not account:
         raise HTTPException(401, "Session invalid")
 
-    user, tenant, role = await _resolve_switch_target(
-        db,
-        auth_account_id=account.id,
-        target_tenant_id=body.tenant_id,
-    )
+    async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
+        user, tenant, role = await _resolve_switch_target(
+            db,
+            auth_account_id=account.id,
+            target_tenant_id=body.tenant_id,
+        )
+        memberships = await _membership_summaries_for_account(
+            db, auth_account_id=account.id
+        )
 
     access, refresh = await _mint_session_tokens(db, user=user, tenant=tenant, role=role)
-    memberships = await _membership_summaries_for_account(db, auth_account_id=account.id)
     return ApiEnvelope(
         data=TokenResponse(
             access_token=access,
@@ -436,7 +439,7 @@ async def me(
     ctx: AuthContext = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[UserResponse]:
-    tenant = await db.get(Tenant, ctx.tenant_id)
+    tenant = ctx.tenant or await db.get(Tenant, ctx.tenant_id)
     if not tenant:
         raise HTTPException(500, "Tenant missing")
     if ctx.user_id is None:
@@ -453,7 +456,7 @@ async def me(
                 tenant_locale=tenant_locale(tenant),
             )
         )
-    user = await db.get(User, ctx.user_id)
+    user = ctx.user or await db.get(User, ctx.user_id)
     if not user:
         raise HTTPException(401, "Session invalid")
     return ApiEnvelope(
@@ -476,11 +479,12 @@ async def my_memberships(
     user = await db.get(User, ctx.user_id)
     if not user or not user.auth_account_id:
         raise HTTPException(401, "Session invalid")
-    memberships = filter_switchable_memberships(
-        await list_memberships_for_auth_account(
-            db, auth_account_id=user.auth_account_id
+    async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
+        memberships = filter_switchable_memberships(
+            await list_memberships_for_auth_account(
+                db, auth_account_id=user.auth_account_id
+            )
         )
-    )
     return ApiEnvelope(
         data=[_account_summary_from_membership(m) for m in memberships],
     )

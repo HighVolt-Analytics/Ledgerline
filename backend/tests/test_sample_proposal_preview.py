@@ -174,6 +174,14 @@ def _tree_has_or_group(node: dict) -> bool:
     return False
 
 
+def test_grouped_single_signal_root_is_group() -> None:
+    root = build_classifier_from_signals(["text_import"], "grouped").root
+    assert root["type"] == "group"
+    assert root["operator"] == "AND"
+    assert len(root["children"]) == 1
+    assert root["children"][0]["type"] == "condition"
+
+
 def test_grouped_contract_builder_has_or_and_and() -> None:
     root = build_classifier_from_signals(
         [

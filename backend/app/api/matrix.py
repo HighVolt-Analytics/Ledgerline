@@ -22,14 +22,17 @@ router = APIRouter(prefix="/matrix", tags=["matrix"])
 
 
 async def _audit_logs_for_invoices(
-    db: AsyncSession, invoice_ids: list[int]
+    db: AsyncSession, invoice_ids: list[int], *, tenant_id
 ) -> dict[int, list[AuditLog]]:
     if not invoice_ids:
         return {}
     rows = (
         await db.execute(
             select(AuditLog)
-            .where(AuditLog.invoice_id.in_(invoice_ids))
+            .where(
+                AuditLog.invoice_id.in_(invoice_ids),
+                AuditLog.tenant_id == tenant_id,
+            )
             .order_by(AuditLog.created_at.desc())
         )
     ).scalars().all()
@@ -96,11 +99,11 @@ async def document_matrix(
     ).scalars().all()
 
     invoice_ids = [inv.id for inv in invoices]
-    audit_by_id = await _audit_logs_for_invoices(db, invoice_ids)
+    audit_by_id = await _audit_logs_for_invoices(db, invoice_ids, tenant_id=ctx.tenant_id)
     payments_by_id = await _payments_for_invoices(db, ctx.tenant_id, invoice_ids)
     from app.services.publish_service import published_invoice_ids
 
-    published_ids = await published_invoice_ids(db, invoice_ids)
+    published_ids = await published_invoice_ids(db, invoice_ids, tenant_id=ctx.tenant_id)
 
     data: list[MatrixRowResponse] = []
     for inv in invoices:

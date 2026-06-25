@@ -13,17 +13,13 @@ from app.services.document_type_catalog import (
     DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN,
     get_document_type_definition,
     min_route_confidence_for_document_type,
-    resolve_document_type_for_purchase_kind,
 )
-from app.services.document_type_rule_engine import list_configured_document_type_matches
 from app.services.document_type_scoring_service import (
     DocumentTypeScoreBreakdown,
     pick_best_scored_definition,
     score_document_type_definition,
 )
 from app.services.segment_heading_classification import (
-    INVOICE_LIKE_KINDS,
-    classify_from_segment_heading,
     list_heading_aware_document_type_matches,
     resolve_segment_heading_kind,
 )
@@ -157,7 +153,7 @@ def _score_all_configured_matches(
             definition,
             invoice=invoice,
             parsed=parsed,
-            rule_strength=CONFIG_RULE_STRENGTH,
+            rule_strength=float(definition.classifier.confidence),
             parse_confidence=parse_confidence,
         )
         scored.append((definition, breakdown, source))
@@ -222,40 +218,6 @@ def rank_document_type_candidates(
     return results
 
 
-PURCHASE_KIND_FALLBACK_STRENGTH = 0.78
-
-
-def _classify_from_purchase_kind(
-    *,
-    invoice: Invoice,
-    parsed: InvoiceData,
-    document_types: Sequence[DocumentTypeDefinition],
-    parse_confidence: ParseConfidence | None,
-) -> DocumentTypeClassification | None:
-    from app.services.purchase_document_service import infer_purchase_document_type
-
-    kind = infer_purchase_document_type(invoice)
-    if not kind:
-        return None
-    definition = resolve_document_type_for_purchase_kind(kind, document_types)
-    if definition is None:
-        return None
-    breakdown = score_document_type_definition(
-        definition,
-        invoice=invoice,
-        parsed=parsed,
-        rule_strength=PURCHASE_KIND_FALLBACK_STRENGTH,
-        parse_confidence=parse_confidence,
-    )
-    return DocumentTypeClassification(
-        definition.code,
-        breakdown.confidence,
-        f"Purchase document role inferred as {kind}",
-        min_route_confidence=breakdown.min_route_confidence,
-        score_breakdown=breakdown,
-    )
-
-
 def classify_document_type(
     *,
     invoice: Invoice,
@@ -274,26 +236,6 @@ def classify_document_type(
         segment_heading_kind=segment_heading_kind,
     )
 
-    heading_result = classify_from_segment_heading(
-        heading_kind=heading_kind,
-        document_types=document_types,
-        invoice=invoice,
-        parsed=parsed,
-        parse_confidence=parse_confidence,
-    )
-    if heading_result is not None and not heading_result.needs_review:
-        return _gate_classification(heading_result, document_types)
-
-    if heading_kind in INVOICE_LIKE_KINDS:
-        purchase_invoice = _classify_from_purchase_kind(
-            invoice=invoice,
-            parsed=parsed,
-            document_types=document_types,
-            parse_confidence=parse_confidence,
-        )
-        if purchase_invoice is not None:
-            return _gate_classification(purchase_invoice, document_types)
-
     configured = _score_configured_matches(
         document_types=document_types,
         invoice=invoice,
@@ -304,16 +246,6 @@ def classify_document_type(
     if configured is not None:
         return _gate_classification(configured, document_types)
 
-    if heading_result is not None:
-        return _gate_classification(heading_result, document_types)
-    purchase_fallback = _classify_from_purchase_kind(
-        invoice=invoice,
-        parsed=parsed,
-        document_types=document_types,
-        parse_confidence=parse_confidence,
-    )
-    if purchase_fallback is not None:
-        return _gate_classification(purchase_fallback, document_types)
     return _unclassified_result(unclassified, document_types)
 
 
@@ -352,6 +284,7 @@ def classification_audit_detail(
             "field_completeness": result.score_breakdown.field_completeness,
             "parse_score": result.score_breakdown.parse_score,
             "heading_alignment": result.score_breakdown.heading_alignment,
+            "confidence": result.score_breakdown.confidence,
             "required_present": result.score_breakdown.required_present,
             "required_missing": result.score_breakdown.required_missing,
             "absent_ok": result.score_breakdown.absent_ok,

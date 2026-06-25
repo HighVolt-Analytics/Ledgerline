@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request, Response
@@ -8,18 +9,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_db, get_preauth_db
 from app.models.user import User, UserRole, SUPER_ADMIN_ROLE
+from app.models.tenant import Tenant
 from app.tenant_roles import TenantRole
 from app.schemas.common import ApiEnvelope, ErrorDetail, ResponseMeta
 from app.services.auth_service import decode_access_token
-from app.services.membership_service import get_membership_role, user_has_tenant_access
+from app.services.membership_service import resolve_auth_principals
 from app.services.tenant_context_service import get_or_create_default_tenant, get_tenant_slug
 from app.tenant_context import set_jwt_tenant_id, set_request_tenant_id
 from app.tenant_isolation.resolution import TenantResolutionService
-from app.tenant_rls import apply_rls_session_context
+from app.tenant_rls import apply_platform_lookup_session, apply_rls_session_context
 from app.tenant_ids import parse_tenant_id
-from app.tenant_status import assert_tenant_active_for_user
+from app.tenant_status import assert_tenant_active
 from app.utils.logger import correlation_id_ctx, get_logger
 
 logger = get_logger(__name__)
@@ -28,10 +30,12 @@ __all__ = [
     "ApiEnvelope",
     "AuthContext",
     "CorrelationIdMiddleware",
+    "cross_tenant_db_lookup",
     "ErrorDetail",
     "ResponseMeta",
     "get_auth_context",
     "get_db",
+    "get_preauth_db",
     "require_admin",
     "require_super_admin",
     "is_super_admin_role",
@@ -49,6 +53,8 @@ class AuthContext:
     email: str
     role: str
     is_support_session: bool = False
+    user: User | None = None
+    tenant: Tenant | None = None
 
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
@@ -98,12 +104,14 @@ async def _context_from_token(
     role = str(payload.get("role", UserRole.MEMBER.value))
     user_id = int(payload["sub"])
 
-    if not await user_has_tenant_access(db, user_id=user_id, tenant_id=tenant_id):
+    principals = await resolve_auth_principals(
+        db, user_id=user_id, tenant_id=tenant_id
+    )
+    if not principals:
         raise HTTPException(403, "Tenant access denied")
 
-    membership_role = await get_membership_role(db, user_id=user_id, tenant_id=tenant_id)
-    if membership_role:
-        role = membership_role
+    role = principals.role or role
+    await assert_tenant_active(principals.tenant)
 
     return AuthContext(
         user_id=user_id,
@@ -112,6 +120,8 @@ async def _context_from_token(
         email=str(payload.get("email", "")),
         role=role,
         is_support_session=bool(payload.get("is_support_session")),
+        user=principals.user,
+        tenant=principals.tenant,
     )
 
 
@@ -122,13 +132,14 @@ async def require_user(
 ) -> AuthContext:
     ctx = await _context_from_token(creds, db, request)
     if ctx:
-        user = await db.get(User, ctx.user_id)
-        if not user or not user.is_active:
-            raise HTTPException(401, "Session invalid")
+        if ctx.is_support_session:
+            raise HTTPException(
+                403,
+                "Support workspace access is disabled for organisation data security",
+            )
         set_request_tenant_id(ctx.tenant_id)
         await apply_rls_session_context(db, ctx.tenant_id)
-        await assert_tenant_active_for_user(db, user)
-        logger.info(
+        logger.debug(
             "auth_context_resolved",
             tenant_id=str(ctx.tenant_id),
             user_id=ctx.user_id,
@@ -143,7 +154,7 @@ async def require_user(
         tenant = await get_or_create_default_tenant(db)
         set_request_tenant_id(tenant.id)
         await apply_rls_session_context(db, tenant.id)
-        logger.info(
+        logger.debug(
             "auth_context_resolved",
             tenant_id=str(tenant.id),
             user_id=None,
@@ -158,6 +169,7 @@ async def require_user(
             tenant_slug=tenant.slug,
             email="system@local",
             role=UserRole.ADMIN.value,
+            tenant=tenant,
         )
 
     raise HTTPException(401, "Authentication required")
@@ -187,6 +199,8 @@ async def require_super_admin(ctx: AuthContext = Depends(require_user)) -> AuthC
 
 async def actor_from_context(db: AsyncSession, ctx: AuthContext) -> tuple[str, str]:
     """Return (display_name, email) for audit attribution."""
+    if ctx.user:
+        return ctx.user.full_name, ctx.user.email
     if ctx.user_id:
         user = await db.get(User, ctx.user_id)
         if user:
@@ -194,3 +208,21 @@ async def actor_from_context(db: AsyncSession, ctx: AuthContext) -> tuple[str, s
     if ctx.email:
         return ctx.email.split("@")[0].replace(".", " ").title(), ctx.email
     return "System", "system@local"
+
+
+@asynccontextmanager
+async def cross_tenant_db_lookup(
+    db: AsyncSession,
+    *,
+    restore_tenant_id: uuid.UUID | None = None,
+):
+    """Temporarily disable RLS to enumerate memberships, then restore tenant scope."""
+    await apply_platform_lookup_session(db)
+    try:
+        yield db
+    finally:
+        from app.tenant_rls import clear_platform_lookup_session
+
+        await clear_platform_lookup_session(db)
+        if restore_tenant_id is not None:
+            await apply_rls_session_context(db, restore_tenant_id)

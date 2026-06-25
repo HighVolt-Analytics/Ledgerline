@@ -1082,6 +1082,7 @@ export interface InvoiceClassificationScoreBreakdown {
   field_completeness?: number;
   parse_score?: number;
   heading_alignment?: number;
+  confidence?: number;
   required_present?: string[];
   required_missing?: string[];
   absent_ok?: string[];

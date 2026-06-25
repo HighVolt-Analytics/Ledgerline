@@ -134,7 +134,7 @@ export function DocumentMatrixPanel({
   }, [load, refreshRef]);
 
   useVisibilityPolling(() => {
-    void load({ silent: true, fresh: true });
+    void load({ silent: true });
   }, MATRIX_POLL_MS);
 
   useEffect(() => {
@@ -303,7 +303,8 @@ export function DocumentMatrixPanel({
             <KpiCard label="Paid this month" value={kpis.paid} testid="kpi-matrix-paid" />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="flex flex-wrap items-center gap-2">
             {FILTER_PILLS.map((pill) => (
               <button
                 key={pill.key}
@@ -320,21 +321,72 @@ export function DocumentMatrixPanel({
                 {pill.label}
               </button>
             ))}
+            </div>
             <ListSearchInput
               value={searchQuery}
               onChange={setSearchQuery}
               placeholder="Search this list…"
               testId="input-matrix-search"
-              className="ml-auto"
+              className="w-full sm:ml-auto sm:max-w-xs"
             />
-            <span className="text-xs text-muted-foreground shrink-0">
+            <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
               {filteredRows.length} of {matrixRows.length} documents
               {filteredRows.length > PAGE_SIZE ? ` · page ${page} of ${totalPages}` : ""}
             </span>
           </div>
 
           <Card className="overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="md:hidden divide-y divide-border">
+              {pagedRows.length === 0 && (
+                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  No documents match your search.
+                </p>
+              )}
+              {pagedRows.map(({ inv, cells, flag, payment }) => {
+                const docRef = documentDisplayRef(inv);
+                const flagged = flag !== "Clean";
+                const completedStages = MATRIX_STAGES.filter(
+                  (stage) => cells[stage as MatrixStage]?.state === "done"
+                ).length;
+                return (
+                  <div key={inv.id} className="px-3 py-3">
+                    <div className="flex items-start justify-between gap-3 min-w-0">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium tnum">{docRef}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {inv.invoice_no ?? "—"} · {inv.vendor ?? "—"}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          {completedStages}/{MATRIX_STAGES.length} stages complete
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="tnum font-medium text-sm">
+                          {money(inv.total, inv.currency)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {flagged ? (
+                        <button
+                          type="button"
+                          onClick={() => setFlagDrawerId(inv.id)}
+                          data-testid={`matrix-flag-${docRef}`}
+                          className="text-left"
+                        >
+                          <MatrixFlagBadge flag={flag} />
+                        </button>
+                      ) : (
+                        <MatrixFlagBadge flag={flag} />
+                      )}
+                      <MatrixPaymentBadge status={payment} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr className="text-xs text-muted-foreground border-b border-border">
@@ -422,7 +474,7 @@ export function DocumentMatrixPanel({
               </table>
             </div>
             {totalPages > 1 && (
-              <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-border">
+              <div className="flex items-center justify-between gap-3 px-3 sm:px-4 py-3 border-t border-border">
                 <p className="text-xs text-muted-foreground">
                   Page {page} of {totalPages}
                 </p>
@@ -436,6 +488,7 @@ export function DocumentMatrixPanel({
                   >
                     Prev
                   </Button>
+                  <div className="hidden sm:flex items-center gap-1.5">
                   {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
                     <Button
                       key={p}
@@ -447,6 +500,7 @@ export function DocumentMatrixPanel({
                       {p}
                     </Button>
                   ))}
+                  </div>
                   <Button
                     variant="outline"
                     size="sm"

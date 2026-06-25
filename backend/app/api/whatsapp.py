@@ -13,7 +13,7 @@ from starlette.requests import ClientDisconnect
 
 from app.api.deps import AuthContext, get_db, require_admin
 from app.config import get_settings
-from app.database import async_session_factory
+from app.database import db_session_with_rls, platform_lookup_session
 from app.models.connected_whatsapp import ConnectedWhatsapp
 from app.models.user import User, UserRole
 from app.schemas.common import ApiEnvelope
@@ -222,24 +222,25 @@ async def process_whatsapp_payload(payload: dict) -> None:
         if not messages:
             return
 
-        async with async_session_factory() as session:
-            for msg in messages:
-                if not msg.message_id:
-                    continue
+        for msg in messages:
+            if not msg.message_id:
+                continue
 
+            async with platform_lookup_session() as lookup:
                 connection = await find_connection_by_phone_or_waba(
-                    session,
+                    lookup,
                     phone_number_id=msg.phone_number_id or None,
                     waba_id=msg.waba_id or None,
                 )
-                if not connection:
-                    logger.warning(
-                        "whatsapp_unknown_connection",
-                        phone_number_id=msg.phone_number_id,
-                        waba_id=msg.waba_id,
-                    )
-                    continue
+            if not connection:
+                logger.warning(
+                    "whatsapp_unknown_connection",
+                    phone_number_id=msg.phone_number_id,
+                    waba_id=msg.waba_id,
+                )
+                continue
 
+            async with db_session_with_rls(connection.tenant_id) as session:
                 if not await try_claim_message_mid(
                     session,
                     msg.message_id,
@@ -266,10 +267,14 @@ async def process_whatsapp_payload(payload: dict) -> None:
                     msg=msg,
                     access_token=token,
                 )
-                await session.commit()
 
                 for invoice_id in result.invoice_ids or []:
-                    asyncio.create_task(process_invoice_background(invoice_id))
+                    asyncio.create_task(
+                        process_invoice_background(
+                            invoice_id,
+                            tenant_id=connection.tenant_id,
+                        )
+                    )
 
             logger.info(
                 "whatsapp_message_processed",

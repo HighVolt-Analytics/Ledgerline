@@ -21,7 +21,7 @@ export function PageTabs({
       <div
         data-testid={testId}
         className={cn(
-          "inline-flex h-auto min-h-10 max-w-full flex-wrap items-center gap-1 rounded-md bg-muted p-1 text-muted-foreground",
+          "flex h-auto min-h-10 w-full max-w-full flex-wrap items-center gap-1 rounded-md bg-muted p-1 text-muted-foreground",
           className
         )}
       >

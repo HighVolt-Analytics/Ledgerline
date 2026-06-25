@@ -6,7 +6,6 @@ from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.playbook_policy import ApprovalPolicy, MatchPolicy, PlaybookProfile
 from app.services.playbook_profile_catalog import (
     PlaybookProfilePreset,
-    infer_playbook_profile_from_definition,
     preset_for_profile,
 )
 
@@ -15,7 +14,7 @@ def effective_playbook_profile(definition: DocumentTypeDefinition) -> PlaybookPr
     explicit = (definition.playbook_profile or "").strip().lower()
     if explicit:
         return explicit  # type: ignore[return-value]
-    return infer_playbook_profile_from_definition(definition)
+    return "standard_transactional"
 
 
 def _preset(definition: DocumentTypeDefinition) -> PlaybookProfilePreset:

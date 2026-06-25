@@ -189,6 +189,79 @@ async def test_reject_processed_invoice(
 
 
 @pytest.mark.asyncio
+async def test_reject_skips_relocate_when_file_already_in_rejected(
+    client: AsyncClient, db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
+    get_settings.cache_clear()
+
+    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "Testing" / "Vault" / "DT-03" / "Done Co" / "2026" / "May"
+    rejected_path.mkdir(parents=True)
+    pdf = rejected_path / "INV-171_2026-05-04_id171.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Done Co",
+        invoice_no="INV-171",
+        invoice_date=date(2026, 5, 4),
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="rej-skip-1",
+        raw_file_path=str(pdf),
+        total=Decimal("200"),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.post(f"/api/approvals/{inv.id}/reject")
+    assert res.status_code == 200
+    body = res.json()["data"]
+    assert body["status"] == "rejected"
+    assert pdf.is_file()
+
+
+@pytest.mark.asyncio
+async def test_approvals_board_returns_queue_pipeline_and_processed(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    exception = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Queue Co",
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        file_hash="board-exc",
+    )
+    pending = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Pipeline Co",
+        status=InvoiceStatus.PENDING,
+        currency="AUD",
+        file_hash="board-pending",
+    )
+    processed = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Done Co",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="board-done",
+        total=Decimal("10"),
+    )
+    db_session.add_all([exception, pending, processed])
+    await db_session.flush()
+
+    res = await client.get("/api/approvals/board")
+    assert res.status_code == 200
+    ids = {row["id"] for row in res.json()["data"]}
+    assert exception.id in ids
+    assert pending.id in ids
+    assert processed.id in ids
+
+
+@pytest.mark.asyncio
 async def test_reject_requires_rejectable_status(
     client: AsyncClient, db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -324,3 +397,38 @@ async def test_permanent_delete_rejects_non_rejected_status(
 
     res = await client.delete(f"/api/approvals/{inv.id}")
     assert res.status_code == 400
+    assert "Reject the document first" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_processed_with_rejected_blob(
+    client: AsyncClient, db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
+    get_settings.cache_clear()
+
+    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "Testing" / "Orphan Co" / "2026" / "May"
+    rejected_path.mkdir(parents=True)
+    pdf = rejected_path / "INV-orph_2026-05-04_id1.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Orphan Co",
+        invoice_no="INV-orph",
+        invoice_date=date(2026, 5, 4),
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="orph-1",
+        raw_file_path=str(pdf),
+        total=Decimal("50"),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.delete(f"/api/approvals/{inv.id}")
+    assert res.status_code == 204
+    assert not pdf.is_file()

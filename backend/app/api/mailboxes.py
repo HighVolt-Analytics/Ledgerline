@@ -577,19 +577,23 @@ async def start_mailbox_backfill(
     if settings.sync_processing:
         from app.workers.tasks import run_mailbox_backfill_background
 
-        background_tasks.add_task(run_mailbox_backfill_background, job.id)
+        background_tasks.add_task(
+            run_mailbox_backfill_background, job.id, tenant_id=ctx.tenant_id
+        )
     else:
         try:
             from app.workers.tasks import mailbox_backfill_task
 
-            async_result = mailbox_backfill_task.delay(job.id)
+            async_result = mailbox_backfill_task.delay(job.id, tenant_id=ctx.tenant_id)
             task_id = async_result.id
             job.celery_task_id = task_id
             await db.commit()
         except Exception:
             from app.workers.tasks import run_mailbox_backfill_background
 
-            background_tasks.add_task(run_mailbox_backfill_background, job.id)
+            background_tasks.add_task(
+                run_mailbox_backfill_background, job.id, tenant_id=ctx.tenant_id
+            )
 
     return ApiEnvelope(
         data=MailboxBackfillQueuedResponse(

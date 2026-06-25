@@ -193,7 +193,7 @@ export function UploadPage() {
   }, [load]);
 
   useVisibilityPolling(() => {
-    void load({ silent: true, fresh: true });
+    void load({ silent: true });
   }, INBOX_POLL_MS);
 
   useEffect(() => {
@@ -425,8 +425,9 @@ export function UploadPage() {
         actions={
           workspaceTab === "upload" ? (
             <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" />
-              Add mailbox
+              <Plus className="h-4 w-4 sm:mr-1" />
+              <span className="hidden sm:inline">Add mailbox</span>
+              <span className="sm:hidden">Mailbox</span>
             </Button>
           ) : (
             <Button
@@ -678,18 +679,19 @@ export function UploadPage() {
         />
       ) : (
         <Card className="overflow-hidden">
-          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border flex-wrap">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
+          <div className="flex flex-col gap-3 px-3 sm:px-4 py-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="text-sm font-semibold flex items-center gap-2 shrink-0">
               <Mail className="h-4 w-4 text-primary" />
               Captured documents
               <span className="text-muted-foreground tnum font-normal">({totalInvoices})</span>
             </h3>
-            <div className="flex items-center gap-2 ml-auto flex-wrap">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:ml-auto">
             <ListSearchInput
               value={searchQuery}
               onChange={setSearchQuery}
               placeholder="Search this list…"
               testId="input-upload-search"
+              className="w-full sm:max-w-xs"
             />
             <Select
               value={source}
@@ -698,7 +700,7 @@ export function UploadPage() {
                 setPage(1);
               }}
               data-testid="select-source-filter"
-              className="w-[220px] h-8 text-xs"
+              className="w-full sm:w-[220px] h-8 text-xs"
               options={[
                 { value: "all", label: "All sources" },
                 ...mailboxes.map((mb) => ({
@@ -710,8 +712,61 @@ export function UploadPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="md:hidden divide-y divide-border">
+            {filtered.length === 0 && (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No documents match this filter.
+              </p>
+            )}
+            {filtered.map((inv) => (
+              <button
+                key={inv.id}
+                type="button"
+                data-testid={`row-invoice-${inv.id}`}
+                className="w-full text-left px-3 py-3 hover-elevate active:bg-muted/40 transition-colors"
+                onClick={() => openDrawer(inv.id)}
+              >
+                <div className="flex items-start justify-between gap-3 min-w-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium tnum">{documentDisplayRef(inv)}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {inv.invoice_no ? `${inv.invoice_no} · ` : ""}
+                      {invoiceDocumentTypeDisplayLabel(inv, ruleBook?.documentTypes)}
+                    </div>
+                    <div className="text-sm truncate mt-0.5">{inv.vendor ?? "—"}</div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="tnum font-medium text-sm">
+                      {money(inv.total, inv.currency)}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground tnum mt-0.5">
+                      {relativeTime(inv.created_at)}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <InboxSourceBadge kind={invoiceSourceKind(inv)} />
+                  <RouteTargetBadge route={inv.route_target} />
+                  <InboxGlAccountBadge account={inv.account_name} />
+                  <StageBadge {...invoiceStageBadgeProps(inv)} />
+                  <EvaluationStatusBadge status={inv.evaluation_status} />
+                </div>
+                <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[11px] text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    VR pass
+                    <InboxConfidenceBadge value={invoiceValidationConfidence(inv)} />
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    Vendor match
+                    <InboxConfidenceBadge value={invoiceVendorConfidence(inv)} />
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full min-w-[1080px] text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
                   <th className="px-4 py-2 font-medium">Document</th>
@@ -720,7 +775,10 @@ export function UploadPage() {
                   <th className="px-3 py-2 font-medium">Route</th>
                   <th className="px-3 py-2 font-medium">GL account</th>
                   <th className="px-3 py-2 font-medium">Stage</th>
-                  <th className="px-3 py-2 font-medium" title="Routing outcome after rule book evaluation">
+                  <th
+                    className="px-3 py-2 font-medium"
+                    title="Routing outcome after rule book evaluation"
+                  >
                     Evaluation
                   </th>
                   <th className="px-3 py-2 font-medium text-right">VR pass</th>
@@ -732,7 +790,7 @@ export function UploadPage() {
               <tbody>
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
                       No documents match this filter.
                     </td>
                   </tr>
@@ -773,10 +831,10 @@ export function UploadPage() {
                     <td className="px-3 py-2.5 text-right">
                       <InboxConfidenceBadge value={invoiceVendorConfidence(inv)} />
                     </td>
-                    <td className="px-3 py-2.5 text-right tnum font-medium">
+                    <td className="px-3 py-2.5 text-right tnum font-medium whitespace-nowrap">
                       {money(inv.total, inv.currency)}
                     </td>
-                    <td className="px-4 py-2.5 text-right text-xs text-muted-foreground tnum">
+                    <td className="px-4 py-2.5 text-right text-xs text-muted-foreground tnum whitespace-nowrap">
                       {relativeTime(inv.created_at)}
                     </td>
                   </tr>
@@ -784,8 +842,8 @@ export function UploadPage() {
               </tbody>
             </table>
           </div>
-          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-border">
-            <p className="text-xs text-muted-foreground">
+          <div className="flex items-center justify-between gap-3 px-3 sm:px-4 py-3 border-t border-border">
+            <p className="text-xs text-muted-foreground shrink-0">
               Page {page} of {totalPages}
             </p>
             <div className="flex items-center gap-1.5">
@@ -798,6 +856,7 @@ export function UploadPage() {
               >
                 Prev
               </Button>
+              <div className="hidden sm:flex items-center gap-1.5">
               {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
                 <Button
                   key={p}
@@ -809,6 +868,7 @@ export function UploadPage() {
                   {p}
                 </Button>
               ))}
+              </div>
               <Button
                 variant="outline"
                 size="sm"

@@ -220,7 +220,7 @@ export function Layout() {
       </aside>
 
       <div className="flex flex-col overflow-hidden min-w-0">
-        <header className="flex items-center gap-3 border-b border-border bg-background/95 backdrop-blur px-4 md:px-6 h-14 shrink-0 z-10">
+        <header className="flex items-center gap-2 sm:gap-3 border-b border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 h-12 md:h-14 shrink-0 z-10">
           <div className="md:hidden text-primary">
             <LogoBlock collapsed />
           </div>
@@ -249,7 +249,7 @@ export function Layout() {
           </button>
           <Badge
             variant="outline"
-            className="border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)] font-medium"
+            className="hidden sm:inline-flex border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)] font-medium shrink-0"
           >
             Sandbox
           </Badge>
@@ -328,22 +328,29 @@ export function Layout() {
         )}
 
         <main
-          className="flex-1 overflow-y-auto min-h-0 px-4 md:px-6 py-6"
+          className="flex-1 overflow-y-auto min-h-0 px-3 py-4 sm:px-4 md:px-6 md:py-6"
           style={{ overscrollBehavior: "contain" }}
         >
           <Outlet key={user?.tenant_id ?? "anon"} context={{ refreshCounts }} />
         </main>
 
-        <footer className="shrink-0 border-t border-border bg-background/95 backdrop-blur px-4 md:px-6 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground/70">Ledgerline v4</span>
-          {user?.email && !user.is_support_session && <span>{user.email}</span>}
+        <footer className="shrink-0 border-t border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground/70 shrink-0">Ledgerline v4</span>
+          {user?.email && !user.is_support_session && (
+            <span className="hidden sm:inline truncate max-w-[10rem] md:max-w-none">
+              {user.email}
+            </span>
+          )}
           {TRUST.map((t) => (
-            <span key={t}>{t}</span>
+            <span key={t} className="hidden lg:inline">
+              {t}
+            </span>
           ))}
-          <span className="ml-auto">© 2026 Ledgerline · Sandbox environment</span>
+          <span className="ml-auto hidden sm:inline">© 2026 Ledgerline · Sandbox environment</span>
+          <span className="ml-auto sm:hidden">© 2026</span>
         </footer>
 
-        <nav className="md:hidden flex items-center gap-1 overflow-x-auto border-t border-border bg-background px-2 py-2 shrink-0">
+        <nav className="md:hidden flex items-center justify-around border-t border-border bg-background px-1 py-1.5 shrink-0">
           {MOBILE_NAV.filter(canShowNavItem).map(({ to, label, icon: Icon, badge }) => {
             const active = pathname === to || (to !== "/" && pathname.startsWith(to));
             return (

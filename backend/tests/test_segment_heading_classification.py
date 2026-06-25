@@ -75,7 +75,7 @@ def test_dt07_catchall_filtered_for_non_invoice_heading() -> None:
     parsed = InvoiceData(
         invoice_no="260671582",
         total=Decimal("1000"),
-        document_text="PACKING LIST / WEIGHT LIST\nInvoice No: 260671582",
+        document_text="Shipment details\nInvoice No: 260671582",
     )
     assert classifier_match_relies_on_invoice_number(catchall, invoice=invoice, parsed=parsed)
 

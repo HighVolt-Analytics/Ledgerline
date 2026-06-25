@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
-import { api, ApiError } from "@/api/client";
+import { api, ApiError, clearGetCache } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
@@ -12,11 +12,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef, money } from "@/lib/format";
-import { fetchAllApprovals, fetchAllInvoices } from "@/lib/invoices";
+import { fetchApprovalsBoard } from "@/lib/invoices";
 import { approveAndProcess, watchProcessingUntilIdle } from "@/lib/invoiceActions";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { cn } from "@/lib/cn";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const APPROVAL_POLL_MS = 15_000;
 const API_HINT = " Ensure the API is running on port 8001.";
@@ -45,11 +46,17 @@ const APPROVABLE_STATUSES = new Set(["exception", "rejected", "duplicate_skipped
 
 const PERMANENTLY_DELETABLE = new Set(["rejected", "duplicate_skipped"]);
 
-function columnForInvoice(inv: Invoice): ColumnKey {
+function upsertInvoice(rows: Invoice[], row: Invoice): Invoice[] {
+  const byId = new Map(rows.map((inv) => [inv.id, inv]));
+  byId.set(row.id, row);
+  return [...byId.values()];
+}
+
+function columnForInvoice(inv: Invoice, processingIds: ReadonlySet<number>): ColumnKey {
+  if (processingIds.has(inv.id) || PIPELINE_STATUSES.has(inv.status)) return "awaiting";
   if (inv.status === "rejected" || inv.status === "duplicate_skipped") return "rejected";
   if (inv.status === "processed") return "approved";
   if (inv.status === "exception") return "pending";
-  if (PIPELINE_STATUSES.has(inv.status)) return "awaiting";
   return "pending";
 }
 
@@ -57,40 +64,60 @@ function docNumber(inv: Invoice): string {
   return documentDisplayRef(inv);
 }
 
-async function fetchBoardInvoices(fresh: boolean): Promise<Invoice[]> {
-  const [approvals, allInvoices] = await Promise.all([
-    fetchAllApprovals(fresh),
-    fetchAllInvoices(fresh),
-  ]);
-  const pipeline = allInvoices.filter((inv) => PIPELINE_STATUSES.has(inv.status));
-  const approved = allInvoices.filter((inv) => inv.status === "processed");
-  return mergeBoardInvoices(approvals, [...pipeline, ...approved]);
-}
-
-function mergeBoardInvoices(approvals: Invoice[], pipeline: Invoice[]): Invoice[] {
-  const byId = new Map<number, Invoice>();
-  for (const inv of pipeline) byId.set(inv.id, inv);
-  for (const inv of approvals) byId.set(inv.id, inv);
-  return [...byId.values()];
-}
-
 export function ApprovalsPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { permissions } = usePermissions();
+  const canReject = !permissions || permissions.permissions.Reject === true;
   const [toast, setToast] = useState<string | null>(null);
   const [drawerInvoice, setDrawerInvoice] = useState<Invoice | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerEditMode, setDrawerEditMode] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
+  const [processingBusy, setProcessingBusy] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const loadSeq = useRef(0);
+  const busyRef = useRef<number | null>(null);
+  busyRef.current = busyId;
 
   function openDrawer(inv: Invoice, edit = false) {
     setDrawerInvoice(inv);
     setDrawerEditMode(edit);
     setDrawerOpen(true);
   }
-  const [busyId, setBusyId] = useState<number | null>(null);
-  const [processingBusy, setProcessingBusy] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+
+  const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const seq = ++loadSeq.current;
+    if (!options?.silent) {
+      setLoading(true);
+      setError(null);
+    }
+    const fresh = options?.fresh ?? !options?.silent;
+    if (fresh) clearGetCache();
+
+    try {
+      const rows = await fetchApprovalsBoard(fresh);
+      if (seq !== loadSeq.current) return;
+      setInvoices(rows);
+      if (!options?.silent) setError(null);
+    } catch (reason) {
+      if (seq !== loadSeq.current) return;
+      if (!options?.silent) {
+        setInvoices([]);
+        setError(
+          reason instanceof Error
+            ? reason.message + API_HINT
+            : "Failed to load approvals" + API_HINT
+        );
+      }
+    } finally {
+      if (seq === loadSeq.current && !options?.silent) {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   const runProcessing = async () => {
     setProcessingBusy(true);
@@ -112,36 +139,12 @@ export function ApprovalsPage() {
     }
   };
 
-  const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
-    if (!options?.silent) {
-      setLoading(true);
-      setError(null);
-    }
-    const fresh = options?.fresh ?? !options?.silent;
-
-    const boardResult = await Promise.allSettled([fetchBoardInvoices(fresh)]);
-
-    if (boardResult[0].status === "fulfilled") {
-      setInvoices(boardResult[0].value);
-      if (!options?.silent) setError(null);
-    } else if (!options?.silent) {
-      setInvoices([]);
-      const reason = boardResult[0].reason;
-      setError(
-        reason instanceof Error
-          ? reason.message + API_HINT
-          : "Failed to load approvals" + API_HINT
-      );
-    }
-
-    if (!options?.silent) setLoading(false);
-  }, []);
-
   useEffect(() => {
     void load();
   }, [load]);
 
   useVisibilityPolling(() => {
+    if (busyRef.current !== null) return;
     void load({ silent: true, fresh: true });
   }, APPROVAL_POLL_MS);
 
@@ -160,10 +163,10 @@ export function ApprovalsPage() {
     };
     for (const inv of invoices) {
       if (!invoiceMatchesListSearch(inv, searchQuery)) continue;
-      cols[columnForInvoice(inv)].push(inv);
+      cols[columnForInvoice(inv, processingIds)].push(inv);
     }
     return cols;
-  }, [invoices, searchQuery]);
+  }, [invoices, searchQuery, processingIds]);
 
   const queueCount = useMemo(
     () => invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
@@ -178,13 +181,21 @@ export function ApprovalsPage() {
       return;
     }
     setBusyId(id);
+    setProcessingIds((prev) => new Set(prev).add(id));
     try {
       setToast("Invoice queued for processing…");
       await approveAndProcess(id, () => load({ silent: true, fresh: true }));
+      await load({ fresh: true });
       setToast("Invoice approved — processing complete");
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Approve failed");
+      await load({ fresh: true });
     } finally {
+      setProcessingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       setBusyId(null);
     }
   };
@@ -195,13 +206,26 @@ export function ApprovalsPage() {
       setToast("This invoice cannot be rejected.");
       return;
     }
+    if (!canReject) {
+      setToast("Your role does not have permission to reject documents.");
+      return;
+    }
+    if (!window.confirm(`Reject ${inv.vendor ?? documentDisplayRef(inv)}?`)) {
+      return;
+    }
     setBusyId(id);
     try {
-      await api.reject(id);
+      const rejected = await api.reject(id);
+      setInvoices((prev) => upsertInvoice(prev, rejected));
       setToast("Invoice rejected — file moved to rejected storage");
-      await load({ silent: true, fresh: true });
+      await load({ fresh: true });
     } catch (e) {
-      setToast(e instanceof Error ? e.message : "Reject failed");
+      if (e instanceof ApiError && e.status === 403) {
+        setToast("Your role does not have permission to reject documents.");
+      } else {
+        setToast(e instanceof Error ? e.message : "Reject failed");
+      }
+      await load({ fresh: true });
     } finally {
       setBusyId(null);
     }
@@ -277,7 +301,13 @@ export function ApprovalsPage() {
     );
   }
 
-  if (!loading && queueCount === 0 && board.awaiting.length === 0 && board.approved.length === 0) {
+  if (
+    !loading &&
+    queueCount === 0 &&
+    board.awaiting.length === 0 &&
+    board.approved.length === 0 &&
+    board.rejected.length === 0
+  ) {
     return (
       <div>
         <PageHeader
@@ -360,131 +390,133 @@ export function ApprovalsPage() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {COLUMNS.map((col) => {
-            const cards = board[col.key];
-            return (
-              <Card
-                key={col.key}
-                className="p-3 bg-muted/30 min-h-[240px]"
-                data-testid={`col-${col.key}`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold">{col.label}</h3>
-                  <Badge variant="outline" className="tnum text-[10px]">
-                    {cards.length}
-                  </Badge>
-                </div>
-                <div className="space-y-2">
-                  {cards.map((inv) => (
-                    <Card
-                      key={inv.id}
-                      className="p-3 cursor-pointer hover-elevate shadow-sm flex flex-col min-h-[120px]"
-                      data-testid={`card-approval-${inv.id}`}
-                      onClick={() => openDrawer(inv)}
+        {COLUMNS.map((col) => {
+          const cards = board[col.key];
+          return (
+            <Card
+              key={col.key}
+              className="p-3 bg-muted/30 min-h-[240px]"
+              data-testid={`col-${col.key}`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold">{col.label}</h3>
+                <Badge variant="outline" className="tnum text-[10px]">
+                  {cards.length}
+                </Badge>
+              </div>
+              <div className="space-y-2">
+                {cards.map((inv) => (
+                  <Card
+                    key={inv.id}
+                    className="p-3 cursor-pointer hover-elevate shadow-sm flex flex-col min-h-[120px]"
+                    data-testid={`card-approval-${inv.id}`}
+                    onClick={() => openDrawer(inv)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium truncate">{inv.vendor ?? "—"}</span>
+                      <Badge variant="outline" className="tnum text-[10px] shrink-0">
+                        {documentDisplayRef(inv)}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground tnum mt-0.5">
+                      {docNumber(inv)} · {money(inv.total, inv.currency)}
+                      {col.key === "awaiting" && (
+                        <span className="ml-1 capitalize">· {inv.status.replace(/_/g, " ")}</span>
+                      )}
+                    </div>
+                    <div
+                      className="flex items-center gap-1 mt-2 flex-wrap"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium truncate">{inv.vendor ?? "—"}</span>
-                        <Badge variant="outline" className="tnum text-[10px] shrink-0">
-                          {documentDisplayRef(inv)}
-                        </Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground tnum mt-0.5">
-                        {docNumber(inv)} · {money(inv.total, inv.currency)}
-                        {col.key === "awaiting" && (
-                          <span className="ml-1 capitalize">· {inv.status.replace(/_/g, " ")}</span>
-                        )}
-                      </div>
-                      <div
-                        className="flex items-center gap-1 mt-2 flex-wrap"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {col.key === "pending" && APPROVABLE_STATUSES.has(inv.status) && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-1.5 text-[11px]"
-                            onClick={() => openDrawer(inv, true)}
-                            data-testid={`edit-${inv.id}`}
-                          >
-                            <Pencil className="h-3 w-3 mr-0.5" />
-                            Edit
-                          </Button>
-                        )}
-                        {col.key !== "approved" && APPROVABLE_STATUSES.has(inv.status) && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-1.5 text-[11px] text-[hsl(var(--chart-1))]"
-                            disabled={busyId === inv.id}
-                            onClick={() => void approveInvoice(inv.id)}
-                            data-testid={`approve-${inv.id}`}
-                          >
-                            <Check className="h-3 w-3 mr-0.5" />
-                            {busyId === inv.id ? "…" : "Approve"}
-                          </Button>
-                        )}
-                        {col.key === "pending" && inv.status === "exception" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
-                            disabled={busyId === inv.id}
-                            onClick={() => void rejectInvoice(inv.id)}
-                            data-testid={`reject-${inv.id}`}
-                          >
-                            <X className="h-3 w-3 mr-0.5" />
-                            Reject
-                          </Button>
-                        )}
-                        {col.key === "approved" && inv.status === "processed" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
-                            disabled={busyId === inv.id}
-                            onClick={() => void rejectInvoice(inv.id)}
-                            data-testid={`reject-${inv.id}`}
-                          >
-                            <X className="h-3 w-3 mr-0.5" />
-                            Reject
-                          </Button>
-                        )}
-                        {col.key === "approved" && invoiceCanPublishToLedger(inv) && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-1.5 text-[11px] text-primary"
-                            onClick={() => void publish(inv)}
-                            data-testid={`publish-${inv.id}`}
-                          >
-                            <Send className="h-3 w-3 mr-0.5" />
-                            Post
-                          </Button>
-                        )}
-                        {col.key === "rejected" && PERMANENTLY_DELETABLE.has(inv.status) && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
-                            disabled={busyId === inv.id}
-                            onClick={() => void permanentDeleteInvoice(inv.id)}
-                            data-testid={`delete-permanent-${inv.id}`}
-                          >
-                            <Trash2 className="h-3 w-3 mr-0.5" />
-                            {busyId === inv.id ? "…" : "Delete permanently"}
-                          </Button>
-                        )}
-                      </div>
-                    </Card>
-                  ))}
-                  {cards.length === 0 && (
-                    <p className="text-xs text-muted-foreground py-4 text-center">Empty</p>
-                  )}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
+                      {col.key === "pending" && APPROVABLE_STATUSES.has(inv.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px]"
+                          onClick={() => openDrawer(inv, true)}
+                          data-testid={`edit-${inv.id}`}
+                        >
+                          <Pencil className="h-3 w-3 mr-0.5" />
+                          Edit
+                        </Button>
+                      )}
+                      {col.key !== "approved" && APPROVABLE_STATUSES.has(inv.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px] text-[hsl(var(--chart-1))]"
+                          disabled={busyId === inv.id}
+                          onClick={() => void approveInvoice(inv.id)}
+                          data-testid={`approve-${inv.id}`}
+                        >
+                          <Check className="h-3 w-3 mr-0.5" />
+                          {busyId === inv.id ? "…" : "Approve"}
+                        </Button>
+                      )}
+                      {col.key === "pending" && inv.status === "exception" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
+                          disabled={busyId === inv.id || !canReject}
+                          title={canReject ? undefined : "Your role cannot reject documents"}
+                          onClick={() => void rejectInvoice(inv.id)}
+                          data-testid={`reject-${inv.id}`}
+                        >
+                          <X className="h-3 w-3 mr-0.5" />
+                          Reject
+                        </Button>
+                      )}
+                      {col.key === "approved" && inv.status === "processed" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
+                          disabled={busyId === inv.id || !canReject}
+                          title={canReject ? undefined : "Your role cannot reject documents"}
+                          onClick={() => void rejectInvoice(inv.id)}
+                          data-testid={`reject-${inv.id}`}
+                        >
+                          <X className="h-3 w-3 mr-0.5" />
+                          Reject
+                        </Button>
+                      )}
+                      {col.key === "approved" && invoiceCanPublishToLedger(inv) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px] text-primary"
+                          onClick={() => void publish(inv)}
+                          data-testid={`publish-${inv.id}`}
+                        >
+                          <Send className="h-3 w-3 mr-0.5" />
+                          Post
+                        </Button>
+                      )}
+                      {col.key === "rejected" && PERMANENTLY_DELETABLE.has(inv.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
+                          disabled={busyId === inv.id}
+                          onClick={() => void permanentDeleteInvoice(inv.id)}
+                          data-testid={`delete-permanent-${inv.id}`}
+                        >
+                          <Trash2 className="h-3 w-3 mr-0.5" />
+                          {busyId === inv.id ? "…" : "Delete permanently"}
+                        </Button>
+                      )}
+                    </div>
+                  </Card>
+                ))}
+                {cards.length === 0 && (
+                  <p className="text-xs text-muted-foreground py-4 text-center">Empty</p>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
 
       <InvoiceDetailDrawer
         invoiceId={drawerInvoice?.id ?? null}

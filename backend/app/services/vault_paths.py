@@ -149,6 +149,8 @@ def vault_document_type_folder(
         folder = label
     else:
         folder = UNCLASSIFIED_DT_FOLDER
+    # Azure blob paths must stay ASCII-safe; middle dots often corrupt to U+FFFD in storage.
+    folder = folder.replace("\u00b7", " - ").replace("\ufffd", " - ")
     cleaned = re.sub(r'[/\\:*?"<>|]+', "", folder).strip()
     return cleaned or UNCLASSIFIED_DT_FOLDER
 

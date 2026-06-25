@@ -39,11 +39,12 @@ import type {
 } from "@/lib/v5DocumentTypes";
 
 import { api, ApiError } from "@/api/client";
-
-
+import {
+  isKnownRecognitionSignal,
+  weakSignalSet,
+} from "@/lib/recognitionSignalCatalog";
 
 export type DocumentTypeSampleFileResult = {
-
   filename: string;
 
   recognition_signals: string[];
@@ -177,133 +178,80 @@ export type DocumentTypeSampleProposal = {
 
 };
 
+/** Shipped matrix template that best matches a sample-analysis playbook (simple-mode UI). */
+const PLAYBOOK_MATRIX_TEMPLATE: Partial<Record<PlaybookProfile, DocumentTypeTemplateId>> = {
+  po_goods: "DT-01",
+  po_services: "DT-01",
+  direct_expense: "DT-21",
+  credit_adjustment: "DT-04",
+  debit_note: "DT-05",
+  pre_transactional: "DT-06",
+  import_dossier: "DT-10",
+  freight_logistics: "DT-09",
+  intercompany: "DT-11",
+  employee_claim: "DT-12",
+  supporting: "DT-02",
+  master_data: "DT-23",
+  non_actionable: "DT-24",
+  compliance_route: "DT-25",
+  reconciliation: "DT-13",
+  informational: "DT-13",
+  standard_transactional: "DT-21",
+};
 
+function proposalSignalsForApply(proposal: DocumentTypeSampleProposal): RecognitionSignalId[] {
+  const weakSignals = weakSignalSet();
+  const detected = normalizeSignals(proposal.recognition_signals ?? []);
+  const strongDetected = detected.filter((id) => !weakSignals.has(id));
+  if (strongDetected.length > 0) {
+    return detected;
+  }
+  const fromSuggested = (proposal.suggested_signals ?? [])
+    .map((row) => row.signal_id)
+    .filter(
+      (id): id is RecognitionSignalId =>
+        isKnownRecognitionSignal(id) && !weakSignals.has(id as RecognitionSignalId)
+    );
+  return [...new Set([...detected, ...fromSuggested])];
+}
 
-const RECOGNITION_SIGNALS = new Set<string>([
-
-  "heading_po",
-
-  "text_po",
-
-  "filename_po",
-
-  "heading_grn",
-
-  "text_grn",
-
-  "filename_grn",
-
-  "heading_contract",
-
-  "text_contract",
-
-  "filename_contract",
-
-  "text_terms",
-
-  "text_governing_law",
-
-  "text_signed_behalf",
-
-  "heading_invoice",
-
-  "text_invoice",
-
-  "filename_invoice",
-
-  "text_credit_note",
-
-  "filename_credit_note",
-
-  "text_debit_note",
-
-  "filename_debit_note",
-
-  "text_proforma",
-
-  "filename_proforma",
-
-  "text_recurring",
-
-  "filename_recurring",
-
-  "text_utility",
-
-  "filename_utility",
-
-  "text_freight",
-
-  "filename_freight",
-
-  "text_import",
-
-  "filename_import",
-
-  "text_intercompany",
-
-  "filename_intercompany",
-
-  "text_claim",
-
-  "filename_claim",
-
-  "text_statement",
-
-  "filename_statement",
-
-  "text_timesheet",
-
-  "filename_timesheet",
-
-  "text_remittance",
-
-  "filename_remittance",
-
-  "text_rcti",
-
-  "filename_rcti",
-
-  "text_consignment",
-
-  "filename_consignment",
-
-  "text_dunning",
-
-  "filename_dunning",
-
-  "text_bank_change",
-
-  "filename_bank_change",
-
-  "text_quote",
-
-  "filename_quote",
-
-  "text_tax_notice",
-
-  "filename_tax_notice",
-
-  "channel_whatsapp",
-
-  "has_po_reference",
-
-  "has_invoice_number",
-
-  "has_total_amount",
-
-]);
+function resolveTemplateIdForApply(
+  templateId: DocumentTypeTemplateId,
+  proposal: DocumentTypeSampleProposal,
+  draft: DocumentTypeDefinition
+): DocumentTypeTemplateId {
+  const stored = draft.matrixTemplateCode?.trim().toUpperCase();
+  if (stored && stored !== "CUSTOM") {
+    const fromStored = getDocumentTypeTemplate(stored as DocumentTypeTemplateId);
+    if (fromStored.signals.length > 0) {
+      return stored as DocumentTypeTemplateId;
+    }
+  }
+  if (templateId !== "custom") {
+    return templateId;
+  }
+  const playbook = asPlaybookProfile(proposal.playbook_profile ?? "");
+  const mapped = PLAYBOOK_MATRIX_TEMPLATE[playbook];
+  if (mapped) {
+    return mapped;
+  }
+  return templateId;
+}
 
 
 
 export function buildSampleAnalysisRecord(
   filenames: string[],
-  proposal: DocumentTypeSampleProposal
+  proposal: DocumentTypeSampleProposal,
+  options?: { afterApply?: boolean }
 ): DocumentTypeSampleAnalysis {
   return {
     analyzedAt: new Date().toISOString(),
     filenames,
     fileCount: filenames.length,
-    recognitionSignals: proposal.recognition_signals ?? [],
+    recognitionSignals: options?.afterApply
+      ? proposalSignalsForApply(proposal)
+      : normalizeSignals(proposal.recognition_signals ?? []),
   };
 }
 
@@ -327,7 +275,7 @@ export function formatSampleAnalysisWhen(iso: string): string {
 
 function normalizeSignals(values: string[]): RecognitionSignalId[] {
 
-  return values.filter((id): id is RecognitionSignalId => RECOGNITION_SIGNALS.has(id));
+  return values.filter((id): id is RecognitionSignalId => isKnownRecognitionSignal(id));
 
 }
 
@@ -337,7 +285,12 @@ function isPlaceholderTitle(value: string): boolean {
 
   const token = value.trim().toLowerCase();
 
-  return token === "new document type" || token === "new type";
+  return (
+    token === "new document type" ||
+    token === "new type" ||
+    token === "custom type" ||
+    token.startsWith("custom type ")
+  );
 
 }
 
@@ -401,9 +354,11 @@ export function mergeSampleProposalIntoDraft(
 
 ): DocumentTypeDefinition {
 
-  const template = getDocumentTypeTemplate(templateId);
+  const resolvedTemplateId = resolveTemplateIdForApply(templateId, proposal, draft);
 
-  const signalIds = normalizeSignals(proposal.recognition_signals);
+  const template = getDocumentTypeTemplate(resolvedTemplateId);
+
+  const signalIds = proposalSignalsForApply(proposal);
 
   const layout = proposal.classifier_layout ?? template.classifierLayout;
 
@@ -503,9 +458,12 @@ export function mergeSampleProposalIntoDraft(
 
     },
 
-    classifierCustomized: layout === "grouped" || layout === "supporting_doc",
+    classifierCustomized: false,
 
     minRouteConfidence: hasSignals ? proposal.min_route_confidence : draft.minRouteConfidence,
+
+    matrixTemplateCode:
+      resolvedTemplateId !== "custom" ? resolvedTemplateId : draft.matrixTemplateCode,
 
   };
 

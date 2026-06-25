@@ -10,6 +10,35 @@ function pct(value: number | undefined): string {
   return `${Math.round(value * 100)}%`;
 }
 
+const WEIGHT_RULE = 0.45;
+const WEIGHT_FIELDS = 0.30;
+const WEIGHT_PARSE = 0.15;
+const WEIGHT_HEADING = 0.10;
+
+function blendedConfidence(breakdown: NonNullable<InvoiceClassificationAudit["score_breakdown"]>): number {
+  const rule = breakdown.rule_strength ?? 0;
+  const fields = breakdown.field_completeness ?? 0;
+  const parse = breakdown.parse_score ?? 0;
+  const heading = breakdown.heading_alignment ?? 0;
+  return (
+    WEIGHT_RULE * rule +
+    WEIGHT_FIELDS * fields +
+    WEIGHT_PARSE * parse +
+    WEIGHT_HEADING * heading
+  );
+}
+
+function displayConfidence(audit: InvoiceClassificationAudit): string {
+  const breakdown = audit.score_breakdown;
+  if (breakdown?.confidence != null) {
+    return pct(breakdown.confidence);
+  }
+  if (breakdown) {
+    return pct(blendedConfidence(breakdown));
+  }
+  return pct(audit.document_type_confidence);
+}
+
 export function InvoiceClassificationPanel({ audit, loading }: InvoiceClassificationPanelProps) {
   if (loading) {
     return (
@@ -34,7 +63,7 @@ export function InvoiceClassificationPanel({ audit, loading }: InvoiceClassifica
           {audit.document_type_title ? ` · ${audit.document_type_title}` : ""}
         </span>
         <span className="text-muted-foreground tnum">
-          {pct(audit.document_type_confidence)} confidence
+          {displayConfidence(audit)} confidence
         </span>
         {audit.needs_review ? (
           <span className="text-amber-700 dark:text-amber-400">Needs review</span>

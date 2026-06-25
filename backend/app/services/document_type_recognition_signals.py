@@ -7,7 +7,13 @@ from dataclasses import dataclass
 
 from app.models.invoice import Invoice
 from app.schemas.document_layout import DocumentLayoutResult
-from app.services.document_heading_utils import extract_document_heading_signals
+from app.services.document_heading_utils import extract_document_heading_signals, infer_page_document_kind
+from app.services.heading_kind_recognition import (
+    NON_INVOICE_NUMBER_KINDS,
+    infer_heading_kind,
+    playbook_for_heading_kind,
+    signals_for_heading_kind,
+)
 from app.services.document_type_rule_engine import (
     DocumentClassifierContext,
     build_document_classifier_context,
@@ -19,11 +25,16 @@ from app.services.purchase_document_service import (
     _attachment_suggests_po,
 )
 
+from app.services.recognition_signal_registry import (
+    SIGNAL_PICK_GROUPS,
+    WEAK_SIGNAL_IDS,
+    filename_detection_patterns,
+    text_detection_patterns,
+)
+
 RecognitionSignalId = str
 
-WEAK_SIGNALS: frozenset[RecognitionSignalId] = frozenset(
-    {"has_po_reference", "has_invoice_number", "has_total_amount"}
-)
+WEAK_SIGNALS: frozenset[RecognitionSignalId] = WEAK_SIGNAL_IDS
 
 NO_SHARED_IDENTITY_NOTE = (
     "No shared document identity signals across samples — upload files of the same type "
@@ -59,25 +70,6 @@ CONTRACT_IDENTITY_SIGNALS = frozenset(
     {"heading_contract", "text_contract", "filename_contract"}
 )
 
-# OR channels — structural only (how classifier trees group conditions).
-SIGNAL_PICK_GROUPS: tuple[tuple[RecognitionSignalId, ...], ...] = (
-    ("heading_invoice", "text_invoice", "filename_invoice"),
-    ("heading_po", "text_po", "filename_po"),
-    ("heading_grn", "text_grn", "filename_grn"),
-    ("heading_contract", "text_contract", "filename_contract"),
-    ("text_credit_note", "filename_credit_note"),
-    ("text_debit_note", "filename_debit_note"),
-    ("text_proforma", "filename_proforma"),
-    ("text_claim", "filename_claim"),
-    ("text_quote", "filename_quote"),
-    ("text_tax_notice", "filename_tax_notice"),
-    ("text_bank_change", "filename_bank_change"),
-    ("text_freight", "filename_freight"),
-    ("text_import", "filename_import"),
-    ("text_intercompany", "filename_intercompany"),
-    ("text_terms", "text_governing_law", "text_signed_behalf"),
-)
-
 # Group indices for conflict resolution (same order as SIGNAL_PICK_GROUPS).
 _GRP_INVOICE = 0
 _GRP_PO = 1
@@ -93,11 +85,19 @@ _GRP_BANK = 10
 _GRP_FREIGHT = 11
 _GRP_IMPORT = 12
 _GRP_INTERCOMPANY = 13
-_GRP_TERMS = 14
+_GRP_RECURRING = 14
+_GRP_UTILITY = 15
+_GRP_STATEMENT = 16
+_GRP_TIMESHEET = 17
+_GRP_REMITTANCE = 18
+_GRP_RCTI = 19
+_GRP_CONSIGNMENT = 20
+_GRP_DUNNING = 21
+_GRP_TERMS = 22
 
 # Groups whose documents are normally matched to transactional playbooks (invoice-like).
 TRANSACTIONAL_GROUP_INDICES: frozenset[int] = frozenset(
-    {_GRP_INVOICE, _GRP_CREDIT, _GRP_DEBIT, _GRP_PROFORMA, _GRP_CLAIM}
+    {_GRP_INVOICE, _GRP_CREDIT, _GRP_DEBIT, _GRP_PROFORMA, _GRP_CLAIM, _GRP_RCTI}
 )
 
 # Groups whose documents are supporting / pre-transactional / compliance (not invoice-like).
@@ -112,6 +112,13 @@ SUPPORTING_GROUP_INDICES: frozenset[int] = frozenset(
         _GRP_FREIGHT,
         _GRP_IMPORT,
         _GRP_INTERCOMPANY,
+        _GRP_RECURRING,
+        _GRP_UTILITY,
+        _GRP_STATEMENT,
+        _GRP_TIMESHEET,
+        _GRP_REMITTANCE,
+        _GRP_CONSIGNMENT,
+        _GRP_DUNNING,
         _GRP_TERMS,
     }
 )
@@ -135,37 +142,8 @@ INCOMPATIBLE_GROUP_SETS: tuple[frozenset[int], ...] = (
     frozenset({_GRP_INVOICE, _GRP_TAX_NOTICE}),
 )
 
-_FILENAME_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
-    ("filename_invoice", re.compile(r"(?i)(?:^|[-_/])(?:inv|invoice|tax[_-]?inv)(?:[-_.]|$)")),
-    ("filename_po", re.compile(r"(^|[-_/])po([-_.]|$)|purchase[_-]?order", re.I)),
-    ("filename_grn", re.compile(r"(^|[-_/])grn([-_.]|$)|goods[_-]?receipt|delivery[_-]?note", re.I)),
-    ("filename_contract", re.compile(r"contract|agreement|sow|msa", re.I)),
-    ("filename_credit_note", re.compile(r"credit[_-]?note", re.I)),
-    ("filename_debit_note", re.compile(r"debit[_-]?note", re.I)),
-    ("filename_proforma", re.compile(r"pro[\s-]?forma|advance", re.I)),
-    ("filename_quote", re.compile(r"quote|quotation|estimate|proposal", re.I)),
-    ("filename_claim", re.compile(r"claim|expense|reimburse", re.I)),
-    ("filename_bank_change", re.compile(r"bank[_-]?detail|change[_-]?of[_-]?bank", re.I)),
-    ("filename_tax_notice", re.compile(r"ato|tax[_-]?notice|compliance[_-]?notice", re.I)),
-]
-
-_TEXT_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = [
-    ("text_invoice", re.compile(r"(?i)\b(tax\s+invoice|commercial\s+invoice)\b")),
-    ("text_invoice", re.compile(r"(?i)\b(?:billing\s+summary|invoice\s+no|invoice\s+number)\b")),
-    ("text_po", re.compile(r"(?i)purchase\s+order")),
-    ("text_grn", re.compile(r"(?i)(goods\s+receipt|delivery\s+(note|docket)|\bGRN\b)")),
-    ("text_contract", re.compile(r"(?i)(\bcontract\b|master service agreement|docusign)")),
-    ("text_terms", re.compile(r"(?i)terms and conditions")),
-    ("text_governing_law", re.compile(r"(?i)governing law")),
-    ("text_signed_behalf", re.compile(r"(?i)signed for and on behalf of|executed by")),
-    ("text_credit_note", re.compile(r"(?i)credit\s+note")),
-    ("text_debit_note", re.compile(r"(?i)debit\s+note")),
-    ("text_proforma", re.compile(r"(?i)pro[\s-]?forma")),
-    ("text_quote", re.compile(r"(?i)\b(quote|quotation|estimate|proposal)\b")),
-    ("text_claim", re.compile(r"(?i)(expense claim|reimbursement|employee expense)")),
-    ("text_bank_change", re.compile(r"(?i)(bank\s+detail|change of bank)")),
-    ("text_tax_notice", re.compile(r"(?i)\b(ato|tax[_-]?office|tax[_-]?notice|compliance[_-]?notice)\b")),
-]
+_FILENAME_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = filename_detection_patterns()
+_TEXT_PATTERNS: list[tuple[RecognitionSignalId, re.Pattern[str]]] = text_detection_patterns()
 
 
 @dataclass(frozen=True)
@@ -261,6 +239,8 @@ def _signals_from_stored_heading(heading: str) -> set[RecognitionSignalId]:
         found.add("text_credit_note")
     if heading_signals.has_heading_quote:
         found.add("text_quote")
+    kind = heading_signals.primary_kind or infer_page_document_kind(cleaned)
+    found |= set(signals_for_heading_kind(kind))
     if not found and re.search(r"(?i)\b(tax\s+invoice|commercial\s+invoice)\b", cleaned):
         found.add("heading_invoice")
     elif not found and re.search(r"(?i)\binvoice\b", cleaned):
@@ -352,6 +332,11 @@ def detect_recognition_signals(
         if heading_label and re.search(r"(?i)(goods\s+receipt|delivery)", heading_label):
             signals.add("heading_grn")
 
+    body_kind = infer_heading_kind(heading=heading_label, document_text=body)
+    signals |= set(signals_for_heading_kind(body_kind))
+    if body_kind in NON_INVOICE_NUMBER_KINDS:
+        signals.discard("has_invoice_number")
+
     signals = set(refine_recognition_signals(frozenset(signals), ctx=ctx))
 
     extraction = _field_keys_from_sample(invoice=invoice, parsed=parsed, ctx=ctx)
@@ -404,7 +389,7 @@ def _compatible_weak_signals(
         return set(weak)
     kept = set(weak)
     kept.discard("has_invoice_number")
-    if active & {_GRP_CONTRACT, _GRP_QUOTE, _GRP_TERMS, _GRP_PROFORMA}:
+    if active & {_GRP_CONTRACT, _GRP_QUOTE, _GRP_TERMS, _GRP_PROFORMA, _GRP_FREIGHT, _GRP_IMPORT}:
         kept.discard("has_total_amount")
     return kept
 
@@ -651,6 +636,7 @@ def merge_signals_for_classifier_profiles(
 
 
 def infer_playbook_profile(signals: frozenset[RecognitionSignalId]) -> str:
+    """Onboarding-only: propose playbook from detected signals (sample analyzer)."""
     if signals & {"heading_grn", "text_grn", "filename_grn"}:
         return "supporting"
     if signals & {"heading_po", "text_po", "filename_po"}:
@@ -670,6 +656,10 @@ def infer_playbook_profile(signals: frozenset[RecognitionSignalId]) -> str:
         return "supporting"
     if signals & {"text_quote", "filename_quote"}:
         return "non_actionable"
+    if signals & {"text_freight", "filename_freight"}:
+        return "freight_logistics"
+    if signals & {"text_import", "filename_import"}:
+        return "import_dossier"
     if signals & {"heading_invoice", "text_invoice", "filename_invoice"}:
         if "has_po_reference" in signals:
             return "po_goods"
@@ -805,6 +795,10 @@ def suggest_one_line(
 ) -> str:
     if signals & {"heading_grn", "text_grn", "filename_grn"}:
         return "Goods receipt or delivery note linked to a purchase order."
+    if signals & {"text_import", "filename_import"}:
+        return "Import or customs document (permit, entry, certificate, or packing list)."
+    if signals & {"text_freight", "filename_freight"}:
+        return "Freight or transport document (AWB, bill of lading, or broker paperwork)."
     if signals & {"heading_po", "text_po", "filename_po"} and "has_invoice_number" not in signals:
         return "Purchase order copy used as a supporting bundle document."
     if signals & {"text_credit_note", "filename_credit_note"}:

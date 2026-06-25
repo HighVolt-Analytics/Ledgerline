@@ -1,5 +1,6 @@
 """Dashboard aggregates — single source of truth for KPIs and charts."""
 
+import asyncio
 import json
 import re
 from datetime import date, timedelta
@@ -471,19 +472,29 @@ def _integrations_count(mailboxes_active: int) -> int:
 
 
 async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
-    """Sidebar badge counts in two DB round-trips (no period/value aggregates)."""
+    """Sidebar badge counts — status aggregate plus parallel queue counters."""
     status_counts = await _invoice_status_counts(db, tenant_id)
     pending_approval = sum(
         status_counts.get(s, 0) for s in _APPROVAL_STATUSES
     )
     inbox_count = sum(status_counts.get(s, 0) for s in _INBOX_STATUSES)
-    mailboxes_mapped = await _mailboxes_mapped(db, tenant_id=tenant_id)
+    (
+        team_expenses_count,
+        business_expenses_count,
+        payments_queue_count,
+        mailboxes_mapped,
+    ) = await asyncio.gather(
+        _team_expenses_queue_count(db, tenant_id),
+        _business_expenses_queue_count(db, tenant_id),
+        _payments_queue_count(db, tenant_id),
+        _mailboxes_mapped(db, tenant_id=tenant_id),
+    )
     return NavBadges(
         inbox_count=inbox_count,
         pending_approval=pending_approval,
-        team_expenses_count=await _team_expenses_queue_count(db, tenant_id),
-        business_expenses_count=await _business_expenses_queue_count(db, tenant_id),
-        payments_queue_count=await _payments_queue_count(db, tenant_id),
+        team_expenses_count=team_expenses_count,
+        business_expenses_count=business_expenses_count,
+        payments_queue_count=payments_queue_count,
         integrations_connected=_integrations_count(mailboxes_mapped),
     )
 

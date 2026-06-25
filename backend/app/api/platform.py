@@ -6,10 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, get_db, require_super_admin
+from app.api.deps import AuthContext, cross_tenant_db_lookup, get_db, require_super_admin
 from app.models.tenant import Tenant
-from app.models.user import User
-from app.schemas.auth import TokenResponse
 from app.schemas.common import ApiEnvelope
 from app.schemas.platform import (
     CreatePlatformTenantRequest,
@@ -27,7 +25,6 @@ from app.services.platform_service import (
     get_client_tenant,
     invite_tenant_admin,
     list_client_tenants,
-    provision_client_tenant_access,
     update_client_tenant,
 )
 from app.tenant_roles import TenantRole
@@ -38,9 +35,10 @@ router = APIRouter(prefix="/platform", tags=["platform"])
 @router.get("/tenants", response_model=ApiEnvelope[list[PlatformTenantSummary]])
 async def list_tenants(
     db: AsyncSession = Depends(get_db),
-    _ctx: AuthContext = Depends(require_super_admin),
+    ctx: AuthContext = Depends(require_super_admin),
 ) -> ApiEnvelope[list[PlatformTenantSummary]]:
-    tenants = await list_client_tenants(db)
+    async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
+        tenants = await list_client_tenants(db)
     return ApiEnvelope(data=tenants)
 
 
@@ -123,74 +121,14 @@ async def invite_admin(
     )
 
 
-@router.post("/tenants/{tenant_id}/enter-workspace", response_model=ApiEnvelope[TokenResponse])
-async def enter_client_workspace(
-    tenant_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_super_admin),
-) -> ApiEnvelope[TokenResponse]:
-    """Provision shadow admin access if needed, then mint a support-mode tenant session."""
-    if ctx.user_id is None:
-        raise HTTPException(401, "Sign in to open workspace")
-
-    tenant = await get_client_tenant(db, tenant_id=tenant_id)
-    if not tenant:
-        raise HTTPException(404, "Tenant not found")
-
-    try:
-        client_user = await provision_client_tenant_access(
-            db,
-            tenant_id=tenant_id,
-            operator_user_id=ctx.user_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
-
-    tenant_row = await db.get(Tenant, tenant_id)
-    if not tenant_row:
-        raise HTTPException(404, "Tenant not found")
-
-    role = TenantRole.ADMIN.value
-    from app.api.auth import (
-        _membership_summaries_for_account,
-        _mint_session_tokens,
-        _user_response,
-    )
-    from app.tenant_settings import tenant_onboarding_completed
-
-    operator = await db.get(User, ctx.user_id)
-    if not operator or not operator.auth_account_id:
-        raise HTTPException(401, "Session invalid")
-
-    access, refresh = await _mint_session_tokens(
-        db, user=client_user, tenant=tenant_row, role=role, is_support_session=True
-    )
-    memberships = await _membership_summaries_for_account(
-        db, auth_account_id=operator.auth_account_id
-    )
-    return ApiEnvelope(
-        data=TokenResponse(
-            access_token=access,
-            refresh_token=refresh,
-            user=_user_response(
-                client_user,
-                tenant_row,
-                role=role,
-                is_support_session=True,
-                onboarding_completed=tenant_onboarding_completed(tenant_row),
-            ),
-            memberships=memberships,
-        )
-    )
-
-
 @router.get("/tenants/{tenant_id}", response_model=ApiEnvelope[PlatformTenantDetail])
 async def get_tenant(
     tenant_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _ctx: AuthContext = Depends(require_super_admin),
+    ctx: AuthContext = Depends(require_super_admin),
 ) -> ApiEnvelope[PlatformTenantDetail]:
-    tenant = await get_client_tenant(db, tenant_id=tenant_id)
+    async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
+        tenant = await get_client_tenant(db, tenant_id=tenant_id)
     if not tenant:
         raise HTTPException(404, "Tenant not found")
     return ApiEnvelope(data=tenant)

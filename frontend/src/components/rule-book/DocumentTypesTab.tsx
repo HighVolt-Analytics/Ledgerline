@@ -920,7 +920,7 @@ function DocumentTypeEditDialog({
                 onChange({
                   ...next,
                   sampleAnalysis: markSampleAnalysisApplied(
-                    buildSampleAnalysisRecord(filenames, proposal)
+                    buildSampleAnalysisRecord(filenames, proposal, { afterApply: true })
                   ),
                 });
               }}
@@ -1294,9 +1294,8 @@ export function DocumentTypesTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Choose a template for each document your organisation receives. Tick how we recognise it —
-          routing, extraction, and validations follow from the type. GL accounts are set under
-          Purchase, Expenses, and Team tabs.
+          Add a type by uploading sample files (recommended) or from a template. Recognition
+          rules drive routing; GL accounts are set under Purchase, Expenses, and Team tabs.
         </p>
         {canEdit ? (
           <Button

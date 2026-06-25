@@ -28,6 +28,7 @@ import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
 import { useRuleBookConfig, useDeleteRuleBookDocumentType, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useRecognitionSignalCatalog } from "@/hooks/useRecognitionSignalCatalog";
 import { useEmployeeMasters, useVendorMasters } from "@/hooks/useMasterData";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 import { removeDocumentTypeFromCatalog } from "@/lib/documentTypeLifecycle";
@@ -56,6 +57,7 @@ export function RulesPage() {
   const pendingSaveRef = useRef<RuleBookConfigState | null>(null);
 
   const { data, isLoading, isError } = useRuleBookConfig(Boolean(user));
+  useRecognitionSignalCatalog(Boolean(user));
   const { data: vendorMasters = [] } = useVendorMasters(Boolean(user));
   const { data: employeeMasters = [] } = useEmployeeMasters(Boolean(user));
   const saveMutation = useSaveRuleBookConfig();

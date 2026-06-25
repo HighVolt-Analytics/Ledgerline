@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database import async_session_factory
+from app.database import db_session_with_rls
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.audit_service import log_event
 from app.services.invoice_evaluation_service import apply_invoice_evaluation, load_config_for_tenant
@@ -100,7 +100,7 @@ async def remap_tenant_invoices_background(
 ) -> None:
     """Run invoice remap outside the request path (catalogue deletes, etc.)."""
     try:
-        async with async_session_factory() as session:
+        async with db_session_with_rls(tenant_id) as session:
             result = await remap_invoices_for_tenant(session, tenant_id=tenant_id)
             if result.updated:
                 await log_event(
@@ -117,7 +117,6 @@ async def remap_tenant_invoices_background(
                     actor_email=actor_email,
                     client_ip=client_ip,
                 )
-            await session.commit()
     except Exception:
         logger.exception(
             "remap_tenant_invoices_background_failed",

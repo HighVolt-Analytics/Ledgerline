@@ -5,9 +5,9 @@ import { tenantIdFromToken } from "@/lib/authToken";
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
-      gcTime: 5 * 60_000,
-      refetchOnWindowFocus: true,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
       retry: 1,
     },
   },
@@ -36,6 +36,7 @@ const baseKeys = {
   reconciliationOverview: ["reconciliation", "overview"] as const,
   ruleBookConfig: ["rule-book", "config"] as const,
   ruleBookChangelog: ["rule-book", "changelog"] as const,
+  recognitionSignals: ["rule-book", "recognition-signals"] as const,
   vendorMasters: ["vendor-masters"] as const,
   employeeMasters: ["employee-masters"] as const,
   pendingVendors: ["pending-vendors"] as const,
@@ -58,6 +59,7 @@ export const queryKeys = {
   reconciliationOverview: () => tenantQueryKey(baseKeys.reconciliationOverview),
   ruleBookConfig: () => tenantQueryKey(baseKeys.ruleBookConfig),
   ruleBookChangelog: () => tenantQueryKey(baseKeys.ruleBookChangelog),
+  recognitionSignals: () => tenantQueryKey(baseKeys.recognitionSignals),
   vendorMasters: () => tenantQueryKey(baseKeys.vendorMasters),
   employeeMasters: () => tenantQueryKey(baseKeys.employeeMasters),
   pendingVendors: () => tenantQueryKey(baseKeys.pendingVendors),

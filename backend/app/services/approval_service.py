@@ -11,9 +11,11 @@ from app.models.tenant import Tenant
 from app.services.audit_service import log_event
 from app.services.file_storage import (
     delete_stored_file,
+    is_rejected_storage_path,
     relocate_invoice_to_rejected,
     relocate_rejected_to_vault,
     repair_invoice_stored_path,
+    resolve_readable_stored,
     stored_file_available,
 )
 from app.services.invoice_evaluation_service import load_config_for_tenant
@@ -40,9 +42,18 @@ _APPROVABLE = frozenset(
     }
 )
 
+APPROVABLE_STATUSES = _APPROVABLE
+
 _DELETABLE = frozenset(
     {InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED}
 )
+
+
+async def _tenant_storage_context(session: AsyncSession, inv: Invoice) -> tuple[str, str | None]:
+    org = await session.get(Tenant, inv.tenant_id)
+    tenant_slug = org.slug if org else "default"
+    tenant_name = org.name if org else None
+    return tenant_slug, tenant_name
 
 _REQUESTABLE = frozenset(
     {
@@ -69,6 +80,8 @@ async def reject_invoice(
     actor_email: str | None = None,
 ) -> None:
     """Mark invoice rejected and move stored file to rejected/{org}/{vendor}/{year}/{month}/."""
+    if inv.status == InvoiceStatus.REJECTED:
+        return
     if inv.status not in _REJECTABLE:
         raise ValueError(f"Invoice status '{inv.status.value}' cannot be rejected")
 
@@ -81,7 +94,26 @@ async def reject_invoice(
     previous_status = inv.status.value
     old_path = inv.raw_file_path
 
-    if inv.raw_file_path and stored_file_available(inv.raw_file_path, tenant_id=inv.tenant_id):
+    await repair_invoice_stored_path(session, inv)
+    resolved = (
+        resolve_readable_stored(
+            inv.raw_file_path,
+            tenant_id=inv.tenant_id,
+            tenant_slug=tenant_slug,
+            tenant_name=tenant_name,
+        )
+        if inv.raw_file_path
+        else None
+    )
+    if resolved:
+        inv.raw_file_path = resolved
+
+    if inv.raw_file_path and stored_file_available(
+        inv.raw_file_path,
+        tenant_id=inv.tenant_id,
+        tenant_slug=tenant_slug,
+        tenant_name=tenant_name,
+    ):
         filename = filename_from_stored(inv.raw_file_path)
         new_path = relocate_invoice_to_rejected(
             inv.raw_file_path,
@@ -121,6 +153,39 @@ async def reject_invoice(
     )
 
 
+async def restore_rejected_invoice_file_if_needed(
+    session: AsyncSession,
+    inv: Invoice,
+) -> None:
+    """Move a rejected blob back to invoice/ vault before reprocessing."""
+    if inv.status != InvoiceStatus.REJECTED or not inv.raw_file_path:
+        return
+
+    org = await session.get(Tenant, inv.tenant_id)
+    tenant_slug = org.slug if org else "default"
+    tenant_name = org.name if org else None
+    config = await load_config_for_tenant(session, inv.tenant_id)
+    short_title, title = vault_document_type_titles_for_invoice(inv, list(config.document_types))
+    filename = filename_from_stored(inv.raw_file_path)
+    inv.raw_file_path = relocate_rejected_to_vault(
+        inv.raw_file_path,
+        inv.tenant_id,
+        tenant_slug,
+        inv.storage_vendor_slug or "unknown",
+        inv.id,
+        inv.file_hash or "",
+        filename,
+        tenant_name=tenant_name,
+        vendor_name=inv.vendor,
+        invoice_no=inv.invoice_no,
+        invoice_date=inv.invoice_date,
+        route_target=inv.route_target,
+        document_type_code=inv.document_type_code,
+        document_type_short_title=short_title,
+        document_type_title=title,
+    )
+
+
 async def approve_invoice_for_reprocess(
     session: AsyncSession,
     inv: Invoice,
@@ -140,36 +205,13 @@ async def approve_invoice_for_reprocess(
         )
     ).scalar_one()
     await assert_team_expense_approvable(session, loaded)
+    previous_status = inv.status.value
     await repair_invoice_stored_path(session, inv)
+
+    await restore_rejected_invoice_file_if_needed(session, inv)
+
     if not stored_file_available(inv.raw_file_path, tenant_id=inv.tenant_id):
         raise ValueError("Invoice has no stored file to process")
-
-    org = await session.get(Tenant, inv.tenant_id)
-    tenant_slug = org.slug if org else "default"
-    tenant_name = org.name if org else None
-    config = await load_config_for_tenant(session, inv.tenant_id)
-    short_title, title = vault_document_type_titles_for_invoice(inv, list(config.document_types))
-    previous_status = inv.status.value
-
-    if inv.status == InvoiceStatus.REJECTED and inv.raw_file_path:
-        filename = filename_from_stored(inv.raw_file_path)
-        inv.raw_file_path = relocate_rejected_to_vault(
-            inv.raw_file_path,
-            inv.tenant_id,
-            tenant_slug,
-            inv.storage_vendor_slug or "unknown",
-            inv.id,
-            inv.file_hash or "",
-            filename,
-            tenant_name=tenant_name,
-            vendor_name=inv.vendor,
-            invoice_no=inv.invoice_no,
-            invoice_date=inv.invoice_date,
-            route_target=inv.route_target,
-            document_type_code=inv.document_type_code,
-            document_type_short_title=short_title,
-            document_type_title=title,
-        )
 
     await reset_invoice_for_reprocess(session, inv)
     await log_event(
@@ -210,12 +252,19 @@ async def request_approval(
 
 async def permanently_delete_invoice(session: AsyncSession, inv: Invoice) -> None:
     """Permanently remove a rejected/duplicate invoice and its stored file."""
-    if inv.status not in _DELETABLE:
+    tenant_slug, tenant_name = await _tenant_storage_context(session, inv)
+    await repair_invoice_stored_path(session, inv)
+    deletable = inv.status in _DELETABLE
+    if not deletable and inv.status == InvoiceStatus.PROCESSED:
+        deletable = is_rejected_storage_path(inv.raw_file_path)
+    if not deletable:
         raise ValueError(
-            f"Invoice status '{inv.status.value}' cannot be permanently deleted"
+            f"Invoice status '{inv.status.value}' cannot be permanently deleted. "
+            "Reject the document first, then delete it from the Rejected column."
         )
 
     stored_path = inv.raw_file_path
+    prefer_rejected = inv.status in _DELETABLE or is_rejected_storage_path(stored_path)
     await log_event(
         session,
         "invoice_permanently_deleted",
@@ -227,6 +276,13 @@ async def permanently_delete_invoice(session: AsyncSession, inv: Invoice) -> Non
             "stored_path": stored_path,
         },
     )
-    delete_stored_file(stored_path)
+    delete_stored_file(
+        stored_path,
+        tenant_id=inv.tenant_id,
+        tenant_slug=tenant_slug,
+        tenant_name=tenant_name,
+        invoice_id=inv.id,
+        prefer_rejected=prefer_rejected,
+    )
     await session.delete(inv)
     await session.flush()

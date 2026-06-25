@@ -73,6 +73,26 @@ def test_heading_alignment_neutral_when_no_heading() -> None:
     assert score == 0.55
 
 
+def test_heading_alignment_cargo_clearance_permit_dt03() -> None:
+    from app.schemas.document_type import DocumentTypeDefinition
+
+    text = "CARGO CLEARANCE PERMIT\nPermit No: ABC-123\nImporter details"
+    signals = extract_document_heading_signals(text)
+    definition = DocumentTypeDefinition(
+        code="DT-03",
+        title="Cargo Clearance Permit",
+        shortTitle="Cargo Clearance Permit",
+        klass="Supporting",
+        posting="No",
+        fraudRisk="low",
+        oneLine="Import customs clearance permit",
+        routeTarget="Purchase Management",
+        playbook_profile="import_dossier",
+    )
+    score = heading_alignment_score("DT-03", signals, document_text=text, definition=definition)
+    assert score >= 0.82
+
+
 def test_infer_import_logistics_page_kinds() -> None:
     from app.services.document_heading_utils import infer_page_document_kind
 
