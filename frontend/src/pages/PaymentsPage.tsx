@@ -15,6 +15,7 @@ import {
   useStripeAccount,
   useStripeBalance,
   useStripeOnboardingLink,
+  useStripeOAuthUrl,
   useStripeTransactions,
 } from "@/hooks/useStripe";
 import { useTenantTime } from "@/hooks/useTenantTime";
@@ -74,6 +75,7 @@ export function PaymentsPage() {
     useStripeTransactions(10, stripeConnected);
   const connectStripe = useConnectStripe();
   const onboardingLink = useStripeOnboardingLink();
+  const stripeOAuthUrl = useStripeOAuthUrl();
   const [tab, setTab] = useState<PaymentTab>("queue");
   const [justPaidId, setJustPaidId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<PaymentRecord | null>(null);
@@ -104,6 +106,18 @@ export function PaymentsPage() {
       }
     } catch (err) {
       setStripeActionError(err instanceof Error ? err.message : "Unable to connect Stripe");
+    }
+  };
+
+  const handleConnectExistingStripe = async () => {
+    setStripeActionError(null);
+    try {
+      const result = await stripeOAuthUrl.mutateAsync();
+      window.location.href = result.url;
+    } catch (err) {
+      setStripeActionError(
+        err instanceof Error ? err.message : "Unable to start Stripe sign-in"
+      );
     }
   };
 
@@ -165,18 +179,38 @@ export function PaymentsPage() {
                 Connect a Stripe account to view balance and ledger activity. Payables workflow
                 below is unchanged.
               </p>
+              {!stripeConnected && !stripeAccountLoading ? (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Existing Stripe account uses Stripe sign-in and authorization.
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             {!stripeConnected && !stripeAccountLoading ? (
-              <Button
-                size="sm"
-                onClick={() => void handleConnectStripe()}
-                disabled={connectStripe.isPending}
-                data-testid="button-connect-stripe"
-              >
-                {connectStripe.isPending ? "Connecting…" : "Connect Stripe"}
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => void handleConnectStripe()}
+                  disabled={connectStripe.isPending || stripeOAuthUrl.isPending}
+                  data-testid="button-connect-stripe"
+                >
+                  {connectStripe.isPending
+                    ? "Connecting…"
+                    : "Create new Stripe connected account"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void handleConnectExistingStripe()}
+                  disabled={connectStripe.isPending || stripeOAuthUrl.isPending}
+                  data-testid="button-connect-existing-stripe"
+                >
+                  {stripeOAuthUrl.isPending
+                    ? "Redirecting…"
+                    : "Connect existing Stripe account"}
+                </Button>
+              </>
             ) : null}
             {stripeConnected && needsOnboarding ? (
               <Button
@@ -200,7 +234,8 @@ export function PaymentsPage() {
           <p className="text-xs text-muted-foreground">Loading Stripe connection…</p>
         ) : !stripeConnected ? (
           <p className="text-xs text-muted-foreground">
-            Not connected. Connect Stripe to enable balance and transaction visibility.
+            Not connected. Create a new connected account or connect an existing Stripe account
+            to enable balance and transaction visibility.
           </p>
         ) : (
           <div className="space-y-3">

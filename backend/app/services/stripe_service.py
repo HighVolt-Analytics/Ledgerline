@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlencode
 
+import jwt
 import stripe
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +24,7 @@ from app.models.stripe_payments import (
     StripeWebhookEvent,
 )
 from app.models.tenant import Tenant
+from app.tenant_ids import parse_tenant_id
 from app.tenant_scoped import coerce_tenant_uuid
 from app.utils.logger import get_logger
 
@@ -29,6 +32,10 @@ logger = get_logger(__name__)
 
 # Phase 2: external supplier bank payout via Connect transfers / vendor_payment_methods.
 _VENDOR_BANK_PAYOUT_PHASE = 2
+
+STRIPE_OAUTH_STATE_TYP = "stripe_connect_oauth"
+STRIPE_OAUTH_STATE_TTL_MINUTES = 15
+STRIPE_OAUTH_AUTHORIZE_URL = "https://connect.stripe.com/oauth/authorize"
 
 
 class StripeServiceError(Exception):
@@ -66,6 +73,17 @@ def _require_stripe_configured(settings: Settings | None = None) -> Settings:
     cfg = settings or get_settings()
     if not cfg.stripe_configured:
         raise StripeServiceError("Stripe is not configured")
+    return cfg
+
+
+def _require_stripe_oauth_configured(settings: Settings | None = None) -> Settings:
+    cfg = _require_stripe_configured(settings)
+    if not cfg.stripe_connect_client_id.strip():
+        raise StripeServiceError("Stripe Connect client ID is not configured")
+    if not cfg.stripe_oauth_redirect_url.strip():
+        raise StripeServiceError("Stripe OAuth redirect URL is not configured")
+    if not cfg.jwt_secret.strip():
+        raise StripeServiceError("JWT secret is not configured")
     return cfg
 
 
@@ -184,6 +202,115 @@ def _verify_stripe_webhook_event(
 
 async def _run_stripe(callable_obj, *args, **kwargs):
     return await asyncio.to_thread(callable_obj, *args, **kwargs)
+
+
+def create_stripe_oauth_state(
+    *,
+    tenant_id: uuid.UUID | str | int,
+    user_id: int | None = None,
+) -> str:
+    """Signed OAuth state binding tenant (and optional user) for the callback."""
+    _require_stripe_oauth_configured()
+    tid = coerce_tenant_uuid(tenant_id)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=STRIPE_OAUTH_STATE_TTL_MINUTES)
+    payload: dict[str, Any] = {
+        "typ": STRIPE_OAUTH_STATE_TYP,
+        "org_id": str(tid),
+        "exp": expire,
+    }
+    if user_id is not None:
+        payload["user_id"] = user_id
+    return jwt.encode(payload, get_settings().jwt_secret, algorithm="HS256")
+
+
+def parse_stripe_oauth_state(state: str) -> dict[str, Any]:
+    payload = jwt.decode(state, get_settings().jwt_secret, algorithms=["HS256"])
+    if payload.get("typ") != STRIPE_OAUTH_STATE_TYP:
+        raise ValueError("Invalid Stripe OAuth state")
+    tenant_id = parse_tenant_id(payload.get("org_id"))
+    if tenant_id is None:
+        raise ValueError("Invalid tenant in Stripe OAuth state")
+    payload["tenant_id"] = tenant_id
+    return payload
+
+
+def create_stripe_oauth_url(tenant_id: uuid.UUID | str | int, state: str) -> str:
+    """Build Stripe Connect OAuth authorize URL for an existing Standard account."""
+    cfg = _require_stripe_oauth_configured()
+    tid = coerce_tenant_uuid(tenant_id)
+    redirect_uri = cfg.stripe_oauth_redirect_url.strip()
+    client_id = cfg.stripe_connect_client_id.strip()
+    if not state.strip():
+        raise StripeServiceError("Stripe OAuth state is required")
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "scope": "read_write",
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    logger.info("stripe_oauth_authorize_url_created", tenant_id=str(tid))
+    return f"{STRIPE_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
+
+
+def _exchange_stripe_oauth_code(code: str) -> dict[str, Any]:
+    return _stripe_object_to_dict(stripe.OAuth.token(grant_type="authorization_code", code=code))
+
+
+async def exchange_stripe_oauth_code(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int,
+    code: str,
+) -> StripeAccount:
+    """Exchange OAuth authorization code and link an existing Standard connected account."""
+    cfg = _require_stripe_oauth_configured()
+    tid = coerce_tenant_uuid(tenant_id)
+    if not code.strip():
+        raise StripeServiceError("Stripe OAuth authorization code is required")
+
+    def _token() -> dict[str, Any]:
+        _configure_stripe(cfg)
+        return _exchange_stripe_oauth_code(code)
+
+    try:
+        token_response = await _run_stripe(_token)
+    except stripe.StripeError as exc:
+        logger.warning("stripe_oauth_token_failed", tenant_id=str(tid), error=str(exc))
+        raise StripeServiceError("Unable to complete Stripe OAuth connection") from exc
+
+    stripe_user_id = str(token_response.get("stripe_user_id") or "")
+    if not stripe_user_id:
+        raise StripeServiceError("Stripe OAuth response missing connected account id")
+
+    existing = await get_stripe_account_for_tenant(db, tid)
+    if existing is not None:
+        if existing.stripe_account_id != stripe_user_id:
+            raise StripeServiceError("Tenant already has a different Stripe connected account")
+        row = existing
+    else:
+        row = StripeAccount(tenant_id=tid, stripe_account_id=stripe_user_id)
+        db.add(row)
+
+    row.account_type = "standard"
+    await db.flush()
+
+    try:
+        row = await refresh_connected_account_status(db, row)
+    except StripeServiceError:
+        row.account_type = "standard"
+        if not row.onboarding_status:
+            row.onboarding_status = "complete"
+        await db.flush()
+
+    logger.info(
+        "stripe_oauth_account_linked",
+        tenant_id=str(tid),
+        stripe_account_id=row.stripe_account_id,
+        account_type=row.account_type,
+        onboarding_status=row.onboarding_status,
+    )
+    return row
 
 
 async def get_stripe_account_for_tenant(

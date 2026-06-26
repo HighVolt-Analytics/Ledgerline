@@ -1,6 +1,10 @@
 """Payment disbursement workflow API."""
 
+from urllib.parse import urlencode
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
@@ -13,6 +17,7 @@ from app.schemas.payment import (
     StripeBalanceAmountResponse,
     StripeBalanceResponse,
     StripeConnectResponse,
+    StripeOAuthUrlResponse,
     StripeOnboardingLinkResponse,
     StripeTransactionResponse,
     WalletSummaryResponse,
@@ -23,12 +28,47 @@ from app.services.stripe_service import (
     StripeServiceError,
     create_account_onboarding_link,
     create_connected_account_for_tenant,
+    create_stripe_oauth_state,
+    create_stripe_oauth_url,
+    exchange_stripe_oauth_code,
     get_connected_account_balance,
     get_stripe_account_for_tenant,
     list_connected_account_transactions,
+    parse_stripe_oauth_state,
 )
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+
+# Stripe OAuth browser callback — no JWT (mounted without require_user in main.py).
+oauth_public_router = APIRouter(prefix="/payments", tags=["payments"])
+
+
+def _append_query(url: str, params: dict[str, str]) -> str:
+    if not params:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{urlencode(params)}"
+
+
+def _stripe_oauth_return_url() -> str:
+    settings = get_settings()
+    return_url = settings.stripe_return_url.strip()
+    if return_url:
+        return return_url.rstrip("/")
+    base = settings.public_app_url.strip().rstrip("/")
+    if base:
+        return f"{base}/payments"
+    return "/payments"
+
+
+def _stripe_oauth_redirect(*, outcome: str, message: str | None = None) -> RedirectResponse:
+    params = {"stripe": outcome}
+    if message:
+        params["message"] = message[:200]
+    return RedirectResponse(_append_query(_stripe_oauth_return_url(), params))
 
 
 def _stripe_http_error(exc: StripeServiceError) -> HTTPException:
@@ -127,6 +167,61 @@ async def get_stripe_onboarding_link(
     except StripeServiceError as exc:
         raise _stripe_http_error(exc) from exc
     return ApiEnvelope(data=StripeOnboardingLinkResponse(url=url))
+
+
+@router.get("/stripe/oauth-url", response_model=ApiEnvelope[StripeOAuthUrlResponse])
+async def get_stripe_oauth_url(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[StripeOAuthUrlResponse]:
+    try:
+        state = create_stripe_oauth_state(tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+        url = create_stripe_oauth_url(ctx.tenant_id, state)
+    except StripeServiceError as exc:
+        raise _stripe_http_error(exc) from exc
+    return ApiEnvelope(data=StripeOAuthUrlResponse(url=url))
+
+
+@oauth_public_router.get("/stripe/oauth/callback")
+async def stripe_oauth_callback(
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    error_description: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Stripe Connect OAuth redirect target — exchanges code and returns user to Payments."""
+    if error:
+        return _stripe_oauth_redirect(
+            outcome="oauth_error",
+            message=(error_description or error),
+        )
+
+    if not code or not state:
+        return _stripe_oauth_redirect(
+            outcome="oauth_error",
+            message="Missing authorization code",
+        )
+
+    try:
+        payload = parse_stripe_oauth_state(state)
+        tenant_id = payload["tenant_id"]
+        if not isinstance(tenant_id, uuid.UUID):
+            tenant_id = uuid.UUID(str(tenant_id))
+        await exchange_stripe_oauth_code(db, tenant_id, code)
+        await db.commit()
+    except (ValueError, StripeServiceError) as exc:
+        await db.rollback()
+        logger.warning("stripe_oauth_callback_failed", error=str(exc))
+        return _stripe_oauth_redirect(outcome="oauth_error", message=str(exc))
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("stripe_oauth_callback_failed", error=str(exc))
+        return _stripe_oauth_redirect(
+            outcome="oauth_error",
+            message="Stripe connection failed. Try again or contact support.",
+        )
+
+    return _stripe_oauth_redirect(outcome="connected")
 
 
 @router.get("/stripe/balance", response_model=ApiEnvelope[StripeBalanceResponse])
