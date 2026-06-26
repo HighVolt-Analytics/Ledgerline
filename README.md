@@ -177,6 +177,8 @@ Requests accept `X-Correlation-ID` for tracing.
 | `CORS_ORIGINS` | Comma-separated origins |
 | `BASE_PATH` / `ROOT_PATH` | Reverse-proxy prefix for AKS/Front Door (e.g. `/ledgerlink`; empty locally) |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | App Insights (optional locally) |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_CLIENT_ID` | Stripe Connect (secrets — see [docs/stripe-payments.md](docs/stripe-payments.md)) |
+| `STRIPE_MODE`, `STRIPE_RETURN_URL`, `STRIPE_REFRESH_URL` | Stripe Connect (non-secret URLs / mode) |
 
 | Run mode | Where config lives |
 |----------|-------------------|
@@ -322,6 +324,7 @@ Create in namespace **`quantum-ledgerlink`** before the first deploy:
 - `AZURE_STORAGE_CONNECTION_STRING`
 - `AZURE_DI_KEY`
 - `APPLICATIONINSIGHTS_CONNECTION_STRING` (if used)
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_CLIENT_ID` (see [docs/stripe-payments.md](docs/stripe-payments.md))
 
 **`ledgerlink-config`** (ConfigMap) — non-secret app configuration:
 
@@ -333,6 +336,7 @@ Create in namespace **`quantum-ledgerlink`** before the first deploy:
 - `UPLOAD_DIR` (e.g. `/app/uploads`)
 - `RULE_BOOK_CONFIG_PATH`, `CHART_OF_ACCOUNTS_PATH`
 - `CORS_ORIGINS` (include `https://staging.highvolt.tech`)
+- `STRIPE_MODE`, `STRIPE_RETURN_URL`, `STRIPE_REFRESH_URL` (Payments sandbox — [docs/stripe-payments.md](docs/stripe-payments.md))
 - `LOG_LEVEL`, `AUTH_REQUIRED`, `GRAPH_FOLDER_MOVES_ENABLED`, etc.
 
 All backend Deployments (`ledgerlink-api`, `ledgerlink-worker`, `ledgerlink-beat`) mount both via `envFrom`:

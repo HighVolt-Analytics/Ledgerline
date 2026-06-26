@@ -24,6 +24,10 @@ data:
   GRAPH_OAUTH_FRONTEND_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/integrations"
   LOG_LEVEL: "INFO"
   AUTH_REQUIRED: "true"
+  STRIPE_MODE: "sandbox"
+  STRIPE_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/payments"
+  STRIPE_REFRESH_URL: "https://staging.highvolt.tech/ledgerlink/payments"
   # app-secrets (not ConfigMap): META_APP_ID, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN,
+  # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_CLIENT_ID,
   # WHATSAPP_OAUTH_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/auth/whatsapp/callback
   # WHATSAPP_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations

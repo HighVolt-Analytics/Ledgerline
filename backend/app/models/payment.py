@@ -50,6 +50,11 @@ class Payment(Base):
     approvers: Mapped[list | None] = mapped_column(JSON)
     payment_intent: Mapped[str | None] = mapped_column(String(255))
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    stripe_transfer_id: Mapped[str | None] = mapped_column(String(255))
+    stripe_payout_id: Mapped[str | None] = mapped_column(String(255))
+    stripe_charge_id: Mapped[str | None] = mapped_column(String(255))
+    stripe_latest_event_id: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
