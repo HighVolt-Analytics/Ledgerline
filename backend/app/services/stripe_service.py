@@ -133,6 +133,22 @@ def _derive_onboarding_status(account: Any) -> str:
     return "action_required"
 
 
+def _onboarding_status_from_webhook_account(account_data: dict[str, Any]) -> str:
+    details_submitted = bool(account_data.get("details_submitted"))
+    charges_enabled = bool(account_data.get("charges_enabled"))
+    payouts_enabled = bool(account_data.get("payouts_enabled"))
+    if details_submitted and charges_enabled and payouts_enabled:
+        return "complete"
+    requirements = account_data.get("requirements") or {}
+    if not isinstance(requirements, dict):
+        requirements = _stripe_object_to_dict(requirements)
+    currently_due = requirements.get("currently_due") or []
+    past_due = requirements.get("past_due") or []
+    if currently_due or past_due:
+        return "action_required"
+    return "pending"
+
+
 def _is_active_stripe_account(row: StripeAccount | None) -> bool:
     if row is None:
         return False
@@ -330,6 +346,17 @@ async def _get_stripe_account_row_for_tenant(
     tid = coerce_tenant_uuid(tenant_id)
     return (
         await db.execute(select(StripeAccount).where(StripeAccount.tenant_id == tid))
+    ).scalar_one_or_none()
+
+
+async def _get_stripe_account_by_stripe_id(
+    db: AsyncSession,
+    stripe_account_id: str,
+) -> StripeAccount | None:
+    return (
+        await db.execute(
+            select(StripeAccount).where(StripeAccount.stripe_account_id == stripe_account_id)
+        )
     ).scalar_one_or_none()
 
 
@@ -712,3 +739,76 @@ async def record_webhook_event_once(db: AsyncSession, event: Any) -> WebhookReco
 
     logger.info("stripe_webhook_recorded", stripe_event_id=event_id, event_type=event_type)
     return WebhookRecordResult(event=row, duplicate=False, already_processed=False)
+
+
+async def _apply_account_updated_webhook(db: AsyncSession, event: Any) -> bool:
+    event_dict = _stripe_object_to_dict(event)
+    data = event_dict.get("data") or {}
+    account_raw = data.get("object")
+    account_data = (
+        account_raw
+        if isinstance(account_raw, dict)
+        else _stripe_object_to_dict(account_raw)
+        if account_raw is not None
+        else {}
+    )
+    stripe_account_id = str(account_data.get("id") or "")
+    if not stripe_account_id:
+        logger.warning("stripe_webhook_account_updated_missing_id")
+        return False
+
+    row = await _get_stripe_account_by_stripe_id(db, stripe_account_id)
+    if row is None:
+        logger.info(
+            "stripe_webhook_account_updated_unlinked",
+            stripe_account_id=stripe_account_id,
+        )
+        return False
+
+    if row.onboarding_status == STRIPE_ONBOARDING_STATUS_DISCONNECTED:
+        logger.info(
+            "stripe_webhook_account_updated_skipped_disconnected",
+            tenant_id=str(row.tenant_id),
+            stripe_account_id=stripe_account_id,
+        )
+        return False
+
+    row.charges_enabled = bool(account_data.get("charges_enabled"))
+    row.payouts_enabled = bool(account_data.get("payouts_enabled"))
+    row.details_submitted = bool(account_data.get("details_submitted"))
+    account_type = account_data.get("type")
+    if account_type:
+        row.account_type = str(account_type)
+    row.onboarding_status = _onboarding_status_from_webhook_account(account_data)
+    await db.flush()
+
+    logger.info(
+        "stripe_webhook_account_updated_applied",
+        tenant_id=str(row.tenant_id),
+        stripe_account_id=stripe_account_id,
+        onboarding_status=row.onboarding_status,
+        charges_enabled=row.charges_enabled,
+        payouts_enabled=row.payouts_enabled,
+    )
+    return True
+
+
+async def process_stripe_webhook_event(
+    db: AsyncSession,
+    event: Any,
+    *,
+    webhook_row: StripeWebhookEvent,
+) -> None:
+    """Apply supported webhook side effects and mark the event processed."""
+    event_type = str(getattr(event, "type", "") or "")
+    if event_type != "account.updated":
+        return
+
+    await _apply_account_updated_webhook(db, event)
+    webhook_row.processed_at = datetime.now(timezone.utc)
+    await db.flush()
+    logger.info(
+        "stripe_webhook_processed",
+        stripe_event_id=webhook_row.stripe_event_id,
+        event_type=event_type,
+    )

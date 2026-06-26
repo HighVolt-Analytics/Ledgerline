@@ -66,6 +66,17 @@ export function useDisconnectStripe() {
   });
 }
 
+export function useRefreshStripeAccount() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => api.refreshStripeAccount(),
+    onSuccess: async () => {
+      await invalidateStripeQueries(queryClient);
+    },
+  });
+}
+
 export function useStripeBalance(enabled = true) {
   return useQuery({
     queryKey: queryKeys.stripeBalance(),

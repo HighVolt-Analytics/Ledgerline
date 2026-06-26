@@ -10,6 +10,7 @@ from app.api.deps import get_db
 from app.config import get_settings
 from app.services.stripe_service import (
     StripeServiceError,
+    process_stripe_webhook_event,
     record_webhook_event_once,
     verify_stripe_webhook,
 )
@@ -48,6 +49,18 @@ async def stripe_webhook_receive(
         result = await record_webhook_event_once(db, event)
     except StripeServiceError as exc:
         raise HTTPException(500, str(exc)) from exc
+
+    if not result.duplicate and not result.already_processed:
+        try:
+            await process_stripe_webhook_event(db, event, webhook_row=result.event)
+        except Exception as exc:
+            logger.exception(
+                "stripe_webhook_processing_failed",
+                stripe_event_id=result.event.stripe_event_id,
+                event_type=result.event.event_type,
+                error=str(exc),
+            )
+            raise HTTPException(500, "Unable to process Stripe webhook event") from exc
 
     logger.info(
         "stripe_webhook_received",

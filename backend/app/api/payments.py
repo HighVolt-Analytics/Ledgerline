@@ -37,6 +37,7 @@ from app.services.stripe_service import (
     get_stripe_account_for_tenant,
     list_connected_account_transactions,
     parse_stripe_oauth_state,
+    refresh_connected_account_status,
 )
 from app.utils.logger import get_logger
 
@@ -129,6 +130,21 @@ async def get_stripe_account(
     account = await get_stripe_account_for_tenant(db, ctx.tenant_id)
     if account is None:
         raise HTTPException(404, "Stripe connected account not found")
+    return ApiEnvelope(data=StripeAccountResponse.model_validate(account))
+
+
+@router.post("/stripe/account/refresh", response_model=ApiEnvelope[StripeAccountResponse])
+async def post_stripe_account_refresh(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[StripeAccountResponse]:
+    account = await get_stripe_account_for_tenant(db, ctx.tenant_id)
+    if account is None:
+        raise HTTPException(404, "Stripe connected account not found")
+    try:
+        account = await refresh_connected_account_status(db, account)
+    except StripeServiceError as exc:
+        raise _stripe_http_error(exc) from exc
     return ApiEnvelope(data=StripeAccountResponse.model_validate(account))
 
 
