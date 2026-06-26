@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Link2, Shield } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
@@ -13,6 +14,7 @@ import { usePaymentMutations, usePayments } from "@/hooks/usePayments";
 import {
   useConnectStripe,
   useDisconnectStripe,
+  useRefreshStripeAccount,
   useStripeAccount,
   useStripeBalance,
   useStripeOnboardingLink,
@@ -78,6 +80,8 @@ function sumStripeBalanceAmounts(
 }
 
 export function PaymentsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const stripeReturnHandled = useRef(false);
   const { timeZone } = useTenantTime();
   const { data: paymentRows = [], isLoading, isError } = usePayments();
   const { updateStatus } = usePaymentMutations();
@@ -90,6 +94,7 @@ export function PaymentsPage() {
     useStripeTransactions(10, stripeConnected);
   const connectStripe = useConnectStripe();
   const disconnectStripe = useDisconnectStripe();
+  const refreshStripeAccount = useRefreshStripeAccount();
   const onboardingLink = useStripeOnboardingLink();
   const stripeOAuthUrl = useStripeOAuthUrl();
   const [tab, setTab] = useState<PaymentTab>("queue");
@@ -106,6 +111,32 @@ export function PaymentsPage() {
   const needsOnboarding = stripeAccount ? stripeNeedsOnboarding(stripeAccount) : false;
   const stripeWalletAvailable = sumStripeBalanceAmounts(stripeBalance?.available ?? []);
   const stripeWalletPending = sumStripeBalanceAmounts(stripeBalance?.pending ?? []);
+
+  useEffect(() => {
+    const stripeReturn = searchParams.get("stripe");
+    if (!stripeReturn) return;
+    if (stripeReturnHandled.current) return;
+    stripeReturnHandled.current = true;
+
+    const message = searchParams.get("message");
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("stripe");
+    nextParams.delete("message");
+    setSearchParams(nextParams, { replace: true });
+
+    if (stripeReturn === "oauth_error") {
+      setStripeActionError(message || "Stripe connection failed");
+      return;
+    }
+
+    if (stripeReturn === "connected" || stripeReturn === "return") {
+      void refreshStripeAccount.mutateAsync().catch((err: unknown) => {
+        setStripeActionError(
+          err instanceof Error ? err.message : "Unable to refresh Stripe account status"
+        );
+      });
+    }
+  }, [refreshStripeAccount, searchParams, setSearchParams]);
 
   const advance = async (payment: PaymentRecord, status: string) => {
     await updateStatus(Number(payment.id), { status });
@@ -149,6 +180,17 @@ export function PaymentsPage() {
     }
   };
 
+  const handleRefreshStripeStatus = async () => {
+    setStripeActionError(null);
+    try {
+      await refreshStripeAccount.mutateAsync();
+    } catch (err) {
+      setStripeActionError(
+        err instanceof Error ? err.message : "Unable to refresh Stripe account status"
+      );
+    }
+  };
+
   const handleDisconnectStripe = async () => {
     const confirmed = window.confirm(
       "Disconnect this Stripe account from LedgerLink? You can reconnect another Stripe account after this."
@@ -168,7 +210,8 @@ export function PaymentsPage() {
   const stripeConnectBusy =
     connectStripe.isPending ||
     stripeOAuthUrl.isPending ||
-    disconnectStripe.isPending;
+    disconnectStripe.isPending ||
+    refreshStripeAccount.isPending;
 
   return (
     <div>
@@ -294,6 +337,22 @@ export function PaymentsPage() {
           </div>
         ) : (
           <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Account status
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs px-2"
+                onClick={() => void handleRefreshStripeStatus()}
+                disabled={stripeConnectBusy}
+                data-testid="button-refresh-stripe-status"
+              >
+                {refreshStripeAccount.isPending ? "Refreshing…" : "Refresh status"}
+              </Button>
+            </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">
               <div>
                 <span className="text-muted-foreground">Account</span>
