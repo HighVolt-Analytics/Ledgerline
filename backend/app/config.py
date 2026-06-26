@@ -311,6 +311,11 @@ class Settings(BaseSettings):
     stripe_mode: str = Field(default="sandbox", validation_alias="STRIPE_MODE")
     stripe_return_url: str = Field(default="", validation_alias="STRIPE_RETURN_URL")
     stripe_refresh_url: str = Field(default="", validation_alias="STRIPE_REFRESH_URL")
+    stripe_oauth_redirect_url: str = Field(
+        default="",
+        validation_alias="STRIPE_OAUTH_REDIRECT_URL",
+        description="Stripe Connect OAuth redirect URI (must match Stripe Dashboard Connect/OAuth settings)",
+    )
 
     @field_validator("root_path", mode="before")
     @classmethod
