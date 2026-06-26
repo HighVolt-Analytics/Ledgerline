@@ -13,7 +13,7 @@ import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef, money } from "@/lib/format";
 import { fetchApprovalsBoard } from "@/lib/invoices";
-import { approveAndProcess, watchProcessingUntilIdle } from "@/lib/invoiceActions";
+import { approveAndProcess, invoiceFieldsFromDetails, validateInvoiceFieldsForApproval, watchProcessingUntilIdle } from "@/lib/invoiceActions";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { cn } from "@/lib/cn";
@@ -74,6 +74,7 @@ export function ApprovalsPage() {
   const [drawerInvoice, setDrawerInvoice] = useState<Invoice | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerEditMode, setDrawerEditMode] = useState(false);
+  const [drawerEditing, setDrawerEditing] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
   const [processingBusy, setProcessingBusy] = useState(false);
@@ -176,8 +177,17 @@ export function ApprovalsPage() {
   const approveInvoice = async (id: number) => {
     const inv = invoices.find((i) => i.id === id);
     if (!inv) return;
+    if (drawerOpen && drawerInvoice?.id === id && drawerEditing) {
+      setToast("Save your edits in the review drawer before approving from the board.");
+      return;
+    }
     if (!inv.has_stored_file) {
       setToast("Upload a PDF before approving this invoice.");
+      return;
+    }
+    const fieldCheck = validateInvoiceFieldsForApproval(invoiceFieldsFromDetails(inv));
+    if (!fieldCheck.ok) {
+      setToast(fieldCheck.message);
       return;
     }
     setBusyId(id);
@@ -524,8 +534,10 @@ export function ApprovalsPage() {
         onClose={() => {
           setDrawerOpen(false);
           setDrawerEditMode(false);
+          setDrawerEditing(false);
         }}
         startInEditMode={drawerEditMode}
+        onEditingChange={setDrawerEditing}
         onUpdated={() => load({ fresh: true })}
       />
     </div>

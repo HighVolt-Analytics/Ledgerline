@@ -1,4 +1,5 @@
 import { api } from "@/api/client";
+import type { InvoiceUpdatePayload } from "@/api/types";
 
 export const APPROVAL_QUEUE_STATUSES = ["exception", "duplicate_skipped", "rejected"] as const;
 
@@ -31,6 +32,25 @@ export function canQueuePipeline(status: string): boolean {
 
 export function canRequestInfo(status: string): boolean {
   return !(APPROVAL_QUEUE_STATUSES as readonly string[]).includes(status);
+}
+
+export function validateInvoiceFieldsForApproval(fields: {
+  vendor?: string | null;
+  total?: string | null;
+  due_date?: string | null;
+}): { ok: true } | { ok: false; message: string } {
+  const missing: string[] = [];
+  if (!fields.vendor?.trim()) missing.push("vendor");
+  const total = fields.total?.trim();
+  if (!total || Number.isNaN(Number(total)) || Number(total) <= 0) missing.push("total");
+  if (!fields.due_date?.trim()) missing.push("due date");
+  if (missing.length) {
+    return {
+      ok: false,
+      message: `Cannot approve: missing required field(s): ${missing.join(", ")}. Save corrections before approving.`,
+    };
+  }
+  return { ok: true };
 }
 
 export async function watchProcessingUntilIdle(
@@ -79,8 +99,12 @@ export async function watchInvoiceUntilSettled(
 
 export async function approveAndProcess(
   invoiceId: number,
-  refresh: () => Promise<void>
+  refresh: () => Promise<void>,
+  pendingEdits?: InvoiceUpdatePayload
 ): Promise<void> {
+  if (pendingEdits) {
+    await api.updateInvoice(invoiceId, pendingEdits);
+  }
   await api.approve(invoiceId);
   await watchInvoiceUntilSettled(invoiceId, refresh);
 }
@@ -92,4 +116,20 @@ export async function reprocessAndWatch(
 ): Promise<void> {
   await api.reprocess(invoiceId);
   await watchInvoiceUntilSettled(invoiceId, refresh);
+}
+
+export function invoiceFieldsFromDetails(inv: {
+  vendor?: string | null;
+  total?: string | null;
+  due_date?: string | null;
+}): {
+  vendor: string | null;
+  total: string | null;
+  due_date: string | null;
+} {
+  return {
+    vendor: inv.vendor ?? null,
+    total: inv.total ?? null,
+    due_date: inv.due_date ?? null,
+  };
 }
