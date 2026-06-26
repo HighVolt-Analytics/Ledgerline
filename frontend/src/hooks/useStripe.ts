@@ -55,6 +55,17 @@ export function useStripeOAuthUrl() {
   });
 }
 
+export function useDisconnectStripe() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => api.deleteStripeAccount(),
+    onSuccess: async () => {
+      await invalidateStripeQueries(queryClient);
+    },
+  });
+}
+
 export function useStripeBalance(enabled = true) {
   return useQuery({
     queryKey: queryKeys.stripeBalance(),
