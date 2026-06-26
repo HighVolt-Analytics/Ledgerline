@@ -69,6 +69,7 @@ def payment_to_response(
 
 async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Payment | None:
     from app.services.purchase_document_service import is_commercial_purchase_invoice
+    from app.services.vendor_payout_method_service import resolve_vendor_registry_id_for_invoice
 
     if not is_commercial_purchase_invoice(invoice):
         return None
@@ -76,6 +77,13 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
         return None
     if invoice.due_date is None or invoice.total is None or invoice.total <= 0:
         return None
+
+    vendor_registry_id = await resolve_vendor_registry_id_for_invoice(
+        db,
+        invoice.tenant_id,
+        vendor_name=invoice.vendor,
+        storage_vendor_slug=invoice.storage_vendor_slug,
+    )
 
     existing = (
         await db.execute(
@@ -92,11 +100,14 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
             existing.vendor = invoice.vendor
         if not existing.due_date:
             existing.due_date = invoice.due_date
+        if vendor_registry_id is not None:
+            existing.vendor_registry_id = vendor_registry_id
         return existing
 
     payment = Payment(
         tenant_id=invoice.tenant_id,
         invoice_id=invoice.id,
+        vendor_registry_id=vendor_registry_id,
         vendor=invoice.vendor,
         amount=invoice.total,
         currency=invoice.currency or "AUD",
@@ -115,38 +126,22 @@ async def list_payments(
     *,
     status: str | None = None,
 ) -> list[PaymentResponse]:
-    from app.services.vendor_payout_method_service import (
-        _normalize_vendor_key,
-        default_payout_lookup_by_vendor_names,
-    )
+    from app.services.vendor_payout_method_service import payout_summary_for_payments
 
     stmt = select(Payment).where(Payment.tenant_id == tenant_id).order_by(Payment.created_at.desc())
     if status:
         stmt = stmt.where(Payment.status == PaymentStatus(status))
     rows = (await db.execute(stmt)).scalars().all()
 
-    payout_lookup = await default_payout_lookup_by_vendor_names(
-        db,
-        tenant_id,
-        [row.vendor for row in rows],
-    )
-    responses: list[PaymentResponse] = []
-    for row in rows:
-        key = _normalize_vendor_key(row.vendor)
-        if not key:
-            summary: dict[str, str | None] = {}
-        elif key in payout_lookup:
-            summary = payout_lookup[key]
-        else:
-            summary = {"status": "not_configured", "method_type": None}
-        responses.append(
-            payment_to_response(
-                row,
-                vendor_payout_status=summary.get("status"),
-                vendor_payout_method_type=summary.get("method_type"),
-            )
+    summaries = await payout_summary_for_payments(db, tenant_id, rows)
+    return [
+        payment_to_response(
+            row,
+            vendor_payout_status=summary.get("status"),
+            vendor_payout_method_type=summary.get("method_type"),
         )
-    return responses
+        for row, summary in zip(rows, summaries, strict=True)
+    ]
 
 
 async def update_payment_status(
@@ -173,7 +168,16 @@ async def update_payment_status(
         row.failure_reason = body.failure_reason
     if new_status == PaymentStatus.PAID:
         row.paid_date = datetime.now(timezone.utc)
-    return payment_to_response(row)
+
+    from app.services.vendor_payout_method_service import payout_summary_for_payments
+
+    summaries = await payout_summary_for_payments(db, tenant_id, [row])
+    summary = summaries[0] if summaries else {}
+    return payment_to_response(
+        row,
+        vendor_payout_status=summary.get("status"),
+        vendor_payout_method_type=summary.get("method_type"),
+    )
 
 
 async def wallet_summary(db: AsyncSession, tenant_id: int) -> WalletSummaryResponse:
