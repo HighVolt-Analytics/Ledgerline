@@ -38,16 +38,23 @@ def upgrade() -> None:
     conn.execute(
         sa.text(
             """
-            UPDATE payments AS p
-            SET vendor_registry_id = vr.id
-            FROM invoices AS i
-            JOIN vendor_registry AS vr
-              ON vr.tenant_id = p.tenant_id
-             AND vr.vendor_slug = i.storage_vendor_slug
-            WHERE p.invoice_id = i.id
-              AND p.vendor_registry_id IS NULL
-              AND i.storage_vendor_slug IS NOT NULL
-              AND i.storage_vendor_slug <> 'unknown'
+            WITH matched AS (
+                SELECT
+                    p.id AS payment_id,
+                    vr.id AS vendor_registry_id
+                FROM payments p
+                JOIN invoices i ON i.id = p.invoice_id
+                JOIN vendor_registry vr
+                  ON vr.tenant_id = p.tenant_id
+                 AND vr.vendor_slug = i.storage_vendor_slug
+                WHERE p.vendor_registry_id IS NULL
+                  AND i.storage_vendor_slug IS NOT NULL
+                  AND i.storage_vendor_slug <> 'unknown'
+            )
+            UPDATE payments p
+            SET vendor_registry_id = matched.vendor_registry_id
+            FROM matched
+            WHERE p.id = matched.payment_id
             """
         )
     )
