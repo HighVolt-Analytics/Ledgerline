@@ -146,7 +146,6 @@ export function PaymentsPage() {
   const stripeWalletAvailable = sumStripeBalanceAmounts(stripeBalance?.available ?? []);
   const stripeWalletPending = sumStripeBalanceAmounts(stripeBalance?.pending ?? []);
   const readinessBanner = stripeReadinessBanner(stripeReadiness);
-  const stripePayoutsReady = stripeReadiness?.ready_for_payouts ?? false;
 
   useEffect(() => {
     const stripeReturn = searchParams.get("stripe");
@@ -548,7 +547,6 @@ export function PaymentsPage() {
                 key={payment.id}
                 payment={payment}
                 justPaid={justPaidId === payment.id}
-                stripePayoutsReady={stripePayoutsReady}
                 onSubmit={() => void advance(payment, "awaiting")}
                 onApprove={() => void advance(payment, "scheduled")}
                 onPayNow={() => void advance(payment, "paid")}
