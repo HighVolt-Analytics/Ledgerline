@@ -19,6 +19,7 @@ async function invalidateStripeQueries(
 ) {
   await queryClient.invalidateQueries({ queryKey: queryKeys.stripeAccount() });
   await queryClient.invalidateQueries({ queryKey: queryKeys.stripeBalance() });
+  await queryClient.invalidateQueries({ queryKey: queryKeys.stripeReadiness() });
   await queryClient.invalidateQueries({
     predicate: (query) => query.queryKey[0] === "stripeTransactions",
   });
@@ -28,6 +29,14 @@ export function useStripeAccount(enabled = true) {
   return useQuery({
     queryKey: queryKeys.stripeAccount(),
     queryFn: fetchStripeAccount,
+    enabled,
+  });
+}
+
+export function useStripeReadiness(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.stripeReadiness(),
+    queryFn: () => api.getStripeReadiness(),
     enabled,
   });
 }

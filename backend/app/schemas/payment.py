@@ -78,6 +78,18 @@ class StripeDisconnectResponse(BaseModel):
     disconnected: bool
 
 
+class StripeReadinessResponse(BaseModel):
+    connected: bool
+    account_id: str | None = None
+    onboarding_status: str | None = None
+    charges_enabled: bool
+    payouts_enabled: bool
+    ready_for_charges: bool
+    ready_for_payouts: bool
+    blocking_reason: str | None = None
+    recommended_action: str | None = None
+
+
 class StripeBalanceAmountResponse(BaseModel):
     amount: float | None = None
     currency: str | None = None

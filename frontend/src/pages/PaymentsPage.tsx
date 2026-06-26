@@ -19,11 +19,13 @@ import {
   useStripeBalance,
   useStripeOnboardingLink,
   useStripeOAuthUrl,
+  useStripeReadiness,
   useStripeTransactions,
 } from "@/hooks/useStripe";
 import { useTenantTime } from "@/hooks/useTenantTime";
-import type { StripeAccount, StripeBalanceAmount } from "@/api/types";
+import type { StripeAccount, StripeBalanceAmount, StripeReadinessResponse } from "@/api/types";
 import { money } from "@/lib/format";
+import { cn } from "@/lib/cn";
 import { apiPaymentToRecord, paymentsKpis } from "@/lib/routePageAdapters";
 import { paymentTierLabel, type PaymentRecord, type PaymentTab } from "@/lib/v4MockData";
 
@@ -79,6 +81,37 @@ function sumStripeBalanceAmounts(
   return { total, currency };
 }
 
+function stripeReadinessBanner(
+  readiness: StripeReadinessResponse | undefined
+): { message: string; tone: "success" | "warning" | "neutral" } | null {
+  if (!readiness) return null;
+  if (!readiness.connected) {
+    return {
+      tone: "neutral",
+      message: "Connect Stripe below to view balance and readiness for charges and payouts.",
+    };
+  }
+  if (readiness.ready_for_charges && readiness.ready_for_payouts) {
+    return { tone: "success", message: "Stripe ready for charges and payouts." };
+  }
+  if (readiness.ready_for_charges && !readiness.ready_for_payouts) {
+    return {
+      tone: "warning",
+      message: "Stripe ready for charges. Payouts are still disabled.",
+    };
+  }
+  if (readiness.blocking_reason === "Stripe onboarding is incomplete") {
+    return {
+      tone: "warning",
+      message: "Stripe setup incomplete. Complete onboarding before enabling payouts.",
+    };
+  }
+  return {
+    tone: "warning",
+    message: readiness.blocking_reason ?? "Stripe setup is incomplete.",
+  };
+}
+
 export function PaymentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const stripeReturnHandled = useRef(false);
@@ -86,6 +119,7 @@ export function PaymentsPage() {
   const { data: paymentRows = [], isLoading, isError } = usePayments();
   const { updateStatus } = usePaymentMutations();
   const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount();
+  const { data: stripeReadiness } = useStripeReadiness();
   const stripeConnected = stripeAccount != null;
   const { data: stripeBalance, isLoading: stripeBalanceLoading } = useStripeBalance(
     stripeConnected
@@ -111,6 +145,8 @@ export function PaymentsPage() {
   const needsOnboarding = stripeAccount ? stripeNeedsOnboarding(stripeAccount) : false;
   const stripeWalletAvailable = sumStripeBalanceAmounts(stripeBalance?.available ?? []);
   const stripeWalletPending = sumStripeBalanceAmounts(stripeBalance?.pending ?? []);
+  const readinessBanner = stripeReadinessBanner(stripeReadiness);
+  const stripePayoutsReady = stripeReadiness?.ready_for_payouts ?? false;
 
   useEffect(() => {
     const stripeReturn = searchParams.get("stripe");
@@ -298,6 +334,26 @@ export function PaymentsPage() {
 
         {stripeActionError ? (
           <p className="text-xs text-destructive mb-3">{stripeActionError}</p>
+        ) : null}
+
+        {readinessBanner ? (
+          <div
+            className={cn(
+              "rounded-md border px-3 py-2 text-xs mb-3",
+              readinessBanner.tone === "success" &&
+                "border-primary/30 bg-primary/10 text-primary",
+              readinessBanner.tone === "warning" &&
+                "border-[hsl(36_80%_70%)] bg-[hsl(36_80%_96%)] text-[hsl(36_80%_28%)] dark:border-[hsl(43_74%_35%)] dark:bg-[hsl(43_74%_12%)] dark:text-[hsl(43_74%_72%)]",
+              readinessBanner.tone === "neutral" &&
+                "border-border bg-muted/40 text-muted-foreground"
+            )}
+            data-testid="stripe-readiness-banner"
+          >
+            <p>{readinessBanner.message}</p>
+            {readinessBanner.tone === "warning" && stripeReadiness?.recommended_action ? (
+              <p className="mt-1 opacity-90">{stripeReadiness.recommended_action}</p>
+            ) : null}
+          </div>
         ) : null}
 
         {stripeAccountLoading ? (
@@ -492,6 +548,7 @@ export function PaymentsPage() {
                 key={payment.id}
                 payment={payment}
                 justPaid={justPaidId === payment.id}
+                stripePayoutsReady={stripePayoutsReady}
                 onSubmit={() => void advance(payment, "awaiting")}
                 onApprove={() => void advance(payment, "scheduled")}
                 onPayNow={() => void advance(payment, "paid")}

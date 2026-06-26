@@ -59,6 +59,7 @@ import type {
   StripeOnboardingLinkResponse,
   StripeOAuthUrlResponse,
   StripeDisconnectResponse,
+  StripeReadinessResponse,
   StripeTransaction,
   WhatsappStatus,
 } from "./types";
@@ -1113,6 +1114,11 @@ export const api = {
     request<StripeDisconnectResponse>("/api/payments/stripe/account", {
       method: "DELETE",
     }),
+  getStripeReadiness: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/readiness";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeReadinessResponse>(path);
+  },
   getStripeBalance: (options?: FreshRequestOptions) => {
     const path = "/api/payments/stripe/balance";
     if (options?.fresh) bustGetCache(path);

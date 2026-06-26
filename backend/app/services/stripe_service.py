@@ -70,6 +70,19 @@ class WebhookRecordResult:
     already_processed: bool
 
 
+@dataclass(frozen=True)
+class StripeReadiness:
+    connected: bool
+    account_id: str | None
+    onboarding_status: str | None
+    charges_enabled: bool
+    payouts_enabled: bool
+    ready_for_charges: bool
+    ready_for_payouts: bool
+    blocking_reason: str | None
+    recommended_action: str | None
+
+
 def _require_stripe_configured(settings: Settings | None = None) -> Settings:
     cfg = settings or get_settings()
     if not cfg.stripe_configured:
@@ -368,6 +381,57 @@ async def get_stripe_account_for_tenant(
     if not _is_active_stripe_account(row):
         return None
     return row
+
+
+async def get_stripe_readiness_for_tenant(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int,
+) -> StripeReadiness:
+    """Read-only Stripe Connect readiness for payment/payout guards."""
+    account = await get_stripe_account_for_tenant(db, tenant_id)
+    if account is None:
+        return StripeReadiness(
+            connected=False,
+            account_id=None,
+            onboarding_status=None,
+            charges_enabled=False,
+            payouts_enabled=False,
+            ready_for_charges=False,
+            ready_for_payouts=False,
+            blocking_reason="Stripe account is not connected",
+            recommended_action="Connect a Stripe account in the Payments panel.",
+        )
+
+    charges_enabled = bool(account.charges_enabled)
+    payouts_enabled = bool(account.payouts_enabled)
+    onboarding_status = account.onboarding_status
+    ready_for_charges = charges_enabled
+    ready_for_payouts = payouts_enabled
+
+    blocking_reason: str | None = None
+    recommended_action: str | None = None
+
+    if onboarding_status in ("pending", "action_required") or not account.details_submitted:
+        blocking_reason = "Stripe onboarding is incomplete"
+        recommended_action = "Complete onboarding before enabling payouts."
+    elif not charges_enabled:
+        blocking_reason = "Stripe charges are disabled"
+        recommended_action = "Review your Stripe account settings and complete setup."
+    elif not payouts_enabled:
+        blocking_reason = "Stripe payouts are disabled"
+        recommended_action = "Complete Stripe payout setup in the Connect panel."
+
+    return StripeReadiness(
+        connected=True,
+        account_id=account.stripe_account_id,
+        onboarding_status=onboarding_status,
+        charges_enabled=charges_enabled,
+        payouts_enabled=payouts_enabled,
+        ready_for_charges=ready_for_charges,
+        ready_for_payouts=ready_for_payouts,
+        blocking_reason=blocking_reason,
+        recommended_action=recommended_action,
+    )
 
 
 async def disconnect_stripe_account_for_tenant(
