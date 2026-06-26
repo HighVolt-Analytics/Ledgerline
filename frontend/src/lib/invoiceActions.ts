@@ -1,5 +1,5 @@
 import { api } from "@/api/client";
-import type { InvoiceUpdatePayload } from "@/api/types";
+import type { InvoiceDetails, InvoiceUpdatePayload, PaymentApi } from "@/api/types";
 
 export const APPROVAL_QUEUE_STATUSES = ["exception", "duplicate_skipped", "rejected"] as const;
 
@@ -53,6 +53,39 @@ export function validateInvoiceFieldsForApproval(fields: {
   return { ok: true };
 }
 
+export function invoiceFieldsFromDetails(inv: {
+  vendor?: string | null;
+  total?: string | null;
+  due_date?: string | null;
+}): {
+  vendor: string | null;
+  total: string | null;
+  due_date: string | null;
+} {
+  return {
+    vendor: inv.vendor ?? null,
+    total: inv.total ?? null,
+    due_date: inv.due_date ?? null,
+  };
+}
+
+function approvalFailureMessage(inv: InvoiceDetails): string {
+  if (inv.status === "exception") {
+    if (inv.evaluation_status === "awaiting_po") {
+      return "Approval blocked: a matching purchase order is required for this document.";
+    }
+    if (inv.evaluation_status === "needs_review") {
+      return "Approval blocked: document still requires review after processing.";
+    }
+    const failed = inv.validation_results?.find((row) => !row.passed && !row.skipped);
+    if (failed?.message) {
+      return `Approval blocked: ${failed.message}`;
+    }
+    return "Approval did not complete — document returned to review. Check validation or routing rules.";
+  }
+  return `Approval did not complete (status: ${inv.status}).`;
+}
+
 export async function watchProcessingUntilIdle(
   refresh: () => Promise<void>,
   timeoutMs = PROCESSING_TIMEOUT_MS
@@ -97,16 +130,45 @@ export async function watchInvoiceUntilSettled(
   await refresh();
 }
 
+export type ApproveAndProcessResult = {
+  invoice: InvoiceDetails;
+  payment?: PaymentApi;
+};
+
 export async function approveAndProcess(
   invoiceId: number,
   refresh: () => Promise<void>,
   pendingEdits?: InvoiceUpdatePayload
-): Promise<void> {
+): Promise<ApproveAndProcessResult> {
   if (pendingEdits) {
     await api.updateInvoice(invoiceId, pendingEdits);
   }
   await api.approve(invoiceId);
   await watchInvoiceUntilSettled(invoiceId, refresh);
+  const invoice = await api.getInvoice(invoiceId, { fresh: true });
+
+  if (invoice.status !== "processed") {
+    throw new Error(approvalFailureMessage(invoice));
+  }
+
+  const payable =
+    Boolean(invoice.vendor?.trim()) &&
+    Boolean(invoice.total?.trim()) &&
+    Boolean(invoice.due_date?.trim()) &&
+    Number(invoice.total) > 0;
+
+  let payment: PaymentApi | undefined;
+  if (payable) {
+    const payments = await api.listPayments(undefined, { fresh: true });
+    payment = payments.find((row) => row.invoice_id === invoiceId);
+    if (!payment) {
+      throw new Error(
+        "Invoice processed but no payment row was created. Confirm this is a supplier invoice with vendor, total, and due date."
+      );
+    }
+  }
+
+  return { invoice, payment };
 }
 
 /** Re-parse a stuck invoice (clears extracted fields, runs pipeline for this row). */
@@ -116,20 +178,4 @@ export async function reprocessAndWatch(
 ): Promise<void> {
   await api.reprocess(invoiceId);
   await watchInvoiceUntilSettled(invoiceId, refresh);
-}
-
-export function invoiceFieldsFromDetails(inv: {
-  vendor?: string | null;
-  total?: string | null;
-  due_date?: string | null;
-}): {
-  vendor: string | null;
-  total: string | null;
-  due_date: string | null;
-} {
-  return {
-    vendor: inv.vendor ?? null,
-    total: inv.total ?? null,
-    due_date: inv.due_date ?? null,
-  };
 }

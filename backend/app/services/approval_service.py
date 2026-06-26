@@ -18,6 +18,10 @@ from app.services.file_storage import (
     resolve_readable_stored,
     stored_file_available,
 )
+from app.services.approval_pipeline_service import (
+    apply_human_approval_processing_defaults,
+    payable_fields_complete,
+)
 from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.services.invoice_reset import (
     clear_invoice_posting_artifacts,
@@ -225,6 +229,8 @@ async def approve_invoice_for_reprocess(
     ).scalar_one()
     await assert_team_expense_approvable(session, loaded)
     _assert_invoice_ready_for_approval(loaded)
+    if payable_fields_complete(loaded):
+        apply_human_approval_processing_defaults(loaded)
     previous_status = inv.status.value
     await repair_invoice_stored_path(session, inv)
 
