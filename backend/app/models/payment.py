@@ -31,6 +31,10 @@ class Payment(Base):
         ForeignKey("invoices.id", ondelete="CASCADE"),
         index=True,
     )
+    vendor_registry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vendor_registry.id", ondelete="SET NULL"),
+        index=True,
+    )
     vendor: Mapped[str | None] = mapped_column(String(255))
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     currency: Mapped[str] = mapped_column(String(3), default="AUD")
