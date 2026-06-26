@@ -1109,6 +1109,10 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<StripeAccount>(path);
   },
+  refreshStripeAccount: () =>
+    request<StripeAccount>("/api/payments/stripe/account/refresh", {
+      method: "POST",
+    }),
   connectStripe: () =>
     request<StripeConnectResponse>("/api/payments/stripe/connect", {
       method: "POST",
