@@ -26,7 +26,6 @@ import type {
   InvoiceDetails,
   LedgerLinkResponse,
   InvoiceUpdatePayload,
-  Organisation,
   Tenant,
   PlatformTenantSummary,
   PlatformTenantDetail,
@@ -54,10 +53,16 @@ import type {
   VaultTreeResponse,
   VaultMigrateResponse,
   WalletSummary,
+  StripeAccount,
+  StripeBalanceResponse,
+  StripeConnectResponse,
+  StripeOnboardingLinkResponse,
+  StripeTransaction,
   WhatsappStatus,
 } from "./types";
 
 import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
+import { decodeJwtPayload } from "@/lib/authToken";
 
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE =
@@ -151,8 +156,12 @@ export function clearGetCache() {
 }
 
 function getRequestKey(path: string, method: string) {
-  const tid = tenantIdFromToken(authToken) ?? authUser?.tenant_id ?? "anon";
-  return `${tid}:${method}:${path}`;
+  let tid = authUser?.tenant_id;
+  if (!tid && authToken) {
+    const payload = decodeJwtPayload(authToken);
+    tid = payload?.tenant_id ?? payload?.org_id;
+  }
+  return `${tid ?? "anon"}:${method}:${path}`;
 }
 
 function invalidateGetCache() {
@@ -1081,6 +1090,27 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  getStripeAccount: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/account";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeAccount>(path);
+  },
+  connectStripe: () =>
+    request<StripeConnectResponse>("/api/payments/stripe/connect", {
+      method: "POST",
+    }),
+  getStripeOnboardingLink: () =>
+    request<StripeOnboardingLinkResponse>("/api/payments/stripe/onboarding-link"),
+  getStripeBalance: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/balance";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeBalanceResponse>(path);
+  },
+  listStripeTransactions: (limit = 20, options?: FreshRequestOptions) => {
+    const path = `/api/payments/stripe/transactions?limit=${encodeURIComponent(String(limit))}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeTransaction[]>(path);
+  },
 };
 
 /** Inclusive invoice-date range for workbook export; omit both for all invoices. */
