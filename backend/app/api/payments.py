@@ -20,6 +20,7 @@ from app.schemas.payment import (
     StripeDisconnectResponse,
     StripeOAuthUrlResponse,
     StripeOnboardingLinkResponse,
+    StripeReadinessResponse,
     StripeTransactionResponse,
     WalletSummaryResponse,
 )
@@ -35,6 +36,7 @@ from app.services.stripe_service import (
     exchange_stripe_oauth_code,
     get_connected_account_balance,
     get_stripe_account_for_tenant,
+    get_stripe_readiness_for_tenant,
     list_connected_account_transactions,
     parse_stripe_oauth_state,
     refresh_connected_account_status,
@@ -131,6 +133,15 @@ async def get_stripe_account(
     if account is None:
         raise HTTPException(404, "Stripe connected account not found")
     return ApiEnvelope(data=StripeAccountResponse.model_validate(account))
+
+
+@router.get("/stripe/readiness", response_model=ApiEnvelope[StripeReadinessResponse])
+async def get_stripe_readiness(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[StripeReadinessResponse]:
+    readiness = await get_stripe_readiness_for_tenant(db, ctx.tenant_id)
+    return ApiEnvelope(data=StripeReadinessResponse.model_validate(readiness))
 
 
 @router.post("/stripe/account/refresh", response_model=ApiEnvelope[StripeAccountResponse])
