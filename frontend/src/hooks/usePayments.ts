@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { queryKeys } from "@/lib/queryClient";
 
@@ -7,6 +7,20 @@ export function usePayments(enabled = true) {
     queryKey: queryKeys.payments(),
     queryFn: () => api.listPayments(),
     enabled,
+  });
+}
+
+export function useAppSettings(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.appSettings(),
+    queryFn: () => api.getSettings(),
+    enabled,
+  });
+}
+
+export function useValidatePaymentExecutionReadiness() {
+  return useMutation({
+    mutationFn: (paymentId: number) => api.validatePaymentExecutionReadiness(paymentId),
   });
 }
 

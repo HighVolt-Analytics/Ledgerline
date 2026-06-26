@@ -53,6 +53,7 @@ const baseKeys = {
   stripeTransactions: (limit: number) => ["stripeTransactions", limit] as const,
   ledgerLink: ["ledger-link"] as const,
   billing: ["billing"] as const,
+  appSettings: ["app-settings"] as const,
 };
 
 export const queryKeys = {
@@ -82,4 +83,5 @@ export const queryKeys = {
   stripeTransactions: (limit: number) => baseKeys.stripeTransactions(limit),
   ledgerLink: () => tenantQueryKey(baseKeys.ledgerLink),
   billing: () => tenantQueryKey(baseKeys.billing),
+  appSettings: () => tenantQueryKey(baseKeys.appSettings),
 };

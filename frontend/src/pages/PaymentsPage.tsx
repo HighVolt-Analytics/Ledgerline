@@ -10,7 +10,7 @@ import { PaymentRow } from "@/components/payments/PaymentRow";
 import { WalletCard } from "@/components/payments/WalletCard";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { usePaymentMutations, usePayments } from "@/hooks/usePayments";
+import { usePaymentMutations, usePayments, useAppSettings } from "@/hooks/usePayments";
 import {
   useConnectStripe,
   useDisconnectStripe,
@@ -117,6 +117,8 @@ export function PaymentsPage() {
   const stripeReturnHandled = useRef(false);
   const { timeZone } = useTenantTime();
   const { data: paymentRows = [], isLoading, isError } = usePayments();
+  const { data: appSettings } = useAppSettings();
+  const paymentsExecutionEnabled = appSettings?.stripe_payments_execution_enabled ?? false;
   const { updateStatus } = usePaymentMutations();
   const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount();
   const { data: stripeReadiness } = useStripeReadiness();
@@ -515,6 +517,26 @@ export function PaymentsPage() {
         </p>
       </Card>
 
+      <Card className="p-3 mb-5 border-amber-500/30 bg-amber-500/5">
+        <div className="flex items-start gap-2.5">
+          <Shield className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+          <div className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
+              Real Stripe payouts are disabled.
+            </span>{" "}
+            This environment supports readiness validation only. Use{" "}
+            <span className="text-foreground">Validate payment</span> on each row to run a dry-run
+            check — no funds are moved.
+            {paymentsExecutionEnabled ? (
+              <span className="block mt-1 text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]">
+                STRIPE_PAYMENTS_EXECUTION_ENABLED is true in server config, but real execution
+                endpoints are not enabled in this build.
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </Card>
+
       <Card className="p-3 mb-5 border-primary/30 bg-primary/5">
         <div className="flex items-start gap-2.5">
           <Shield className="h-4 w-4 text-primary mt-0.5 shrink-0" />
@@ -547,6 +569,7 @@ export function PaymentsPage() {
                 key={payment.id}
                 payment={payment}
                 justPaid={justPaidId === payment.id}
+                paymentsExecutionEnabled={paymentsExecutionEnabled}
                 onSubmit={() => void advance(payment, "awaiting")}
                 onApprove={() => void advance(payment, "scheduled")}
                 onPayNow={() => void advance(payment, "paid")}
