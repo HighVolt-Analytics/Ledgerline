@@ -26,3 +26,4 @@ bcrypt==4.0.1
 PyJWT==2.10.1
 cryptography==44.0.0
 azure-monitor-opentelemetry==1.6.4
+stripe==15.3.0
