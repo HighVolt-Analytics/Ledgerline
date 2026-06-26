@@ -857,7 +857,7 @@ export function InvoiceDetailDrawer({
     setActionBusy(true);
     onPipelineStart?.(fresh);
     try {
-      await approveAndProcess(
+      const result = await approveAndProcess(
         inv.id,
         async () => {
           onUpdated?.();
@@ -869,6 +869,7 @@ export function InvoiceDetailDrawer({
         setEditing(false);
         setDraft(null);
       }
+      setInv(result.invoice);
       onUpdated?.();
       onClose();
     } catch (e) {
