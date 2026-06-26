@@ -103,6 +103,12 @@ jobs:
           kubectl rollout status deployment/ledgerlink-api -n "${{ env.NAMESPACE }}" --timeout=10m
           kubectl rollout status deployment/ledgerlink-frontend -n "${{ env.NAMESPACE }}" --timeout=10m
 
+      - name: Run database migrations
+        run: |
+          kubectl exec deployment/ledgerlink-api \
+            -n "${{ env.NAMESPACE }}" \
+            -- sh -lc "cd /app && alembic upgrade head"
+
       - name: Verify API health via cluster service
         run: |
           kubectl run ledgerlink-health-check \

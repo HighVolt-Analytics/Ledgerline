@@ -14,6 +14,7 @@ Resource group: `rg-email-to-accounting-automation` (eastus2).
 | Document Intelligence | `AZURE_DI_ENDPOINT` / `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`, `AZURE_DI_KEY` | OCR fallback when local parse is low confidence |
 | Microsoft Graph | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `GRAPH_MAILBOX` | Inbox poll + folder moves |
 | Microsoft Graph OAuth | `GRAPH_OAUTH_REDIRECT_URI`, `GRAPH_OAUTH_FRONTEND_RETURN_URL` | User mailbox sign-in ([mailbox-oauth-setup.md](./mailbox-oauth-setup.md)) |
+| Stripe Connect (Payments) | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_CLIENT_ID`, `STRIPE_MODE`, `STRIPE_RETURN_URL`, `STRIPE_REFRESH_URL` | Tenant connected accounts, balance, webhooks ([stripe-payments.md](./stripe-payments.md)) |
 | Application Insights | `APPLICATIONINSIGHTS_CONNECTION_STRING` | OpenTelemetry on API startup (auto on App Service; set `ENABLE_APPLICATION_INSIGHTS=true` to test locally) |
 
 Optional metadata (Integrations UI / CORS):

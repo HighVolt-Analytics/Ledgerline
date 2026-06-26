@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/authSession";
-import { tenantIdFromToken } from "@/lib/authToken";
+import { decodeJwtPayload } from "@/lib/authToken";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,7 +17,8 @@ export const queryClient = new QueryClient({
 export function tenantScope(): string {
   const token = getAccessToken();
   if (!token) return "signed-out";
-  return tenantIdFromToken(token) ?? "unknown";
+  const payload = decodeJwtPayload(token);
+  return payload?.tenant_id ?? payload?.org_id ?? "unknown";
 }
 
 export function tenantQueryKey<const T extends readonly unknown[]>(
@@ -45,6 +46,9 @@ const baseKeys = {
   purchases: ["purchases"] as const,
   payments: ["payments"] as const,
   walletSummary: ["payments", "wallet-summary"] as const,
+  stripeAccount: ["stripeAccount"] as const,
+  stripeBalance: ["stripeBalance"] as const,
+  stripeTransactions: (limit: number) => ["stripeTransactions", limit] as const,
   ledgerLink: ["ledger-link"] as const,
   billing: ["billing"] as const,
 };
@@ -68,6 +72,9 @@ export const queryKeys = {
   purchases: () => tenantQueryKey(baseKeys.purchases),
   payments: () => tenantQueryKey(baseKeys.payments),
   walletSummary: () => tenantQueryKey(baseKeys.walletSummary),
+  stripeAccount: () => baseKeys.stripeAccount,
+  stripeBalance: () => baseKeys.stripeBalance,
+  stripeTransactions: (limit: number) => baseKeys.stripeTransactions(limit),
   ledgerLink: () => tenantQueryKey(baseKeys.ledgerLink),
   billing: () => tenantQueryKey(baseKeys.billing),
 };

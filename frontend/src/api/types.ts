@@ -1053,6 +1053,51 @@ export interface WalletSummary {
   transactions: WalletTransaction[];
 }
 
+export interface StripeAccount {
+  id: number;
+  tenant_id: string;
+  stripe_account_id: string;
+  account_type: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  details_submitted: boolean;
+  onboarding_status: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StripeConnectResponse {
+  account: StripeAccount;
+  onboarding_url: string | null;
+}
+
+export interface StripeOnboardingLinkResponse {
+  url: string;
+}
+
+export interface StripeBalanceAmount {
+  amount: number | null;
+  currency: string | null;
+}
+
+export interface StripeBalanceResponse {
+  available: StripeBalanceAmount[];
+  pending: StripeBalanceAmount[];
+  livemode: boolean;
+  snapshot_id: number;
+}
+
+export interface StripeTransaction {
+  id: number;
+  stripe_transaction_id: string;
+  type: string | null;
+  amount: number | null;
+  currency: string | null;
+  status: string | null;
+  description: string | null;
+  available_on: string | null;
+}
+
 export interface CreditPack {
   id: string;
   name: string;

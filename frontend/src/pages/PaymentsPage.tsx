@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Shield } from "lucide-react";
+import { Link2, Shield } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
@@ -7,9 +7,18 @@ import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { PaymentReceiptSheet } from "@/components/payments/PaymentReceiptSheet";
 import { PaymentRow } from "@/components/payments/PaymentRow";
 import { WalletCard } from "@/components/payments/WalletCard";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { usePaymentMutations, usePayments } from "@/hooks/usePayments";
+import {
+  useConnectStripe,
+  useStripeAccount,
+  useStripeBalance,
+  useStripeOnboardingLink,
+  useStripeTransactions,
+} from "@/hooks/useStripe";
 import { useTenantTime } from "@/hooks/useTenantTime";
+import type { StripeAccount, StripeBalanceAmount } from "@/api/types";
 import { money } from "@/lib/format";
 import { apiPaymentToRecord, paymentsKpis } from "@/lib/routePageAdapters";
 import { paymentTierLabel, type PaymentRecord, type PaymentTab } from "@/lib/v4MockData";
@@ -22,13 +31,53 @@ const TABS: { value: PaymentTab; label: string; testid: string }[] = [
   { value: "failed", label: "Failed", testid: "tab-pay-failed" },
 ];
 
+function stripeNeedsOnboarding(account: StripeAccount): boolean {
+  if (account.onboarding_status === "complete") return false;
+  if (!account.details_submitted) return true;
+  if (!account.charges_enabled || !account.payouts_enabled) return true;
+  return (
+    account.onboarding_status == null ||
+    account.onboarding_status === "pending" ||
+    account.onboarding_status === "action_required"
+  );
+}
+
+function maskStripeAccountId(id: string): string {
+  if (id.length <= 12) return id;
+  return `${id.slice(0, 8)}…${id.slice(-4)}`;
+}
+
+function formatBalanceLine(label: string, items: StripeBalanceAmount[]): string {
+  if (!items.length) return `${label}: —`;
+  const parts = items
+    .filter((item) => item.amount != null)
+    .map((item) => money(item.amount, item.currency ?? "AUD"));
+  return `${label}: ${parts.length ? parts.join(" · ") : "—"}`;
+}
+
+function stripeModeLabel(livemode: boolean | undefined): string {
+  if (livemode === true) return "Live mode";
+  if (livemode === false) return "Test mode";
+  return "Sandbox";
+}
+
 export function PaymentsPage() {
   const { timeZone } = useTenantTime();
   const { data: paymentRows = [], isLoading, isError } = usePayments();
   const { updateStatus } = usePaymentMutations();
+  const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount();
+  const stripeConnected = stripeAccount != null;
+  const { data: stripeBalance, isLoading: stripeBalanceLoading } = useStripeBalance(
+    stripeConnected
+  );
+  const { data: stripeTransactions = [], isLoading: stripeTransactionsLoading } =
+    useStripeTransactions(10, stripeConnected);
+  const connectStripe = useConnectStripe();
+  const onboardingLink = useStripeOnboardingLink();
   const [tab, setTab] = useState<PaymentTab>("queue");
   const [justPaidId, setJustPaidId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<PaymentRecord | null>(null);
+  const [stripeActionError, setStripeActionError] = useState<string | null>(null);
 
   const payments = useMemo(() => paymentRows.map(apiPaymentToRecord), [paymentRows]);
   const kpis = paymentsKpis(payments, timeZone);
@@ -36,12 +85,35 @@ export function PaymentsPage() {
     () => payments.filter((p) => p.tab === tab),
     [payments, tab]
   );
+  const needsOnboarding = stripeAccount ? stripeNeedsOnboarding(stripeAccount) : false;
 
   const advance = async (payment: PaymentRecord, status: string) => {
     await updateStatus(Number(payment.id), { status });
     if (status === "paid") {
       setJustPaidId(payment.id);
       setTimeout(() => setJustPaidId(null), 2000);
+    }
+  };
+
+  const handleConnectStripe = async () => {
+    setStripeActionError(null);
+    try {
+      const result = await connectStripe.mutateAsync();
+      if (result.onboarding_url) {
+        window.location.href = result.onboarding_url;
+      }
+    } catch (err) {
+      setStripeActionError(err instanceof Error ? err.message : "Unable to connect Stripe");
+    }
+  };
+
+  const handleContinueOnboarding = async () => {
+    setStripeActionError(null);
+    try {
+      const result = await onboardingLink.mutateAsync();
+      window.location.href = result.url;
+    } catch (err) {
+      setStripeActionError(err instanceof Error ? err.message : "Unable to open onboarding");
     }
   };
 
@@ -74,6 +146,170 @@ export function PaymentsPage() {
         />
         <WalletCard />
       </div>
+
+      <Card className="p-4 mb-5" data-testid="card-stripe-connect">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+          <div className="flex items-start gap-2.5">
+            <Link2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-medium">Stripe Connect</h2>
+                <span
+                  className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+                  data-testid="badge-stripe-mode"
+                >
+                  {stripeModeLabel(stripeBalance?.livemode)}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Connect a Stripe account to view balance and ledger activity. Payables workflow
+                below is unchanged.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {!stripeConnected && !stripeAccountLoading ? (
+              <Button
+                size="sm"
+                onClick={() => void handleConnectStripe()}
+                disabled={connectStripe.isPending}
+                data-testid="button-connect-stripe"
+              >
+                {connectStripe.isPending ? "Connecting…" : "Connect Stripe"}
+              </Button>
+            ) : null}
+            {stripeConnected && needsOnboarding ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void handleContinueOnboarding()}
+                disabled={onboardingLink.isPending}
+                data-testid="button-continue-onboarding"
+              >
+                {onboardingLink.isPending ? "Opening…" : "Continue onboarding"}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        {stripeActionError ? (
+          <p className="text-xs text-destructive mb-3">{stripeActionError}</p>
+        ) : null}
+
+        {stripeAccountLoading ? (
+          <p className="text-xs text-muted-foreground">Loading Stripe connection…</p>
+        ) : !stripeConnected ? (
+          <p className="text-xs text-muted-foreground">
+            Not connected. Connect Stripe to enable balance and transaction visibility.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+              <div>
+                <span className="text-muted-foreground">Account</span>
+                <div className="font-mono text-foreground">
+                  {maskStripeAccountId(stripeAccount.stripe_account_id)}
+                </div>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Onboarding</span>
+                <div className="text-foreground capitalize">
+                  {stripeAccount.onboarding_status?.replace(/_/g, " ") ?? "—"}
+                </div>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Charges</span>
+                <div className="text-foreground">
+                  {stripeAccount.charges_enabled ? "Enabled" : "Disabled"}
+                </div>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Payouts</span>
+                <div className="text-foreground">
+                  {stripeAccount.payouts_enabled ? "Enabled" : "Disabled"}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs">
+              {stripeBalanceLoading ? (
+                <span className="text-muted-foreground">Loading balance…</span>
+              ) : stripeBalance ? (
+                <div className="space-y-1 tnum">
+                  <div>{formatBalanceLine("Available", stripeBalance.available)}</div>
+                  <div>{formatBalanceLine("Pending", stripeBalance.pending)}</div>
+                </div>
+              ) : (
+                <span className="text-muted-foreground">Balance unavailable</span>
+              )}
+            </div>
+
+            <div>
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Recent Stripe transactions
+              </h3>
+              <div className="overflow-x-auto rounded-md border border-border">
+                <table className="w-full text-sm" data-testid="table-stripe-transactions">
+                  <thead>
+                    <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                      <th className="px-3 py-2 font-medium">Available</th>
+                      <th className="px-3 py-2 font-medium">Description</th>
+                      <th className="px-3 py-2 font-medium">Type</th>
+                      <th className="px-3 py-2 font-medium text-right">Amount</th>
+                      <th className="px-3 py-2 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stripeTransactionsLoading ? (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
+                          Loading transactions…
+                        </td>
+                      </tr>
+                    ) : stripeTransactions.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
+                          No Stripe transactions yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      stripeTransactions.map((txn) => (
+                        <tr
+                          key={txn.id}
+                          className="border-b border-border/60 last:border-0 hover-elevate"
+                        >
+                          <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                            {txn.available_on ?? "—"}
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            {txn.description ?? "—"}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-muted-foreground">
+                            {txn.type ?? "—"}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-right tnum whitespace-nowrap">
+                            {txn.amount != null
+                              ? money(txn.amount, txn.currency ?? "AUD")
+                              : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-muted-foreground">
+                            {txn.status ?? "—"}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <p className="text-[11px] text-muted-foreground mt-3 border-t border-border/60 pt-3">
+          External supplier bank payouts — Phase 2. Vendor payout rails are not enabled yet; Top Up
+          and Withdraw remain unavailable until supported by the backend.
+        </p>
+      </Card>
 
       <Card className="p-3 mb-5 border-primary/30 bg-primary/5">
         <div className="flex items-start gap-2.5">
