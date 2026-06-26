@@ -169,7 +169,13 @@ export function VendorFormDialog({
 
         {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
 
-        {isEdit && vendor ? <VendorPayoutMethodsPanel vendorId={vendor.id} /> : null}
+        {isEdit && vendor ? (
+          <VendorPayoutMethodsPanel vendorId={vendor.id} />
+        ) : (
+          <p className="mt-5 border-t border-border pt-4 text-[11px] text-muted-foreground">
+            Save the vendor before adding payout methods.
+          </p>
+        )}
 
         <div className="flex gap-2 mt-5">
           <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>
