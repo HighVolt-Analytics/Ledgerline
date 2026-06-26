@@ -316,6 +316,14 @@ class Settings(BaseSettings):
         validation_alias="STRIPE_OAUTH_REDIRECT_URL",
         description="Stripe Connect OAuth redirect URI (must match Stripe Dashboard Connect/OAuth settings)",
     )
+    stripe_payments_execution_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_PAYMENTS_EXECUTION_ENABLED",
+    )
+    stripe_live_payments_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_LIVE_PAYMENTS_ENABLED",
+    )
 
     @field_validator("root_path", mode="before")
     @classmethod
@@ -524,6 +532,10 @@ class Settings(BaseSettings):
         return bool(
             self.stripe_secret_key.strip() and self.stripe_webhook_secret.strip()
         )
+
+    @property
+    def stripe_payment_execution_enabled(self) -> bool:
+        return bool(self.stripe_payments_execution_enabled)
 
     @property
     def application_insights_runtime_enabled(self) -> bool:

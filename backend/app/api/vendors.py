@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, get_auth_context, get_db
+from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.models.vendor import VendorRegistry
 from app.schemas.common import ApiEnvelope
 from app.schemas.vendor import (
@@ -22,6 +22,7 @@ from app.services.vendor_payout_method_service import (
     list_payout_methods_for_vendor,
     update_payout_method_for_vendor,
 )
+from app.services.audit_service import log_event
 
 router = APIRouter(prefix="/vendors", tags=["vendors"])
 
@@ -141,6 +142,20 @@ async def create_vendor_payout_method(
         raise HTTPException(404, str(exc)) from exc
     except VendorPayoutMethodError as exc:
         raise HTTPException(400, str(exc)) from exc
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "vendor_payout_method_created",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "vendor_id": vendor_id,
+            "method_id": row.id,
+            "method_type": row.method_type,
+            "status": row.status,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
     return ApiEnvelope(data=row)
 
 
@@ -163,6 +178,20 @@ async def patch_vendor_payout_method(
         raise HTTPException(404, str(exc)) from exc
     except VendorPayoutMethodError as exc:
         raise HTTPException(400, str(exc)) from exc
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "vendor_payout_method_updated",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "vendor_id": vendor_id,
+            "method_id": row.id,
+            "method_type": row.method_type,
+            "status": row.status,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
     return ApiEnvelope(data=row)
 
 
@@ -177,3 +206,12 @@ async def delete_vendor_payout_method(
         await delete_payout_method_for_vendor(db, ctx.tenant_id, vendor_id, method_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "vendor_payout_method_deleted",
+        tenant_id=ctx.tenant_id,
+        detail={"vendor_id": vendor_id, "method_id": method_id},
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )

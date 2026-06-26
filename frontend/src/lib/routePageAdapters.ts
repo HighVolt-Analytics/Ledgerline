@@ -437,6 +437,8 @@ export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
     failureReason: row.failure_reason ?? undefined,
     vendorPayoutStatus: row.vendor_payout_status ?? undefined,
     vendorPayoutMethodType: row.vendor_payout_method_type ?? undefined,
+    executionReadinessStatus: row.execution_readiness_status ?? undefined,
+    executionBlockingReason: row.execution_blocking_reason ?? undefined,
   };
 }
 

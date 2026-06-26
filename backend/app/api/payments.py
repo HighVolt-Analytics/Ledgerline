@@ -11,6 +11,7 @@ from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_
 from app.config import get_settings
 from app.schemas.common import ApiEnvelope
 from app.schemas.payment import (
+    PaymentExecutionReadinessResponse,
     PaymentResponse,
     PaymentStatusUpdate,
     StripeAccountResponse,
@@ -26,6 +27,7 @@ from app.schemas.payment import (
 )
 from app.services.audit_service import log_event
 from app.services.payment_service import list_payments, update_payment_status, wallet_summary
+from app.services.payment_execution_readiness_service import validate_payment_execution_readiness
 from app.services.stripe_service import (
     StripeServiceError,
     create_account_onboarding_link,
@@ -156,6 +158,20 @@ async def post_stripe_account_refresh(
         account = await refresh_connected_account_status(db, account)
     except StripeServiceError as exc:
         raise _stripe_http_error(exc) from exc
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "stripe_status_refreshed",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "stripe_account_id": account.stripe_account_id,
+            "onboarding_status": account.onboarding_status,
+            "charges_enabled": account.charges_enabled,
+            "payouts_enabled": account.payouts_enabled,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
     return ApiEnvelope(data=StripeAccountResponse.model_validate(account))
 
 
@@ -200,6 +216,19 @@ async def post_stripe_connect(
     onboarding_url = await _optional_onboarding_url(
         account.stripe_account_id,
         needs_onboarding=_account_needs_onboarding(account),
+    )
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "stripe_account_connected_onboarding",
+        tenant_id=ctx.tenant_id,
+        detail={
+            "stripe_account_id": account.stripe_account_id,
+            "account_type": account.account_type,
+            "onboarding_status": account.onboarding_status,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
     )
     return ApiEnvelope(
         data=StripeConnectResponse(
@@ -261,6 +290,15 @@ async def stripe_oauth_callback(
         if not isinstance(tenant_id, uuid.UUID):
             tenant_id = uuid.UUID(str(tenant_id))
         await exchange_stripe_oauth_code(db, tenant_id, code)
+        account = await get_stripe_account_for_tenant(db, tenant_id)
+        await log_event(
+            db,
+            "stripe_account_connected_oauth",
+            tenant_id=tenant_id,
+            detail={
+                "stripe_account_id": account.stripe_account_id if account else None,
+            },
+        )
         await db.commit()
     except (ValueError, StripeServiceError) as exc:
         await db.rollback()
@@ -392,3 +430,58 @@ async def patch_payment(
         actor_email=actor_email,
     )
     return ApiEnvelope(data=row)
+
+
+@router.post(
+    "/{payment_id}/execution-readiness",
+    response_model=ApiEnvelope[PaymentExecutionReadinessResponse],
+)
+async def post_payment_execution_readiness(
+    payment_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PaymentExecutionReadinessResponse]:
+    try:
+        result = await validate_payment_execution_readiness(
+            db,
+            ctx.tenant_id,
+            payment_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    from sqlalchemy import select
+
+    from app.models.payment import Payment
+
+    payment = (
+        await db.execute(
+            select(Payment).where(
+                Payment.id == payment_id,
+                Payment.tenant_id == ctx.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    await log_event(
+        db,
+        "payment_execution_readiness_validated",
+        invoice_id=payment.invoice_id if payment else None,
+        tenant_id=ctx.tenant_id,
+        detail={
+            "payment_id": payment_id,
+            "can_execute": result.can_execute,
+            "execution_mode": result.execution_mode,
+            "blocking_reasons": result.blocking_reasons,
+            "warnings": result.warnings,
+            "tenant_stripe_ready": result.tenant_stripe_ready,
+            "vendor_payout_ready": result.vendor_payout_ready,
+            "approval_ready": result.approval_ready,
+            "amount_ready": result.amount_ready,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+    return ApiEnvelope(
+        data=PaymentExecutionReadinessResponse.model_validate(result),
+    )

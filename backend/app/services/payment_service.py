@@ -45,6 +45,8 @@ def payment_to_response(
     *,
     vendor_payout_status: str | None = None,
     vendor_payout_method_type: str | None = None,
+    execution_readiness_status: str | None = None,
+    execution_blocking_reason: str | None = None,
 ) -> PaymentResponse:
     tab = row.status.value
     return PaymentResponse(
@@ -64,6 +66,8 @@ def payment_to_response(
         failure_reason=row.failure_reason,
         vendor_payout_status=vendor_payout_status,
         vendor_payout_method_type=vendor_payout_method_type,
+        execution_readiness_status=execution_readiness_status,
+        execution_blocking_reason=execution_blocking_reason,
     )
 
 
@@ -126,6 +130,8 @@ async def list_payments(
     *,
     status: str | None = None,
 ) -> list[PaymentResponse]:
+    from app.services.payment_execution_readiness_service import derive_execution_eligibility
+    from app.services.stripe_service import get_stripe_readiness_for_tenant
     from app.services.vendor_payout_method_service import payout_summary_for_payments
 
     stmt = select(Payment).where(Payment.tenant_id == tenant_id).order_by(Payment.created_at.desc())
@@ -134,14 +140,25 @@ async def list_payments(
     rows = (await db.execute(stmt)).scalars().all()
 
     summaries = await payout_summary_for_payments(db, tenant_id, rows)
-    return [
-        payment_to_response(
+    stripe = await get_stripe_readiness_for_tenant(db, tenant_id)
+    responses: list[PaymentResponse] = []
+    for row, summary in zip(rows, summaries, strict=True):
+        eligibility_status, eligibility_reason = derive_execution_eligibility(
             row,
+            stripe=stripe,
             vendor_payout_status=summary.get("status"),
             vendor_payout_method_type=summary.get("method_type"),
         )
-        for row, summary in zip(rows, summaries, strict=True)
-    ]
+        responses.append(
+            payment_to_response(
+                row,
+                vendor_payout_status=summary.get("status"),
+                vendor_payout_method_type=summary.get("method_type"),
+                execution_readiness_status=eligibility_status,
+                execution_blocking_reason=eligibility_reason,
+            )
+        )
+    return responses
 
 
 async def update_payment_status(
@@ -169,14 +186,25 @@ async def update_payment_status(
     if new_status == PaymentStatus.PAID:
         row.paid_date = datetime.now(timezone.utc)
 
+    from app.services.payment_execution_readiness_service import derive_execution_eligibility
+    from app.services.stripe_service import get_stripe_readiness_for_tenant
     from app.services.vendor_payout_method_service import payout_summary_for_payments
 
     summaries = await payout_summary_for_payments(db, tenant_id, [row])
     summary = summaries[0] if summaries else {}
+    stripe = await get_stripe_readiness_for_tenant(db, tenant_id)
+    eligibility_status, eligibility_reason = derive_execution_eligibility(
+        row,
+        stripe=stripe,
+        vendor_payout_status=summary.get("status"),
+        vendor_payout_method_type=summary.get("method_type"),
+    )
     return payment_to_response(
         row,
         vendor_payout_status=summary.get("status"),
         vendor_payout_method_type=summary.get("method_type"),
+        execution_readiness_status=eligibility_status,
+        execution_blocking_reason=eligibility_reason,
     )
 
 
