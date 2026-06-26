@@ -167,9 +167,12 @@ class VendorPaymentMethod(Base):
         index=True,
     )
     method_type: Mapped[str | None] = mapped_column(String(32))
+    display_label: Mapped[str | None] = mapped_column(String(255))
     stripe_account_id: Mapped[str | None] = mapped_column(String(255), index=True)
-    external_account_last4: Mapped[str | None] = mapped_column(String(4))
+    last4: Mapped[str | None] = mapped_column(String(4))
+    currency: Mapped[str] = mapped_column(String(3), default="AUD")
     status: Mapped[str | None] = mapped_column(String(32), index=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     raw_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

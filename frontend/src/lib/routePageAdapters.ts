@@ -435,6 +435,8 @@ export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
     paidDate: row.paid_date ?? undefined,
     paymentIntent: row.payment_intent ?? undefined,
     failureReason: row.failure_reason ?? undefined,
+    vendorPayoutStatus: row.vendor_payout_status ?? undefined,
+    vendorPayoutMethodType: row.vendor_payout_method_type ?? undefined,
   };
 }
 
