@@ -1079,6 +1079,10 @@ export interface StripeOAuthUrlResponse {
   url: string;
 }
 
+export interface StripeDisconnectResponse {
+  disconnected: boolean;
+}
+
 export interface StripeBalanceAmount {
   amount: number | null;
   currency: string | null;

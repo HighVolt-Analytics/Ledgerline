@@ -74,6 +74,10 @@ class StripeOAuthUrlResponse(BaseModel):
     url: str
 
 
+class StripeDisconnectResponse(BaseModel):
+    disconnected: bool
+
+
 class StripeBalanceAmountResponse(BaseModel):
     amount: float | None = None
     currency: str | None = None
