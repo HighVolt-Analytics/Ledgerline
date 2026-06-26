@@ -18,9 +18,32 @@ import {
   type PaymentRecord,
 } from "@/lib/v4MockData";
 
+function formatVendorPayoutStatus(
+  status: string,
+  methodType: string | undefined
+): string {
+  const statusLabel =
+    status === "not_configured"
+      ? "not configured"
+      : status === "verified"
+        ? "verified"
+        : status;
+  if (!methodType) return statusLabel;
+  const typeLabel =
+    methodType === "manual_bank"
+      ? "manual bank"
+      : methodType === "stripe_connected_account"
+        ? "Stripe account"
+        : methodType === "external_bank_phase2"
+          ? "external bank"
+          : methodType.replaceAll("_", " ");
+  return `${typeLabel} (${statusLabel})`;
+}
+
 export function PaymentRow({
   payment: p,
   justPaid,
+  stripePayoutsReady = false,
   onSubmit,
   onApprove,
   onPayNow,
@@ -28,6 +51,7 @@ export function PaymentRow({
 }: {
   payment: PaymentRecord;
   justPaid: boolean;
+  stripePayoutsReady?: boolean;
   onSubmit: () => void;
   onApprove: () => void;
   onPayNow: () => void;
@@ -56,6 +80,9 @@ export function PaymentRow({
             Source {p.invoiceId} · due {p.dueDate}
             {p.tab === "scheduled" && p.scheduledDate && <> · scheduled {p.scheduledDate}</>}
             {p.tab === "paid" && p.paidDate && <> · paid {p.paidDate}</>}
+            {p.vendorPayoutStatus != null && p.vendorPayoutStatus !== undefined ? (
+              <> · vendor payout: {formatVendorPayoutStatus(p.vendorPayoutStatus, p.vendorPayoutMethodType)}</>
+            ) : null}
           </div>
         </div>
         <div className="text-right">
@@ -142,6 +169,15 @@ export function PaymentRow({
             <Shield className="h-3.5 w-3.5 mr-1" />
             {justPaid ? "Processing…" : "Pay Now"}
           </Button>
+        )}
+
+        {p.tab === "scheduled" && !stripePayoutsReady && (
+          <p
+            className="text-[11px] text-muted-foreground w-full basis-full"
+            data-testid={`stripe-payout-guard-${p.id}`}
+          >
+            Real Stripe payouts are disabled until Stripe readiness is complete.
+          </p>
         )}
 
         {p.tab === "paid" && (

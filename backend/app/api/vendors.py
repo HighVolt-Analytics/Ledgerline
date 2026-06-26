@@ -7,7 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, get_auth_context, get_db
 from app.models.vendor import VendorRegistry
 from app.schemas.common import ApiEnvelope
-from app.schemas.vendor import VendorCreate, VendorResponse, VendorUpdate
+from app.schemas.vendor import (
+    VendorCreate,
+    VendorPayoutMethodCreate,
+    VendorPayoutMethodResponse,
+    VendorPayoutMethodUpdate,
+    VendorResponse,
+    VendorUpdate,
+)
+from app.services.vendor_payout_method_service import (
+    VendorPayoutMethodError,
+    create_payout_method_for_vendor,
+    delete_payout_method_for_vendor,
+    list_payout_methods_for_vendor,
+    update_payout_method_for_vendor,
+)
 
 router = APIRouter(prefix="/vendors", tags=["vendors"])
 
@@ -92,3 +106,74 @@ async def delete_vendor(
         raise HTTPException(404, "Vendor not found")
     await db.delete(row)
     await db.flush()
+
+
+@router.get(
+    "/{vendor_id}/payout-methods",
+    response_model=ApiEnvelope[list[VendorPayoutMethodResponse]],
+)
+async def list_vendor_payout_methods(
+    vendor_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[VendorPayoutMethodResponse]]:
+    try:
+        rows = await list_payout_methods_for_vendor(db, ctx.tenant_id, vendor_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return ApiEnvelope(data=rows)
+
+
+@router.post(
+    "/{vendor_id}/payout-methods",
+    response_model=ApiEnvelope[VendorPayoutMethodResponse],
+    status_code=201,
+)
+async def create_vendor_payout_method(
+    vendor_id: int,
+    body: VendorPayoutMethodCreate,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[VendorPayoutMethodResponse]:
+    try:
+        row = await create_payout_method_for_vendor(db, ctx.tenant_id, vendor_id, body)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except VendorPayoutMethodError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return ApiEnvelope(data=row)
+
+
+@router.patch(
+    "/{vendor_id}/payout-methods/{method_id}",
+    response_model=ApiEnvelope[VendorPayoutMethodResponse],
+)
+async def patch_vendor_payout_method(
+    vendor_id: int,
+    method_id: int,
+    body: VendorPayoutMethodUpdate,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[VendorPayoutMethodResponse]:
+    try:
+        row = await update_payout_method_for_vendor(
+            db, ctx.tenant_id, vendor_id, method_id, body
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except VendorPayoutMethodError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return ApiEnvelope(data=row)
+
+
+@router.delete("/{vendor_id}/payout-methods/{method_id}", status_code=204)
+async def delete_vendor_payout_method(
+    vendor_id: int,
+    method_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> None:
+    try:
+        await delete_payout_method_for_vendor(db, ctx.tenant_id, vendor_id, method_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc

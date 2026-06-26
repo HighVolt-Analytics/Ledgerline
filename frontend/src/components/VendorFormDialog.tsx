@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Building2, X } from "lucide-react";
 import type { Vendor } from "@/api/types";
+import { VendorPayoutMethodsPanel } from "@/components/vendors/VendorPayoutMethodsPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -106,7 +107,7 @@ export function VendorFormDialog({
       <div
         role="dialog"
         aria-modal="true"
-        className="relative z-10 w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
+        className="relative z-10 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-lg border border-border bg-background p-6 shadow-lg"
       >
         <div className="flex items-center gap-2 mb-4">
           <Building2 className="h-5 w-5 text-primary" />
@@ -167,6 +168,8 @@ export function VendorFormDialog({
         </div>
 
         {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+
+        {isEdit && vendor ? <VendorPayoutMethodsPanel vendorId={vendor.id} /> : null}
 
         <div className="flex gap-2 mt-5">
           <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>

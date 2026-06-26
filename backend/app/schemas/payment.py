@@ -24,6 +24,8 @@ class PaymentResponse(BaseModel):
     approvers: list[dict[str, Any]] = Field(default_factory=list)
     payment_intent: str | None = None
     failure_reason: str | None = None
+    vendor_payout_status: str | None = None
+    vendor_payout_method_type: str | None = None
 
 
 class PaymentStatusUpdate(BaseModel):
