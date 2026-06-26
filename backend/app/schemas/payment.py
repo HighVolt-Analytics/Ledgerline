@@ -81,6 +81,8 @@ class StripeDisconnectResponse(BaseModel):
 
 
 class StripeReadinessResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     connected: bool
     account_id: str | None = None
     onboarding_status: str | None = None
@@ -105,6 +107,8 @@ class StripeBalanceResponse(BaseModel):
 
 
 class StripeTransactionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     stripe_transaction_id: str
     type: str | None = None
