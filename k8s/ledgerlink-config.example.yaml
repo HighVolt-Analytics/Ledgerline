@@ -27,6 +27,7 @@ data:
   STRIPE_MODE: "sandbox"
   STRIPE_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/payments"
   STRIPE_REFRESH_URL: "https://staging.highvolt.tech/ledgerlink/payments"
+  STRIPE_OAUTH_REDIRECT_URL: "https://staging.highvolt.tech/ledgerlink/payments/stripe/oauth/callback"
   # app-secrets (not ConfigMap): META_APP_ID, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN,
   # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_CLIENT_ID,
   # WHATSAPP_OAUTH_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/auth/whatsapp/callback

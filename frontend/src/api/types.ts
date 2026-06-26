@@ -1075,6 +1075,10 @@ export interface StripeOnboardingLinkResponse {
   url: string;
 }
 
+export interface StripeOAuthUrlResponse {
+  url: string;
+}
+
 export interface StripeBalanceAmount {
   amount: number | null;
   currency: string | null;
