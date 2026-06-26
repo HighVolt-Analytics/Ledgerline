@@ -215,6 +215,11 @@ export function VendorsPage() {
   const onHoldCount = rows.length - activeCount;
   const topMax = toNumber(topVendors[0]?.amount);
 
+  const openAddVendor = () => {
+    setEditVendor(null);
+    setFormOpen(true);
+  };
+
   const toggleApproved = async (vendor: Vendor) => {
     try {
       await api.updateVendor(vendor.id, { approved: !vendor.approved });
@@ -245,9 +250,17 @@ export function VendorsPage() {
 
   if (error && !loading && rows.length === 0) {
     return (
-      <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {error}. Ensure the API is running on port 8001.
-      </Card>
+      <>
+        <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
+          {error}. Ensure the API is running on port 8001.
+        </Card>
+        <VendorFormDialog
+          open={formOpen}
+          vendor={editVendor}
+          onClose={() => { setFormOpen(false); setEditVendor(null); }}
+          onSave={saveVendor}
+        />
+      </>
     );
   }
 
@@ -265,22 +278,36 @@ export function VendorsPage() {
 
   if (rows.length === 0) {
     return (
-      <div>
-        <PageHeader
-          title="Vendors"
-          subtitle="Vendor master with default coding, payment terms and status."
+      <>
+        <div>
+          <PageHeader
+            title="Vendors"
+            subtitle="Vendor master with default coding, payment terms and status."
+            actions={
+              <Button size="sm" onClick={openAddVendor}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add vendor
+              </Button>
+            }
+          />
+          <EmptyState
+            title="No vendors yet"
+            hint="Add a vendor manually or they will be created as documents are captured."
+            action={
+              <Button size="sm" onClick={openAddVendor}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add vendor
+              </Button>
+            }
+          />
+        </div>
+        <VendorFormDialog
+          open={formOpen}
+          vendor={editVendor}
+          onClose={() => { setFormOpen(false); setEditVendor(null); }}
+          onSave={saveVendor}
         />
-        <EmptyState
-          title="No vendors yet"
-          hint="Add a vendor manually or they will be created as documents are captured."
-          action={
-            <Button size="sm" onClick={() => { setEditVendor(null); setFormOpen(true); }}>
-              <Plus className="h-4 w-4 mr-1" />
-              Add vendor
-            </Button>
-          }
-        />
-      </div>
+      </>
     );
   }
 
@@ -303,10 +330,7 @@ export function VendorsPage() {
             </div>
             <Button
               size="sm"
-              onClick={() => {
-                setEditVendor(null);
-                setFormOpen(true);
-              }}
+              onClick={openAddVendor}
             >
               <Plus className="h-4 w-4 mr-1" />
               Add vendor
