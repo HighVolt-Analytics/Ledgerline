@@ -6,8 +6,80 @@ import { useWalletSummary } from "@/hooks/useWalletSummary";
 import { cn } from "@/lib/cn";
 import { money } from "@/lib/format";
 
-export function WalletCard() {
-  const { data: wallet, isLoading, error } = useWalletSummary();
+export type WalletCardProps = {
+  stripeConnected?: boolean;
+  stripeLoading?: boolean;
+  stripeAvailableTotal?: number;
+  stripePendingTotal?: number;
+  stripeCurrency?: string;
+  stripeLivemode?: boolean;
+};
+
+function stripeModeLabel(livemode: boolean | undefined): string {
+  if (livemode === true) return "Live";
+  if (livemode === false) return "Test";
+  return "Sandbox";
+}
+
+export function WalletCard({
+  stripeConnected = false,
+  stripeLoading = false,
+  stripeAvailableTotal = 0,
+  stripePendingTotal = 0,
+  stripeCurrency = "AUD",
+  stripeLivemode,
+}: WalletCardProps) {
+  const { data: wallet, isLoading, error } = useWalletSummary(!stripeConnected);
+
+  if (stripeConnected) {
+    const fmt = (value: number) => money(value, stripeCurrency);
+
+    if (stripeLoading) {
+      return (
+        <Card className="p-4" data-testid="card-wallet">
+          <PageLoader label="Loading wallet…" />
+        </Card>
+      );
+    }
+
+    return (
+      <Card
+        className="p-4 bg-gradient-to-br from-primary/10 to-transparent border-primary/30"
+        data-testid="card-wallet"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            <Wallet className="h-3.5 w-3.5 text-primary" /> Stripe Wallet
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {stripeModeLabel(stripeLivemode)}
+            </span>
+            <Shield className="h-4 w-4 text-primary/60" />
+          </div>
+        </div>
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <div className="text-lg font-semibold tnum">{fmt(stripeAvailableTotal)}</div>
+            <div className="text-[11px] text-muted-foreground tnum">
+              Available {fmt(stripeAvailableTotal)} · pending {fmt(stripePendingTotal)}
+            </div>
+          </div>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-topup" disabled>
+              <Download className="h-3.5 w-3.5 mr-1" /> Top Up
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-withdraw" disabled>
+              <Upload className="h-3.5 w-3.5 mr-1" /> Withdraw
+            </Button>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground border-t border-border/60 mt-2.5 pt-2">
+          Balance from connected Stripe account.
+        </p>
+      </Card>
+    );
+  }
 
   if (isLoading && !wallet) {
     return (
