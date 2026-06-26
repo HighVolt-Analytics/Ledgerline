@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { usePaymentMutations, usePayments } from "@/hooks/usePayments";
 import {
   useConnectStripe,
+  useDisconnectStripe,
   useStripeAccount,
   useStripeBalance,
   useStripeOnboardingLink,
@@ -33,6 +34,8 @@ const TABS: { value: PaymentTab; label: string; testid: string }[] = [
 ];
 
 function stripeNeedsOnboarding(account: StripeAccount): boolean {
+  if (account.onboarding_status === "disconnected") return false;
+  if (account.account_type === "standard") return false;
   if (account.onboarding_status === "complete") return false;
   if (!account.details_submitted) return true;
   if (!account.charges_enabled || !account.payouts_enabled) return true;
@@ -74,6 +77,7 @@ export function PaymentsPage() {
   const { data: stripeTransactions = [], isLoading: stripeTransactionsLoading } =
     useStripeTransactions(10, stripeConnected);
   const connectStripe = useConnectStripe();
+  const disconnectStripe = useDisconnectStripe();
   const onboardingLink = useStripeOnboardingLink();
   const stripeOAuthUrl = useStripeOAuthUrl();
   const [tab, setTab] = useState<PaymentTab>("queue");
@@ -131,6 +135,27 @@ export function PaymentsPage() {
     }
   };
 
+  const handleDisconnectStripe = async () => {
+    const confirmed = window.confirm(
+      "Disconnect this Stripe account from LedgerLink? You can reconnect another Stripe account after this."
+    );
+    if (!confirmed) return;
+
+    setStripeActionError(null);
+    try {
+      await disconnectStripe.mutateAsync();
+    } catch (err) {
+      setStripeActionError(
+        err instanceof Error ? err.message : "Unable to disconnect Stripe account"
+      );
+    }
+  };
+
+  const stripeConnectBusy =
+    connectStripe.isPending ||
+    stripeOAuthUrl.isPending ||
+    disconnectStripe.isPending;
+
   return (
     <div>
       <PageHeader
@@ -179,51 +204,32 @@ export function PaymentsPage() {
                 Connect a Stripe account to view balance and ledger activity. Payables workflow
                 below is unchanged.
               </p>
-              {!stripeConnected && !stripeAccountLoading ? (
-                <p className="text-xs text-muted-foreground mt-2">
-                  Existing Stripe account uses Stripe sign-in and authorization.
-                </p>
-              ) : null}
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {!stripeConnected && !stripeAccountLoading ? (
-              <>
-                <Button
-                  size="sm"
-                  onClick={() => void handleConnectStripe()}
-                  disabled={connectStripe.isPending || stripeOAuthUrl.isPending}
-                  data-testid="button-connect-stripe"
-                >
-                  {connectStripe.isPending
-                    ? "Connecting…"
-                    : "Create new Stripe connected account"}
-                </Button>
+          {stripeConnected ? (
+            <div className="flex flex-wrap gap-2">
+              {needsOnboarding ? (
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => void handleConnectExistingStripe()}
-                  disabled={connectStripe.isPending || stripeOAuthUrl.isPending}
-                  data-testid="button-connect-existing-stripe"
+                  onClick={() => void handleContinueOnboarding()}
+                  disabled={onboardingLink.isPending || stripeConnectBusy}
+                  data-testid="button-continue-onboarding"
                 >
-                  {stripeOAuthUrl.isPending
-                    ? "Redirecting…"
-                    : "Connect existing Stripe account"}
+                  {onboardingLink.isPending ? "Opening…" : "Continue onboarding"}
                 </Button>
-              </>
-            ) : null}
-            {stripeConnected && needsOnboarding ? (
+              ) : null}
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => void handleContinueOnboarding()}
-                disabled={onboardingLink.isPending}
-                data-testid="button-continue-onboarding"
+                onClick={() => void handleDisconnectStripe()}
+                disabled={stripeConnectBusy}
+                data-testid="button-disconnect-stripe"
               >
-                {onboardingLink.isPending ? "Opening…" : "Continue onboarding"}
+                {disconnectStripe.isPending ? "Disconnecting…" : "Disconnect Stripe"}
               </Button>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </div>
 
         {stripeActionError ? (
@@ -233,10 +239,38 @@ export function PaymentsPage() {
         {stripeAccountLoading ? (
           <p className="text-xs text-muted-foreground">Loading Stripe connection…</p>
         ) : !stripeConnected ? (
-          <p className="text-xs text-muted-foreground">
-            Not connected. Create a new connected account or connect an existing Stripe account
-            to enable balance and transaction visibility.
-          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              className="text-left rounded-md border border-border bg-card p-4 transition-colors hover:bg-muted/40 disabled:opacity-50 disabled:pointer-events-none"
+              onClick={() => void handleConnectExistingStripe()}
+              disabled={stripeConnectBusy}
+              data-testid="card-stripe-oauth-choice"
+            >
+              <h3 className="text-sm font-medium text-foreground">I already use Stripe</h3>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Sign in to Stripe and authorize LedgerLink.
+              </p>
+              <p className="text-xs text-primary mt-3">
+                {stripeOAuthUrl.isPending ? "Redirecting…" : "Connect existing account"}
+              </p>
+            </button>
+            <button
+              type="button"
+              className="text-left rounded-md border border-border bg-card p-4 transition-colors hover:bg-muted/40 disabled:opacity-50 disabled:pointer-events-none"
+              onClick={() => void handleConnectStripe()}
+              disabled={stripeConnectBusy}
+              data-testid="card-stripe-express-choice"
+            >
+              <h3 className="text-sm font-medium text-foreground">I don&apos;t have Stripe yet</h3>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Create a new connected Stripe account with hosted onboarding.
+              </p>
+              <p className="text-xs text-primary mt-3">
+                {connectStripe.isPending ? "Connecting…" : "Create new account"}
+              </p>
+            </button>
+          </div>
         ) : (
           <div className="space-y-3">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">

@@ -36,6 +36,7 @@ _VENDOR_BANK_PAYOUT_PHASE = 2
 STRIPE_OAUTH_STATE_TYP = "stripe_connect_oauth"
 STRIPE_OAUTH_STATE_TTL_MINUTES = 15
 STRIPE_OAUTH_AUTHORIZE_URL = "https://connect.stripe.com/oauth/authorize"
+STRIPE_ONBOARDING_STATUS_DISCONNECTED = "disconnected"
 
 
 class StripeServiceError(Exception):
@@ -130,6 +131,12 @@ def _derive_onboarding_status(account: Any) -> str:
     ):
         return "complete"
     return "action_required"
+
+
+def _is_active_stripe_account(row: StripeAccount | None) -> bool:
+    if row is None:
+        return False
+    return row.onboarding_status != STRIPE_ONBOARDING_STATUS_DISCONNECTED
 
 
 def _account_row_from_stripe(
@@ -283,11 +290,14 @@ async def exchange_stripe_oauth_code(
     if not stripe_user_id:
         raise StripeServiceError("Stripe OAuth response missing connected account id")
 
-    existing = await get_stripe_account_for_tenant(db, tid)
-    if existing is not None:
-        if existing.stripe_account_id != stripe_user_id:
+    existing_row = await _get_stripe_account_row_for_tenant(db, tid)
+    if existing_row is not None and _is_active_stripe_account(existing_row):
+        if existing_row.stripe_account_id != stripe_user_id:
             raise StripeServiceError("Tenant already has a different Stripe connected account")
-        row = existing
+        row = existing_row
+    elif existing_row is not None:
+        row = existing_row
+        row.stripe_account_id = stripe_user_id
     else:
         row = StripeAccount(tenant_id=tid, stripe_account_id=stripe_user_id)
         db.add(row)
@@ -313,7 +323,7 @@ async def exchange_stripe_oauth_code(
     return row
 
 
-async def get_stripe_account_for_tenant(
+async def _get_stripe_account_row_for_tenant(
     db: AsyncSession,
     tenant_id: uuid.UUID | int,
 ) -> StripeAccount | None:
@@ -321,6 +331,41 @@ async def get_stripe_account_for_tenant(
     return (
         await db.execute(select(StripeAccount).where(StripeAccount.tenant_id == tid))
     ).scalar_one_or_none()
+
+
+async def get_stripe_account_for_tenant(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int,
+) -> StripeAccount | None:
+    row = await _get_stripe_account_row_for_tenant(db, tenant_id)
+    if not _is_active_stripe_account(row):
+        return None
+    return row
+
+
+async def disconnect_stripe_account_for_tenant(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int,
+) -> StripeAccount:
+    """Locally unlink the tenant Stripe account without deleting Stripe-side data."""
+    tid = coerce_tenant_uuid(tenant_id)
+    row = await _get_stripe_account_row_for_tenant(db, tid)
+    if row is None or not _is_active_stripe_account(row):
+        raise StripeServiceError("Stripe connected account not found")
+
+    row.onboarding_status = STRIPE_ONBOARDING_STATUS_DISCONNECTED
+    row.charges_enabled = False
+    row.payouts_enabled = False
+    row.details_submitted = False
+    await db.flush()
+
+    logger.info(
+        "stripe_account_disconnected",
+        tenant_id=str(tid),
+        stripe_account_id=row.stripe_account_id,
+        account_type=row.account_type,
+    )
+    return row
 
 
 async def create_connected_account_for_tenant(
@@ -332,9 +377,19 @@ async def create_connected_account_for_tenant(
     cfg = _require_stripe_configured()
     tid = coerce_tenant_uuid(tenant_id)
 
-    existing = await get_stripe_account_for_tenant(db, tid)
-    if existing is not None:
-        return await refresh_connected_account_status(db, existing)
+    existing_row = await _get_stripe_account_row_for_tenant(db, tid)
+    if existing_row is not None and _is_active_stripe_account(existing_row):
+        return await refresh_connected_account_status(db, existing_row)
+
+    if existing_row is not None and existing_row.account_type == "express":
+        try:
+            return await refresh_connected_account_status(db, existing_row)
+        except StripeServiceError:
+            logger.info(
+                "stripe_express_reconnect_refresh_failed",
+                tenant_id=str(tid),
+                stripe_account_id=existing_row.stripe_account_id,
+            )
 
     if tenant_name is None:
         tenant = await db.get(Tenant, tid)
@@ -351,9 +406,14 @@ async def create_connected_account_for_tenant(
         logger.warning("stripe_account_create_failed", tenant_id=str(tid), error=str(exc))
         raise StripeServiceError("Unable to create Stripe connected account") from exc
 
-    row = StripeAccount(tenant_id=tid, stripe_account_id=account.id)
-    _account_row_from_stripe(row, account, tenant_id=tid)
-    db.add(row)
+    if existing_row is not None:
+        row = existing_row
+        row.stripe_account_id = account.id
+        _account_row_from_stripe(row, account, tenant_id=tid)
+    else:
+        row = StripeAccount(tenant_id=tid, stripe_account_id=account.id)
+        _account_row_from_stripe(row, account, tenant_id=tid)
+        db.add(row)
     await db.flush()
 
     logger.info(

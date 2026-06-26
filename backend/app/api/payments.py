@@ -17,6 +17,7 @@ from app.schemas.payment import (
     StripeBalanceAmountResponse,
     StripeBalanceResponse,
     StripeConnectResponse,
+    StripeDisconnectResponse,
     StripeOAuthUrlResponse,
     StripeOnboardingLinkResponse,
     StripeTransactionResponse,
@@ -30,6 +31,7 @@ from app.services.stripe_service import (
     create_connected_account_for_tenant,
     create_stripe_oauth_state,
     create_stripe_oauth_url,
+    disconnect_stripe_account_for_tenant,
     exchange_stripe_oauth_code,
     get_connected_account_balance,
     get_stripe_account_for_tenant,
@@ -83,6 +85,8 @@ def _stripe_http_error(exc: StripeServiceError) -> HTTPException:
 
 def _account_needs_onboarding(account: object) -> bool:
     status = getattr(account, "onboarding_status", None)
+    if status == "disconnected":
+        return False
     if status == "complete":
         return False
     if not getattr(account, "details_submitted", False):
@@ -126,6 +130,28 @@ async def get_stripe_account(
     if account is None:
         raise HTTPException(404, "Stripe connected account not found")
     return ApiEnvelope(data=StripeAccountResponse.model_validate(account))
+
+
+@router.delete("/stripe/account", response_model=ApiEnvelope[StripeDisconnectResponse])
+async def delete_stripe_account(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[StripeDisconnectResponse]:
+    try:
+        await disconnect_stripe_account_for_tenant(db, ctx.tenant_id)
+    except StripeServiceError as exc:
+        raise _stripe_http_error(exc) from exc
+
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    await log_event(
+        db,
+        "stripe_account_disconnected",
+        tenant_id=ctx.tenant_id,
+        detail={"tenant_id": str(ctx.tenant_id)},
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+    return ApiEnvelope(data=StripeDisconnectResponse(disconnected=True))
 
 
 @router.post("/stripe/connect", response_model=ApiEnvelope[StripeConnectResponse])
