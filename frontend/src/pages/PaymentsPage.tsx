@@ -65,6 +65,18 @@ function stripeModeLabel(livemode: boolean | undefined): string {
   return "Sandbox";
 }
 
+function sumStripeBalanceAmounts(
+  items: StripeBalanceAmount[]
+): { total: number; currency: string } {
+  const withAmount = items.filter((item) => item.amount != null);
+  if (!withAmount.length) {
+    return { total: 0, currency: "AUD" };
+  }
+  const currency = withAmount[0]?.currency ?? "AUD";
+  const total = withAmount.reduce((sum, item) => sum + (item.amount ?? 0), 0);
+  return { total, currency };
+}
+
 export function PaymentsPage() {
   const { timeZone } = useTenantTime();
   const { data: paymentRows = [], isLoading, isError } = usePayments();
@@ -92,6 +104,8 @@ export function PaymentsPage() {
     [payments, tab]
   );
   const needsOnboarding = stripeAccount ? stripeNeedsOnboarding(stripeAccount) : false;
+  const stripeWalletAvailable = sumStripeBalanceAmounts(stripeBalance?.available ?? []);
+  const stripeWalletPending = sumStripeBalanceAmounts(stripeBalance?.pending ?? []);
 
   const advance = async (payment: PaymentRecord, status: string) => {
     await updateStatus(Number(payment.id), { status });
@@ -183,7 +197,14 @@ export function PaymentsPage() {
           value={isLoading ? "…" : money(kpis.total)}
           testid="kpi-pay-paid"
         />
-        <WalletCard />
+        <WalletCard
+          stripeConnected={stripeConnected}
+          stripeLoading={stripeAccountLoading || stripeBalanceLoading}
+          stripeAvailableTotal={stripeWalletAvailable.total}
+          stripePendingTotal={stripeWalletPending.total}
+          stripeCurrency={stripeWalletAvailable.currency || stripeWalletPending.currency}
+          stripeLivemode={stripeBalance?.livemode}
+        />
       </div>
 
       <Card className="p-4 mb-5" data-testid="card-stripe-connect">
