@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { Invoice } from "@/api/types";
@@ -17,6 +18,7 @@ import { approveAndProcess, invoiceFieldsFromDetails, validateInvoiceFieldsForAp
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { cn } from "@/lib/cn";
+import { queryKeys } from "@/lib/queryClient";
 import { usePermissions } from "@/hooks/usePermissions";
 
 const APPROVAL_POLL_MS = 15_000;
@@ -65,6 +67,7 @@ function docNumber(inv: Invoice): string {
 }
 
 export function ApprovalsPage() {
+  const queryClient = useQueryClient();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +177,13 @@ export function ApprovalsPage() {
     [invoices]
   );
 
+  const invalidateAfterApproval = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.payments() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
+    ]);
+  }, [queryClient]);
+
   const approveInvoice = async (id: number) => {
     const inv = invoices.find((i) => i.id === id);
     if (!inv) return;
@@ -194,9 +204,14 @@ export function ApprovalsPage() {
     setProcessingIds((prev) => new Set(prev).add(id));
     try {
       setToast("Invoice queued for processing…");
-      await approveAndProcess(id, () => load({ silent: true, fresh: true }));
+      const result = await approveAndProcess(id, () => load({ silent: true, fresh: true }));
       await load({ fresh: true });
-      setToast("Invoice approved — processing complete");
+      await invalidateAfterApproval();
+      if (result.payment) {
+        setToast(`Invoice approved — payment ${result.payment.id} queued for disbursement`);
+      } else {
+        setToast("Invoice approved — processing complete");
+      }
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Approve failed");
       await load({ fresh: true });

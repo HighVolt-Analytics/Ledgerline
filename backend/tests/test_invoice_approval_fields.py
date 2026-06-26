@@ -1,4 +1,4 @@
-"""Approval must preserve user-corrected invoice fields."""
+"""Approval must preserve user-corrected invoice fields and reach processed state."""
 
 from datetime import date
 from decimal import Decimal
@@ -8,7 +8,46 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
+from app.services.approval_pipeline_service import (
+    human_approved_payable_bypass,
+    payable_fields_complete,
+)
 from app.services.approval_service import approve_invoice_for_reprocess
+from app.services.audit_service import log_event
+
+
+@pytest.mark.asyncio
+async def test_payable_fields_complete() -> None:
+    complete = Invoice(
+        tenant_id=1,
+        vendor="ram",
+        total=Decimal("110"),
+        due_date=date(2026, 6, 30),
+        currency="AUD",
+        file_hash="x",
+    )
+    incomplete = Invoice(tenant_id=1, vendor="ram", currency="AUD", file_hash="y")
+    assert payable_fields_complete(complete) is True
+    assert payable_fields_complete(incomplete) is False
+
+
+@pytest.mark.asyncio
+async def test_human_approved_payable_bypass(db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=1,
+        vendor="ram",
+        total=Decimal("110"),
+        due_date=date(2026, 6, 30),
+        currency="AUD",
+        file_hash="bypass-1",
+        status=InvoiceStatus.EXCEPTION,
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    assert await human_approved_payable_bypass(db_session, inv) is False
+
+    await log_event(db_session, "invoice_approved", invoice_id=inv.id)
+    assert await human_approved_payable_bypass(db_session, inv) is True
 
 
 @pytest.mark.asyncio
