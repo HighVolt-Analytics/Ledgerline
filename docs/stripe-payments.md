@@ -23,7 +23,7 @@ Store in `backend/.env` locally, Kubernetes **`app-secrets`**, or the **`ledgerl
 |----------|-------------|
 | `STRIPE_SECRET_KEY` | Platform secret key (`sk_test_...` in sandbox) |
 | `STRIPE_WEBHOOK_SECRET` | Signing secret for the staging webhook endpoint (`whsec_...`) |
-| `STRIPE_CONNECT_CLIENT_ID` | Connect OAuth client ID (`ca_...`) |
+| `STRIPE_CONNECT_CLIENT_ID` | Connect OAuth client ID (`ca_...`); **required** to connect an existing Stripe Standard account via OAuth |
 
 ### Required non-secret environment variables
 
@@ -32,6 +32,9 @@ Store in `backend/.env` locally, Kubernetes **`app-secrets`**, or the **`ledgerl
 | `STRIPE_MODE` | `sandbox` |
 | `STRIPE_RETURN_URL` | `https://staging.highvolt.tech/ledgerlink/payments` |
 | `STRIPE_REFRESH_URL` | `https://staging.highvolt.tech/ledgerlink/payments` |
+| `STRIPE_OAUTH_REDIRECT_URL` | `https://staging.highvolt.tech/ledgerlink/payments/stripe/oauth/callback` |
+
+`STRIPE_RETURN_URL` and `STRIPE_REFRESH_URL` are used by the Express Account Links onboarding flow. `STRIPE_OAUTH_REDIRECT_URL` is the OAuth redirect URI for connecting an **existing** Stripe Standard account; it must be registered exactly in **Stripe Dashboard -> Connect -> OAuth settings** (redirect URIs allowlist).
 
 Local dev (Vite on port 5173):
 
@@ -39,6 +42,7 @@ Local dev (Vite on port 5173):
 STRIPE_MODE=sandbox
 STRIPE_RETURN_URL=http://localhost:5173/payments
 STRIPE_REFRESH_URL=http://localhost:5173/payments
+STRIPE_OAUTH_REDIRECT_URL=http://localhost:5173/payments/stripe/oauth/callback
 ```
 
 Apply migration **038** (`stripe_accounts`, webhook dedupe, etc.) before testing:
@@ -51,9 +55,19 @@ alembic upgrade head
 ### Stripe Dashboard (sandbox)
 
 1. Enable **Connect** on the platform account (test mode).
-2. Create a **Connect** settings profile; note the **client ID** for `STRIPE_CONNECT_CLIENT_ID`.
-3. Under **Developers -> API keys**, use the **test** secret key for `STRIPE_SECRET_KEY`.
-4. In the LedgerLink UI (**Payments**), click **Connect Stripe** or **Continue onboarding** to complete Express onboarding for a test connected account.
+2. Create a **Connect** settings profile; note the **client ID** for `STRIPE_CONNECT_CLIENT_ID` (required for OAuth existing-account connection).
+3. Under **Connect -> OAuth settings**, add `STRIPE_OAUTH_REDIRECT_URL` to the **redirect URIs** allowlist (must match exactly, including path and scheme).
+4. Under **Developers -> API keys**, use the **test** secret key for `STRIPE_SECRET_KEY`.
+5. In the LedgerLink UI (**Payments**), click **Connect Stripe** or **Continue onboarding** to complete Express onboarding for a new test connected account.
+
+### Connect paths (overview)
+
+| Path | Flow | Key configuration |
+|------|------|-------------------|
+| New Express account | Account Links onboarding | `STRIPE_RETURN_URL`, `STRIPE_REFRESH_URL` |
+| Existing Standard account | Connect OAuth (planned) | `STRIPE_CONNECT_CLIENT_ID`, `STRIPE_OAUTH_REDIRECT_URL` |
+
+OAuth routes are not enabled yet; configure redirect URI and client ID in advance so staging is ready when the callback endpoint ships.
 
 ## Webhook endpoint
 

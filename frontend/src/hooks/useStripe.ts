@@ -49,6 +49,12 @@ export function useStripeOnboardingLink() {
   });
 }
 
+export function useStripeOAuthUrl() {
+  return useMutation({
+    mutationFn: () => api.getStripeOAuthUrl(),
+  });
+}
+
 export function useStripeBalance(enabled = true) {
   return useQuery({
     queryKey: queryKeys.stripeBalance(),

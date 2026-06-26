@@ -70,6 +70,10 @@ class StripeOnboardingLinkResponse(BaseModel):
     url: str
 
 
+class StripeOAuthUrlResponse(BaseModel):
+    url: str
+
+
 class StripeBalanceAmountResponse(BaseModel):
     amount: float | None = None
     currency: str | None = None

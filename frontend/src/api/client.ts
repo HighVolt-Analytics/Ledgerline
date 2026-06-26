@@ -57,6 +57,7 @@ import type {
   StripeBalanceResponse,
   StripeConnectResponse,
   StripeOnboardingLinkResponse,
+  StripeOAuthUrlResponse,
   StripeTransaction,
   WhatsappStatus,
 } from "./types";
@@ -1113,6 +1114,8 @@ export const api = {
     }),
   getStripeOnboardingLink: () =>
     request<StripeOnboardingLinkResponse>("/api/payments/stripe/onboarding-link"),
+  getStripeOAuthUrl: () =>
+    request<StripeOAuthUrlResponse>("/api/payments/stripe/oauth-url"),
   getStripeBalance: (options?: FreshRequestOptions) => {
     const path = "/api/payments/stripe/balance";
     if (options?.fresh) bustGetCache(path);
