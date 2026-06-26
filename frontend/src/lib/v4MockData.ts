@@ -118,6 +118,8 @@ export type PaymentRecord = {
   paidDate?: string;
   paymentIntent?: string;
   failureReason?: string;
+  vendorPayoutStatus?: string;
+  vendorPayoutMethodType?: string;
 };
 
 export type WalletTxn = {

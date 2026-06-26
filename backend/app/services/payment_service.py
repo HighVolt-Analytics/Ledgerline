@@ -40,7 +40,12 @@ def _payment_tier_approvers(amount: Decimal) -> list[dict[str, str]]:
     return []
 
 
-def payment_to_response(row: Payment) -> PaymentResponse:
+def payment_to_response(
+    row: Payment,
+    *,
+    vendor_payout_status: str | None = None,
+    vendor_payout_method_type: str | None = None,
+) -> PaymentResponse:
     tab = row.status.value
     return PaymentResponse(
         id=row.id,
@@ -57,6 +62,8 @@ def payment_to_response(row: Payment) -> PaymentResponse:
         approvers=row.approvers or [],
         payment_intent=row.payment_intent,
         failure_reason=row.failure_reason,
+        vendor_payout_status=vendor_payout_status,
+        vendor_payout_method_type=vendor_payout_method_type,
     )
 
 
@@ -108,11 +115,38 @@ async def list_payments(
     *,
     status: str | None = None,
 ) -> list[PaymentResponse]:
+    from app.services.vendor_payout_method_service import (
+        _normalize_vendor_key,
+        default_payout_lookup_by_vendor_names,
+    )
+
     stmt = select(Payment).where(Payment.tenant_id == tenant_id).order_by(Payment.created_at.desc())
     if status:
         stmt = stmt.where(Payment.status == PaymentStatus(status))
     rows = (await db.execute(stmt)).scalars().all()
-    return [payment_to_response(row) for row in rows]
+
+    payout_lookup = await default_payout_lookup_by_vendor_names(
+        db,
+        tenant_id,
+        [row.vendor for row in rows],
+    )
+    responses: list[PaymentResponse] = []
+    for row in rows:
+        key = _normalize_vendor_key(row.vendor)
+        if not key:
+            summary: dict[str, str | None] = {}
+        elif key in payout_lookup:
+            summary = payout_lookup[key]
+        else:
+            summary = {"status": "not_configured", "method_type": None}
+        responses.append(
+            payment_to_response(
+                row,
+                vendor_payout_status=summary.get("status"),
+                vendor_payout_method_type=summary.get("method_type"),
+            )
+        )
+    return responses
 
 
 async def update_payment_status(

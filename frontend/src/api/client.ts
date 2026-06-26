@@ -50,6 +50,9 @@ import type {
   OnboardingStatus,
   UserPermissions,
   Vendor,
+  VendorPayoutMethod,
+  VendorPayoutMethodCreate,
+  VendorPayoutMethodUpdate,
   VaultTreeResponse,
   VaultMigrateResponse,
   WalletSummary,
@@ -886,6 +889,31 @@ export const api = {
     }),
   deleteVendor: (id: number) =>
     request<void>(`/api/vendors/${id}`, { method: "DELETE" }),
+  listVendorPayoutMethods: (vendorId: number, options?: FreshRequestOptions) => {
+    const path = `/api/vendors/${vendorId}/payout-methods`;
+    if (options?.fresh) bustGetCache(path);
+    return request<VendorPayoutMethod[]>(path);
+  },
+  createVendorPayoutMethod: (vendorId: number, body: VendorPayoutMethodCreate) =>
+    request<VendorPayoutMethod>(`/api/vendors/${vendorId}/payout-methods`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateVendorPayoutMethod: (
+    vendorId: number,
+    methodId: number,
+    body: VendorPayoutMethodUpdate
+  ) =>
+    request<VendorPayoutMethod>(`/api/vendors/${vendorId}/payout-methods/${methodId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteVendorPayoutMethod: (vendorId: number, methodId: number) =>
+    request<void>(`/api/vendors/${vendorId}/payout-methods/${methodId}`, {
+      method: "DELETE",
+    }),
   listVendorMasters: (options?: FreshRequestOptions) => {
     const path = "/api/vendor-masters";
     if (options?.fresh) bustGetCache(path);

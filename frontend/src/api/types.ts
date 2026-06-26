@@ -462,6 +462,8 @@ export interface PaymentApi {
   approvers: Array<Record<string, unknown>>;
   payment_intent: string | null;
   failure_reason: string | null;
+  vendor_payout_status: string | null;
+  vendor_payout_method_type: string | null;
 }
 
 export interface DashboardStats {
@@ -616,6 +618,51 @@ export interface Vendor {
   sender_pattern: string;
   abn: string | null;
   approved: boolean;
+}
+
+export type VendorPayoutMethodType =
+  | "manual_bank"
+  | "stripe_connected_account"
+  | "external_bank_phase2";
+
+export type VendorPayoutMethodStatus =
+  | "not_configured"
+  | "pending"
+  | "verified"
+  | "disabled";
+
+export interface VendorPayoutMethod {
+  id: number;
+  vendor_id: number;
+  method_type: VendorPayoutMethodType | string;
+  display_label: string | null;
+  stripe_account_id: string | null;
+  last4: string | null;
+  currency: string;
+  status: VendorPayoutMethodStatus | string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorPayoutMethodCreate {
+  method_type: VendorPayoutMethodType;
+  display_label?: string | null;
+  stripe_account_id?: string | null;
+  last4?: string | null;
+  currency?: string;
+  status?: VendorPayoutMethodStatus;
+  is_default?: boolean;
+}
+
+export interface VendorPayoutMethodUpdate {
+  method_type?: VendorPayoutMethodType;
+  display_label?: string | null;
+  stripe_account_id?: string | null;
+  last4?: string | null;
+  currency?: string;
+  status?: VendorPayoutMethodStatus;
+  is_default?: boolean;
 }
 
 export interface AppSettings {

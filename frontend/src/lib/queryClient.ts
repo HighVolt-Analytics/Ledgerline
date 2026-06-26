@@ -41,6 +41,7 @@ const baseKeys = {
   vendorMasters: ["vendor-masters"] as const,
   employeeMasters: ["employee-masters"] as const,
   pendingVendors: ["pending-vendors"] as const,
+  vendorPayoutMethods: (vendorId: number) => ["vendor-payout-methods", vendorId] as const,
   routedInvoices: (routeTarget: string) => ["invoices", "routed", routeTarget] as const,
   payablesQueue: ["invoices", "payables"] as const,
   purchases: ["purchases"] as const,
@@ -68,6 +69,8 @@ export const queryKeys = {
   vendorMasters: () => tenantQueryKey(baseKeys.vendorMasters),
   employeeMasters: () => tenantQueryKey(baseKeys.employeeMasters),
   pendingVendors: () => tenantQueryKey(baseKeys.pendingVendors),
+  vendorPayoutMethods: (vendorId: number) =>
+    tenantQueryKey(baseKeys.vendorPayoutMethods(vendorId)),
   routedInvoices: (routeTarget: string) => tenantQueryKey(baseKeys.routedInvoices(routeTarget)),
   payablesQueue: () => tenantQueryKey(baseKeys.payablesQueue),
   purchases: () => tenantQueryKey(baseKeys.purchases),
