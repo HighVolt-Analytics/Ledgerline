@@ -45,6 +45,35 @@ def _normalize_vendor_key(name: str | None) -> str:
     return (name or "").strip().lower()
 
 
+NOT_CONFIGURED_PAYOUT_SUMMARY: dict[str, str | None] = {
+    "status": "not_configured",
+    "method_type": None,
+}
+
+
+def _summarize_methods_by_vendor(
+    methods: list[VendorPaymentMethod],
+) -> dict[int, dict[str, str | None]]:
+    by_vendor: dict[int, list[VendorPaymentMethod]] = {}
+    for method in methods:
+        by_vendor.setdefault(method.vendor_id, []).append(method)
+
+    summaries: dict[int, dict[str, str | None]] = {}
+    for vendor_id, rows in by_vendor.items():
+        active = [row for row in rows if (row.status or "") != "disabled"]
+        default = next((row for row in active if row.is_default), None)
+        if default is None and active:
+            default = active[0]
+        if default is None:
+            summaries[vendor_id] = dict(NOT_CONFIGURED_PAYOUT_SUMMARY)
+        else:
+            summaries[vendor_id] = {
+                "status": default.status or "not_configured",
+                "method_type": default.method_type,
+            }
+    return summaries
+
+
 def _validate_last4(value: str | None) -> str | None:
     if value is None or value == "":
         return None
@@ -238,6 +267,63 @@ async def delete_payout_method_for_vendor(
     await db.flush()
 
 
+async def resolve_vendor_registry_id_for_invoice(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    vendor_name: str | None,
+    storage_vendor_slug: str | None,
+) -> int | None:
+    """Resolve vendor_registry.id from invoice slug (exact) then vendor name (exact)."""
+    slug = (storage_vendor_slug or "").strip()
+    if slug and slug != "unknown":
+        matched_id = (
+            await db.execute(
+                select(VendorRegistry.id).where(
+                    VendorRegistry.tenant_id == tenant_id,
+                    VendorRegistry.vendor_slug == slug,
+                )
+            )
+        ).scalar_one_or_none()
+        if matched_id is not None:
+            return int(matched_id)
+
+    name_key = _normalize_vendor_key(vendor_name)
+    if not name_key:
+        return None
+
+    vendors = (
+        await db.execute(
+            select(VendorRegistry).where(VendorRegistry.tenant_id == tenant_id)
+        )
+    ).scalars().all()
+    for vendor in vendors:
+        if _normalize_vendor_key(vendor.vendor_name) == name_key:
+            return vendor.id
+    return None
+
+
+async def default_payout_lookup_by_vendor_ids(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    vendor_registry_ids: list[int | None],
+) -> dict[int, dict[str, str | None]]:
+    """Map vendor_registry.id -> default payout method summary."""
+    vendor_ids = {vendor_id for vendor_id in vendor_registry_ids if vendor_id is not None}
+    if not vendor_ids:
+        return {}
+
+    methods = (
+        await db.execute(
+            select(VendorPaymentMethod).where(
+                VendorPaymentMethod.tenant_id == tenant_id,
+                VendorPaymentMethod.vendor_id.in_(vendor_ids),
+            )
+        )
+    ).scalars().all()
+    return _summarize_methods_by_vendor(methods)
+
+
 async def default_payout_lookup_by_vendor_names(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -290,31 +376,51 @@ async def default_payout_lookup_by_vendor_names(
         )
     ).scalars().all()
 
-    by_vendor: dict[int, list[VendorPaymentMethod]] = {}
-    for method in methods:
-        by_vendor.setdefault(method.vendor_id, []).append(method)
-
-    vendor_id_to_summary: dict[int, dict[str, str | None]] = {}
-    for vendor_id, rows in by_vendor.items():
-        active = [r for r in rows if (r.status or "") != "disabled"]
-        default = next((r for r in active if r.is_default), None)
-        if default is None and active:
-            default = active[0]
-        if default is None:
-            vendor_id_to_summary[vendor_id] = {
-                "status": "not_configured",
-                "method_type": None,
-            }
-        else:
-            vendor_id_to_summary[vendor_id] = {
-                "status": default.status or "not_configured",
-                "method_type": default.method_type,
-            }
+    vendor_id_to_summary = _summarize_methods_by_vendor(methods)
 
     result: dict[str, dict[str, str | None]] = {}
     for name, vendor_id in payment_name_to_vendor_id.items():
-        result[name] = vendor_id_to_summary.get(
-            vendor_id,
-            {"status": "not_configured", "method_type": None},
-        )
+        result[name] = vendor_id_to_summary.get(vendor_id, dict(NOT_CONFIGURED_PAYOUT_SUMMARY))
     return result
+
+
+async def payout_summary_for_payments(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    payments: list[Any],
+) -> list[dict[str, str | None]]:
+    """Resolve payout summaries for payments: FK first, name fallback for legacy rows."""
+    from app.models.payment import Payment
+
+    payment_rows = [payment for payment in payments if isinstance(payment, Payment)]
+    if not payment_rows:
+        return []
+
+    id_lookup = await default_payout_lookup_by_vendor_ids(
+        db,
+        tenant_id,
+        [payment.vendor_registry_id for payment in payment_rows],
+    )
+
+    fallback_names = [
+        payment.vendor
+        for payment in payment_rows
+        if payment.vendor_registry_id is None and payment.vendor
+    ]
+    name_lookup = await default_payout_lookup_by_vendor_names(db, tenant_id, fallback_names)
+
+    summaries: list[dict[str, str | None]] = []
+    for payment in payment_rows:
+        if payment.vendor_registry_id is not None:
+            summary = id_lookup.get(
+                payment.vendor_registry_id,
+                dict(NOT_CONFIGURED_PAYOUT_SUMMARY),
+            )
+        else:
+            key = _normalize_vendor_key(payment.vendor)
+            if not key:
+                summary = {}
+            else:
+                summary = name_lookup.get(key, dict(NOT_CONFIGURED_PAYOUT_SUMMARY))
+        summaries.append(summary)
+    return summaries
