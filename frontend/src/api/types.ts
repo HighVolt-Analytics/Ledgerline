@@ -1083,6 +1083,18 @@ export interface StripeDisconnectResponse {
   disconnected: boolean;
 }
 
+export interface StripeReadinessResponse {
+  connected: boolean;
+  account_id: string | null;
+  onboarding_status: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  ready_for_charges: boolean;
+  ready_for_payouts: boolean;
+  blocking_reason: string | null;
+  recommended_action: string | null;
+}
+
 export interface StripeBalanceAmount {
   amount: number | null;
   currency: string | null;
