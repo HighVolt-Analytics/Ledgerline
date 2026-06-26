@@ -26,6 +26,8 @@ class PaymentResponse(BaseModel):
     failure_reason: str | None = None
     vendor_payout_status: str | None = None
     vendor_payout_method_type: str | None = None
+    execution_readiness_status: str | None = None
+    execution_blocking_reason: str | None = None
 
 
 class PaymentStatusUpdate(BaseModel):
@@ -134,3 +136,19 @@ class PaymentAttemptResponse(BaseModel):
     failure_message: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class PaymentExecutionReadinessResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    payment_id: int
+    can_execute: bool
+    execution_mode: str = "dry_run"
+    blocking_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    tenant_stripe_ready: bool
+    vendor_payout_ready: bool
+    approval_ready: bool
+    amount_ready: bool
+    recommended_action: str | None = None
+    payments_execution_enabled: bool = False

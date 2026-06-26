@@ -447,6 +447,16 @@ export interface PurchaseOrderApi {
   purchase_rule_id?: string | null;
 }
 
+export type PaymentExecutionEligibilityStatus =
+  | "not_ready"
+  | "awaiting_approval"
+  | "blocked_stripe_setup"
+  | "blocked_vendor_payout_setup"
+  | "ready_dry_run"
+  | "scheduled"
+  | "paid"
+  | "failed";
+
 export interface PaymentApi {
   id: number;
   invoice_id: number;
@@ -464,6 +474,22 @@ export interface PaymentApi {
   failure_reason: string | null;
   vendor_payout_status: string | null;
   vendor_payout_method_type: string | null;
+  execution_readiness_status: PaymentExecutionEligibilityStatus | null;
+  execution_blocking_reason: string | null;
+}
+
+export interface PaymentExecutionReadinessResponse {
+  payment_id: number;
+  can_execute: boolean;
+  execution_mode: "dry_run";
+  blocking_reasons: string[];
+  warnings: string[];
+  tenant_stripe_ready: boolean;
+  vendor_payout_ready: boolean;
+  approval_ready: boolean;
+  amount_ready: boolean;
+  recommended_action: string | null;
+  payments_execution_enabled: boolean;
 }
 
 export interface DashboardStats {
@@ -684,6 +710,8 @@ export interface AppSettings {
   rule_book_config_path: string;
   cors_origins: string;
   whatsapp_configured: boolean;
+  stripe_payments_execution_enabled: boolean;
+  stripe_live_payments_enabled: boolean;
 }
 
 export interface WhatsappConnection {

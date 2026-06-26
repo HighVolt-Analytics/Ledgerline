@@ -115,6 +115,30 @@ function activityLabel(
   if (event.includes("email") || event.includes("ingest") || event.includes("poll")) {
     return `${label} captured via email`;
   }
+  if (event === "stripe_account_connected_onboarding") {
+    return "Stripe account connected (onboarding)";
+  }
+  if (event === "stripe_account_connected_oauth") {
+    return "Stripe account connected (OAuth)";
+  }
+  if (event === "stripe_account_disconnected") {
+    return "Stripe account disconnected";
+  }
+  if (event === "stripe_status_refreshed") {
+    return "Stripe account status refreshed";
+  }
+  if (event === "vendor_payout_method_created") {
+    return "Vendor payout method added";
+  }
+  if (event === "vendor_payout_method_updated") {
+    return "Vendor payout method updated";
+  }
+  if (event === "vendor_payout_method_deleted") {
+    return "Vendor payout method removed";
+  }
+  if (event === "payment_execution_readiness_validated") {
+    return "Payment execution readiness validated (dry-run)";
+  }
   return `${label} — ${event.replace(/_/g, " ")}`;
 }
 

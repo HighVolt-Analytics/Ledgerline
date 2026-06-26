@@ -16,6 +16,7 @@ import type {
   DailyReconciliation,
   NavBadges,
   PaymentApi,
+  PaymentExecutionReadinessResponse,
   PurchaseOrderApi,
   PurchaseDossier,
   DashboardOverview,
@@ -1157,6 +1158,11 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<StripeTransaction[]>(path);
   },
+  validatePaymentExecutionReadiness: (paymentId: number) =>
+    request<PaymentExecutionReadinessResponse>(
+      `/api/payments/${paymentId}/execution-readiness`,
+      { method: "POST" }
+    ),
 };
 
 /** Inclusive invoice-date range for workbook export; omit both for all invoices. */

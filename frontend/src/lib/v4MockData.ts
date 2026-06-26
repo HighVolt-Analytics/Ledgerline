@@ -120,6 +120,16 @@ export type PaymentRecord = {
   failureReason?: string;
   vendorPayoutStatus?: string;
   vendorPayoutMethodType?: string;
+  executionReadinessStatus?:
+    | "not_ready"
+    | "awaiting_approval"
+    | "blocked_stripe_setup"
+    | "blocked_vendor_payout_setup"
+    | "ready_dry_run"
+    | "scheduled"
+    | "paid"
+    | "failed";
+  executionBlockingReason?: string;
 };
 
 export type WalletTxn = {
