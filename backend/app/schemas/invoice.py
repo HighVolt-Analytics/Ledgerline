@@ -107,6 +107,7 @@ class InvoiceUpdateRequest(BaseModel):
     invoice_no: str | None = None
     po_reference: str | None = None
     cost_centre: str | None = None
+    billing_address: str | None = None
     invoice_date: date | None = None
     due_date: date | None = None
     currency: str | None = None

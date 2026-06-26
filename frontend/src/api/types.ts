@@ -363,6 +363,7 @@ export interface InvoiceUpdatePayload {
   invoice_no?: string | null;
   po_reference?: string | null;
   cost_centre?: string | null;
+  billing_address?: string | null;
   invoice_date?: string | null;
   due_date?: string | null;
   currency?: string | null;

@@ -675,12 +675,15 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<InvoiceDetails>(path);
   },
-  updateInvoice: (id: number, body: InvoiceUpdatePayload) =>
-    request<InvoiceDetails>(`/api/invoices/${id}`, {
+  updateInvoice: (id: number, body: InvoiceUpdatePayload) => {
+    bustGetCacheByPrefix("/api/invoices");
+    bustGetCacheByPrefix("/api/approvals");
+    return request<InvoiceDetails>(`/api/invoices/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }),
+    });
+  },
   getInvoicePipeline: (id: number, options?: FreshRequestOptions) => {
     const path = `/api/invoices/${id}/pipeline`;
     if (options?.fresh) bustGetCache(path);

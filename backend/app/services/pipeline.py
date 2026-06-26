@@ -102,6 +102,20 @@ def _filename_from_stored(stored: str, invoice_id: int, file_hash: str) -> str:
     return filename_from_stored(stored)
 
 
+def _scalar_field_empty(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
+def _apply_parsed_scalar(invoice: Invoice, field: str, value: object) -> None:
+    if not _scalar_field_empty(getattr(invoice, field)):
+        return
+    setattr(invoice, field, value)
+
+
 async def _replace_line_items(
     session: AsyncSession,
     invoice: Invoice,
@@ -627,31 +641,41 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     if not resolved_vendor and parsed.vendor and is_plausible_vendor_name(parsed.vendor):
         resolved_vendor = parsed.vendor
 
-    invoice.vendor = resolved_vendor
-    invoice.abn = parsed.abn
-    invoice.billing_address = parsed.billing_address
-    invoice.bank_bsb = parsed.bank_bsb
-    invoice.bank_account = parsed.bank_account
-    invoice.invoice_no = parsed.invoice_no
-    invoice.po_reference = parsed.po_reference
-    invoice.cost_centre = parsed.cost_centre
-    invoice.invoice_date = parsed.invoice_date
-    invoice.due_date = parsed.due_date
-    invoice.subtotal = plausible_money(parsed.subtotal)
-    invoice.gst = plausible_money(parsed.gst)
-    invoice.total = plausible_money(parsed.total)
-    invoice.currency = parsed.currency
+    _apply_parsed_scalar(invoice, "vendor", resolved_vendor)
+    _apply_parsed_scalar(invoice, "abn", parsed.abn)
+    _apply_parsed_scalar(invoice, "billing_address", parsed.billing_address)
+    _apply_parsed_scalar(invoice, "bank_bsb", parsed.bank_bsb)
+    _apply_parsed_scalar(invoice, "bank_account", parsed.bank_account)
+    _apply_parsed_scalar(invoice, "invoice_no", parsed.invoice_no)
+    _apply_parsed_scalar(invoice, "po_reference", parsed.po_reference)
+    _apply_parsed_scalar(invoice, "cost_centre", parsed.cost_centre)
+    _apply_parsed_scalar(invoice, "invoice_date", parsed.invoice_date)
+    _apply_parsed_scalar(invoice, "due_date", parsed.due_date)
+    if _scalar_field_empty(invoice.subtotal):
+        invoice.subtotal = plausible_money(parsed.subtotal)
+    if _scalar_field_empty(invoice.gst):
+        invoice.gst = plausible_money(parsed.gst)
+    if _scalar_field_empty(invoice.total):
+        invoice.total = plausible_money(parsed.total)
+    _apply_parsed_scalar(invoice, "currency", parsed.currency)
     from app.services.document_text import cap_document_text
     from app.services.po_reference import effective_po_reference, extract_po_reference_from_text
 
-    invoice.document_text = cap_document_text(parsed.document_text)
+    if _scalar_field_empty(invoice.document_text):
+        invoice.document_text = cap_document_text(parsed.document_text)
     if not effective_po_reference(invoice.po_reference):
         extracted = extract_po_reference_from_text(invoice.document_text)
         if extracted:
             invoice.po_reference = extracted
             parsed.po_reference = extracted
 
-    await _replace_line_items(session, invoice, parsed.line_items)
+    existing_line_count = (
+        await session.execute(
+            select(LineItem.id).where(*line_items_for_invoice(invoice.tenant_id, invoice.id))
+        )
+    ).scalars().all()
+    if not existing_line_count:
+        await _replace_line_items(session, invoice, parsed.line_items)
 
     stmt = (
         select(Invoice)
