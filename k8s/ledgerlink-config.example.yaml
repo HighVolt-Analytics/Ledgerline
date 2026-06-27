@@ -31,6 +31,10 @@ data:
   # Production safety — keep false until live cutover is explicitly approved
   STRIPE_PAYMENTS_EXECUTION_ENABLED: "false"
   STRIPE_LIVE_PAYMENTS_ENABLED: "false"
+  # Manual instruction orchestration for staging dry-run (no real Stripe payouts)
+  PAYMENT_MANUAL_EXECUTION_ENABLED: "true"
+  PAYMENT_MANUAL_EXECUTION_LIMIT_AUD: "1000"
+  PAYMENT_EXECUTION_DISABLED: "false"
   # app-secrets (not ConfigMap): META_APP_ID, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN,
   # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_CLIENT_ID,
   # WHATSAPP_OAUTH_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/auth/whatsapp/callback

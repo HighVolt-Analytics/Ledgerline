@@ -324,6 +324,20 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="STRIPE_LIVE_PAYMENTS_ENABLED",
     )
+    payment_manual_execution_enabled: bool = Field(
+        default=False,
+        validation_alias="PAYMENT_MANUAL_EXECUTION_ENABLED",
+    )
+    payment_manual_execution_limit_aud: float = Field(
+        default=1000.0,
+        ge=0,
+        validation_alias="PAYMENT_MANUAL_EXECUTION_LIMIT_AUD",
+    )
+    payment_execution_disabled: bool = Field(
+        default=False,
+        validation_alias="PAYMENT_EXECUTION_DISABLED",
+        description="Emergency kill switch for all payment execution orchestration endpoints",
+    )
 
     @field_validator("root_path", mode="before")
     @classmethod

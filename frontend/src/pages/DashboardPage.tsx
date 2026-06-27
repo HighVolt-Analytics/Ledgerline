@@ -142,6 +142,15 @@ function activityLabel(
   if (event === "payment_approved") {
     return "Payment approved for disbursement readiness";
   }
+  if (event === "payment_execution_instruction_created") {
+    return "Manual payment instruction created";
+  }
+  if (event === "payment_marked_paid_manual") {
+    return "Payment marked paid manually (no funds moved)";
+  }
+  if (event === "payment_execution_blocked_by_safety_gate") {
+    return "Payment execution blocked by safety gate";
+  }
   return `${label} — ${event.replace(/_/g, " ")}`;
 }
 

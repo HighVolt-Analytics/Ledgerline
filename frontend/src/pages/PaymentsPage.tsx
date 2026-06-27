@@ -119,6 +119,9 @@ export function PaymentsPage() {
   const { data: paymentRows = [], isLoading, isError } = usePayments();
   const { data: appSettings } = useAppSettings();
   const paymentsExecutionEnabled = appSettings?.stripe_payments_execution_enabled ?? false;
+  const manualExecutionEnabled =
+    (appSettings?.payment_manual_execution_enabled ?? false) &&
+    !(appSettings?.payment_execution_disabled ?? false);
   const { updateStatus, approvePayment } = usePaymentMutations();
   const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount();
   const { data: stripeReadiness } = useStripeReadiness();
@@ -534,13 +537,21 @@ export function PaymentsPage() {
             <span className="font-medium text-foreground">
               Real Stripe payouts are disabled.
             </span>{" "}
-            This environment supports readiness validation only. Use{" "}
-            <span className="text-foreground">Validate payment</span> on each row to run a dry-run
-            check — no funds are moved.
+            LedgerLink is currently in client-controlled manual execution mode. It can create
+            payment instructions and record manual payment completion, but it does not move funds.
+            Use <span className="text-foreground">Validate payment</span> for dry-run readiness
+            checks.
             {paymentsExecutionEnabled ? (
               <span className="block mt-1 text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]">
                 STRIPE_PAYMENTS_EXECUTION_ENABLED is true in server config, but real execution
                 endpoints are not enabled in this build.
+              </span>
+            ) : null}
+            {!manualExecutionEnabled ? (
+              <span className="block mt-1">
+                Manual instruction orchestration is disabled (
+                <span className="font-mono text-[10px]">PAYMENT_MANUAL_EXECUTION_ENABLED</span>
+                ).
               </span>
             ) : null}
           </div>
@@ -580,6 +591,7 @@ export function PaymentsPage() {
                 payment={payment}
                 justPaid={justPaidId === payment.id}
                 paymentsExecutionEnabled={paymentsExecutionEnabled}
+                manualExecutionEnabled={manualExecutionEnabled}
                 approveBusy={approvingId === payment.id}
                 onSubmit={() => void advance(payment, "awaiting")}
                 onApprove={() => void handleApprovePayment(payment)}
