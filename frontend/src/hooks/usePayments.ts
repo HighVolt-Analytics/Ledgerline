@@ -35,6 +35,34 @@ export function useApprovePayment() {
   });
 }
 
+export function useCreatePaymentExecutionInstruction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (paymentId: number) => api.createPaymentExecutionInstruction(paymentId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
+    },
+  });
+}
+
+export function useMarkPaymentPaidManual() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      paymentId,
+      body,
+    }: {
+      paymentId: number;
+      body: { reference: string; paid_date?: string; note?: string };
+    }) => api.markPaymentPaidManual(paymentId, body),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
+    },
+  });
+}
+
 export function usePaymentMutations() {
   const queryClient = useQueryClient();
 

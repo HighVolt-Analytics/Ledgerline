@@ -302,6 +302,9 @@ def derive_execution_eligibility(
     stripe: StripeReadiness,
     vendor_payout_status: str | None,
     vendor_payout_method_type: str | None,
+    has_instruction: bool = False,
+    manual_execution_enabled: bool = False,
+    manual_instruction_eligible: bool = False,
 ) -> tuple[str, str | None]:
     """Read-only eligibility label for payment list UI."""
     if payment.status == PaymentStatus.PAID:
@@ -324,8 +327,19 @@ def derive_execution_eligibility(
     )
 
     if payment.status == PaymentStatus.SCHEDULED:
+        if has_instruction:
+            return "instruction_created", None
+
+        manual_bank_verified = (
+            vendor_payout_method_type == "manual_bank" and vendor_payout_status == "verified"
+        )
+        if manual_execution_enabled and manual_instruction_eligible:
+            return "manual_instruction_available", None
+
         if not stripe_ready:
             reason = stripe.blocking_reason or "Stripe setup is incomplete"
+            if manual_execution_enabled and manual_bank_verified:
+                return "manual_instruction_available", reason
             return "blocked_stripe_setup", reason
         if not vendor_ready:
             if not vendor_payout_status or vendor_payout_status == "not_configured":
@@ -335,6 +349,8 @@ def derive_execution_eligibility(
                 f"Vendor payout method is {vendor_payout_status or 'not ready'}",
             )
         if _approval_ready(payment):
+            if manual_execution_enabled:
+                return "manual_instruction_available", None
             return "ready_dry_run", None
         return "scheduled", "Payment is scheduled but approval chain may be incomplete"
 

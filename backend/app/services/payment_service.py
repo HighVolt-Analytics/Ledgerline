@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.payment import (
+    PaymentExecutionInstructionResponse,
     PaymentResponse,
     PaymentStatusUpdate,
     WalletSummaryResponse,
@@ -47,18 +48,50 @@ async def _payment_response_with_eligibility(
     tenant_id: uuid.UUID,
     row: Payment,
 ) -> PaymentResponse:
-    from app.services.payment_execution_readiness_service import derive_execution_eligibility
+    from app.config import get_settings
+    from app.services.payment_execution_instruction_service import (
+        _instruction_to_response,
+        instructions_for_payments,
+        manual_instruction_eligible,
+    )
+    from app.services.payment_execution_readiness_service import (
+        _build_readiness_checks,
+        _default_payout_method,
+        _resolve_vendor_registry_id,
+        derive_execution_eligibility,
+    )
     from app.services.stripe_service import get_stripe_readiness_for_tenant
     from app.services.vendor_payout_method_service import payout_summary_for_payments
 
     summaries = await payout_summary_for_payments(db, tenant_id, [row])
     summary = summaries[0] if summaries else {}
     stripe = await get_stripe_readiness_for_tenant(db, tenant_id)
+    instructions = await instructions_for_payments(db, tenant_id, [row.id])
+    instruction = instructions.get(row.id)
+    settings = get_settings()
+
+    manual_eligible = False
+    if row.status == PaymentStatus.SCHEDULED and instruction is None:
+        checks = await _build_readiness_checks(db, row, stripe=stripe)
+        vendor_registry_id = await _resolve_vendor_registry_id(db, row)
+        method = (
+            await _default_payout_method(db, tenant_id, vendor_registry_id)
+            if vendor_registry_id is not None
+            else None
+        )
+        manual_eligible, _ = manual_instruction_eligible(row, checks=checks, method=method)
+
     eligibility_status, eligibility_reason = derive_execution_eligibility(
         row,
         stripe=stripe,
         vendor_payout_status=summary.get("status"),
         vendor_payout_method_type=summary.get("method_type"),
+        has_instruction=instruction is not None,
+        manual_execution_enabled=settings.payment_manual_execution_enabled,
+        manual_instruction_eligible=manual_eligible,
+    )
+    instruction_response = (
+        _instruction_to_response(instruction) if instruction is not None else None
     )
     return payment_to_response(
         row,
@@ -66,6 +99,7 @@ async def _payment_response_with_eligibility(
         vendor_payout_method_type=summary.get("method_type"),
         execution_readiness_status=eligibility_status,
         execution_blocking_reason=eligibility_reason,
+        execution_instruction=instruction_response,
     )
 
 
@@ -123,6 +157,7 @@ def payment_to_response(
     vendor_payout_method_type: str | None = None,
     execution_readiness_status: str | None = None,
     execution_blocking_reason: str | None = None,
+    execution_instruction: PaymentExecutionInstructionResponse | None = None,
 ) -> PaymentResponse:
     tab = row.status.value
     return PaymentResponse(
@@ -144,6 +179,7 @@ def payment_to_response(
         vendor_payout_method_type=vendor_payout_method_type,
         execution_readiness_status=execution_readiness_status,
         execution_blocking_reason=execution_blocking_reason,
+        execution_instruction=execution_instruction,
     )
 
 
@@ -206,7 +242,18 @@ async def list_payments(
     *,
     status: str | None = None,
 ) -> list[PaymentResponse]:
-    from app.services.payment_execution_readiness_service import derive_execution_eligibility
+    from app.config import get_settings
+    from app.services.payment_execution_instruction_service import (
+        _instruction_to_response,
+        instructions_for_payments,
+        manual_instruction_eligible,
+    )
+    from app.services.payment_execution_readiness_service import (
+        _build_readiness_checks,
+        _default_payout_method,
+        _resolve_vendor_registry_id,
+        derive_execution_eligibility,
+    )
     from app.services.stripe_service import get_stripe_readiness_for_tenant
     from app.services.vendor_payout_method_service import payout_summary_for_payments
 
@@ -217,13 +264,33 @@ async def list_payments(
 
     summaries = await payout_summary_for_payments(db, tenant_id, rows)
     stripe = await get_stripe_readiness_for_tenant(db, tenant_id)
+    instructions = await instructions_for_payments(db, tenant_id, [row.id for row in rows])
+    settings = get_settings()
     responses: list[PaymentResponse] = []
     for row, summary in zip(rows, summaries, strict=True):
+        instruction = instructions.get(row.id)
+        manual_eligible = False
+        if row.status == PaymentStatus.SCHEDULED and instruction is None:
+            checks = await _build_readiness_checks(db, row, stripe=stripe)
+            vendor_registry_id = await _resolve_vendor_registry_id(db, row)
+            method = (
+                await _default_payout_method(db, tenant_id, vendor_registry_id)
+                if vendor_registry_id is not None
+                else None
+            )
+            manual_eligible, _ = manual_instruction_eligible(row, checks=checks, method=method)
+
         eligibility_status, eligibility_reason = derive_execution_eligibility(
             row,
             stripe=stripe,
             vendor_payout_status=summary.get("status"),
             vendor_payout_method_type=summary.get("method_type"),
+            has_instruction=instruction is not None,
+            manual_execution_enabled=settings.payment_manual_execution_enabled,
+            manual_instruction_eligible=manual_eligible,
+        )
+        instruction_response = (
+            _instruction_to_response(instruction) if instruction is not None else None
         )
         responses.append(
             payment_to_response(
@@ -232,6 +299,7 @@ async def list_payments(
                 vendor_payout_method_type=summary.get("method_type"),
                 execution_readiness_status=eligibility_status,
                 execution_blocking_reason=eligibility_reason,
+                execution_instruction=instruction_response,
             )
         )
     return responses

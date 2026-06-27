@@ -16,7 +16,10 @@ import type {
   DailyReconciliation,
   NavBadges,
   PaymentApi,
+  PaymentExecutionInstructionApi,
+  PaymentExecutionInstructionExportApi,
   PaymentExecutionReadinessResponse,
+  PaymentMarkPaidManualPayload,
   PurchaseOrderApi,
   PurchaseDossier,
   DashboardOverview,
@@ -1169,6 +1172,24 @@ export const api = {
   approvePayment: (paymentId: number) => {
     bustGetCacheByPrefix("/api/payments");
     return request<PaymentApi>(`/api/payments/${paymentId}/approve`, { method: "POST" });
+  },
+  createPaymentExecutionInstruction: (paymentId: number) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentExecutionInstructionApi>(
+      `/api/payments/${paymentId}/execution-instruction`,
+      { method: "POST" }
+    );
+  },
+  exportPaymentExecutionInstruction: (paymentId: number) =>
+    request<PaymentExecutionInstructionExportApi>(
+      `/api/payments/${paymentId}/execution-instruction/export`
+    ),
+  markPaymentPaidManual: (paymentId: number, body: PaymentMarkPaidManualPayload) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentApi>(`/api/payments/${paymentId}/mark-paid-manual`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 };
 

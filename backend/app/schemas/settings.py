@@ -24,3 +24,6 @@ class AppSettingsResponse(BaseModel):
     whatsapp_configured: bool
     stripe_payments_execution_enabled: bool = False
     stripe_live_payments_enabled: bool = False
+    payment_manual_execution_enabled: bool = False
+    payment_manual_execution_limit_aud: float = 1000.0
+    payment_execution_disabled: bool = False
