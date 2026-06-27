@@ -26,15 +26,19 @@ Internal payables workflow (queue -> approval -> scheduled) remains separate fro
 | Deterministic payment-to-vendor linking (`vendor_registry_id`) | Complete |
 | Payment execution dry-run validation | Complete |
 | Single payment approval (logged-in approver → scheduled) | Complete |
+| Manual payment instruction orchestration (`manual_instruction`) | Complete |
+| Manual paid confirmation (accounting status only) | Complete |
 
-**Real transfers, payouts, PaymentIntents, top-ups, withdrawals, and external supplier bank payouts are not enabled.** The Payments UI supports **readiness validation only** unless production safety flags are explicitly approved and execution endpoints are implemented in a future release.
+**Real transfers, payouts, PaymentIntents, top-ups, withdrawals, and external supplier bank payouts are not enabled.** LedgerLink orchestrates payment instructions and records manual completion; it does **not** custody client funds or move money through Stripe in this release.
 
-### Payment approval (readiness only)
+### Payment approval and manual execution
 
 - Payments move **Queue → Awaiting approval → Scheduled** via the Payments page.
 - **Approve payment** binds approval to the logged-in user (`POST /api/payments/{id}/approve`).
-- **Validate payment** runs a dry-run readiness check; after approval, Stripe setup blocks may remain until Connect onboarding is complete.
-- **Pay Now** and real execution remain disabled unless `STRIPE_PAYMENTS_EXECUTION_ENABLED` is explicitly approved for a future release.
+- **Validate payment** runs a dry-run readiness check; after approval, Stripe setup may still block automated rails until Connect onboarding is complete.
+- **Create payment instruction** (`POST /api/payments/{id}/execution-instruction`) generates a read-only manual instruction when `PAYMENT_MANUAL_EXECUTION_ENABLED=true`. No funds are moved.
+- **Mark paid manually** (`POST /api/payments/{id}/mark-paid-manual`) records paid status with a client-supplied bank reference. Accounting status only — no funds are moved.
+- **Pay Now** and real Stripe execution remain disabled unless `STRIPE_PAYMENTS_EXECUTION_ENABLED` is explicitly approved for a future release with implemented money-movement endpoints.
 
 ## Sandbox setup
 
@@ -58,6 +62,9 @@ Store in `backend/.env` locally, Kubernetes **`app-secrets`**, or the **`ledgerl
 | `STRIPE_OAUTH_REDIRECT_URL` | `https://staging.highvolt.tech/ledgerlink/payments/stripe/oauth/callback` |
 | `STRIPE_PAYMENTS_EXECUTION_ENABLED` | `false` (default) |
 | `STRIPE_LIVE_PAYMENTS_ENABLED` | `false` (default) |
+| `PAYMENT_MANUAL_EXECUTION_ENABLED` | `false` (default); set `true` on staging for manual instruction dry-run |
+| `PAYMENT_MANUAL_EXECUTION_LIMIT_AUD` | `1000` (default cap per payment for manual instruction) |
+| `PAYMENT_EXECUTION_DISABLED` | `false` (emergency kill switch for instruction / mark-paid endpoints) |
 
 `STRIPE_RETURN_URL` and `STRIPE_REFRESH_URL` are used by the Express Account Links onboarding flow. `STRIPE_OAUTH_REDIRECT_URL` is the OAuth redirect URI for connecting an **existing** Stripe Standard account; it must be registered exactly in **Stripe Dashboard -> Connect -> OAuth settings** (redirect URIs allowlist).
 
@@ -70,9 +77,12 @@ STRIPE_REFRESH_URL=http://localhost:5173/payments
 STRIPE_OAUTH_REDIRECT_URL=http://localhost:5173/payments/stripe/oauth/callback
 STRIPE_PAYMENTS_EXECUTION_ENABLED=false
 STRIPE_LIVE_PAYMENTS_ENABLED=false
+PAYMENT_MANUAL_EXECUTION_ENABLED=false
+PAYMENT_MANUAL_EXECUTION_LIMIT_AUD=1000
+PAYMENT_EXECUTION_DISABLED=false
 ```
 
-Apply migrations **038–040** before testing:
+Apply migrations **038–041** before testing:
 
 ```powershell
 cd backend
@@ -111,6 +121,56 @@ Response includes `can_execute`, `blocking_reasons`, `warnings`, and `recommende
 
 Audit event: `payment_execution_readiness_validated`.
 
+## Manual payment instruction orchestration
+
+When `PAYMENT_MANUAL_EXECUTION_ENABLED=true` (and `PAYMENT_EXECUTION_DISABLED=false`), scheduled payments can receive a **manual instruction** without Stripe money APIs.
+
+### Create instruction
+
+`POST /api/payments/{payment_id}/execution-instruction`
+
+- Payment must be **scheduled** with approval complete.
+- Runs dry-run validation first (read-only).
+- If Stripe payout rails are blocked, manual instruction is still allowed when the vendor default payout method is `manual_bank` and **verified**.
+- Creates `payment_execution_instructions` row with `execution_mode=manual_instruction`, `status=instruction_created`.
+- Idempotent: returns existing instruction if already created.
+- Does **not** mark paid or move funds.
+
+### Mark paid manually
+
+`POST /api/payments/{payment_id}/mark-paid-manual`
+
+Body: `{ "reference": "BANK-TXN-123", "paid_date": "2026-06-26", "note": "optional" }`
+
+- Allowed when payment is **scheduled** (with an active instruction).
+- Sets `status=paid`, stores reference on `payment_intent`, sets `paid_date`.
+- Accounting status only — **no money movement**.
+
+### Export instruction
+
+`GET /api/payments/{payment_id}/execution-instruction/export`
+
+Returns JSON with instruction fields for copy/export in the UI.
+
+### Safety gates
+
+| Flag | Effect |
+|------|--------|
+| `PAYMENT_EXECUTION_DISABLED=true` | Blocks instruction and mark-paid endpoints |
+| `PAYMENT_MANUAL_EXECUTION_ENABLED=false` | Blocks manual orchestration (default) |
+| `PAYMENT_MANUAL_EXECUTION_LIMIT_AUD` | Rejects instructions above limit |
+| `STRIPE_PAYMENTS_EXECUTION_ENABLED` | Reserved for future real Stripe rails only; manual orchestration does not call Stripe money APIs |
+
+Staging example (manual instruction only, no real payouts):
+
+```env
+STRIPE_PAYMENTS_EXECUTION_ENABLED=false
+STRIPE_LIVE_PAYMENTS_ENABLED=false
+PAYMENT_MANUAL_EXECUTION_ENABLED=true
+PAYMENT_MANUAL_EXECUTION_LIMIT_AUD=1000
+PAYMENT_EXECUTION_DISABLED=false
+```
+
 ## Webhook endpoint
 
 | Environment | URL |
@@ -139,6 +199,9 @@ Logged via `audit_service.log_event` (visible on dashboard activity feed):
 | `vendor_payout_method_deleted` | Vendor payout method removed |
 | `payment_execution_readiness_validated` | Dry-run validation requested |
 | `payment_approved` | Payment approved by logged-in user (awaiting → scheduled) |
+| `payment_execution_instruction_created` | Manual payment instruction created |
+| `payment_marked_paid_manual` | Payment marked paid manually (no funds moved) |
+| `payment_execution_blocked_by_safety_gate` | Instruction or mark-paid blocked by safety flag |
 
 ## Production safety
 
@@ -147,8 +210,9 @@ Logged via `audit_service.log_event` (visible on dashboard activity feed):
 - [ ] UAT signoff on staging (`staging.highvolt.tech/ledgerlink`)
 - [ ] Stripe sandbox validation (Connect onboarding, OAuth, balance, transactions, webhooks, dry-run)
 - [ ] Internal payment approval workflow validation (queue / tiers / status transitions)
+- [ ] Manual instruction and mark-paid workflow validated on staging
 - [ ] Security review (secrets handling, webhook verification, tenant isolation / RLS)
-- [ ] Business signoff recorded
+- [ ] Business / legal / compliance signoff for the chosen payout rail
 
 ### Production cutover checklist
 
@@ -180,6 +244,9 @@ Authenticated (payments module, JWT):
 | PATCH | `/api/payments/{payment_id}` |
 | POST | `/api/payments/{payment_id}/approve` |
 | POST | `/api/payments/{payment_id}/execution-readiness` |
+| POST | `/api/payments/{payment_id}/execution-instruction` |
+| GET | `/api/payments/{payment_id}/execution-instruction/export` |
+| POST | `/api/payments/{payment_id}/mark-paid-manual` |
 | GET | `/api/payments/stripe/account` |
 | POST | `/api/payments/stripe/account/refresh` |
 | DELETE | `/api/payments/stripe/account` |

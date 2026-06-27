@@ -4,6 +4,7 @@ import {
   Check,
   CheckCircle2,
   ClipboardCheck,
+  FileText,
   Send,
   Shield,
 } from "lucide-react";
@@ -11,8 +12,13 @@ import { ApproverChip } from "@/components/ApproverChip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
-import { useValidatePaymentExecutionReadiness } from "@/hooks/usePayments";
+import {
+  useCreatePaymentExecutionInstruction,
+  useMarkPaymentPaidManual,
+  useValidatePaymentExecutionReadiness,
+} from "@/hooks/usePayments";
 import type { PaymentExecutionReadinessResponse } from "@/api/types";
 import {
   fmtAud,
@@ -48,6 +54,10 @@ function executionReadinessBadge(
   switch (status) {
     case "ready_dry_run":
       return { label: "Ready check available", variant: "default" };
+    case "manual_instruction_available":
+      return { label: "Manual instruction available", variant: "default" };
+    case "instruction_created":
+      return { label: "Instruction created", variant: "secondary" };
     case "blocked_stripe_setup":
       return { label: "Blocked: Stripe setup", variant: "outline", destructive: true };
     case "blocked_vendor_payout_setup":
@@ -112,10 +122,46 @@ function ReadinessResultPanel({ result }: { result: PaymentExecutionReadinessRes
   );
 }
 
+function InstructionPanel({ instruction }: { instruction: NonNullable<PaymentRecord["executionInstruction"]> }) {
+  return (
+    <div
+      className="mt-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs space-y-1"
+      data-testid={`payment-instruction-panel-${instruction.id}`}
+    >
+      <div className="font-medium text-foreground">Manual payment instruction</div>
+      <p className="text-muted-foreground">No funds are moved by LedgerLink.</p>
+      <div className="grid gap-0.5 sm:grid-cols-2 pt-1">
+        <span>
+          Vendor: <span className="text-foreground">{instruction.vendorName}</span>
+        </span>
+        <span>
+          Amount:{" "}
+          <span className="text-foreground tnum">
+            {fmtAud(instruction.amount)} {instruction.currency}
+          </span>
+        </span>
+        <span>
+          Payout method:{" "}
+          <span className="text-foreground">{instruction.vendorPayoutMethodLabel}</span>
+        </span>
+        {instruction.dueDate ? (
+          <span>
+            Due: <span className="text-foreground">{instruction.dueDate}</span>
+          </span>
+        ) : null}
+        <span className="sm:col-span-2 font-mono text-[11px] text-muted-foreground">
+          Reference: {instruction.instructionReference}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function PaymentRow({
   payment: p,
   justPaid,
   paymentsExecutionEnabled = false,
+  manualExecutionEnabled = false,
   approveBusy = false,
   onSubmit,
   onApprove,
@@ -125,6 +171,7 @@ export function PaymentRow({
   payment: PaymentRecord;
   justPaid: boolean;
   paymentsExecutionEnabled?: boolean;
+  manualExecutionEnabled?: boolean;
   approveBusy?: boolean;
   onSubmit: () => void;
   onApprove: () => void;
@@ -132,11 +179,24 @@ export function PaymentRow({
   onReceipt: () => void;
 }) {
   const validateReadiness = useValidatePaymentExecutionReadiness();
+  const createInstruction = useCreatePaymentExecutionInstruction();
+  const markPaidManual = useMarkPaymentPaidManual();
   const [readinessResult, setReadinessResult] = useState<PaymentExecutionReadinessResponse | null>(
     null
   );
+  const [showMarkPaid, setShowMarkPaid] = useState(false);
+  const [manualReference, setManualReference] = useState("");
+  const [manualNote, setManualNote] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const badge = executionReadinessBadge(p.executionReadinessStatus);
   const showValidate = p.tab !== "paid" && p.tab !== "failed";
+  const canCreateInstruction =
+    p.tab === "scheduled" &&
+    manualExecutionEnabled &&
+    !p.executionInstruction &&
+    (p.executionReadinessStatus === "manual_instruction_available" || manualExecutionEnabled);
+  const canMarkPaidManual = p.tab === "scheduled" && !!p.executionInstruction;
 
   const handleValidate = async () => {
     setReadinessResult(null);
@@ -145,6 +205,43 @@ export function PaymentRow({
       setReadinessResult(result);
     } catch {
       setReadinessResult(null);
+    }
+  };
+
+  const handleCreateInstruction = async () => {
+    setActionError(null);
+    try {
+      await createInstruction.mutateAsync(Number(p.id));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not create payment instruction");
+    }
+  };
+
+  const handleMarkPaidManual = async () => {
+    const reference = manualReference.trim();
+    if (!reference) {
+      setActionError("A manual payment reference is required");
+      return;
+    }
+    const confirmed = window.confirm(
+      "This only records the payment as paid in LedgerLink. It does not move funds.\n\nContinue?"
+    );
+    if (!confirmed) return;
+
+    setActionError(null);
+    try {
+      await markPaidManual.mutateAsync({
+        paymentId: Number(p.id),
+        body: {
+          reference,
+          note: manualNote.trim() || undefined,
+        },
+      });
+      setShowMarkPaid(false);
+      setManualReference("");
+      setManualNote("");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not mark payment paid");
     }
   };
 
@@ -235,6 +332,32 @@ export function PaymentRow({
           </Button>
         )}
 
+        {canCreateInstruction && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => void handleCreateInstruction()}
+            disabled={createInstruction.isPending}
+            data-testid={`button-create-instruction-${p.id}`}
+          >
+            <FileText className="h-3.5 w-3.5 mr-1" />
+            {createInstruction.isPending ? "Creating…" : "Create payment instruction"}
+          </Button>
+        )}
+
+        {canMarkPaidManual && !showMarkPaid && (
+          <Button
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => setShowMarkPaid(true)}
+            data-testid={`button-mark-paid-manual-${p.id}`}
+          >
+            <Check className="h-3.5 w-3.5 mr-1" />
+            Mark paid manually
+          </Button>
+        )}
+
         {p.tab === "scheduled" && paymentsExecutionEnabled && (
           <Button
             size="sm"
@@ -274,6 +397,57 @@ export function PaymentRow({
           </span>
         )}
       </div>
+
+      {showMarkPaid && canMarkPaidManual ? (
+        <div
+          className="mt-2 rounded-md border border-border/80 bg-muted/30 px-3 py-2.5 space-y-2"
+          data-testid={`payment-mark-paid-form-${p.id}`}
+        >
+          <p className="text-xs text-muted-foreground">
+            This only records the payment as paid in LedgerLink. It does not move funds.
+          </p>
+          <Input
+            value={manualReference}
+            onChange={(e) => setManualReference(e.target.value)}
+            placeholder="Bank transfer reference (required)"
+            className="h-8 text-xs"
+            data-testid={`input-mark-paid-reference-${p.id}`}
+          />
+          <Input
+            value={manualNote}
+            onChange={(e) => setManualNote(e.target.value)}
+            placeholder="Note (optional)"
+            className="h-8 text-xs"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => void handleMarkPaidManual()}
+              disabled={markPaidManual.isPending}
+            >
+              {markPaidManual.isPending ? "Saving…" : "Confirm mark paid"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={() => {
+                setShowMarkPaid(false);
+                setActionError(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <p className="mt-2 text-xs text-destructive">{actionError}</p>
+      ) : null}
+
+      {p.executionInstruction ? <InstructionPanel instruction={p.executionInstruction} /> : null}
 
       {readinessResult ? <ReadinessResultPanel result={readinessResult} /> : null}
     </Card>

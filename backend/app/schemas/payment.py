@@ -9,6 +9,46 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class PaymentExecutionInstructionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    payment_id: int
+    instruction_reference: str
+    vendor_name: str | None = None
+    vendor_payout_method_label: str | None = None
+    amount: float
+    currency: str = "AUD"
+    due_date: date | None = None
+    execution_mode: str
+    status: str
+    created_by_name: str | None = None
+    created_by_email: str | None = None
+    created_at: datetime
+
+
+class PaymentExecutionInstructionExportResponse(BaseModel):
+    payment_id: int
+    instruction_reference: str
+    vendor_name: str | None = None
+    vendor_payout_method_label: str | None = None
+    amount: float
+    currency: str = "AUD"
+    due_date: date | None = None
+    execution_mode: str
+    status: str
+    created_by: str | None = None
+    created_at: datetime
+    export_format: str = "json"
+    disclaimer: str
+
+
+class PaymentMarkPaidManualRequest(BaseModel):
+    reference: str = Field(min_length=1, max_length=255)
+    paid_date: date | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
 class PaymentResponse(BaseModel):
     id: int
     invoice_id: int
@@ -28,6 +68,7 @@ class PaymentResponse(BaseModel):
     vendor_payout_method_type: str | None = None
     execution_readiness_status: str | None = None
     execution_blocking_reason: str | None = None
+    execution_instruction: PaymentExecutionInstructionResponse | None = None
 
 
 class PaymentStatusUpdate(BaseModel):

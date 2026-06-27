@@ -11,7 +11,10 @@ from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_
 from app.config import get_settings
 from app.schemas.common import ApiEnvelope
 from app.schemas.payment import (
+    PaymentExecutionInstructionExportResponse,
+    PaymentExecutionInstructionResponse,
     PaymentExecutionReadinessResponse,
+    PaymentMarkPaidManualRequest,
     PaymentResponse,
     PaymentStatusUpdate,
     StripeAccountResponse,
@@ -33,6 +36,12 @@ from app.services.payment_service import (
     wallet_summary,
 )
 from app.services.payment_execution_readiness_service import validate_payment_execution_readiness
+from app.services.payment_execution_instruction_service import (
+    PaymentExecutionBlockedError,
+    create_payment_execution_instruction,
+    export_payment_execution_instruction,
+    mark_payment_paid_manual,
+)
 from app.services.stripe_service import (
     StripeServiceError,
     create_account_onboarding_link,
@@ -535,3 +544,188 @@ async def post_payment_execution_readiness(
     return ApiEnvelope(
         data=PaymentExecutionReadinessResponse.model_validate(result),
     )
+
+
+async def _log_execution_safety_block(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    payment_id: int,
+    action: str,
+    reason: str,
+    actor_name: str,
+    actor_email: str,
+) -> None:
+    from sqlalchemy import select
+
+    from app.models.payment import Payment
+
+    payment = (
+        await db.execute(
+            select(Payment).where(
+                Payment.id == payment_id,
+                Payment.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    await log_event(
+        db,
+        "payment_execution_blocked_by_safety_gate",
+        invoice_id=payment.invoice_id if payment else None,
+        tenant_id=tenant_id,
+        detail={
+            "payment_id": payment_id,
+            "action": action,
+            "reason": reason,
+            "vendor": payment.vendor if payment else None,
+            "amount": float(payment.amount) if payment and payment.amount is not None else None,
+        },
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+
+
+@router.post(
+    "/{payment_id}/execution-instruction",
+    response_model=ApiEnvelope[PaymentExecutionInstructionResponse],
+)
+async def post_payment_execution_instruction(
+    payment_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PaymentExecutionInstructionResponse]:
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    try:
+        instruction, created = await create_payment_execution_instruction(
+            db,
+            ctx.tenant_id,
+            payment_id,
+            actor={
+                "user_id": ctx.user_id,
+                "name": actor_name,
+                "email": actor_email,
+            },
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except PaymentExecutionBlockedError as exc:
+        await _log_execution_safety_block(
+            db,
+            tenant_id=ctx.tenant_id,
+            payment_id=payment_id,
+            action="create_instruction",
+            reason=str(exc),
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if created:
+        from sqlalchemy import select
+
+        from app.models.payment import Payment
+
+        payment = (
+            await db.execute(
+                select(Payment).where(
+                    Payment.id == payment_id,
+                    Payment.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        await log_event(
+            db,
+            "payment_execution_instruction_created",
+            invoice_id=payment.invoice_id if payment else None,
+            tenant_id=ctx.tenant_id,
+            detail={
+                "payment_id": payment_id,
+                "instruction_id": instruction.id,
+                "instruction_reference": instruction.instruction_reference,
+                "vendor": instruction.vendor_name,
+                "amount": instruction.amount,
+                "currency": instruction.currency,
+                "execution_mode": instruction.execution_mode,
+            },
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
+    return ApiEnvelope(data=instruction)
+
+
+@router.get(
+    "/{payment_id}/execution-instruction/export",
+    response_model=ApiEnvelope[PaymentExecutionInstructionExportResponse],
+)
+async def get_payment_execution_instruction_export(
+    payment_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PaymentExecutionInstructionExportResponse]:
+    try:
+        export_row = await export_payment_execution_instruction(
+            db,
+            ctx.tenant_id,
+            payment_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return ApiEnvelope(data=export_row)
+
+
+@router.post("/{payment_id}/mark-paid-manual", response_model=ApiEnvelope[PaymentResponse])
+async def post_payment_mark_paid_manual(
+    payment_id: int,
+    body: PaymentMarkPaidManualRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PaymentResponse]:
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    try:
+        row, changed = await mark_payment_paid_manual(
+            db,
+            ctx.tenant_id,
+            payment_id,
+            body,
+            actor={
+                "user_id": ctx.user_id,
+                "name": actor_name,
+                "email": actor_email,
+            },
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except PaymentExecutionBlockedError as exc:
+        await _log_execution_safety_block(
+            db,
+            tenant_id=ctx.tenant_id,
+            payment_id=payment_id,
+            action="mark_paid_manual",
+            reason=str(exc),
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if changed:
+        await log_event(
+            db,
+            "payment_marked_paid_manual",
+            invoice_id=row.invoice_id,
+            tenant_id=ctx.tenant_id,
+            detail={
+                "payment_id": payment_id,
+                "vendor": row.vendor,
+                "amount": row.amount,
+                "reference": body.reference,
+                "paid_date": row.paid_date.isoformat() if row.paid_date else None,
+                "note": body.note,
+            },
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
+    return ApiEnvelope(data=row)

@@ -14,6 +14,7 @@ from app.models.tenant import Tenant
 from app.models.tenant_module import TenantModule
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
 from app.models.payment import Payment
+from app.models.payment_execution_instruction import PaymentExecutionInstruction
 from app.models.stripe_payments import (
     PaymentAttempt,
     StripeAccount,
@@ -51,6 +52,7 @@ __all__ = [
     "MailboxSyncJob",
     "Payment",
     "PaymentAttempt",
+    "PaymentExecutionInstruction",
     "PendingVendor",
     "PurchaseOrder",
     "StripeAccount",

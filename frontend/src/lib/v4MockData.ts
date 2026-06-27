@@ -126,10 +126,25 @@ export type PaymentRecord = {
     | "blocked_stripe_setup"
     | "blocked_vendor_payout_setup"
     | "ready_dry_run"
+    | "manual_instruction_available"
+    | "instruction_created"
     | "scheduled"
     | "paid"
     | "failed";
   executionBlockingReason?: string;
+  executionInstruction?: {
+    id: number;
+    instructionReference: string;
+    vendorName: string;
+    vendorPayoutMethodLabel: string;
+    amount: number;
+    currency: string;
+    dueDate?: string;
+    executionMode: string;
+    status: string;
+    createdByName?: string;
+    createdAt: string;
+  };
 };
 
 export type WalletTxn = {

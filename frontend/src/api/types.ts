@@ -454,9 +454,49 @@ export type PaymentExecutionEligibilityStatus =
   | "blocked_stripe_setup"
   | "blocked_vendor_payout_setup"
   | "ready_dry_run"
+  | "manual_instruction_available"
+  | "instruction_created"
   | "scheduled"
   | "paid"
   | "failed";
+
+export interface PaymentExecutionInstructionApi {
+  id: number;
+  payment_id: number;
+  instruction_reference: string;
+  vendor_name: string | null;
+  vendor_payout_method_label: string | null;
+  amount: number;
+  currency: string;
+  due_date: string | null;
+  execution_mode: string;
+  status: string;
+  created_by_name: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
+export interface PaymentExecutionInstructionExportApi {
+  payment_id: number;
+  instruction_reference: string;
+  vendor_name: string | null;
+  vendor_payout_method_label: string | null;
+  amount: number;
+  currency: string;
+  due_date: string | null;
+  execution_mode: string;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  export_format: string;
+  disclaimer: string;
+}
+
+export interface PaymentMarkPaidManualPayload {
+  reference: string;
+  paid_date?: string;
+  note?: string;
+}
 
 export interface PaymentApi {
   id: number;
@@ -477,6 +517,7 @@ export interface PaymentApi {
   vendor_payout_method_type: string | null;
   execution_readiness_status: PaymentExecutionEligibilityStatus | null;
   execution_blocking_reason: string | null;
+  execution_instruction: PaymentExecutionInstructionApi | null;
 }
 
 export interface PaymentExecutionReadinessResponse {
@@ -713,6 +754,9 @@ export interface AppSettings {
   whatsapp_configured: boolean;
   stripe_payments_execution_enabled: boolean;
   stripe_live_payments_enabled: boolean;
+  payment_manual_execution_enabled: boolean;
+  payment_manual_execution_limit_aud: number;
+  payment_execution_disabled: boolean;
 }
 
 export interface WhatsappConnection {
