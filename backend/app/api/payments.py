@@ -26,7 +26,12 @@ from app.schemas.payment import (
     WalletSummaryResponse,
 )
 from app.services.audit_service import log_event
-from app.services.payment_service import list_payments, update_payment_status, wallet_summary
+from app.services.payment_service import (
+    approve_payment,
+    list_payments,
+    update_payment_status,
+    wallet_summary,
+)
 from app.services.payment_execution_readiness_service import validate_payment_execution_readiness
 from app.services.stripe_service import (
     StripeServiceError,
@@ -429,6 +434,51 @@ async def patch_payment(
         actor_name=actor_name,
         actor_email=actor_email,
     )
+    return ApiEnvelope(data=row)
+
+
+@router.post("/{payment_id}/approve", response_model=ApiEnvelope[PaymentResponse])
+async def post_payment_approve(
+    payment_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[PaymentResponse]:
+    """Approve a payment awaiting release (single approver = logged-in user)."""
+    actor_name, actor_email = await actor_from_context(db, ctx)
+    try:
+        row, changed = await approve_payment(
+            db,
+            ctx.tenant_id,
+            payment_id,
+            actor={
+                "user_id": ctx.user_id,
+                "name": actor_name,
+                "email": actor_email,
+            },
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if changed:
+        await log_event(
+            db,
+            "payment_approved",
+            invoice_id=row.invoice_id,
+            tenant_id=ctx.tenant_id,
+            detail={
+                "payment_id": payment_id,
+                "vendor": row.vendor,
+                "amount": row.amount,
+                "approver_id": ctx.user_id,
+                "approver_name": actor_name,
+                "approver_email": actor_email,
+                "scheduled_date": row.scheduled_date.isoformat() if row.scheduled_date else None,
+            },
+            actor_name=actor_name,
+            actor_email=actor_email,
+        )
     return ApiEnvelope(data=row)
 
 

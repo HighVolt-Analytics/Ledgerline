@@ -25,8 +25,16 @@ Internal payables workflow (queue -> approval -> scheduled) remains separate fro
 | Vendor payout method readiness | Complete |
 | Deterministic payment-to-vendor linking (`vendor_registry_id`) | Complete |
 | Payment execution dry-run validation | Complete |
+| Single payment approval (logged-in approver → scheduled) | Complete |
 
 **Real transfers, payouts, PaymentIntents, top-ups, withdrawals, and external supplier bank payouts are not enabled.** The Payments UI supports **readiness validation only** unless production safety flags are explicitly approved and execution endpoints are implemented in a future release.
+
+### Payment approval (readiness only)
+
+- Payments move **Queue → Awaiting approval → Scheduled** via the Payments page.
+- **Approve payment** binds approval to the logged-in user (`POST /api/payments/{id}/approve`).
+- **Validate payment** runs a dry-run readiness check; after approval, Stripe setup blocks may remain until Connect onboarding is complete.
+- **Pay Now** and real execution remain disabled unless `STRIPE_PAYMENTS_EXECUTION_ENABLED` is explicitly approved for a future release.
 
 ## Sandbox setup
 
@@ -130,6 +138,7 @@ Logged via `audit_service.log_event` (visible on dashboard activity feed):
 | `vendor_payout_method_updated` | Vendor payout method updated |
 | `vendor_payout_method_deleted` | Vendor payout method removed |
 | `payment_execution_readiness_validated` | Dry-run validation requested |
+| `payment_approved` | Payment approved by logged-in user (awaiting → scheduled) |
 
 ## Production safety
 
@@ -169,6 +178,7 @@ Authenticated (payments module, JWT):
 |--------|------|
 | GET | `/api/payments` |
 | PATCH | `/api/payments/{payment_id}` |
+| POST | `/api/payments/{payment_id}/approve` |
 | POST | `/api/payments/{payment_id}/execution-readiness` |
 | GET | `/api/payments/stripe/account` |
 | POST | `/api/payments/stripe/account/refresh` |

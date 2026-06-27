@@ -1166,6 +1166,10 @@ export const api = {
       `/api/payments/${paymentId}/execution-readiness`,
       { method: "POST" }
     ),
+  approvePayment: (paymentId: number) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentApi>(`/api/payments/${paymentId}/approve`, { method: "POST" });
+  },
 };
 
 /** Inclusive invoice-date range for workbook export; omit both for all invoices. */

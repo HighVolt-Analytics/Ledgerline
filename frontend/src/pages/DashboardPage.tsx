@@ -139,6 +139,9 @@ function activityLabel(
   if (event === "payment_execution_readiness_validated") {
     return "Payment execution readiness validated (dry-run)";
   }
+  if (event === "payment_approved") {
+    return "Payment approved for disbursement readiness";
+  }
   return `${label} — ${event.replace(/_/g, " ")}`;
 }
 
