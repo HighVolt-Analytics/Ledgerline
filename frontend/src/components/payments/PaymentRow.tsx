@@ -4,8 +4,6 @@ import {
   Check,
   CheckCircle2,
   ClipboardCheck,
-  Clock,
-  Lock,
   Send,
   Shield,
 } from "lucide-react";
@@ -18,9 +16,7 @@ import { useValidatePaymentExecutionReadiness } from "@/hooks/usePayments";
 import type { PaymentExecutionReadinessResponse } from "@/api/types";
 import {
   fmtAud,
-  paymentApproverCount,
   paymentTierLabel,
-  SANDBOX_CURRENT_USER,
   type PaymentRecord,
 } from "@/lib/v4MockData";
 
@@ -120,6 +116,7 @@ export function PaymentRow({
   payment: p,
   justPaid,
   paymentsExecutionEnabled = false,
+  approveBusy = false,
   onSubmit,
   onApprove,
   onPayNow,
@@ -128,22 +125,18 @@ export function PaymentRow({
   payment: PaymentRecord;
   justPaid: boolean;
   paymentsExecutionEnabled?: boolean;
+  approveBusy?: boolean;
   onSubmit: () => void;
   onApprove: () => void;
   onPayNow: () => void;
   onReceipt: () => void;
 }) {
-  const user = SANDBOX_CURRENT_USER;
-  const invoiceApprover = p.invoiceApprovedBy === user.id;
-  const pending = p.approvers.find((a) => a.state === "pending");
-  const canApprove = Boolean(pending && pending.id === user.id);
   const validateReadiness = useValidatePaymentExecutionReadiness();
   const [readinessResult, setReadinessResult] = useState<PaymentExecutionReadinessResponse | null>(
     null
   );
   const badge = executionReadinessBadge(p.executionReadinessStatus);
-  const showValidate =
-    p.tab !== "paid" && p.tab !== "failed";
+  const showValidate = p.tab !== "paid" && p.tab !== "failed";
 
   const handleValidate = async () => {
     setReadinessResult(null);
@@ -201,25 +194,9 @@ export function PaymentRow({
 
       {p.approvers.length > 0 && (
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {p.approvers.map((a) => {
-            const disabled = a.id === user.id && invoiceApprover && a.state === "pending";
-            return (
-              <ApproverChip
-                key={a.id}
-                {...a}
-                disabled={disabled}
-                disabledTitle="You approved this invoice — payment approval must come from another authorised approver."
-              />
-            );
-          })}
-        </div>
-      )}
-
-      {invoiceApprover && (p.tab === "awaiting" || p.tab === "queue") && (
-        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]">
-          <Lock className="h-3.5 w-3.5" />
-          Segregation of duties: you approved invoice {p.invoiceId}; payment approval must come from
-          another approver.
+          {p.approvers.map((a) => (
+            <ApproverChip key={a.id} {...a} />
+          ))}
         </div>
       )}
 
@@ -227,44 +204,22 @@ export function PaymentRow({
         {p.tab === "queue" && (
           <Button size="sm" className="h-7 text-xs" onClick={onSubmit} data-testid={`button-submit-${p.id}`}>
             <Send className="h-3.5 w-3.5 mr-1" />
-            Submit for approval ({paymentApproverCount(p.amount)}{" "}
-            {paymentApproverCount(p.amount) === 1 ? "approver" : "approvers"})
+            Submit for approval
           </Button>
         )}
 
-        {p.tab === "awaiting" &&
-          (canApprove && !invoiceApprover ? (
-            <Button
-              size="sm"
-              className="h-7 text-xs"
-              onClick={onApprove}
-              data-testid={`button-approve-pay-${p.id}`}
-            >
-              <Check className="h-3.5 w-3.5 mr-1" /> Approve payment ({pending?.role})
-            </Button>
-          ) : canApprove && invoiceApprover ? (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              disabled
-              title="You approved this invoice — payment approval must come from another authorised approver."
-              data-testid={`button-approve-pay-${p.id}`}
-            >
-              <Lock className="h-3.5 w-3.5 mr-1" /> Approve payment
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              disabled
-              title={`Next approver in chain: ${pending?.name} (${pending?.role}).`}
-              data-testid={`button-approve-pay-${p.id}`}
-            >
-              <Clock className="h-3.5 w-3.5 mr-1" /> Awaiting {pending?.name.split(" ")[0]}
-            </Button>
-          ))}
+        {p.tab === "awaiting" && (
+          <Button
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onApprove}
+            disabled={approveBusy}
+            data-testid={`button-approve-pay-${p.id}`}
+          >
+            <Check className="h-3.5 w-3.5 mr-1" />
+            {approveBusy ? "Approving…" : "Approve payment"}
+          </Button>
+        )}
 
         {showValidate && (
           <Button

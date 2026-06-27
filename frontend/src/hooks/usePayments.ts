@@ -24,6 +24,17 @@ export function useValidatePaymentExecutionReadiness() {
   });
 }
 
+export function useApprovePayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (paymentId: number) => api.approvePayment(paymentId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
+    },
+  });
+}
+
 export function usePaymentMutations() {
   const queryClient = useQueryClient();
 
@@ -33,6 +44,11 @@ export function usePaymentMutations() {
   };
 
   return {
+    approvePayment: async (paymentId: number) => {
+      const row = await api.approvePayment(paymentId);
+      await invalidate();
+      return row;
+    },
     updateStatus: async (
       paymentId: number,
       body: {

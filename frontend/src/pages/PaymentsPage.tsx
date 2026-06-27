@@ -119,7 +119,7 @@ export function PaymentsPage() {
   const { data: paymentRows = [], isLoading, isError } = usePayments();
   const { data: appSettings } = useAppSettings();
   const paymentsExecutionEnabled = appSettings?.stripe_payments_execution_enabled ?? false;
-  const { updateStatus } = usePaymentMutations();
+  const { updateStatus, approvePayment } = usePaymentMutations();
   const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount();
   const { data: stripeReadiness } = useStripeReadiness();
   const stripeConnected = stripeAccount != null;
@@ -135,6 +135,7 @@ export function PaymentsPage() {
   const stripeOAuthUrl = useStripeOAuthUrl();
   const [tab, setTab] = useState<PaymentTab>("queue");
   const [justPaidId, setJustPaidId] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<PaymentRecord | null>(null);
   const [stripeActionError, setStripeActionError] = useState<string | null>(null);
 
@@ -180,6 +181,15 @@ export function PaymentsPage() {
     if (status === "paid") {
       setJustPaidId(payment.id);
       setTimeout(() => setJustPaidId(null), 2000);
+    }
+  };
+
+  const handleApprovePayment = async (payment: PaymentRecord) => {
+    setApprovingId(payment.id);
+    try {
+      await approvePayment(Number(payment.id));
+    } finally {
+      setApprovingId(null);
     }
   };
 
@@ -570,8 +580,9 @@ export function PaymentsPage() {
                 payment={payment}
                 justPaid={justPaidId === payment.id}
                 paymentsExecutionEnabled={paymentsExecutionEnabled}
+                approveBusy={approvingId === payment.id}
                 onSubmit={() => void advance(payment, "awaiting")}
-                onApprove={() => void advance(payment, "scheduled")}
+                onApprove={() => void handleApprovePayment(payment)}
                 onPayNow={() => void advance(payment, "paid")}
                 onReceipt={() => setReceipt(payment)}
               />

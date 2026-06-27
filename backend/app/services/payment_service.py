@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +40,80 @@ def _payment_tier_approvers(amount: Decimal) -> list[dict[str, str]]:
     if value >= 500:
         return [{"id": "mgr", "name": "Manager", "role": "Manager", "state": "pending"}]
     return []
+
+
+async def _payment_response_with_eligibility(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    row: Payment,
+) -> PaymentResponse:
+    from app.services.payment_execution_readiness_service import derive_execution_eligibility
+    from app.services.stripe_service import get_stripe_readiness_for_tenant
+    from app.services.vendor_payout_method_service import payout_summary_for_payments
+
+    summaries = await payout_summary_for_payments(db, tenant_id, [row])
+    summary = summaries[0] if summaries else {}
+    stripe = await get_stripe_readiness_for_tenant(db, tenant_id)
+    eligibility_status, eligibility_reason = derive_execution_eligibility(
+        row,
+        stripe=stripe,
+        vendor_payout_status=summary.get("status"),
+        vendor_payout_method_type=summary.get("method_type"),
+    )
+    return payment_to_response(
+        row,
+        vendor_payout_status=summary.get("status"),
+        vendor_payout_method_type=summary.get("method_type"),
+        execution_readiness_status=eligibility_status,
+        execution_blocking_reason=eligibility_reason,
+    )
+
+
+async def approve_payment(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    payment_id: int,
+    *,
+    actor: dict[str, Any],
+) -> tuple[PaymentResponse, bool]:
+    """Single approver workflow: awaiting -> scheduled with logged-in user as approver."""
+    row = (
+        await db.execute(
+            select(Payment).where(
+                Payment.id == payment_id,
+                Payment.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise LookupError("Payment not found")
+
+    if row.status == PaymentStatus.SCHEDULED:
+        return await _payment_response_with_eligibility(db, tenant_id, row), False
+
+    if row.status != PaymentStatus.AWAITING:
+        raise ValueError(
+            f"Payment status '{row.status.value}' cannot be approved; "
+            "submit the payment for approval first."
+        )
+
+    actor_user_id = actor.get("user_id")
+    actor_name = str(actor.get("name") or actor.get("email") or "Approver").strip()
+    actor_email = str(actor.get("email") or "").strip()
+    actor_id = str(actor_user_id) if actor_user_id is not None else actor_email or actor_name
+
+    row.status = PaymentStatus.SCHEDULED
+    row.scheduled_date = date.today()
+    row.approvers = [
+        {
+            "id": actor_id,
+            "name": actor_name,
+            "role": "Approver",
+            "state": "approved",
+        }
+    ]
+    await db.flush()
+    return await _payment_response_with_eligibility(db, tenant_id, row), True
 
 
 def payment_to_response(
@@ -126,7 +202,7 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
 
 async def list_payments(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     *,
     status: str | None = None,
 ) -> list[PaymentResponse]:
@@ -163,7 +239,7 @@ async def list_payments(
 
 async def update_payment_status(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     payment_id: int,
     body: PaymentStatusUpdate,
 ) -> PaymentResponse:
@@ -186,29 +262,11 @@ async def update_payment_status(
     if new_status == PaymentStatus.PAID:
         row.paid_date = datetime.now(timezone.utc)
 
-    from app.services.payment_execution_readiness_service import derive_execution_eligibility
-    from app.services.stripe_service import get_stripe_readiness_for_tenant
-    from app.services.vendor_payout_method_service import payout_summary_for_payments
-
-    summaries = await payout_summary_for_payments(db, tenant_id, [row])
-    summary = summaries[0] if summaries else {}
-    stripe = await get_stripe_readiness_for_tenant(db, tenant_id)
-    eligibility_status, eligibility_reason = derive_execution_eligibility(
-        row,
-        stripe=stripe,
-        vendor_payout_status=summary.get("status"),
-        vendor_payout_method_type=summary.get("method_type"),
-    )
-    return payment_to_response(
-        row,
-        vendor_payout_status=summary.get("status"),
-        vendor_payout_method_type=summary.get("method_type"),
-        execution_readiness_status=eligibility_status,
-        execution_blocking_reason=eligibility_reason,
-    )
+    await db.flush()
+    return await _payment_response_with_eligibility(db, tenant_id, row)
 
 
-async def wallet_summary(db: AsyncSession, tenant_id: int) -> WalletSummaryResponse:
+async def wallet_summary(db: AsyncSession, tenant_id: uuid.UUID) -> WalletSummaryResponse:
     rows = (
         await db.execute(
             select(Payment)
@@ -256,7 +314,7 @@ async def wallet_summary(db: AsyncSession, tenant_id: int) -> WalletSummaryRespo
     )
 
 
-async def payments_queue_count(db: AsyncSession, tenant_id: int) -> int:
+async def payments_queue_count(db: AsyncSession, tenant_id: uuid.UUID) -> int:
     return (
         await db.execute(
             select(func.count(Payment.id)).where(
