@@ -151,6 +151,12 @@ function activityLabel(
   if (event === "payment_execution_blocked_by_safety_gate") {
     return "Payment execution blocked by safety gate";
   }
+  if (event === "payment_execution_blocked_by_tenant_disable") {
+    return "Payment execution blocked for tenant";
+  }
+  if (event === "payment_execution_blocked_by_limit") {
+    return "Payment execution blocked — over launch limit";
+  }
   return `${label} — ${event.replace(/_/g, " ")}`;
 }
 

@@ -539,6 +539,7 @@ export function PaymentsPage() {
             </span>{" "}
             LedgerLink is currently in client-controlled manual execution mode. It can create
             payment instructions and record manual payment completion, but it does not move funds.
+            Launch limit: USD {appSettings?.payment_manual_execution_limit_usd ?? 1000} per payment.
             Use <span className="text-foreground">Validate payment</span> for dry-run readiness
             checks.
             {paymentsExecutionEnabled ? (

@@ -328,10 +328,13 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="PAYMENT_MANUAL_EXECUTION_ENABLED",
     )
-    payment_manual_execution_limit_aud: float = Field(
+    payment_manual_execution_limit_usd: float = Field(
         default=1000.0,
         ge=0,
-        validation_alias="PAYMENT_MANUAL_EXECUTION_LIMIT_AUD",
+        validation_alias=AliasChoices(
+            "PAYMENT_MANUAL_EXECUTION_LIMIT_USD",
+            "PAYMENT_MANUAL_EXECUTION_LIMIT_AUD",
+        ),
     )
     payment_execution_disabled: bool = Field(
         default=False,
