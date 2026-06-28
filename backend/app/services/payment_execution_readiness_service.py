@@ -13,14 +13,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.payment import Payment, PaymentStatus
 from app.models.stripe_payments import VendorPaymentMethod
-from app.models.vendor import VendorRegistry
+from app.models.tenant import Tenant
+from app.services.payment_execution_auth import actor_can_execute_manual_payment
+from app.services.payment_execution_rules import (
+    LIMIT_BLOCK_MESSAGE,
+    TENANT_DISABLED_MESSAGE,
+    VENDOR_NOT_VERIFIED_MESSAGE,
+    approval_ready,
+    check_payment_manual_execution_limit,
+    vendor_payout_method_verified,
+)
 from app.services.stripe_service import StripeReadiness, get_stripe_readiness_for_tenant
 from app.services.vendor_payout_method_service import (
     PAYOUT_METHOD_TYPES,
     resolve_vendor_registry_id_for_invoice,
 )
+from app.tenant_settings import tenant_payment_execution_disabled
 
-_SUPPORTED_CURRENCIES = frozenset({"AUD"})
+_SUPPORTED_CURRENCIES = frozenset({"AUD", "USD"})
 _EXECUTION_SUPPORTED_METHOD_TYPES = frozenset(
     {"manual_bank", "stripe_connected_account"},
 )
@@ -37,6 +47,10 @@ class PaymentExecutionReadiness:
     vendor_payout_ready: bool
     approval_ready: bool
     amount_ready: bool
+    manual_execution_ready: bool
+    role_ready: bool | None
+    limit_ready: bool
+    tenant_execution_enabled: bool
     recommended_action: str | None
     payments_execution_enabled: bool
 
@@ -49,16 +63,13 @@ class _ReadinessChecks:
     vendor_payout_ready: bool = False
     approval_ready: bool = False
     amount_ready: bool = False
+    limit_ready: bool = True
+    tenant_execution_enabled: bool = True
     recommended_action: str | None = None
 
 
 def _approval_ready(payment: Payment) -> bool:
-    if payment.status != PaymentStatus.SCHEDULED:
-        return False
-    approvers = payment.approvers or []
-    if not approvers:
-        return True
-    return all(str(a.get("state", "")) == "approved" for a in approvers)
+    return approval_ready(payment)
 
 
 async def _resolve_vendor_registry_id(
@@ -146,7 +157,7 @@ def _evaluate_vendor_payout(
     if method is None:
         checks.blocking_reasons.append("Vendor has no default payout method configured")
         if checks.recommended_action is None:
-            checks.recommended_action = "Add a verified payout method on the vendor record."
+            checks.recommended_action = "Verify vendor payout method"
         return
 
     method_type = method.method_type or ""
@@ -161,16 +172,12 @@ def _evaluate_vendor_payout(
             "Vendor Stripe connected account payout method is missing stripe_account_id"
         )
 
-    status = method.status or "not_configured"
-    if status != "verified":
-        checks.blocking_reasons.append(f"Vendor payout method status is {status}, not verified")
+    if not vendor_payout_method_verified(method):
+        checks.blocking_reasons.append(VENDOR_NOT_VERIFIED_MESSAGE)
+        if checks.recommended_action is None:
+            checks.recommended_action = "Verify vendor payout method"
 
-    checks.vendor_payout_ready = (
-        method is not None
-        and method_type in _EXECUTION_SUPPORTED_METHOD_TYPES
-        and status == "verified"
-        and (method_type != "stripe_connected_account" or bool(method.stripe_account_id))
-    )
+    checks.vendor_payout_ready = vendor_payout_method_verified(method)
 
 
 async def _build_readiness_checks(
@@ -178,8 +185,18 @@ async def _build_readiness_checks(
     payment: Payment,
     *,
     stripe: StripeReadiness | None = None,
+    tenant: Tenant | None = None,
 ) -> _ReadinessChecks:
     checks = _ReadinessChecks()
+
+    if tenant is None:
+        tenant = (
+            await db.execute(select(Tenant).where(Tenant.id == payment.tenant_id))
+        ).scalar_one_or_none()
+    checks.tenant_execution_enabled = not tenant_payment_execution_disabled(tenant)
+    if not checks.tenant_execution_enabled:
+        checks.blocking_reasons.append(TENANT_DISABLED_MESSAGE)
+        checks.recommended_action = TENANT_DISABLED_MESSAGE
 
     if payment.status in (PaymentStatus.PAID, PaymentStatus.FAILED):
         checks.blocking_reasons.append(
@@ -193,12 +210,19 @@ async def _build_readiness_checks(
     else:
         checks.amount_ready = True
 
-    currency = (payment.currency or "AUD").upper()
+    currency = (payment.currency or "USD").upper()
     if currency not in _SUPPORTED_CURRENCIES:
         checks.blocking_reasons.append(f"Payment currency {currency} is not supported")
         checks.amount_ready = False
     elif checks.amount_ready and not payment.due_date:
         checks.warnings.append("Payment due date is missing; confirm scheduling before execution")
+
+    limit_ok, limit_reason, limit_warnings = check_payment_manual_execution_limit(payment)
+    checks.limit_ready = limit_ok
+    checks.warnings.extend(limit_warnings)
+    if not limit_ok and limit_reason:
+        checks.blocking_reasons.append(limit_reason)
+        checks.recommended_action = limit_reason
 
     checks.approval_ready = _approval_ready(payment)
     if not checks.approval_ready:
@@ -209,7 +233,7 @@ async def _build_readiness_checks(
                 "Payment is not approved for execution (status must be scheduled with approvals complete)"
             )
         if checks.recommended_action is None:
-            checks.recommended_action = "Complete tiered payment approval before validating execution."
+            checks.recommended_action = "Approve payment first"
 
     stripe_readiness = stripe or await get_stripe_readiness_for_tenant(db, payment.tenant_id)
     _evaluate_stripe_readiness(checks, stripe_readiness)
@@ -233,40 +257,89 @@ async def _build_readiness_checks(
     settings = get_settings()
     if settings.stripe_payment_execution_enabled:
         checks.warnings.append(
-            "STRIPE_PAYMENTS_EXECUTION_ENABLED is true but real execution endpoints are not implemented yet."
+            "STRIPE_PAYMENTS_EXECUTION_ENABLED is true but real Stripe payout/transfer APIs remain disabled."
         )
+    if not settings.payment_manual_execution_enabled:
+        checks.warnings.append("Manual payment execution is disabled in server configuration.")
 
     return checks
+
+
+def _manual_execution_ready(checks: _ReadinessChecks) -> bool:
+    settings = get_settings()
+    return (
+        settings.payment_manual_execution_enabled
+        and not settings.payment_execution_disabled
+        and checks.tenant_execution_enabled
+        and checks.approval_ready
+        and checks.amount_ready
+        and checks.limit_ready
+        and checks.vendor_payout_ready
+    )
+
+
+def _recommended_action(
+    checks: _ReadinessChecks,
+    *,
+    manual_ready: bool,
+    has_instruction: bool,
+) -> str | None:
+    if has_instruction:
+        return "Mark paid manually after client completes external payment"
+    if not checks.tenant_execution_enabled:
+        return TENANT_DISABLED_MESSAGE
+    if not checks.limit_ready:
+        return LIMIT_BLOCK_MESSAGE
+    if not checks.approval_ready:
+        return "Approve payment first"
+    if not checks.vendor_payout_ready:
+        return "Verify vendor payout method"
+    if manual_ready:
+        return "Create payment instruction"
+    return checks.recommended_action
 
 
 def _to_readiness_result(
     payment_id: int,
     checks: _ReadinessChecks,
+    *,
+    role_ready: bool | None = None,
+    has_instruction: bool = False,
 ) -> PaymentExecutionReadiness:
     settings = get_settings()
+    manual_ready = _manual_execution_ready(checks)
     can_execute = (
+        manual_ready
+        and (role_ready is not False)
+        and not has_instruction
+    )
+    stripe_can_execute = (
         not checks.blocking_reasons
         and checks.tenant_stripe_ready
         and checks.vendor_payout_ready
         and checks.approval_ready
         and checks.amount_ready
     )
-    recommended = checks.recommended_action
-    if can_execute:
+    recommended = _recommended_action(checks, manual_ready=manual_ready, has_instruction=has_instruction)
+    if stripe_can_execute and not manual_ready:
         recommended = (
-            "Dry-run validation passed. Real Stripe execution remains disabled until "
-            "production safety flags and business signoff are complete."
+            "Dry-run validation passed for Stripe rails. Real Stripe execution remains disabled; "
+            "use manual payment instruction orchestration."
         )
     return PaymentExecutionReadiness(
         payment_id=payment_id,
-        can_execute=can_execute,
-        execution_mode="dry_run",
+        can_execute=can_execute or stripe_can_execute,
+        execution_mode="manual_instruction" if manual_ready else "dry_run",
         blocking_reasons=checks.blocking_reasons,
         warnings=checks.warnings,
         tenant_stripe_ready=checks.tenant_stripe_ready,
         vendor_payout_ready=checks.vendor_payout_ready,
         approval_ready=checks.approval_ready,
         amount_ready=checks.amount_ready,
+        manual_execution_ready=manual_ready,
+        role_ready=role_ready,
+        limit_ready=checks.limit_ready,
+        tenant_execution_enabled=checks.tenant_execution_enabled,
         recommended_action=recommended,
         payments_execution_enabled=settings.stripe_payment_execution_enabled,
     )
@@ -278,9 +351,9 @@ async def validate_payment_execution_readiness(
     payment_id: int,
     *,
     actor: dict[str, Any] | None = None,
+    ctx: Any | None = None,
 ) -> PaymentExecutionReadiness:
     """Read-only dry-run validation; does not mutate payment or call Stripe money APIs."""
-    _ = actor
     payment = (
         await db.execute(
             select(Payment).where(
@@ -292,8 +365,32 @@ async def validate_payment_execution_readiness(
     if payment is None:
         raise LookupError("Payment not found")
 
+    role_ready: bool | None = None
+    if ctx is not None:
+        role_ready = actor_can_execute_manual_payment(ctx)
+        if not role_ready:
+            pass  # surfaced via recommended_action in API layer if needed
+
+    from app.models.payment_execution_instruction import PaymentExecutionInstruction
+
+    instructions = (
+        await db.execute(
+            select(PaymentExecutionInstruction).where(
+                PaymentExecutionInstruction.tenant_id == tenant_id,
+                PaymentExecutionInstruction.payment_id == payment.id,
+                PaymentExecutionInstruction.status == "instruction_created",
+            )
+        )
+    ).scalars().all()
+    has_instruction = bool(instructions)
+
     checks = await _build_readiness_checks(db, payment)
-    return _to_readiness_result(payment.id, checks)
+    return _to_readiness_result(
+        payment.id,
+        checks,
+        role_ready=role_ready,
+        has_instruction=has_instruction,
+    )
 
 
 def derive_execution_eligibility(
@@ -305,6 +402,8 @@ def derive_execution_eligibility(
     has_instruction: bool = False,
     manual_execution_enabled: bool = False,
     manual_instruction_eligible: bool = False,
+    tenant_execution_enabled: bool = True,
+    manual_block_reason: str | None = None,
 ) -> tuple[str, str | None]:
     """Read-only eligibility label for payment list UI."""
     if payment.status == PaymentStatus.PAID:
@@ -315,39 +414,39 @@ def derive_execution_eligibility(
     if payment.status in (PaymentStatus.QUEUE, PaymentStatus.AWAITING):
         return "awaiting_approval", "Complete payment approval workflow"
 
-    stripe_ready = (
-        stripe.connected
-        and stripe.charges_enabled
-        and stripe.payouts_enabled
-        and stripe.blocking_reason is None
-    )
-    vendor_ready = (
-        vendor_payout_status == "verified"
-        and vendor_payout_method_type in _EXECUTION_SUPPORTED_METHOD_TYPES
-    )
+    if not tenant_execution_enabled:
+        return "blocked_tenant_disabled", TENANT_DISABLED_MESSAGE
+
+    if manual_block_reason == LIMIT_BLOCK_MESSAGE:
+        return "blocked_limit", LIMIT_BLOCK_MESSAGE
+
+    vendor_verified = vendor_payout_status == "verified"
 
     if payment.status == PaymentStatus.SCHEDULED:
         if has_instruction:
             return "instruction_created", None
 
-        manual_bank_verified = (
-            vendor_payout_method_type == "manual_bank" and vendor_payout_status == "verified"
-        )
         if manual_execution_enabled and manual_instruction_eligible:
+            return "manual_instruction_available", None
+
+        if not vendor_verified:
+            if not vendor_payout_status or vendor_payout_status == "not_configured":
+                return "blocked_vendor_payout_setup", VENDOR_NOT_VERIFIED_MESSAGE
+            return "blocked_vendor_payout_setup", VENDOR_NOT_VERIFIED_MESSAGE
+
+        stripe_ready = (
+            stripe.connected
+            and stripe.charges_enabled
+            and stripe.payouts_enabled
+            and stripe.blocking_reason is None
+        )
+        if manual_execution_enabled and _approval_ready(payment):
             return "manual_instruction_available", None
 
         if not stripe_ready:
             reason = stripe.blocking_reason or "Stripe setup is incomplete"
-            if manual_execution_enabled and manual_bank_verified:
-                return "manual_instruction_available", reason
             return "blocked_stripe_setup", reason
-        if not vendor_ready:
-            if not vendor_payout_status or vendor_payout_status == "not_configured":
-                return "blocked_vendor_payout_setup", "Vendor payout method is not configured"
-            return (
-                "blocked_vendor_payout_setup",
-                f"Vendor payout method is {vendor_payout_status or 'not ready'}",
-            )
+
         if _approval_ready(payment):
             if manual_execution_enabled:
                 return "manual_instruction_available", None

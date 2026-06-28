@@ -156,3 +156,9 @@ def merge_onboarding_settings(
     if onboarding_completed is not None:
         out["onboarding_completed"] = onboarding_completed
     return out
+
+
+def tenant_payment_execution_disabled(tenant: Tenant | None) -> bool:
+    """Per-tenant emergency disable for payment instruction / mark-paid orchestration."""
+    settings = _settings(tenant)
+    return bool(settings.get("payment_execution_disabled"))

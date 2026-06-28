@@ -45,7 +45,12 @@ class PaymentExecutionInstructionExportResponse(BaseModel):
 
 class PaymentMarkPaidManualRequest(BaseModel):
     reference: str = Field(min_length=1, max_length=255)
-    paid_date: date | None = None
+    paid_date: date
+    proof_reference: str = Field(
+        min_length=1,
+        max_length=512,
+        description="Proof of payment reference (file attachment integration planned)",
+    )
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -191,5 +196,9 @@ class PaymentExecutionReadinessResponse(BaseModel):
     vendor_payout_ready: bool
     approval_ready: bool
     amount_ready: bool
+    manual_execution_ready: bool = False
+    role_ready: bool | None = None
+    limit_ready: bool = True
+    tenant_execution_enabled: bool = True
     recommended_action: str | None = None
     payments_execution_enabled: bool = False
