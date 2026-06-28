@@ -115,6 +115,42 @@ function activityLabel(
   if (event.includes("email") || event.includes("ingest") || event.includes("poll")) {
     return `${label} captured via email`;
   }
+  if (event === "stripe_account_connected_onboarding") {
+    return "Stripe account connected (onboarding)";
+  }
+  if (event === "stripe_account_connected_oauth") {
+    return "Stripe account connected (OAuth)";
+  }
+  if (event === "stripe_account_disconnected") {
+    return "Stripe account disconnected";
+  }
+  if (event === "stripe_status_refreshed") {
+    return "Stripe account status refreshed";
+  }
+  if (event === "vendor_payout_method_created") {
+    return "Vendor payout method added";
+  }
+  if (event === "vendor_payout_method_updated") {
+    return "Vendor payout method updated";
+  }
+  if (event === "vendor_payout_method_deleted") {
+    return "Vendor payout method removed";
+  }
+  if (event === "payment_execution_readiness_validated") {
+    return "Payment execution readiness validated (dry-run)";
+  }
+  if (event === "payment_approved") {
+    return "Payment approved for disbursement readiness";
+  }
+  if (event === "payment_execution_instruction_created") {
+    return "Manual payment instruction created";
+  }
+  if (event === "payment_marked_paid_manual") {
+    return "Payment marked paid manually (no funds moved)";
+  }
+  if (event === "payment_execution_blocked_by_safety_gate") {
+    return "Payment execution blocked by safety gate";
+  }
   return `${label} — ${event.replace(/_/g, " ")}`;
 }
 

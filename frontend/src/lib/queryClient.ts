@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/authSession";
-import { tenantIdFromToken } from "@/lib/authToken";
+import { decodeJwtPayload } from "@/lib/authToken";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,7 +17,8 @@ export const queryClient = new QueryClient({
 export function tenantScope(): string {
   const token = getAccessToken();
   if (!token) return "signed-out";
-  return tenantIdFromToken(token) ?? "unknown";
+  const payload = decodeJwtPayload(token);
+  return payload?.tenant_id ?? payload?.org_id ?? "unknown";
 }
 
 export function tenantQueryKey<const T extends readonly unknown[]>(
@@ -40,13 +41,19 @@ const baseKeys = {
   vendorMasters: ["vendor-masters"] as const,
   employeeMasters: ["employee-masters"] as const,
   pendingVendors: ["pending-vendors"] as const,
+  vendorPayoutMethods: (vendorId: number) => ["vendor-payout-methods", vendorId] as const,
   routedInvoices: (routeTarget: string) => ["invoices", "routed", routeTarget] as const,
   payablesQueue: ["invoices", "payables"] as const,
   purchases: ["purchases"] as const,
   payments: ["payments"] as const,
   walletSummary: ["payments", "wallet-summary"] as const,
+  stripeAccount: ["stripeAccount"] as const,
+  stripeBalance: ["stripeBalance"] as const,
+  stripeReadiness: ["stripeReadiness"] as const,
+  stripeTransactions: (limit: number) => ["stripeTransactions", limit] as const,
   ledgerLink: ["ledger-link"] as const,
   billing: ["billing"] as const,
+  appSettings: ["app-settings"] as const,
 };
 
 export const queryKeys = {
@@ -63,11 +70,18 @@ export const queryKeys = {
   vendorMasters: () => tenantQueryKey(baseKeys.vendorMasters),
   employeeMasters: () => tenantQueryKey(baseKeys.employeeMasters),
   pendingVendors: () => tenantQueryKey(baseKeys.pendingVendors),
+  vendorPayoutMethods: (vendorId: number) =>
+    tenantQueryKey(baseKeys.vendorPayoutMethods(vendorId)),
   routedInvoices: (routeTarget: string) => tenantQueryKey(baseKeys.routedInvoices(routeTarget)),
   payablesQueue: () => tenantQueryKey(baseKeys.payablesQueue),
   purchases: () => tenantQueryKey(baseKeys.purchases),
   payments: () => tenantQueryKey(baseKeys.payments),
   walletSummary: () => tenantQueryKey(baseKeys.walletSummary),
+  stripeAccount: () => baseKeys.stripeAccount,
+  stripeBalance: () => baseKeys.stripeBalance,
+  stripeReadiness: () => baseKeys.stripeReadiness,
+  stripeTransactions: (limit: number) => baseKeys.stripeTransactions(limit),
   ledgerLink: () => tenantQueryKey(baseKeys.ledgerLink),
   billing: () => tenantQueryKey(baseKeys.billing),
+  appSettings: () => tenantQueryKey(baseKeys.appSettings),
 };

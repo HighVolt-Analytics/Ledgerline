@@ -14,6 +14,15 @@ from app.models.tenant import Tenant
 from app.models.tenant_module import TenantModule
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
 from app.models.payment import Payment
+from app.models.payment_execution_instruction import PaymentExecutionInstruction
+from app.models.stripe_payments import (
+    PaymentAttempt,
+    StripeAccount,
+    StripeBalanceSnapshot,
+    StripeTransaction,
+    StripeWebhookEvent,
+    VendorPaymentMethod,
+)
 from app.models.purchase_order import PurchaseOrder
 from app.models.reconciliation import DailyReconciliation
 from app.models.tenant_member_invite import TenantMemberInvite
@@ -42,8 +51,14 @@ __all__ = [
     "MailboxConnectionRequest",
     "MailboxSyncJob",
     "Payment",
+    "PaymentAttempt",
+    "PaymentExecutionInstruction",
     "PendingVendor",
     "PurchaseOrder",
+    "StripeAccount",
+    "StripeBalanceSnapshot",
+    "StripeTransaction",
+    "StripeWebhookEvent",
     "Tenant",
     "TenantMemberInvite",
     "TenantModule",
@@ -52,5 +67,6 @@ __all__ = [
     "UserTenantMapping",
     "UserRole",
     "VendorMasterRecord",
+    "VendorPaymentMethod",
     "VendorRegistry",
 ]

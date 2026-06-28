@@ -23,6 +23,7 @@ from app.services.document_duplicate_service import (
 )
 from app.services.document_ref_service import assign_document_ref, audit_document_detail
 from app.services.ingest_capture_service import apply_ingest_capture, evaluate_ingest_capture
+from app.services.approval_pipeline_service import human_approved_payable_bypass
 from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.services.invoice_evaluation_service import (
     EVAL_NEEDS_REVIEW,
@@ -100,6 +101,20 @@ class EmailIngestResult:
 def _filename_from_stored(stored: str, invoice_id: int, file_hash: str) -> str:
     _ = (invoice_id, file_hash)
     return filename_from_stored(stored)
+
+
+def _scalar_field_empty(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
+def _apply_parsed_scalar(invoice: Invoice, field: str, value: object) -> None:
+    if not _scalar_field_empty(getattr(invoice, field)):
+        return
+    setattr(invoice, field, value)
 
 
 async def _replace_line_items(
@@ -562,6 +577,8 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     await assign_document_ref(session, invoice)
 
+    bypass_review_gates = await human_approved_payable_bypass(session, invoice)
+
     if not invoice.raw_file_path:
         invoice.status = InvoiceStatus.EXCEPTION
         await log_event(
@@ -627,31 +644,41 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     if not resolved_vendor and parsed.vendor and is_plausible_vendor_name(parsed.vendor):
         resolved_vendor = parsed.vendor
 
-    invoice.vendor = resolved_vendor
-    invoice.abn = parsed.abn
-    invoice.billing_address = parsed.billing_address
-    invoice.bank_bsb = parsed.bank_bsb
-    invoice.bank_account = parsed.bank_account
-    invoice.invoice_no = parsed.invoice_no
-    invoice.po_reference = parsed.po_reference
-    invoice.cost_centre = parsed.cost_centre
-    invoice.invoice_date = parsed.invoice_date
-    invoice.due_date = parsed.due_date
-    invoice.subtotal = plausible_money(parsed.subtotal)
-    invoice.gst = plausible_money(parsed.gst)
-    invoice.total = plausible_money(parsed.total)
-    invoice.currency = parsed.currency
+    _apply_parsed_scalar(invoice, "vendor", resolved_vendor)
+    _apply_parsed_scalar(invoice, "abn", parsed.abn)
+    _apply_parsed_scalar(invoice, "billing_address", parsed.billing_address)
+    _apply_parsed_scalar(invoice, "bank_bsb", parsed.bank_bsb)
+    _apply_parsed_scalar(invoice, "bank_account", parsed.bank_account)
+    _apply_parsed_scalar(invoice, "invoice_no", parsed.invoice_no)
+    _apply_parsed_scalar(invoice, "po_reference", parsed.po_reference)
+    _apply_parsed_scalar(invoice, "cost_centre", parsed.cost_centre)
+    _apply_parsed_scalar(invoice, "invoice_date", parsed.invoice_date)
+    _apply_parsed_scalar(invoice, "due_date", parsed.due_date)
+    if _scalar_field_empty(invoice.subtotal):
+        invoice.subtotal = plausible_money(parsed.subtotal)
+    if _scalar_field_empty(invoice.gst):
+        invoice.gst = plausible_money(parsed.gst)
+    if _scalar_field_empty(invoice.total):
+        invoice.total = plausible_money(parsed.total)
+    _apply_parsed_scalar(invoice, "currency", parsed.currency)
     from app.services.document_text import cap_document_text
     from app.services.po_reference import effective_po_reference, extract_po_reference_from_text
 
-    invoice.document_text = cap_document_text(parsed.document_text)
+    if _scalar_field_empty(invoice.document_text):
+        invoice.document_text = cap_document_text(parsed.document_text)
     if not effective_po_reference(invoice.po_reference):
         extracted = extract_po_reference_from_text(invoice.document_text)
         if extracted:
             invoice.po_reference = extracted
             parsed.po_reference = extracted
 
-    await _replace_line_items(session, invoice, parsed.line_items)
+    existing_line_count = (
+        await session.execute(
+            select(LineItem.id).where(*line_items_for_invoice(invoice.tenant_id, invoice.id))
+        )
+    ).scalars().all()
+    if not existing_line_count:
+        await _replace_line_items(session, invoice, parsed.line_items)
 
     stmt = (
         select(Invoice)
@@ -701,7 +728,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     no_classifier_match = not classifier_matches
     dt_definition = resolve_definition_for_invoice(loaded, list(config.document_types))
 
-    if requires_classification_review(loaded, classification):
+    if requires_classification_review(loaded, classification) and not bypass_review_gates:
         loaded.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.status = InvoiceStatus.EXCEPTION
@@ -742,7 +769,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             ),
         },
     )
-    if requires_playbook_review(playbook, definition=dt_definition):
+    if requires_playbook_review(playbook, definition=dt_definition) and not bypass_review_gates:
         loaded.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.status = InvoiceStatus.EXCEPTION
@@ -780,10 +807,18 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         invoice.po_reference = loaded.po_reference
         invoice.evaluation_status = loaded.evaluation_status
         if loaded.status == InvoiceStatus.EXCEPTION:
-            invoice.status = InvoiceStatus.EXCEPTION
-            return
+            if bypass_review_gates:
+                from app.services.invoice_evaluation_service import EVAL_AUTO_CODED
 
-    if await apply_vendor_hold_if_needed(session, loaded):
+                loaded.evaluation_status = EVAL_AUTO_CODED
+                invoice.evaluation_status = EVAL_AUTO_CODED
+                loaded.status = InvoiceStatus.PARSING
+                invoice.status = InvoiceStatus.PARSING
+            else:
+                invoice.status = InvoiceStatus.EXCEPTION
+                return
+
+    if await apply_vendor_hold_if_needed(session, loaded) and not bypass_review_gates:
         invoice.status = InvoiceStatus.EXCEPTION
         return
 
@@ -815,32 +850,44 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.validation_results = results_to_json(results)
     invoice.abn = parsed.abn
     if not all_passed(results):
-        stmt = (
-            select(Invoice)
-            .where(Invoice.id == invoice.id)
-            .options(selectinload(Invoice.line_items))
-        )
-        loaded = (await session.execute(stmt)).scalar_one()
-        await apply_invoice_evaluation(session, loaded)
-        await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
-        invoice.raw_file_path = loaded.raw_file_path
-        invoice.route_target = loaded.route_target
-        if await apply_vendor_hold_if_needed(session, loaded):
+        if bypass_review_gates:
+            await log_event(
+                session,
+                "validation_bypassed_after_human_approval",
+                invoice_id=invoice.id,
+                detail=validation_audit_detail(
+                    results,
+                    route_target=invoice.route_target,
+                    has_receipt_file=has_receipt_attachment(invoice.raw_file_path),
+                ),
+            )
+        else:
+            stmt = (
+                select(Invoice)
+                .where(Invoice.id == invoice.id)
+                .options(selectinload(Invoice.line_items))
+            )
+            loaded = (await session.execute(stmt)).scalar_one()
+            await apply_invoice_evaluation(session, loaded)
+            await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
+            invoice.raw_file_path = loaded.raw_file_path
+            invoice.route_target = loaded.route_target
+            if await apply_vendor_hold_if_needed(session, loaded):
+                invoice.status = InvoiceStatus.EXCEPTION
+                return
             invoice.status = InvoiceStatus.EXCEPTION
+            await log_event(
+                session,
+                "validation_failed",
+                invoice_id=invoice.id,
+                detail=validation_audit_detail(
+                    results,
+                    route_target=invoice.route_target,
+                    has_receipt_file=has_receipt_attachment(invoice.raw_file_path),
+                ),
+            )
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
-        invoice.status = InvoiceStatus.EXCEPTION
-        await log_event(
-            session,
-            "validation_failed",
-            invoice_id=invoice.id,
-            detail=validation_audit_detail(
-                results,
-                route_target=invoice.route_target,
-                has_receipt_file=has_receipt_attachment(invoice.raw_file_path),
-            ),
-        )
-        send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
 
     await log_event(
         session,
@@ -877,7 +924,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         send_notification(invoice, InvoiceStatus.PROCESSED)
         return
 
-    if doc_type in ("po", "grn"):
+    if doc_type in ("po", "grn") and not bypass_review_gates:
         await _finish_purchase_supporting_document(session, invoice)
         return
 
@@ -888,7 +935,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             .options(selectinload(Invoice.line_items))
         )
     ).scalar_one()
-    if await apply_vendor_hold_if_needed(session, post_validate):
+    if await apply_vendor_hold_if_needed(session, post_validate) and not bypass_review_gates:
         invoice.status = InvoiceStatus.EXCEPTION
         return
 
@@ -931,7 +978,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         loaded,
         mapping_detail,
         document_types=list(config.document_types),
-    ):
+    ) and not bypass_review_gates:
         invoice.status = InvoiceStatus.EXCEPTION
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
         await log_event(
@@ -1005,7 +1052,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await save_reconciliation(session, recon, tenant_id=invoice.tenant_id)
     if recon.halted:
         route = (invoice.route_target or "").strip()
-        non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES)
+        non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES) or bypass_review_gates
         if non_blocking_recon:
             await log_event(
                 session,
@@ -1035,10 +1082,15 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     await sync_purchase_document(session, invoice)
     if invoice.evaluation_status == "awaiting_po":
-        invoice.status = InvoiceStatus.EXCEPTION
-        await session.flush()
-        send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
+        if bypass_review_gates:
+            from app.services.invoice_evaluation_service import EVAL_AUTO_CODED
+
+            invoice.evaluation_status = EVAL_AUTO_CODED
+        else:
+            invoice.status = InvoiceStatus.EXCEPTION
+            await session.flush()
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
+            return
     if is_commercial_purchase_invoice(invoice):
         await ensure_payment_for_invoice(session, invoice)
     await _auto_learn_sender(session, invoice)

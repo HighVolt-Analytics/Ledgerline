@@ -18,8 +18,15 @@ from app.services.file_storage import (
     resolve_readable_stored,
     stored_file_available,
 )
+from app.services.approval_pipeline_service import (
+    apply_human_approval_processing_defaults,
+    payable_fields_complete,
+)
 from app.services.invoice_evaluation_service import load_config_for_tenant
-from app.services.invoice_reset import clear_invoice_posting_artifacts, reset_invoice_for_reprocess
+from app.services.invoice_reset import (
+    clear_invoice_posting_artifacts,
+    reset_invoice_for_approval,
+)
 from app.services.team_expense_approval import assert_team_expense_approvable
 from app.services.vault_invoice_paths import vault_document_type_titles_for_invoice
 from app.services.vault_paths import filename_from_stored
@@ -186,6 +193,22 @@ async def restore_rejected_invoice_file_if_needed(
     )
 
 
+def _assert_invoice_ready_for_approval(inv: Invoice) -> None:
+    missing: list[str] = []
+    if not (inv.vendor or "").strip():
+        missing.append("vendor")
+    if inv.total is None or inv.total <= 0:
+        missing.append("total")
+    if inv.due_date is None:
+        missing.append("due date")
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(
+            f"Cannot approve: missing required field(s): {joined}. "
+            "Save corrections for vendor, total, and due date before approving."
+        )
+
+
 async def approve_invoice_for_reprocess(
     session: AsyncSession,
     inv: Invoice,
@@ -193,7 +216,7 @@ async def approve_invoice_for_reprocess(
     actor_name: str | None = None,
     actor_email: str | None = None,
 ) -> None:
-    """Reset invoice for pipeline; restore file from rejected/ to invoice/ when needed."""
+    """Re-queue invoice for pipeline; preserve user-corrected extracted fields."""
     if inv.status not in _APPROVABLE:
         raise ValueError(f"Invoice status '{inv.status.value}' is not in the approval queue")
 
@@ -205,6 +228,9 @@ async def approve_invoice_for_reprocess(
         )
     ).scalar_one()
     await assert_team_expense_approvable(session, loaded)
+    _assert_invoice_ready_for_approval(loaded)
+    if payable_fields_complete(loaded):
+        apply_human_approval_processing_defaults(loaded)
     previous_status = inv.status.value
     await repair_invoice_stored_path(session, inv)
 
@@ -213,7 +239,7 @@ async def approve_invoice_for_reprocess(
     if not stored_file_available(inv.raw_file_path, tenant_id=inv.tenant_id):
         raise ValueError("Invoice has no stored file to process")
 
-    await reset_invoice_for_reprocess(session, inv)
+    await reset_invoice_for_approval(session, inv)
     await log_event(
         session,
         "invoice_approved",

@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { queryKeys } from "@/lib/queryClient";
 
@@ -7,6 +7,59 @@ export function usePayments(enabled = true) {
     queryKey: queryKeys.payments(),
     queryFn: () => api.listPayments(),
     enabled,
+  });
+}
+
+export function useAppSettings(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.appSettings(),
+    queryFn: () => api.getSettings(),
+    enabled,
+  });
+}
+
+export function useValidatePaymentExecutionReadiness() {
+  return useMutation({
+    mutationFn: (paymentId: number) => api.validatePaymentExecutionReadiness(paymentId),
+  });
+}
+
+export function useApprovePayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (paymentId: number) => api.approvePayment(paymentId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
+    },
+  });
+}
+
+export function useCreatePaymentExecutionInstruction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (paymentId: number) => api.createPaymentExecutionInstruction(paymentId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
+    },
+  });
+}
+
+export function useMarkPaymentPaidManual() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      paymentId,
+      body,
+    }: {
+      paymentId: number;
+      body: { reference: string; paid_date?: string; note?: string };
+    }) => api.markPaymentPaidManual(paymentId, body),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
+    },
   });
 }
 
@@ -19,6 +72,11 @@ export function usePaymentMutations() {
   };
 
   return {
+    approvePayment: async (paymentId: number) => {
+      const row = await api.approvePayment(paymentId);
+      await invalidate();
+      return row;
+    },
     updateStatus: async (
       paymentId: number,
       body: {

@@ -29,7 +29,9 @@ import {
   canQueuePipeline,
   canRejectClaim,
   canRequestInfo,
+  invoiceFieldsFromDetails,
   reprocessAndWatch,
+  validateInvoiceFieldsForApproval,
 } from "@/lib/invoiceActions";
 import {
   invoiceCanPublishToLedger,
@@ -244,6 +246,8 @@ function updateDraftExtractionField(
       return { ...draft, po_reference: value };
     case "cost_centre":
       return { ...draft, cost_centre: value };
+    case "billing_address":
+      return { ...draft, billing_address: value };
     case "invoice_date":
       return { ...draft, invoice_date: value };
     case "due_date":
@@ -292,6 +296,7 @@ type InvoiceEditDraft = {
   invoice_no: string;
   po_reference: string;
   cost_centre: string;
+  billing_address: string;
   invoice_date: string;
   due_date: string;
   subtotal: string;
@@ -307,6 +312,7 @@ function draftFromInvoice(inv: InvoiceDetails): InvoiceEditDraft {
     invoice_no: strField(inv.invoice_no),
     po_reference: strField(inv.po_reference),
     cost_centre: strField(inv.cost_centre),
+    billing_address: strField(inv.billing_address),
     invoice_date: strField(inv.invoice_date),
     due_date: strField(inv.due_date),
     subtotal: strField(inv.subtotal),
@@ -338,6 +344,7 @@ function payloadFromDraft(draft: InvoiceEditDraft): InvoiceUpdatePayload {
     invoice_no: optionalText(draft.invoice_no),
     po_reference: optionalText(draft.po_reference),
     cost_centre: optionalText(draft.cost_centre),
+    billing_address: optionalText(draft.billing_address),
     invoice_date: optionalText(draft.invoice_date),
     due_date: optionalText(draft.due_date),
     subtotal: optionalText(draft.subtotal),
@@ -515,6 +522,7 @@ type InvoiceDetailDrawerProps = {
   onClose: () => void;
   onUpdated?: () => void;
   onPipelineStart?: (invoice: InvoiceDetails) => void;
+  onEditingChange?: (editing: boolean) => void;
   startInEditMode?: boolean;
   initialTab?: Tab;
 };
@@ -525,6 +533,7 @@ export function InvoiceDetailDrawer({
   onClose,
   onUpdated,
   onPipelineStart,
+  onEditingChange,
   startInEditMode = false,
   initialTab = "fields",
 }: InvoiceDetailDrawerProps) {
@@ -633,6 +642,10 @@ export function InvoiceDetailDrawer({
       setDraft(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    onEditingChange?.(editing);
+  }, [editing, onEditingChange]);
 
   useEffect(() => {
     if (!inv) return;
@@ -751,6 +764,17 @@ export function InvoiceDetailDrawer({
     setDraft(null);
   }
 
+  function approvalFieldsFromDraftOrInvoice() {
+    if (editing && draft) {
+      return {
+        vendor: draft.vendor,
+        total: draft.total,
+        due_date: draft.due_date,
+      };
+    }
+    return inv ? invoiceFieldsFromDetails(inv) : { vendor: null, total: null, due_date: null };
+  }
+
   async function handleReject() {
     if (!inv || !canRejectClaim(inv.status)) return;
     if (!window.confirm(`Reject ${inv.vendor ?? documentDisplayRef(inv)}?`)) return;
@@ -821,13 +845,31 @@ export function InvoiceDetailDrawer({
       alert("Upload a PDF before approving this invoice.");
       return;
     }
+
+    const fieldCheck = validateInvoiceFieldsForApproval(approvalFieldsFromDraftOrInvoice());
+    if (!fieldCheck.ok) {
+      alert(fieldCheck.message);
+      return;
+    }
+
+    const pendingEdits = editing && draft ? payloadFromDraft(draft) : undefined;
+
     setActionBusy(true);
     onPipelineStart?.(fresh);
     try {
-      await approveAndProcess(inv.id, async () => {
-        onUpdated?.();
-        await reloadInvoice();
-      });
+      const result = await approveAndProcess(
+        inv.id,
+        async () => {
+          onUpdated?.();
+          await reloadInvoice();
+        },
+        pendingEdits
+      );
+      if (pendingEdits) {
+        setEditing(false);
+        setDraft(null);
+      }
+      setInv(result.invoice);
       onUpdated?.();
       onClose();
     } catch (e) {

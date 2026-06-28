@@ -31,6 +31,7 @@ from app.api import (
     reports,
     rule_book,
     settings as settings_api,
+    stripe_webhooks,
     vault,
     vendor_masters,
     vendors,
@@ -93,8 +94,12 @@ if _settings.root_path:
     app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
 
 app.include_router(auth.router, prefix="/api")
+# Stripe webhooks — no JWT.
+app.include_router(stripe_webhooks.router, prefix="/api")
 # OAuth Microsoft redirect — no JWT (must be before authenticated mailboxes router).
 app.include_router(mailboxes.oauth_public_router, prefix="/api")
+# Stripe Connect OAuth callback — no JWT (must be before authenticated payments router).
+app.include_router(payments.oauth_public_router, prefix="/api")
 # Meta / WhatsApp OAuth callback and webhooks — no JWT.
 # Paths: /webhook/meta, /auth/whatsapp/callback (Front Door routes /ledgerlink/webhook/* and /ledgerlink/auth/*).
 app.include_router(whatsapp.public_router)

@@ -33,5 +33,10 @@ async def get_app_settings() -> ApiEnvelope[AppSettingsResponse]:
             rule_book_config_path=s.rule_book_config_path,
             cors_origins=s.cors_origins,
             whatsapp_configured=s.whatsapp_configured,
+            stripe_payments_execution_enabled=s.stripe_payment_execution_enabled,
+            stripe_live_payments_enabled=s.stripe_live_payments_enabled,
+            payment_manual_execution_enabled=s.payment_manual_execution_enabled,
+            payment_manual_execution_limit_aud=s.payment_manual_execution_limit_aud,
+            payment_execution_disabled=s.payment_execution_disabled,
         )
     )

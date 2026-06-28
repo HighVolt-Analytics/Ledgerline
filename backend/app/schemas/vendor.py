@@ -1,8 +1,21 @@
 """Vendor registry schemas."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+PayoutMethodType = Literal[
+    "manual_bank",
+    "stripe_connected_account",
+    "external_bank_phase2",
+]
+PayoutMethodStatus = Literal[
+    "not_configured",
+    "pending",
+    "verified",
+    "disabled",
+]
 
 
 class VendorCreate(BaseModel):
@@ -30,3 +43,39 @@ class VendorResponse(BaseModel):
     abn: str | None
     approved: bool
     created_at: datetime
+
+
+class VendorPayoutMethodResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vendor_id: int
+    method_type: str
+    display_label: str | None = None
+    stripe_account_id: str | None = None
+    last4: str | None = None
+    currency: str = "AUD"
+    status: str
+    is_default: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class VendorPayoutMethodCreate(BaseModel):
+    method_type: PayoutMethodType
+    display_label: str | None = Field(None, max_length=255)
+    stripe_account_id: str | None = Field(None, max_length=255)
+    last4: str | None = Field(None, max_length=4)
+    currency: str = Field(default="AUD", min_length=3, max_length=3)
+    status: PayoutMethodStatus = "pending"
+    is_default: bool = True
+
+
+class VendorPayoutMethodUpdate(BaseModel):
+    method_type: PayoutMethodType | None = None
+    display_label: str | None = Field(None, max_length=255)
+    stripe_account_id: str | None = Field(None, max_length=255)
+    last4: str | None = Field(None, max_length=4)
+    currency: str | None = Field(None, min_length=3, max_length=3)
+    status: PayoutMethodStatus | None = None
+    is_default: bool | None = None

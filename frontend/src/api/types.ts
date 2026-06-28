@@ -363,6 +363,7 @@ export interface InvoiceUpdatePayload {
   invoice_no?: string | null;
   po_reference?: string | null;
   cost_centre?: string | null;
+  billing_address?: string | null;
   invoice_date?: string | null;
   due_date?: string | null;
   currency?: string | null;
@@ -447,6 +448,56 @@ export interface PurchaseOrderApi {
   purchase_rule_id?: string | null;
 }
 
+export type PaymentExecutionEligibilityStatus =
+  | "not_ready"
+  | "awaiting_approval"
+  | "blocked_stripe_setup"
+  | "blocked_vendor_payout_setup"
+  | "ready_dry_run"
+  | "manual_instruction_available"
+  | "instruction_created"
+  | "scheduled"
+  | "paid"
+  | "failed";
+
+export interface PaymentExecutionInstructionApi {
+  id: number;
+  payment_id: number;
+  instruction_reference: string;
+  vendor_name: string | null;
+  vendor_payout_method_label: string | null;
+  amount: number;
+  currency: string;
+  due_date: string | null;
+  execution_mode: string;
+  status: string;
+  created_by_name: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
+export interface PaymentExecutionInstructionExportApi {
+  payment_id: number;
+  instruction_reference: string;
+  vendor_name: string | null;
+  vendor_payout_method_label: string | null;
+  amount: number;
+  currency: string;
+  due_date: string | null;
+  execution_mode: string;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  export_format: string;
+  disclaimer: string;
+}
+
+export interface PaymentMarkPaidManualPayload {
+  reference: string;
+  paid_date?: string;
+  note?: string;
+}
+
 export interface PaymentApi {
   id: number;
   invoice_id: number;
@@ -462,6 +513,25 @@ export interface PaymentApi {
   approvers: Array<Record<string, unknown>>;
   payment_intent: string | null;
   failure_reason: string | null;
+  vendor_payout_status: string | null;
+  vendor_payout_method_type: string | null;
+  execution_readiness_status: PaymentExecutionEligibilityStatus | null;
+  execution_blocking_reason: string | null;
+  execution_instruction: PaymentExecutionInstructionApi | null;
+}
+
+export interface PaymentExecutionReadinessResponse {
+  payment_id: number;
+  can_execute: boolean;
+  execution_mode: "dry_run";
+  blocking_reasons: string[];
+  warnings: string[];
+  tenant_stripe_ready: boolean;
+  vendor_payout_ready: boolean;
+  approval_ready: boolean;
+  amount_ready: boolean;
+  recommended_action: string | null;
+  payments_execution_enabled: boolean;
 }
 
 export interface DashboardStats {
@@ -618,6 +688,51 @@ export interface Vendor {
   approved: boolean;
 }
 
+export type VendorPayoutMethodType =
+  | "manual_bank"
+  | "stripe_connected_account"
+  | "external_bank_phase2";
+
+export type VendorPayoutMethodStatus =
+  | "not_configured"
+  | "pending"
+  | "verified"
+  | "disabled";
+
+export interface VendorPayoutMethod {
+  id: number;
+  vendor_id: number;
+  method_type: VendorPayoutMethodType | string;
+  display_label: string | null;
+  stripe_account_id: string | null;
+  last4: string | null;
+  currency: string;
+  status: VendorPayoutMethodStatus | string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorPayoutMethodCreate {
+  method_type: VendorPayoutMethodType;
+  display_label?: string | null;
+  stripe_account_id?: string | null;
+  last4?: string | null;
+  currency?: string;
+  status?: VendorPayoutMethodStatus;
+  is_default?: boolean;
+}
+
+export interface VendorPayoutMethodUpdate {
+  method_type?: VendorPayoutMethodType;
+  display_label?: string | null;
+  stripe_account_id?: string | null;
+  last4?: string | null;
+  currency?: string;
+  status?: VendorPayoutMethodStatus;
+  is_default?: boolean;
+}
+
 export interface AppSettings {
   graph_mailbox: string;
   graph_enabled: boolean;
@@ -637,6 +752,11 @@ export interface AppSettings {
   rule_book_config_path: string;
   cors_origins: string;
   whatsapp_configured: boolean;
+  stripe_payments_execution_enabled: boolean;
+  stripe_live_payments_enabled: boolean;
+  payment_manual_execution_enabled: boolean;
+  payment_manual_execution_limit_aud: number;
+  payment_execution_disabled: boolean;
 }
 
 export interface WhatsappConnection {
@@ -1051,6 +1171,71 @@ export interface WalletSummary {
   available: number;
   last_top_up: string;
   transactions: WalletTransaction[];
+}
+
+export interface StripeAccount {
+  id: number;
+  tenant_id: string;
+  stripe_account_id: string;
+  account_type: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  details_submitted: boolean;
+  onboarding_status: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StripeConnectResponse {
+  account: StripeAccount;
+  onboarding_url: string | null;
+}
+
+export interface StripeOnboardingLinkResponse {
+  url: string;
+}
+
+export interface StripeOAuthUrlResponse {
+  url: string;
+}
+
+export interface StripeDisconnectResponse {
+  disconnected: boolean;
+}
+
+export interface StripeReadinessResponse {
+  connected: boolean;
+  account_id: string | null;
+  onboarding_status: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  ready_for_charges: boolean;
+  ready_for_payouts: boolean;
+  blocking_reason: string | null;
+  recommended_action: string | null;
+}
+
+export interface StripeBalanceAmount {
+  amount: number | null;
+  currency: string | null;
+}
+
+export interface StripeBalanceResponse {
+  available: StripeBalanceAmount[];
+  pending: StripeBalanceAmount[];
+  livemode: boolean;
+  snapshot_id: number;
+}
+
+export interface StripeTransaction {
+  id: number;
+  stripe_transaction_id: string;
+  type: string | null;
+  amount: number | null;
+  currency: string | null;
+  status: string | null;
+  description: string | null;
+  available_on: string | null;
 }
 
 export interface CreditPack {

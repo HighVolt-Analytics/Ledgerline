@@ -301,6 +301,44 @@ class Settings(BaseSettings):
         validation_alias="WHATSAPP_OAUTH_FRONTEND_RETURN_URL",
     )
 
+    # Stripe Connect / payments (optional — empty until configured)
+    stripe_secret_key: str = Field(default="", validation_alias="STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str = Field(default="", validation_alias="STRIPE_WEBHOOK_SECRET")
+    stripe_connect_client_id: str = Field(
+        default="",
+        validation_alias="STRIPE_CONNECT_CLIENT_ID",
+    )
+    stripe_mode: str = Field(default="sandbox", validation_alias="STRIPE_MODE")
+    stripe_return_url: str = Field(default="", validation_alias="STRIPE_RETURN_URL")
+    stripe_refresh_url: str = Field(default="", validation_alias="STRIPE_REFRESH_URL")
+    stripe_oauth_redirect_url: str = Field(
+        default="",
+        validation_alias="STRIPE_OAUTH_REDIRECT_URL",
+        description="Stripe Connect OAuth redirect URI (must match Stripe Dashboard Connect/OAuth settings)",
+    )
+    stripe_payments_execution_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_PAYMENTS_EXECUTION_ENABLED",
+    )
+    stripe_live_payments_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_LIVE_PAYMENTS_ENABLED",
+    )
+    payment_manual_execution_enabled: bool = Field(
+        default=False,
+        validation_alias="PAYMENT_MANUAL_EXECUTION_ENABLED",
+    )
+    payment_manual_execution_limit_aud: float = Field(
+        default=1000.0,
+        ge=0,
+        validation_alias="PAYMENT_MANUAL_EXECUTION_LIMIT_AUD",
+    )
+    payment_execution_disabled: bool = Field(
+        default=False,
+        validation_alias="PAYMENT_EXECUTION_DISABLED",
+        description="Emergency kill switch for all payment execution orchestration endpoints",
+    )
+
     @field_validator("root_path", mode="before")
     @classmethod
     def normalize_root_path(cls, value: object) -> str:
@@ -488,6 +526,30 @@ class Settings(BaseSettings):
         if explicit:
             return explicit.rstrip("/")
         return self.graph_oauth_frontend_return_url.rstrip("/")
+
+    @property
+    def stripe_sandbox_mode(self) -> bool:
+        return self.stripe_mode.strip().lower() in ("sandbox", "test")
+
+    @property
+    def stripe_configured(self) -> bool:
+        return bool(self.stripe_secret_key.strip())
+
+    @property
+    def stripe_connect_configured(self) -> bool:
+        return bool(
+            self.stripe_secret_key.strip() and self.stripe_connect_client_id.strip()
+        )
+
+    @property
+    def stripe_webhooks_configured(self) -> bool:
+        return bool(
+            self.stripe_secret_key.strip() and self.stripe_webhook_secret.strip()
+        )
+
+    @property
+    def stripe_payment_execution_enabled(self) -> bool:
+        return bool(self.stripe_payments_execution_enabled)
 
     @property
     def application_insights_runtime_enabled(self) -> bool:

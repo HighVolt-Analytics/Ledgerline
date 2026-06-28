@@ -16,6 +16,10 @@ import type {
   DailyReconciliation,
   NavBadges,
   PaymentApi,
+  PaymentExecutionInstructionApi,
+  PaymentExecutionInstructionExportApi,
+  PaymentExecutionReadinessResponse,
+  PaymentMarkPaidManualPayload,
   PurchaseOrderApi,
   PurchaseDossier,
   DashboardOverview,
@@ -50,14 +54,25 @@ import type {
   OnboardingStatus,
   UserPermissions,
   Vendor,
+  VendorPayoutMethod,
+  VendorPayoutMethodCreate,
+  VendorPayoutMethodUpdate,
   VaultTreeResponse,
   VaultMigrateResponse,
   WalletSummary,
+  StripeAccount,
+  StripeBalanceResponse,
+  StripeConnectResponse,
+  StripeOnboardingLinkResponse,
+  StripeOAuthUrlResponse,
+  StripeDisconnectResponse,
+  StripeReadinessResponse,
+  StripeTransaction,
   WhatsappStatus,
 } from "./types";
 
 import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
-import { tenantIdFromToken } from "@/lib/authToken";
+import { decodeJwtPayload, tenantIdFromToken } from "@/lib/authToken";
 
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE =
@@ -152,8 +167,12 @@ export function clearGetCache() {
 }
 
 function getRequestKey(path: string, method: string) {
-  const tid = tenantIdFromToken(authToken) ?? authUser?.tenant_id ?? "anon";
-  return `${tid}:${method}:${path}`;
+  let tid = authUser?.tenant_id;
+  if (!tid && authToken) {
+    const payload = decodeJwtPayload(authToken);
+    tid = payload?.tenant_id ?? payload?.org_id;
+  }
+  return `${tid ?? "anon"}:${method}:${path}`;
 }
 
 function invalidateGetCache() {
@@ -655,12 +674,15 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<InvoiceDetails>(path);
   },
-  updateInvoice: (id: number, body: InvoiceUpdatePayload) =>
-    request<InvoiceDetails>(`/api/invoices/${id}`, {
+  updateInvoice: (id: number, body: InvoiceUpdatePayload) => {
+    bustGetCacheByPrefix("/api/invoices");
+    bustGetCacheByPrefix("/api/approvals");
+    return request<InvoiceDetails>(`/api/invoices/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }),
+    });
+  },
   getInvoicePipeline: (id: number, options?: FreshRequestOptions) => {
     const path = `/api/invoices/${id}/pipeline`;
     if (options?.fresh) bustGetCache(path);
@@ -870,6 +892,31 @@ export const api = {
     }),
   deleteVendor: (id: number) =>
     request<void>(`/api/vendors/${id}`, { method: "DELETE" }),
+  listVendorPayoutMethods: (vendorId: number, options?: FreshRequestOptions) => {
+    const path = `/api/vendors/${vendorId}/payout-methods`;
+    if (options?.fresh) bustGetCache(path);
+    return request<VendorPayoutMethod[]>(path);
+  },
+  createVendorPayoutMethod: (vendorId: number, body: VendorPayoutMethodCreate) =>
+    request<VendorPayoutMethod>(`/api/vendors/${vendorId}/payout-methods`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateVendorPayoutMethod: (
+    vendorId: number,
+    methodId: number,
+    body: VendorPayoutMethodUpdate
+  ) =>
+    request<VendorPayoutMethod>(`/api/vendors/${vendorId}/payout-methods/${methodId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteVendorPayoutMethod: (vendorId: number, methodId: number) =>
+    request<void>(`/api/vendors/${vendorId}/payout-methods/${methodId}`, {
+      method: "DELETE",
+    }),
   listVendorMasters: (options?: FreshRequestOptions) => {
     const path = "/api/vendor-masters";
     if (options?.fresh) bustGetCache(path);
@@ -1089,6 +1136,69 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  getStripeAccount: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/account";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeAccount>(path);
+  },
+  refreshStripeAccount: () =>
+    request<StripeAccount>("/api/payments/stripe/account/refresh", {
+      method: "POST",
+    }),
+  connectStripe: () =>
+    request<StripeConnectResponse>("/api/payments/stripe/connect", {
+      method: "POST",
+    }),
+  getStripeOnboardingLink: () =>
+    request<StripeOnboardingLinkResponse>("/api/payments/stripe/onboarding-link"),
+  getStripeOAuthUrl: () =>
+    request<StripeOAuthUrlResponse>("/api/payments/stripe/oauth-url"),
+  deleteStripeAccount: () =>
+    request<StripeDisconnectResponse>("/api/payments/stripe/account", {
+      method: "DELETE",
+    }),
+  getStripeReadiness: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/readiness";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeReadinessResponse>(path);
+  },
+  getStripeBalance: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/balance";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeBalanceResponse>(path);
+  },
+  listStripeTransactions: (limit = 20, options?: FreshRequestOptions) => {
+    const path = `/api/payments/stripe/transactions?limit=${encodeURIComponent(String(limit))}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeTransaction[]>(path);
+  },
+  validatePaymentExecutionReadiness: (paymentId: number) =>
+    request<PaymentExecutionReadinessResponse>(
+      `/api/payments/${paymentId}/execution-readiness`,
+      { method: "POST" }
+    ),
+  approvePayment: (paymentId: number) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentApi>(`/api/payments/${paymentId}/approve`, { method: "POST" });
+  },
+  createPaymentExecutionInstruction: (paymentId: number) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentExecutionInstructionApi>(
+      `/api/payments/${paymentId}/execution-instruction`,
+      { method: "POST" }
+    );
+  },
+  exportPaymentExecutionInstruction: (paymentId: number) =>
+    request<PaymentExecutionInstructionExportApi>(
+      `/api/payments/${paymentId}/execution-instruction/export`
+    ),
+  markPaymentPaidManual: (paymentId: number, body: PaymentMarkPaidManualPayload) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentApi>(`/api/payments/${paymentId}/mark-paid-manual`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
 };
 
 /** Inclusive invoice-date range for workbook export; omit both for all invoices. */
