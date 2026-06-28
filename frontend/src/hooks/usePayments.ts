@@ -54,7 +54,7 @@ export function useMarkPaymentPaidManual() {
       body,
     }: {
       paymentId: number;
-      body: { reference: string; paid_date?: string; note?: string };
+      body: { reference: string; paid_date: string; proof_reference: string; note?: string };
     }) => api.markPaymentPaidManual(paymentId, body),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.payments() });

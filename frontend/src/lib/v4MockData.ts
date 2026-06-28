@@ -128,6 +128,8 @@ export type PaymentRecord = {
     | "ready_dry_run"
     | "manual_instruction_available"
     | "instruction_created"
+    | "blocked_limit"
+    | "blocked_tenant_disabled"
     | "scheduled"
     | "paid"
     | "failed";

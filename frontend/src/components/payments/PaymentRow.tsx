@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   useCreatePaymentExecutionInstruction,
   useMarkPaymentPaidManual,
@@ -58,6 +59,10 @@ function executionReadinessBadge(
       return { label: "Manual instruction available", variant: "default" };
     case "instruction_created":
       return { label: "Instruction created", variant: "secondary" };
+    case "blocked_limit":
+      return { label: "Over launch limit", variant: "outline", destructive: true };
+    case "blocked_tenant_disabled":
+      return { label: "Tenant execution disabled", variant: "outline", destructive: true };
     case "blocked_stripe_setup":
       return { label: "Blocked: Stripe setup", variant: "outline", destructive: true };
     case "blocked_vendor_payout_setup":
@@ -118,6 +123,9 @@ function ReadinessResultPanel({ result }: { result: PaymentExecutionReadinessRes
       {result.recommended_action && (
         <p className="pt-0.5 opacity-90">{result.recommended_action}</p>
       )}
+      {result.role_ready === false ? (
+        <p className="opacity-90">Tenant Admin or Approver role required.</p>
+      ) : null}
     </div>
   );
 }
@@ -181,11 +189,18 @@ export function PaymentRow({
   const validateReadiness = useValidatePaymentExecutionReadiness();
   const createInstruction = useCreatePaymentExecutionInstruction();
   const markPaidManual = useMarkPaymentPaidManual();
+  const { permissions } = usePermissions();
+  const canExecuteManual =
+    permissions == null || permissions.permissions.Approve === true;
   const [readinessResult, setReadinessResult] = useState<PaymentExecutionReadinessResponse | null>(
     null
   );
   const [showMarkPaid, setShowMarkPaid] = useState(false);
   const [manualReference, setManualReference] = useState("");
+  const [manualProofReference, setManualProofReference] = useState("");
+  const [manualPaidDate, setManualPaidDate] = useState(
+    () => new Date().toISOString().slice(0, 10)
+  );
   const [manualNote, setManualNote] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -194,9 +209,11 @@ export function PaymentRow({
   const canCreateInstruction =
     p.tab === "scheduled" &&
     manualExecutionEnabled &&
+    canExecuteManual &&
     !p.executionInstruction &&
-    (p.executionReadinessStatus === "manual_instruction_available" || manualExecutionEnabled);
-  const canMarkPaidManual = p.tab === "scheduled" && !!p.executionInstruction;
+    p.executionReadinessStatus === "manual_instruction_available";
+  const canMarkPaidManual =
+    p.tab === "scheduled" && !!p.executionInstruction && canExecuteManual;
 
   const handleValidate = async () => {
     setReadinessResult(null);
@@ -219,12 +236,21 @@ export function PaymentRow({
 
   const handleMarkPaidManual = async () => {
     const reference = manualReference.trim();
+    const proofReference = manualProofReference.trim();
     if (!reference) {
-      setActionError("A manual payment reference is required");
+      setActionError("Payment/reference number is required");
+      return;
+    }
+    if (!proofReference) {
+      setActionError("Proof/reference is required");
+      return;
+    }
+    if (!manualPaidDate) {
+      setActionError("Paid date is required");
       return;
     }
     const confirmed = window.confirm(
-      "This only records the payment as paid in LedgerLink. It does not move funds.\n\nContinue?"
+      "This records the payment as paid in LedgerLink only. Funds must be paid externally by the client. LedgerLink does not move money.\n\nContinue?"
     );
     if (!confirmed) return;
 
@@ -234,11 +260,14 @@ export function PaymentRow({
         paymentId: Number(p.id),
         body: {
           reference,
+          paid_date: manualPaidDate,
+          proof_reference: proofReference,
           note: manualNote.trim() || undefined,
         },
       });
       setShowMarkPaid(false);
       setManualReference("");
+      setManualProofReference("");
       setManualNote("");
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not mark payment paid");
@@ -358,6 +387,12 @@ export function PaymentRow({
           </Button>
         )}
 
+        {!canExecuteManual && p.tab === "scheduled" && manualExecutionEnabled ? (
+          <span className="text-xs text-muted-foreground">
+            Tenant Admin or Approver role required for payment execution.
+          </span>
+        ) : null}
+
         {p.tab === "scheduled" && paymentsExecutionEnabled && (
           <Button
             size="sm"
@@ -404,14 +439,29 @@ export function PaymentRow({
           data-testid={`payment-mark-paid-form-${p.id}`}
         >
           <p className="text-xs text-muted-foreground">
-            This only records the payment as paid in LedgerLink. It does not move funds.
+            This records the payment as paid in LedgerLink only. Funds must be paid externally by
+            the client. LedgerLink does not move money.
           </p>
           <Input
             value={manualReference}
             onChange={(e) => setManualReference(e.target.value)}
-            placeholder="Bank transfer reference (required)"
+            placeholder="Payment/reference number (required)"
             className="h-8 text-xs"
             data-testid={`input-mark-paid-reference-${p.id}`}
+          />
+          <Input
+            type="date"
+            value={manualPaidDate}
+            onChange={(e) => setManualPaidDate(e.target.value)}
+            className="h-8 text-xs"
+            data-testid={`input-mark-paid-date-${p.id}`}
+          />
+          <Input
+            value={manualProofReference}
+            onChange={(e) => setManualProofReference(e.target.value)}
+            placeholder="Proof/reference (required)"
+            className="h-8 text-xs"
+            data-testid={`input-mark-paid-proof-${p.id}`}
           />
           <Input
             value={manualNote}
