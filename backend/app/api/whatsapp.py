@@ -267,14 +267,15 @@ async def process_whatsapp_payload(payload: dict) -> None:
                     msg=msg,
                     access_token=token,
                 )
+                queued_invoice_ids = list(result.invoice_ids or [])
 
-                for invoice_id in result.invoice_ids or []:
-                    asyncio.create_task(
-                        process_invoice_background(
-                            invoice_id,
-                            tenant_id=connection.tenant_id,
-                        )
+            for invoice_id in queued_invoice_ids:
+                asyncio.create_task(
+                    process_invoice_background(
+                        invoice_id,
+                        tenant_id=connection.tenant_id,
                     )
+                )
 
             logger.info(
                 "whatsapp_message_processed",

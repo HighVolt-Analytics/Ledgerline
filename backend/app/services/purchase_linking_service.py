@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
+from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.po_reference import effective_po_reference, is_plausible_po_reference
 
 _ACTIVE_SKIP = {
@@ -118,11 +119,21 @@ async def attach_grn_invoice_to_po(
     ).scalar_one_or_none()
     grn_invoice = loaded or grn_invoice
     qty, _, _ = _invoice_qty_and_price(grn_invoice)
+    first_line = grn_invoice.line_items[0] if grn_invoice.line_items else None
+    from app.services.uom_conversion_service import infer_uom_from_description
+
+    grn_uom = getattr(po, "po_uom", None)
+    if first_line:
+        grn_uom = getattr(first_line, "uom", None) or infer_uom_from_description(
+            first_line.description
+        ) or grn_uom
 
     grn = GoodsReceipt(
         tenant_id=po.tenant_id,
         purchase_order_id=po.id,
         grn_qty=qty,
+        grn_uom=grn_uom,
+        grn_currency=getattr(grn_invoice, "currency", None) or "AUD",
         grn_date=grn_invoice.invoice_date,
         receiver=None,
         condition_note="Linked via invoice_no bridge",
@@ -138,6 +149,7 @@ async def bridge_orphan_grns_via_commercial_invoice(
     *,
     commercial: Invoice,
     po,
+    config: RuleBookConfigPayload | None = None,
 ) -> list[Invoice]:
     """
     Invoice → GRN via invoice_no, then GRN → PO through the commercial invoice bridge.
@@ -153,7 +165,7 @@ async def bridge_orphan_grns_via_commercial_invoice(
     )
     for grn_invoice in candidates:
         await attach_grn_invoice_to_po(session, grn_invoice=grn_invoice, po=po)
-        inherit_po_coding_to_invoice(po, grn_invoice)
+        inherit_po_coding_to_invoice(po, grn_invoice, config=config)
         linked.append(grn_invoice)
     return linked
 

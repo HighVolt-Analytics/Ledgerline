@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from sqlalchemy import select
@@ -25,6 +26,9 @@ _RULE_LIST_KEYS = (
 )
 
 _SCALAR_KEYS = (
+    "document_classification",
+    "org_context",
+    "ai_classification",
     "vendor_detection_config",
     "posting_defaults",
     "legacy_cascade",
@@ -262,7 +266,7 @@ def extract_rule_book_content_from_audit_detail(
 
 async def fetch_last_rule_book_updated(
     session: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
 ) -> AuditLog | None:
     return (
         await session.execute(
@@ -279,7 +283,7 @@ async def fetch_last_rule_book_updated(
 
 async def is_duplicate_rule_book_update(
     session: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     incoming_content: dict[str, Any],
 ) -> bool:
     """True when incoming config matches the last persisted rule_book_updated snapshot."""
@@ -304,7 +308,7 @@ async def is_duplicate_rule_book_update(
 async def log_rule_book_updated(
     session: AsyncSession,
     *,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     after_config: dict[str, Any],
     detail: dict[str, Any],
     actor_name: str | None = None,

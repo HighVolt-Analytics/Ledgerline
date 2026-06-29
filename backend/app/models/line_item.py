@@ -4,7 +4,7 @@ import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Numeric, Text, Uuid
+from sqlalchemy import ForeignKey, Numeric, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -31,5 +31,7 @@ class LineItem(Base):
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     tax_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    uom: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sku: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="line_items")

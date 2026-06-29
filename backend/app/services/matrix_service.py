@@ -46,6 +46,10 @@ def derive_matrix_flag(inv: Invoice) -> tuple[str, str | None]:
         return "Quarantined", "Invoice rejected and quarantined"
     if inv.status == InvoiceStatus.EXCEPTION:
         return "Anomaly Detected", _first_validation_failure(inv) or "Routed to exception review"
+    if inv.evaluation_status == "needs_rescan":
+        return "Anomaly Detected", "Poor image quality — rescan required"
+    if inv.evaluation_status == "awaiting_classification":
+        return "Anomaly Detected", "Document type not classified — review required"
     if inv.evaluation_status == "pending_vendor":
         return "Anomaly Detected", "Vendor could not be matched confidently"
     if inv.evaluation_status == "unmatched_expense_vendor":
@@ -85,7 +89,13 @@ def derive_matrix_payment_status(inv: Invoice, payment: Payment | None) -> str:
         InvoiceStatus.REJECTED,
     ):
         return "On Hold"
-    if inv.evaluation_status in ("needs_review", "pending_vendor", "unmatched_expense_vendor"):
+    if inv.evaluation_status in (
+        "needs_review",
+        "pending_vendor",
+        "unmatched_expense_vendor",
+        "awaiting_classification",
+        "needs_rescan",
+    ):
         if inv.status != InvoiceStatus.PROCESSED:
             return "On Hold"
     if inv.status == InvoiceStatus.PROCESSED and inv.due_date is not None:

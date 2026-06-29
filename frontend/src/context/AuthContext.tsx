@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ApiError, api, setAuthToken, setAuthUser, setUnauthorizedHandler } from "@/api/client";
+import { ApiError, api, clearGetCache, setAuthToken, setAuthUser, setUnauthorizedHandler } from "@/api/client";
 import type { AuthUser } from "@/api/types";
 import {
   apiLogin,
@@ -24,9 +24,10 @@ import {
   getStoredMemberships,
   getStoredUser,
   persistAuthSuccess,
+  PROFILE_UPDATED_EVENT,
   rememberLastTenant,
 } from "@/lib/authSession";
-import { isTokenExpired, userFromToken } from "@/lib/authToken";
+import { isTokenExpired, mergeStoredUserWithToken, userFromToken } from "@/lib/authToken";
 import { refreshAccessTokenSingleFlight } from "@/lib/authTokenRefresh";
 import { homePathForRole } from "@/lib/roles";
 import { withRouterBasename } from "@/lib/routerBasename";
@@ -160,14 +161,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const refreshUser = useCallback(async () => {
+    clearGetCache();
     const me = await api.me();
     setUser(me);
     setAuthUser(me);
     const refresh = getRefreshToken();
     const access = getAccessToken();
-    if (access && refresh) {
-      persistAuthSuccess({ access_token: access, refresh_token: refresh, user: me });
+    let memberships = getStoredMemberships();
+    if (access) {
+      try {
+        memberships = await fetchMyMemberships(access);
+        sessionStorage.setItem("ledgerline_memberships", JSON.stringify(memberships));
+      } catch {
+        memberships = memberships.map((m) =>
+          m.tenant_id === me.tenant_id ? { ...m, tenant_name: me.tenant_name } : m
+        );
+        if (memberships.some((m) => m.tenant_id === me.tenant_id)) {
+          sessionStorage.setItem("ledgerline_memberships", JSON.stringify(memberships));
+        }
+      }
     }
+    if (access && refresh) {
+      persistAuthSuccess({
+        access_token: access,
+        refresh_token: refresh,
+        user: me,
+        memberships,
+      });
+    }
+    queryClient.invalidateQueries();
+    window.dispatchEvent(new CustomEvent(PROFILE_UPDATED_EVENT, { detail: { user: me } }));
   }, []);
 
   useEffect(() => {
@@ -183,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const tokenProfile = access ? userFromToken(access) : null;
         const initial =
           tokenProfile && stored
-            ? { ...stored, ...tokenProfile, tenant_id: tokenProfile.tenant_id }
+            ? mergeStoredUserWithToken(stored, tokenProfile)
             : tokenProfile ?? stored;
         if (initial) {
           setUser(initial);
@@ -230,7 +253,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const storedUser = getStoredUser();
       const initialUser =
         tokenProfile && storedUser
-          ? { ...storedUser, ...tokenProfile, tenant_id: tokenProfile.tenant_id }
+          ? mergeStoredUserWithToken(storedUser, tokenProfile)
           : tokenProfile ?? storedUser;
       if (initialUser) {
         setAuthUser(initialUser);
@@ -242,6 +265,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           setUser(me);
           setAuthUser(me);
+          persistAuthSuccess({
+            access_token: access,
+            refresh_token: refresh,
+            user: me,
+            memberships: getStoredMemberships(),
+          });
         }
         if (!cancelled && getStoredMemberships().length === 0) {
           const memberships = await fetchMyMemberships(access);

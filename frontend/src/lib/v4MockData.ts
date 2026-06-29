@@ -251,14 +251,6 @@ export const PAYMENT_TABS: { value: PaymentTab; label: string }[] = [
   { value: "failed", label: "Failed" },
 ];
 
-export const SANDBOX_APPROVER_ID = "u2";
-
-export const SANDBOX_CURRENT_USER = {
-  id: SANDBOX_APPROVER_ID,
-  name: "Marcus Webb",
-  role: "Finance Lead",
-};
-
 export const MOCK_LEDGER_RECON: LedgerRecon = {
   balanced: true,
   deltaDrCr: 0,

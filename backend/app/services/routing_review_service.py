@@ -1,10 +1,11 @@
-"""Review gates after document-type classification and GL mapping."""
+"""Review gates after LLM + policy document-type classification."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 from app.models.invoice import Invoice
+from app.schemas.classification_decision import ClassificationDecision
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.document_type_catalog import get_document_type_definition
 from app.services.document_type_classifier import DocumentTypeClassification
@@ -28,7 +29,7 @@ def is_posting_document_type(
         tenant_id=tenant_id,
     )
     if definition is None:
-        return True
+        return False
     return (definition.posting or "").strip().lower() == "yes"
 
 
@@ -37,7 +38,24 @@ def routing_target_missing(invoice: Invoice) -> bool:
 
 
 def classification_unmatched(classification: DocumentTypeClassification) -> bool:
-    return "no classifier matched" in (classification.reason or "").lower()
+    return not (classification.code or "").strip()
+
+
+def requires_classification_review_v2(decision: ClassificationDecision) -> bool:
+    """Block downstream pipeline until LLM + policy classification passes."""
+    return not decision.auto_eligible
+
+
+def requires_classification_review(
+    invoice: Invoice,
+    classification: DocumentTypeClassification,
+) -> bool:
+    """Legacy gate — prefer requires_classification_review_v2 for LLM pipeline."""
+    if classification_unmatched(classification):
+        return True
+    if classification.needs_review:
+        return True
+    return routing_target_missing(invoice)
 
 
 def requires_playbook_review(
@@ -48,20 +66,10 @@ def requires_playbook_review(
     if playbook is None or not playbook.blocks_posting:
         return False
     if definition is not None and not should_enforce_bundle_mandatory(definition):
+        if playbook.missing_extraction_fields and not playbook.missing_bundle_mandatory:
+            return True
         return False
     return True
-
-
-def requires_classification_review(
-    invoice: Invoice,
-    classification: DocumentTypeClassification,
-) -> bool:
-    """Block downstream pipeline until document type and route are confident."""
-    if classification_unmatched(classification):
-        return True
-    if classification.needs_review:
-        return True
-    return routing_target_missing(invoice)
 
 
 def requires_routing_review(
@@ -70,7 +78,10 @@ def requires_routing_review(
     *,
     playbook: PlaybookGateResult | None = None,
     definition: DocumentTypeDefinition | None = None,
+    decision: ClassificationDecision | None = None,
 ) -> bool:
+    if decision is not None and requires_classification_review_v2(decision):
+        return True
     if requires_playbook_review(playbook, definition=definition):
         return True
     return requires_classification_review(invoice, classification)
@@ -81,11 +92,12 @@ def requires_gl_mapping_review(
     mapping_detail: MappingDetail,
     *,
     document_types: Sequence[DocumentTypeDefinition] | None = None,
+    tenant_id: int | None = None,
 ) -> bool:
     if mapping_detail.rule_type != FALLBACK_RULE_TYPE:
         return False
     return is_posting_document_type(
         invoice.document_type_code,
         document_types=document_types,
-        tenant_id=invoice.tenant_id,
+        tenant_id=tenant_id,
     )

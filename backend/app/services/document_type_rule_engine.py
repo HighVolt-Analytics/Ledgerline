@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeDefinition
+from app.schemas.ocr_artifact import OcrArtifact
 from app.services.capture_channel import infer_capture_channel
 from app.services.document_heading_utils import extract_document_heading_signals, infer_page_document_kind
+from app.services.extraction_field_values import (
+    extracted_fields_from_invoice,
+    extracted_fields_from_parsed,
+    merge_extracted_field_maps,
+)
 from app.services.heading_kind_recognition import NON_INVOICE_NUMBER_KINDS
-from app.services.document_text import cap_document_text
 from app.services.invoice_data import InvoiceData
 from app.services.po_reference import is_plausible_po_reference
 from app.services.purchase_document_service import (
@@ -35,9 +42,31 @@ class DocumentClassifierContext:
     document_text: str
     abn: str
     capture_channel: str
+    invoice_date: str
+    due_date: str
+    total: str
+    subtotal: str
+    gst: str
+    billing_address: str
+    cost_centre: str
+    account_code: str
+    account_name: str
+    bank_details: str
+    currency: str
+    attachment_extension: str
     has_po_reference: str
     has_invoice_no: str
     has_total: str
+    has_abn: str
+    has_vendor: str
+    has_invoice_date: str
+    has_due_date: str
+    has_subtotal: str
+    has_gst: str
+    has_billing_address: str
+    has_bank_details: str
+    has_line_items: str
+    has_cost_centre: str
     is_commercial_invoice: str
     document_heading: str
     has_heading_invoice: str
@@ -46,10 +75,30 @@ class DocumentClassifierContext:
     has_heading_credit_note: str
     has_heading_quote: str
     has_heading_contract: str
+    extracted_fields: dict[str, str] = field(default_factory=dict)
 
 
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _date_text(value: date | None) -> str:
+    if value is None:
+        return ""
+    return value.isoformat()
+
+
+def _decimal_text(value: Decimal | None) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _attachment_extension(name: str) -> str:
+    token = (name or "").strip()
+    if not token or "." not in token:
+        return ""
+    return token.rsplit(".", 1)[-1].lower()
 
 
 def _resolved_document_text(*, invoice: Invoice, parsed: InvoiceData) -> str:
@@ -69,6 +118,26 @@ def build_document_classifier_context(
     attachment = (invoice.email_attachment_name or "").strip()
     po = (parsed.po_reference or invoice.po_reference or "").strip()
     invoice_no = (parsed.invoice_no or invoice.invoice_no or "").strip()
+    vendor = (parsed.vendor or invoice.vendor or "").strip()
+    abn = (parsed.abn or invoice.abn or "").strip()
+    billing_address = (parsed.billing_address or invoice.billing_address or "").strip()
+    cost_centre = (parsed.cost_centre or invoice.cost_centre or "").strip()
+    account_code = (invoice.account_code or "").strip()
+    account_name = (invoice.account_name or "").strip()
+    bank_bsb = (parsed.bank_bsb or invoice.bank_bsb or "").strip()
+    bank_account = (parsed.bank_account or invoice.bank_account or "").strip()
+    bank_details = " ".join(part for part in (bank_bsb, bank_account) if part)
+    invoice_date = parsed.invoice_date or invoice.invoice_date
+    due_date = parsed.due_date or invoice.due_date
+    subtotal = parsed.subtotal if parsed.subtotal is not None else invoice.subtotal
+    gst = parsed.gst if parsed.gst is not None else invoice.gst
+    total = parsed.total if parsed.total is not None else invoice.total
+    currency = (parsed.currency or invoice.currency or "AUD").strip()
+    extracted_fields = merge_extracted_field_maps(
+        extracted_fields_from_invoice(invoice),
+        extracted_fields_from_parsed(parsed),
+    )
+
     has_po = bool(po and is_plausible_po_reference(po))
     commercial = False
     if attachment and _attachment_suggests_commercial_invoice(attachment):
@@ -106,16 +175,38 @@ def build_document_classifier_context(
         attachment_name=attachment,
         email_sender=(invoice.email_sender or "").strip(),
         email_subject=(invoice.email_subject or "").strip(),
-        vendor=(parsed.vendor or invoice.vendor or "").strip(),
+        vendor=vendor,
         invoice_no=invoice_no,
         po_reference=po,
         line_text=line_text,
         document_text=document_text,
-        abn=(parsed.abn or invoice.abn or "").strip(),
+        abn=abn,
         capture_channel=channel,
+        invoice_date=_date_text(invoice_date),
+        due_date=_date_text(due_date),
+        total=_decimal_text(total),
+        subtotal=_decimal_text(subtotal),
+        gst=_decimal_text(gst),
+        billing_address=billing_address,
+        cost_centre=cost_centre,
+        account_code=account_code,
+        account_name=account_name,
+        bank_details=bank_details,
+        currency=currency,
+        attachment_extension=_attachment_extension(attachment),
         has_po_reference=_bool_text(has_po),
         has_invoice_no=_bool_text(has_invoice_number),
-        has_total=_bool_text(parsed.total is not None or invoice.total is not None),
+        has_total=_bool_text(total is not None),
+        has_abn=_bool_text(bool(abn)),
+        has_vendor=_bool_text(bool(vendor)),
+        has_invoice_date=_bool_text(invoice_date is not None),
+        has_due_date=_bool_text(due_date is not None),
+        has_subtotal=_bool_text(subtotal is not None),
+        has_gst=_bool_text(gst is not None),
+        has_billing_address=_bool_text(bool(billing_address)),
+        has_bank_details=_bool_text(bool(bank_details)),
+        has_line_items=_bool_text(bool(parsed.line_items)),
+        has_cost_centre=_bool_text(bool(cost_centre)),
         is_commercial_invoice=_bool_text(commercial),
         document_heading=(parsed.document_heading or heading_signals.primary_label or "").strip(),
         has_heading_invoice=_bool_text(heading_signals.has_heading_invoice),
@@ -124,11 +215,12 @@ def build_document_classifier_context(
         has_heading_credit_note=_bool_text(heading_signals.has_heading_credit_note),
         has_heading_quote=_bool_text(heading_signals.has_heading_quote),
         has_heading_contract=_bool_text(heading_signals.has_heading_contract),
+        extracted_fields=extracted_fields,
     )
 
 
-def _document_field(ctx: DocumentClassifierContext, field: str) -> str:
-    mapping = {
+def _static_document_field_mapping(ctx: DocumentClassifierContext) -> dict[str, str]:
+    return {
         "attachment_name": ctx.attachment_name,
         "email_sender": ctx.email_sender,
         "email_subject": ctx.email_subject,
@@ -139,9 +231,31 @@ def _document_field(ctx: DocumentClassifierContext, field: str) -> str:
         "document_text": ctx.document_text,
         "abn": ctx.abn,
         "capture_channel": ctx.capture_channel,
+        "invoice_date": ctx.invoice_date,
+        "due_date": ctx.due_date,
+        "total": ctx.total,
+        "subtotal": ctx.subtotal,
+        "gst": ctx.gst,
+        "billing_address": ctx.billing_address,
+        "cost_centre": ctx.cost_centre,
+        "account_code": ctx.account_code,
+        "account_name": ctx.account_name,
+        "bank_details": ctx.bank_details,
+        "currency": ctx.currency,
+        "attachment_extension": ctx.attachment_extension,
         "has_po_reference": ctx.has_po_reference,
         "has_invoice_no": ctx.has_invoice_no,
         "has_total": ctx.has_total,
+        "has_abn": ctx.has_abn,
+        "has_vendor": ctx.has_vendor,
+        "has_invoice_date": ctx.has_invoice_date,
+        "has_due_date": ctx.has_due_date,
+        "has_subtotal": ctx.has_subtotal,
+        "has_gst": ctx.has_gst,
+        "has_billing_address": ctx.has_billing_address,
+        "has_bank_details": ctx.has_bank_details,
+        "has_line_items": ctx.has_line_items,
+        "has_cost_centre": ctx.has_cost_centre,
         "is_commercial_invoice": ctx.is_commercial_invoice,
         "document_heading": ctx.document_heading,
         "has_heading_invoice": ctx.has_heading_invoice,
@@ -151,7 +265,22 @@ def _document_field(ctx: DocumentClassifierContext, field: str) -> str:
         "has_heading_quote": ctx.has_heading_quote,
         "has_heading_contract": ctx.has_heading_contract,
     }
-    return mapping.get(field, "")
+
+
+def _document_field(ctx: DocumentClassifierContext, field: str) -> str:
+    key = (field or "").strip()
+    if not key:
+        return ""
+    mapping = _static_document_field_mapping(ctx)
+    if key in mapping:
+        return mapping[key]
+    if key.startswith("has_"):
+        base = key[4:]
+        if base in mapping:
+            return _bool_text(bool(str(mapping[base]).strip()))
+        custom_val = ctx.extracted_fields.get(base, "")
+        return _bool_text(bool(str(custom_val).strip()))
+    return ctx.extracted_fields.get(key, "")
 
 
 def _classifier_has_conditions(root: dict[str, Any]) -> bool:
@@ -201,3 +330,44 @@ def match_configured_document_type(
     if not matches:
         return None
     return matches[0]
+
+
+def build_classifier_context_from_ocr(
+    *,
+    invoice: Invoice,
+    ocr: OcrArtifact,
+) -> DocumentClassifierContext:
+    """Pre-extract classifier context from OCR artifact only."""
+    text = (ocr.text or "").strip()
+    heading = ""
+    if isinstance(ocr.payload_json, dict):
+        heading = str(ocr.payload_json.get("document_heading") or "").strip()
+    if not heading:
+        signals = extract_document_heading_signals(text)
+        heading = signals.primary_label or ""
+    parsed = InvoiceData(document_text=text, document_heading=heading or None)
+    return build_document_classifier_context(invoice=invoice, parsed=parsed)
+
+
+def is_user_defined_document_type(defn: DocumentTypeDefinition) -> bool:
+    """Org custom type vs shipped matrix template."""
+    if defn.classifier_customized:
+        return True
+    token = (defn.matrix_template_code or "").strip()
+    return not token
+
+
+def classifier_rules_match_ocr(
+    defn: DocumentTypeDefinition,
+    *,
+    invoice: Invoice,
+    ocr: OcrArtifact,
+) -> bool:
+    classifier = defn.classifier
+    if not classifier.enabled or not classifier_has_actionable_conditions(classifier.root):
+        return True
+    ctx = build_classifier_context_from_ocr(invoice=invoice, ocr=ocr)
+    return eval_condition_group_generic(
+        classifier.root,
+        field_resolver=lambda field, _ctx=ctx: _document_field(_ctx, field),
+    )

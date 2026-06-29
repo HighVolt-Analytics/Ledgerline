@@ -9,6 +9,7 @@ from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
 
 PipelineStageState = Literal["done", "pending", "fail", "skipped"]
+ApprovalBoardColumn = Literal["review", "processing", "approved", "rejected"]
 
 
 class InvoiceStatus(str, Enum):
@@ -27,9 +28,22 @@ class InvoiceStatus(str, Enum):
 class EvaluationStatus(str, Enum):
     AUTO_CODED = "auto_coded"
     NEEDS_REVIEW = "needs_review"
+    AWAITING_CLASSIFICATION = "awaiting_classification"
+    NEEDS_RESCAN = "needs_rescan"
     PENDING_VENDOR = "pending_vendor"
     UNMATCHED_EXPENSE_VENDOR = "unmatched_expense_vendor"
     AWAITING_PO = "awaiting_po"
+
+
+def parse_evaluation_status(raw: str | None) -> EvaluationStatus | None:
+    """Map DB evaluation_status without raising on unknown legacy values."""
+    if not raw:
+        return None
+    normalized = raw.strip().lower()
+    for member in EvaluationStatus:
+        if member.value == normalized:
+            return member
+    return EvaluationStatus.NEEDS_REVIEW
 
 
 class ValidationResultItem(BaseModel):
@@ -71,6 +85,8 @@ class InvoiceResponse(BaseModel):
     purchase_document_type: str | None = None
     document_type_code: str | None = None
     document_type_confidence: float | None = None
+    llm_suggested_dt: str | None = None
+    llm_confidence: float | None = None
     document_type_extraction_fields: list[str] | None = None
     bank_bsb: str | None = None
     bank_account: str | None = None
@@ -78,6 +94,8 @@ class InvoiceResponse(BaseModel):
     billing_address: str | None = None
     email_subject: str | None = None
     document_text: str | None = None
+    document_heading: str | None = None
+    extracted_fields: dict[str, str] | None = None
     validation_results: list[ValidationResultItem] | None = None
     extraction_field_confidence: dict[str, float] | None = None
     created_at: datetime
@@ -85,6 +103,7 @@ class InvoiceResponse(BaseModel):
     published_to_ledger: bool = False
     current_stage: str = "Received"
     current_stage_state: PipelineStageState = "pending"
+    approval_board_column: ApprovalBoardColumn | None = None
 
 
 class InvoiceWithDetails(InvoiceResponse):

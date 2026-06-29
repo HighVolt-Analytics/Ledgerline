@@ -1,14 +1,11 @@
 /**
  * Simple-mode recognition signals per shipped DT code (Excel / v5 matrix).
- * Labels and hints come from the recognition signal catalog API.
  */
 
-import type { ClassifierLayout, RecognitionSignalId } from "@/lib/documentClassifierBuilder";
 import type { PurchaseBundleRole } from "@/lib/documentBundleConfig";
-import {
-  getRecognitionSignalCatalog,
-  recognitionSignalOptions,
-} from "@/lib/recognitionSignalCatalog";
+
+export type ClassifierLayout = "any_signal" | "all_signals" | "supporting_doc";
+export type RecognitionSignalId = string;
 
 export type RouteConfidencePreset = "flexible" | "standard" | "strict";
 
@@ -185,17 +182,11 @@ export const TEMPLATE_SIGNAL_META: Record<string, TemplateSignalMetaRaw> = {
 };
 
 function hydrateSignalOptions(ids: RecognitionSignalId[]): RecognitionSignalOption[] {
-  const catalog = getRecognitionSignalCatalog();
-  const byId = new Map(recognitionSignalOptions(catalog).map((row) => [row.id, row]));
-  return ids.map((id) => {
-    const row = byId.get(id);
-    if (row) return row;
-    return {
-      id,
-      label: id.replace(/_/g, " "),
-      hint: "",
-    };
-  });
+  return ids.map((id) => ({
+    id,
+    label: id.replace(/_/g, " "),
+    hint: "",
+  }));
 }
 
 export type TemplateSignalMetaHydrated = TemplateSignalMeta & {
@@ -211,12 +202,8 @@ export function templateSignalMetaForCode(code: string): TemplateSignalMetaHydra
   };
 }
 
-/** Union of every shipped-template recognition signal (for custom / sample-applied types). */
+/** Union of every shipped-template recognition signal (for custom types). */
 export function allRecognitionSignalOptions(): RecognitionSignalOption[] {
-  const fromCatalog = recognitionSignalOptions();
-  if (fromCatalog.length > 0) {
-    return fromCatalog;
-  }
   const byId = new Map<string, RecognitionSignalOption>();
   for (const meta of Object.values(TEMPLATE_SIGNAL_META)) {
     for (const signal of hydrateSignalOptions(meta.signalIds)) {

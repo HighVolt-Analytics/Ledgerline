@@ -215,6 +215,69 @@ class Settings(BaseSettings):
         le=120,
         validation_alias="SAMPLE_PROPOSAL_LLM_TIMEOUT_SECONDS",
     )
+    runtime_llm_enabled: bool = Field(
+        default=True,
+        validation_alias="RUNTIME_LLM_ENABLED",
+    )
+    runtime_llm_timeout_seconds: int = Field(
+        default=45,
+        ge=5,
+        le=180,
+        validation_alias="RUNTIME_LLM_TIMEOUT_SECONDS",
+    )
+    runtime_llm_min_confidence: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        validation_alias="RUNTIME_LLM_MIN_CONFIDENCE",
+    )
+    google_gemini_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "GOOGLE_GEMINI_API_KEY",
+            "GEMINI_API_KEY",
+        ),
+    )
+    gemini_vision_model: str = Field(
+        default="gemini-2.5-flash",
+        validation_alias="GEMINI_VISION_MODEL",
+    )
+    vision_llm_provider: str = Field(
+        default="azure_di",
+        validation_alias="VISION_LLM_PROVIDER",
+        description="Default vision document AI: azure_di | azure_foundry | gemini_vision",
+    )
+    azure_ai_foundry_endpoint: str = Field(
+        default="",
+        validation_alias="AZURE_AI_FOUNDRY_ENDPOINT",
+    )
+    azure_ai_foundry_api_key: str = Field(
+        default="",
+        validation_alias="AZURE_AI_FOUNDRY_API_KEY",
+    )
+    azure_ai_foundry_deployment: str = Field(
+        default="gpt-4o",
+        validation_alias="AZURE_AI_FOUNDRY_DEPLOYMENT",
+    )
+    azure_ai_foundry_api_version: str = Field(
+        default="2024-08-01-preview",
+        validation_alias="AZURE_AI_FOUNDRY_API_VERSION",
+    )
+    policy_min_confidence: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        validation_alias="POLICY_MIN_CONFIDENCE",
+    )
+    ocr_min_text_chars: int = Field(
+        default=80,
+        ge=0,
+        validation_alias="OCR_MIN_TEXT_CHARS",
+    )
+    llm_classification_prompt_version: str = Field(
+        default="v1",
+        validation_alias="LLM_CLASSIFICATION_PROMPT_VERSION",
+    )
     abn_validation_mode: str = Field(default="format")
     duplicate_invoice_check_enabled: bool = Field(
         default=True,
@@ -341,6 +404,10 @@ class Settings(BaseSettings):
         validation_alias="PAYMENT_EXECUTION_DISABLED",
         description="Emergency kill switch for all payment execution orchestration endpoints",
     )
+
+    # Viber Public Account Bot API
+    viber_auth_token: str = Field(default="", validation_alias="VIBER_AUTH_TOKEN")
+    viber_webhook_url: str = Field(default="", validation_alias="VIBER_WEBHOOK_URL")
 
     @field_validator("root_path", mode="before")
     @classmethod
@@ -483,6 +550,39 @@ class Settings(BaseSettings):
         return bool(self.sample_proposal_llm_enabled and self.azure_openai_configured)
 
     @property
+    def runtime_llm_available(self) -> bool:
+        return bool(self.runtime_llm_enabled and self.azure_openai_configured)
+
+    @property
+    def gemini_configured(self) -> bool:
+        return bool(self.google_gemini_api_key.strip())
+
+    @property
+    def gemini_vision_available(self) -> bool:
+        return self.gemini_configured
+
+    @property
+    def azure_foundry_vision_configured(self) -> bool:
+        return bool(
+            self.azure_ai_foundry_endpoint.strip()
+            and self.azure_ai_foundry_api_key.strip()
+            and self.azure_ai_foundry_deployment.strip()
+        )
+
+    @property
+    def azure_foundry_vision_available(self) -> bool:
+        return self.azure_foundry_vision_configured
+
+    @property
+    def default_document_ai_provider(self) -> str:
+        token = self.vision_llm_provider.strip().lower()
+        if token in {"azure_foundry", "azure_foundry_vision"}:
+            return "azure_foundry_vision"
+        if token in {"gemini", "gemini_vision"}:
+            return "gemini_vision"
+        return "azure_di"
+
+    @property
     def azure_postgres_enabled(self) -> bool:
         return "postgres.database.azure.com" in self.database_url
 
@@ -518,6 +618,14 @@ class Settings(BaseSettings):
             and self.whatsapp_effective_app_secret
             and self.whatsapp_effective_verify_token
         )
+
+    @property
+    def viber_effective_auth_token(self) -> str:
+        return self.viber_auth_token.strip()
+
+    @property
+    def viber_configured(self) -> bool:
+        return bool(self.viber_effective_auth_token)
 
     @property
     def is_production(self) -> bool:

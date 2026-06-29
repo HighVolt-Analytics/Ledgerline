@@ -9,10 +9,11 @@ import { MatrixFlagBadge } from "@/components/matrix/MatrixFlagBadge";
 import { MatrixFlagDrawer } from "@/components/matrix/MatrixFlagDrawer";
 import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
 import { MatrixStageCell } from "@/components/matrix/MatrixStageCell";
+import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
-import { MATRIX_STAGES, type MatrixStage } from "@/lib/matrix";
+import { MATRIX_STAGES, type MatrixCellState, type MatrixStage } from "@/lib/matrix";
 import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
@@ -38,10 +39,23 @@ type MatrixTableRow = {
   cells: ReturnType<typeof stagesToCells>;
   flag: MatrixFlagType;
   payment: MatrixPaymentStatus;
+  paidDate?: string | null;
   reason?: string;
   conflictWith?: string;
   conflictDetail?: import("@/lib/v4MatrixMockData").MatrixConflictRow[];
 };
+
+function isPaidThisMonth(paidDate: string | null | undefined): boolean {
+  if (!paidDate) return false;
+  const paid = new Date(paidDate);
+  if (Number.isNaN(paid.getTime())) return false;
+  const now = new Date();
+  return paid.getFullYear() === now.getFullYear() && paid.getMonth() === now.getMonth();
+}
+
+function stageBlocked(flag: MatrixFlagType, cellState: MatrixCellState | undefined): boolean {
+  return flag !== "Clean" && cellState === "pending";
+}
 
 function toFlagType(value: string): MatrixFlagType {
   if (value === "Anomaly Detected") return "Anomaly Detected";
@@ -69,6 +83,7 @@ function rowFromApi(row: MatrixRow): MatrixTableRow {
     cells: stagesToCells(row.stages),
     flag,
     payment: toPaymentStatus(row.payment_status),
+    paidDate: row.paid_date ?? null,
     reason: row.flag_reason ?? undefined,
     conflictWith: row.conflict_with ?? undefined,
     conflictDetail: row.conflict_detail?.map((line) => ({
@@ -99,6 +114,13 @@ export function DocumentMatrixPanel({
   const [toast, setToast] = useState<string | null>(null);
   const [flagDrawerId, setFlagDrawerId] = useState<number | null>(null);
   const [resolveBusy, setResolveBusy] = useState(false);
+  const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  function openInvoiceDrawer(invoiceId: number) {
+    setDrawerInvoiceId(invoiceId);
+    setDrawerOpen(true);
+  }
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     if (!options?.silent) {
@@ -162,7 +184,9 @@ export function DocumentMatrixPanel({
         if (filter === "awaiting") {
           return row.payment === "Awaiting Payment" || row.payment === "Payment Approved";
         }
-        if (filter === "paid") return row.payment === "Paid";
+        if (filter === "paid") {
+          return row.payment === "Paid" && isPaidThisMonth(row.paidDate);
+        }
         return true;
       }),
     [matrixRows, filter, searchQuery]
@@ -190,7 +214,9 @@ export function DocumentMatrixPanel({
       awaiting: matrixRows.filter(
         (r) => r.payment === "Awaiting Payment" || r.payment === "Payment Approved"
       ).length,
-      paid: matrixRows.filter((r) => r.payment === "Paid").length,
+      paid: matrixRows.filter(
+        (r) => r.payment === "Paid" && isPaidThisMonth(r.paidDate)
+      ).length,
     }),
     [matrixRows]
   );
@@ -213,7 +239,9 @@ export function DocumentMatrixPanel({
           await api.triggerProcess();
           setToast(`${documentDisplayRef(inv)} approved for reprocessing`);
         } else {
-          setToast(`${documentDisplayRef(inv)} marked as reviewed`);
+          setToast(`${documentDisplayRef(inv)} — open the document to resolve routing or mapping`);
+          setFlagDrawerId(null);
+          openInvoiceDrawer(inv.id);
         }
       } else if (action === "duplicate") {
         if (inv.status === "duplicate_skipped" || inv.status === "rejected") {
@@ -349,7 +377,20 @@ export function DocumentMatrixPanel({
                   (stage) => cells[stage as MatrixStage]?.state === "done"
                 ).length;
                 return (
-                  <div key={inv.id} className="px-3 py-3">
+                  <div
+                    key={inv.id}
+                    className="px-3 py-3 cursor-pointer hover:bg-muted/40"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openInvoiceDrawer(inv.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openInvoiceDrawer(inv.id);
+                      }
+                    }}
+                    data-testid={`matrix-row-${docRef}`}
+                  >
                     <div className="flex items-start justify-between gap-3 min-w-0">
                       <div className="min-w-0 flex-1">
                         <div className="font-medium tnum">{docRef}</div>
@@ -370,7 +411,10 @@ export function DocumentMatrixPanel({
                       {flagged ? (
                         <button
                           type="button"
-                          onClick={() => setFlagDrawerId(inv.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFlagDrawerId(inv.id);
+                          }}
                           data-testid={`matrix-flag-${docRef}`}
                           className="text-left"
                         >
@@ -423,7 +467,9 @@ export function DocumentMatrixPanel({
                     return (
                       <tr
                         key={inv.id}
-                        className="row-band border-b border-border/60 last:border-0"
+                        className="row-band border-b border-border/60 last:border-0 cursor-pointer hover:bg-muted/30"
+                        onClick={() => openInvoiceDrawer(inv.id)}
+                        data-testid={`matrix-row-${docRef}`}
                       >
                         <td className="px-4 py-2 sticky left-0 bg-card z-10">
                           <div className="font-medium tnum">{docRef}</div>
@@ -435,12 +481,15 @@ export function DocumentMatrixPanel({
                           {inv.vendor ?? "—"}
                         </td>
                         {MATRIX_STAGES.map((stage) => {
-                          const blocked = flagged && (stage === "Approved" || stage === "Posted");
+                          const cell = cells[stage as MatrixStage];
+                          const blocked =
+                            (stage === "Approved" || stage === "Posted") &&
+                            stageBlocked(flag, cell?.state);
                           return (
                             <td key={stage} className="px-3 py-2 text-center">
                               <MatrixStageCell
                                 stage={stage as MatrixStage}
-                                cell={cells[stage as MatrixStage]}
+                                cell={cell}
                                 blocked={blocked}
                                 flag={flag}
                               />
@@ -451,7 +500,10 @@ export function DocumentMatrixPanel({
                           {flagged ? (
                             <button
                               type="button"
-                              onClick={() => setFlagDrawerId(inv.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFlagDrawerId(inv.id);
+                              }}
                               data-testid={`matrix-flag-${docRef}`}
                               className="text-left"
                             >
@@ -555,6 +607,16 @@ export function DocumentMatrixPanel({
           const inv = flagDrawerRow?.inv;
           if (inv) void resolveFlag(inv, action);
         }}
+      />
+
+      <InvoiceDetailDrawer
+        invoiceId={drawerInvoiceId}
+        open={drawerOpen}
+        onClose={() => {
+          setDrawerOpen(false);
+          setDrawerInvoiceId(null);
+        }}
+        onUpdated={() => void load({ silent: true, fresh: true })}
       />
     </div>
   );

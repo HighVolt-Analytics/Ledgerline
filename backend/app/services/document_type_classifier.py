@@ -249,6 +249,47 @@ def classify_document_type(
     return _unclassified_result(unclassified, document_types)
 
 
+def score_classifier_policy_matches(
+    *,
+    document_types: Sequence[DocumentTypeDefinition],
+    invoice: Invoice,
+    parsed: InvoiceData,
+    parse_confidence: ParseConfidence | None = None,
+    heading_kind=None,
+):
+    """Map classifier tree matches to policy scores for compare step."""
+    from app.schemas.classification_decision import PolicyDtScore, PolicyScoreResult
+
+    scored = _score_all_configured_matches(
+        document_types=document_types,
+        invoice=invoice,
+        parsed=parsed,
+        parse_confidence=parse_confidence,
+        heading_kind=heading_kind,
+    )
+    if not scored:
+        return None
+
+    policy_scores: list[PolicyDtScore] = []
+    for definition, breakdown, _source in scored:
+        policy_scores.append(
+            PolicyDtScore(
+                code=definition.code.strip().upper(),
+                confidence=breakdown.confidence,
+                required_present=list(breakdown.required_present),
+                required_missing=list(breakdown.required_missing),
+                absent_violations=list(breakdown.absent_violations),
+            )
+        )
+    ordered = sorted(policy_scores, key=lambda row: row.confidence, reverse=True)
+    winner = ordered[0]
+    return PolicyScoreResult(
+        winner_dt=winner.code,
+        winner_confidence=winner.confidence,
+        scores=ordered,
+    )
+
+
 def apply_document_type_classification(
     invoice: Invoice,
     result: DocumentTypeClassification,

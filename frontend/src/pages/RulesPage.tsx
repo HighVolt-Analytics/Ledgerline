@@ -15,6 +15,7 @@ import { PageLoader } from "@/components/PageLoader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Card } from "@/components/ui/card";
 import { DocumentTypesTab } from "@/components/rule-book/DocumentTypesTab";
+import { AiClassificationSettingsPanel } from "@/components/rule-book/AiClassificationSettingsPanel";
 import { IngestionTab } from "@/components/rule-book/IngestionTab";
 import { EmployeesTab } from "@/components/rule-book/EmployeesTab";
 import { ExpensesRulesTab } from "@/components/rule-book/ExpensesRulesTab";
@@ -23,6 +24,7 @@ import { RuleChangeHistory } from "@/components/rule-book/RuleChangeHistory";
 import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
 import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
 import { PurchaseRulesTab } from "@/components/rule-book/PurchaseRulesTab";
+import { PurchaseMatchSettingsPanel } from "@/components/rule-book/PurchaseMatchSettingsPanel";
 import { TeamExpensesRulesTab } from "@/components/rule-book/TeamExpensesRulesTab";
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
@@ -56,25 +58,13 @@ export function RulesPage() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<RuleBookConfigState | null>(null);
 
+  const tenantId = user?.tenant_id ?? null;
   const { data, isLoading, isError } = useRuleBookConfig(Boolean(user));
   useRecognitionSignalCatalog(Boolean(user));
   const { data: vendorMasters = [] } = useVendorMasters(Boolean(user));
   const { data: employeeMasters = [] } = useEmployeeMasters(Boolean(user));
   const saveMutation = useSaveRuleBookConfig();
   const deleteDocumentTypeMutation = useDeleteRuleBookDocumentType();
-
-  useEffect(() => {
-    if (!data || hydratedRef.current) return;
-    setRuleBook(data);
-    hydratedRef.current = true;
-  }, [data]);
-
-  useEffect(() => {
-    if (!user) {
-      hydratedRef.current = false;
-      setRuleBook(null);
-    }
-  }, [user]);
 
   const cancelPendingSave = () => {
     if (saveTimerRef.current) {
@@ -83,6 +73,26 @@ export function RulesPage() {
     }
     pendingSaveRef.current = null;
   };
+
+  useEffect(() => {
+    hydratedRef.current = false;
+    setRuleBook(null);
+    cancelPendingSave();
+    setSaveState("idle");
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (!data || hydratedRef.current) return;
+    setRuleBook(data);
+    hydratedRef.current = true;
+  }, [data, tenantId]);
+
+  useEffect(() => {
+    if (!user) {
+      hydratedRef.current = false;
+      setRuleBook(null);
+    }
+  }, [user]);
 
   const flushSave = (next: RuleBookConfigState) => {
     pendingSaveRef.current = next;
@@ -211,6 +221,16 @@ export function RulesPage() {
 
       <div className={!canEdit ? "pointer-events-none opacity-90" : undefined}>
       <PageTabPanel value="document-types" active={tab} className="mt-0">
+        <AiClassificationSettingsPanel
+          value={
+            ruleBook.aiClassification ?? {
+              documentAiProvider: "azure_di",
+              autoRouteMinConfidence: 0.85,
+            }
+          }
+          onChange={(aiClassification) => patch({ aiClassification })}
+          canEdit={canEdit}
+        />
         <DocumentTypesTab
           documentTypes={ruleBook.documentTypes}
           onChange={(documentTypes) => patch({ documentTypes })}
@@ -245,7 +265,11 @@ export function RulesPage() {
           onChange={(emailCaptureRules) => patch({ emailCaptureRules })}
         />
       </PageTabPanel>
-      <PageTabPanel value="purchase" active={tab} className="mt-0">
+      <PageTabPanel value="purchase" active={tab} className="mt-0 space-y-5">
+        <PurchaseMatchSettingsPanel
+          value={ruleBook.purchaseMatch}
+          onChange={(purchaseMatch) => patch({ purchaseMatch })}
+        />
         <PurchaseRulesTab
           rules={ruleBook.purchaseRules}
           onChange={(purchaseRules) => patch({ purchaseRules })}

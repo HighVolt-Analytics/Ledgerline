@@ -31,6 +31,14 @@ from app.services.rule_book_config_io import (
     load_rule_book_config_dict,
 )
 from app.services.rule_book_mapper import clear_classification_config_cache
+from app.tenant_scoped import coerce_tenant_uuid
+
+
+def _tenant_id(tenant_id: uuid.UUID | int | str) -> uuid.UUID:
+    resolved = coerce_tenant_uuid(tenant_id)
+    if resolved is None:
+        raise ValueError("Invalid tenant_id")
+    return resolved
 
 
 def _slugify(name: str) -> str:
@@ -101,13 +109,17 @@ def employee_master_to_dict(employee: EmployeeMaster) -> dict[str, Any]:
     return data
 
 
-async def count_vendor_masters(db: AsyncSession, tenant_id: int) -> int:
+async def count_vendor_masters(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int | str,
+) -> int:
+    tid = _tenant_id(tenant_id)
     return int(
         (
             await db.execute(
                 select(func.count())
                 .select_from(VendorMasterRecord)
-                .where(VendorMasterRecord.tenant_id == tenant_id)
+                .where(VendorMasterRecord.tenant_id == tid)
             )
         ).scalar_one()
     )
@@ -203,12 +215,16 @@ async def ensure_masters_imported(db: AsyncSession, tenant_id: int) -> None:
         await import_masters_from_config_file(db, tenant_id)
 
 
-async def list_vendor_masters(db: AsyncSession, tenant_id: int) -> list[VendorMasterResponse]:
-    await ensure_masters_imported(db, tenant_id)
+async def list_vendor_masters(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int | str,
+) -> list[VendorMasterResponse]:
+    tid = _tenant_id(tenant_id)
+    await ensure_masters_imported(db, tid)
     rows = (
         await db.execute(
             select(VendorMasterRecord)
-            .where(VendorMasterRecord.tenant_id == tenant_id)
+            .where(VendorMasterRecord.tenant_id == tid)
             .order_by(VendorMasterRecord.name)
         )
     ).scalars().all()
@@ -430,13 +446,17 @@ async def delete_employee_master(db: AsyncSession, tenant_id: int, master_id: st
     await sync_masters_to_config_file(db, tenant_id)
 
 
-async def list_pending_vendors(db: AsyncSession, tenant_id: int) -> list[PendingVendorResponse]:
-    await _dismiss_pending_matching_masters(db, tenant_id)
+async def list_pending_vendors(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int | str,
+) -> list[PendingVendorResponse]:
+    tid = _tenant_id(tenant_id)
+    await _dismiss_pending_matching_masters(db, tid)
     rows = (
         await db.execute(
             select(PendingVendor)
             .where(
-                PendingVendor.tenant_id == tenant_id,
+                PendingVendor.tenant_id == tid,
                 PendingVendor.status == "pending",
             )
             .order_by(PendingVendor.created_at.desc())
@@ -445,15 +465,19 @@ async def list_pending_vendors(db: AsyncSession, tenant_id: int) -> list[Pending
     return [PendingVendorResponse.model_validate(row) for row in rows]
 
 
-async def _dismiss_pending_matching_masters(db: AsyncSession, tenant_id: int) -> None:
+async def _dismiss_pending_matching_masters(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int | str,
+) -> None:
     """Remove queue rows when the vendor is already registered in masters."""
     from app.services.vendor_detection import find_matching_vendor_master
 
-    masters = await list_vendor_masters(db, tenant_id)
+    tid = _tenant_id(tenant_id)
+    masters = await list_vendor_masters(db, tid)
     pending = (
         await db.execute(
             select(PendingVendor).where(
-                PendingVendor.tenant_id == tenant_id,
+                PendingVendor.tenant_id == tid,
                 PendingVendor.status == "pending",
             )
         )
@@ -470,19 +494,20 @@ async def _dismiss_pending_matching_masters(db: AsyncSession, tenant_id: int) ->
 
 async def create_pending_vendor(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID | int | str,
     body: PendingVendorCreate,
 ) -> PendingVendorResponse:
     from app.services.vendor_detection import find_matching_vendor_master
 
-    masters = await list_vendor_masters(db, tenant_id)
+    tid = _tenant_id(tenant_id)
+    masters = await list_vendor_masters(db, tid)
     if find_matching_vendor_master(body.detected_name, body.detected_abn, masters):
         raise ValueError("Vendor already registered in master data")
 
     existing = (
         await db.execute(
             select(PendingVendor).where(
-                PendingVendor.tenant_id == tenant_id,
+                PendingVendor.tenant_id == tid,
                 PendingVendor.status == "pending",
             )
         )
@@ -493,7 +518,7 @@ async def create_pending_vendor(
             return PendingVendorResponse.model_validate(row)
 
     row = PendingVendor(
-        tenant_id=tenant_id,
+        tenant_id=tid,
         detected_name=body.detected_name,
         detected_abn=body.detected_abn,
         detected_address=body.detected_address,
@@ -506,9 +531,14 @@ async def create_pending_vendor(
     return PendingVendorResponse.model_validate(row)
 
 
-async def dismiss_pending_vendor(db: AsyncSession, tenant_id: int, pending_id: int) -> None:
+async def dismiss_pending_vendor(
+    db: AsyncSession,
+    tenant_id: uuid.UUID | int | str,
+    pending_id: int,
+) -> None:
+    tid = _tenant_id(tenant_id)
     row = await db.get(PendingVendor, pending_id)
-    if not row or row.tenant_id != tenant_id:
+    if not row or row.tenant_id != tid:
         raise LookupError("Pending vendor not found")
     row.status = "dismissed"
     row.resolved_at = datetime.now(UTC)
@@ -517,17 +547,18 @@ async def dismiss_pending_vendor(db: AsyncSession, tenant_id: int, pending_id: i
 
 async def promote_pending_vendor(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID | int | str,
     pending_id: int,
     body: PendingVendorPromote,
 ) -> VendorMasterResponse:
+    tid = _tenant_id(tenant_id)
     row = await db.get(PendingVendor, pending_id)
-    if not row or row.tenant_id != tenant_id or row.status != "pending":
+    if not row or row.tenant_id != tid or row.status != "pending":
         raise LookupError("Pending vendor not found")
 
     from app.services.vendor_detection import find_matching_vendor_master
 
-    masters = await list_vendor_masters(db, tenant_id)
+    masters = await list_vendor_masters(db, tid)
     existing = find_matching_vendor_master(row.detected_name, row.detected_abn, masters)
     if existing is not None:
         row.status = "promoted"
@@ -538,7 +569,7 @@ async def promote_pending_vendor(
 
         await release_invoices_after_vendor_promotion(
             db,
-            tenant_id,
+            tid,
             vendor_name=existing.name,
             source_invoice_id=row.source_invoice_id,
         )
@@ -548,7 +579,7 @@ async def promote_pending_vendor(
     master_id = body.master_id or _new_master_id("vm", name)
     vendor = await create_vendor_master(
         db,
-        tenant_id,
+        tid,
         VendorMasterCreate(
             master_id=master_id,
             name=name,
@@ -568,7 +599,7 @@ async def promote_pending_vendor(
 
     await release_invoices_after_vendor_promotion(
         db,
-        tenant_id,
+        tid,
         vendor_name=name,
         source_invoice_id=row.source_invoice_id,
     )

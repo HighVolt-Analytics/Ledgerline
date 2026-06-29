@@ -75,6 +75,14 @@ async def flush_rule_book_save_buffer(
         await commit_rule_book_save(pending, db=db, remap_invoices=remap_invoices)
 
 
+async def flush_all_rule_book_save_buffers() -> None:
+    """Persist any in-memory debounced saves (e.g. before process shutdown)."""
+    async with _buffer_lock:
+        tenant_ids = list(_buffers.keys())
+    for tenant_id in tenant_ids:
+        await flush_rule_book_save_buffer(tenant_id)
+
+
 async def schedule_rule_book_save(
     *,
     tenant_id: uuid.UUID,
@@ -84,6 +92,7 @@ async def schedule_rule_book_save(
     actor_email: str | None,
     client_ip: str | None,
     db: AsyncSession | None = None,
+    remap_invoices: bool = True,
 ) -> None:
     """Buffer a validated save; flush after the debounce window."""
     async with _buffer_lock:
@@ -110,8 +119,15 @@ async def schedule_rule_book_save(
         )
 
         delay = _debounce_seconds()
-        if delay <= 0:
-            await commit_rule_book_save(pending, db=db)
+        # HTTP handlers pass a request-scoped session — commit before the response
+        # so a page reload cannot read stale DB state while a timer is still pending.
+        if db is not None or delay <= 0:
+            _buffers.pop(tenant_id, None)
+            await commit_rule_book_save(
+                pending,
+                db=db,
+                remap_invoices=remap_invoices,
+            )
             return
 
         _buffers[tenant_id] = pending
@@ -145,13 +161,6 @@ async def _commit_rule_book_db_side_effects(
     after_norm: dict[str, Any],
     remap_invoices: bool = True,
 ) -> None:
-    if await is_duplicate_rule_book_update(session, pending.tenant_id, after_norm):
-        logger.info(
-            "rule_book_save_suppressed_duplicate",
-            tenant_id=str(pending.tenant_id),
-        )
-        return
-
     await save_rule_book_config(session, pending.payload, pending.tenant_id)
 
     if rule_book_changes_are_auditable(

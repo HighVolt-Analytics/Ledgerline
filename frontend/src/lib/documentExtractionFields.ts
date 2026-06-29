@@ -14,6 +14,7 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "line_items", label: "Line items" },
   { key: "bank_details", label: "Bank details" },
   { key: "attachment_name", label: "Attachment name" },
+  { key: "document_heading", label: "Document heading" },
   { key: "document_text", label: "Document text (OCR body)" },
   { key: "billing_address", label: "Billing address" },
   { key: "email_subject", label: "Email subject" },

@@ -35,6 +35,7 @@ from app.api import (
     vault,
     vendor_masters,
     vendors,
+    viber,
     whatsapp,
 )
 from app.api.deps import CorrelationIdMiddleware, require_super_admin, require_user
@@ -46,6 +47,7 @@ from app.services.inline_mailbox_poller import (
     start_inline_mailbox_poller,
     stop_inline_mailbox_poller,
 )
+from app.services.rule_book_save_buffer import flush_all_rule_book_save_buffers
 from app.services.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.tenant_module_service import require_module
 from app.telemetry import setup_application_insights
@@ -69,6 +71,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("app_started")
     start_inline_mailbox_poller()
     yield
+    await flush_all_rule_book_save_buffers()
     await stop_inline_mailbox_poller()
     logger.info("app_stopped")
 
@@ -104,6 +107,7 @@ app.include_router(payments.oauth_public_router, prefix="/api")
 # Paths: /webhook/meta, /auth/whatsapp/callback (Front Door routes /ledgerlink/webhook/* and /ledgerlink/auth/*).
 app.include_router(whatsapp.public_router)
 app.include_router(whatsapp.webhook_router)
+app.include_router(viber.webhook_router)
 
 _api_deps = [Depends(require_user)]
 
@@ -134,6 +138,7 @@ app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
 app.include_router(dossiers.router, prefix="/api", dependencies=_module_deps("dossiers"))
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
+app.include_router(viber.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenant_members.router, prefix="/api", dependencies=_api_deps)
 app.include_router(platform.router, prefix="/api", dependencies=[Depends(require_super_admin)])

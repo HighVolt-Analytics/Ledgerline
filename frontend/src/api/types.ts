@@ -89,9 +89,31 @@ export interface Tenant {
 }
 
 export interface InstitutionSettings {
+  name: string;
   country: string;
   timezone: string;
   locale: string;
+}
+
+export interface OrgAiBrief {
+  legal_name: string;
+  abn: string;
+  aliases: string[];
+  default_perspective: "buyer" | "seller" | "mixed" | string;
+  intake_summary: string;
+  classification_hints: string;
+}
+
+export type ChartOfAccountType = "Expense" | "Asset" | "Liability" | "Revenue" | "Equity";
+
+export interface ChartOfAccountRow {
+  code: string;
+  name: string;
+  type: ChartOfAccountType;
+}
+
+export interface ChartOfAccountsPayload {
+  accounts: ChartOfAccountRow[];
 }
 
 export interface PlatformTenantModule {
@@ -299,6 +321,8 @@ export interface Invoice {
   evaluation_status:
     | "auto_coded"
     | "needs_review"
+    | "awaiting_classification"
+    | "needs_rescan"
     | "pending_vendor"
     | "unmatched_expense_vendor"
     | "awaiting_po"
@@ -307,6 +331,8 @@ export interface Invoice {
   purchase_document_type?: string | null;
   document_type_code?: string | null;
   document_type_confidence?: number | null;
+  llm_suggested_dt?: string | null;
+  llm_confidence?: number | null;
   document_type_extraction_fields?: string[] | null;
   bank_bsb?: string | null;
   bank_account?: string | null;
@@ -314,12 +340,15 @@ export interface Invoice {
   billing_address?: string | null;
   email_subject?: string | null;
   document_text?: string | null;
+  document_heading?: string | null;
+  extracted_fields?: Record<string, string> | null;
   extraction_field_confidence?: Record<string, number> | null;
   created_at: string;
   has_stored_file: boolean;
   published_to_ledger?: boolean;
   current_stage?: string;
   current_stage_state?: "done" | "pending" | "fail" | "skipped";
+  approval_board_column?: "review" | "processing" | "approved" | "rejected";
 }
 
 export interface LineItem {
@@ -378,10 +407,36 @@ export interface InvoiceUpdatePayload {
 export interface NavBadges {
   inbox_count: number;
   pending_approval: number;
+  pending_classification: number;
   team_expenses_count: number;
   business_expenses_count: number;
   payments_queue_count: number;
   integrations_connected: number;
+}
+
+export interface ClassificationReviewItem {
+  invoice_id: number;
+  document_ref?: string | null;
+  status: string;
+  evaluation_status?: string | null;
+  llm_suggested_dt?: string | null;
+  llm_confidence?: number | null;
+  policy_winner_dt?: string | null;
+  document_type_code?: string | null;
+  review_reasons?: string[];
+  document_ai_provider?: string | null;
+}
+
+export interface AiProviderStatus {
+  available: boolean;
+  label: string;
+  reason?: string;
+}
+
+export interface AiProvidersResponse {
+  azure_di: AiProviderStatus;
+  azure_foundry_vision: AiProviderStatus;
+  gemini_vision: AiProviderStatus;
 }
 
 export interface ThreeWayMatchApi {
@@ -750,6 +805,9 @@ export interface AppSettings {
   blob_enabled: boolean;
   azure_storage_container: string;
   azure_di_enabled: boolean;
+  gemini_vision_available: boolean;
+  azure_foundry_vision_available: boolean;
+  default_document_ai_provider: string;
   azure_postgres_enabled: boolean;
   azure_redis_enabled: boolean;
   appinsights_enabled: boolean;
@@ -787,6 +845,23 @@ export interface WhatsappStatus {
   webhook_callback_url: string;
   oauth_callback_url: string;
   connections: WhatsappConnection[];
+}
+
+export interface ViberConnection {
+  id: number;
+  tenant_id: string;
+  bot_id: string;
+  connection_status: string;
+  integration_health: string;
+  created_at: string;
+}
+
+export interface ViberStatus {
+  configured: boolean;
+  webhook_callback_url: string;
+  webhook_reachable: boolean;
+  webhook_reachability_hint?: string | null;
+  connections: ViberConnection[];
 }
 
 export interface DocumentSetRule {
@@ -883,6 +958,9 @@ export interface RuleBookConfig {
     tax_account: string;
     payable_account: string;
     fallback_account: string;
+    functional_currency?: string;
+    fx_gain_loss_account?: string;
+    bank_account?: string;
   };
   document_sets: Array<{
     id: string;
@@ -890,9 +968,35 @@ export interface RuleBookConfig {
     set_name: string;
     isolated?: boolean;
   }>;
+  purchase_match?: {
+    base_uom?: string;
+    qty_tolerance_pct?: number;
+    uom_conversions?: Array<{
+      id: string;
+      vendor_key?: string;
+      sku?: string;
+      from_uom: string;
+      to_uom: string;
+      factor: number;
+    }>;
+  };
   document_classification?: {
     unclassified_document_type_code: string;
     unclassified_min_confidence: number;
+  };
+  org_context?: {
+    legal_name: string;
+    abn: string;
+    aliases: string[];
+    default_perspective: string;
+    intake_summary?: string;
+    classification_hints?: string;
+  };
+  ai_classification?: {
+    document_ai_provider?: "azure_di" | "azure_foundry_vision" | "gemini_vision";
+    auto_route_min_confidence?: number;
+    llm_min_confidence?: number;
+    policy_min_confidence?: number;
   };
   document_types: Array<{
     code: string;
@@ -941,6 +1045,7 @@ export interface RuleBookConfig {
     bundle_mandatory: string[];
     bundle_conditional: string[];
     purchase_bundle_role?: string;
+    llm_hint?: string;
   }>;
 }
 
@@ -964,6 +1069,22 @@ export interface RuleBookEvaluationRow {
   category_rule: { label: string; kind: string } | null;
   category_rule_disabled: { label: string; kind: string } | null;
   auto_coded: boolean;
+}
+
+export interface DocumentTypeRecognitionTestRequest {
+  draft_document_type: Record<string, unknown>;
+  document_text?: string;
+  document_heading?: string;
+  email_sender?: string;
+  attachment_name?: string;
+}
+
+export interface DocumentTypeRecognitionTestResponse {
+  matches: boolean;
+  match_rules_passed: boolean;
+  exclude_rules_passed: boolean;
+  summary: string;
+  classifier_enabled: boolean;
 }
 
 export interface RuleBookEvaluateResult {
@@ -1139,6 +1260,7 @@ export interface MatrixRow {
   flag: string;
   flag_reason?: string | null;
   payment_status: string;
+  paid_date?: string | null;
   conflict_with?: string | null;
   conflict_detail?: MatrixConflictRow[] | null;
 }
@@ -1292,4 +1414,21 @@ export interface InvoiceClassificationAudit {
   min_route_confidence?: number;
   signal_conflicts?: string[];
   score_breakdown?: InvoiceClassificationScoreBreakdown;
+  llm_suggested_dt?: string;
+  llm_confidence?: number;
+  llm_reasoning?: string;
+  policy_winner_dt?: string;
+  policy_winner_confidence?: number;
+  policy_scores?: Array<{
+    code: string;
+    confidence: number;
+    required_missing?: string[];
+    absent_violations?: string[];
+  }>;
+  confirmed_dt?: string;
+  confirmed_confidence?: number;
+  review_reasons?: string[];
+  compare_passed?: boolean;
+  auto_route_min_confidence?: number;
+  perspective?: string;
 }

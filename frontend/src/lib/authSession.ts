@@ -1,6 +1,7 @@
 import type { AuthUser } from "@/api/types";
 import type { TenantAccountSummary } from "@/lib/authApi";
 
+export const PROFILE_UPDATED_EVENT = "ledgerline:profile-updated";
 const ACCESS_KEY = "ledgerline_access_token";
 const REFRESH_KEY = "ledgerline_refresh_token";
 const USER_KEY = "ledgerline_user";

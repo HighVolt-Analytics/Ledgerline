@@ -1,0 +1,138 @@
+"""Tenant organisation context for perspective inference and LLM prompts."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from app.models.tenant import Tenant
+from app.schemas.rule_book_config import AiClassificationConfig, OrgContextConfig, RuleBookConfigPayload
+
+_VALID_PERSPECTIVES = frozenset({"buyer", "seller", "mixed"})
+
+
+def normalize_org_perspective(value: object) -> str:
+    token = str(value or "buyer").strip().lower()
+    if token in _VALID_PERSPECTIVES:
+        return token
+    return "buyer"
+
+
+@dataclass(frozen=True)
+class OrgContext:
+    legal_name: str = ""
+    abn: str = ""
+    aliases: list[str] = field(default_factory=list)
+    default_perspective: str = "buyer"
+    intake_summary: str = ""
+    classification_hints: str = ""
+
+
+def _org_context_from_mapping(block: dict[str, Any]) -> OrgContext:
+    aliases_raw = block.get("aliases") or []
+    aliases = [str(a).strip() for a in aliases_raw if str(a).strip()]
+    return OrgContext(
+        legal_name=str(block.get("legal_name") or block.get("legalName") or "").strip(),
+        abn=str(block.get("abn") or "").strip(),
+        aliases=aliases,
+        default_perspective=normalize_org_perspective(
+            block.get("default_perspective") or block.get("defaultPerspective")
+        ),
+        intake_summary=str(
+            block.get("intake_summary") or block.get("intakeSummary") or ""
+        ).strip(),
+        classification_hints=str(
+            block.get("classification_hints") or block.get("classificationHints") or ""
+        ).strip(),
+    )
+
+
+def _settings_dict(tenant: Tenant | None) -> dict[str, Any]:
+    raw = tenant.settings_json if tenant else None
+    return raw if isinstance(raw, dict) else {}
+
+
+def org_context_from_settings(settings: dict[str, Any]) -> OrgContext:
+    block = settings.get("org_context")
+    if not isinstance(block, dict):
+        return OrgContext()
+    return _org_context_from_mapping(block)
+
+
+def org_context_for_tenant(tenant: Tenant | None) -> OrgContext:
+    ctx = org_context_from_settings(_settings_dict(tenant))
+    if ctx.legal_name:
+        return ctx
+    if tenant and tenant.name:
+        return OrgContext(
+            legal_name=tenant.name.strip(),
+            default_perspective=ctx.default_perspective,
+            intake_summary=ctx.intake_summary,
+            classification_hints=ctx.classification_hints,
+            abn=ctx.abn,
+            aliases=list(ctx.aliases),
+        )
+    return ctx
+
+
+def ai_classification_from_config(config: RuleBookConfigPayload | None) -> AiClassificationConfig:
+    if config is None or config.ai_classification is None:
+        return AiClassificationConfig()
+    return config.ai_classification
+
+
+def org_context_from_config(config: RuleBookConfigPayload | None, tenant: Tenant | None) -> OrgContext:
+    if config is not None and config.org_context is not None:
+        oc = config.org_context
+        return OrgContext(
+            legal_name=oc.legal_name.strip(),
+            abn=oc.abn.strip(),
+            aliases=list(oc.aliases),
+            default_perspective=normalize_org_perspective(oc.default_perspective),
+            intake_summary=oc.intake_summary.strip(),
+            classification_hints=oc.classification_hints.strip(),
+        )
+    return org_context_for_tenant(tenant)
+
+
+def _normalize_abn(value: str) -> str:
+    return "".join(c for c in value if c.isdigit())
+
+
+def party_matches_tenant(name: str, abn: str, org: OrgContext) -> bool:
+    if org.abn and abn:
+        if _normalize_abn(org.abn) == _normalize_abn(abn):
+            return True
+    legal = org.legal_name.lower()
+    token = name.strip().lower()
+    if legal and token and legal in token:
+        return True
+    for alias in org.aliases:
+        al = alias.strip().lower()
+        if al and token and al in token:
+            return True
+    return False
+
+
+def infer_perspective(
+    *,
+    org: OrgContext,
+    seller_name: str,
+    seller_abn: str,
+    buyer_name: str,
+    buyer_abn: str,
+    llm_perspective: str,
+) -> str:
+    seller_match = party_matches_tenant(seller_name, seller_abn, org)
+    buyer_match = party_matches_tenant(buyer_name, buyer_abn, org)
+    if seller_match and not buyer_match:
+        return "sales"
+    if buyer_match and not seller_match:
+        return "purchase"
+    if llm_perspective in {"purchase", "sales"}:
+        return llm_perspective
+    if org.default_perspective == "buyer":
+        return "purchase"
+    if org.default_perspective == "seller":
+        return "sales"
+    return "unknown"

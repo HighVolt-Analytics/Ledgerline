@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
+from app.models.journal import JournalEntry
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.payment import (
     PaymentExecutionInstructionResponse,
@@ -18,6 +19,16 @@ from app.schemas.payment import (
     PaymentStatusUpdate,
     WalletSummaryResponse,
     WalletTransactionResponse,
+)
+from app.services.fx_posting_service import (
+    booking_fx_rate,
+    document_to_functional,
+    generate_payment_entries,
+    resolve_fx_policy,
+)
+from app.services.rule_book_mapper import (
+    get_payable_account_mapping,
+    load_classification_config,
 )
 
 _OPEN_STATUSES = (
@@ -244,6 +255,68 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
     db.add(payment)
     await db.flush()
     return payment
+
+
+async def _apply_payment_fx(
+    db: AsyncSession,
+    payment: Payment,
+    invoice: Invoice,
+    *,
+    manual_payment_rate: Decimal | None = None,
+) -> None:
+    config = await load_classification_config(db, invoice.tenant_id)
+    policy = resolve_fx_policy(
+        config=config,
+        document_type_code=invoice.document_type_code,
+    )
+    payable = get_payable_account_mapping(config)
+    payment_date = date.today()
+    doc_currency = (invoice.currency or policy.functional_currency).upper()
+    functional_ap = invoice.functional_total
+    if functional_ap is None:
+        functional_ap, _ = document_to_functional(
+            invoice.total,
+            doc_currency,
+            policy=policy,
+            booking_date=invoice.invoice_date,
+        )
+
+    if doc_currency == policy.functional_currency.upper():
+        bank_amount = functional_ap
+        pay_rate = None
+    else:
+        pay_rate = manual_payment_rate or booking_fx_rate(
+            doc_currency,
+            functional_currency=policy.functional_currency,
+            on_date=payment_date,
+        )
+        bank_amount = ((invoice.total or Decimal("0")) * pay_rate).quantize(Decimal("0.01"))
+
+    lines, variance = generate_payment_entries(
+        functional_ap_amount=functional_ap,
+        bank_payment_amount=bank_amount,
+        policy=policy,
+        payable_account_code=payable.account_code,
+        payable_account_name=payable.account_name,
+        payment_date=payment_date,
+    )
+    payment.payment_fx_rate = pay_rate
+    payment.bank_payment_amount = bank_amount
+    payment.fx_variance = variance
+
+    for line in lines:
+        db.add(
+            JournalEntry(
+                tenant_id=payment.tenant_id,
+                invoice_id=invoice.id,
+                date=line.date,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                debit=line.debit,
+                credit=line.credit,
+                entry_type=line.entry_type,
+            )
+        )
 
 
 async def list_payments(

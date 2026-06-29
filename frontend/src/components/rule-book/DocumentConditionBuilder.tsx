@@ -1,33 +1,17 @@
+import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { MatchRuleFieldSelect } from "@/components/rule-book/MatchRuleFieldSelect";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/cn";
+import {
+  BOOLEAN_OPERATORS,
+  CUSTOM_MATCH_RULE_FIELD,
+  isMatchRuleBooleanField,
+  matchRuleFieldGroupsForDocumentType,
+} from "@/lib/documentMatchRules";
 import type { ConditionOperator } from "@/lib/v4RuleBookTypes";
 import type { DocumentRuleCondition, DocumentRuleConditionGroup } from "@/lib/v5DocumentTypes";
-
-const FIELDS = [
-  { key: "attachment_name", label: "Attachment name" },
-  { key: "email_sender", label: "Email sender" },
-  { key: "email_subject", label: "Email subject" },
-  { key: "vendor", label: "Vendor" },
-  { key: "invoice_no", label: "Invoice number" },
-  { key: "po_reference", label: "PO reference" },
-  { key: "line_text", label: "Line descriptions" },
-  { key: "document_text", label: "Document text (OCR body)" },
-  { key: "document_heading", label: "Document heading (OCR title)" },
-  { key: "abn", label: "ABN" },
-  { key: "capture_channel", label: "Capture channel" },
-  { key: "has_po_reference", label: "Has PO reference" },
-  { key: "has_invoice_no", label: "Has invoice number" },
-  { key: "has_total", label: "Has total amount" },
-  { key: "is_commercial_invoice", label: "Is commercial invoice" },
-  { key: "has_heading_invoice", label: "Heading is invoice / tax invoice" },
-  { key: "has_heading_po", label: "Heading is purchase order" },
-  { key: "has_heading_grn", label: "Heading is GRN / delivery note" },
-  { key: "has_heading_credit_note", label: "Heading is credit note" },
-  { key: "has_heading_quote", label: "Heading is quote / quotation" },
-  { key: "has_heading_contract", label: "Heading is contract / agreement" },
-] as const;
 
 const OPERATORS: { key: ConditionOperator; label: string }[] = [
   { key: "equals", label: "equals" },
@@ -75,40 +59,115 @@ function ConditionRow({
   onRemove,
   readOnly,
   idx,
+  fieldGroups,
 }: {
   cond: DocumentRuleCondition;
   onChange: (next: DocumentRuleCondition) => void;
   onRemove: () => void;
   readOnly?: boolean;
   idx: string;
+  fieldGroups: ReturnType<typeof matchRuleFieldGroupsForDocumentType>;
 }) {
+  const catalogKeys = useMemo(
+    () => new Set(fieldGroups.flatMap((group) => group.fields.map((field) => field.key))),
+    [fieldGroups]
+  );
+  const [customKeyMode, setCustomKeyMode] = useState(
+    () => cond.field !== "" && !catalogKeys.has(cond.field)
+  );
+  const useCustomInput = customKeyMode || (cond.field !== "" && !catalogKeys.has(cond.field));
+  const isBoolean = isMatchRuleBooleanField(cond.field);
+  const operators = isBoolean ? BOOLEAN_OPERATORS : OPERATORS;
+
   return (
     <div className="flex flex-nowrap items-center gap-2 min-w-max" data-testid={`dt-condition-${idx}`}>
-      <Select
-        value={cond.field}
-        disabled={readOnly}
-        onValueChange={(field) => onChange({ ...cond, field })}
-        options={FIELDS.map((f) => ({ value: f.key, label: f.label }))}
-        className="w-[170px] shrink-0"
-      />
+      {useCustomInput ? (
+        <>
+          <input
+            type="text"
+            value={cond.field}
+            disabled={readOnly}
+            onChange={(e) =>
+              onChange({
+                ...cond,
+                field: e.target.value.trim().toLowerCase().replace(/\s+/g, "_"),
+                operator: isMatchRuleBooleanField(e.target.value) ? "equals" : cond.operator,
+              })
+            }
+            placeholder="custom_field_name"
+            className="h-8 w-[170px] shrink-0 rounded-md border border-input bg-background px-2 text-xs font-mono"
+          />
+          {!readOnly ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 shrink-0 px-2 text-[11px]"
+              onClick={() => {
+                setCustomKeyMode(false);
+                onChange({
+                  ...cond,
+                  field: "document_heading",
+                  operator: "contains",
+                  value: "",
+                });
+              }}
+            >
+              Presets
+            </Button>
+          ) : null}
+        </>
+      ) : (
+        <MatchRuleFieldSelect
+          value={cond.field}
+          groups={fieldGroups}
+          disabled={readOnly}
+          onValueChange={(field) => {
+            if (field === CUSTOM_MATCH_RULE_FIELD) {
+              setCustomKeyMode(true);
+              onChange({ ...cond, field: "", operator: "contains", value: "" });
+              return;
+            }
+            onChange(
+              isMatchRuleBooleanField(field)
+                ? { ...cond, field, operator: "equals", value: "true" }
+                : { ...cond, field, operator: "contains" }
+            );
+          }}
+          className="h-8 w-[170px] shrink-0"
+        />
+      )}
       <Select
         value={cond.operator}
         disabled={readOnly}
         onValueChange={(operator) =>
           onChange({ ...cond, operator: operator as ConditionOperator })
         }
-        options={OPERATORS.map((o) => ({ value: o.key, label: o.label }))}
+        options={operators.map((o) => ({ value: o.key, label: o.label }))}
         className="w-[130px] shrink-0"
       />
-      <input
-        type="text"
-        value={cond.value}
-        disabled={readOnly}
-        onChange={(e) => onChange({ ...cond, value: e.target.value })}
-        className={valueInputCls}
-        placeholder={cond.field.startsWith("has_") || cond.field.startsWith("is_") ? "true / false" : "value"}
-        data-testid={`dt-condition-value-${idx}`}
-      />
+      {isBoolean ? (
+        <Select
+          value={cond.value === "false" ? "false" : "true"}
+          disabled={readOnly}
+          onValueChange={(value) => onChange({ ...cond, value })}
+          options={[
+            { value: "true", label: "Yes / true" },
+            { value: "false", label: "No / false" },
+          ]}
+          className="h-8 w-[120px] shrink-0 text-xs"
+        />
+      ) : (
+        <input
+          type="text"
+          value={cond.value}
+          disabled={readOnly}
+          onChange={(e) => onChange({ ...cond, value: e.target.value })}
+          className={valueInputCls}
+          placeholder="value"
+          data-testid={`dt-condition-value-${idx}`}
+        />
+      )}
       {!readOnly ? (
         <Button
           type="button"
@@ -132,6 +191,7 @@ function GroupEditor({
   onChange,
   readOnly,
   depth = 0,
+  fieldGroups,
 }: {
   group: DocumentRuleConditionGroup;
   path: number[];
@@ -139,6 +199,7 @@ function GroupEditor({
   onChange: (next: DocumentRuleConditionGroup) => void;
   readOnly?: boolean;
   depth?: number;
+  fieldGroups: ReturnType<typeof matchRuleFieldGroupsForDocumentType>;
 }) {
   const setRoot = (next: DocumentRuleConditionGroup) => onChange(next);
 
@@ -159,7 +220,7 @@ function GroupEditor({
           ...g.children,
           {
             type: "condition",
-            field: "vendor",
+            field: "document_heading",
             operator: "contains",
             value: "",
           },
@@ -236,6 +297,7 @@ function GroupEditor({
                 onChange={onChange}
                 readOnly={readOnly}
                 depth={depth + 1}
+                fieldGroups={fieldGroups}
               />
             );
           }
@@ -245,6 +307,7 @@ function GroupEditor({
               cond={child}
               readOnly={readOnly}
               idx={childKey}
+              fieldGroups={fieldGroups}
               onChange={(next) => {
                 setRoot(
                   updateAtPath(root, path, (g) => ({
@@ -277,10 +340,26 @@ export function DocumentConditionBuilder({
   root,
   onChange,
   readOnly,
+  extractionFields,
 }: {
   root: DocumentRuleConditionGroup;
   onChange: (next: DocumentRuleConditionGroup) => void;
   readOnly?: boolean;
+  extractionFields?: string[];
 }) {
-  return <GroupEditor group={root} path={[]} root={root} onChange={onChange} readOnly={readOnly} />;
+  const fieldGroups = useMemo(
+    () => matchRuleFieldGroupsForDocumentType(extractionFields),
+    [extractionFields]
+  );
+
+  return (
+    <GroupEditor
+      group={root}
+      path={[]}
+      root={root}
+      onChange={onChange}
+      readOnly={readOnly}
+      fieldGroups={fieldGroups}
+    />
+  );
 }

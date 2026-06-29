@@ -10,6 +10,11 @@ import {
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/cn";
+import {
+  computeDropdownMenuPosition,
+  DROPDOWN_MENU_Z_INDEX,
+  type DropdownMenuPosition,
+} from "@/lib/dropdownPortal";
 
 export type SelectOption = { value: string; label: string };
 
@@ -52,19 +57,26 @@ export function Select({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [menuStyle, setMenuStyle] = useState({ top: 0, left: 0, width: 0 });
+  const [menuStyle, setMenuStyle] = useState<DropdownMenuPosition | null>(null);
 
   const selected = options.find((o) => o.value === value);
 
   const updatePosition = useCallback(() => {
-    const rect = triggerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setMenuStyle({
-      top: rect.bottom + 4,
-      left: rect.left,
-      width: rect.width,
-    });
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    setMenuStyle(computeDropdownMenuPosition(trigger));
   }, []);
+
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+  }, []);
+
+  const openMenu = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger || disabled) return;
+    setMenuStyle(computeDropdownMenuPosition(trigger));
+    setOpen(true);
+  }, [disabled]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -87,27 +99,27 @@ export function Select({
 
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
+      closeMenu();
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") closeMenu();
     };
-    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [open, closeMenu]);
 
   const onTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (disabled) return;
     if (event.key === "Enter" || event.key === " " || event.key === "ArrowDown") {
       event.preventDefault();
-      setOpen(true);
+      openMenu();
     }
   };
 
@@ -122,7 +134,11 @@ export function Select({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
-        onClick={() => !disabled && setOpen((v) => !v)}
+        onClick={() => {
+          if (disabled) return;
+          if (open) closeMenu();
+          else openMenu();
+        }}
         onKeyDown={onTriggerKeyDown}
         className={cn(triggerBase, triggerSize[size], className)}
       >
@@ -138,10 +154,8 @@ export function Select({
         />
       </button>
 
-      {open &&
-        createPortal(
-          <>
-            <div className="fixed inset-0 z-[240]" aria-hidden onClick={() => setOpen(false)} />
+      {open && menuStyle
+        ? createPortal(
             <div
               ref={menuRef}
               id={listId}
@@ -152,7 +166,10 @@ export function Select({
                 left: menuStyle.left,
                 width: menuStyle.width,
                 minWidth: menuStyle.width,
+                maxHeight: menuStyle.maxHeight,
+                zIndex: DROPDOWN_MENU_Z_INDEX,
               }}
+              onPointerDown={(event) => event.stopPropagation()}
             >
               {options.map((option) => {
                 const isSelected = option.value === value;
@@ -164,9 +181,10 @@ export function Select({
                     aria-selected={isSelected}
                     data-selected={isSelected ? "true" : undefined}
                     className={cn("app-dropdown-option", size === "md" && "app-dropdown-option--md")}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
                       onValueChange(option.value);
-                      setOpen(false);
+                      closeMenu();
                     }}
                   >
                     <span className="truncate">{option.label}</span>
@@ -179,10 +197,10 @@ export function Select({
                   </button>
                 );
               })}
-            </div>
-          </>,
-          document.body
-        )}
+            </div>,
+            document.body
+          )
+        : null}
     </>
   );
 }

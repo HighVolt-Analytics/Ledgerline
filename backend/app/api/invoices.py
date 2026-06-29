@@ -22,11 +22,20 @@ from app.schemas.invoice import (
     InvoiceStatus as InvoiceStatusSchema,
     InvoiceUpdateRequest,
     InvoiceWithDetails,
+    parse_evaluation_status,
     ProcessInvoicesBatchRequest,
     ValidationResultItem,
 )
+from app.schemas.classification_api import ClassificationResolveRequest, ClassificationReviewItem
+from app.services.classification_learning_service import record_learning_from_resolution
+from app.services.llm_document_service import apply_document_type_to_invoice
+from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.services.invoice_edit_service import update_invoice_fields
-from app.services.invoice_evaluation_service import parse_matched_rule_ids
+from app.services.invoice_evaluation_service import (
+    apply_invoice_evaluation,
+    load_config_for_tenant,
+    parse_matched_rule_ids,
+)
 from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
 from app.schemas.purchase import PurchaseDossierResponse
@@ -58,10 +67,24 @@ from app.services.ingest_fanout_service import DuplicateUploadError, ingest_uplo
 from app.services.purchase_dossier_service import build_purchase_dossier
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 from app.tenant_scoped import get_for_tenant
-from app.services.invoice_evaluation_service import load_config_for_tenant
 from app.workers.tasks import process_invoice_background, process_invoices_batch_background
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
+
+
+def _classification_review_confidence(inv: Invoice, detail: dict[str, object]) -> float | None:
+    if inv.llm_confidence is not None:
+        try:
+            return round(float(inv.llm_confidence), 4)
+        except (TypeError, ValueError):
+            pass
+    raw = detail.get("llm_confidence")
+    if raw is None:
+        return None
+    try:
+        return round(float(raw), 4)
+    except (TypeError, ValueError):
+        return None
 
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
@@ -150,14 +173,12 @@ def _to_response(
         route_target=inv.route_target,
         matched_rule_ids=parse_matched_rule_ids(inv.matched_rule_ids) or None,
         vendor_confidence=inv.vendor_confidence,
-        evaluation_status=(
-            EvaluationStatus(inv.evaluation_status)
-            if inv.evaluation_status
-            else None
-        ),
+        evaluation_status=parse_evaluation_status(inv.evaluation_status),
         purchase_document_type=inv.purchase_document_type,
         document_type_code=inv.document_type_code,
         document_type_confidence=inv.document_type_confidence,
+        llm_suggested_dt=getattr(inv, "llm_suggested_dt", None),
+        llm_confidence=getattr(inv, "llm_confidence", None),
         document_type_extraction_fields=document_type_extraction_fields,
         bank_bsb=inv.bank_bsb,
         bank_account=inv.bank_account,
@@ -165,6 +186,8 @@ def _to_response(
         billing_address=inv.billing_address,
         email_subject=inv.email_subject,
         document_text=inv.document_text,
+        document_heading=getattr(inv, "document_heading", None),
+        extracted_fields=getattr(inv, "extracted_fields", None) or None,
         validation_results=_validation(inv.validation_results),
         extraction_field_confidence=(
             compute_extraction_field_confidence(inv)
@@ -313,7 +336,89 @@ async def list_invoices(
     )
 
 
-@router.get("/{invoice_id}", response_model=ApiEnvelope[InvoiceWithDetails])
+@router.get("/classification-review", response_model=ApiEnvelope[list[ClassificationReviewItem]])
+async def classification_review_queue(
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[ClassificationReviewItem]]:
+    """Invoices awaiting human document-type confirmation before field extraction."""
+    rows = (
+        await db.execute(
+            select(Invoice)
+            .where(
+                Invoice.tenant_id == ctx.tenant_id,
+                Invoice.status == InvoiceStatus.EXCEPTION,
+                Invoice.evaluation_status == "awaiting_classification",
+            )
+            .order_by(Invoice.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    items: list[ClassificationReviewItem] = []
+    for inv in rows:
+        routing_row = (
+            await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.invoice_id == inv.id,
+                    AuditLog.tenant_id == ctx.tenant_id,
+                    AuditLog.event == "routing_review_required",
+                )
+                .order_by(AuditLog.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        resolved_row = (
+            await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.invoice_id == inv.id,
+                    AuditLog.tenant_id == ctx.tenant_id,
+                    AuditLog.event == "classification_resolved",
+                )
+                .order_by(AuditLog.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if resolved_row and routing_row:
+            routing_detail = (
+                routing_row.detail if isinstance(routing_row.detail, dict) else {}
+            )
+            if str(routing_detail.get("gate") or "").strip().lower() == "classification":
+                if resolved_row.created_at >= routing_row.created_at:
+                    continue
+        audit_row = (
+            await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.invoice_id == inv.id,
+                    AuditLog.tenant_id == ctx.tenant_id,
+                    AuditLog.event == "document_classified",
+                )
+                .order_by(AuditLog.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        detail = audit_row.detail if audit_row and isinstance(audit_row.detail, dict) else {}
+        items.append(
+            ClassificationReviewItem(
+                invoice_id=inv.id,
+                document_ref=inv.document_ref,
+                status=inv.status.value if hasattr(inv.status, "value") else str(inv.status),
+                evaluation_status=inv.evaluation_status,
+                llm_suggested_dt=inv.llm_suggested_dt or detail.get("llm_suggested_dt"),
+                llm_confidence=_classification_review_confidence(inv, detail),
+                policy_winner_dt=str(detail.get("policy_winner_dt") or ""),
+                document_type_code=inv.document_type_code,
+                review_reasons=[str(reason) for reason in (detail.get("review_reasons") or [])],
+                document_ai_provider=str(detail.get("document_ai_provider") or "") or None,
+            )
+        )
+    return ApiEnvelope(data=items)
+
+
+@router.get("/{invoice_id:int}", response_model=ApiEnvelope[InvoiceWithDetails])
 async def get_invoice(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
@@ -349,7 +454,7 @@ async def get_invoice(
     )
 
 
-@router.patch("/{invoice_id}", response_model=ApiEnvelope[InvoiceWithDetails])
+@router.patch("/{invoice_id:int}", response_model=ApiEnvelope[InvoiceWithDetails])
 async def patch_invoice(
     invoice_id: int,
     body: InvoiceUpdateRequest,
@@ -402,7 +507,7 @@ async def patch_invoice(
     )
 
 
-@router.get("/{invoice_id}/file")
+@router.get("/{invoice_id:int}/file")
 async def download_invoice_file(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
@@ -430,7 +535,7 @@ async def download_invoice_file(
     )
 
 
-@router.get("/{invoice_id}/line-items", response_model=ApiEnvelope[list[LineItemResponse]])
+@router.get("/{invoice_id:int}/line-items", response_model=ApiEnvelope[list[LineItemResponse]])
 async def get_line_items(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
@@ -446,7 +551,7 @@ async def get_line_items(
 
 
 @router.get(
-    "/{invoice_id}/journal-entries",
+    "/{invoice_id:int}/journal-entries",
     response_model=ApiEnvelope[list[JournalEntryResponse]],
 )
 async def get_journal_entries(
@@ -585,6 +690,9 @@ async def upload_invoice(
         raise HTTPException(409, "Duplicate file already uploaded") from None
 
     primary = await _get_invoice_for_tenant(db, result.invoice_ids[0], ctx.tenant_id)
+    if not defer_processing:
+        # Commit before background task so the new row is visible to the pipeline worker.
+        await db.commit()
     await _queue_upload_processing(
         background_tasks,
         result.invoice_ids,
@@ -605,7 +713,7 @@ async def upload_invoice(
 _ALLOWED_ATTACH = (".pdf", ".jpg", ".jpeg", ".png", ".docx")
 
 
-@router.post("/{invoice_id}/attach", response_model=ApiEnvelope[InvoiceResponse])
+@router.post("/{invoice_id:int}/attach", response_model=ApiEnvelope[InvoiceResponse])
 async def attach_invoice_file(
     invoice_id: int,
     file: UploadFile = File(...),
@@ -694,7 +802,7 @@ _REPROCESSABLE = frozenset(
 )
 
 
-@router.post("/{invoice_id}/reprocess", response_model=ApiEnvelope[InvoiceResponse])
+@router.post("/{invoice_id:int}/reprocess", response_model=ApiEnvelope[InvoiceResponse])
 async def reprocess_invoice(
     invoice_id: int,
     background_tasks: BackgroundTasks,
@@ -727,13 +835,15 @@ async def reprocess_invoice(
         invoice_id=inv.id,
         detail={"previous_status": previous_status},
     )
+    # Commit before background task so process_invoice sees pending (not processed/rejected).
+    await db.commit()
     background_tasks.add_task(process_invoice_background, inv.id, tenant_id=ctx.tenant_id)
     return ApiEnvelope(
         data=await _response_for_invoice(db, inv, verify_stored_file=True),
     )
 
 
-@router.get("/{invoice_id}/pipeline", response_model=ApiEnvelope[PipelineStepsResponse])
+@router.get("/{invoice_id:int}/pipeline", response_model=ApiEnvelope[PipelineStepsResponse])
 async def invoice_pipeline(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
@@ -755,14 +865,107 @@ async def invoice_pipeline(
     return ApiEnvelope(data=PipelineStepsResponse(steps=pipeline_steps_for_api(steps)))
 
 
-@router.get("/{invoice_id}/classification-audit", response_model=ApiEnvelope[dict[str, object]])
+@router.post("/{invoice_id:int}/classification/resolve", response_model=ApiEnvelope[InvoiceResponse])
+async def resolve_classification(
+    invoice_id: int,
+    body: ClassificationResolveRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[InvoiceResponse]:
+    """Confirm document type after review; record learning event and optionally reprocess."""
+    inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    confirmed = body.confirmed_dt.strip().upper()
+    if not confirmed:
+        raise HTTPException(400, "confirmed_dt is required")
+
+    audit_row = (
+        await db.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.invoice_id == invoice_id,
+                AuditLog.tenant_id == ctx.tenant_id,
+                AuditLog.event == "document_classified",
+            )
+            .order_by(AuditLog.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    detail = audit_row.detail if audit_row and isinstance(audit_row.detail, dict) else {}
+
+    routing_row = (
+        await db.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.invoice_id == invoice_id,
+                AuditLog.tenant_id == ctx.tenant_id,
+                AuditLog.event == "routing_review_required",
+            )
+            .order_by(AuditLog.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    routing_detail = (
+        routing_row.detail if routing_row and isinstance(routing_row.detail, dict) else {}
+    )
+    if routing_detail.get("gate") == "classification" or not detail.get("policy_winner_dt"):
+        for key in ("policy_winner_dt", "review_reasons", "llm_suggested_dt", "llm_confidence"):
+            if not detail.get(key) and routing_detail.get(key) is not None:
+                detail[key] = routing_detail[key]
+
+    await record_learning_from_resolution(
+        db,
+        tenant_id=ctx.tenant_id,
+        invoice=inv,
+        human_confirmed_dt=confirmed,
+        classification_detail=detail,
+        reviewer_user_id=None,
+    )
+    apply_document_type_to_invoice(
+        inv,
+        code=confirmed,
+        confidence=float(inv.document_type_confidence or 0.85),
+        llm_suggested_dt=str(detail.get("llm_suggested_dt") or inv.llm_suggested_dt or ""),
+        llm_confidence=float(detail.get("llm_confidence") or inv.llm_confidence or 0.0),
+    )
+    config = await load_config_for_tenant(db, ctx.tenant_id)
+    await apply_invoice_evaluation(db, inv, config=config, enqueue_pending=False)
+    await log_event(
+        db,
+        "classification_resolved",
+        invoice_id=invoice_id,
+        tenant_id=ctx.tenant_id,
+        detail={
+            "confirmed_dt": confirmed,
+            "llm_suggested_dt": detail.get("llm_suggested_dt"),
+            "policy_winner_dt": detail.get("policy_winner_dt"),
+        },
+    )
+
+    if body.reprocess:
+        await reset_invoice_for_reprocess(db, inv, preserve_document_type=True)
+        await db.commit()
+        background_tasks.add_task(
+            process_invoice_background,
+            invoice_id,
+            tenant_id=ctx.tenant_id,
+        )
+    else:
+        await db.commit()
+
+    refreshed = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    extraction_fields = await _document_type_extraction_fields(db, ctx.tenant_id, refreshed)
+    return ApiEnvelope(data=_to_response(refreshed, document_type_extraction_fields=extraction_fields))
+
+
+@router.get("/{invoice_id:int}/classification-audit", response_model=ApiEnvelope[dict[str, object]])
 async def invoice_classification_audit(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[dict[str, object]]:
-    """Latest document-type classification detail from the processing audit trail."""
-    await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    """Latest LLM + policy classification detail from the processing audit trail."""
+    inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     row = (
         await db.execute(
             select(AuditLog)
@@ -776,11 +979,21 @@ async def invoice_classification_audit(
         )
     ).scalar_one_or_none()
     if row is None or not isinstance(row.detail, dict):
-        return ApiEnvelope(data={})
-    return ApiEnvelope(data=row.detail)
+        return ApiEnvelope(
+            data={
+                "llm_suggested_dt": inv.llm_suggested_dt,
+                "llm_confidence": inv.llm_confidence,
+                "document_type_code": inv.document_type_code,
+            }
+        )
+    merged = dict(row.detail)
+    merged.setdefault("llm_suggested_dt", inv.llm_suggested_dt)
+    merged.setdefault("llm_confidence", inv.llm_confidence)
+    merged.setdefault("document_type_code", inv.document_type_code)
+    return ApiEnvelope(data=merged)
 
 
-@router.get("/{invoice_id}/purchase-dossier", response_model=ApiEnvelope[PurchaseDossierResponse])
+@router.get("/{invoice_id:int}/purchase-dossier", response_model=ApiEnvelope[PurchaseDossierResponse])
 async def invoice_purchase_dossier(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
@@ -824,7 +1037,7 @@ async def remap_invoices(
     )
 
 
-@router.post("/{invoice_id}/publish", response_model=ApiEnvelope[InvoiceResponse])
+@router.post("/{invoice_id:int}/publish", response_model=ApiEnvelope[InvoiceResponse])
 async def publish_invoice(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),

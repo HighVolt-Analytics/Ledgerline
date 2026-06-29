@@ -6,13 +6,6 @@
 import shippedCatalog from "@/lib/v5DocumentTypes.json";
 import shippedDefaults from "@/lib/documentTypeDefaults.json";
 import classifierPresets from "@/lib/documentTypeClassifierPresets.json";
-import {
-  buildClassifierFromSignals,
-  inferClassifierLayout,
-  parseSignalsFromClassifier,
-  type ClassifierLayout,
-  type RecognitionSignalId,
-} from "@/lib/documentClassifierBuilder";
 import { playbookPresetForProfile, type PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import type {
   DocumentTypeClass,
@@ -28,7 +21,19 @@ import {
   templateSignalMetaForCode,
   type RecognitionSignalOption,
   type RouteConfidencePreset,
+  type ClassifierLayout,
+  type RecognitionSignalId,
 } from "@/lib/documentTypeTemplateMeta";
+import {
+  buildClassifierFromSignals,
+  inferClassifierLayout,
+  parseSignalsFromClassifier,
+} from "@/lib/documentClassifierBuilder";
+import {
+  compileMatchRulesToClassifier,
+  matchRulesFormFromClassifier,
+} from "@/lib/documentMatchRules";
+import { initializeCustomDocumentTypeRecognition } from "@/lib/documentUserRecognition";
 
 export type { RouteConfidencePreset, RecognitionSignalOption };
 
@@ -163,7 +168,7 @@ export const DOCUMENT_TYPE_TEMPLATES: DocumentTypeTemplate[] = [
   {
     id: "custom",
     label: "Custom type",
-    description: "Start blank and configure recognition manually.",
+    description: "Blank type with match / exclude rules and processing sections.",
     shippedCode: "",
     routeTarget: "Vault",
     klass: "Transactional",
@@ -190,7 +195,7 @@ function shippedRowForCode(code: string) {
   return SHIPPED_ROWS.find((row) => row.code.toUpperCase() === code.toUpperCase());
 }
 
-function classifierFromTemplate(template: DocumentTypeTemplate): DocumentTypeClassifier {
+function legacyClassifierFromTemplate(template: DocumentTypeTemplate): DocumentTypeClassifier {
   const preset = template.shippedCode
     ? CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]
     : undefined;
@@ -217,6 +222,20 @@ function classifierFromTemplate(template: DocumentTypeTemplate): DocumentTypeCla
   }
 
   return createBlankDocumentType([]).classifier;
+}
+
+/** Shipped templates use the same match/exclude rules editor as custom types. */
+function matchRulesClassifierFromTemplate(
+  template: DocumentTypeTemplate
+): DocumentTypeClassifier {
+  const legacy = legacyClassifierFromTemplate(template);
+  const form = matchRulesFormFromClassifier(legacy.root);
+  return {
+    enabled: legacy.enabled,
+    priority: legacy.priority,
+    confidence: legacy.confidence,
+    root: compileMatchRulesToClassifier(form),
+  };
 }
 
 /** Org catalogue codes always follow the org sequence — never the shipped matrix code. */
@@ -256,7 +275,10 @@ export function documentTypeFromTemplate(
   const shipped = template.shippedCode ? shippedRowForCode(template.shippedCode) : null;
   const preset = playbookPresetForProfile(template.playbookProfile);
   const defaults = template.shippedCode ? defaultsRowForCode(template.shippedCode) : {};
-  const classifier = classifierFromTemplate(template);
+  const classifier =
+    templateId === "custom"
+      ? base.classifier
+      : matchRulesClassifierFromTemplate(template);
   const code = orgCodeForNewType(existing);
   const matrixTemplateCode =
     templateId !== "custom" && template.shippedCode ? template.shippedCode.toUpperCase() : "";
@@ -264,13 +286,16 @@ export function documentTypeFromTemplate(
     ? [...defaults.required_fields]
     : [...template.defaultExtractionFields];
   const absentFields = defaults.absent_fields?.length ? [...defaults.absent_fields] : [];
+  const oneLine =
+    shipped?.oneLine ?? (templateId === "custom" ? "" : template.description);
 
-  return {
+  const payload: DocumentTypeDefinition = {
     ...base,
     code,
-    title: shipped?.title ?? template.label,
-    shortTitle: shipped?.shortTitle ?? template.label,
-    oneLine: shipped?.oneLine ?? template.description,
+    title: shipped?.title ?? (templateId === "custom" ? "" : template.label),
+    shortTitle: shipped?.shortTitle ?? (templateId === "custom" ? "" : template.label),
+    oneLine,
+    llmHint: templateId === "custom" ? "" : oneLine,
     klass: template.klass,
     posting: template.posting,
     fraudRisk: template.fraudRisk,
@@ -279,18 +304,34 @@ export function documentTypeFromTemplate(
     matchPolicy: { mode: preset.matchMode },
     approvalPolicy: { mode: preset.approvalMode },
     purchaseBundleRole: template.purchaseBundleRole,
-    validationProfile: template.validationProfile,
-    extractionFields: [...template.defaultExtractionFields],
+    validationProfile:
+      templateId === "custom" ? "non_actionable" : template.validationProfile,
+    extractionFields:
+      templateId === "custom"
+        ? ["document_heading", "document_text"]
+        : [...template.defaultExtractionFields],
     requiredFields,
     absentFields,
     minRouteConfidence:
-      defaults.min_route_confidence ?? ROUTE_CONFIDENCE_VALUES[template.defaultRouteConfidence],
+      templateId === "custom"
+        ? 0.75
+        : defaults.min_route_confidence ?? ROUTE_CONFIDENCE_VALUES[template.defaultRouteConfidence],
     classifier,
     classifierCustomized: false,
     matrixTemplateCode,
     enabled: true,
     bundleMandatory: shipped?.bundleMandatory ? [...shipped.bundleMandatory] : [],
     bundleConditional: shipped?.bundleConditional ? [...shipped.bundleConditional] : [],
+  };
+
+  if (templateId === "custom") {
+    return initializeCustomDocumentTypeRecognition(payload);
+  }
+
+  return {
+    ...payload,
+    enabled: true,
+    classifierCustomized: false,
   };
 }
 

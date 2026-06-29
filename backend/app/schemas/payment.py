@@ -81,6 +81,7 @@ class PaymentStatusUpdate(BaseModel):
     scheduled_date: date | None = None
     payment_intent: str | None = None
     failure_reason: str | None = None
+    payment_fx_rate: float | None = None
 
 
 class WalletTransactionResponse(BaseModel):

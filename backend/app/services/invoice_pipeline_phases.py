@@ -1,0 +1,407 @@
+"""Named pipeline phases: Storage → OCR → LLM classify → Confidence gate."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Sequence
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.models.invoice import Invoice
+from app.schemas.classification_decision import ReviewReason
+from app.schemas.document_type import DocumentTypeDefinition
+from app.schemas.llm_document import LlmDocumentResult
+from app.schemas.ocr_artifact import OcrArtifact
+from app.schemas.rule_book_config import AiClassificationConfig
+from app.services.audit_service import log_event
+from app.services.classification_learning_service import load_cached_ocr, store_ocr_artifact
+from app.services.di_extract_service import OcrFailed
+from app.services.document_ai_provider import (
+    DocumentAiProvider,
+    classify_only,
+    provider_available,
+    provider_unavailable_reason,
+    read_for_classification,
+)
+from app.services.document_ref_service import audit_document_detail
+from app.services.document_type_catalog import (
+    get_document_type_definition,
+    min_route_confidence_for_document_type,
+)
+from app.services.document_type_rule_engine import (
+    classifier_rules_match_ocr,
+    is_user_defined_document_type,
+)
+from app.services.file_storage import open_pdf_for_reading, repair_invoice_stored_path, stored_file_available
+from app.services.tenant_org_context import OrgContext
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class GatePhaseResult:
+    passed: bool
+    confirmed_dt: str = ""
+    confirmed_confidence: float = 0.0
+    review_reasons: list[str] = field(default_factory=list)
+    llm_suggested_dt: str | None = None
+    llm_confidence: float | None = None
+    llm_reasoning: str | None = None
+    min_route_confidence: float = 0.0
+
+
+@dataclass
+class ImageQualityGateResult:
+    passed: bool
+    review_reasons: list[str] = field(default_factory=list)
+    text_length: int = 0
+    sparse: bool = False
+    min_text_chars: int = 0
+
+
+@dataclass
+class FieldConfidenceGateResult:
+    passed: bool
+    low_confidence_fields: dict[str, float] = field(default_factory=dict)
+    min_confidence: float = 0.0
+    review_reasons: list[str] = field(default_factory=list)
+
+
+_CRITICAL_EXTRACT_FIELDS = ("vendor", "total", "invoice_no", "gst", "abn")
+
+
+async def phase_storage_verify(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    document_ai_provider: str,
+) -> None:
+    """Verify persisted file is readable before OCR."""
+    await repair_invoice_stored_path(session, invoice)
+    if not stored_file_available(invoice.raw_file_path, tenant_id=invoice.tenant_id):
+        raise OcrFailed("stored_file_missing")
+
+    await log_event(
+        session,
+        "storage_verified",
+        invoice_id=invoice.id,
+        detail=audit_document_detail(
+            invoice,
+            path=invoice.raw_file_path,
+            document_ai_provider=document_ai_provider,
+        ),
+    )
+
+
+async def phase_ocr(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    org: OrgContext,
+    document_types: Sequence[DocumentTypeDefinition],
+    doc_provider: DocumentAiProvider,
+    provider_token: str,
+    human_locked_dt: str | None,
+) -> OcrArtifact:
+    """OCR / layout read only — no field extraction."""
+    ocr: OcrArtifact | None = None
+    if invoice.file_hash:
+        ocr = await load_cached_ocr(
+            session,
+            tenant_id=invoice.tenant_id,
+            invoice_id=invoice.id,
+            file_hash=invoice.file_hash,
+        )
+
+    if ocr is None:
+        with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+            if not provider_available(doc_provider) and not human_locked_dt:
+                raise OcrFailed(provider_unavailable_reason(doc_provider))
+            ocr = await read_for_classification(
+                path,
+                provider=doc_provider,
+                org=org,
+                document_types=document_types,
+            )
+        if invoice.file_hash:
+            await store_ocr_artifact(
+                session,
+                tenant_id=invoice.tenant_id,
+                invoice_id=invoice.id,
+                file_hash=invoice.file_hash,
+                ocr=ocr,
+            )
+
+    await log_event(
+        session,
+        "ocr_completed",
+        invoice_id=invoice.id,
+        detail={
+            "source": provider_token,
+            "confidence": "high" if not ocr.sparse else "low",
+            "text_length": ocr.text_length,
+            "di_model": ocr.di_model,
+            "document_ai_provider": provider_token,
+            "sparse": ocr.sparse,
+        },
+    )
+    return ocr
+
+
+def evaluate_image_quality_gate(
+    ocr: OcrArtifact,
+    *,
+    ai_cfg: AiClassificationConfig,
+) -> ImageQualityGateResult:
+    """Block classify when OCR/image quality is too poor (skewed photos, unreadable scans)."""
+    settings = get_settings()
+    min_chars = ai_cfg.ocr_quality_min_text_chars
+    if min_chars is None:
+        min_chars = settings.ocr_min_text_chars
+
+    reasons: list[str] = []
+    if ai_cfg.block_sparse_ocr and ocr.sparse:
+        reasons.append(ReviewReason.OCR_SPARSE.value)
+    if ocr.text_length < min_chars:
+        reasons.append(ReviewReason.IMAGE_QUALITY_LOW.value)
+
+    quality_hint = str((ocr.payload_json or {}).get("image_quality") or "").strip().lower()
+    if quality_hint in {"low", "poor", "unreadable"}:
+        reasons.append(ReviewReason.IMAGE_QUALITY_LOW.value)
+
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    deduped = [r for r in reasons if not (r in seen or seen.add(r))]
+
+    return ImageQualityGateResult(
+        passed=not deduped,
+        review_reasons=deduped,
+        text_length=ocr.text_length,
+        sparse=ocr.sparse,
+        min_text_chars=min_chars,
+    )
+
+
+def image_quality_audit_detail(
+    result: ImageQualityGateResult,
+    *,
+    provider_token: str,
+) -> dict[str, object]:
+    return {
+        "gate": "image_quality",
+        "compare_passed": result.passed,
+        "review_reasons": result.review_reasons,
+        "text_length": result.text_length,
+        "sparse": result.sparse,
+        "min_text_chars": result.min_text_chars,
+        "document_ai_provider": provider_token,
+        "resubmit_hint": "Please resend a flat, well-lit scan or PDF — avoid angled phone photos.",
+    }
+
+
+async def phase_llm_classify(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    ocr: OcrArtifact,
+    org: OrgContext,
+    document_types: Sequence[DocumentTypeDefinition],
+    few_shots: Sequence[dict[str, str]],
+    doc_provider: DocumentAiProvider,
+    provider_token: str,
+    file_path: str | Path,
+) -> LlmDocumentResult | None:
+    """LLM document-type classification with org prompt + few-shots."""
+    settings = get_settings()
+    result = await classify_only(
+        ocr,
+        file_path=file_path,
+        org=org,
+        document_types=document_types,
+        few_shots=few_shots,
+        provider=doc_provider,
+    )
+
+    if result is not None:
+        invoice.llm_suggested_dt = result.suggested_dt or None
+        invoice.llm_confidence = round(result.confidence, 4)
+
+    await log_event(
+        session,
+        "llm_classified",
+        invoice_id=invoice.id,
+        detail={
+            "llm_suggested_dt": result.suggested_dt if result else None,
+            "llm_confidence": result.confidence if result else None,
+            "llm_reasoning": result.reasoning if result else None,
+            "document_ai_provider": provider_token,
+            "prompt_version": settings.llm_classification_prompt_version,
+        },
+    )
+    return result
+
+
+def evaluate_confidence_gate(
+    llm: LlmDocumentResult | None,
+    *,
+    document_types: Sequence[DocumentTypeDefinition],
+    ai_cfg: AiClassificationConfig,
+    provider_token: str,
+) -> GatePhaseResult:
+    """LLM confidence + catalogue gate (no policy scorer at pre-extract)."""
+    settings = get_settings()
+    org_route_min = ai_cfg.auto_route_min_confidence
+    reasons: list[str] = []
+
+    if llm is None:
+        reasons.append(ReviewReason.LLM_INVALID.value)
+        return GatePhaseResult(
+            passed=False,
+            review_reasons=reasons,
+            llm_suggested_dt=None,
+            llm_confidence=None,
+            min_route_confidence=org_route_min,
+        )
+
+    suggested = (llm.suggested_dt or "").strip().upper()
+    route_min = max(
+        org_route_min,
+        min_route_confidence_for_document_type(suggested, document_types)
+        if suggested
+        else org_route_min,
+    )
+
+    if not suggested:
+        reasons.append(ReviewReason.DT_NOT_IN_CATALOGUE.value)
+    else:
+        defn = get_document_type_definition(suggested, document_types=document_types)
+        if defn is None:
+            reasons.append(ReviewReason.DT_NOT_IN_CATALOGUE.value)
+        elif not defn.enabled:
+            reasons.append(ReviewReason.DT_DISABLED.value)
+
+    if llm.confidence < route_min:
+        reasons.append(ReviewReason.LLM_LOW_CONF.value)
+
+    passed = not reasons and bool(suggested)
+    confirmed_conf = round(llm.confidence, 4) if passed else 0.0
+
+    return GatePhaseResult(
+        passed=passed,
+        confirmed_dt=suggested if passed else "",
+        confirmed_confidence=confirmed_conf,
+        review_reasons=reasons,
+        llm_suggested_dt=suggested or None,
+        llm_confidence=round(llm.confidence, 4),
+        llm_reasoning=llm.reasoning,
+        min_route_confidence=route_min,
+    )
+
+
+def apply_user_defined_classifier_gate(
+    gate_result: GatePhaseResult,
+    *,
+    invoice: Invoice,
+    ocr: OcrArtifact,
+    document_types: Sequence[DocumentTypeDefinition],
+) -> GatePhaseResult:
+    """Fail auto-route when LLM picks a custom type whose match rules don't fit OCR."""
+    if not gate_result.passed or not gate_result.confirmed_dt:
+        return gate_result
+
+    defn = get_document_type_definition(gate_result.confirmed_dt, document_types=document_types)
+    if defn is None or not is_user_defined_document_type(defn):
+        return gate_result
+
+    if classifier_rules_match_ocr(defn, invoice=invoice, ocr=ocr):
+        return gate_result
+
+    reasons = list(gate_result.review_reasons)
+    if ReviewReason.CLASSIFIER_RULE_MISMATCH.value not in reasons:
+        reasons.append(ReviewReason.CLASSIFIER_RULE_MISMATCH.value)
+
+    return GatePhaseResult(
+        passed=False,
+        confirmed_dt="",
+        confirmed_confidence=0.0,
+        review_reasons=reasons,
+        llm_suggested_dt=gate_result.llm_suggested_dt,
+        llm_confidence=gate_result.llm_confidence,
+        llm_reasoning=gate_result.llm_reasoning,
+        min_route_confidence=gate_result.min_route_confidence,
+    )
+
+
+def gate_audit_detail(result: GatePhaseResult, *, provider_token: str) -> dict[str, object]:
+    settings = get_settings()
+    return {
+        "gate": "classification",
+        "compare_passed": result.passed,
+        "llm_suggested_dt": result.llm_suggested_dt,
+        "llm_confidence": result.llm_confidence,
+        "llm_reasoning": result.llm_reasoning,
+        "confirmed_dt": result.confirmed_dt,
+        "confirmed_confidence": result.confirmed_confidence,
+        "review_reasons": result.review_reasons,
+        "min_route_confidence": result.min_route_confidence,
+        "document_ai_provider": provider_token,
+        "prompt_version": settings.llm_classification_prompt_version,
+    }
+
+
+def evaluate_field_confidence_gate(
+    llm: LlmDocumentResult | None,
+    *,
+    ai_cfg: AiClassificationConfig,
+    critical_fields: Sequence[str] = _CRITICAL_EXTRACT_FIELDS,
+) -> FieldConfidenceGateResult:
+    """Flag extracted fields below per-field confidence threshold."""
+    floor = ai_cfg.min_field_extract_confidence
+    if llm is None or not llm.field_confidence:
+        return FieldConfidenceGateResult(passed=True, min_confidence=floor)
+
+    low: dict[str, float] = {}
+    for key in critical_fields:
+        conf = llm.field_confidence.get(key)
+        if conf is None:
+            continue
+        value_present = False
+        if key == "vendor":
+            value_present = bool((llm.vendor or llm.seller.name or "").strip())
+        elif key == "total":
+            value_present = llm.total is not None
+        elif key == "invoice_no":
+            value_present = bool((llm.invoice_no or "").strip())
+        elif key == "gst":
+            value_present = llm.gst is not None
+        elif key == "abn":
+            value_present = bool((llm.abn or llm.seller.abn or "").strip())
+        if value_present and conf < floor:
+            low[key] = round(conf, 4)
+
+    for key, conf in llm.field_confidence.items():
+        if key in low or key in critical_fields:
+            continue
+        if conf < floor:
+            low[key] = round(conf, 4)
+
+    reasons = [ReviewReason.FIELD_CONFIDENCE_LOW.value] if low else []
+    return FieldConfidenceGateResult(
+        passed=not low,
+        low_confidence_fields=low,
+        min_confidence=floor,
+        review_reasons=reasons,
+    )
+
+
+def field_confidence_audit_detail(result: FieldConfidenceGateResult) -> dict[str, object]:
+    return {
+        "gate": "field_confidence",
+        "compare_passed": result.passed,
+        "low_confidence_fields": result.low_confidence_fields,
+        "min_field_extract_confidence": result.min_confidence,
+        "review_reasons": result.review_reasons,
+    }

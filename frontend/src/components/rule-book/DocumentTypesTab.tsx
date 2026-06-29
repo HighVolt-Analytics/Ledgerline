@@ -15,14 +15,7 @@ import {
   type DocumentTypeDefinition,
   type DocumentTypeFraudRisk,
 } from "@/lib/v5DocumentTypes";
-import { DocumentConditionBuilder } from "@/components/rule-book/DocumentConditionBuilder";
-import { DocumentTypeSamplesSection } from "@/components/rule-book/DocumentTypeSamplesSection";
-import {
-  buildSampleAnalysisRecord,
-  markSampleAnalysisApplied,
-} from "@/lib/documentTypeSampleAnalysis";
 import { DocumentTypeTemplateDialog } from "@/components/rule-book/DocumentTypeTemplateDialog";
-import { SimpleClassifierSection } from "@/components/rule-book/SimpleClassifierSection";
 import {
   ValidationDetailSection,
   ValidationRulesEditor,
@@ -53,6 +46,14 @@ import {
   documentTypeFromTemplate,
   inferTemplateIdFromDefinition,
 } from "@/lib/documentTypeTemplates";
+import { DocumentConditionBuilder } from "@/components/rule-book/DocumentConditionBuilder";
+import { DocumentMatchRulesEditor } from "@/components/rule-book/DocumentMatchRulesEditor";
+import {
+  FxPostingPolicyEditor,
+  FxPostingPolicySummary,
+} from "@/components/rule-book/FxPostingPolicyEditor";
+import { documentTypeReadiness } from "@/lib/documentMatchRules";
+import type { MatchRulesForm } from "@/lib/documentMatchRules";
 
 const CLASS_BADGE_CLASSES: Record<DocumentTypeClass, string> = {
   Transactional: "text-primary bg-primary/10 border-primary/20",
@@ -601,11 +602,6 @@ function DocumentTypeDetailDialog({
                 {docType.fraudRisk}
               </span>
             </DetailFact>
-            <DetailFact label="Classifier">
-              {docType.classifier.enabled
-                ? `On · priority ${docType.classifier.priority}`
-                : "Off"}
-            </DetailFact>
           </dl>
         </div>
 
@@ -659,6 +655,11 @@ function DocumentTypeDetailDialog({
             <DetailCard title="Processing playbook" hint="Match and approval preset">
               <PlaybookDetailSection docType={docType} />
             </DetailCard>
+            {(docType.routeTarget === "Purchase Management" || docType.posting !== "No") && (
+              <DetailCard title="Currency & FX" hint="Booking and payment FX policy">
+                <FxPostingPolicySummary policy={docType.fxPolicy} />
+              </DetailCard>
+            )}
             <DetailCard
               title="Validation"
               hint="Standard, custom, and duplicate checks"
@@ -710,6 +711,23 @@ function DocumentTypeEditDialog({
     [draft]
   );
   const advancedMode = Boolean(draft.classifierCustomized);
+  const isUserDefinedType = templateId === "custom" || !draft.matrixTemplateCode?.trim();
+  const [showAdvancedIdentity, setShowAdvancedIdentity] = useState(!isNew);
+  const [matchRulesForm, setMatchRulesForm] = useState<MatchRulesForm | null>(null);
+
+  const readiness = useMemo(
+    () =>
+      documentTypeReadiness(
+        {
+          title: draft.title,
+          oneLine: draft.oneLine,
+          code: draft.code,
+          classifier: draft.classifier,
+        },
+        matchRulesForm ?? undefined
+      ),
+    [draft.title, draft.oneLine, draft.code, draft.classifier, matchRulesForm]
+  );
 
   function patchClassifier(
     classifier: Partial<DocumentTypeDefinition["classifier"]>
@@ -770,8 +788,8 @@ function DocumentTypeEditDialog({
               </div>
               <p className="text-sm text-muted-foreground">
                 {isNew
-                  ? "Name the type and confirm how we recognise it. Advanced options are optional."
-                  : "Update labels, recognition signals, extraction, and processing rules."}
+                  ? "Set recognition, then configure extraction, validation, playbook, and bundle rules before creating."
+                  : "Update labels, recognition rules, extraction, and processing rules."}
               </p>
             </div>
             <button
@@ -786,19 +804,17 @@ function DocumentTypeEditDialog({
         </div>
 
         <div className="detail-dialog-body">
-          <DetailCard title="Identity" hint="Code, labels, routing, and enablement">
+          <DetailCard title="Identity" hint="Name, route, and enablement">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-code">Code</FieldLabel>
+              <div className="space-y-1.5 sm:col-span-2">
+                <FieldLabel htmlFor="dt-title">Document name</FieldLabel>
                 <Input
-                  id="dt-code"
-                  value={draft.code}
-                  onChange={(e) => onChange({ ...draft, code: e.target.value.toUpperCase() })}
-                  className="h-9 font-mono text-sm"
+                  id="dt-title"
+                  value={draft.title}
+                  onChange={(e) => onChange({ ...draft, title: e.target.value })}
+                  className="h-9 text-sm"
+                  placeholder="e.g. Handwritten GRN"
                 />
-                {codeTaken ? (
-                  <p className="text-xs text-destructive">That code is already in use.</p>
-                ) : null}
               </div>
               <div className="space-y-1.5">
                 <FieldLabel htmlFor="dt-short">Short title</FieldLabel>
@@ -809,137 +825,149 @@ function DocumentTypeEditDialog({
                   className="h-9 text-sm"
                 />
               </div>
+              {(showAdvancedIdentity || !isNew) && (
+                <div className="space-y-1.5">
+                  <FieldLabel htmlFor="dt-code">Code</FieldLabel>
+                  <Input
+                    id="dt-code"
+                    value={draft.code}
+                    onChange={(e) => onChange({ ...draft, code: e.target.value.toUpperCase() })}
+                    className="h-9 font-mono text-sm"
+                  />
+                  {codeTaken ? (
+                    <p className="text-xs text-destructive">That code is already in use.</p>
+                  ) : null}
+                </div>
+              )}
               <div className="space-y-1.5 sm:col-span-2">
-                <FieldLabel htmlFor="dt-title">Title</FieldLabel>
-                <Input
-                  id="dt-title"
-                  value={draft.title}
-                  onChange={(e) => onChange({ ...draft, title: e.target.value })}
-                  className="h-9 text-sm"
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <FieldLabel htmlFor="dt-oneline">Summary</FieldLabel>
+                <FieldLabel htmlFor="dt-oneline">
+                  {isUserDefinedType
+                    ? "Notes for operators (optional)"
+                    : "How to recognise this document (AI + humans)"}
+                </FieldLabel>
                 <textarea
                   id="dt-oneline"
                   rows={2}
                   value={draft.oneLine}
                   onChange={(e) => onChange({ ...draft, oneLine: e.target.value })}
+                  placeholder={
+                    isUserDefinedType
+                      ? "Optional — match rules below are required for recognition."
+                      : "e.g. Goods received note with PO ref; often handwritten. Not a tax invoice."
+                  }
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 />
               </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-klass">Class</FieldLabel>
-                <select
-                  id="dt-klass"
-                  value={draft.klass}
-                  onChange={(e) =>
-                    onChange({ ...draft, klass: e.target.value as DocumentTypeClass })
-                  }
-                  className={selectClass}
-                >
-                  {KLASS_OPTIONS.map((klass) => (
-                    <option key={klass} value={klass}>
-                      {klass}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-posting">Posting</FieldLabel>
-                <select
-                  id="dt-posting"
-                  value={draft.posting}
-                  onChange={(e) => onChange({ ...draft, posting: e.target.value })}
-                  className={selectClass}
-                >
-                  {POSTING_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-fraud">Fraud risk</FieldLabel>
-                <select
-                  id="dt-fraud"
-                  value={draft.fraudRisk}
-                  onChange={(e) =>
-                    onChange({ ...draft, fraudRisk: e.target.value as DocumentTypeFraudRisk })
-                  }
-                  className={cn(selectClass, "capitalize")}
-                >
-                  {FRAUD_RISK_OPTIONS.map((risk) => (
-                    <option key={risk} value={risk}>
-                      {risk}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-route">Workspace route</FieldLabel>
-                <select
-                  id="dt-route"
-                  value={draft.routeTarget}
-                  onChange={(e) => onChange({ ...draft, routeTarget: e.target.value })}
-                  className={selectClass}
-                >
-                  {ROUTE_TARGETS.map((route) => (
-                    <option key={route} value={route}>
-                      {route}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-2 sm:col-span-2">
-                <Switch
-                  id="dt-enabled"
-                  checked={draft.enabled}
-                  onCheckedChange={(enabled) => onChange({ ...draft, enabled })}
-                />
-                <FieldLabel htmlFor="dt-enabled">Enabled for classification and routing</FieldLabel>
-              </div>
+              {isNew && !showAdvancedIdentity ? (
+                <div className="sm:col-span-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => setShowAdvancedIdentity(true)}
+                  >
+                    Show code, class, posting, fraud risk
+                  </Button>
+                </div>
+              ) : null}
+              {(showAdvancedIdentity || !isNew) && (
+                <>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="dt-klass">Class</FieldLabel>
+                    <select
+                      id="dt-klass"
+                      value={draft.klass}
+                      onChange={(e) =>
+                        onChange({ ...draft, klass: e.target.value as DocumentTypeClass })
+                      }
+                      className={selectClass}
+                    >
+                      {KLASS_OPTIONS.map((klass) => (
+                        <option key={klass} value={klass}>
+                          {klass}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="dt-posting">Posting</FieldLabel>
+                    <select
+                      id="dt-posting"
+                      value={draft.posting}
+                      onChange={(e) => onChange({ ...draft, posting: e.target.value })}
+                      className={selectClass}
+                    >
+                      {POSTING_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="dt-fraud">Fraud risk</FieldLabel>
+                    <select
+                      id="dt-fraud"
+                      value={draft.fraudRisk}
+                      onChange={(e) =>
+                        onChange({ ...draft, fraudRisk: e.target.value as DocumentTypeFraudRisk })
+                      }
+                      className={cn(selectClass, "capitalize")}
+                    >
+                      {FRAUD_RISK_OPTIONS.map((risk) => (
+                        <option key={risk} value={risk}>
+                          {risk}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="dt-route">Workspace route</FieldLabel>
+                    <select
+                      id="dt-route"
+                      value={draft.routeTarget}
+                      onChange={(e) => onChange({ ...draft, routeTarget: e.target.value })}
+                      className={selectClass}
+                    >
+                      {ROUTE_TARGETS.map((route) => (
+                        <option key={route} value={route}>
+                          {route}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {!isUserDefinedType ? (
+                    <div className="flex items-center gap-2 sm:col-span-2">
+                      <Switch
+                        id="dt-enabled"
+                        checked={draft.enabled}
+                        onCheckedChange={(enabled) => onChange({ ...draft, enabled })}
+                      />
+                      <FieldLabel htmlFor="dt-enabled">
+                        Enabled for classification and routing
+                      </FieldLabel>
+                    </div>
+                  ) : null}
+                </>
+              )}
             </div>
-          </DetailCard>
-
-          <DetailCard
-            title="Sample files"
-            hint={
-              draft.sampleAnalysis
-                ? "Sample analysis on record — upload new files to re-analyze"
-                : "Detect recognition signals and extraction fields from examples"
-            }
-          >
-            <DocumentTypeSamplesSection
-              draft={draft}
-              templateId={templateId}
-              sampleAnalysis={draft.sampleAnalysis}
-              onRecordAnalysis={(sampleAnalysis) => onChange({ ...draft, sampleAnalysis })}
-              onApply={(next, proposal, filenames) => {
-                onChange({
-                  ...next,
-                  sampleAnalysis: markSampleAnalysisApplied(
-                    buildSampleAnalysisRecord(filenames, proposal, { afterApply: true })
-                  ),
-                });
-              }}
-            />
           </DetailCard>
 
           <DetailCard
             title="Recognition"
             hint={
               advancedMode
-                ? "Advanced condition tree — for power users"
-                : "How we identify this document after OCR"
+                ? "Advanced condition tree — AND/OR rules on OCR fields"
+                : "Match / exclude rules on headings, OCR text, and field presence"
             }
           >
             {advancedMode ? (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
-                    Editing raw AND/OR conditions. Switch back to simple mode when finished.
+                    Build AND/OR condition trees on attachment name, document text, headings, and
+                    field presence flags.
                   </p>
                   <Button type="button" size="sm" variant="outline" className="h-8" onClick={useSimpleMode}>
                     Use simple recognition
@@ -994,20 +1022,22 @@ function DocumentTypeEditDialog({
                 {draft.classifier.enabled ? (
                   <DocumentConditionBuilder
                     root={draft.classifier.root}
+                    extractionFields={draft.extractionFields}
                     onChange={(root) => onChange(patchClassifier({ root }))}
                   />
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    Built-in heuristics apply when the classifier is off.
+                    Enable the classifier to add deterministic recognition rules.
                   </p>
                 )}
               </div>
             ) : (
-              <SimpleClassifierSection
+              <DocumentMatchRulesEditor
                 draft={draft}
-                templateId={templateId}
                 onChange={onChange}
                 onOpenAdvanced={() => onChange({ ...draft, classifierCustomized: true })}
+                onFormChange={setMatchRulesForm}
+                rulesOnly
               />
             )}
           </DetailCard>
@@ -1032,26 +1062,6 @@ function DocumentTypeEditDialog({
                   className="h-9 text-sm font-mono"
                 />
               </div>
-              {advancedMode ? (
-                <div className="space-y-1.5">
-                  <FieldLabel htmlFor="dt-min-route-confidence">Min route confidence</FieldLabel>
-                  <Input
-                    id="dt-min-route-confidence"
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={draft.minRouteConfidence}
-                    onChange={(e) =>
-                      onChange({
-                        ...draft,
-                        minRouteConfidence: Math.min(1, Math.max(0, Number(e.target.value) || 0)),
-                      })
-                    }
-                    className="h-9 text-sm"
-                  />
-                </div>
-              ) : null}
               <div className="space-y-1.5">
                 <FieldLabel htmlFor="dt-validation-profile">Validation profile</FieldLabel>
                 <select
@@ -1072,6 +1082,18 @@ function DocumentTypeEditDialog({
           <DetailCard title="Processing playbook" hint="Match and approval preset">
             <PlaybookPolicyEditor draft={draft} onChange={onChange} />
           </DetailCard>
+
+          {(draft.routeTarget === "Purchase Management" || draft.posting !== "No") && (
+            <DetailCard
+              title="Currency & FX"
+              hint="Booking rate at invoice date; FX variance at payment"
+            >
+              <FxPostingPolicyEditor
+                value={draft.fxPolicy}
+                onChange={(fxPolicy) => onChange({ ...draft, fxPolicy })}
+              />
+            </DetailCard>
+          )}
 
           <DetailCard title="Validation" hint="Standard checks and custom field rules">
             <ValidationRulesEditor
@@ -1163,17 +1185,36 @@ function DocumentTypeEditDialog({
           </DetailCard>
         </div>
 
-        <div className="detail-dialog-footer">
+        <div className="detail-dialog-footer flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+          {isNew ? (
+            <ul className="flex-1 space-y-0.5 text-xs text-muted-foreground">
+              {readiness.items.map((item) => (
+                <li key={item.label} className={item.done ? "text-primary" : undefined}>
+                  {item.done ? "✓" : "○"} {item.label}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span className="flex-1" />
+          )}
+          <div className="flex gap-2 justify-end">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button
             type="button"
             onClick={onSave}
-            disabled={!draft.code.trim() || !draft.title.trim() || codeTaken}
+            disabled={
+              !draft.code.trim() ||
+              !draft.title.trim() ||
+              codeTaken ||
+              (isNew && !readiness.ready)
+            }
+            title={isNew && !readiness.ready ? "Complete the readiness checklist" : undefined}
           >
             {isNew ? "Create type" : "Save changes"}
           </Button>
+          </div>
         </div>
       </div>
     </div>,
@@ -1294,8 +1335,8 @@ export function DocumentTypesTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Add a type by uploading sample files (recommended) or from a template. Recognition
-          rules drive routing; GL accounts are set under Purchase, Expenses, and Team tabs.
+          Configure document types for AI classification and routing. GL accounts are set under
+          Purchase, Expenses, and Team tabs.
         </p>
         {canEdit ? (
           <Button
@@ -1374,9 +1415,6 @@ export function DocumentTypesTab({
                 <ToneBadge tone={cardPostingTone(docType.posting)}>
                   Post: {docType.posting}
                 </ToneBadge>
-                {docType.sampleAnalysis ? (
-                  <ToneBadge tone="primary">Samples analyzed</ToneBadge>
-                ) : null}
                 {!docType.enabled ? <ToneBadge tone="fail">Off</ToneBadge> : null}
               </div>
             </button>

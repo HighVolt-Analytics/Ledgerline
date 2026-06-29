@@ -8,19 +8,17 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connected_whatsapp import ConnectedWhatsapp
-from app.models.invoice import Invoice, InvoiceStatus
+from app.models.invoice import Invoice
 from app.models.tenant import Tenant
 from app.services.audit_service import log_event
 from app.services.capture_channel import normalize_phone
-from app.services.file_storage import store_invoice_pdf
-from app.utils.hashing import compute_sha256_bytes
 from app.services.document_duplicate_service import (
     create_duplicate_shadow_invoice,
     evaluate_file_hash_duplicate,
     find_invoice_by_file_hash,
     log_duplicate_in_progress,
 )
-from app.services.document_ref_service import assign_document_ref
+from app.services.ingest_fanout_service import IngestSourceMetadata, ingest_file_with_fanout
 from app.services.invoice_reset import reset_invoice_for_reprocess
 from app.services.team_expense_validator import resolve_employee_for_sender
 from app.services.vendor_resolver import resolve_vendor_slug
@@ -32,6 +30,7 @@ from app.services.whatsapp_graph_client import (
     mark_message_read,
     send_text_message_with_retry,
 )
+from app.utils.hashing import compute_sha256_bytes
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -267,48 +266,43 @@ async def ingest_whatsapp_message(
         return result
 
     vendor_slug = await resolve_vendor_slug(session, sender, tenant_id=connection.tenant_id)
-    inv = Invoice(
-        tenant_id=connection.tenant_id,
-        whatsapp_connection_id=connection.id,
-        status=InvoiceStatus.PENDING,
-        file_hash=file_hash,
-        currency="AUD",
-        email_sender=sender,
-        email_subject=caption or None,
-        email_attachment_name=filename,
-        email_message_id=msg.message_id,
-        storage_vendor_slug=vendor_slug,
-        capture_source="whatsapp",
-        matched_rule_ids=json.dumps(["ingest:whatsapp"]),
-    )
-    session.add(inv)
-    await session.flush()
-    await assign_document_ref(session, inv)
-
-    stored = store_invoice_pdf(
-        data,
-        org.id,
-        org.slug,
-        vendor_slug,
-        inv.id,
-        file_hash,
-        filename,
-        tenant_name=org.name,
-    )
-    inv.raw_file_path = stored
-
-    await log_event(
+    fanout = await ingest_file_with_fanout(
         session,
-        "whatsapp_ingested",
-        invoice_id=inv.id,
-        detail={
-            "sender": sender,
-            "employee": employee.name,
-            "message_id": msg.message_id,
-            "filename": filename,
-            "storage": stored,
-        },
+        tenant_id=connection.tenant_id,
+        tenant_slug=org.slug,
+        tenant_name=org.name,
+        filename=filename,
+        data=data,
+        source=IngestSourceMetadata(
+            storage_vendor_slug=vendor_slug,
+            email_sender=sender,
+            email_subject=caption or None,
+            email_message_id=msg.message_id,
+            email_attachment_name=filename,
+            whatsapp_connection_id=connection.id,
+            capture_source="whatsapp",
+            matched_rule_ids=json.dumps(["ingest:whatsapp"]),
+        ),
     )
+
+    for segment_index, invoice_id in enumerate(fanout.invoice_ids):
+        inv = await session.get(Invoice, invoice_id)
+        assert inv is not None
+        await log_event(
+            session,
+            "whatsapp_ingested",
+            invoice_id=inv.id,
+            detail={
+                "sender": sender,
+                "employee": employee.name,
+                "message_id": msg.message_id,
+                "filename": filename,
+                "storage": inv.raw_file_path,
+                "parent_file_hash": fanout.parent_file_hash,
+                "segment_index": segment_index,
+                "segment_count": fanout.segment_count,
+            },
+        )
 
     await mark_message_read(
         connection.phone_number_id,
@@ -322,6 +316,6 @@ async def ingest_whatsapp_message(
         text="Receipt received — your expense claim is being processed.",
     )
 
-    result.ingested_count = 1
-    result.invoice_ids.append(inv.id)
+    result.ingested_count = len(fanout.invoice_ids)
+    result.invoice_ids.extend(fanout.invoice_ids)
     return result

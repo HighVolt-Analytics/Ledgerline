@@ -207,6 +207,19 @@ export type PostingDefaults = {
   taxAccount: string;
   payableAccount: string;
   fallbackAccount: string;
+  functionalCurrency?: string;
+  fxGainLossAccount?: string;
+  bankAccount?: string;
+};
+
+export type FxPostingPolicy = {
+  functionalCurrency?: string;
+  fxGainLossAccount?: string;
+  bankAccount?: string;
+  bookingRateSource?: "invoice_date" | "payment_date" | "po_date" | "manual" | "static_table";
+  paymentRateSource?: "invoice_date" | "payment_date" | "po_date" | "manual" | "static_table";
+  requirePoInvoiceCurrencyMatch?: boolean;
+  grnCurrencyOperationalOnly?: boolean;
 };
 
 export type { DocumentTypeDefinition } from "./v5DocumentTypes";
@@ -216,10 +229,35 @@ export type DocumentClassificationConfig = {
   unclassifiedMinConfidence: number;
 };
 
+export type AiClassificationConfig = {
+  documentAiProvider: "azure_di" | "azure_foundry_vision" | "gemini_vision";
+  autoRouteMinConfidence: number;
+};
+
+export type OrgContextConfig = {
+  legalName: string;
+  abn: string;
+  aliases: string[];
+  defaultPerspective: "buyer" | "seller" | "mixed";
+  intakeSummary: string;
+  classificationHints: string;
+};
+
+export const emptyOrgContextConfig = (): OrgContextConfig => ({
+  legalName: "",
+  abn: "",
+  aliases: [],
+  defaultPerspective: "buyer",
+  intakeSummary: "",
+  classificationHints: "",
+});
+
 /** In-app rule book state (camelCase). Persisted via /api/rule-book/config. */
 export type RuleBookConfigState = {
   documentTypes: DocumentTypeDefinition[];
   documentClassification: DocumentClassificationConfig;
+  aiClassification: AiClassificationConfig;
+  orgContext: OrgContextConfig;
   emailCaptureRules: EmailCaptureRule[];
   purchaseRules: PurchaseRule[];
   expenseRules: ExpenseRule[];
@@ -229,6 +267,19 @@ export type RuleBookConfigState = {
   employeeMasters: EmployeeMaster[];
   postingDefaults: PostingDefaults;
   documentSets: DocumentSetRule[];
+  /** PO three-way match — UOM conversions and qty tolerance (API round-trip). */
+  purchaseMatch?: {
+    baseUom: string;
+    qtyTolerancePct: number;
+    uomConversions: Array<{
+      id: string;
+      vendorKey?: string;
+      sku?: string;
+      fromUom: string;
+      toUom: string;
+      factor: number;
+    }>;
+  };
 };
 
 /** @deprecated Use RuleBookConfigState */
@@ -252,6 +303,12 @@ export const TAX_ACCOUNTS = [
 
 export const PAYABLE_ACCOUNTS = ["Accounts Payable"] as const;
 
+export const FX_GAIN_LOSS_ACCOUNTS = ["FX Gain/Loss", "Foreign Exchange Gain/Loss"] as const;
+
+export const BANK_ACCOUNTS = ["Bank", "Operating Bank Account", "USD Bank Account"] as const;
+
+export const CURRENCY_CODES = ["AUD", "USD", "EUR", "GBP", "NZD", "INR"] as const;
+
 export const LEDGER_ACCOUNTS = [
   "Cloud Hosting Expense",
   "Software Subscription Expense",
@@ -267,6 +324,8 @@ export const LEDGER_ACCOUNTS = [
   "GST Paid",
   "Accounts Payable",
   "Suspense Account",
+  "FX Gain/Loss",
+  "Bank",
 ] as const;
 
 export const INGEST_ACTION_ROUTE_PLACEHOLDER = "Purchase Management";

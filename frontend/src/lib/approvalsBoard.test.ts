@@ -1,33 +1,78 @@
 import { describe, expect, it } from "vitest";
 import type { Invoice } from "@/api/types";
 import {
+  canShowApproveOnBoard,
   columnForInvoice,
+  isPreClassificationReview,
   mergeBoardRowWithLocal,
+  reviewQueueCount,
   shouldClearProcessingId,
 } from "@/lib/approvalsBoard";
 
-function inv(id: number, status: string): Invoice {
+function inv(
+  id: number,
+  status: string,
+  extra: Partial<Invoice> = {}
+): Invoice {
   return {
     id,
     status,
     created_at: "2026-01-01T00:00:00Z",
     currency: "AUD",
+    ...extra,
   } as Invoice;
 }
 
 describe("columnForInvoice", () => {
-  it("places exception invoices in To review", () => {
-    expect(columnForInvoice(inv(1, "exception"))).toBe("pending");
+  it("places pre-classification exceptions in Review", () => {
+    expect(
+      columnForInvoice(
+        inv(1, "exception", { evaluation_status: "awaiting_classification" })
+      )
+    ).toBe("pending");
+    expect(
+      columnForInvoice(inv(2, "exception", { evaluation_status: "needs_rescan" }))
+    ).toBe("pending");
+    expect(columnForInvoice(inv(3, "exception"))).toBe("pending");
+  });
+
+  it("places post-classification exceptions in Processing", () => {
+    for (const evaluation_status of ["needs_review", "awaiting_po", "pending_vendor"] as const) {
+      expect(
+        columnForInvoice(
+          inv(1, "exception", {
+            evaluation_status,
+            document_type_code: "DT-03",
+          })
+        )
+      ).toBe("awaiting");
+    }
   });
 
   it("places pipeline statuses in Processing", () => {
-    for (const status of ["pending", "parsing", "validating", "mapping", "journaling", "reconciling"]) {
-      expect(columnForInvoice(inv(1, status))).toBe("awaiting");
+    for (const status of [
+      "pending",
+      "parsing",
+      "validating",
+      "mapping",
+      "journaling",
+      "reconciling",
+    ]) {
+      expect(columnForInvoice(inv(1, status, { document_type_code: "DT-03" })).toBe(
+        "awaiting"
+      );
     }
   });
 
   it("places processed invoices in Approved", () => {
-    expect(columnForInvoice(inv(1, "processed"))).toBe("approved");
+    expect(
+      columnForInvoice(
+        inv(1, "processed", {
+          evaluation_status: "auto_coded",
+          document_type_code: "DT-03",
+        })
+      )
+    ).toBe("approved");
   });
 
   it("places rejected invoices in Rejected", () => {
@@ -36,11 +81,68 @@ describe("columnForInvoice", () => {
   });
 
   it("prefers processingIds over stale exception status", () => {
-    expect(columnForInvoice(inv(1, "exception"), undefined, new Set([1]))).toBe("awaiting");
+    expect(
+      columnForInvoice(inv(1, "exception"), undefined, new Set([1]))
+    ).toBe("awaiting");
   });
 
   it("prefers pinnedRejectedIds over processed status", () => {
     expect(columnForInvoice(inv(1, "processed"), new Set([1]))).toBe("rejected");
+  });
+
+  it("uses approval_board_column from API when present", () => {
+    expect(
+      columnForInvoice(
+        inv(1, "exception", {
+          evaluation_status: "awaiting_classification",
+          approval_board_column: "processing",
+        })
+      )
+    ).toBe("awaiting");
+  });
+});
+
+describe("isPreClassificationReview and approve visibility", () => {
+  it("flags Review column items", () => {
+    expect(
+      isPreClassificationReview(
+        inv(1, "exception", { evaluation_status: "awaiting_classification" })
+      )
+    ).toBe(true);
+    expect(
+      isPreClassificationReview(
+        inv(2, "exception", {
+          evaluation_status: "needs_review",
+          document_type_code: "DT-03",
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("hides approve on Review, shows on Processing", () => {
+    const reviewInv = inv(1, "exception", {
+      evaluation_status: "awaiting_classification",
+    });
+    const procInv = inv(2, "exception", {
+      evaluation_status: "needs_review",
+      document_type_code: "DT-03",
+    });
+    expect(canShowApproveOnBoard(reviewInv, "pending")).toBe(false);
+    expect(canShowApproveOnBoard(procInv, "awaiting")).toBe(true);
+  });
+});
+
+describe("reviewQueueCount", () => {
+  it("counts only Review column items", () => {
+    const rows = [
+      inv(1, "exception", { evaluation_status: "awaiting_classification" }),
+      inv(2, "exception", {
+        evaluation_status: "needs_review",
+        document_type_code: "DT-03",
+      }),
+      inv(3, "parsing"),
+    ];
+    expect(reviewQueueCount(rows)).toBe(1);
   });
 });
 

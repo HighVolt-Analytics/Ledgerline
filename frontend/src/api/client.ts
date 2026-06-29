@@ -51,6 +51,8 @@ import type {
   InvitePreview,
   InviteAcceptResult,
   InstitutionSettings,
+  OrgAiBrief,
+  ChartOfAccountsPayload,
   OnboardingStatus,
   UserPermissions,
   Vendor,
@@ -69,6 +71,7 @@ import type {
   StripeReadinessResponse,
   StripeTransaction,
   WhatsappStatus,
+  ViberStatus,
 } from "./types";
 
 import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
@@ -444,11 +447,27 @@ export const api = {
   getInstitutionSettings: () =>
     request<InstitutionSettings>("/api/tenants/current/institution"),
   updateInstitutionSettings: (body: {
+    name?: string;
     country?: string;
     timezone?: string;
     locale?: string;
   }) =>
     request<InstitutionSettings>("/api/tenants/current/institution", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getOrgAiBrief: () => request<OrgAiBrief>("/api/tenants/current/org-ai-brief"),
+  updateOrgAiBrief: (body: OrgAiBrief) =>
+    request<OrgAiBrief>("/api/tenants/current/org-ai-brief", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getChartOfAccounts: () =>
+    request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts"),
+  updateChartOfAccounts: (body: ChartOfAccountsPayload) =>
+    request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -650,6 +669,35 @@ export const api = {
     }>(`/api/integrations/whatsapp/test/${id}`, { method: "POST" });
   },
 
+  getViberStatus: (options?: FreshRequestOptions) => {
+    const path = "/api/integrations/viber/status";
+    if (options?.fresh) bustGetCache(path);
+    return request<ViberStatus>(path);
+  },
+  connectViber: (auth_token: string) => {
+    bustGetCache("/api/integrations/viber/status");
+    return request<{ connection: ViberStatus["connections"][number]; bot_name: string | null }>(
+      "/api/integrations/viber/connect",
+      { method: "POST", body: JSON.stringify({ auth_token }) }
+    );
+  },
+  disconnectViber: (id: number) => {
+    bustGetCache("/api/integrations/viber/status");
+    return request<{ disconnected: boolean; id: number }>(
+      `/api/integrations/viber/disconnect/${id}`,
+      { method: "DELETE" }
+    );
+  },
+  testViberConnection: (id: number) => {
+    bustGetCache("/api/integrations/viber/status");
+    return request<{
+      ok: boolean;
+      integration_health: string;
+      warnings: string[];
+      profile: Record<string, unknown>;
+    }>(`/api/integrations/viber/test/${id}`, { method: "POST" });
+  },
+
   getNavBadges: () => request<NavBadges>("/api/dashboard/badges"),
   getStats: () => request<DashboardStats>("/api/dashboard/stats"),
   getDashboardOverview: (activityLimit = 10, month?: string) => {
@@ -696,6 +744,20 @@ export const api = {
     const path = `/api/invoices/${id}/classification-audit`;
     if (options?.fresh) bustGetCache(path);
     return request<InvoiceClassificationAudit>(path);
+  },
+  resolveInvoiceClassification: (
+    id: number,
+    body: { confirmed_dt: string; reprocess?: boolean }
+  ) =>
+    request<Invoice>(`/api/invoices/${id}/classification/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getClassificationReviewQueue: (options?: FreshRequestOptions) => {
+    const path = "/api/invoices/classification-review";
+    if (options?.fresh) bustGetCache(path);
+    return request<import("@/api/types").ClassificationReviewItem[]>(path);
   },
   getPurchaseDossier: (id: number, options?: FreshRequestOptions) => {
     const path = `/api/invoices/${id}/purchase-dossier`;
@@ -995,6 +1057,8 @@ export const api = {
   dismissPendingVendor: (pendingId: number) =>
     request<void>(`/api/pending-vendors/${pendingId}/dismiss`, { method: "POST" }),
   getRuleBookConfig: () => request<RuleBookConfig>("/api/rule-book/config"),
+  getAiProviders: () =>
+    request<import("@/api/types").AiProvidersResponse>("/api/rule-book/ai-providers"),
   getRecognitionSignalCatalog: () =>
     request<{
       weak_signal_ids: string[];
@@ -1017,6 +1081,15 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  testDocumentTypeRecognition: (body: import("@/api/types").DocumentTypeRecognitionTestRequest) =>
+    request<import("@/api/types").DocumentTypeRecognitionTestResponse>(
+      "/api/rule-book/document-types/test-recognition",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ),
   getVaultTree: (options?: FreshRequestOptions) => {
     const path = "/api/vault/tree";
     if (options?.fresh) bustGetCache(path);
@@ -1034,14 +1107,6 @@ export const api = {
     request<RuleBookConfig>(
       `/api/rule-book/document-types/${encodeURIComponent(code.trim())}`,
       { method: "DELETE" }
-    ),
-  analyzeDocumentTypeSamples: (
-    formData: FormData,
-    options?: { timeoutMs?: number }
-  ) =>
-    request<import("@/lib/documentTypeSampleAnalysis").DocumentTypeSampleProposal>(
-      "/api/rule-book/document-types/analyze-samples",
-      { method: "POST", body: formData, timeoutMs: options?.timeoutMs }
     ),
   getRuleBookChangelog: (limit = 20) =>
     request<RuleBookChangelogEntry[]>(`/api/rule-book/changelog?limit=${limit}`),

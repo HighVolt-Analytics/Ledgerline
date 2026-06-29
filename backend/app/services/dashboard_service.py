@@ -19,6 +19,7 @@ from app.services.graph_client import is_graph_enabled
 from app.models.journal import JournalEntry
 from app.services.currency import BASE_CURRENCY, convert_to_base, sum_amounts_by_currency
 from app.services.invoice_evaluation_service import (
+    EVAL_AWAITING_CLASSIFICATION,
     EVAL_NEEDS_REVIEW,
     EVAL_PENDING_VENDOR,
     EVAL_UNMATCHED_EXPENSE_VENDOR,
@@ -465,10 +466,32 @@ async def _period_invoice_metrics(
 
 def _integrations_count(mailboxes_active: int) -> int:
     s = get_settings()
-    count = sum(1 for flag in (s.blob_enabled, s.azure_di_enabled) if flag)
+    count = sum(
+        1
+        for flag in (
+            s.blob_enabled,
+            s.azure_di_enabled,
+            s.azure_foundry_vision_available,
+            s.gemini_vision_available,
+        )
+        if flag
+    )
     if mailboxes_active and is_graph_enabled():
         count += 1
     return count
+
+
+async def _pending_classification_count(db: AsyncSession, tenant_id: int) -> int:
+    row = await db.execute(
+        select(func.count())
+        .select_from(Invoice)
+        .where(
+            Invoice.tenant_id == tenant_id,
+            Invoice.status == InvoiceStatus.EXCEPTION,
+            Invoice.evaluation_status == EVAL_AWAITING_CLASSIFICATION,
+        )
+    )
+    return int(row.scalar() or 0)
 
 
 async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
@@ -483,15 +506,18 @@ async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
         business_expenses_count,
         payments_queue_count,
         mailboxes_mapped,
+        pending_classification,
     ) = await asyncio.gather(
         _team_expenses_queue_count(db, tenant_id),
         _business_expenses_queue_count(db, tenant_id),
         _payments_queue_count(db, tenant_id),
         _mailboxes_mapped(db, tenant_id=tenant_id),
+        _pending_classification_count(db, tenant_id),
     )
     return NavBadges(
         inbox_count=inbox_count,
         pending_approval=pending_approval,
+        pending_classification=pending_classification,
         team_expenses_count=team_expenses_count,
         business_expenses_count=business_expenses_count,
         payments_queue_count=payments_queue_count,

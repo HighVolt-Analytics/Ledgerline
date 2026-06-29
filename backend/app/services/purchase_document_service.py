@@ -31,7 +31,7 @@ from app.services.purchase_linking_service import (
     grn_has_po_ref,
     po_ref_for_invoice,
 )
-from app.services.rule_book_mapper import load_classification_config
+from app.services.uom_conversion_service import infer_uom_from_description
 
 EVAL_AWAITING_PO = "awaiting_po"
 
@@ -183,6 +183,11 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
     invoice = await _load_invoice_with_lines(db, invoice)
     qty, unit, _ = _invoice_qty_and_price(invoice)
     first_line = invoice.line_items[0] if invoice.line_items else None
+    line_uom = None
+    if first_line:
+        line_uom = getattr(first_line, "uom", None) or infer_uom_from_description(
+            first_line.description
+        )
 
     po = await _get_or_load_po(db, invoice, po_number)
     if po is None:
@@ -194,6 +199,8 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
             item=first_line.description if first_line else None,
             po_qty=qty,
             po_unit_price=unit,
+            po_uom=line_uom,
+            po_currency=invoice.currency,
             po_document_id=invoice.id,
         )
         db.add(po)
@@ -213,11 +220,13 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
             po.po_qty = qty
         if po.po_unit_price <= 0:
             po.po_unit_price = unit
+        if not po.po_currency and invoice.currency:
+            po.po_currency = invoice.currency
 
     config = await load_classification_config(db, invoice.tenant_id)
     if not po.ledger:
         code_po_from_invoice(po, invoice, config)
-    inherit_po_coding_to_invoice(po, invoice)
+    inherit_po_coding_to_invoice(po, invoice, config=config)
 
     commercial: Invoice | None = None
     if po.invoice_id:
@@ -234,6 +243,7 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
         commercial,
         invoice_id_for_audit=invoice.id,
         audit_on_sync=True,
+        rule_book_config=config,
     )
     await db.flush()
     await log_event(
@@ -269,7 +279,8 @@ async def _sync_grn_document(db: AsyncSession, invoice: Invoice, po_number: str)
 
     invoice = await _load_invoice_with_lines(db, invoice)
     await attach_grn_invoice_to_po(db, grn_invoice=invoice, po=po)
-    inherit_po_coding_to_invoice(po, invoice)
+    config = await load_classification_config(db, invoice.tenant_id)
+    inherit_po_coding_to_invoice(po, invoice, config=config)
 
     commercial: Invoice | None = None
     if po.invoice_id:
@@ -286,6 +297,7 @@ async def _sync_grn_document(db: AsyncSession, invoice: Invoice, po_number: str)
         commercial,
         invoice_id_for_audit=invoice.id,
         audit_on_sync=True,
+        rule_book_config=config,
     )
     await db.flush()
     await log_event(
@@ -338,10 +350,11 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
 
     invoice = await _load_invoice_with_lines(db, invoice)
     po.invoice_id = invoice.id
-    inherit_po_coding_to_invoice(po, invoice)
+    config = await load_classification_config(db, invoice.tenant_id)
+    inherit_po_coding_to_invoice(po, invoice, config=config)
 
     bridged = await bridge_orphan_grns_via_commercial_invoice(
-        db, commercial=invoice, po=po
+        db, commercial=invoice, po=po, config=config,
     )
     if bridged:
         await db.refresh(po, attribute_names=["goods_receipts"])
@@ -352,6 +365,7 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
         invoice,
         invoice_id_for_audit=invoice.id,
         audit_on_sync=True,
+        rule_book_config=config,
     )
     await db.flush()
     await log_event(

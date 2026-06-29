@@ -33,9 +33,7 @@ export async function fetchAllMatrixRows(
 }
 
 function actorFromDetail(detail?: string | null): string {
-  if (!detail) return "—";
-  const parts = detail.split(" · ");
-  return parts.length > 1 ? parts[parts.length - 1].trim() : detail;
+  return detail?.trim() || "—";
 }
 
 export function stagesToCells(stages: MatrixRow["stages"]): Record<MatrixStage, MatrixCell> {
@@ -45,7 +43,7 @@ export function stagesToCells(stages: MatrixRow["stages"]): Record<MatrixStage, 
     cells[stage] = {
       state: (hit?.state ?? "pending") as MatrixCell["state"],
       ts: hit?.when ?? "—",
-      actor: actorFromDetail(hit?.detail),
+      detail: actorFromDetail(hit?.detail),
     };
   }
   return cells;

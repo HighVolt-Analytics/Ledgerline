@@ -11,6 +11,7 @@ import type {
   RuleBookConfigState,
   VendorMaster,
 } from "./v4RuleBookTypes";
+import { emptyOrgContextConfig } from "./v4RuleBookTypes";
 export function ruleGroup(
   operator: "AND" | "OR",
   children: RuleConditionGroup["children"]
@@ -640,6 +641,9 @@ export const DEFAULT_POSTING_DEFAULTS = {
   taxAccount: "GST Paid",
   payableAccount: "Accounts Payable",
   fallbackAccount: "Suspense Account",
+  functionalCurrency: "AUD",
+  fxGainLossAccount: "FX Gain/Loss",
+  bankAccount: "Bank",
 } as const;
 
 export const DEFAULT_DOCUMENT_SETS = [
@@ -658,6 +662,11 @@ export function createDefaultRuleBookConfig(): RuleBookConfigState {
       unclassifiedDocumentTypeCode: "",
       unclassifiedMinConfidence: 0.45,
     },
+    aiClassification: {
+      documentAiProvider: "azure_di",
+      autoRouteMinConfidence: 0.85,
+    },
+    orgContext: emptyOrgContextConfig(),
     emailCaptureRules: EMAIL_CAPTURE_RULES,
     purchaseRules: PURCHASE_RULES,
     expenseRules: EXPENSE_RULES,
@@ -670,6 +679,11 @@ export function createDefaultRuleBookConfig(): RuleBookConfigState {
     employeeMasters: EMPLOYEE_MASTERS,
     postingDefaults: { ...DEFAULT_POSTING_DEFAULTS },
     documentSets: DEFAULT_DOCUMENT_SETS.map((set) => ({ ...set })),
+    purchaseMatch: {
+      baseUom: "EA",
+      qtyTolerancePct: 0,
+      uomConversions: [],
+    },
   };
 }
 

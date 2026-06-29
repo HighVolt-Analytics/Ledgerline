@@ -44,7 +44,7 @@ type DossierPipelineDotsProps = {
   style?: CSSProperties;
 };
 
-/** 15 circular dots — one per pipeline stage. */
+/** One dot per pipeline stage (full detail on dossier page). */
 export function DossierPipelineDots({ pipeline, className, style }: DossierPipelineDotsProps) {
   const byStage = new Map(pipeline.map((step) => [step.stageId, step.state]));
 
@@ -53,7 +53,7 @@ export function DossierPipelineDots({ pipeline, className, style }: DossierPipel
       className={className}
       style={{ ...STRIP_STYLE, ...style }}
       role="img"
-      aria-label="15-stage pipeline status"
+      aria-label="Pipeline stage status"
     >
       {DOSSIER_PIPELINE_STAGES.map((stage) => {
         const state = byStage.get(stage.id) ?? "pending";

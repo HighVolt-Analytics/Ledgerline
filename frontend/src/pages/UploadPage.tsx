@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
+import { useAuth } from "@/context/AuthContext";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -110,6 +111,8 @@ function mailboxNickname(mb: ConnectedMailbox): string {
 }
 
 export function UploadPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [searchParams, setSearchParams] = useSearchParams();
   const workspaceTab = searchParams.get("tab") === "matrix" ? "matrix" : "upload";
   const { data: navBadges } = useNavBadges();
@@ -251,8 +254,9 @@ export function UploadPage() {
     setFetchNotice(
       result.email_sent
         ? `Invitation sent to ${body.email}`
-        : `Invitation link refreshed for ${body.email}. Copy the link from Integrations if email delivery failed.`
+        : `Invitation created for ${body.email}. Copy the invite link from the dialog if email delivery failed.`
     );
+    return result;
   }
 
   function applyMailboxUpdate(updated: ConnectedMailbox) {
@@ -423,13 +427,12 @@ export function UploadPage() {
             : "Pipeline stage status, anomaly detection, and payment readiness. Flagged documents are blocked from progressing until cleared."
         }
         actions={
-          workspaceTab === "upload" ? (
+          workspaceTab === "upload" && isAdmin ? (
             <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4 sm:mr-1" />
-              <span className="hidden sm:inline">Add mailbox</span>
-              <span className="sm:hidden">Mailbox</span>
+              <Plus className="h-4 w-4 mr-1.5 shrink-0" />
+              Add mailbox
             </Button>
-          ) : (
+          ) : workspaceTab === "upload" ? null : (
             <Button
               variant="outline"
               size="sm"
@@ -619,6 +622,7 @@ export function UploadPage() {
                       />
                       Fetch
                     </Button>
+                    {isAdmin ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -633,7 +637,9 @@ export function UploadPage() {
                       )}
                       {mb.is_active ? "Pause" : "Resume"}
                     </Button>
+                    ) : null}
                   </div>
+                  {isAdmin ? (
                   <Button
                     variant="ghost"
                     size="icon"
@@ -644,6 +650,7 @@ export function UploadPage() {
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
+                  ) : null}
                 </div>
               </Card>
             );
@@ -653,13 +660,30 @@ export function UploadPage() {
         !loading && (
           <Card className="p-4 mb-6 text-sm text-muted-foreground">
             No mailboxes connected yet.{" "}
-            <button
-              type="button"
-              className="text-primary hover:underline"
-              onClick={() => setAddOpen(true)}
-            >
-              Add a mailbox
-            </button>
+            {isAdmin ? (
+              <>
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => setAddOpen(true)}
+                >
+                  Add a mailbox
+                </button>{" "}
+                or manage invitations in{" "}
+                <Link to="/integrations" className="text-primary hover:underline">
+                  Integrations
+                </Link>
+                .
+              </>
+            ) : (
+              <>
+                Ask an admin to connect a mailbox from{" "}
+                <Link to="/integrations" className="text-primary hover:underline">
+                  Integrations
+                </Link>
+                .
+              </>
+            )}
           </Card>
         )
       )}
@@ -671,10 +695,12 @@ export function UploadPage() {
           title="No documents yet"
           hint="Drop files in the panel above, or connect a mailbox and fetch from email."
           action={
-            <Button size="sm" onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" />
-              Add mailbox
-            </Button>
+            isAdmin ? (
+              <Button size="sm" onClick={() => setAddOpen(true)}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add mailbox
+              </Button>
+            ) : undefined
           }
         />
       ) : (
