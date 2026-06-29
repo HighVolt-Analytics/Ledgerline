@@ -759,11 +759,30 @@ export interface AppSettings {
   rule_book_config_path: string;
   cors_origins: string;
   whatsapp_configured: boolean;
+  stripe_mode: string;
+  xero_configured: boolean;
+  quickbooks_configured: boolean;
   stripe_payments_execution_enabled: boolean;
   stripe_live_payments_enabled: boolean;
   payment_manual_execution_enabled: boolean;
   payment_manual_execution_limit_usd: number;
   payment_execution_disabled: boolean;
+}
+
+export interface AccountingIntegrationItem {
+  provider: string;
+  configured: boolean;
+  status: string;
+  display_name: string | null;
+  provider_tenant_id: string | null;
+  scopes: string | null;
+  connected_at: string | null;
+  last_error: string | null;
+}
+
+export interface AccountingIntegrationsStatus {
+  xero: AccountingIntegrationItem;
+  quickbooks_online: AccountingIntegrationItem;
 }
 
 export interface WhatsappConnection {
