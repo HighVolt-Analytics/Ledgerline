@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from app.api import (
+    accounting_integrations,
     approval_policy,
     approvals,
     billing,
@@ -100,6 +101,8 @@ app.include_router(stripe_webhooks.router, prefix="/api")
 app.include_router(mailboxes.oauth_public_router, prefix="/api")
 # Stripe Connect OAuth callback — no JWT (must be before authenticated payments router).
 app.include_router(payments.oauth_public_router, prefix="/api")
+# Accounting OAuth callbacks (Xero, QuickBooks) — no JWT.
+app.include_router(accounting_integrations.oauth_public_router, prefix="/api")
 # Meta / WhatsApp OAuth callback and webhooks — no JWT.
 # Paths: /webhook/meta, /auth/whatsapp/callback (Front Door routes /ledgerlink/webhook/* and /ledgerlink/auth/*).
 app.include_router(whatsapp.public_router)
@@ -134,6 +137,7 @@ app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
 app.include_router(dossiers.router, prefix="/api", dependencies=_module_deps("dossiers"))
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
+app.include_router(accounting_integrations.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenant_members.router, prefix="/api", dependencies=_api_deps)
 app.include_router(platform.router, prefix="/api", dependencies=[Depends(require_super_admin)])

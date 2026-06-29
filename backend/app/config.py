@@ -301,6 +301,43 @@ class Settings(BaseSettings):
         validation_alias="WHATSAPP_OAUTH_FRONTEND_RETURN_URL",
     )
 
+    # Xero accounting OAuth (optional)
+    xero_client_id: str = Field(default="", validation_alias="XERO_CLIENT_ID")
+    xero_client_secret: str = Field(default="", validation_alias="XERO_CLIENT_SECRET")
+    xero_redirect_uri: str = Field(default="", validation_alias="XERO_REDIRECT_URI")
+    xero_oauth_scopes: str = Field(
+        default="openid profile email accounting.settings.read offline_access",
+        validation_alias="XERO_OAUTH_SCOPES",
+    )
+    xero_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="XERO_OAUTH_FRONTEND_RETURN_URL",
+    )
+
+    # QuickBooks Online accounting OAuth (optional)
+    quickbooks_client_id: str = Field(default="", validation_alias="QUICKBOOKS_CLIENT_ID")
+    quickbooks_client_secret: str = Field(
+        default="",
+        validation_alias="QUICKBOOKS_CLIENT_SECRET",
+    )
+    quickbooks_redirect_uri: str = Field(default="", validation_alias="QUICKBOOKS_REDIRECT_URI")
+    quickbooks_environment: str = Field(
+        default="sandbox",
+        validation_alias="QUICKBOOKS_ENVIRONMENT",
+    )
+    quickbooks_oauth_scopes: str = Field(
+        default="com.intuit.quickbooks.accounting",
+        validation_alias="QUICKBOOKS_OAUTH_SCOPES",
+    )
+    quickbooks_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL",
+    )
+    accounting_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="ACCOUNTING_OAUTH_FRONTEND_RETURN_URL",
+    )
+
     # Stripe Connect / payments (optional — empty until configured)
     stripe_secret_key: str = Field(default="", validation_alias="STRIPE_SECRET_KEY")
     stripe_webhook_secret: str = Field(default="", validation_alias="STRIPE_WEBHOOK_SECRET")
@@ -528,6 +565,33 @@ class Settings(BaseSettings):
         explicit = self.whatsapp_oauth_frontend_return_url.strip()
         if explicit:
             return explicit.rstrip("/")
+        return self.graph_oauth_frontend_return_url.rstrip("/")
+
+    @property
+    def xero_configured(self) -> bool:
+        return bool(self.xero_client_id.strip() and self.xero_client_secret.strip())
+
+    @property
+    def quickbooks_configured(self) -> bool:
+        return bool(
+            self.quickbooks_client_id.strip() and self.quickbooks_client_secret.strip()
+        )
+
+    @property
+    def quickbooks_sandbox_mode(self) -> bool:
+        return self.quickbooks_environment.strip().lower() in ("sandbox", "test")
+
+    @property
+    def accounting_oauth_frontend_return_url_resolved(self) -> str:
+        explicit = self.accounting_oauth_frontend_return_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        xero_explicit = self.xero_oauth_frontend_return_url.strip()
+        if xero_explicit:
+            return xero_explicit.rstrip("/")
+        qbo_explicit = self.quickbooks_oauth_frontend_return_url.strip()
+        if qbo_explicit:
+            return qbo_explicit.rstrip("/")
         return self.graph_oauth_frontend_return_url.rstrip("/")
 
     @property

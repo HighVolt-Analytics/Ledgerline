@@ -1,3 +1,4 @@
+from app.models.accounting_integration import AccountingIntegration
 from app.models.audit import AuditLog
 from app.models.auth_account import AuthAccount
 from app.models.connected_mailbox import ConnectedMailbox
@@ -36,6 +37,7 @@ from app.models.vendor_master import VendorMasterRecord
 import app.tenant_child_tables  # noqa: F401 — register child-table tenant listeners
 
 __all__ = [
+    "AccountingIntegration",
     "AuditLog",
     "AuthAccount",
     "ConnectedMailbox",
