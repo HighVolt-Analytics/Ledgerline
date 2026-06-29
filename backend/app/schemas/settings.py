@@ -24,6 +24,9 @@ class AppSettingsResponse(BaseModel):
     rule_book_config_path: str
     cors_origins: str
     whatsapp_configured: bool
+    stripe_mode: str = "sandbox"
+    xero_configured: bool = False
+    quickbooks_configured: bool = False
     stripe_payments_execution_enabled: bool = False
     stripe_live_payments_enabled: bool = False
     payment_manual_execution_enabled: bool = False

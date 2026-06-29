@@ -1,8 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Activity, ArrowLeftRight, Cloud, Copy, Database, FileSearch, Link2, Mail, MessageCircle, Plus, Server, Sparkles, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import {
+  Activity,
+  ArrowLeftRight,
+  Cloud,
+  Copy,
+  CreditCard,
+  Database,
+  FileSearch,
+  Link2,
+  Mail,
+  MessageCircle,
+  Plus,
+  Server,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { api } from "@/api/client";
-import type { AppSettings, ConnectedMailbox, MailboxConnectionRequest, ViberConnection, WhatsappConnection } from "@/api/types";
+import type {
+  AccountingIntegrationItem,
+  AppSettings,
+  ConnectedMailbox,
+  MailboxConnectionRequest,
+  ViberConnection,
+  WhatsappConnection,
+} from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +32,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useStripeAccount, useStripeReadiness } from "@/hooks/useStripe";
+import { useAccountingIntegrations } from "@/hooks/useAccountingIntegrations";
 
 function statusBadge(ok: boolean) {
   return ok ? (
@@ -20,6 +44,69 @@ function statusBadge(ok: boolean) {
     <Badge variant="secondary">Not connected</Badge>
   );
 }
+
+function comingSoonBadge() {
+  return <Badge variant="secondary">Coming soon</Badge>;
+}
+
+function maskStripeAccountId(id: string): string {
+  if (id.length <= 12) return id;
+  return `${id.slice(0, 8)}…${id.slice(-4)}`;
+}
+
+function stripeModeLabel(mode: string | undefined): string {
+  const normalized = (mode || "sandbox").toLowerCase();
+  if (normalized === "live") return "Live";
+  return "Sandbox";
+}
+
+function accountingStatusBadge(item: AccountingIntegrationItem | undefined) {
+  const status = item?.status ?? "disconnected";
+  if (status === "connected") {
+    return (
+      <Badge variant="outline" className="border-[hsl(var(--chart-1)/0.4)] text-[hsl(var(--chart-1))]">
+        Connected
+      </Badge>
+    );
+  }
+  if (status === "error") {
+    return (
+      <Badge variant="outline" className="border-destructive/40 text-destructive">
+        Error
+      </Badge>
+    );
+  }
+  if (status === "expired") {
+    return <Badge variant="secondary">Expired</Badge>;
+  }
+  return <Badge variant="secondary">Not connected</Badge>;
+}
+
+function accountingConnected(item: AccountingIntegrationItem | undefined): boolean {
+  return item?.status === "connected";
+}
+
+function accountingTagline(
+  item: AccountingIntegrationItem | undefined,
+  fallback: string
+): string {
+  if (!item || item.status === "disconnected") return fallback;
+  if (item.display_name) return item.display_name;
+  if (item.status === "error") {
+    return item.last_error || "Connection error — try reconnecting";
+  }
+  if (item.status === "expired") return "Session expired — reconnect to continue";
+  return fallback;
+}
+
+const ACCOUNTING_OAUTH_ERRORS: Record<string, string> = {
+  not_configured: "Accounting credentials are not configured on the server.",
+  invalid_state: "Connection session expired — try Connect again.",
+  not_admin: "Only tenant admins can connect accounting integrations.",
+  oauth_failed: "OAuth connection failed or was cancelled.",
+  missing_code: "Authorization code missing from provider callback.",
+  missing_realm: "QuickBooks company id missing from callback.",
+};
 
 function requestStatusLabel(status: string) {
   if (status === "pending") return "Pending";
@@ -48,6 +135,15 @@ export function IntegrationsPage() {
   const [waOAuthUrl, setWaOAuthUrl] = useState<string>("");
   const [waError, setWaError] = useState<string | null>(null);
   const [waBusy, setWaBusy] = useState(false);
+  const [accountingBusy, setAccountingBusy] = useState<string | null>(null);
+  const [accountingError, setAccountingError] = useState<string | null>(null);
+  const {
+    status: accountingStatus,
+    loading: accountingLoading,
+    reload: reloadAccounting,
+  } = useAccountingIntegrations(Boolean(s));
+  const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount(Boolean(s));
+  const { data: stripeReadiness, isLoading: stripeReadinessLoading } = useStripeReadiness(Boolean(s));
   const [vbConnections, setVbConnections] = useState<ViberConnection[]>([]);
   const [vbWebhookUrl, setVbWebhookUrl] = useState<string>("");
   const [vbWebhookReachable, setVbWebhookReachable] = useState<boolean | null>(null);
@@ -186,6 +282,123 @@ export function IntegrationsPage() {
     setSearchParams(searchParams, { replace: true });
   }, [searchParams, setSearchParams, toast, loadWhatsapp]);
 
+  useEffect(() => {
+    const xero = searchParams.get("xero");
+    if (!xero) return;
+    const company = searchParams.get("company");
+    const reason = searchParams.get("reason");
+    if (xero === "connected") {
+      toast({
+        title: "Xero connected",
+        description: company ? `${company} is linked to this tenant.` : undefined,
+      });
+      void reloadAccounting(true);
+    } else if (xero === "error") {
+      const msg = ACCOUNTING_OAUTH_ERRORS[reason ?? ""] ?? reason ?? "Xero connection failed";
+      setAccountingError(msg);
+      toast({ title: "Xero connection failed", description: msg, variant: "destructive" });
+      void reloadAccounting(true);
+    }
+    searchParams.delete("xero");
+    searchParams.delete("company");
+    searchParams.delete("reason");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, toast, reloadAccounting]);
+
+  useEffect(() => {
+    const quickbooks = searchParams.get("quickbooks");
+    if (!quickbooks) return;
+    const company = searchParams.get("company");
+    const reason = searchParams.get("reason");
+    if (quickbooks === "connected") {
+      toast({
+        title: "QuickBooks connected",
+        description: company ? `${company} is linked to this tenant.` : undefined,
+      });
+      void reloadAccounting(true);
+    } else if (quickbooks === "error") {
+      const msg =
+        ACCOUNTING_OAUTH_ERRORS[reason ?? ""] ?? reason ?? "QuickBooks connection failed";
+      setAccountingError(msg);
+      toast({
+        title: "QuickBooks connection failed",
+        description: msg,
+        variant: "destructive",
+      });
+      void reloadAccounting(true);
+    }
+    searchParams.delete("quickbooks");
+    searchParams.delete("company");
+    searchParams.delete("reason");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, toast, reloadAccounting]);
+
+  async function startAccountingConnect(provider: "xero" | "quickbooks_online") {
+    setAccountingBusy(provider);
+    setAccountingError(null);
+    try {
+      const { connect_url } =
+        provider === "xero" ? await api.connectXero() : await api.connectQuickBooks();
+      window.location.href = connect_url;
+    } catch (err) {
+      setAccountingError(err instanceof Error ? err.message : "Could not start OAuth");
+      setAccountingBusy(null);
+    }
+  }
+
+  async function disconnectAccounting(provider: "xero" | "quickbooks_online") {
+    setAccountingBusy(provider);
+    setAccountingError(null);
+    try {
+      await api.disconnectAccountingIntegration(provider);
+      await reloadAccounting(true);
+      toast({
+        title: provider === "xero" ? "Xero disconnected" : "QuickBooks disconnected",
+      });
+    } catch (err) {
+      setAccountingError(err instanceof Error ? err.message : "Disconnect failed");
+    } finally {
+      setAccountingBusy(null);
+    }
+  }
+
+  function accountingCardFooter(
+    provider: "xero" | "quickbooks_online",
+    item: AccountingIntegrationItem | undefined,
+    configured: boolean
+  ) {
+    if (user?.role !== "admin") return null;
+    if (!configured) {
+      return (
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          Set provider OAuth credentials in backend environment (see docs).
+        </p>
+      );
+    }
+    const connected = accountingConnected(item);
+    return (
+      <div className="mt-1.5">
+        <Button
+          size="sm"
+          variant={connected ? "outline" : "default"}
+          className="h-7 text-xs"
+          disabled={accountingBusy === provider || accountingLoading}
+          onClick={() =>
+            void (connected ? disconnectAccounting(provider) : startAccountingConnect(provider))
+          }
+        >
+          {accountingBusy === provider
+            ? connected
+              ? "Disconnecting…"
+              : "Redirecting…"
+            : connected
+              ? "Disconnect"
+              : "Connect"}
+        </Button>
+      </div>
+    );
+  }
+
   async function sendInvitation(e: React.FormEvent) {
     e.preventDefault();
     setMbError(null);
@@ -224,11 +437,46 @@ export function IntegrationsPage() {
     }
   }
 
-  if (!s) {
-    return <p className="text-sm text-muted-foreground">Loading integrations…</p>;
-  }
+  const stripePaymentsConnected =
+    stripeReadiness?.connected === true ||
+    (stripeAccount != null && stripeAccount.onboarding_status !== "disconnected");
 
-  const items = [
+  const stripePaymentsTagline = useMemo(() => {
+    if (stripeAccountLoading || stripeReadinessLoading) {
+      return "Loading Stripe Connect status…";
+    }
+    if (!stripePaymentsConnected) {
+      return "Payables disbursement & balance visibility — connect on Payments";
+    }
+    const mode = stripeModeLabel(s?.stripe_mode);
+    const accountId =
+      stripeReadiness?.account_id ??
+      stripeAccount?.stripe_account_id ??
+      null;
+    const masked = accountId ? maskStripeAccountId(accountId) : "account linked";
+    if (stripeReadiness?.ready_for_charges && stripeReadiness.ready_for_payouts) {
+      return `${mode} · ${masked} · Ready for charges & payouts`;
+    }
+    if (stripeReadiness?.blocking_reason) {
+      return `${mode} · ${masked} · ${stripeReadiness.blocking_reason}`;
+    }
+    return `${mode} · ${masked}`;
+  }, [
+    s?.stripe_mode,
+    stripeAccount,
+    stripeAccountLoading,
+    stripePaymentsConnected,
+    stripeReadiness,
+    stripeReadinessLoading,
+  ]);
+
+  const xeroItem = accountingStatus?.xero;
+  const qboItem = accountingStatus?.quickbooks_online;
+
+  const items = useMemo(
+    () => {
+      if (!s) return [];
+      return [
     {
       id: "graph",
       name: "Microsoft Graph",
@@ -302,16 +550,20 @@ export function IntegrationsPage() {
     {
       id: "xero",
       name: "Xero",
-      tagline: "Chart of accounts & journals",
-      ok: false,
+      tagline: accountingTagline(xeroItem, "Chart of accounts & journals"),
+      ok: accountingConnected(xeroItem),
       icon: ArrowLeftRight,
+      badge: accountingStatusBadge(xeroItem),
+      footer: accountingCardFooter("xero", xeroItem, s.xero_configured),
     },
     {
       id: "qbo",
       name: "QuickBooks Online",
-      tagline: "Bills & journals (coming soon)",
-      ok: false,
+      tagline: accountingTagline(qboItem, "Bills & journals"),
+      ok: accountingConnected(qboItem),
       icon: ArrowLeftRight,
+      badge: accountingStatusBadge(qboItem),
+      footer: accountingCardFooter("quickbooks_online", qboItem, s.quickbooks_configured),
     },
     {
       id: "myob",
@@ -321,13 +573,55 @@ export function IntegrationsPage() {
       icon: ArrowLeftRight,
     },
     {
-      id: "stripe",
-      name: "Stripe",
-      tagline: "Credit pack billing (coming soon)",
+      id: "stripe-payments",
+      name: "Stripe Payments / Connect",
+      tagline: stripePaymentsTagline,
+      ok: stripePaymentsConnected,
+      icon: CreditCard,
+      badge: statusBadge(stripePaymentsConnected),
+      footer: stripePaymentsConnected ? (
+        <Link
+          to="/payments"
+          className="text-[11px] text-primary hover:underline"
+        >
+          Manage on Payments
+        </Link>
+      ) : (
+        <Link
+          to="/payments"
+          className="text-[11px] text-primary hover:underline"
+        >
+          Connect on Payments
+        </Link>
+      ),
+    },
+    {
+      id: "stripe-billing",
+      name: "Stripe Billing / Credits",
+      tagline: "Credit pack billing for LedgerLink usage (not enabled)",
       ok: false,
       icon: ArrowLeftRight,
+      badge: comingSoonBadge(),
     },
   ];
+    },
+    [
+      s,
+      waConnections,
+      vbConnections,
+      xeroItem,
+      qboItem,
+      stripePaymentsTagline,
+      stripePaymentsConnected,
+      accountingBusy,
+      accountingLoading,
+      user?.role,
+    ]
+  );
+
+  if (!s) {
+    return <p className="text-sm text-muted-foreground">Loading integrations…</p>;
+  }
 
   const connected = items.filter((i) => i.ok).length;
   const pendingRequests = requests.filter((r) => r.status === "pending");
@@ -338,6 +632,10 @@ export function IntegrationsPage() {
         title="Integrations"
         subtitle={`${connected} of ${items.length} services connected`}
       />
+
+      {accountingError && (
+        <p className="text-sm text-destructive mb-4">{accountingError}</p>
+      )}
 
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
         {items.map((h) => (
@@ -350,11 +648,12 @@ export function IntegrationsPage() {
               <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-primary">
                 <h.icon className="h-5 w-5" />
               </div>
-              {statusBadge(h.ok)}
+              {"badge" in h && h.badge ? h.badge : statusBadge(h.ok)}
             </div>
             <div>
               <p className="text-sm font-medium">{h.name}</p>
               <p className="text-xs text-muted-foreground">{h.tagline}</p>
+              {"footer" in h && h.footer ? <div className="mt-1.5">{h.footer}</div> : null}
             </div>
           </Card>
         ))}
@@ -954,9 +1253,9 @@ export function IntegrationsPage() {
       </Card>
 
       <Card className="p-5">
-        <h2 className="text-sm font-semibold mb-1">What syncs when connected to Xero?</h2>
+        <h2 className="text-sm font-semibold mb-1">Planned Xero & QuickBooks sync</h2>
         <p className="text-xs text-muted-foreground mb-4">
-          Bidirectional sync keeps your ledger and Ledgerline aligned.
+          OAuth connection is live; bill and journal sync is not enabled yet. Planned features:
         </p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {["Chart of accounts", "Contacts", "Bills & payments", "Tax rates", "Tracking categories"].map(

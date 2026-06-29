@@ -5,6 +5,7 @@ import type {
   ActivityItem,
   ApiEnvelope,
   AppSettings,
+  AccountingIntegrationsStatus,
   AuthUser,
   ConnectedMailbox,
   MailboxBackfillJob,
@@ -669,6 +670,22 @@ export const api = {
     }>(`/api/integrations/whatsapp/test/${id}`, { method: "POST" });
   },
 
+  getAccountingIntegrationsStatus: (options?: FreshRequestOptions) => {
+    const path = "/api/integrations/status";
+    if (options?.fresh) bustGetCache(path);
+    return request<AccountingIntegrationsStatus>(path);
+  },
+  connectXero: () =>
+    request<{ connect_url: string }>("/api/integrations/xero/connect"),
+  connectQuickBooks: () =>
+    request<{ connect_url: string }>("/api/integrations/quickbooks/connect"),
+  disconnectAccountingIntegration: (provider: "xero" | "quickbooks_online") => {
+    bustGetCache("/api/integrations/status");
+    return request<{ disconnected: boolean; provider: string }>(
+      `/api/integrations/${provider}/disconnect`,
+      { method: "POST" }
+    );
+  },
   getViberStatus: (options?: FreshRequestOptions) => {
     const path = "/api/integrations/viber/status";
     if (options?.fresh) bustGetCache(path);
