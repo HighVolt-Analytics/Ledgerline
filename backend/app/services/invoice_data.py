@@ -43,6 +43,7 @@ class InvoiceData:
     raw_fields: dict[str, Any] = field(default_factory=dict)
     document_text: str | None = None
     document_heading: str | None = None
+    extracted_fields: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -103,6 +104,7 @@ def invoice_data_from_invoice(invoice: object) -> InvoiceData:
         line_items=_line_items_from_invoice(invoice),
         document_text=getattr(invoice, "document_text", None),
         document_heading=_resolved_document_heading(invoice=invoice, parsed=None),
+        extracted_fields=dict(getattr(invoice, "extracted_fields", None) or {}),
     )
 
 

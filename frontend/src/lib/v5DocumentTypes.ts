@@ -1,7 +1,5 @@
 import type { ConditionOperator } from "./v4RuleBookTypes";
 import {
-  emptyApprovalPolicy,
-  emptyMatchPolicy,
   inferPlaybookProfileFromDefinition,
   playbookPresetForProfile,
 } from "./documentPlaybookConfig";
@@ -55,6 +53,7 @@ export type V5DocumentType = {
   posting: string;
   fraudRisk: DocumentTypeFraudRisk;
   oneLine: string;
+  llmHint?: string;
   routeTarget: string;
   enabled: boolean;
   classifier: DocumentTypeClassifier;
@@ -81,6 +80,8 @@ export type V5DocumentType = {
   sampleAnalysis?: DocumentTypeSampleAnalysis;
   /** Shipped matrix template this org type was created from (e.g. DT-07). Org code is separate. */
   matrixTemplateCode?: string;
+  /** FX booking at invoice date; payment variance to fxGainLossAccount. */
+  fxPolicy?: import("./v4RuleBookTypes").FxPostingPolicy;
 };
 
 export const DOCUMENT_TYPE_CLASSES: Array<"all" | DocumentTypeClass> = [
@@ -126,25 +127,29 @@ export function createBlankDocumentType(existing: DocumentTypeDefinition[]): Doc
   const preset = playbookPresetForProfile(profile);
   return {
     code,
-    title: "New document type",
-    shortTitle: "New type",
-    klass: "Transactional",
+    title: "",
+    shortTitle: "",
+    klass: "Supporting",
     posting: "No",
     fraudRisk: "low",
-    oneLine: "Describe how this document type is identified and processed.",
+    oneLine: "",
+    llmHint: "",
     routeTarget: "Vault",
-    enabled: true,
-    classifier: emptyDocumentClassifier(),
+    enabled: false,
+    classifier: {
+      ...emptyDocumentClassifier(),
+      enabled: false,
+    },
     requiredFields: [],
     absentFields: [],
-    minRouteConfidence: 0.65,
-    validationProfile: "",
+    minRouteConfidence: 0.75,
+    validationProfile: "non_actionable",
     playbookProfile: profile,
     matchPolicy: { mode: preset.matchMode },
     approvalPolicy: { mode: preset.approvalMode },
     validationRules: [],
     customValidationRules: [],
-    extractionFields: [],
+    extractionFields: ["document_heading", "document_text"],
     extraction: [],
     checks: [],
     match: [],

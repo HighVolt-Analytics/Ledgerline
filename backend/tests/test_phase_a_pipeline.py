@@ -152,7 +152,7 @@ async def test_ingest_creates_invoice_when_capture_rule_matches(
     clean_org_rule_book,
 ) -> None:
     monkeypatch.setattr(
-        "app.services.pipeline.store_invoice_pdf",
+        "app.services.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/test.pdf",
     )
     monkeypatch.setattr(

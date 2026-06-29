@@ -24,7 +24,6 @@ import {
 } from "lucide-react";
 import { LogoBlock } from "@/components/Logo";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
@@ -247,12 +246,6 @@ export function Layout() {
             <span className="tnum font-medium">{(1240).toLocaleString()}</span>
             <span className="hidden sm:inline text-muted-foreground text-xs">credits</span>
           </button>
-          <Badge
-            variant="outline"
-            className="hidden sm:inline-flex border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)] font-medium shrink-0"
-          >
-            Sandbox
-          </Badge>
           <Button
             variant="ghost"
             size="icon"
@@ -346,7 +339,7 @@ export function Layout() {
               {t}
             </span>
           ))}
-          <span className="ml-auto hidden sm:inline">© 2026 Ledgerline · Sandbox environment</span>
+          <span className="ml-auto hidden sm:inline">© 2026 Ledgerline</span>
           <span className="ml-auto sm:hidden">© 2026</span>
         </footer>
 

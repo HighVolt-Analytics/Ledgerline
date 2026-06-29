@@ -88,7 +88,7 @@ const LABEL_BY_CODE = Object.fromEntries(
   ].map((row) => [row.code, row.label])
 ) as Record<string, string>;
 
-const CONFIGURABLE_CODES = new Set(
+const CONFIGURABLE_CODES = new Set<string>(
   CONFIGURABLE_VALIDATION_CHECKS.map((row) => row.code)
 );
 
@@ -173,7 +173,7 @@ export function normalizeCustomValidationRules(
 
 export function defaultValidationRulesForProfile(
   profile: string,
-  documentTypeCode = ""
+  _documentTypeCode = ""
 ): ValidationRuleConfig[] {
   const token = (profile || "").trim().toLowerCase();
   if (token === "po_goods") return PO_GOODS_RULES.map((row) => ({ ...row }));

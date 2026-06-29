@@ -1,4 +1,4 @@
-"""Fan-out upload ingest: split multi-document PDFs into separate invoice rows."""
+"""Fan-out ingest: split multi-document PDFs into separate invoice rows."""
 
 from __future__ import annotations
 
@@ -36,6 +36,23 @@ class IngestUploadResult:
     parent_file_hash: str
 
 
+@dataclass
+class IngestSourceMetadata:
+    """Channel-specific fields applied to each created invoice row."""
+
+    storage_vendor_slug: str = UNKNOWN_SLUG
+    email_sender: str | None = None
+    email_subject: str | None = None
+    email_message_id: str | None = None
+    email_attachment_name: str | None = None
+    connected_mailbox_id: int | None = None
+    viber_connection_id: int | None = None
+    whatsapp_connection_id: int | None = None
+    capture_source: str | None = None
+    matched_rule_ids: str | None = None
+    route_target: str | None = None
+
+
 async def _create_invoice_from_bytes(
     session: AsyncSession,
     *,
@@ -46,20 +63,34 @@ async def _create_invoice_from_bytes(
     data: bytes,
     file_hash: str,
     purchase_document_type: str | None,
+    source: IngestSourceMetadata | None = None,
+    log_upload_event: bool = True,
 ) -> int:
     existing = await find_invoice_by_file_hash(session, file_hash, tenant_id=tenant_id)
     if existing is not None:
         raise DuplicateUploadError("Duplicate file already uploaded")
 
+    meta = source or IngestSourceMetadata()
+    attachment_name = meta.email_attachment_name or filename
+    vendor_slug = meta.storage_vendor_slug or UNKNOWN_SLUG
+
     document_ref = await allocate_next_document_ref(session, tenant_id)
     inv = Invoice(
         tenant_id=tenant_id,
+        connected_mailbox_id=meta.connected_mailbox_id,
+        viber_connection_id=meta.viber_connection_id,
+        whatsapp_connection_id=meta.whatsapp_connection_id,
         status=InvoiceStatus.PENDING,
         file_hash=file_hash,
         currency="AUD",
-        storage_vendor_slug=UNKNOWN_SLUG,
+        storage_vendor_slug=vendor_slug,
         purchase_document_type=purchase_document_type,
-        email_attachment_name=filename,
+        email_sender=meta.email_sender,
+        email_subject=meta.email_subject,
+        email_message_id=meta.email_message_id,
+        email_attachment_name=attachment_name,
+        capture_source=meta.capture_source,
+        matched_rule_ids=meta.matched_rule_ids,
         document_ref=document_ref,
     )
     session.add(inv)
@@ -69,26 +100,28 @@ async def _create_invoice_from_bytes(
         data,
         tenant_id,
         tenant_slug,
-        UNKNOWN_SLUG,
+        vendor_slug,
         inv.id,
         file_hash,
         filename,
         tenant_name=tenant_name,
         purchase_document_type=purchase_document_type,
+        route_target=meta.route_target,
     )
     inv.raw_file_path = stored
 
-    await log_event(
-        session,
-        "invoice_uploaded",
-        invoice_id=inv.id,
-        detail={"path": stored, "vendor_slug": UNKNOWN_SLUG, "file_hash": file_hash},
-    )
+    if log_upload_event:
+        await log_event(
+            session,
+            "invoice_uploaded",
+            invoice_id=inv.id,
+            detail={"path": stored, "vendor_slug": vendor_slug, "file_hash": file_hash},
+        )
     await session.flush()
     return inv.id
 
 
-async def ingest_upload_file(
+async def ingest_file_with_fanout(
     session: AsyncSession,
     *,
     tenant_id: int,
@@ -96,10 +129,12 @@ async def ingest_upload_file(
     tenant_name: str | None,
     filename: str,
     data: bytes,
-    purchase_document_type: str | None,
+    purchase_document_type: str | None = None,
+    source: IngestSourceMetadata | None = None,
+    log_upload_event: bool = False,
 ) -> IngestUploadResult:
     """
-    Create one or more pending invoices from an uploaded file.
+    Create one or more pending invoices from an attachment.
 
     PDFs may be split when multiple document headings are detected; other
     capture types always create a single invoice row.
@@ -119,6 +154,8 @@ async def ingest_upload_file(
             data=data,
             file_hash=parent_hash,
             purchase_document_type=normalized_type,
+            source=source,
+            log_upload_event=log_upload_event,
         )
         return IngestUploadResult(invoice_ids=[invoice_id], segment_count=1, parent_file_hash=parent_hash)
 
@@ -139,6 +176,8 @@ async def ingest_upload_file(
                 data=data,
                 file_hash=parent_hash,
                 purchase_document_type=normalized_type,
+                source=source,
+                log_upload_event=log_upload_event,
             )
             return IngestUploadResult(
                 invoice_ids=[invoice_id],
@@ -157,6 +196,8 @@ async def ingest_upload_file(
                 data=data,
                 file_hash=parent_hash,
                 purchase_document_type=normalized_type,
+                source=source,
+                log_upload_event=log_upload_event,
             )
             return IngestUploadResult(
                 invoice_ids=[invoice_id],
@@ -185,6 +226,8 @@ async def ingest_upload_file(
                 data=segment_bytes,
                 file_hash=segment_hash,
                 purchase_document_type=segment_type,
+                source=source,
+                log_upload_event=False,
             )
             invoice_ids.append(invoice_id)
 
@@ -212,3 +255,26 @@ async def ingest_upload_file(
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
+
+
+async def ingest_upload_file(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    tenant_slug: str,
+    tenant_name: str | None,
+    filename: str,
+    data: bytes,
+    purchase_document_type: str | None,
+) -> IngestUploadResult:
+    """Upload API entry point — logs invoice_uploaded for single-file ingest."""
+    return await ingest_file_with_fanout(
+        session,
+        tenant_id=tenant_id,
+        tenant_slug=tenant_slug,
+        tenant_name=tenant_name,
+        filename=filename,
+        data=data,
+        purchase_document_type=purchase_document_type,
+        log_upload_event=True,
+    )

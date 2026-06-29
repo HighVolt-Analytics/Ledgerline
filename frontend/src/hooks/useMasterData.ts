@@ -38,10 +38,12 @@ export function usePendingVendors(enabled = true) {
   return useQuery({
     queryKey: queryKeys.pendingVendors(),
     queryFn: async () => {
-      const rows = await api.listPendingVendors();
+      const rows = await api.listPendingVendors({ fresh: true });
       return rows.map((row) => mapPendingVendor(row as Record<string, unknown>));
     },
     enabled,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 

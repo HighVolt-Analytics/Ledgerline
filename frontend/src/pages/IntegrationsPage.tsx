@@ -13,6 +13,7 @@ import {
   MessageCircle,
   Plus,
   Server,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { api } from "@/api/client";
@@ -21,6 +22,7 @@ import type {
   AppSettings,
   ConnectedMailbox,
   MailboxConnectionRequest,
+  ViberConnection,
   WhatsappConnection,
 } from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
@@ -142,6 +144,13 @@ export function IntegrationsPage() {
   } = useAccountingIntegrations(Boolean(s));
   const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount(Boolean(s));
   const { data: stripeReadiness, isLoading: stripeReadinessLoading } = useStripeReadiness(Boolean(s));
+  const [vbConnections, setVbConnections] = useState<ViberConnection[]>([]);
+  const [vbWebhookUrl, setVbWebhookUrl] = useState<string>("");
+  const [vbWebhookReachable, setVbWebhookReachable] = useState<boolean | null>(null);
+  const [vbWebhookHint, setVbWebhookHint] = useState<string | null>(null);
+  const [vbError, setVbError] = useState<string | null>(null);
+  const [vbBusy, setVbBusy] = useState(false);
+  const [vbAuthToken, setVbAuthToken] = useState("");
 
   async function copyInviteLink(url: string) {
     try {
@@ -178,12 +187,31 @@ export function IntegrationsPage() {
       });
   }, []);
 
+  const loadViber = useCallback((fresh = false) => {
+    api
+      .getViberStatus({ fresh })
+      .then((status) => {
+        setVbConnections(status.connections);
+        setVbWebhookUrl(status.webhook_callback_url);
+        setVbWebhookReachable(status.webhook_reachable);
+        setVbWebhookHint(status.webhook_reachability_hint ?? null);
+        setVbError(null);
+      })
+      .catch(() => {
+        setVbConnections([]);
+        setVbWebhookUrl("");
+        setVbWebhookReachable(null);
+        setVbWebhookHint(null);
+      });
+  }, []);
+
   useEffect(() => {
     api.getSettings().then(setS);
     loadMailboxes();
     loadRequests();
     loadWhatsapp();
-  }, [loadMailboxes, loadRequests, loadWhatsapp]);
+    loadViber();
+  }, [loadMailboxes, loadRequests, loadWhatsapp, loadViber]);
 
   useEffect(() => {
     if (user?.role !== "admin") return;
@@ -464,6 +492,13 @@ export function IntegrationsPage() {
       icon: MessageCircle,
     },
     {
+      id: "viber",
+      name: "Viber",
+      tagline: vbConnections[0]?.bot_id || "Team expense capture",
+      ok: vbConnections.some((c) => c.connection_status === "connected"),
+      icon: MessageCircle,
+    },
+    {
       id: "blob",
       name: "Azure Blob Storage",
       tagline: s.azure_storage_container,
@@ -476,6 +511,20 @@ export function IntegrationsPage() {
       tagline: "Invoice OCR & extraction",
       ok: s.azure_di_enabled,
       icon: FileSearch,
+    },
+    {
+      id: "foundry-vision",
+      name: "Azure AI Foundry (GPT-4o Vision)",
+      tagline: "Vision LLM document AI provider",
+      ok: Boolean(s.azure_foundry_vision_available),
+      icon: Sparkles,
+    },
+    {
+      id: "gemini",
+      name: "Gemini Vision",
+      tagline: "Legacy optional document AI provider",
+      ok: Boolean(s.gemini_vision_available),
+      icon: Sparkles,
     },
     {
       id: "postgres",
@@ -559,6 +608,7 @@ export function IntegrationsPage() {
     [
       s,
       waConnections,
+      vbConnections,
       xeroItem,
       qboItem,
       stripePaymentsTagline,
@@ -704,7 +754,11 @@ export function IntegrationsPage() {
         )}
 
         {pendingRequests.length === 0 && requests.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No connection requests yet.</p>
+          <p className="text-sm text-muted-foreground">
+            {user?.role === "admin"
+              ? "No connection requests yet."
+              : "No connection requests yet. Only admins can send mailbox invitations."}
+          </p>
         ) : (
           <ul className="space-y-2">
             {requests.map((req) => (
@@ -790,8 +844,14 @@ export function IntegrationsPage() {
         </div>
         {mailboxes.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No mailboxes connected yet. Send an invitation above, or set GRAPH_MAILBOX in
-            backend .env for legacy application-permission polling.
+            {user?.role === "admin" ? (
+              <>
+                No mailboxes connected yet. Send an invitation above, or set GRAPH_MAILBOX in
+                backend .env for legacy application-permission polling.
+              </>
+            ) : (
+              <>No mailboxes connected yet. Ask an admin to send a connection invitation.</>
+            )}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -1008,6 +1068,177 @@ export function IntegrationsPage() {
                           toast({ title: "WhatsApp disconnected" });
                         } catch (e) {
                           setWaError(e instanceof Error ? e.message : "Disconnect failed");
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card className="p-5 mb-6" id="viber-integration">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold">Viber</h2>
+            <p className="text-xs text-muted-foreground">
+              Connect your Viber Public Account bot so employees can submit expense receipts via
+              Viber. Identity is matched by Viber user ID or phone in Rule Book → Employees.
+            </p>
+          </div>
+          <MessageCircle className="h-5 w-5 text-muted-foreground" />
+        </div>
+
+        {vbError && <p className="text-sm text-destructive mb-2">{vbError}</p>}
+
+        {vbWebhookUrl && (
+          <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 space-y-2 max-w-2xl">
+            <p className="text-xs text-muted-foreground">
+              Webhook URL (registered automatically on connect; must be HTTPS and reachable by
+              Viber):
+            </p>
+            <div className="flex gap-2">
+              <Input readOnly value={vbWebhookUrl} className="text-xs font-mono" />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => void copyInviteLink(vbWebhookUrl)}
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Copy
+              </Button>
+            </div>
+            {vbWebhookReachable === false && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive space-y-1">
+                <p className="font-medium">Webhook not reachable from the internet</p>
+                <p>{vbWebhookHint ?? "Start ngrok and update PUBLIC_TUNNEL_URL in backend .env"}</p>
+                <ol className="list-decimal list-inside text-muted-foreground mt-1 space-y-0.5">
+                  <li>In a new terminal: <code className="text-[10px]">ngrok http 8001</code></li>
+                  <li>
+                    Copy the <code className="text-[10px]">https://….ngrok-free.dev</code> URL into{" "}
+                    <code className="text-[10px]">PUBLIC_TUNNEL_URL</code> in{" "}
+                    <code className="text-[10px]">backend/.env</code>
+                  </li>
+                  <li>Restart uvicorn, refresh this page, then Connect or Test Viber again</li>
+                </ol>
+              </div>
+            )}
+            {vbWebhookReachable === true && (
+              <p className="text-xs text-[hsl(var(--chart-1))]">Webhook is reachable (tunnel OK).</p>
+            )}
+          </div>
+        )}
+
+        {user?.role === "admin" && (
+          <div className="mb-4 space-y-2 max-w-md">
+            <label className="text-xs text-muted-foreground" htmlFor="viber-auth-token">
+              Viber auth token (from partners.viber.com → your Public Account)
+            </label>
+            <div className="flex gap-2">
+              <Input
+                id="viber-auth-token"
+                type="password"
+                autoComplete="off"
+                placeholder="Paste auth token"
+                value={vbAuthToken}
+                onChange={(e) => setVbAuthToken(e.target.value)}
+                className="text-xs font-mono"
+              />
+              <Button
+                size="sm"
+                disabled={vbBusy || vbAuthToken.trim().length < 8}
+                onClick={async () => {
+                  setVbBusy(true);
+                  setVbError(null);
+                  try {
+                    const result = await api.connectViber(vbAuthToken.trim());
+                    setVbAuthToken("");
+                    loadViber(true);
+                    toast({
+                      title: "Viber connected",
+                      description: result.bot_name
+                        ? `${result.bot_name} is ready for expense capture.`
+                        : `Bot ${result.connection.bot_id} connected.`,
+                    });
+                  } catch (e) {
+                    setVbError(e instanceof Error ? e.message : "Could not connect Viber bot");
+                  } finally {
+                    setVbBusy(false);
+                  }
+                }}
+              >
+                {vbBusy ? "Connecting…" : "Connect Viber"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Use the same ngrok URL as <code className="text-[10px]">PUBLIC_TUNNEL_URL</code> in{" "}
+              <code className="text-[10px]">backend/.env</code>. Free ngrok URLs change every time
+              you restart ngrok — update .env and reconnect Viber after each restart.
+            </p>
+          </div>
+        )}
+
+        {vbConnections.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No Viber bots connected yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {vbConnections.map((conn) => (
+              <li
+                key={conn.id}
+                className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm gap-3"
+              >
+                <div className="min-w-0">
+                  <span className="font-medium font-mono text-xs">{conn.bot_id}</span>
+                  <Badge variant="outline" className="ml-2 text-[10px]">
+                    {conn.integration_health}
+                  </Badge>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Status: {conn.connection_status}
+                  </p>
+                </div>
+                {user?.role === "admin" && (
+                  <div className="flex gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={async () => {
+                        try {
+                          const result = await api.testViberConnection(conn.id);
+                          if (result.ok) {
+                            toast({ title: "Viber test passed", description: "Webhook resubscribed." });
+                          } else {
+                            toast({
+                              title: "Viber needs attention",
+                              description: result.warnings.join(" · ") || result.integration_health,
+                              variant: "destructive",
+                            });
+                          }
+                          loadViber(true);
+                        } catch (e) {
+                          setVbError(e instanceof Error ? e.message : "Test failed");
+                        }
+                      }}
+                    >
+                      Test
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive"
+                      onClick={async () => {
+                        try {
+                          await api.disconnectViber(conn.id);
+                          loadViber(true);
+                          toast({ title: "Viber disconnected" });
+                        } catch (e) {
+                          setVbError(e instanceof Error ? e.message : "Disconnect failed");
                         }
                       }}
                     >

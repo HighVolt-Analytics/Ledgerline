@@ -39,6 +39,15 @@ function vr03AppliesToField(token: string, fieldKey: string): boolean {
   return false;
 }
 
+function headingFromDocumentText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  for (const line of text.split(/\r?\n/)) {
+    const token = line.trim();
+    if (token.length >= 4) return token.slice(0, 120);
+  }
+  return null;
+}
+
 function extractionFieldPopulated(inv: InvoiceDetails, fieldKey: string): boolean {
   if (fieldKey === "line_items") return inv.line_items.length > 0;
   if (fieldKey === "bank_details") {
@@ -50,6 +59,15 @@ function extractionFieldPopulated(inv: InvoiceDetails, fieldKey: string): boolea
   if (fieldKey === "document_text") {
     return Boolean(inv.document_text?.trim());
   }
+  if (fieldKey === "document_heading") {
+    return Boolean(
+      inv.document_heading?.trim() ||
+        inv.extracted_fields?.document_heading?.trim() ||
+        headingFromDocumentText(inv.document_text)
+    );
+  }
+  const extracted = inv.extracted_fields?.[fieldKey];
+  if (extracted != null && String(extracted).trim()) return true;
   const record = inv as unknown as Record<string, unknown>;
   const value = record[fieldKey];
   if (value == null) return false;
@@ -117,6 +135,8 @@ export function evaluationStatusLabel(
 ): string {
   if (status === "auto_coded") return "Auto coded";
   if (status === "needs_review") return "Needs review";
+  if (status === "awaiting_classification") return "Awaiting classification";
+  if (status === "needs_rescan") return "Needs rescan";
   if (status === "pending_vendor") return "Pending vendor";
   if (status === "unmatched_expense_vendor") return "Unmatched vendor";
   if (status === "awaiting_po") return "Awaiting PO";
@@ -132,6 +152,12 @@ export function evaluationStatusDescription(
   }
   if (status === "needs_review") {
     return "Document type, route, or GL mapping needs a human check before posting.";
+  }
+  if (status === "awaiting_classification") {
+    return "LLM confidence was below the auto-route threshold — confirm document type on the document.";
+  }
+  if (status === "needs_rescan") {
+    return "Image or OCR quality was too poor — ask the sender for a flat, well-lit scan or PDF.";
   }
   if (status === "pending_vendor") {
     return "Vendor is not in master (VR12 on) — register in Vendors before processing.";

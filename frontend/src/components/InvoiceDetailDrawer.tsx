@@ -17,6 +17,7 @@ import {
   type PreviewPaneMode,
 } from "@/components/InvoiceFilePreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
+import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +27,7 @@ import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
   canApproveClaim,
-  canQueuePipeline,
+  canReprocessInvoice,
   canRejectClaim,
   canRequestInfo,
   invoiceFieldsFromDetails,
@@ -50,7 +51,7 @@ import {
   effectiveDocumentTypeCode,
 } from "@/lib/documentTypeResolve";
 
-const TABS = ["fields", "lines", "po", "tax", "audit"] as const;
+const TABS = ["fields", "lines", "po", "tax", "audit", "pipeline"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -59,6 +60,7 @@ const TAB_LABELS: Record<Tab, string> = {
   po: "PO Match",
   tax: "Tax",
   audit: "Audit log",
+  pipeline: "Pipeline (dev)",
 };
 
 const EXPENSE_GL_ACCOUNTS = [
@@ -181,11 +183,27 @@ function isEditableExtractionField(key: string): boolean {
 }
 
 function invoiceScalarValue(inv: InvoiceDetails, key: string): string | null {
-  const record = inv as Record<string, unknown>;
+  const record = inv as unknown as Record<string, unknown>;
+  const extracted = inv.extracted_fields;
+  if (extracted && typeof extracted === "object") {
+    const custom = extracted[key];
+    if (custom != null && String(custom).trim()) {
+      return String(custom).trim();
+    }
+  }
   const val = record[key];
   if (val == null) return null;
   const text = String(val).trim();
   return text || null;
+}
+
+function headingFromDocumentText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  for (const line of text.split(/\r?\n/)) {
+    const token = line.trim();
+    if (token.length >= 4) return token.slice(0, 120);
+  }
+  return null;
 }
 
 function readExtractionFieldValue(
@@ -211,6 +229,10 @@ function readExtractionFieldValue(
     if (!body) return "—";
     const max = 280;
     return body.length > max ? `${body.slice(0, max)}… (${body.length.toLocaleString()} chars)` : body;
+  }
+  if (key === "document_heading") {
+    const direct = invoiceScalarValue(inv, key) ?? headingFromDocumentText(inv.document_text);
+    return direct || "—";
   }
   if (editing && draft && isEditableExtractionField(key)) {
     const draftValue = draft[key as keyof InvoiceEditDraft];
@@ -558,6 +580,36 @@ export function InvoiceDetailDrawer({
 
   const activeInvoiceId = viewId ?? invoiceId;
 
+  const catalogueCodes = useMemo(
+    () =>
+      (ruleBook?.documentTypes ?? [])
+        .filter((dt) => dt.enabled)
+        .map((dt) => dt.code),
+    [ruleBook?.documentTypes]
+  );
+
+  const resolveClassification = async (confirmedDt: string) => {
+    if (!activeInvoiceId) return;
+    setActionBusy(true);
+    try {
+      await api.resolveInvoiceClassification(activeInvoiceId, {
+        confirmed_dt: confirmedDt,
+        reprocess: true,
+      });
+      const [freshInv, freshAudit] = await Promise.all([
+        api.getInvoice(activeInvoiceId, { fresh: true }),
+        api.getInvoiceClassificationAudit(activeInvoiceId, { fresh: true }),
+      ]);
+      setInv(freshInv);
+      setClassificationAudit(freshAudit);
+      onUpdated?.();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (open) {
       setTab(initialTab);
@@ -610,7 +662,12 @@ export function InvoiceDetailDrawer({
     api
       .getInvoiceClassificationAudit(inv.id, { fresh: true })
       .then((detail) => {
-        setClassificationAudit(detail?.document_type_code ? detail : null);
+        const hasAudit =
+          detail &&
+          (detail.document_type_code ||
+            detail.llm_suggested_dt ||
+            (Array.isArray(detail.review_reasons) && detail.review_reasons.length > 0));
+        setClassificationAudit(hasAudit ? detail : null);
       })
       .catch(() => setClassificationAudit(null))
       .finally(() => setClassificationLoading(false));
@@ -809,7 +866,7 @@ export function InvoiceDetailDrawer({
   }
 
   async function handleReprocess() {
-    if (!inv || !canQueuePipeline(inv.status)) return;
+    if (!inv || !canReprocessInvoice(inv.status)) return;
     if (!inv.has_stored_file) {
       alert("Upload a PDF before reprocessing this invoice.");
       return;
@@ -1025,14 +1082,17 @@ export function InvoiceDetailDrawer({
                     <InvoiceClassificationPanel
                       audit={classificationAudit}
                       loading={classificationLoading}
+                      catalogueCodes={catalogueCodes}
+                      onConfirmDt={(code) => void resolveClassification(code)}
+                      onChangeDt={(code) => void resolveClassification(code)}
                     />
                     {extractionFieldKeys.length === 0 ? (
                       <p className="text-sm text-muted-foreground">
                         {!resolvedDocumentTypeCode
-                          ? "No document type matched. Configure classifiers in Rule Book → Document types, then reprocess."
+                          ? "Document type needs review. Confirm or change DT above, then reprocess."
                           : !documentTypeInCatalogue
-                            ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or reprocess after fixing classifiers.`
-                            : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type card in Rule Book.`}
+                            ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or confirm a valid DT.`
+                            : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type in Rule Book.`}
                       </p>
                     ) : (
                       extractionFieldKeys.map((key) => (
@@ -1275,6 +1335,8 @@ export function InvoiceDetailDrawer({
                     )}
                   </div>
                 )}
+
+                {tab === "pipeline" && inv && <PipelineDebugPanel invoice={inv} />}
               </div>
             </div>
 
@@ -1312,7 +1374,7 @@ export function InvoiceDetailDrawer({
                     Reject
                   </Button>
                   <div className="flex gap-2">
-                    {canQueuePipeline(inv.status) && (
+                    {canReprocessInvoice(inv.status) && (
                         <Button
                           variant="outline"
                           size="sm"

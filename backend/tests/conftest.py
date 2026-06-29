@@ -45,6 +45,9 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
     fixture = Path(__file__).resolve().parent / "fixtures" / "rule_book_demo.json"
     demo_config = json.loads(fixture.read_text(encoding="utf-8"))
+    catalog_path = Path(__file__).resolve().parent / "fixtures" / "document_types_test_catalog.json"
+    if catalog_path.is_file():
+        demo_config["document_types"] = json.loads(catalog_path.read_text(encoding="utf-8"))
     demo_config.pop("vendor_masters", None)
     demo_config.pop("employee_masters", None)
 

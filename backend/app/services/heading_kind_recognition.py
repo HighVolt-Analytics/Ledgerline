@@ -82,9 +82,7 @@ def resolve_playbook_profile(
     document_text: str = "",
 ) -> str:
     """Pick playbook from detected signals, else heading kind, else transactional default."""
-    from app.services.document_type_recognition_signals import infer_playbook_profile
-
-    playbook = infer_playbook_profile(signals)
+    playbook = _infer_playbook_profile(signals)
     if playbook not in {"standard_transactional", "direct_expense"}:
         return playbook
     kind = infer_heading_kind(heading=heading, document_text=document_text)
@@ -92,3 +90,42 @@ def resolve_playbook_profile(
     if kind_playbook:
         return kind_playbook
     return playbook
+
+
+def _infer_playbook_profile(signals: frozenset[RecognitionSignalId]) -> str:
+    if signals & {"heading_grn", "text_grn", "filename_grn"}:
+        return "supporting"
+    if signals & {"heading_po", "text_po", "filename_po"}:
+        if "has_invoice_number" not in signals:
+            return "supporting"
+    if signals & {"text_credit_note", "filename_credit_note"}:
+        return "credit_adjustment"
+    if signals & {"text_debit_note", "filename_debit_note"}:
+        return "debit_note"
+    if signals & {"text_proforma", "filename_proforma"}:
+        return "pre_transactional"
+    if signals & {"text_claim", "filename_claim"}:
+        return "employee_claim"
+    if signals & {"text_bank_change", "filename_bank_change"}:
+        return "master_data"
+    if signals & {"heading_contract", "text_contract", "text_governing_law", "filename_contract"}:
+        return "supporting"
+    if signals & {"text_quote", "filename_quote"}:
+        return "non_actionable"
+    if signals & {"text_freight", "filename_freight"}:
+        return "freight_logistics"
+    if signals & {"text_import", "filename_import"}:
+        return "import_dossier"
+    if signals & {"heading_invoice", "text_invoice", "filename_invoice"}:
+        if "has_po_reference" in signals:
+            return "po_goods"
+        if "has_invoice_number" in signals and "has_po_reference" not in signals:
+            return "direct_expense"
+        return "standard_transactional"
+    if signals & {"text_tax_notice", "filename_tax_notice"}:
+        return "compliance_route"
+    if {"has_po_reference", "has_invoice_number", "has_total_amount"}.issubset(signals):
+        return "po_goods"
+    if "has_invoice_number" in signals and "has_po_reference" not in signals:
+        return "direct_expense"
+    return "standard_transactional"

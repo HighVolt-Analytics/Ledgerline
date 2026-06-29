@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { Copy, X } from "lucide-react";
+import type { MailboxConnectionRequestAction } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -10,7 +11,7 @@ type ConnectMailboxDialogProps = {
     email: string;
     display_name?: string;
     message?: string;
-  }) => Promise<void>;
+  }) => Promise<MailboxConnectionRequestAction>;
 };
 
 export function ConnectMailboxDialog({
@@ -24,12 +25,16 @@ export function ConnectMailboxDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [inviteResult, setInviteResult] = useState<MailboxConnectionRequestAction | null>(null);
+  const [copyDone, setCopyDone] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setBusy(false);
     setSent(false);
+    setInviteResult(null);
+    setCopyDone(false);
     setEmail("");
     setDisplayName("");
     setMessage("");
@@ -51,16 +56,27 @@ export function ConnectMailboxDialog({
     setBusy(true);
     setError(null);
     try {
-      await onSendInvite({
+      const result = await onSendInvite({
         email: email.trim(),
         display_name: displayName.trim() || undefined,
         message: message.trim() || undefined,
       });
+      setInviteResult(result);
       setSent(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send invitation");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function copyInviteLink() {
+    if (!inviteResult?.connect_url) return;
+    try {
+      await navigator.clipboard.writeText(inviteResult.connect_url);
+      setCopyDone(true);
+    } catch {
+      setError("Could not copy link — select and copy manually.");
     }
   }
 
@@ -81,7 +97,7 @@ export function ConnectMailboxDialog({
       >
         <div className="flex items-start justify-between gap-4 mb-4">
           <h2 id="connect-mailbox-title" className="text-lg font-semibold leading-none">
-            Request mailbox connection
+            Add mailbox
           </h2>
           <button
             type="button"
@@ -95,10 +111,42 @@ export function ConnectMailboxDialog({
 
         {sent ? (
           <div className="space-y-4 py-2 text-sm">
-            <p className="text-muted-foreground">
-              Invitation sent to <span className="font-medium text-foreground">{email}</span>.
-              They will receive an email with a link to connect their mailbox.
-            </p>
+            {inviteResult?.email_sent ? (
+              <p className="text-muted-foreground">
+                Invitation sent to <span className="font-medium text-foreground">{email}</span>.
+                They will receive an email with a link to connect their mailbox.
+              </p>
+            ) : (
+              <>
+                <p className="text-muted-foreground">
+                  Invitation created for{" "}
+                  <span className="font-medium text-foreground">{email}</span>.
+                  {inviteResult?.email_error
+                    ? ` Email could not be sent (${inviteResult.email_error}).`
+                    : " Email could not be sent."}{" "}
+                  Share the link below with the mailbox owner.
+                </p>
+                {inviteResult?.connect_url && (
+                  <div className="space-y-2">
+                    <Input
+                      readOnly
+                      value={inviteResult.connect_url}
+                      className="text-xs font-mono"
+                      data-testid="input-mailbox-invite-link"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void copyInviteLink()}
+                    >
+                      <Copy className="h-4 w-4 mr-1" />
+                      {copyDone ? "Copied" : "Copy invite link"}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
             <Button type="button" onClick={onClose}>
               Done
             </Button>

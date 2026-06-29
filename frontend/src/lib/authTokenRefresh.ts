@@ -1,6 +1,6 @@
 import { apiRefreshSession } from "@/lib/authApi";
 import { getRefreshToken, persistAuthSuccess } from "@/lib/authSession";
-import { setAuthToken } from "@/api/client";
+import { setAuthToken, setAuthUser } from "@/api/client";
 
 let inflight: Promise<void> | null = null;
 
@@ -20,6 +20,7 @@ export async function refreshAccessTokenSingleFlight(): Promise<void> {
       user: data.user,
     });
     setAuthToken(data.access_token);
+    setAuthUser(data.user);
   })();
 
   try {

@@ -80,7 +80,16 @@ async def list_approvals_board(
         key=lambda inv: (inv.created_at, inv.id),
         reverse=True,
     )
-    return ApiEnvelope(data=await _responses_for_invoices(db, list(rows)))
+    responses = await _responses_for_invoices(db, list(rows))
+    from app.services.approval_board_service import approval_board_column
+
+    enriched: list[InvoiceResponse] = []
+    by_id_inv = {inv.id: inv for inv in rows}
+    for resp in responses:
+        inv = by_id_inv.get(resp.id)
+        column = approval_board_column(inv) if inv is not None else None
+        enriched.append(resp.model_copy(update={"approval_board_column": column}))
+    return ApiEnvelope(data=enriched)
 
 
 @router.get("", response_model=ApiEnvelope[list[InvoiceResponse]])
@@ -151,6 +160,8 @@ async def approve_invoice(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    # Commit before background task so process_invoice sees pending (not exception/rejected).
+    await db.commit()
     background_tasks.add_task(process_invoice_background, invoice_id, tenant_id=ctx.tenant_id)
     return ApiEnvelope(data=await _response_for_invoice(db, inv))
 

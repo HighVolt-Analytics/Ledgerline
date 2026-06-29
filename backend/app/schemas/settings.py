@@ -13,7 +13,9 @@ class AppSettingsResponse(BaseModel):
     blob_enabled: bool
     azure_storage_container: str
     azure_di_enabled: bool
-    azure_postgres_enabled: bool
+    gemini_vision_available: bool = False
+    azure_foundry_vision_available: bool = False
+    default_document_ai_provider: str = "azure_di"
     azure_redis_enabled: bool
     appinsights_enabled: bool
     azure_location: str

@@ -110,6 +110,10 @@ async def document_matrix(
         flag, flag_reason = derive_matrix_flag(inv)
         payment = payments_by_id.get(inv.id)
         conflict_with, conflict_detail = await duplicate_conflict_for_invoice(db, ctx.tenant_id, inv)
+        paid_date = None
+        if payment is not None and payment.paid_date is not None:
+            paid_date = payment.paid_date.isoformat()
+
         data.append(
             MatrixRowResponse(
                 invoice=_to_response(
@@ -121,6 +125,7 @@ async def document_matrix(
                 flag=flag,
                 flag_reason=flag_reason,
                 payment_status=derive_matrix_payment_status(inv, payment),
+                paid_date=paid_date,
                 conflict_with=conflict_with,
                 conflict_detail=conflict_detail or None,
             )

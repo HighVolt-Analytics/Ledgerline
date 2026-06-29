@@ -15,7 +15,7 @@ export type MatrixCellState = "done" | "pending" | "fail";
 export type MatrixCell = {
   state: MatrixCellState;
   ts: string;
-  actor: string;
+  detail: string;
 };
 
 const STAGE_ACTORS: Record<MatrixStage, string> = {
@@ -69,51 +69,53 @@ export function buildMatrixCells(inv: Invoice): Record<MatrixStage, MatrixCell> 
   const cells = {} as Record<MatrixStage, MatrixCell>;
 
   if (inv.status === "duplicate_skipped") {
-    for (const stage of MATRIX_STAGES) {
-      cells[stage] = { state: stage === "Received" ? "fail" : "pending", ts: "—", actor: "—" };
+    cells.Received = { state: "done", ts: "—", detail: "—" };
+    cells.Parsed = { state: "fail", ts: "—", detail: "Duplicate skipped" };
+    for (const stage of MATRIX_STAGES.slice(2)) {
+      cells[stage] = { state: "pending", ts: "—", detail: "—" };
     }
     return cells;
   }
 
   if (inv.status === "rejected") {
-    cells.Received = { state: "done", ts: "—", actor: "—" };
-    cells.Parsed = { state: "fail", ts: "—", actor: "—" };
+    cells.Received = { state: "done", ts: "—", detail: "—" };
+    cells.Parsed = { state: "fail", ts: "—", detail: "—" };
     for (const stage of MATRIX_STAGES.slice(2)) {
-      cells[stage] = { state: "pending", ts: "—", actor: "—" };
+      cells[stage] = { state: "pending", ts: "—", detail: "—" };
     }
     return cells;
   }
 
   if (inv.status === "processed") {
     for (const stage of MATRIX_STAGES) {
-      cells[stage] = { state: "done", ts: "—", actor: "—" };
+      cells[stage] = { state: "done", ts: "—", detail: "—" };
     }
     return cells;
   }
 
   if (inv.status === "exception" || invoiceRoutedToSuspense(inv)) {
-    cells.Received = { state: "done", ts: "—", actor: "—" };
-    cells.Parsed = { state: "done", ts: "—", actor: "—" };
+    cells.Received = { state: "done", ts: "—", detail: "—" };
+    cells.Parsed = { state: "done", ts: "—", detail: "—" };
     if (validationHasFailure(inv)) {
-      cells.Validated = { state: "fail", ts: "—", actor: "—" };
-      cells.Mapped = { state: "pending", ts: "—", actor: "—" };
+      cells.Validated = { state: "fail", ts: "—", detail: "—" };
+      cells.Mapped = { state: "pending", ts: "—", detail: "—" };
     } else {
-      cells.Validated = { state: "done", ts: "—", actor: "—" };
-      cells.Mapped = { state: "fail", ts: "—", actor: "—" };
+      cells.Validated = { state: "done", ts: "—", detail: "—" };
+      cells.Mapped = { state: "fail", ts: "—", detail: "—" };
     }
-    cells.Approved = { state: "pending", ts: "—", actor: "—" };
-    cells.Posted = { state: "pending", ts: "—", actor: "—" };
+    cells.Approved = { state: "pending", ts: "—", detail: "—" };
+    cells.Posted = { state: "pending", ts: "—", detail: "—" };
     return cells;
   }
 
   const doneThrough = completedStageCount(inv.status);
   MATRIX_STAGES.forEach((stage, i) => {
-    cells[stage] = { state: i < doneThrough ? "done" : "pending", ts: "—", actor: "—" };
+    cells[stage] = { state: i < doneThrough ? "done" : "pending", ts: "—", detail: "—" };
   });
   return cells;
 }
 
-/** Attach v4-style timestamps and actors to pipeline cells (v4 `kW`). */
+/** Attach v4-style timestamps and details to pipeline cells (v4 `kW`). */
 export function enrichMatrixCells(
   inv: Invoice,
   cells: Record<MatrixStage, MatrixCell>,
@@ -125,7 +127,7 @@ export function enrichMatrixCells(
 
   for (const stage of MATRIX_STAGES) {
     const base = cells[stage];
-    const actor =
+    const detail =
       stage === "Posted"
         ? "Ledger sync"
         : stage === "Approved" && rowIndex % 3 === 0 && base.state === "done"
@@ -133,15 +135,15 @@ export function enrichMatrixCells(
           : STAGE_ACTORS[stage];
 
     if (base.state === "pending") {
-      enriched[stage] = { state: "pending", ts: "—", actor };
+      enriched[stage] = { state: "pending", ts: "—", detail };
     } else if (base.state === "fail") {
-      enriched[stage] = { state: "fail", ts: `${date} 09:00`, actor };
+      enriched[stage] = { state: "fail", ts: `${date} 09:00`, detail };
     } else {
       const min = (10 + rowIndex) % 60;
       enriched[stage] = {
         state: "done",
         ts: `${date} 09:${String(min).padStart(2, "0")}`,
-        actor,
+        detail,
       };
     }
   }
@@ -150,12 +152,12 @@ export function enrichMatrixCells(
     enriched.Approved = {
       state: "done",
       ts: enriched.Approved.ts,
-      actor: "Marcus Webb",
+      detail: "Marcus Webb",
     };
     enriched.Posted = {
       state: "done",
       ts: enriched.Posted.ts,
-      actor: "Ledger sync",
+      detail: "Ledger sync",
     };
   }
 

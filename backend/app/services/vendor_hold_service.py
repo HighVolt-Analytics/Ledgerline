@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -159,6 +161,35 @@ async def _release_hold_when_po_vendor_matches(
     return True
 
 
+async def _unknown_vendor_needs_registration(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    """True when vendor is not in masters and registration is required for this document."""
+    if not await _registration_required_for_invoice(session, invoice):
+        return False
+    if _is_purchase_supporting_document(invoice):
+        return False
+    if await purchase_invoice_trusts_po_register(session, invoice):
+        return False
+
+    name = (invoice.vendor or "").strip()
+    if not name:
+        return False
+
+    from app.services.master_data_service import list_vendor_masters
+    from app.services.vendor_detection import find_matching_vendor_master
+
+    db_masters = await list_vendor_masters(session, invoice.tenant_id)
+    if find_matching_vendor_master(name, invoice.abn, db_masters):
+        return False
+
+    config = await load_classification_config(session, invoice.tenant_id)
+    threshold = float(config.vendor_detection_config.threshold)
+    confidence = float(invoice.vendor_confidence or 0)
+    return confidence < threshold
+
+
 async def apply_vendor_hold_if_needed(
     session: AsyncSession,
     invoice: Invoice,
@@ -177,7 +208,8 @@ async def apply_vendor_hold_if_needed(
         return False
 
     if not await invoice_is_vendor_held(session, invoice):
-        return False
+        if not await _unknown_vendor_needs_registration(session, invoice):
+            return False
 
     invoice.evaluation_status = EVAL_PENDING_VENDOR
     if invoice.status not in (
@@ -197,25 +229,33 @@ async def apply_vendor_hold_if_needed(
             "reason": "pending_vendor_registration",
         },
     )
+    from app.services.invoice_evaluation_service import ensure_pending_vendor_queued
+
+    await ensure_pending_vendor_queued(session, invoice)
     await session.flush()
     return True
 
 
 async def release_invoices_after_vendor_promotion(
     session: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID | int | str,
     *,
     vendor_name: str,
     source_invoice_id: int | None = None,
 ) -> int:
     """Re-evaluate and release held invoices tied to a promoted vendor."""
     from app.services.invoice_evaluation_service import apply_invoice_evaluation
+    from app.tenant_scoped import coerce_tenant_uuid
+
+    tid = coerce_tenant_uuid(tenant_id)
+    if tid is None:
+        return 0
 
     name_key = vendor_name.strip().lower()
     stmt = (
         select(Invoice)
         .where(
-            Invoice.tenant_id == tenant_id,
+            Invoice.tenant_id == tid,
             Invoice.evaluation_status == EVAL_PENDING_VENDOR,
             Invoice.status.in_(
                 (

@@ -9,7 +9,12 @@ from app.models.line_item import LineItem
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 
 
-async def reset_invoice_for_reprocess(session: AsyncSession, inv: Invoice) -> None:
+async def reset_invoice_for_reprocess(
+    session: AsyncSession,
+    inv: Invoice,
+    *,
+    preserve_document_type: bool = False,
+) -> None:
     """Clear extracted data and journal lines; set status to pending."""
     inv.status = InvoiceStatus.PENDING
     inv.vendor = None
@@ -29,9 +34,17 @@ async def reset_invoice_for_reprocess(session: AsyncSession, inv: Invoice) -> No
     inv.account_code = None
     inv.account_name = None
     inv.purchase_document_type = None
-    inv.document_type_code = None
-    inv.document_type_confidence = None
+    if not preserve_document_type:
+        inv.document_type_code = None
+        inv.document_type_confidence = None
+        inv.llm_suggested_dt = None
+        inv.llm_confidence = None
     inv.document_text = None
+    inv.document_heading = None
+    inv.extracted_fields = None
+    inv.route_target = None
+    inv.matched_rule_ids = None
+    inv.evaluation_status = None
 
     for entry in (
         await session.execute(

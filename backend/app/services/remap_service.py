@@ -84,7 +84,15 @@ async def remap_invoices_for_tenant(
             changed = True
 
         if changed:
-            await sync_invoice_blob_path(session, inv, parsed_vendor=inv.vendor)
+            try:
+                await sync_invoice_blob_path(session, inv, parsed_vendor=inv.vendor)
+            except Exception as exc:
+                logger.warning(
+                    "remap_blob_relocate_skipped",
+                    tenant_id=str(tenant_id),
+                    invoice_id=inv.id,
+                    error=str(exc),
+                )
             updated += 1
             changed_ids.append(inv.id)
 

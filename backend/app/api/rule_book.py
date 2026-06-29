@@ -27,6 +27,10 @@ from app.schemas.rule_book_evaluate import (
     RuleBookEvaluateRequest,
     RuleBookEvaluateResponse,
 )
+from app.schemas.classification_api import (
+    DocumentTypeRecognitionTestRequest,
+    DocumentTypeRecognitionTestResponse,
+)
 from app.services.document_type_sample_types import ParsedDocumentSample
 from app.services.document_type_sample_analyzer import (
     apply_sample_proposal_to_draft,
@@ -35,6 +39,7 @@ from app.services.document_type_sample_analyzer import (
     parse_document_samples,
 )
 from app.services.sample_proposal_engine import build_sample_proposal
+from app.services.document_type_recognition_service import evaluate_document_type_recognition
 from app.services.document_type_classify_preview import (
     classify_parsed_samples_for_proposal_preview,
     merge_draft_document_type,
@@ -116,10 +121,11 @@ async def get_recognition_signal_catalog(
 async def put_rule_book_config(
     body: RuleBookRulesPayload,
     request: Request,
+    background_tasks: BackgroundTasks,
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[dict[str, Any]]:
-    """Buffer rule book changes; commit after server-side debounce (audit + remap once)."""
+    """Persist rule book changes; remap invoices in the background."""
     require_privilege(ctx, "Edit Policy")
     await load_rule_book_config_dict(db, ctx.tenant_id)
 
@@ -146,13 +152,17 @@ async def put_rule_book_config(
         actor_email=actor_email,
         client_ip=client_ip,
         db=db,
+        remap_invoices=False,
+    )
+    background_tasks.add_task(
+        remap_tenant_invoices_background,
+        ctx.tenant_id,
+        actor_name=actor_name,
+        actor_email=actor_email,
+        client_ip=client_ip,
     )
 
-    data = await attach_email_capture_ingest_stats(
-        db,
-        ctx.tenant_id,
-        await attach_masters_to_config_dict(db, ctx.tenant_id, after_raw),
-    )
+    data = await _load_rule_book_response_dict(db, ctx.tenant_id)
     return ApiEnvelope(data=data)
 
 
@@ -188,6 +198,18 @@ async def delete_document_type(
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+    from app.services.classification_learning_service import (
+        normalize_learning_dt_code,
+        purge_learning_events_for_document_type,
+    )
+
+    deleted_code = normalize_learning_dt_code(code)
+    await purge_learning_events_for_document_type(
+        db,
+        tenant_id=ctx.tenant_id,
+        document_type_code=deleted_code,
+    )
 
     after_raw = payload.model_dump()
     actor_name, actor_email = await actor_from_context(db, ctx)
@@ -428,6 +450,39 @@ async def analyze_document_type_samples_endpoint(
     return ApiEnvelope(data=proposal)
 
 
+@router.post(
+    "/document-types/test-recognition",
+    response_model=ApiEnvelope[DocumentTypeRecognitionTestResponse],
+)
+async def test_document_type_recognition_endpoint(
+    body: DocumentTypeRecognitionTestRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[DocumentTypeRecognitionTestResponse]:
+    """Test draft match/exclude rules against pasted OCR text."""
+    require_privilege(ctx, "Edit Policy")
+    try:
+        draft = DocumentTypeDefinition.model_validate(body.draft_document_type)
+    except ValidationError as exc:
+        raise HTTPException(422, f"Invalid draft document type: {exc}") from exc
+
+    result = evaluate_document_type_recognition(
+        draft,
+        document_text=body.document_text,
+        document_heading=body.document_heading,
+        email_sender=body.email_sender,
+        attachment_name=body.attachment_name,
+    )
+    return ApiEnvelope(
+        data=DocumentTypeRecognitionTestResponse(
+            matches=result.matches,
+            match_rules_passed=result.match_rules_passed,
+            exclude_rules_passed=result.exclude_rules_passed,
+            summary=result.summary,
+            classifier_enabled=result.classifier_enabled,
+        )
+    )
+
+
 @router.post("/evaluate", response_model=ApiEnvelope[RuleBookEvaluateResponse])
 async def evaluate_rule_book_config(
     body: RuleBookEvaluateRequest,
@@ -449,3 +504,48 @@ async def evaluate_rule_book_config(
         return ApiEnvelope(data=RuleBookEvaluateResponse.model_validate(result))
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
+
+
+@router.get("/ai-providers")
+async def list_ai_providers(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[dict[str, object]]:
+    """Availability of document AI providers for Rule Book settings."""
+    from app.config import get_settings
+    from app.services.document_intelligence import is_di_enabled
+
+    settings = get_settings()
+    azure_available = bool(is_di_enabled() and settings.runtime_llm_available)
+    gemini_available = settings.gemini_vision_available
+    foundry_available = settings.azure_foundry_vision_available
+    return ApiEnvelope(
+        data={
+            "azure_di": {
+                "available": azure_available,
+                "label": "Azure Document Intelligence",
+                **(
+                    {"reason": "Azure DI or runtime LLM not configured"}
+                    if not azure_available
+                    else {}
+                ),
+            },
+            "azure_foundry_vision": {
+                "available": foundry_available,
+                "label": "Azure AI Foundry (GPT-4o Vision)",
+                **(
+                    {"reason": "AZURE_AI_FOUNDRY_* not configured"}
+                    if not foundry_available
+                    else {}
+                ),
+            },
+            "gemini_vision": {
+                "available": gemini_available,
+                "label": "Gemini 2.5 Vision",
+                **(
+                    {"reason": "GEMINI_API_KEY not configured"}
+                    if not gemini_available
+                    else {}
+                ),
+            },
+        }
+    )

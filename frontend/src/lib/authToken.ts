@@ -40,9 +40,16 @@ export function isTokenExpired(token: string, skewMs = 30_000): boolean {
 }
 
 /** Fallback profile when /me is temporarily unreachable but the JWT is still valid. */
-export function userFromToken(token: string): AuthUser | null {
+export function tenantIdFromToken(token: string | null | undefined): string | null {
+  if (!token) return null;
   const payload = decodeJwtPayload(token);
   const tenantId = payload?.tenant_id ?? payload?.org_id;
+  return tenantId ? String(tenantId) : null;
+}
+
+export function userFromToken(token: string): AuthUser | null {
+  const payload = decodeJwtPayload(token);
+  const tenantId = tenantIdFromToken(token);
   if (!payload?.sub || !tenantId) return null;
   const email = String(payload.email ?? "");
   return {
@@ -50,12 +57,26 @@ export function userFromToken(token: string): AuthUser | null {
     email,
     full_name: email ? email.split("@")[0] : "User",
     role: String(payload.role ?? "member"),
-    tenant_id: String(tenantId),
+    tenant_id: tenantId,
     tenant_name: "",
     tenant_slug: String(payload.tenant_slug ?? ""),
     tenant_timezone: DEFAULT_TENANT_TIMEZONE,
     tenant_locale: DEFAULT_TENANT_LOCALE,
     is_support_session: Boolean(payload.is_support_session),
     onboarding_completed: undefined,
+  };
+}
+
+/** JWT omits display fields — keep persisted profile values when merging. */
+export function mergeStoredUserWithToken(stored: AuthUser, tokenProfile: AuthUser): AuthUser {
+  return {
+    ...stored,
+    ...tokenProfile,
+    tenant_id: tokenProfile.tenant_id,
+    tenant_name: stored.tenant_name || tokenProfile.tenant_name,
+    tenant_slug: stored.tenant_slug || tokenProfile.tenant_slug,
+    full_name: tokenProfile.full_name || stored.full_name,
+    email: tokenProfile.email || stored.email,
+    role: tokenProfile.role || stored.role,
   };
 }

@@ -136,9 +136,7 @@ def min_route_confidence_for_document_type(
     )
     if definition is None:
         return DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN
-    from app.services.document_type_scoring_service import effective_min_route_confidence
-
-    return effective_min_route_confidence(definition)
+    return float(definition.min_route_confidence)
 
 
 def route_target_for_document_type(

@@ -55,6 +55,26 @@ def resolve_category(category: str) -> AccountMapping:
     return AccountMapping("9999", category, expense_category=category)
 
 
+def resolve_category_for_config(
+    category: str,
+    config: RuleBookConfigPayload | None = None,
+) -> AccountMapping:
+    """Resolve ledger/category name using tenant chart of accounts when available."""
+    cleaned = (category or "").strip()
+    if not cleaned:
+        return AccountMapping("9999", "Suspense Account", expense_category="Suspense Account")
+    if config is not None and config.chart_of_accounts:
+        for entry in config.chart_of_accounts:
+            if entry.name == cleaned:
+                return AccountMapping(entry.code, entry.name, expense_category=entry.name)
+        lowered = cleaned.lower()
+        for entry in config.chart_of_accounts:
+            if entry.name.lower() == lowered:
+                return AccountMapping(entry.code, entry.name, expense_category=entry.name)
+        return AccountMapping("9999", cleaned, expense_category=cleaned)
+    return resolve_category(cleaned)
+
+
 async def _resolve_config(
     *,
     session: AsyncSession | None,

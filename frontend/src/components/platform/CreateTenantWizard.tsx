@@ -200,7 +200,7 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
                   setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""));
                 }}
                 placeholder="acme-hospitality"
-                pattern="[a-z0-9-]+"
+                pattern="[-a-z0-9]+"
                 required
               />
             </div>

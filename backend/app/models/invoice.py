@@ -4,12 +4,15 @@ import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Numeric, String, Text, UniqueConstraint, func, Uuid
+from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint, func, Uuid
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+_JsonColumn = JSON().with_variant(JSONB, "postgresql")
 
 if TYPE_CHECKING:
     from app.models.journal import JournalEntry
@@ -49,6 +52,10 @@ class Invoice(Base):
         ForeignKey("connected_whatsapp_accounts.id"),
         nullable=True,
     )
+    viber_connection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("connected_viber_accounts.id"),
+        nullable=True,
+    )
     vendor: Mapped[str | None] = mapped_column(String(255))
     abn: Mapped[str | None] = mapped_column(String(11))
     billing_address: Mapped[str | None] = mapped_column(Text)
@@ -64,6 +71,9 @@ class Invoice(Base):
     subtotal: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     gst: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    booking_fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    functional_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    functional_total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     status: Mapped[InvoiceStatus] = mapped_column(
         Enum(
             InvoiceStatus,
@@ -91,7 +101,11 @@ class Invoice(Base):
     purchase_document_type: Mapped[str | None] = mapped_column(String(16), index=True)
     document_type_code: Mapped[str | None] = mapped_column(String(16), index=True)
     document_type_confidence: Mapped[float | None] = mapped_column(Float)
+    llm_suggested_dt: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    llm_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     document_text: Mapped[str | None] = mapped_column(Text)
+    document_heading: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    extracted_fields: Mapped[dict[str, Any] | None] = mapped_column(_JsonColumn, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

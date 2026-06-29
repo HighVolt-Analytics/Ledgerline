@@ -1,4 +1,4 @@
-"""Build 15-stage dossier pipeline from invoice state + audit trail.
+"""Build dossier pipeline from invoice state + audit trail.
 
 Stage order mirrors ``process_invoice`` in ``pipeline.py`` and the frontend
 ``DOSSIER_PIPELINE_STAGES`` catalogue.
@@ -19,6 +19,7 @@ from app.schemas.dossier import (
 from app.services.audit_change_summary import summarize_audit_change
 from app.services.pipeline_stages import (
     _actor_name,
+    _is_after,
     _latest_log,
     _source_label,
     _validation_results,
@@ -37,8 +38,13 @@ def _is_vault_route(inv: Invoice) -> bool:
 STAGE_IDS: tuple[str, ...] = (
     "ingest",
     "duplicate",
+    "storage",
+    "ocr",
+    "quality",
+    "llm_classify",
+    "confidence_gate",
     "extract",
-    "classify",
+    "document_type",
     "bundle",
     "vendor_hold",
     "validate",
@@ -55,8 +61,13 @@ STAGE_IDS: tuple[str, ...] = (
 _STAGE_LABELS = {
     "ingest": "Ingest",
     "duplicate": "Duplicate file check",
-    "extract": "Extract",
-    "classify": "Classify",
+    "storage": "Storage",
+    "ocr": "OCR",
+    "quality": "Image quality",
+    "llm_classify": "LLM classify",
+    "confidence_gate": "Confidence gate",
+    "extract": "Field extract",
+    "document_type": "Document type",
     "bundle": "Bundle / Playbook",
     "vendor_hold": "Vendor hold",
     "validate": "Validate",
@@ -65,7 +76,7 @@ _STAGE_LABELS = {
     "map_gl": "Map GL",
     "journal": "Journal",
     "reconcile": "Reconcile",
-    "post": "Process",
+    "post": "Post",
     "pay": "Pay",
     "archive": "Archive",
 }
@@ -80,40 +91,49 @@ _EVENT_STAGE.update(
         "duplicate_skipped": 1,
         "duplicate_in_progress": 1,
         "duplicate_reingest_rejected": 1,
-        "parse_completed": 2,
-        "invoice_parsed": 2,
-        "parsing_failed": 2,
-        "document_classified": 3,
-        "playbook_evaluated": 4,
-        "vendor_registration_hold": 5,
-        "validation_passed": 6,
-        "validation_failed": 6,
-        "routing_review_required": 6,
-        "three_way_match_evaluated": 7,
-        "purchase_variance_approved": 7,
-        "invoice_approved": 8,
-        "approval_required": 8,
-        "approval_requested": 8,
-        "team_expense_approval_required": 8,
-        "mapping_applied": 9,
-        "mapping_review_required": 9,
-        "reconciliation_halted": 11,
-        "reconciliation_skipped": 11,
-        "invoice_processed": 12,
-        "invoice_published_to_ledger": 12,
-        "purchase_document_processed": 12,
-        "vault_stored": 14,
+        "storage_verified": 2,
+        "ocr_completed": 3,
+        "parsing_failed": 3,
+        "image_quality_gate_passed": 4,
+        "image_quality_gate_failed": 4,
+        "llm_classified": 5,
+        "classification_gate_passed": 6,
+        "classification_gate_failed": 6,
+        "field_confidence_evaluated": 7,
+        "parse_completed": 7,
+        "invoice_parsed": 7,
+        "document_classified": 8,
+        "classification_resolved": 8,
+        "playbook_evaluated": 9,
+        "vendor_registration_hold": 10,
+        "validation_passed": 11,
+        "validation_failed": 11,
+        "routing_review_required": 11,
+        "three_way_match_evaluated": 12,
+        "purchase_variance_approved": 12,
+        "invoice_approved": 13,
+        "approval_required": 13,
+        "approval_requested": 13,
+        "team_expense_approval_required": 13,
+        "mapping_applied": 14,
+        "mapping_review_required": 14,
+        "reconciliation_halted": 16,
+        "reconciliation_skipped": 16,
+        "invoice_processed": 17,
+        "invoice_published_to_ledger": 17,
+        "purchase_document_processed": 17,
+        "vault_stored": 19,
     }
 )
 
 _STATUS_FLOOR: dict[InvoiceStatus, int] = {
     InvoiceStatus.PENDING: 0,
-    InvoiceStatus.PARSING: 2,
-    InvoiceStatus.VALIDATING: 6,
-    InvoiceStatus.MAPPING: 9,
-    InvoiceStatus.JOURNALING: 10,
-    InvoiceStatus.RECONCILING: 11,
-    InvoiceStatus.PROCESSED: 12,
+    InvoiceStatus.PARSING: 7,
+    InvoiceStatus.VALIDATING: 11,
+    InvoiceStatus.MAPPING: 14,
+    InvoiceStatus.JOURNALING: 15,
+    InvoiceStatus.RECONCILING: 16,
+    InvoiceStatus.PROCESSED: 17,
     InvoiceStatus.DUPLICATE_SKIPPED: 1,
     InvoiceStatus.REJECTED: 0,
 }
@@ -121,6 +141,8 @@ _STATUS_FLOOR: dict[InvoiceStatus, int] = {
 _REMEDIATION: dict[str, str] = {
     "DUPLICATE_FILE": "Use the existing dossier or request a controlled re-ingest if the prior file was wrong.",
     "PARSE_FAILED": "Re-upload a readable PDF or fix the stored file path, then reprocess.",
+    "IMAGE_QUALITY": "Resend a flat, well-lit scan or PDF — avoid angled phone photos.",
+    "CLASSIFICATION_GATE": "Confirm document type in the exception queue or adjust rule-book classifiers.",
     "BUNDLE_INCOMPLETE": "Upload the missing mandatory bundle documents on the same linkage key.",
     "VENDOR_HOLD": "Approve the vendor in Vendor Masters or clear the registration hold.",
     "VALIDATION_FAILED": "Correct the document or override failed validation rules in the exception queue.",
@@ -250,9 +272,17 @@ def _routing_review_gate(log: AuditLog | None) -> str:
     return str(_routing_review_detail(log).get("gate") or "").strip().lower()
 
 
+def classification_review_pending(logs: list[AuditLog]) -> bool:
+    """True when classify stage is blocked pending human DT confirmation."""
+    return _classification_routing_review(logs) is not None
+
+
 def _classification_routing_review(logs: list[AuditLog]) -> AuditLog | None:
     routing = _latest_log(logs, "routing_review_required")
     if routing is None:
+        return None
+    resolved = _latest_log(logs, "classification_resolved")
+    if resolved and resolved.created_at >= routing.created_at:
         return None
     validate_pass = _latest_log(logs, "validation_passed")
     if validate_pass and validate_pass.created_at > routing.created_at:
@@ -364,7 +394,7 @@ def _resolve_duplicate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPi
             detail=_detail_from_log(dup_log),
             at=dup_log.created_at,
         )
-    if wm >= 2:
+    if wm >= 3:
         ingest_log = _latest_log(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
         return _step(
             "duplicate",
@@ -375,6 +405,236 @@ def _resolve_duplicate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPi
     return _step("duplicate", state="pending", detail="—")
 
 
+def _fail_reason(log: AuditLog | None) -> str:
+    if log is None or not isinstance(log.detail, dict):
+        return ""
+    return str(log.detail.get("reason") or "").strip().lower()
+
+
+def _legacy_capture_complete(logs: list[AuditLog], wm: int) -> bool:
+    return wm >= 7 or _latest_log(logs, "parse_completed", "invoice_parsed") is not None
+
+
+def _provider_detail(log: AuditLog | None) -> str:
+    if log and isinstance(log.detail, dict):
+        provider = log.detail.get("document_ai_provider") or log.detail.get("source")
+        if provider:
+            return str(provider)
+    return "Document AI"
+
+
+def _resolve_storage(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    storage_log = _latest_log(logs, "storage_verified")
+    parse_completed = _latest_log(logs, "parse_completed", "invoice_parsed")
+    parse_failed = _latest_log(logs, "parsing_failed")
+    if parse_failed and _fail_reason(parse_failed) in {"stored_file_missing", "no_stored_path"}:
+        stale_failure = parse_completed and (
+            parse_completed.created_at >= parse_failed.created_at
+            or bool(inv.vendor or inv.invoice_no or (inv.document_type_code or "").strip())
+        )
+        if not stale_failure and (
+            storage_log is None or parse_failed.created_at >= storage_log.created_at
+        ):
+            reason = _detail_from_log(parse_failed, fallback="Stored file missing")
+            return _step(
+                "storage",
+                state="fail",
+                detail=reason,
+                at=parse_failed.created_at,
+                exception_code="PARSE_FAILED",
+                failure_reason=reason,
+                remediation=_REMEDIATION["PARSE_FAILED"],
+            )
+    if storage_log:
+        return _step(
+            "storage",
+            state="pass",
+            detail=_detail_from_log(storage_log, fallback="storage_verified"),
+            at=storage_log.created_at,
+        )
+    if _legacy_capture_complete(logs, wm):
+        return _step("storage", state="pass", detail="storage_verified · legacy run")
+    return _step("storage", state="pending", detail="—")
+
+
+def _resolve_ocr(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    ocr_log = _latest_log(logs, "ocr_completed")
+    parse_completed = _latest_log(logs, "parse_completed", "invoice_parsed")
+    parse_failed = _latest_log(logs, "parsing_failed")
+
+    if parse_failed:
+        reason_key = _fail_reason(parse_failed)
+        stale_failure = parse_completed and (
+            parse_completed.created_at >= parse_failed.created_at
+            or bool(inv.vendor or inv.invoice_no or (inv.document_type_code or "").strip())
+        )
+        if not stale_failure and reason_key in {"ocr_failed", "stored_file_missing", "no_stored_path"}:
+            reason = _detail_from_log(parse_failed, fallback="OCR failed")
+            return _step(
+                "ocr",
+                state="fail",
+                detail=reason,
+                at=parse_failed.created_at,
+                exception_code="PARSE_FAILED",
+                failure_reason=reason,
+                remediation=_REMEDIATION["PARSE_FAILED"],
+            )
+
+    if ocr_log:
+        detail_dict = ocr_log.detail if isinstance(ocr_log.detail, dict) else {}
+        conf = detail_dict.get("confidence", "high")
+        text_len = detail_dict.get("text_length")
+        detail = _detail_from_log(ocr_log, fallback="ocr_completed")
+        if text_len is not None:
+            detail = f"{detail} · {text_len} chars"
+        elif conf:
+            detail = f"{detail} · {conf} confidence"
+        return _step(
+            "ocr",
+            state="pass",
+            detail=detail,
+            at=ocr_log.created_at,
+            actor=_actor_name(detail_dict),
+        )
+    if parse_completed or _legacy_capture_complete(logs, wm):
+        return _step("ocr", state="pass", detail="ocr_completed · legacy run")
+    return _step("ocr", state="pending", detail="—")
+
+
+def _resolve_quality(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    quality_pass = _latest_log(logs, "image_quality_gate_passed")
+    quality_fail = _latest_log(logs, "image_quality_gate_failed")
+    quality_log = quality_pass or quality_fail
+    if quality_log:
+        passed = quality_log.event == "image_quality_gate_passed"
+        detail_dict = quality_log.detail if isinstance(quality_log.detail, dict) else {}
+        text_len = detail_dict.get("text_length")
+        detail = _detail_from_log(
+            quality_log,
+            fallback="Image quality OK" if passed else "Poor image or sparse OCR",
+        )
+        if passed and text_len is not None:
+            detail = f"OCR readable · {text_len} chars"
+        if not passed:
+            return _step(
+                "quality",
+                state="fail",
+                detail=detail,
+                at=quality_log.created_at,
+                exception_code="IMAGE_QUALITY",
+                failure_reason=detail,
+                remediation=_REMEDIATION["IMAGE_QUALITY"],
+            )
+        return _step("quality", state="pass", detail=detail, at=quality_log.created_at)
+    if _legacy_capture_complete(logs, wm):
+        return _step("quality", state="pass", detail="image_quality_gate_passed · legacy run")
+    return _step("quality", state="pending", detail="—")
+
+
+def _resolve_llm_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    classify_log = _latest_log(logs, "llm_classified")
+    if classify_log:
+        detail_dict = classify_log.detail if isinstance(classify_log.detail, dict) else {}
+        dt = detail_dict.get("llm_suggested_dt") or inv.llm_suggested_dt or "—"
+        conf = _confidence_label(detail_dict.get("llm_confidence") or inv.llm_confidence)
+        detail = _detail_from_log(classify_log, fallback=f"llm_classified · {dt}")
+        if conf:
+            detail = f"{detail} · {conf}"
+        return _step("llm_classify", state="pass", detail=detail, at=classify_log.created_at)
+    if inv.llm_suggested_dt and wm >= 5:
+        conf = _confidence_label(inv.llm_confidence)
+        detail = f"llm_classified · {inv.llm_suggested_dt}"
+        if conf:
+            detail = f"{detail} · {conf}"
+        return _step("llm_classify", state="pass", detail=detail)
+    if _legacy_capture_complete(logs, wm) and (inv.document_type_code or inv.llm_suggested_dt):
+        return _step("llm_classify", state="pass", detail="llm_classified · legacy run")
+    return _step("llm_classify", state="pending", detail="—")
+
+
+def _resolve_confidence_gate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    gate_pass = _latest_log(logs, "classification_gate_passed")
+    gate_fail = _latest_log(logs, "classification_gate_failed")
+    classification_review = _classification_routing_review(logs)
+    resolved = _latest_log(logs, "classification_resolved")
+
+    if classification_review:
+        detail = _detail_from_log(classification_review, fallback="Awaiting human classification")
+        detail_dict = _routing_review_detail(classification_review)
+        reason = str(detail_dict.get("reason") or detail).strip() or "Awaiting human classification"
+        return _step(
+            "confidence_gate",
+            state="fail",
+            detail=reason,
+            at=classification_review.created_at,
+            exception_code="DOCUMENT_UNCLASSIFIED",
+            failure_reason=reason,
+            remediation=_REMEDIATION["DOCUMENT_UNCLASSIFIED"],
+        )
+
+    if resolved and (gate_fail is None or _is_after(resolved, gate_fail)):
+        detail_dict = resolved.detail if isinstance(resolved.detail, dict) else {}
+        dt = str(detail_dict.get("confirmed_dt") or inv.document_type_code or "—").strip() or "—"
+        return _step(
+            "confidence_gate",
+            state="pass",
+            detail=f"Human confirmed · {dt}",
+            at=resolved.created_at,
+        )
+
+    gate_log: AuditLog | None
+    if gate_pass and gate_fail:
+        gate_log = gate_pass if _is_after(gate_pass, gate_fail) else gate_fail
+    else:
+        gate_log = gate_pass or gate_fail
+
+    if gate_log:
+        passed = gate_log.event == "classification_gate_passed"
+        detail_dict = gate_log.detail if isinstance(gate_log.detail, dict) else {}
+        conf = _confidence_label(detail_dict.get("llm_confidence") or detail_dict.get("confirmed_confidence"))
+        detail = _detail_from_log(
+            gate_log,
+            fallback="classification_gate_passed" if passed else "classification_gate_failed",
+        )
+        if passed and conf:
+            detail = f"Auto-route · {conf}"
+        if not passed:
+            reasons = detail_dict.get("review_reasons") or []
+            failure = ", ".join(str(r) for r in reasons) if reasons else detail
+            return _step(
+                "confidence_gate",
+                state="fail",
+                detail=detail,
+                at=gate_log.created_at,
+                exception_code="CLASSIFICATION_GATE",
+                failure_reason=failure,
+                remediation=_REMEDIATION["CLASSIFICATION_GATE"],
+            )
+        return _step("confidence_gate", state="pass", detail=detail, at=gate_log.created_at)
+
+    if _legacy_capture_complete(logs, wm):
+        return _step("confidence_gate", state="pass", detail="classification_gate_passed · legacy run")
+    return _step("confidence_gate", state="pending", detail="—")
+
+
+def _resolve_document_type(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    classify_log = _latest_log(logs, "document_classified")
+    code = (inv.document_type_code or "").strip()
+    if classify_log:
+        detail = _detail_from_log(
+            classify_log,
+            fallback=f"document_classified · {code}" if code else "document_classified",
+        )
+        return _step("document_type", state="pass", detail=detail, at=classify_log.created_at)
+    if code and wm >= 8:
+        conf = _confidence_label(inv.document_type_confidence)
+        detail = f"document_classified · {code}"
+        if conf:
+            detail = f"{detail} · conf {conf}"
+        return _step("document_type", state="pass", detail=detail)
+    return _step("document_type", state="pending", detail="—")
+
+
 def _resolve_extract(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
     parse_completed = _latest_log(logs, "parse_completed", "invoice_parsed")
     parse_failed = _latest_log(logs, "parsing_failed")
@@ -383,7 +643,6 @@ def _resolve_extract(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
         if parse_completed.created_at >= parse_failed.created_at:
             parse_log = parse_completed
         elif (inv.vendor or inv.invoice_no or (inv.document_type_code or "").strip()):
-            # Stale parsing_failed from a concurrent re-run after a successful extract.
             parse_log = parse_completed
         else:
             parse_log = parse_failed
@@ -391,17 +650,20 @@ def _resolve_extract(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
         parse_log = parse_failed
 
     if parse_log and parse_log.event == "parsing_failed":
-        reason = _detail_from_log(parse_log, fallback="Could not read document")
-        return _step(
-            "extract",
-            state="fail",
-            detail=reason,
-            at=parse_log.created_at,
-            exception_code="PARSE_FAILED",
-            failure_reason=reason,
-            remediation=_REMEDIATION["PARSE_FAILED"],
-        )
-    if parse_log:
+        reason_key = _fail_reason(parse_log)
+        if reason_key not in {"ocr_failed", "stored_file_missing", "no_stored_path"}:
+            reason = _detail_from_log(parse_log, fallback="Could not extract fields")
+            return _step(
+                "extract",
+                state="fail",
+                detail=reason,
+                at=parse_log.created_at,
+                exception_code="PARSE_FAILED",
+                failure_reason=reason,
+                remediation=_REMEDIATION["PARSE_FAILED"],
+            )
+
+    if parse_log and parse_log.event != "parsing_failed":
         detail_dict = parse_log.detail if isinstance(parse_log.detail, dict) else {}
         conf = _confidence_label(detail_dict.get("confidence"))
         detail = _detail_from_log(parse_log, fallback="parse_completed")
@@ -414,7 +676,7 @@ def _resolve_extract(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
             at=parse_log.created_at,
             actor=_actor_name(detail_dict),
         )
-    if wm >= 3 and (inv.vendor or inv.invoice_no):
+    if wm >= 8 and (inv.vendor or inv.invoice_no):
         return _step(
             "extract",
             state="pass",
@@ -425,33 +687,8 @@ def _resolve_extract(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 
 
 def _resolve_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
-    classification_review = _classification_routing_review(logs)
-    if classification_review:
-        detail = _detail_from_log(classification_review, fallback="Document type not classified")
-        detail_dict = _routing_review_detail(classification_review)
-        reason = str(detail_dict.get("reason") or detail).strip() or "Document type not classified"
-        return _step(
-            "classify",
-            state="fail",
-            detail=reason,
-            at=classification_review.created_at,
-            exception_code="DOCUMENT_UNCLASSIFIED",
-            failure_reason=reason,
-            remediation=_REMEDIATION["DOCUMENT_UNCLASSIFIED"],
-        )
-
-    classify_log = _latest_log(logs, "document_classified")
-    code = (inv.document_type_code or "").strip()
-    if classify_log:
-        detail = _detail_from_log(classify_log, fallback=f"document_classified · {code}" if code else "document_classified")
-        return _step("classify", state="pass", detail=detail, at=classify_log.created_at)
-    if code and wm >= 3:
-        conf = _confidence_label(inv.document_type_confidence)
-        detail = f"document_classified · {code}"
-        if conf:
-            detail = f"{detail} · conf {conf}"
-        return _step("classify", state="pass", detail=detail)
-    return _step("classify", state="pending", detail="—")
+    """Legacy alias — kept for imports; maps to document_type."""
+    return _resolve_document_type(inv, logs, wm)
 
 
 def _resolve_bundle(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
@@ -505,7 +742,7 @@ def _resolve_bundle(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
             remediation=remediation,
             checks=checks,
         )
-    if wm >= 4:
+    if wm >= 9:
         return _step("bundle", state="pass", detail="playbook_evaluated")
     return _step("bundle", state="pending", detail="—")
 
@@ -528,7 +765,7 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
             failure_reason=reason,
             remediation=_REMEDIATION["VENDOR_HOLD"],
         )
-    if wm >= 6:
+    if wm >= 11:
         return _step(
             "vendor_hold",
             state="pass",
@@ -589,7 +826,7 @@ def _resolve_validate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPip
             checks=checks,
         )
 
-    if validate_pass or checks or wm >= 6:
+    if validate_pass or checks or wm >= 11:
         return _step(
             "validate",
             state="pass",
@@ -647,9 +884,9 @@ def _resolve_match(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipeli
         )
 
     po_ref = (inv.po_reference or "").strip()
-    if wm >= 9 and not po_ref:
+    if wm >= 13 and not po_ref:
         return _step("match", state="waived", detail="No PO reference — match not required")
-    if wm >= 7 and inv.status == InvoiceStatus.PROCESSED:
+    if wm >= 12 and inv.status == InvoiceStatus.PROCESSED:
         return _step("match", state="waived", detail="Match not required for this route")
     return _step("match", state="pending", detail="—")
 
@@ -682,7 +919,7 @@ def _resolve_approve(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
             remediation=_REMEDIATION["APPROVAL_REQUIRED"],
         )
 
-    if wm >= 9 or inv.status == InvoiceStatus.PROCESSED:
+    if wm >= 13 or inv.status == InvoiceStatus.PROCESSED:
         return _step("approve", state="pass", detail="Touchless — within policy")
     return _step("approve", state="pending", detail="—")
 
@@ -731,7 +968,7 @@ def _resolve_map_gl(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
             evidence=evidence,
         )
 
-    if wm >= 9:
+    if wm >= 14:
         return _step("map_gl", state="pending", detail="Awaiting mapping")
     return _step("map_gl", state="pending", detail="—")
 
@@ -741,7 +978,7 @@ def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
         return _step("journal", state="waived", detail="Not required — vault route")
 
     processed = _latest_log(logs, "invoice_processed", "purchase_document_processed")
-    if inv.status in (InvoiceStatus.JOURNALING, InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 10:
+    if inv.status in (InvoiceStatus.JOURNALING, InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 15:
         at = processed.created_at if processed else None
         return _step(
             "journal",
@@ -769,7 +1006,7 @@ def _resolve_reconcile(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPi
             failure_reason=reason,
             remediation=_REMEDIATION["RECON_HALTED"],
         )
-    if recon_skip or inv.status in (InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 11:
+    if recon_skip or inv.status in (InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 16:
         return _step(
             "reconcile",
             state="pass",
@@ -806,7 +1043,7 @@ def _resolve_post(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelin
         )
 
     processed_log = _latest_log(logs, "invoice_processed")
-    if processed_log or inv.status == InvoiceStatus.PROCESSED or wm >= 12:
+    if processed_log or inv.status == InvoiceStatus.PROCESSED or wm >= 17:
         return _step(
             "post",
             state="pending",
@@ -839,8 +1076,13 @@ def _resolve_pay(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipeline
 _RESOLVERS = (
     _resolve_ingest,
     _resolve_duplicate,
+    _resolve_storage,
+    _resolve_ocr,
+    _resolve_quality,
+    _resolve_llm_classify,
+    _resolve_confidence_gate,
     _resolve_extract,
-    _resolve_classify,
+    _resolve_document_type,
     _resolve_bundle,
     _resolve_vendor_hold,
     _resolve_validate,

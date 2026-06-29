@@ -5,6 +5,7 @@ import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
+import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
@@ -14,9 +15,20 @@ import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef, money } from "@/lib/format";
 import { fetchApprovalsBoard } from "@/lib/invoices";
-import { approveAndProcess, invoiceFieldsFromDetails, validateInvoiceFieldsForApproval, watchProcessingUntilIdle } from "@/lib/invoiceActions";
+import { approveAndProcess, canReprocessInvoice, invoiceFieldsFromDetails, reprocessAndWatch, validateInvoiceFieldsForApproval, watchProcessingUntilIdle } from "@/lib/invoiceActions";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
+import {
+  APPROVAL_BOARD_COLUMNS,
+  APPROVABLE_STATUSES,
+  type ApprovalBoardColumnKey,
+  canShowApproveOnBoard,
+  columnForInvoice,
+  mergeBoardRowWithLocal,
+  PERMANENTLY_DELETABLE,
+  processingQueueCount,
+  reviewQueueCount,
+} from "@/lib/approvalsBoard";
 import { cn } from "@/lib/cn";
 import { queryKeys } from "@/lib/queryClient";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -24,42 +36,17 @@ import { usePermissions } from "@/hooks/usePermissions";
 const APPROVAL_POLL_MS = 15_000;
 const API_HINT = " Ensure the API is running on port 8001.";
 
-const COLUMNS = [
-  { key: "pending", label: "To review" },
-  { key: "awaiting", label: "Processing" },
-  { key: "approved", label: "Approved" },
-  { key: "rejected", label: "Rejected" },
-] as const;
-
-type ColumnKey = (typeof COLUMNS)[number]["key"];
-
-const PIPELINE_STATUSES = new Set([
-  "pending",
-  "parsing",
-  "validating",
-  "mapping",
-  "journaling",
-  "reconciling",
-]);
-
-const APPROVAL_QUEUE_STATUSES = new Set(["exception", "duplicate_skipped", "rejected"]);
-
-const APPROVABLE_STATUSES = new Set(["exception", "rejected", "duplicate_skipped"]);
-
-const PERMANENTLY_DELETABLE = new Set(["rejected", "duplicate_skipped"]);
+const COLUMN_EMPTY_HINT: Record<ApprovalBoardColumnKey, string> = {
+  pending: "Documents waiting for classification or rescan",
+  awaiting: "Classified documents in the pipeline or blocked before approval",
+  approved: "No approved documents yet",
+  rejected: "No rejected documents",
+};
 
 function upsertInvoice(rows: Invoice[], row: Invoice): Invoice[] {
   const byId = new Map(rows.map((inv) => [inv.id, inv]));
   byId.set(row.id, row);
   return [...byId.values()];
-}
-
-function columnForInvoice(inv: Invoice, processingIds: ReadonlySet<number>): ColumnKey {
-  if (processingIds.has(inv.id) || PIPELINE_STATUSES.has(inv.status)) return "awaiting";
-  if (inv.status === "rejected" || inv.status === "duplicate_skipped") return "rejected";
-  if (inv.status === "processed") return "approved";
-  if (inv.status === "exception") return "pending";
-  return "pending";
 }
 
 function docNumber(inv: Invoice): string {
@@ -84,7 +71,9 @@ export function ApprovalsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const loadSeq = useRef(0);
   const busyRef = useRef<number | null>(null);
+  const processingIdsRef = useRef(processingIds);
   busyRef.current = busyId;
+  processingIdsRef.current = processingIds;
 
   function openDrawer(inv: Invoice, edit = false) {
     setDrawerInvoice(inv);
@@ -104,7 +93,13 @@ export function ApprovalsPage() {
     try {
       const rows = await fetchApprovalsBoard(fresh);
       if (seq !== loadSeq.current) return;
-      setInvoices(rows);
+      const activeProcessing = processingIdsRef.current;
+      setInvoices((prev) => {
+        const prevById = new Map(prev.map((inv) => [inv.id, inv]));
+        return rows.map((row) =>
+          mergeBoardRowWithLocal(row, prevById.get(row.id), activeProcessing)
+        );
+      });
       if (!options?.silent) setError(null);
     } catch (reason) {
       if (seq !== loadSeq.current) return;
@@ -159,7 +154,7 @@ export function ApprovalsPage() {
   }, [toast]);
 
   const board = useMemo(() => {
-    const cols: Record<ColumnKey, Invoice[]> = {
+    const cols: Record<ApprovalBoardColumnKey, Invoice[]> = {
       pending: [],
       awaiting: [],
       approved: [],
@@ -167,15 +162,13 @@ export function ApprovalsPage() {
     };
     for (const inv of invoices) {
       if (!invoiceMatchesListSearch(inv, searchQuery)) continue;
-      cols[columnForInvoice(inv, processingIds)].push(inv);
+      cols[columnForInvoice(inv, undefined, processingIds)].push(inv);
     }
     return cols;
   }, [invoices, searchQuery, processingIds]);
 
-  const queueCount = useMemo(
-    () => invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
-    [invoices]
-  );
+  const reviewCount = useMemo(() => reviewQueueCount(invoices), [invoices]);
+  const processingCount = useMemo(() => processingQueueCount(invoices), [invoices]);
 
   const invalidateAfterApproval = useCallback(async () => {
     await Promise.all([
@@ -214,6 +207,37 @@ export function ApprovalsPage() {
       }
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Approve failed");
+      await load({ fresh: true });
+    } finally {
+      setProcessingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setBusyId(null);
+    }
+  };
+
+  const reprocessInvoice = async (id: number) => {
+    const inv = invoices.find((i) => i.id === id);
+    if (!inv || !canReprocessInvoice(inv.status)) {
+      setToast("This invoice cannot be reprocessed.");
+      return;
+    }
+    if (!inv.has_stored_file) {
+      setToast("Upload a PDF before reprocessing this invoice.");
+      return;
+    }
+    setBusyId(id);
+    setProcessingIds((prev) => new Set(prev).add(id));
+    try {
+      setToast("Reprocessing document…");
+      await reprocessAndWatch(id, () => load({ silent: true, fresh: true }));
+      await load({ fresh: true });
+      await invalidateAfterApproval();
+      setToast("Reprocess complete — check Processing if the document is still in the pipeline.");
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Reprocess failed");
       await load({ fresh: true });
     } finally {
       setProcessingIds((prev) => {
@@ -312,7 +336,7 @@ export function ApprovalsPage() {
   if (loading && invoices.length === 0) {
     return (
       <div>
-        <PageHeader title="Approvals" subtitle="Review and approve invoices — live data from the API." />
+        <PageHeader title="Approvals" subtitle="Review, processing, and approved documents." />
         <Card className="p-8 text-center text-sm text-muted-foreground">Loading approvals…</Card>
       </div>
     );
@@ -328,20 +352,17 @@ export function ApprovalsPage() {
 
   if (
     !loading &&
-    queueCount === 0 &&
-    board.awaiting.length === 0 &&
+    reviewCount === 0 &&
+    processingCount === 0 &&
     board.approved.length === 0 &&
     board.rejected.length === 0
   ) {
     return (
       <div>
-        <PageHeader
-          title="Approvals"
-          subtitle="Review and approve invoices — live data from the API."
-        />
+        <PageHeader title="Approvals" subtitle="Review, processing, and approved documents." />
         <EmptyState
           title="Nothing to approve"
-          hint="Exception invoices appear here for review. Rejected files are stored under rejected/org/vendor/year/month in Azure."
+          hint="Pre-classification issues appear in Review. Classified documents in the pipeline appear in Processing."
           action={
             <Link
               to="/upload"
@@ -356,6 +377,14 @@ export function ApprovalsPage() {
     );
   }
 
+  const subtitleParts: string[] = [];
+  if (reviewCount > 0) subtitleParts.push(`${reviewCount} need review`);
+  if (processingCount > 0) subtitleParts.push(`${processingCount} processing`);
+  const subtitle =
+    subtitleParts.length > 0
+      ? `${subtitleParts.join(" · ")} · reject moves files to rejected storage`
+      : "Reject moves files to rejected/org/vendor/year/month storage";
+
   return (
     <div>
       {toast && (
@@ -366,7 +395,7 @@ export function ApprovalsPage() {
 
       <PageHeader
         title="Approvals"
-        subtitle={`${queueCount} in approval queue · reject moves files to rejected/org/vendor/year/month`}
+        subtitle={subtitle}
         actions={
           <Button
             variant="outline"
@@ -389,9 +418,9 @@ export function ApprovalsPage() {
       {board.awaiting.length > 0 && (
         <Card className="p-3 mb-4 text-xs border-border bg-muted/40 flex flex-wrap items-center justify-between gap-2">
           <p className="text-muted-foreground">
-            {board.awaiting.length} document{board.awaiting.length === 1 ? "" : "s"} in the
-            pipeline (parse → validate → map → journal). Click Run processing if they
-            do not advance automatically.
+            {board.awaiting.length} document{board.awaiting.length === 1 ? "" : "s"} processing
+            or blocked after classification (validation, matching, posting). Run processing if
+            they do not advance automatically.
           </p>
           <Button
             variant="outline"
@@ -415,7 +444,7 @@ export function ApprovalsPage() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {COLUMNS.map((col) => {
+        {APPROVAL_BOARD_COLUMNS.map((col) => {
           const cards = board[col.key];
           return (
             <Card
@@ -449,10 +478,33 @@ export function ApprovalsPage() {
                         <span className="ml-1 capitalize">· {inv.status.replace(/_/g, " ")}</span>
                       )}
                     </div>
+                    {col.key === "pending" && inv.evaluation_status ? (
+                      <div className="mt-1.5">
+                        <EvaluationStatusBadge status={inv.evaluation_status} />
+                      </div>
+                    ) : null}
                     <div
                       className="flex items-center gap-1 mt-2 flex-wrap"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {col.key === "pending" && canReprocessInvoice(inv.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px]"
+                          disabled={busyId === inv.id || !inv.has_stored_file}
+                          title={
+                            inv.has_stored_file
+                              ? undefined
+                              : "Attach a PDF before reprocessing"
+                          }
+                          onClick={() => void reprocessInvoice(inv.id)}
+                          data-testid={`reprocess-${inv.id}`}
+                        >
+                          <RefreshCw className="h-3 w-3 mr-0.5" />
+                          {busyId === inv.id ? "…" : "Reprocess"}
+                        </Button>
+                      )}
                       {col.key === "pending" && APPROVABLE_STATUSES.has(inv.status) && (
                         <Button
                           variant="outline"
@@ -465,7 +517,7 @@ export function ApprovalsPage() {
                           Edit
                         </Button>
                       )}
-                      {col.key !== "approved" && APPROVABLE_STATUSES.has(inv.status) && (
+                      {canShowApproveOnBoard(inv, col.key) && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -478,20 +530,21 @@ export function ApprovalsPage() {
                           {busyId === inv.id ? "…" : "Approve"}
                         </Button>
                       )}
-                      {col.key === "pending" && inv.status === "exception" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
-                          disabled={busyId === inv.id || !canReject}
-                          title={canReject ? undefined : "Your role cannot reject documents"}
-                          onClick={() => void rejectInvoice(inv.id)}
-                          data-testid={`reject-${inv.id}`}
-                        >
-                          <X className="h-3 w-3 mr-0.5" />
-                          Reject
-                        </Button>
-                      )}
+                      {(col.key === "pending" || col.key === "awaiting") &&
+                        inv.status === "exception" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
+                            disabled={busyId === inv.id || !canReject}
+                            title={canReject ? undefined : "Your role cannot reject documents"}
+                            onClick={() => void rejectInvoice(inv.id)}
+                            data-testid={`reject-${inv.id}`}
+                          >
+                            <X className="h-3 w-3 mr-0.5" />
+                            Reject
+                          </Button>
+                        )}
                       {col.key === "approved" && inv.status === "processed" && (
                         <Button
                           variant="outline"
@@ -518,6 +571,24 @@ export function ApprovalsPage() {
                           Post
                         </Button>
                       )}
+                      {col.key === "rejected" && canReprocessInvoice(inv.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-1.5 text-[11px]"
+                          disabled={busyId === inv.id || !inv.has_stored_file}
+                          title={
+                            inv.has_stored_file
+                              ? undefined
+                              : "Attach a PDF before reprocessing"
+                          }
+                          onClick={() => void reprocessInvoice(inv.id)}
+                          data-testid={`reprocess-${inv.id}`}
+                        >
+                          <RefreshCw className="h-3 w-3 mr-0.5" />
+                          {busyId === inv.id ? "…" : "Reprocess"}
+                        </Button>
+                      )}
                       {col.key === "rejected" && PERMANENTLY_DELETABLE.has(inv.status) && (
                         <Button
                           variant="outline"
@@ -535,7 +606,9 @@ export function ApprovalsPage() {
                   </Card>
                 ))}
                 {cards.length === 0 && (
-                  <p className="text-xs text-muted-foreground py-4 text-center">Empty</p>
+                  <p className="text-xs text-muted-foreground py-4 text-center">
+                    {COLUMN_EMPTY_HINT[col.key]}
+                  </p>
                 )}
               </div>
             </Card>

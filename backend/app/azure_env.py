@@ -2,9 +2,129 @@
 
 from __future__ import annotations
 
+import re
+import socket
 import ssl
+import subprocess
+import sys
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse, urlunparse
+
+_AZURE_POSTGRES_SUFFIX = ".postgres.database.azure.com"
+_AZURE_REDIS_SUFFIX = ".redis.cache.windows.net"
+_IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+_FALLBACK_DNS = ("8.8.8.8", "1.1.1.1")
+
+
+def is_ipv4_address(value: str) -> bool:
+    token = (value or "").strip()
+    if not _IPV4_RE.match(token):
+        return False
+    try:
+        socket.inet_aton(token)
+    except OSError:
+        return False
+    return True
+
+
+def resolve_host_with_fallback(
+    hostname: str,
+    *,
+    fallback_dns: tuple[str, ...] = _FALLBACK_DNS,
+) -> tuple[str, str | None]:
+    """Resolve hostname; on DNS failure try public DNS (common on locked-down networks).
+
+    Returns (connect_host, ssl_server_hostname). ssl_server_hostname is set when
+    connect_host is an IP but TLS must validate against the original hostname.
+    """
+    host = (hostname or "").strip()
+    if not host or is_ipv4_address(host):
+        return host, None
+
+    ip = _resolve_via_system_dns(host)
+    if ip:
+        return ip, host
+
+    for dns_server in fallback_dns:
+        ip = _resolve_via_nslookup(host, dns_server)
+        if ip:
+            return ip, host
+
+    return host, None
+
+
+def _resolve_via_system_dns(hostname: str) -> str | None:
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return None
+    if not infos:
+        return None
+    return str(infos[0][4][0])
+
+
+def _resolve_via_nslookup(hostname: str, dns_server: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["nslookup", hostname, dns_server],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode not in (0, 1):
+        return None
+    candidates: list[str] = []
+    for line in (proc.stdout or "").splitlines():
+        match = re.search(r"Address:\s*(\d+\.\d+\.\d+\.\d+)", line)
+        if not match:
+            continue
+        ip = match.group(1)
+        if ip == dns_server:
+            continue
+        candidates.append(ip)
+    return candidates[-1] if candidates else None
+
+
+def _needs_azure_dns_fallback(host: object) -> bool:
+    token = str(host or "").strip().lower()
+    return token.endswith(_AZURE_POSTGRES_SUFFIX) or token.endswith(_AZURE_REDIS_SUFFIX)
+
+
+def _resolve_with_public_dns(hostname: str) -> str | None:
+    for dns_server in _FALLBACK_DNS:
+        ip = _resolve_via_nslookup(hostname, dns_server)
+        if ip:
+            return ip
+    return None
+
+
+_original_getaddrinfo = socket.getaddrinfo
+_dns_fallback_installed = False
+
+
+def install_azure_dns_fallback() -> None:
+    """When system DNS blocks Azure, resolve via public DNS before asyncpg/redis connect."""
+    global _dns_fallback_installed
+    if _dns_fallback_installed:
+        return
+
+    def _patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        try:
+            return _original_getaddrinfo(host, port, family, type, proto, flags)
+        except socket.gaierror:
+            if not _needs_azure_dns_fallback(host):
+                raise
+            ip = _resolve_with_public_dns(str(host))
+            if not ip:
+                raise
+            return _original_getaddrinfo(ip, port, family, type, proto, flags)
+
+    socket.getaddrinfo = _patched_getaddrinfo  # type: ignore[assignment]
+    _dns_fallback_installed = True
 
 
 def normalize_database_url(url: str) -> str:

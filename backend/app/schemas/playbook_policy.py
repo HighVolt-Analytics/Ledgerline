@@ -95,6 +95,14 @@ KNOWN_PLAYBOOK_PROFILES = frozenset(
 
 class MatchPolicy(BaseModel):
     mode: MatchMode = "none"
+    qty_tolerance_pct: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        alias="qtyTolerancePct",
+    )
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
 
     @field_validator("mode", mode="before")
     @classmethod

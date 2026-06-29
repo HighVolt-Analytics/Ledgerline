@@ -1,7 +1,9 @@
 from app.models.accounting_integration import AccountingIntegration
 from app.models.audit import AuditLog
 from app.models.auth_account import AuthAccount
+from app.models.classification_learning import ClassificationLearningEvent, InvoiceOcrArtifact
 from app.models.connected_mailbox import ConnectedMailbox
+from app.models.connected_viber import ConnectedViberAccount
 from app.models.connected_whatsapp import ConnectedWhatsapp
 from app.models.meta_webhook_dedupe import MetaWebhookDedupe
 from app.models.dossier_manual_link import DossierManualLink
@@ -40,13 +42,16 @@ __all__ = [
     "AccountingIntegration",
     "AuditLog",
     "AuthAccount",
+    "ClassificationLearningEvent",
     "ConnectedMailbox",
+    "ConnectedViberAccount",
     "ConnectedWhatsapp",
     "MetaWebhookDedupe",
     "DailyReconciliation",
     "DossierManualLink",
     "EmployeeMasterRecord",
     "GoodsReceipt",
+    "InvoiceOcrArtifact",
     "Invoice",
     "JournalEntry",
     "LineItem",

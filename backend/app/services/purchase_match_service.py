@@ -18,6 +18,16 @@ from app.schemas.purchase import (
     ThreeWayMatchResult,
 )
 from app.schemas.rule_book_config import RuleBookConfigPayload
+from app.schemas.uom_conversion import PurchaseMatchConfig
+from app.schemas.fx_posting import FxPostingPolicy
+from app.services.fx_posting_service import po_invoice_currency_mismatch, resolve_fx_policy
+from app.services.uom_conversion_service import (
+    convert_qty_to_base,
+    infer_uom_from_description,
+    invoice_base_qty,
+    qty_over_billing,
+    unit_price_per_base,
+)
 from app.services.invoice_evaluation_service import ROUTE_PURCHASE, parse_matched_rule_ids
 from app.services.purchase_coding_service import (
     code_po_from_invoice,
@@ -61,11 +71,24 @@ def _latest_grn(po: PurchaseOrder) -> GoodsReceipt | None:
 def compute_three_way_match(
     po: PurchaseOrder,
     inv: Invoice | None,
+    *,
+    match_config: PurchaseMatchConfig | None = None,
+    qty_tolerance_pct: float | None = None,
+    fx_policy: FxPostingPolicy | None = None,
+    rule_book_config: RuleBookConfigPayload | None = None,
 ) -> ThreeWayMatchResult:
+    cfg = match_config or PurchaseMatchConfig()
+    tolerance = cfg.qty_tolerance_pct if qty_tolerance_pct is None else qty_tolerance_pct
     grn = _latest_grn(po)
-    po_qty = float(po.po_qty)
-    po_unit = float(po.po_unit_price)
-    po_value = _round2(Decimal(str(po_qty)) * Decimal(str(po_unit)))
+    vendor = po.vendor or (inv.vendor if inv is not None else None)
+    po_uom = getattr(po, "po_uom", None) or infer_uom_from_description(po.item)
+    po_base_qty = convert_qty_to_base(
+        po.po_qty, po_uom, vendor=vendor, sku=None, config=cfg
+    )
+    po_unit_base = unit_price_per_base(
+        po.po_qty, po.po_unit_price, po_uom, vendor=vendor, config=cfg
+    )
+    po_value = _round2(po_base_qty * po_unit_base)
 
     if inv is None:
         return ThreeWayMatchResult(
@@ -79,8 +102,50 @@ def compute_three_way_match(
             invoice_total=0.0,
         )
 
+    fx = fx_policy
+    if fx is None and rule_book_config is not None:
+        fx = resolve_fx_policy(
+            config=rule_book_config,
+            document_type_code=inv.document_type_code,
+        )
+    if fx is not None and po_invoice_currency_mismatch(
+        getattr(po, "po_currency", None),
+        inv.currency,
+        policy=fx,
+    ):
+        inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
+        inv_base_qty = invoice_base_qty(inv, config=cfg)
+        inv_uom = None
+        if inv.line_items:
+            first = inv.line_items[0]
+            inv_uom = getattr(first, "uom", None) or infer_uom_from_description(first.description)
+        inv_unit_base = unit_price_per_base(
+            inv_qty, inv_unit, inv_uom, vendor=vendor, config=cfg
+        )
+        invoice_value = _round2(inv_base_qty * inv_unit_base)
+        invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
+        invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
+        return ThreeWayMatchResult(
+            status="Currency Mismatch",
+            qty_variance_value=0.0,
+            price_variance_value=0.0,
+            total_deviation=0.0,
+            po_value=po_value,
+            invoice_value=invoice_value,
+            invoice_gst=invoice_gst,
+            invoice_total=invoice_total,
+        )
+
+    inv_base_qty = invoice_base_qty(inv, config=cfg)
     inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
-    invoice_value = _round2(inv_qty * inv_unit)
+    inv_uom = None
+    if inv.line_items:
+        first = inv.line_items[0]
+        inv_uom = getattr(first, "uom", None) or infer_uom_from_description(first.description)
+    inv_unit_base = unit_price_per_base(
+        inv_qty, inv_unit, inv_uom, vendor=vendor, config=cfg
+    )
+    invoice_value = _round2(inv_base_qty * inv_unit_base)
     invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
     invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
 
@@ -96,18 +161,19 @@ def compute_three_way_match(
             invoice_total=invoice_total,
         )
 
-    grn_qty = float(grn.grn_qty)
-    inv_qty_f = float(inv_qty)
-    inv_unit_f = float(inv_unit)
-    qty_variance = _round2((inv_qty_f - grn_qty) * inv_unit_f)
-    price_variance = _round2((inv_unit_f - po_unit) * inv_qty_f)
+    grn_uom = getattr(grn, "grn_uom", None) or po_uom
+    grn_base_qty = convert_qty_to_base(
+        grn.grn_qty, grn_uom, vendor=vendor, config=cfg
+    )
+    qty_variance = _round2((float(inv_base_qty) - float(grn_base_qty)) * float(inv_unit_base))
+    price_variance = _round2((float(inv_unit_base) - float(po_unit_base)) * float(inv_base_qty))
     total_deviation = _round2(qty_variance + price_variance)
 
     if po.variance_approved:
         status = "3-Way Match"
     elif price_variance != 0:
         status = "Price Variance"
-    elif inv_qty_f > grn_qty:
+    elif qty_over_billing(inv_base_qty, grn_base_qty, tolerance_pct=tolerance):
         status = "Qty Variance"
     else:
         status = "3-Way Match"
@@ -131,6 +197,9 @@ async def persist_three_way_match_audit(
     *,
     invoice_id_for_audit: int | None = None,
     audit_on_sync: bool = False,
+    match_config: PurchaseMatchConfig | None = None,
+    qty_tolerance_pct: float | None = None,
+    rule_book_config: RuleBookConfigPayload | None = None,
 ) -> tuple[str, ThreeWayMatchResult]:
     """Compute match status, persist on PO, and audit when status is new or changed."""
     from sqlalchemy.orm import attributes as orm_attributes
@@ -138,7 +207,24 @@ async def persist_three_way_match_audit(
     if "goods_receipts" in orm_attributes.instance_state(po).unloaded:
         await session.refresh(po, attribute_names=["goods_receipts"])
 
-    match = compute_three_way_match(po, inv)
+    cfg = match_config
+    if cfg is None and rule_book_config is not None:
+        cfg = rule_book_config.purchase_match
+    fx = None
+    if rule_book_config is not None and inv is not None:
+        fx = resolve_fx_policy(
+            config=rule_book_config,
+            document_type_code=inv.document_type_code,
+        )
+
+    match = compute_three_way_match(
+        po,
+        inv,
+        match_config=cfg,
+        qty_tolerance_pct=qty_tolerance_pct,
+        fx_policy=fx,
+        rule_book_config=rule_book_config,
+    )
     new_status = compute_three_way_audit_status(po, match)
     previous = po.three_way_match_status
     po.three_way_match_status = new_status
@@ -160,7 +246,7 @@ def _derive_status(match: ThreeWayMatchResult, po: PurchaseOrder) -> PurchaseOrd
         return PurchaseOrderStatus.MATCHED
     if match.status == "Routed for Approval":
         return PurchaseOrderStatus.VARIANCE_PENDING
-    if match.status in ("Price Variance", "Qty Variance"):
+    if match.status in ("Price Variance", "Qty Variance", "Currency Mismatch"):
         return PurchaseOrderStatus.VARIANCE_PENDING
     if match.status == "No GRN":
         return PurchaseOrderStatus.OPEN
@@ -190,7 +276,15 @@ def purchase_order_to_response(
     config: RuleBookConfigPayload | None = None,
 ) -> PurchaseOrderResponse:
     grn = _latest_grn(po)
-    match = compute_three_way_match(po, inv)
+    match_cfg = config.purchase_match if config is not None else None
+    fx = resolve_fx_policy(config=config, document_type_code=inv.document_type_code) if config and inv else None
+    match = compute_three_way_match(
+        po,
+        inv,
+        match_config=match_cfg,
+        fx_policy=fx,
+        rule_book_config=config,
+    )
     inv_qty, inv_unit, gst_rate = (Decimal("0"), Decimal("0"), 0.1)
     matched_rule_ids: list[str] = []
     route_target: str | None = None
@@ -395,8 +489,14 @@ async def record_goods_receipt(
             )
         ).scalar_one_or_none()
 
-    await persist_three_way_match_audit(db, po, inv, invoice_id_for_audit=po.invoice_id)
     config = await load_classification_config(db, tenant_id)
+    await persist_three_way_match_audit(
+        db,
+        po,
+        inv,
+        invoice_id_for_audit=po.invoice_id,
+        rule_book_config=config,
+    )
     return purchase_order_to_response(po, inv, config=config)
 
 
@@ -429,6 +529,12 @@ async def approve_purchase_variance(
             )
         ).scalar_one_or_none()
 
-    await persist_three_way_match_audit(db, po, inv, invoice_id_for_audit=po.invoice_id)
     config = await load_classification_config(db, tenant_id)
+    await persist_three_way_match_audit(
+        db,
+        po,
+        inv,
+        invoice_id_for_audit=po.invoice_id,
+        rule_book_config=config,
+    )
     return purchase_order_to_response(po, inv, config=config)

@@ -60,11 +60,9 @@ function TemplateCard({
         <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
           {template.klass}
         </span>
-        {template.defaultSignalIds.length > 0 ? (
-          <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] text-primary">
-            {template.defaultSignalIds.length} signals
-          </span>
-        ) : null}
+        <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] text-primary">
+          Match rules
+        </span>
       </div>
     </button>
   );
@@ -114,8 +112,8 @@ export function DocumentTypeTemplateDialog({
               Add document type
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Upload sample PDFs first to auto-detect recognition rules, or pick a shipped template
-              to start with pre-filled settings.
+              Pick a shipped template to pre-fill playbook, extraction, and match rules — then
+              adjust in the editor before saving.
             </p>
           </div>
           <button
@@ -126,21 +124,6 @@ export function DocumentTypeTemplateDialog({
           >
             <X className="h-4 w-4" />
           </button>
-        </div>
-
-        <div className="flex flex-col gap-2 border-b border-border px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-muted-foreground">
-            Recommended: upload 3–5 example files of the same document type, then apply suggested
-            settings.
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => onSelect("custom")}
-            data-testid="template-start-from-samples"
-          >
-            Start from sample files
-          </Button>
         </div>
 
         <div className="space-y-3 border-b border-border px-5 py-3">
@@ -191,10 +174,10 @@ export function DocumentTypeTemplateDialog({
 
         <div className="flex items-center justify-between gap-2 border-t border-border px-5 py-3">
           <p className="text-xs text-muted-foreground">
-            Or choose a template below ({templates.length} shown).
+            Org codes are assigned automatically (DT-01, DT-02, …).
           </p>
           <Button type="button" size="sm" variant="ghost" onClick={() => onSelect("custom")}>
-            Blank type
+            Blank type (match rules)
           </Button>
         </div>
       </div>

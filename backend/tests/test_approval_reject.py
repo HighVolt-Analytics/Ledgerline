@@ -255,10 +255,13 @@ async def test_approvals_board_returns_queue_pipeline_and_processed(
 
     res = await client.get("/api/approvals/board")
     assert res.status_code == 200
-    ids = {row["id"] for row in res.json()["data"]}
-    assert exception.id in ids
-    assert pending.id in ids
-    assert processed.id in ids
+    rows = {row["id"]: row for row in res.json()["data"]}
+    assert exception.id in rows
+    assert pending.id in rows
+    assert processed.id in rows
+    assert rows[exception.id]["approval_board_column"] == "review"
+    assert rows[pending.id]["approval_board_column"] == "processing"
+    assert rows[processed.id]["approval_board_column"] == "approved"
 
 
 @pytest.mark.asyncio

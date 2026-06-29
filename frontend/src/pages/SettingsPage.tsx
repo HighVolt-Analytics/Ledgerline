@@ -2,17 +2,18 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { ApprovalPolicyPrivileges } from "@/components/settings/ApprovalPolicyPrivileges";
+import { ChartOfAccountsPanel } from "@/components/settings/ChartOfAccountsPanel";
+import { OrgAiBriefPanel } from "@/components/settings/OrgAiBriefPanel";
 import { TenantMembersSection } from "@/components/settings/TenantMembersSection";
 import { PageHeader } from "@/components/PageHeader";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
+import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/cn";
 import {
-  CHART_OF_ACCOUNTS,
   COUNTRIES,
   INDUSTRIES,
   countryByCode,
@@ -20,6 +21,7 @@ import {
 
 const TABS = [
   { id: "profile", label: "Profile", testid: "tab-profile" },
+  { id: "ai-documents", label: "AI & documents", testid: "tab-ai-documents" },
   { id: "team", label: "Team", testid: "tab-team" },
   { id: "policy", label: "Policy & privileges", testid: "tab-policy" },
   { id: "coa", label: "Chart of accounts", testid: "tab-coa" },
@@ -27,11 +29,14 @@ const TABS = [
 
 export function SettingsPage() {
   const { user, refreshUser } = useAuth();
+  const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const initialTab = TABS.find((t) => t.id === tabParam)?.id ?? "profile";
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>(initialTab);
   const [saved, setSaved] = useState(false);
+  const [aiBriefSaved, setAiBriefSaved] = useState(false);
+  const [coaSaved, setCoaSaved] = useState(false);
   const [businessName, setBusinessName] = useState("");
   const [industry, setIndustry] = useState<string>(INDUSTRIES[1]);
   const [country, setCountry] = useState("AU");
@@ -47,16 +52,17 @@ export function SettingsPage() {
   }, [tabParam]);
   useEffect(() => {
     if (!user) return;
-    setBusinessName(user.tenant_name);
     setEmail(user.email);
     setProfileLoading(true);
     api
       .getInstitutionSettings()
       .then((inst) => {
+        setBusinessName(inst.name);
         setCountry(inst.country);
         setTimezone(inst.timezone);
       })
       .catch(() => {
+        setBusinessName(user.tenant_name);
         setCountry("AU");
         setTimezone(user.tenant_timezone);
       })
@@ -69,18 +75,42 @@ export function SettingsPage() {
     return () => clearTimeout(t);
   }, [saved]);
 
+  useEffect(() => {
+    if (!aiBriefSaved) return;
+    const t = setTimeout(() => setAiBriefSaved(false), 3000);
+    return () => clearTimeout(t);
+  }, [aiBriefSaved]);
+
+  useEffect(() => {
+    if (!coaSaved) return;
+    const t = setTimeout(() => setCoaSaved(false), 3000);
+    return () => clearTimeout(t);
+  }, [coaSaved]);
+
   const countryMeta = countryByCode(country);
+  const canEditAdmin = user?.role === "admin";
 
   const saveProfile = async () => {
+    const trimmedName = businessName.trim();
+    if (!trimmedName) {
+      toast({ title: "Business name is required", variant: "destructive" });
+      return;
+    }
     setProfileSaving(true);
     try {
-      const inst = await api.updateInstitutionSettings({ country });
+      const inst = await api.updateInstitutionSettings({
+        name: trimmedName,
+        country,
+      });
+      setBusinessName(inst.name);
       setCountry(inst.country);
       setTimezone(inst.timezone);
       await refreshUser();
       setSaved(true);
-    } catch {
-      // keep form state; user can retry
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not save profile settings";
+      toast({ title: message, variant: "destructive" });
     } finally {
       setProfileSaving(false);
     }
@@ -92,10 +122,20 @@ export function SettingsPage() {
           Profile updated
         </div>
       )}
+      {aiBriefSaved && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-md border border-border bg-popover px-4 py-2 text-sm shadow-md">
+          AI brief saved
+        </div>
+      )}
+      {coaSaved && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-md border border-border bg-popover px-4 py-2 text-sm shadow-md">
+          Chart of accounts saved
+        </div>
+      )}
 
       <PageHeader
         title="Settings"
-        subtitle="Organisation profile, team, approval policy, and chart of accounts."
+        subtitle="Organisation profile, AI document brief, team, approval policy, and chart of accounts."
       />
 
       <div className="flex flex-wrap gap-1 border-b border-border mb-4">
@@ -205,37 +245,26 @@ export function SettingsPage() {
         </Card>
       )}
 
+      {tab === "ai-documents" && (
+        <>
+          {!canEditAdmin ? (
+            <p className="mb-3 text-sm text-muted-foreground">
+              Only admins can edit the org AI brief.
+            </p>
+          ) : null}
+          <OrgAiBriefPanel
+            tenantName={businessName || user?.tenant_name}
+            canEdit={canEditAdmin}
+            onSaved={() => setAiBriefSaved(true)}
+          />
+        </>
+      )}
+
       {tab === "team" && <TenantMembersSection />}
       {tab === "policy" && <ApprovalPolicyPrivileges />}
 
       {tab === "coa" && (
-        <Card className="overflow-hidden max-w-2xl">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="px-4 py-2 font-medium">Code</th>
-                <th className="px-3 py-2 font-medium">Account</th>
-                <th className="px-4 py-2 font-medium text-right">Type</th>
-              </tr>
-            </thead>
-            <tbody>
-              {CHART_OF_ACCOUNTS.map((row) => (
-                <tr
-                  key={row.code}
-                  className="row-band border-b border-border/60 last:border-0"
-                >
-                  <td className="px-4 py-2.5 tnum text-muted-foreground">{row.code}</td>
-                  <td className="px-3 py-2.5">{row.name}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <Badge variant="outline" className="text-[10px]">
-                      {row.type}
-                    </Badge>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+        <ChartOfAccountsPanel canEdit={canEditAdmin} onSaved={() => setCoaSaved(true)} />
       )}
     </div>
   );

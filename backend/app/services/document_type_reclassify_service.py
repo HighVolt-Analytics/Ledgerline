@@ -1,4 +1,4 @@
-"""Re-apply document type classification from stored invoice fields."""
+"""Re-apply document type classification from stored invoice fields (policy scorer)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.rule_book_config import RuleBookConfigPayload
-from app.services.document_type_classifier import (
-    apply_document_type_classification,
-    classify_document_type,
-)
-from app.services.invoice_data import ParseConfidence, invoice_data_from_invoice
-from app.services.invoice_evaluation_service import load_config_for_tenant
+from app.services.finance_dt_policy_scorer import score_all_enabled_dts
+from app.services.invoice_data import invoice_data_from_invoice
+from app.services.invoice_evaluation_service import apply_invoice_evaluation, load_config_for_tenant
+from app.services.llm_document_service import apply_document_type_to_invoice
 
 _SKIP_RECLASSIFY = frozenset(
     {
@@ -39,9 +37,10 @@ async def reclassify_invoice_document_type(
     invoice: Invoice,
     *,
     config: RuleBookConfigPayload | None = None,
-    parse_confidence: ParseConfidence | None = None,
+    parse_confidence: object | None = None,
 ) -> bool:
-    """Re-run DT classification from persisted fields. Returns True if code/confidence changed."""
+    """Re-run DT policy scoring from persisted fields. Returns True if code/confidence changed."""
+    del parse_confidence  # legacy parameter; LLM-first path uses full pipeline reprocess
     if invoice.status in _SKIP_RECLASSIFY or not _has_parse_snapshot(invoice):
         return False
 
@@ -53,21 +52,24 @@ async def reclassify_invoice_document_type(
         (invoice.document_type_code or "").strip().upper(),
         float(invoice.document_type_confidence or 0.0),
     )
-    classification = classify_document_type(
+    policy = score_all_enabled_dts(
         invoice=invoice,
         parsed=parsed,
         document_types=config.document_types,
-        parse_confidence=parse_confidence,
-        unclassified=config.document_classification,
     )
-    apply_document_type_classification(invoice, classification)
+    if not policy.winner_dt:
+        return False
+
+    apply_document_type_to_invoice(
+        invoice,
+        code=policy.winner_dt,
+        confidence=policy.winner_confidence,
+    )
     after = (
         (invoice.document_type_code or "").strip().upper(),
         float(invoice.document_type_confidence or 0.0),
     )
     if before != after:
-        from app.services.invoice_evaluation_service import apply_invoice_evaluation
-
         await apply_invoice_evaluation(session, invoice, config=config, enqueue_pending=False)
         await session.flush()
         return True

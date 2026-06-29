@@ -28,3 +28,12 @@ export function normalizeBareBasenameUrl(): void {
     window.history.replaceState(null, "", `${basename}/${search}${hash}`);
   }
 }
+
+/** Prefix in-app paths with the public basename (e.g. /ledgerlink on staging). */
+export function withRouterBasename(path: string): string {
+  const basename = getRouterBasename();
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  if (!basename) return normalized;
+  if (normalized === "/") return `${basename}/`;
+  return `${basename}${normalized}`;
+}

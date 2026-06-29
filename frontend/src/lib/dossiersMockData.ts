@@ -120,7 +120,7 @@ function fullPass(detailPrefix: string): DossierPipelineStep[] {
       ],
     },
     {
-      stageId: "classify",
+      stageId: "llm_classify",
       state: "pass",
       detail: "document_classified · DT-01 PO goods invoice",
       at: "2026-02-03 08:12:08",
@@ -515,7 +515,7 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         durationMs: 9800,
       },
       {
-        stageId: "classify",
+        stageId: "llm_classify",
         state: "pass",
         detail: "document_classified · DT-01",
         at: "2026-02-02 09:04:06",
@@ -706,7 +706,7 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
       ["ingest", "pass", "Commercial invoice PDF uploaded", "2026-01-29 11:20:00"],
       ["duplicate", "pass", "File hash unique", "2026-01-29 11:20:01"],
       ["extract", "pass", "parse_completed — landed-cost fields", "2026-01-29 11:20:03"],
-      ["classify", "pass", "DT-10 Import dossier — conf 0.91", "2026-01-29 11:20:05"],
+      ["llm_classify", "pass", "DT-10 Import dossier — conf 0.91", "2026-01-29 11:20:05"],
       ["bundle", "fail", "playbook_evaluated — bundle 3/6", "2026-01-29 11:20:12"],
       ["vendor_hold", "pending", "—", null],
       ["validate", "fail", "VR-PB02 mandatory bundle members missing", "2026-01-29 11:20:55"],
@@ -783,7 +783,7 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         durationMs: 6200,
       },
       {
-        stageId: "classify",
+        stageId: "llm_classify",
         state: "pass",
         detail: "document_classified · DT-01",
         at: "2026-02-03 14:02:05",
@@ -1022,7 +1022,7 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         actor: "Document intelligence",
       },
       {
-        stageId: "classify",
+        stageId: "llm_classify",
         state: "pass",
         detail: "document_classified · DT-01",
         at: "2026-02-03 10:00:04",
@@ -1186,7 +1186,7 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
       ["ingest", "pass", "PDF uploaded via workspace", "2026-01-31 10:00:00"],
       ["duplicate", "pass", "File hash unique", "2026-01-31 10:00:01"],
       ["extract", "pass", "parse_completed", "2026-01-31 10:00:03"],
-      ["classify", "pass", "DT-02 Non-PO invoice — conf 0.93", "2026-01-31 10:00:05"],
+      ["llm_classify", "pass", "DT-02 Non-PO invoice — conf 0.93", "2026-01-31 10:00:05"],
       ["bundle", "pass", "playbook_evaluated", "2026-01-31 10:00:10"],
       ["validate", "pass", "Retention rule applied", "2026-01-31 10:00:35"],
       ["vendor_hold", "pass", "Vendor approved — no hold", "2026-01-31 10:00:38"],
@@ -1271,7 +1271,7 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         actor: "Document intelligence",
       },
       {
-        stageId: "classify",
+        stageId: "llm_classify",
         state: "pass",
         detail: "document_classified · DT-01",
         at: "2026-02-03 09:40:05",
@@ -1520,7 +1520,7 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         blockedReason: blockedAfter("Duplicate file check"),
       },
       {
-        stageId: "classify",
+        stageId: "llm_classify",
         state: "pending",
         detail: "—",
         at: null,

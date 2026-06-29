@@ -439,9 +439,10 @@ async def me(
     ctx: AuthContext = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[UserResponse]:
-    tenant = ctx.tenant or await db.get(Tenant, ctx.tenant_id)
+    tenant = await db.get(Tenant, ctx.tenant_id)
     if not tenant:
         raise HTTPException(500, "Tenant missing")
+    await db.refresh(tenant)
     if ctx.user_id is None:
         return ApiEnvelope(
             data=UserResponse(

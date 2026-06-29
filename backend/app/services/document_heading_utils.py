@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
-if TYPE_CHECKING:
-    from app.schemas.document_type import DocumentTypeDefinition
+from app.schemas.document_type import DocumentTypeDefinition
 
 HeadingKind = Literal[
     "tax_invoice",
@@ -273,6 +272,90 @@ def _expected_heading_kinds(
     return None
 
 
+_HEADING_KIND_TOKENS: dict[str, tuple[str, ...]] = {
+    "commercial_invoice": ("commercial invoice", "commercial inv"),
+    "tax_invoice": ("tax invoice",),
+    "invoice": ("invoice",),
+    "packing_list": ("packing list", "weight list", "packing"),
+    "certificate_of_origin": ("certificate of origin", "origin certificate", "coo"),
+    "transport_doc": ("hawb", "mawb", "air waybill", "bill of lading", "awb", "b/l"),
+    "customs_permit": (
+        "cargo clearance permit",
+        "customs permit",
+        "customs entry",
+        "import declaration",
+        "clearance permit",
+    ),
+    "purchase_order": ("purchase order", " po "),
+    "grn": ("goods receipt", "grn", "delivery note", "delivery docket"),
+    "credit_note": ("credit note", "debit note"),
+    "quote": ("quotation", "quote", "estimate"),
+    "contract": ("contract", "sow", "statement of work", "rate card", "agreement"),
+    "statement": ("statement of account", "vendor statement"),
+    "remittance": ("remittance",),
+    "proforma": ("pro forma", "proforma"),
+    "timesheet": ("timesheet", "time sheet"),
+}
+
+
+def _definition_metadata_blob(definition: DocumentTypeDefinition) -> str:
+    parts = [
+        definition.short_title or "",
+        definition.title or "",
+        definition.one_line or "",
+        " ".join(definition.extraction or []),
+    ]
+    return " ".join(parts).lower()
+
+
+def _classifier_document_text_blob(definition: DocumentTypeDefinition) -> str:
+    chunks: list[str] = []
+
+    def walk(node: dict | None) -> None:
+        if not node:
+            return
+        if node.get("type") == "condition" and node.get("field") == "document_text":
+            value = node.get("value")
+            if isinstance(value, str) and value.strip():
+                chunks.append(value.lower())
+            return
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                walk(child)
+
+    walk(definition.classifier.root)
+    return " ".join(chunks)
+
+
+def score_document_type_for_heading(
+    definition: DocumentTypeDefinition,
+    heading_kind: HeadingKind,
+) -> float:
+    tokens = _HEADING_KIND_TOKENS.get(heading_kind, ())
+    if not tokens or not definition.enabled:
+        return 0.0
+
+    metadata = _definition_metadata_blob(definition)
+    classifier_text = _classifier_document_text_blob(definition)
+    best = 0.0
+
+    for token in tokens:
+        token = token.strip().lower()
+        if not token:
+            continue
+        if token in (definition.short_title or "").lower():
+            best = max(best, 1.0)
+            continue
+        if token in metadata:
+            best = max(best, 0.82)
+        if token in classifier_text:
+            best = max(best, 0.88)
+        for part in re.split(r"[\s/·]+", metadata):
+            if part and token == part:
+                best = max(best, 0.95)
+    return best
+
+
 def heading_alignment_score(
     document_type_code: str,
     signals: DocumentHeadingSignals,
@@ -295,8 +378,6 @@ def heading_alignment_score(
         return 0.55
 
     if definition is not None:
-        from app.services.segment_heading_classification import score_document_type_for_heading
-
         metadata_score = score_document_type_for_heading(definition, kind)
         if metadata_score > 0:
             return metadata_score

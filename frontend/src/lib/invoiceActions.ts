@@ -30,6 +30,16 @@ export function canQueuePipeline(status: string): boolean {
   return status === "processed";
 }
 
+/** Matches POST /api/invoices/{id}/reprocess allowed statuses. */
+export function canReprocessInvoice(status: string): boolean {
+  return (
+    status === "exception" ||
+    status === "duplicate_skipped" ||
+    status === "processed" ||
+    status === "rejected"
+  );
+}
+
 export function canRequestInfo(status: string): boolean {
   return !(APPROVAL_QUEUE_STATUSES as readonly string[]).includes(status);
 }
