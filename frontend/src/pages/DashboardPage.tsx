@@ -157,6 +157,15 @@ function activityLabel(
   if (event === "payment_execution_blocked_by_limit") {
     return "Payment execution blocked — over launch limit";
   }
+  if (event === "accounting_integration_connected") {
+    return "Accounting integration connected";
+  }
+  if (event === "accounting_integration_disconnected") {
+    return "Accounting integration disconnected";
+  }
+  if (event === "accounting_integration_error") {
+    return "Accounting integration error";
+  }
   return `${label} — ${event.replace(/_/g, " ")}`;
 }
 
