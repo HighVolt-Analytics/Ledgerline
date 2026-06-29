@@ -42,6 +42,10 @@ from app.services.payment_execution_instruction_service import (
     export_payment_execution_instruction,
     mark_payment_paid_manual,
 )
+from app.services.payment_execution_auth import (
+    PaymentExecutionUnauthorizedError,
+    require_payment_execution_role,
+)
 from app.services.stripe_service import (
     StripeServiceError,
     create_account_onboarding_link,
@@ -453,6 +457,11 @@ async def post_payment_approve(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[PaymentResponse]:
     """Approve a payment awaiting release (single approver = logged-in user)."""
+    try:
+        require_payment_execution_role(ctx)
+    except PaymentExecutionUnauthorizedError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
     actor_name, actor_email = await actor_from_context(db, ctx)
     try:
         row, changed = await approve_payment(
@@ -505,6 +514,11 @@ async def post_payment_execution_readiness(
             db,
             ctx.tenant_id,
             payment_id,
+            actor={
+                "user_id": ctx.user_id,
+                "role": ctx.role,
+            },
+            ctx=ctx,
         )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
@@ -537,6 +551,10 @@ async def post_payment_execution_readiness(
             "vendor_payout_ready": result.vendor_payout_ready,
             "approval_ready": result.approval_ready,
             "amount_ready": result.amount_ready,
+            "manual_execution_ready": result.manual_execution_ready,
+            "role_ready": result.role_ready,
+            "limit_ready": result.limit_ready,
+            "tenant_execution_enabled": result.tenant_execution_enabled,
         },
         actor_name=actor_name,
         actor_email=actor_email,
@@ -546,13 +564,14 @@ async def post_payment_execution_readiness(
     )
 
 
-async def _log_execution_safety_block(
+async def _log_execution_block(
     db: AsyncSession,
     *,
     tenant_id: uuid.UUID,
     payment_id: int,
     action: str,
     reason: str,
+    reason_code: str,
     actor_name: str,
     actor_email: str,
 ) -> None:
@@ -568,21 +587,36 @@ async def _log_execution_safety_block(
             )
         )
     ).scalar_one_or_none()
+    event = "payment_execution_blocked_by_safety_gate"
+    if reason_code == "tenant_disabled":
+        event = "payment_execution_blocked_by_tenant_disable"
+    elif reason_code == "limit_exceeded":
+        event = "payment_execution_blocked_by_limit"
     await log_event(
         db,
-        "payment_execution_blocked_by_safety_gate",
+        event,
         invoice_id=payment.invoice_id if payment else None,
         tenant_id=tenant_id,
         detail={
             "payment_id": payment_id,
             "action": action,
             "reason": reason,
+            "reason_code": reason_code,
             "vendor": payment.vendor if payment else None,
             "amount": float(payment.amount) if payment and payment.amount is not None else None,
         },
         actor_name=actor_name,
         actor_email=actor_email,
     )
+
+
+def _actor_payload(ctx: AuthContext, actor_name: str, actor_email: str) -> dict:
+    return {
+        "user_id": ctx.user_id,
+        "name": actor_name,
+        "email": actor_email,
+        "role": ctx.role,
+    }
 
 
 @router.post(
@@ -600,21 +634,21 @@ async def post_payment_execution_instruction(
             db,
             ctx.tenant_id,
             payment_id,
-            actor={
-                "user_id": ctx.user_id,
-                "name": actor_name,
-                "email": actor_email,
-            },
+            actor=_actor_payload(ctx, actor_name, actor_email),
+            ctx=ctx,
         )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except PaymentExecutionUnauthorizedError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except PaymentExecutionBlockedError as exc:
-        await _log_execution_safety_block(
+        await _log_execution_block(
             db,
             tenant_id=ctx.tenant_id,
             payment_id=payment_id,
             action="create_instruction",
             reason=str(exc),
+            reason_code=exc.reason_code,
             actor_name=actor_name,
             actor_email=actor_email,
         )
@@ -689,21 +723,21 @@ async def post_payment_mark_paid_manual(
             ctx.tenant_id,
             payment_id,
             body,
-            actor={
-                "user_id": ctx.user_id,
-                "name": actor_name,
-                "email": actor_email,
-            },
+            actor=_actor_payload(ctx, actor_name, actor_email),
+            ctx=ctx,
         )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except PaymentExecutionUnauthorizedError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except PaymentExecutionBlockedError as exc:
-        await _log_execution_safety_block(
+        await _log_execution_block(
             db,
             tenant_id=ctx.tenant_id,
             payment_id=payment_id,
             action="mark_paid_manual",
             reason=str(exc),
+            reason_code=exc.reason_code,
             actor_name=actor_name,
             actor_email=actor_email,
         )
@@ -722,7 +756,8 @@ async def post_payment_mark_paid_manual(
                 "vendor": row.vendor,
                 "amount": row.amount,
                 "reference": body.reference,
-                "paid_date": row.paid_date.isoformat() if row.paid_date else None,
+                "proof_reference": body.proof_reference,
+                "paid_date": body.paid_date.isoformat(),
                 "note": body.note,
             },
             actor_name=actor_name,

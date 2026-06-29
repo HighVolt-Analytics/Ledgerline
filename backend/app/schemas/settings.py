@@ -25,5 +25,5 @@ class AppSettingsResponse(BaseModel):
     stripe_payments_execution_enabled: bool = False
     stripe_live_payments_enabled: bool = False
     payment_manual_execution_enabled: bool = False
-    payment_manual_execution_limit_aud: float = 1000.0
+    payment_manual_execution_limit_usd: float = 1000.0
     payment_execution_disabled: bool = False

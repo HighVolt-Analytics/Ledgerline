@@ -51,8 +51,9 @@ async def _payment_response_with_eligibility(
     from app.config import get_settings
     from app.services.payment_execution_instruction_service import (
         _instruction_to_response,
+        _manual_eligible_from_checks,
         instructions_for_payments,
-        manual_instruction_eligible,
+        tenant_execution_enabled,
     )
     from app.services.payment_execution_readiness_service import (
         _build_readiness_checks,
@@ -69,8 +70,10 @@ async def _payment_response_with_eligibility(
     instructions = await instructions_for_payments(db, tenant_id, [row.id])
     instruction = instructions.get(row.id)
     settings = get_settings()
+    tenant_enabled, _ = await tenant_execution_enabled(db, tenant_id)
 
     manual_eligible = False
+    manual_block_reason: str | None = None
     if row.status == PaymentStatus.SCHEDULED and instruction is None:
         checks = await _build_readiness_checks(db, row, stripe=stripe)
         vendor_registry_id = await _resolve_vendor_registry_id(db, row)
@@ -79,7 +82,12 @@ async def _payment_response_with_eligibility(
             if vendor_registry_id is not None
             else None
         )
-        manual_eligible, _ = manual_instruction_eligible(row, checks=checks, method=method)
+        manual_eligible, manual_block_reason = _manual_eligible_from_checks(
+            row,
+            checks=checks,
+            method=method,
+            tenant_enabled=tenant_enabled,
+        )
 
     eligibility_status, eligibility_reason = derive_execution_eligibility(
         row,
@@ -89,6 +97,8 @@ async def _payment_response_with_eligibility(
         has_instruction=instruction is not None,
         manual_execution_enabled=settings.payment_manual_execution_enabled,
         manual_instruction_eligible=manual_eligible,
+        tenant_execution_enabled=tenant_enabled,
+        manual_block_reason=manual_block_reason,
     )
     instruction_response = (
         _instruction_to_response(instruction) if instruction is not None else None
@@ -245,8 +255,9 @@ async def list_payments(
     from app.config import get_settings
     from app.services.payment_execution_instruction_service import (
         _instruction_to_response,
+        _manual_eligible_from_checks,
         instructions_for_payments,
-        manual_instruction_eligible,
+        tenant_execution_enabled,
     )
     from app.services.payment_execution_readiness_service import (
         _build_readiness_checks,
@@ -266,10 +277,12 @@ async def list_payments(
     stripe = await get_stripe_readiness_for_tenant(db, tenant_id)
     instructions = await instructions_for_payments(db, tenant_id, [row.id for row in rows])
     settings = get_settings()
+    tenant_enabled, _ = await tenant_execution_enabled(db, tenant_id)
     responses: list[PaymentResponse] = []
     for row, summary in zip(rows, summaries, strict=True):
         instruction = instructions.get(row.id)
         manual_eligible = False
+        manual_block_reason: str | None = None
         if row.status == PaymentStatus.SCHEDULED and instruction is None:
             checks = await _build_readiness_checks(db, row, stripe=stripe)
             vendor_registry_id = await _resolve_vendor_registry_id(db, row)
@@ -278,7 +291,12 @@ async def list_payments(
                 if vendor_registry_id is not None
                 else None
             )
-            manual_eligible, _ = manual_instruction_eligible(row, checks=checks, method=method)
+            manual_eligible, manual_block_reason = _manual_eligible_from_checks(
+                row,
+                checks=checks,
+                method=method,
+                tenant_enabled=tenant_enabled,
+            )
 
         eligibility_status, eligibility_reason = derive_execution_eligibility(
             row,
@@ -288,6 +306,8 @@ async def list_payments(
             has_instruction=instruction is not None,
             manual_execution_enabled=settings.payment_manual_execution_enabled,
             manual_instruction_eligible=manual_eligible,
+            tenant_execution_enabled=tenant_enabled,
+            manual_block_reason=manual_block_reason,
         )
         instruction_response = (
             _instruction_to_response(instruction) if instruction is not None else None

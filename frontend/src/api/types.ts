@@ -456,6 +456,8 @@ export type PaymentExecutionEligibilityStatus =
   | "ready_dry_run"
   | "manual_instruction_available"
   | "instruction_created"
+  | "blocked_limit"
+  | "blocked_tenant_disabled"
   | "scheduled"
   | "paid"
   | "failed";
@@ -494,7 +496,8 @@ export interface PaymentExecutionInstructionExportApi {
 
 export interface PaymentMarkPaidManualPayload {
   reference: string;
-  paid_date?: string;
+  paid_date: string;
+  proof_reference: string;
   note?: string;
 }
 
@@ -530,6 +533,10 @@ export interface PaymentExecutionReadinessResponse {
   vendor_payout_ready: boolean;
   approval_ready: boolean;
   amount_ready: boolean;
+  manual_execution_ready: boolean;
+  role_ready: boolean | null;
+  limit_ready: boolean;
+  tenant_execution_enabled: boolean;
   recommended_action: string | null;
   payments_execution_enabled: boolean;
 }
@@ -755,7 +762,7 @@ export interface AppSettings {
   stripe_payments_execution_enabled: boolean;
   stripe_live_payments_enabled: boolean;
   payment_manual_execution_enabled: boolean;
-  payment_manual_execution_limit_aud: number;
+  payment_manual_execution_limit_usd: number;
   payment_execution_disabled: boolean;
 }
 

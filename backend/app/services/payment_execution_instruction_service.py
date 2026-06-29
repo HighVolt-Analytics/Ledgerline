@@ -14,14 +14,26 @@ from app.config import get_settings
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_execution_instruction import PaymentExecutionInstruction
 from app.models.stripe_payments import VendorPaymentMethod
+from app.models.tenant import Tenant
 from app.schemas.payment import (
     PaymentExecutionInstructionExportResponse,
     PaymentExecutionInstructionResponse,
     PaymentMarkPaidManualRequest,
     PaymentResponse,
 )
+from app.services.payment_execution_auth import (
+    PaymentExecutionUnauthorizedError,
+    require_payment_execution_role,
+)
+from app.services.payment_execution_rules import (
+    LIMIT_BLOCK_MESSAGE,
+    TENANT_DISABLED_MESSAGE,
+    VENDOR_NOT_VERIFIED_MESSAGE,
+    check_payment_manual_execution_limit,
+    manual_instruction_eligible,
+    vendor_payout_method_verified,
+)
 from app.services.payment_execution_readiness_service import (
-    _approval_ready,
     _build_readiness_checks,
     _default_payout_method,
     _resolve_vendor_registry_id,
@@ -30,13 +42,21 @@ from app.services.payment_execution_readiness_service import (
 from app.services.payment_service import payment_to_response
 from app.services.stripe_service import get_stripe_readiness_for_tenant
 from app.services.vendor_payout_method_service import payout_summary_for_payments
+from app.tenant_settings import tenant_payment_execution_disabled
 
 
 class PaymentExecutionBlockedError(Exception):
     """Execution blocked by safety gate or business rules."""
 
-    def __init__(self, message: str, *, safety_gate: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = "blocked",
+        safety_gate: bool = False,
+    ) -> None:
         super().__init__(message)
+        self.reason_code = reason_code
         self.safety_gate = safety_gate
 
 
@@ -62,6 +82,36 @@ def check_manual_execution_safety_gate() -> tuple[bool, str | None]:
     if not settings.payment_manual_execution_enabled:
         return False, "Manual payment execution is not enabled (PAYMENT_MANUAL_EXECUTION_ENABLED)"
     return True, None
+
+
+async def tenant_execution_enabled(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> tuple[bool, Tenant | None]:
+    tenant = (
+        await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    ).scalar_one_or_none()
+    if tenant is None:
+        return False, None
+    if tenant_payment_execution_disabled(tenant):
+        return False, tenant
+    return True, tenant
+
+
+def _manual_eligible_from_checks(
+    payment: Payment,
+    *,
+    checks,
+    method: VendorPaymentMethod | None,
+    tenant_enabled: bool,
+) -> tuple[bool, str | None]:
+    return manual_instruction_eligible(
+        payment,
+        approval_ready_flag=checks.approval_ready,
+        amount_ready=checks.amount_ready,
+        method=method,
+        tenant_enabled=tenant_enabled,
+    )
 
 
 def _instruction_to_response(row: PaymentExecutionInstruction) -> PaymentExecutionInstructionResponse:
@@ -101,46 +151,40 @@ async def instructions_for_payments(
     return {row.payment_id: row for row in rows}
 
 
-def manual_instruction_eligible(
-    payment: Payment,
+async def _assert_execution_preconditions(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
     *,
-    checks,
-    method: VendorPaymentMethod | None,
-) -> tuple[bool, str | None]:
-    if payment.status != PaymentStatus.SCHEDULED:
-        return False, "Payment must be scheduled before creating an instruction"
-
-    if not checks.approval_ready:
-        return False, "Payment approval workflow is incomplete"
-
-    if not checks.amount_ready:
-        return False, "Payment amount or currency is not valid for execution"
-
-    settings = get_settings()
-    amount = Decimal(str(payment.amount or 0))
-    limit = Decimal(str(settings.payment_manual_execution_limit_aud))
-    if amount > limit:
-        return (
-            False,
-            f"Payment amount exceeds manual execution limit ({settings.payment_manual_execution_limit_aud} AUD)",
+    ctx: Any | None = None,
+    actor: dict[str, Any] | None = None,
+) -> Tenant | None:
+    allowed, reason = check_manual_execution_safety_gate()
+    if not allowed:
+        raise PaymentExecutionBlockedError(
+            reason or "Manual execution blocked",
+            reason_code="safety_gate",
+            safety_gate=True,
         )
 
-    if checks.tenant_stripe_ready and checks.vendor_payout_ready:
-        return True, None
-
-    method_type = (method.method_type or "") if method else ""
-    status = (method.status or "") if method else ""
-    if method_type == "manual_bank" and status == "verified":
-        return True, None
-
-    if not checks.tenant_stripe_ready:
-        return (
-            False,
-            "Stripe setup is incomplete; configure a verified manual bank payout method for the vendor",
+    tenant_enabled, tenant = await tenant_execution_enabled(db, tenant_id)
+    if not tenant_enabled:
+        raise PaymentExecutionBlockedError(
+            TENANT_DISABLED_MESSAGE,
+            reason_code="tenant_disabled",
         )
-    if not checks.vendor_payout_ready:
-        return False, "Vendor payout method is not verified"
-    return False, "Payment is not eligible for manual instruction"
+
+    if ctx is not None:
+        require_payment_execution_role(ctx)
+    elif actor is not None:
+        from app.services.payment_execution_auth import PAYMENT_EXECUTION_ROLES
+
+        role = str(actor.get("role") or "").strip().lower()
+        if role and role not in PAYMENT_EXECUTION_ROLES:
+            raise PaymentExecutionUnauthorizedError(
+                "Payment execution requires Tenant Admin or Approver role"
+            )
+
+    return tenant
 
 
 async def create_payment_execution_instruction(
@@ -149,11 +193,10 @@ async def create_payment_execution_instruction(
     payment_id: int,
     *,
     actor: dict[str, Any],
+    ctx: Any | None = None,
 ) -> tuple[PaymentExecutionInstructionResponse, bool]:
     """Create a read-only manual payment instruction. Idempotent when one already exists."""
-    allowed, reason = check_manual_execution_safety_gate()
-    if not allowed:
-        raise PaymentExecutionBlockedError(reason or "Manual execution blocked", safety_gate=True)
+    await _assert_execution_preconditions(db, tenant_id, ctx=ctx, actor=actor)
 
     payment = (
         await db.execute(
@@ -184,7 +227,13 @@ async def create_payment_execution_instruction(
             "approve the payment first."
         )
 
-    await validate_payment_execution_readiness(db, tenant_id, payment_id, actor=actor)
+    await validate_payment_execution_readiness(
+        db,
+        tenant_id,
+        payment_id,
+        actor=actor,
+        ctx=ctx,
+    )
 
     checks = await _build_readiness_checks(db, payment)
     vendor_registry_id = await _resolve_vendor_registry_id(db, payment)
@@ -193,8 +242,18 @@ async def create_payment_execution_instruction(
         if vendor_registry_id is not None
         else None
     )
-    eligible, block_reason = manual_instruction_eligible(payment, checks=checks, method=method)
+    tenant_enabled, _ = await tenant_execution_enabled(db, tenant_id)
+    eligible, block_reason = _manual_eligible_from_checks(
+        payment,
+        checks=checks,
+        method=method,
+        tenant_enabled=tenant_enabled,
+    )
     if not eligible:
+        if block_reason == LIMIT_BLOCK_MESSAGE:
+            raise PaymentExecutionBlockedError(block_reason, reason_code="limit_exceeded")
+        if block_reason == VENDOR_NOT_VERIFIED_MESSAGE:
+            raise ValueError(VENDOR_NOT_VERIFIED_MESSAGE)
         raise ValueError(block_reason or "Payment is not eligible for manual instruction")
 
     reference = f"LL-MPI-{payment_id}-{uuid.uuid4().hex[:8].upper()}"
@@ -211,7 +270,7 @@ async def create_payment_execution_instruction(
         vendor_name=payment.vendor,
         vendor_payout_method_label=format_payout_method_label(method),
         amount=Decimal(str(payment.amount)),
-        currency=(payment.currency or "AUD").upper(),
+        currency=(payment.currency or "USD").upper(),
         due_date=payment.due_date,
         created_by_user_id=int(actor_user_id) if actor_user_id is not None else None,
         created_by_name=actor_name,
@@ -260,7 +319,10 @@ async def export_payment_execution_instruction(
         created_by=instruction.created_by_name,
         created_at=instruction.created_at,
         export_format="json",
-        disclaimer="LedgerLink does not move funds. Execute this payment manually outside LedgerLink.",
+        disclaimer=(
+            "LedgerLink does not move funds. Execute this payment manually outside LedgerLink "
+            "from the client-owned bank or wallet."
+        ),
     )
 
 
@@ -271,16 +333,18 @@ async def mark_payment_paid_manual(
     body: PaymentMarkPaidManualRequest,
     *,
     actor: dict[str, Any],
+    ctx: Any | None = None,
 ) -> tuple[PaymentResponse, bool]:
     """Record manual paid status only — no money movement."""
-    _ = actor
-    allowed, reason = check_manual_execution_safety_gate()
-    if not allowed:
-        raise PaymentExecutionBlockedError(reason or "Manual execution blocked", safety_gate=True)
+    await _assert_execution_preconditions(db, tenant_id, ctx=ctx, actor=actor)
 
     reference = (body.reference or "").strip()
     if not reference:
         raise ValueError("A manual payment reference is required")
+
+    proof_reference = (body.proof_reference or "").strip()
+    if not proof_reference:
+        raise ValueError("Proof of payment reference is required")
 
     payment = (
         await db.execute(
@@ -296,6 +360,10 @@ async def mark_payment_paid_manual(
     if payment.status == PaymentStatus.PAID:
         return await _payment_response_with_instruction(db, tenant_id, payment), False
 
+    limit_ok, limit_reason, _ = check_payment_manual_execution_limit(payment)
+    if not limit_ok:
+        raise PaymentExecutionBlockedError(limit_reason or LIMIT_BLOCK_MESSAGE, reason_code="limit_exceeded")
+
     instruction = (
         await db.execute(
             select(PaymentExecutionInstruction).where(
@@ -310,16 +378,18 @@ async def mark_payment_paid_manual(
             f"Payment status '{payment.status.value}' cannot be marked paid manually"
         )
 
-    if instruction is not None and instruction.status != "instruction_created":
-        raise ValueError("Payment instruction is not in instruction_created status")
+    if instruction is None or instruction.status != "instruction_created":
+        raise ValueError("Create a payment instruction before marking paid manually")
 
     payment.status = PaymentStatus.PAID
     payment.payment_intent = reference
-    if body.paid_date is not None:
-        payment.paid_date = datetime.combine(body.paid_date, datetime.min.time(), tzinfo=timezone.utc)
-    else:
-        payment.paid_date = datetime.now(timezone.utc)
+    payment.paid_date = datetime.combine(body.paid_date, datetime.min.time(), tzinfo=timezone.utc)
 
+    instruction.proof_reference = proof_reference
+    instruction.marked_paid_at = datetime.now(timezone.utc)
+    actor_user_id = actor.get("user_id")
+    if actor_user_id is not None:
+        instruction.marked_paid_by_user_id = int(actor_user_id)
     if body.note:
         instruction.note = body.note.strip()
 
@@ -340,8 +410,10 @@ async def _payment_response_with_instruction(
     instructions = await instructions_for_payments(db, tenant_id, [payment.id])
     instruction = instructions.get(payment.id)
     settings = get_settings()
+    tenant_enabled, _ = await tenant_execution_enabled(db, tenant_id)
 
     manual_eligible = False
+    manual_block_reason: str | None = None
     if payment.status == PaymentStatus.SCHEDULED and instruction is None:
         checks = await _build_readiness_checks(db, payment, stripe=stripe)
         vendor_registry_id = await _resolve_vendor_registry_id(db, payment)
@@ -350,7 +422,12 @@ async def _payment_response_with_instruction(
             if vendor_registry_id is not None
             else None
         )
-        manual_eligible, _ = manual_instruction_eligible(payment, checks=checks, method=method)
+        manual_eligible, manual_block_reason = _manual_eligible_from_checks(
+            payment,
+            checks=checks,
+            method=method,
+            tenant_enabled=tenant_enabled,
+        )
 
     eligibility_status, eligibility_reason = derive_execution_eligibility(
         payment,
@@ -360,6 +437,8 @@ async def _payment_response_with_instruction(
         has_instruction=instruction is not None,
         manual_execution_enabled=settings.payment_manual_execution_enabled,
         manual_instruction_eligible=manual_eligible,
+        tenant_execution_enabled=tenant_enabled,
+        manual_block_reason=manual_block_reason,
     )
     instruction_response = (
         _instruction_to_response(instruction) if instruction is not None else None
@@ -372,3 +451,11 @@ async def _payment_response_with_instruction(
         execution_blocking_reason=eligibility_reason,
         execution_instruction=instruction_response,
     )
+
+
+__all__ = [
+    "PaymentExecutionBlockedError",
+    "create_payment_execution_instruction",
+    "export_payment_execution_instruction",
+    "mark_payment_paid_manual",
+]

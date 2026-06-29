@@ -13,7 +13,33 @@ Related: [azure-env-mapping.md](./azure-env-mapping.md) - template: [backend/.en
 
 Internal payables workflow (queue -> approval -> scheduled) remains separate from Stripe money movement until explicitly enabled in a later phase.
 
-## Implemented (staging)
+# Production manual payment execution controls
+
+LedgerLink production disbursement uses **client-controlled manual execution**. The client/tenant pays suppliers from their own bank or wallet. LedgerLink creates payment instructions and records completion. **LedgerLink does not custody client funds.**
+
+## Production model (signoff received)
+
+| Control | Production value |
+|---------|------------------|
+| Payment rail | Client manual bank/wallet payment outside LedgerLink |
+| Funds ownership | Client/tenant owns funds; LedgerLink orchestrates only |
+| Execution roles | Tenant Admin (`admin`) or Approver (`approver`) |
+| Approval | Single approver at launch |
+| Per-payment limit | USD 1000 (`PAYMENT_MANUAL_EXECUTION_LIMIT_USD`) |
+| Vendor requirement | Verified default payout method before instruction |
+| Stripe money APIs | Transfer/Payout/PaymentIntent execution **disabled** |
+| Stripe Connect | Account connection, readiness, balance visibility only |
+| Emergency disable | Global `PAYMENT_EXECUTION_DISABLED` or per-tenant `settings_json.payment_execution_disabled` |
+
+### Manual paid confirmation requires
+
+- Payment/bank **reference** number
+- **Proof/reference** (`proof_reference` text; file attachment integration planned)
+- **Paid date**
+
+Mark paid is accounting status only — **no funds are moved**.
+
+## Implemented (staging / production-safe)
 
 | Feature | Status |
 |---------|--------|
@@ -63,8 +89,9 @@ Store in `backend/.env` locally, Kubernetes **`app-secrets`**, or the **`ledgerl
 | `STRIPE_PAYMENTS_EXECUTION_ENABLED` | `false` (default) |
 | `STRIPE_LIVE_PAYMENTS_ENABLED` | `false` (default) |
 | `PAYMENT_MANUAL_EXECUTION_ENABLED` | `false` (default); set `true` on staging for manual instruction dry-run |
-| `PAYMENT_MANUAL_EXECUTION_LIMIT_AUD` | `1000` (default cap per payment for manual instruction) |
-| `PAYMENT_EXECUTION_DISABLED` | `false` (emergency kill switch for instruction / mark-paid endpoints) |
+| `PAYMENT_MANUAL_EXECUTION_LIMIT_USD` | `1000` (launch cap per payment; non-USD uses same numeric threshold without FX) |
+| `PAYMENT_EXECUTION_DISABLED` | `false` (global emergency kill switch) |
+| Per-tenant disable | `tenants.settings_json.payment_execution_disabled=true` |
 
 `STRIPE_RETURN_URL` and `STRIPE_REFRESH_URL` are used by the Express Account Links onboarding flow. `STRIPE_OAUTH_REDIRECT_URL` is the OAuth redirect URI for connecting an **existing** Stripe Standard account; it must be registered exactly in **Stripe Dashboard -> Connect -> OAuth settings** (redirect URIs allowlist).
 
@@ -78,11 +105,11 @@ STRIPE_OAUTH_REDIRECT_URL=http://localhost:5173/payments/stripe/oauth/callback
 STRIPE_PAYMENTS_EXECUTION_ENABLED=false
 STRIPE_LIVE_PAYMENTS_ENABLED=false
 PAYMENT_MANUAL_EXECUTION_ENABLED=false
-PAYMENT_MANUAL_EXECUTION_LIMIT_AUD=1000
+PAYMENT_MANUAL_EXECUTION_LIMIT_USD=1000
 PAYMENT_EXECUTION_DISABLED=false
 ```
 
-Apply migrations **038–041** before testing:
+Apply migrations **038–042** before testing:
 
 ```powershell
 cd backend
@@ -140,11 +167,13 @@ When `PAYMENT_MANUAL_EXECUTION_ENABLED=true` (and `PAYMENT_EXECUTION_DISABLED=fa
 
 `POST /api/payments/{payment_id}/mark-paid-manual`
 
-Body: `{ "reference": "BANK-TXN-123", "paid_date": "2026-06-26", "note": "optional" }`
+Body: `{ "reference": "BANK-TXN-123", "paid_date": "2026-06-26", "proof_reference": "receipt-scan-ref", "note": "optional" }`
 
-- Allowed when payment is **scheduled** (with an active instruction).
-- Sets `status=paid`, stores reference on `payment_intent`, sets `paid_date`.
+- Allowed when payment is **scheduled** with an active instruction.
+- Requires Tenant Admin or Approver role.
+- Sets `status=paid`, stores reference on `payment_intent`, proof on instruction row.
 - Accounting status only — **no money movement**.
+- File attachment upload for proof is planned; `proof_reference` text is required for now.
 
 ### Export instruction
 
@@ -158,7 +187,9 @@ Returns JSON with instruction fields for copy/export in the UI.
 |------|--------|
 | `PAYMENT_EXECUTION_DISABLED=true` | Blocks instruction and mark-paid endpoints |
 | `PAYMENT_MANUAL_EXECUTION_ENABLED=false` | Blocks manual orchestration (default) |
-| `PAYMENT_MANUAL_EXECUTION_LIMIT_AUD` | Rejects instructions above limit |
+| `PAYMENT_MANUAL_EXECUTION_LIMIT_USD` | Rejects instructions above USD 1000 launch limit |
+| Per-tenant `payment_execution_disabled` | Blocks instruction and mark-paid for that tenant |
+| Role | Tenant Admin or Approver required for approve/instruction/mark-paid |
 | `STRIPE_PAYMENTS_EXECUTION_ENABLED` | Reserved for future real Stripe rails only; manual orchestration does not call Stripe money APIs |
 
 Staging example (manual instruction only, no real payouts):
@@ -167,7 +198,7 @@ Staging example (manual instruction only, no real payouts):
 STRIPE_PAYMENTS_EXECUTION_ENABLED=false
 STRIPE_LIVE_PAYMENTS_ENABLED=false
 PAYMENT_MANUAL_EXECUTION_ENABLED=true
-PAYMENT_MANUAL_EXECUTION_LIMIT_AUD=1000
+PAYMENT_MANUAL_EXECUTION_LIMIT_USD=1000
 PAYMENT_EXECUTION_DISABLED=false
 ```
 
@@ -201,7 +232,9 @@ Logged via `audit_service.log_event` (visible on dashboard activity feed):
 | `payment_approved` | Payment approved by logged-in user (awaiting → scheduled) |
 | `payment_execution_instruction_created` | Manual payment instruction created |
 | `payment_marked_paid_manual` | Payment marked paid manually (no funds moved) |
-| `payment_execution_blocked_by_safety_gate` | Instruction or mark-paid blocked by safety flag |
+| `payment_execution_blocked_by_safety_gate` | Global safety flag blocked execution |
+| `payment_execution_blocked_by_tenant_disable` | Tenant payment execution disabled |
+| `payment_execution_blocked_by_limit` | Payment exceeds USD 1000 launch limit |
 
 ## Production safety
 
