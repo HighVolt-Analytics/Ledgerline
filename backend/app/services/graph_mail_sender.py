@@ -14,6 +14,12 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _mask_graph_recipient(email: str) -> str:
+    from app.services.email_recipient_validation import mask_email_for_log
+
+    return mask_email_for_log(email)
+
+
 @dataclass(frozen=True)
 class GraphMailResult:
     sent: bool
@@ -72,17 +78,21 @@ def send_graph_mail(
             message = f"Graph sendMail failed ({exc.response.status_code})."
         logger.warning(
             "graph_send_mail_failed",
-            to=to_email,
-            from_mailbox=sender,
-            status=exc.response.status_code,
-            error=detail,
+            extra={
+                "email_masked": _mask_graph_recipient(to_email),
+                "from_mailbox": sender,
+                "status": exc.response.status_code,
+                "error": detail,
+            },
         )
         return GraphMailResult(sent=False, error=message)
     except Exception as exc:
         logger.warning(
             "graph_send_mail_failed",
-            to=to_email,
-            from_mailbox=sender,
-            error=str(exc),
+            extra={
+                "email_masked": _mask_graph_recipient(to_email),
+                "from_mailbox": sender,
+                "error": str(exc),
+            },
         )
         return GraphMailResult(sent=False, error=str(exc))
