@@ -1,4 +1,5 @@
 # Production ConfigMap example (namespace quantum-ledgerlink-prod).
+# Apply manually — the GitHub Actions production workflow does NOT apply this file.
 # Do not commit real secrets — use app-secrets for keys and webhook secrets.
 apiVersion: v1
 kind: ConfigMap
@@ -6,15 +7,17 @@ metadata:
   name: ledgerlink-config
   namespace: quantum-ledgerlink-prod
 data:
-  BASE_PATH: ""
   APP_ENV: "production"
+  ENVIRONMENT: "production"
   PAYMENT_ENVIRONMENT_LABEL: "Production"
+  BASE_PATH: "/"
+  API_BASE_PATH: "/api"
   PUBLIC_APP_BASE_URL: "https://ledgerlink.highvolt.tech"
   PUBLIC_API_BASE_URL: "https://ledgerlink.highvolt.tech/api"
   PUBLIC_APP_URL: "https://ledgerlink.highvolt.tech"
   POSTGRES_HOST: "<production-postgres-host>"
   POSTGRES_PORT: "5432"
-  POSTGRES_DB: "<production-db-name>"
+  POSTGRES_DB: "ledgerlink_prod"
   POSTGRES_USER: "<production-db-user>"
   REDIS_HOST: "<production-redis-host>"
   REDIS_SSL_PORT: "6380"
@@ -44,4 +47,4 @@ data:
   PAYMENT_EXECUTION_DISABLED: "false"
   # app-secrets (production): STRIPE_SECRET_KEY (sk_live_…), STRIPE_WEBHOOK_SECRET,
   # STRIPE_CONNECT_CLIENT_ID, STRIPE_GLOBAL_PAYOUTS_WEBHOOK_SECRET,
-  # STRIPE_GLOBAL_PAYOUTS_FINANCIAL_ACCOUNT_ID, DATABASE_URL components, JWT_SECRET, etc.
+  # STRIPE_GLOBAL_PAYOUTS_FINANCIAL_ACCOUNT_ID, POSTGRES_PASSWORD, JWT_SECRET, etc.

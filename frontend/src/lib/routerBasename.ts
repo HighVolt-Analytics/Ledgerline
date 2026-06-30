@@ -1,22 +1,23 @@
-/** Public app path prefix (no trailing slash). */
-export const LEDGERLINK_BASENAME = "/ledgerlink";
+/** Staging / preview path prefix when deployed under a subpath. */
+export const LEDGERLINK_STAGING_BASENAME = "/ledgerlink";
 
 /**
- * React Router basename (no trailing slash). Production always uses /ledgerlink.
+ * React Router basename (no trailing slash).
+ * Driven by VITE_BASE_PATH at build time:
+ * - staging/preview: /ledgerlink
+ * - production root: unset or /
  */
 export function getRouterBasename(): string | undefined {
   const fromEnv = import.meta.env.VITE_BASE_PATH;
   if (typeof fromEnv === "string" && fromEnv.trim()) {
-    return fromEnv.trim().replace(/\/+$/, "");
-  }
-  if (import.meta.env.PROD) {
-    return LEDGERLINK_BASENAME;
+    const trimmed = fromEnv.trim().replace(/\/+$/, "");
+    return trimmed || undefined;
   }
   return undefined;
 }
 
 /**
- * Normalize bare /ledgerlink (no trailing slash) to /ledgerlink/ so Vite asset
+ * Normalize bare basename URL (no trailing slash) to basename/ so Vite asset
  * URLs and React Router both resolve the dashboard at the index route.
  */
 export function normalizeBareBasenameUrl(): void {

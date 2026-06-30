@@ -1,0 +1,158 @@
+name: LedgerLink Production Deploy
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ledgerlink-production-deploy
+  cancel-in-progress: false
+
+env:
+  ACR_REGISTRY: highvoltacr1778087855.azurecr.io
+  ACR_NAME: highvoltacr1778087855
+  NAMESPACE: quantum-ledgerlink-prod
+  API_IMAGE: highvoltacr1778087855.azurecr.io/ledgerlink-api
+  FRONTEND_IMAGE: highvoltacr1778087855.azurecr.io/ledgerlink-frontend
+  API_CONTAINER_PORT: "8001"
+  FRONTEND_CONTAINER_PORT: "80"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: ledgerlink-production
+      url: https://ledgerlink.highvolt.tech
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Azure login
+        uses: azure/login@v2.3.0
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push API image
+        run: |
+          docker build \
+            -t "${{ env.API_IMAGE }}:prod-${{ github.sha }}" \
+            -t "${{ env.API_IMAGE }}:prod-latest" \
+            ./backend
+          docker push "${{ env.API_IMAGE }}:prod-${{ github.sha }}"
+          docker push "${{ env.API_IMAGE }}:prod-latest"
+
+      - name: Build and push frontend image (root SPA)
+        run: |
+          docker build \
+            --build-arg VITE_BASE_PATH=/ \
+            --build-arg VITE_API_BASE= \
+            --build-arg DEPLOY_BASE=root \
+            --build-arg HEALTHCHECK_PATH=/ \
+            -t "${{ env.FRONTEND_IMAGE }}:prod-${{ github.sha }}" \
+            -t "${{ env.FRONTEND_IMAGE }}:prod-latest" \
+            ./frontend
+          docker push "${{ env.FRONTEND_IMAGE }}:prod-${{ github.sha }}"
+          docker push "${{ env.FRONTEND_IMAGE }}:prod-latest"
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
+
+      - name: Ensure namespace
+        run: |
+          kubectl create namespace "${{ env.NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Patch production path and safety config (merge only)
+        run: |
+          if ! kubectl get configmap ledgerlink-config -n "${{ env.NAMESPACE }}" >/dev/null 2>&1; then
+            echo "ERROR: configmap/ledgerlink-config not found in ${{ env.NAMESPACE }}."
+            echo "Apply k8s/ledgerlink-config.production.example.yaml manually (with real POSTGRES_HOST/REDIS_HOST) before first deploy."
+            exit 1
+          fi
+          kubectl patch configmap ledgerlink-config \
+            -n "${{ env.NAMESPACE }}" \
+            --type merge \
+            -p '{
+              "data": {
+                "APP_ENV": "production",
+                "ENVIRONMENT": "production",
+                "PAYMENT_ENVIRONMENT_LABEL": "Production",
+                "BASE_PATH": "/",
+                "API_BASE_PATH": "/api",
+                "PUBLIC_APP_BASE_URL": "https://ledgerlink.highvolt.tech",
+                "PUBLIC_API_BASE_URL": "https://ledgerlink.highvolt.tech/api",
+                "PUBLIC_APP_URL": "https://ledgerlink.highvolt.tech",
+                "CORS_ORIGINS": "https://ledgerlink.highvolt.tech",
+                "AZURE_WEBAPP_URL": "https://ledgerlink.highvolt.tech",
+                "GRAPH_OAUTH_REDIRECT_URI": "https://ledgerlink.highvolt.tech/api/mailboxes/oauth/callback",
+                "GRAPH_OAUTH_FRONTEND_RETURN_URL": "https://ledgerlink.highvolt.tech/integrations",
+                "STRIPE_MODE": "live",
+                "STRIPE_RETURN_URL": "https://ledgerlink.highvolt.tech/payments",
+                "STRIPE_REFRESH_URL": "https://ledgerlink.highvolt.tech/payments",
+                "STRIPE_OAUTH_REDIRECT_URL": "https://ledgerlink.highvolt.tech/payments/stripe/oauth/callback",
+                "STRIPE_PAYMENTS_EXECUTION_ENABLED": "false",
+                "STRIPE_LIVE_PAYMENTS_ENABLED": "false",
+                "STRIPE_GLOBAL_PAYOUTS_ENABLED": "false",
+                "STRIPE_GLOBAL_PAYOUTS_ACCESS_STATUS": "not_requested",
+                "POSTGRES_DB": "ledgerlink_prod"
+              }
+            }'
+
+      - name: Apply Kubernetes manifests
+        run: |
+          for manifest in \
+            ledgerlink-api-deployment.yaml \
+            ledgerlink-worker-deployment.yaml \
+            ledgerlink-beat-deployment.yaml \
+            ledgerlink-frontend-deployment.yaml \
+            ledgerlink-services.yaml \
+            ledgerlink-loadbalancers.yaml
+          do
+            kubectl apply -f "k8s/production/${manifest}" -n "${{ env.NAMESPACE }}"
+          done
+
+      - name: Update deployment images
+        run: |
+          kubectl set image deployment/ledgerlink-api \
+            ledgerlink-api="${{ env.API_IMAGE }}:prod-${{ github.sha }}" \
+            -n "${{ env.NAMESPACE }}"
+
+          kubectl set image deployment/ledgerlink-worker \
+            ledgerlink-worker="${{ env.API_IMAGE }}:prod-${{ github.sha }}" \
+            -n "${{ env.NAMESPACE }}"
+
+          kubectl set image deployment/ledgerlink-beat \
+            ledgerlink-beat="${{ env.API_IMAGE }}:prod-${{ github.sha }}" \
+            -n "${{ env.NAMESPACE }}"
+
+          kubectl set image deployment/ledgerlink-frontend \
+            ledgerlink-frontend="${{ env.FRONTEND_IMAGE }}:prod-${{ github.sha }}" \
+            -n "${{ env.NAMESPACE }}"
+
+      - name: Wait for rollouts
+        run: |
+          kubectl rollout status deployment/ledgerlink-api -n "${{ env.NAMESPACE }}" --timeout=10m
+          kubectl rollout status deployment/ledgerlink-frontend -n "${{ env.NAMESPACE }}" --timeout=10m
+
+      - name: Run database migrations
+        run: |
+          kubectl exec deployment/ledgerlink-api \
+            -n "${{ env.NAMESPACE }}" \
+            -- sh -lc "cd /app && alembic upgrade head"
+
+      - name: Verify API health via cluster service
+        run: |
+          kubectl run ledgerlink-prod-health-check \
+            -n "${{ env.NAMESPACE }}" \
+            --rm -i \
+            --restart=Never \
+            --image=curlimages/curl \
+            -- curl -f "http://ledgerlink-api.${{ env.NAMESPACE }}.svc.cluster.local:${{ env.API_CONTAINER_PORT }}/health"
