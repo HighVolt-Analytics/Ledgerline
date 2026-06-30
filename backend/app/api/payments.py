@@ -47,7 +47,7 @@ from app.services.payment_execution_auth import (
     PaymentExecutionUnauthorizedError,
     require_payment_execution_role,
 )
-from app.services.stripe_global_payouts_service import get_stripe_global_payouts_readiness
+from app.services.stripe_global_payouts_service import stripe_global_payouts_readiness_payload
 from app.services.stripe_service import (
     StripeServiceError,
     create_account_onboarding_link,
@@ -174,9 +174,9 @@ async def get_stripe_global_payouts_readiness_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[StripeGlobalPayoutsReadinessResponse]:
     _ = ctx
-    readiness = get_stripe_global_payouts_readiness()
+    readiness_payload = stripe_global_payouts_readiness_payload()
     return ApiEnvelope(
-        data=StripeGlobalPayoutsReadinessResponse.model_validate(readiness),
+        data=StripeGlobalPayoutsReadinessResponse.model_validate(readiness_payload),
     )
 
 

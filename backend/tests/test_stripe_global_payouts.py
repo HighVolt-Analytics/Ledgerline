@@ -3,13 +3,17 @@
 import pytest
 
 from app.config import get_settings
+from app.schemas.payment import StripeGlobalPayoutsReadinessResponse
 from app.services.payment_rail_service import (
     PAYMENT_RAIL_MANUAL,
     PAYMENT_RAIL_STRIPE_GLOBAL_PAYOUTS,
     get_selected_payment_rail,
     validate_payment_rail_readiness,
 )
-from app.services.stripe_global_payouts_service import get_stripe_global_payouts_readiness
+from app.services.stripe_global_payouts_service import (
+    get_stripe_global_payouts_readiness,
+    stripe_global_payouts_readiness_payload,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -103,3 +107,19 @@ def test_payment_rail_selects_global_payouts_when_ready(monkeypatch: pytest.Monk
         settings=settings,
     )
     assert ready is False
+
+
+def test_readiness_payload_is_schema_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(
+        monkeypatch,
+        STRIPE_GLOBAL_PAYOUTS_ENABLED="true",
+        STRIPE_GLOBAL_PAYOUTS_ACCESS_STATUS="enabled",
+        STRIPE_GLOBAL_PAYOUTS_FINANCIAL_ACCOUNT_ID="fa_123",
+    )
+    readiness = get_stripe_global_payouts_readiness()
+    payload = stripe_global_payouts_readiness_payload()
+    response = StripeGlobalPayoutsReadinessResponse.model_validate(payload)
+    assert response.ready is True
+    assert response.access_status == "enabled"
+    assert response.supported_countries == readiness.supported_countries
+    assert response.live_execution_enabled is False
