@@ -69,6 +69,7 @@ import type {
   StripeOnboardingLinkResponse,
   StripeOAuthUrlResponse,
   StripeDisconnectResponse,
+  StripeGlobalPayoutsReadinessResponse,
   StripeReadinessResponse,
   StripeTransaction,
   WhatsappStatus,
@@ -1247,6 +1248,11 @@ export const api = {
     const path = "/api/payments/stripe/readiness";
     if (options?.fresh) bustGetCache(path);
     return request<StripeReadinessResponse>(path);
+  },
+  getStripeGlobalPayoutsReadiness: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/global-payouts/readiness";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeGlobalPayoutsReadinessResponse>(path);
   },
   getStripeBalance: (options?: FreshRequestOptions) => {
     const path = "/api/payments/stripe/balance";

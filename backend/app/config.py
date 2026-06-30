@@ -442,6 +442,52 @@ class Settings(BaseSettings):
         description="Emergency kill switch for all payment execution orchestration endpoints",
     )
 
+    payment_environment_label: str = Field(
+        default="",
+        validation_alias="PAYMENT_ENVIRONMENT_LABEL",
+    )
+    public_app_base_url: str = Field(
+        default="",
+        validation_alias="PUBLIC_APP_BASE_URL",
+        description="Public LedgerLink app URL (e.g. https://ledgerlink.highvolt.tech)",
+    )
+    public_api_base_url: str = Field(
+        default="",
+        validation_alias="PUBLIC_API_BASE_URL",
+        description="Public LedgerLink API base URL (e.g. https://ledgerlink.highvolt.tech/api)",
+    )
+
+    # Stripe Global Payouts (configuration only — no outbound API calls until approved)
+    stripe_global_payouts_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_ENABLED",
+    )
+    stripe_global_payouts_access_status: str = Field(
+        default="not_requested",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_ACCESS_STATUS",
+    )
+    stripe_global_payouts_financial_account_id: str = Field(
+        default="",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_FINANCIAL_ACCOUNT_ID",
+    )
+    stripe_global_payouts_webhook_secret: str = Field(
+        default="",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_WEBHOOK_SECRET",
+    )
+    stripe_global_payouts_max_amount_usd: float = Field(
+        default=1000.0,
+        ge=0,
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_MAX_AMOUNT_USD",
+    )
+    stripe_global_payouts_supported_countries: str = Field(
+        default="AU",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_SUPPORTED_COUNTRIES",
+    )
+    stripe_global_payouts_supported_currencies: str = Field(
+        default="AUD,USD",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_SUPPORTED_CURRENCIES",
+    )
+
     # Viber Public Account Bot API
     viber_auth_token: str = Field(default="", validation_alias="VIBER_AUTH_TOKEN")
     viber_webhook_url: str = Field(default="", validation_alias="VIBER_WEBHOOK_URL")
@@ -669,6 +715,37 @@ class Settings(BaseSettings):
         return self.app_env.strip().lower() in ("production", "prod")
 
     @property
+    def is_preview(self) -> bool:
+        return self.app_env.strip().lower() == "preview"
+
+    @property
+    def payment_environment_label_resolved(self) -> str:
+        explicit = self.payment_environment_label.strip()
+        if explicit:
+            return explicit
+        if self.is_production:
+            return "Production"
+        if self.is_preview:
+            return "Preview"
+        return "Development"
+
+    @property
+    def public_app_base_url_resolved(self) -> str:
+        explicit = self.public_app_base_url.strip() or self.public_app_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        webapp = self.azure_webapp_url.strip().rstrip("/")
+        return webapp
+
+    @property
+    def public_api_base_url_resolved(self) -> str:
+        explicit = self.public_api_base_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        base = self.public_app_base_url_resolved
+        return f"{base}/api" if base else ""
+
+    @property
     def whatsapp_frontend_return_url(self) -> str:
         explicit = self.whatsapp_oauth_frontend_return_url.strip()
         if explicit:
@@ -705,6 +782,13 @@ class Settings(BaseSettings):
     @property
     def stripe_sandbox_mode(self) -> bool:
         return self.stripe_mode.strip().lower() in ("sandbox", "test")
+
+    @property
+    def stripe_mode_normalized(self) -> str:
+        mode = self.stripe_mode.strip().lower()
+        if mode in ("live", "production"):
+            return "live"
+        return "test"
 
     @property
     def stripe_configured(self) -> bool:
