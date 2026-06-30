@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledgerlink-api
+  namespace: quantum-ledgerlink-prod
+  labels:
+    app: ledgerlink-api
+spec:
+  type: ClusterIP
+  selector:
+    app: ledgerlink-api
+  ports:
+    - name: http
+      port: 8001
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledgerlink-frontend
+  namespace: quantum-ledgerlink-prod
+  labels:
+    app: ledgerlink-frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: ledgerlink-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

@@ -51,6 +51,8 @@ jobs:
           docker build \
             --build-arg VITE_BASE_PATH=/ledgerlink/ \
             --build-arg VITE_API_BASE=/ledgerlink \
+            --build-arg DEPLOY_BASE=prefix \
+            --build-arg HEALTHCHECK_PATH=/ledgerlink/ \
             -t "${{ env.FRONTEND_IMAGE }}:${{ github.sha }}" \
             -t "${{ env.FRONTEND_IMAGE }}:latest" \
             ./frontend
