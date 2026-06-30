@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import stripe
@@ -44,6 +44,16 @@ class StripeGlobalPayoutsReadiness:
     environment: str
     stripe_mode: str
     live_execution_enabled: bool
+
+
+def stripe_global_payouts_readiness_payload(
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Serialize service readiness DTO for StripeGlobalPayoutsReadinessResponse."""
+    readiness = get_stripe_global_payouts_readiness(settings)
+    if hasattr(readiness, "model_dump"):
+        return readiness.model_dump()
+    return asdict(readiness)
 
 
 def _parse_csv_list(value: str) -> list[str]:
