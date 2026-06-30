@@ -86,6 +86,14 @@ export function useRefreshStripeAccount() {
   });
 }
 
+export function useStripeGlobalPayoutsReadiness(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.stripeGlobalPayoutsReadiness(),
+    queryFn: () => api.getStripeGlobalPayoutsReadiness(),
+    enabled,
+  });
+}
+
 export function useStripeBalance(enabled = true) {
   return useQuery({
     queryKey: queryKeys.stripeBalance(),

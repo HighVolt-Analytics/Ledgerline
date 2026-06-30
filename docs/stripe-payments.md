@@ -287,6 +287,7 @@ Authenticated (payments module, JWT):
 | GET | `/api/payments/stripe/onboarding-link` |
 | GET | `/api/payments/stripe/oauth-url` |
 | GET | `/api/payments/stripe/readiness` |
+| GET | `/api/payments/stripe/global-payouts/readiness` |
 | GET | `/api/payments/stripe/balance` |
 | GET | `/api/payments/stripe/transactions` |
 
@@ -302,3 +303,76 @@ Public:
 | Method | Path |
 |--------|------|
 | POST | `/api/webhooks/stripe` |
+| POST | `/api/webhooks/stripe/global-payouts` |
+
+## Stripe Global Payouts (Australia / AUD supplier AP)
+
+Stripe confirmed **Connect-only is not sufficient** for Australia/AUD accounts-payable supplier payments. LedgerLink prepares for **Stripe Global Payouts** while keeping all outbound money APIs disabled until Stripe approval and explicit configuration.
+
+### URLs
+
+| Environment | App URL | API base |
+|-------------|---------|----------|
+| Preview / staging | https://staging.highvolt.tech/ledgerlink | https://staging.highvolt.tech/ledgerlink/api |
+| Production | https://ledgerlink.highvolt.tech | https://ledgerlink.highvolt.tech/api |
+
+### Configuration (no secrets in UI)
+
+| Variable | Purpose |
+|----------|---------|
+| `APP_ENV` | `preview` or `production` |
+| `PAYMENT_ENVIRONMENT_LABEL` | Display label (`Preview` / `Production`) |
+| `PUBLIC_APP_BASE_URL` | Public app origin |
+| `PUBLIC_API_BASE_URL` | Public API origin |
+| `STRIPE_MODE` | `test` (preview) or `live` (production) |
+| `STRIPE_GLOBAL_PAYOUTS_ENABLED` | Feature flag (default `false`) |
+| `STRIPE_GLOBAL_PAYOUTS_ACCESS_STATUS` | `not_requested` \| `pending_approval` \| `enabled` \| `rejected` |
+| `STRIPE_GLOBAL_PAYOUTS_FINANCIAL_ACCOUNT_ID` | Stripe financial account id (secret store) |
+| `STRIPE_GLOBAL_PAYOUTS_WEBHOOK_SECRET` | Webhook signing secret (secret store) |
+| `STRIPE_GLOBAL_PAYOUTS_MAX_AMOUNT_USD` | Launch limit (default 1000) |
+| `STRIPE_GLOBAL_PAYOUTS_SUPPORTED_COUNTRIES` | e.g. `AU` |
+| `STRIPE_GLOBAL_PAYOUTS_SUPPORTED_CURRENCIES` | e.g. `AUD,USD` |
+
+Existing safety flags (unchanged):
+
+- `STRIPE_PAYMENTS_EXECUTION_ENABLED=false`
+- `STRIPE_LIVE_PAYMENTS_ENABLED=false`
+
+`live_execution_enabled` is true only when Global Payouts readiness is true **and** both execution flags are true.
+
+### Payment rails
+
+| Rail | Status |
+|------|--------|
+| `manual_instruction` | **Default** — production manual orchestration |
+| `stripe_global_payouts` | Selected when Global Payouts readiness is true (execution APIs not implemented) |
+| `stripe_treasury` | Placeholder |
+| `external_ap_provider` | Placeholder |
+
+Dry-run readiness (`POST /api/payments/{id}/execution-readiness`) includes rail metadata: `selected_payment_rail`, `stripe_global_payouts_ready`, `payment_rail_ready`, `app_env`, `stripe_mode`, `live_execution_enabled`.
+
+### Webhooks (placeholder)
+
+`POST /api/webhooks/stripe/global-payouts` verifies `STRIPE_GLOBAL_PAYOUTS_WEBHOOK_SECRET` when configured, records event id/type, and does **not** mutate payments yet.
+
+Expected future event types:
+
+- `v2.money_management.outbound_payment.created`
+- `v2.money_management.outbound_payment.posted`
+- `v2.money_management.outbound_payment.failed`
+- `v2.money_management.outbound_payment.returned`
+- `v2.money_management.payout_method.created`
+
+### Go-live checklist (after Stripe approval)
+
+1. Stripe enables Global Payouts on the platform account.
+2. Set `STRIPE_GLOBAL_PAYOUTS_ACCESS_STATUS=enabled` and configure financial account id.
+3. Register production webhook URL: `https://ledgerlink.highvolt.tech/api/webhooks/stripe/global-payouts`
+4. Complete UAT on preview with `STRIPE_MODE=test`.
+5. Deploy production ConfigMap (`k8s/ledgerlink-config.production.example.yaml`) with `STRIPE_MODE=live`.
+6. Only after business/security signoff: set `STRIPE_PAYMENTS_EXECUTION_ENABLED=true` and `STRIPE_LIVE_PAYMENTS_ENABLED=true`.
+7. Implement outbound payment API integration in a follow-up release (not in this foundation).
+
+**No-money-movement rule:** LedgerLink must not call `Transfer.create`, `Payout.create`, Global Payouts outbound payment APIs, or Treasury outbound APIs until steps above are complete and execution code is explicitly implemented.
+
+See also: [production-deployment.md](./production-deployment.md)

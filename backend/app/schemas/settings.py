@@ -24,9 +24,15 @@ class AppSettingsResponse(BaseModel):
     rule_book_config_path: str
     cors_origins: str
     whatsapp_configured: bool
+    app_env: str = "development"
+    payment_environment_label: str = "Development"
+    public_app_base_url: str = ""
+    public_api_base_url: str = ""
     stripe_mode: str = "sandbox"
     xero_configured: bool = False
     quickbooks_configured: bool = False
+    stripe_global_payouts_enabled: bool = False
+    stripe_global_payouts_access_status: str = "not_requested"
     stripe_payments_execution_enabled: bool = False
     stripe_live_payments_enabled: bool = False
     payment_manual_execution_enabled: bool = False

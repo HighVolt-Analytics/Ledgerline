@@ -9,11 +9,28 @@ PayoutMethodType = Literal[
     "manual_bank",
     "stripe_connected_account",
     "external_bank_phase2",
+    "stripe_global_payouts",
+    "stripe_treasury",
+    "external_ap_provider",
 ]
 PayoutMethodStatus = Literal[
     "not_configured",
     "pending",
     "verified",
+    "failed",
+    "disabled",
+]
+PayoutProvider = Literal[
+    "manual_bank",
+    "stripe_global_payouts",
+    "stripe_treasury",
+    "external_ap_provider",
+]
+RecipientStatus = Literal[
+    "not_configured",
+    "pending",
+    "verified",
+    "failed",
     "disabled",
 ]
 
@@ -57,6 +74,11 @@ class VendorPayoutMethodResponse(BaseModel):
     currency: str = "AUD"
     status: str
     is_default: bool
+    provider: str | None = None
+    provider_recipient_id: str | None = None
+    recipient_status: str | None = None
+    recipient_country: str | None = None
+    recipient_currency: str | None = None
     created_at: datetime
     updated_at: datetime
 

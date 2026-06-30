@@ -108,6 +108,14 @@ const ACCOUNTING_OAUTH_ERRORS: Record<string, string> = {
   missing_realm: "QuickBooks company id missing from callback.",
 };
 
+function globalPayoutsAccessLabel(status: string | undefined): string {
+  const normalized = (status || "not_requested").toLowerCase();
+  if (normalized === "pending_approval") return "Pending approval";
+  if (normalized === "enabled") return "Enabled";
+  if (normalized === "rejected") return "Rejected";
+  return "Not requested";
+}
+
 function requestStatusLabel(status: string) {
   if (status === "pending") return "Pending";
   if (status === "connected") return "Connected";
@@ -460,9 +468,11 @@ export function IntegrationsPage() {
     if (stripeReadiness?.blocking_reason) {
       return `${mode} · ${masked} · ${stripeReadiness.blocking_reason}`;
     }
-    return `${mode} · ${masked}`;
+    const gpStatus = globalPayoutsAccessLabel(s?.stripe_global_payouts_access_status);
+    return `${mode} · ${masked} · Global Payouts: ${gpStatus}`;
   }, [
     s?.stripe_mode,
+    s?.stripe_global_payouts_access_status,
     stripeAccount,
     stripeAccountLoading,
     stripePaymentsConnected,
@@ -580,19 +590,29 @@ export function IntegrationsPage() {
       icon: CreditCard,
       badge: statusBadge(stripePaymentsConnected),
       footer: stripePaymentsConnected ? (
-        <Link
-          to="/payments"
-          className="text-[11px] text-primary hover:underline"
-        >
-          Manage on Payments
-        </Link>
+        <div className="space-y-1">
+          <Link
+            to="/payments"
+            className="text-[11px] text-primary hover:underline"
+          >
+            Manage on Payments
+          </Link>
+          <p className="text-[11px] text-muted-foreground">
+            Global Payouts: {globalPayoutsAccessLabel(s.stripe_global_payouts_access_status)}
+          </p>
+        </div>
       ) : (
-        <Link
-          to="/payments"
-          className="text-[11px] text-primary hover:underline"
-        >
-          Connect on Payments
-        </Link>
+        <div className="space-y-1">
+          <Link
+            to="/payments"
+            className="text-[11px] text-primary hover:underline"
+          >
+            Connect on Payments
+          </Link>
+          <p className="text-[11px] text-muted-foreground">
+            Global Payouts: {globalPayoutsAccessLabel(s.stripe_global_payouts_access_status)}
+          </p>
+        </div>
       ),
     },
     {
@@ -625,6 +645,10 @@ export function IntegrationsPage() {
 
   const connected = items.filter((i) => i.ok).length;
   const pendingRequests = requests.filter((r) => r.status === "pending");
+  const isProductionEnv = (s.app_env || "").toLowerCase() === "production";
+  const livePayoutsDisabled =
+    isProductionEnv &&
+    !(s.stripe_live_payments_enabled && s.stripe_payments_execution_enabled);
 
   return (
     <div>
@@ -632,6 +656,17 @@ export function IntegrationsPage() {
         title="Integrations"
         subtitle={`${connected} of ${items.length} services connected`}
       />
+
+      <div
+        className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground mb-4"
+        data-testid="banner-integrations-environment"
+      >
+        {isProductionEnv
+          ? livePayoutsDisabled
+            ? "Production environment — live payout execution disabled until Stripe Global Payouts approval is complete."
+            : `${s.payment_environment_label} environment`
+          : `${s.payment_environment_label} environment — no real money movement`}
+      </div>
 
       {accountingError && (
         <p className="text-sm text-destructive mb-4">{accountingError}</p>

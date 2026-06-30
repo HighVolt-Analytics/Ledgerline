@@ -1,0 +1,47 @@
+# Production ConfigMap example (namespace quantum-ledgerlink-prod).
+# Do not commit real secrets — use app-secrets for keys and webhook secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ledgerlink-config
+  namespace: quantum-ledgerlink-prod
+data:
+  BASE_PATH: ""
+  APP_ENV: "production"
+  PAYMENT_ENVIRONMENT_LABEL: "Production"
+  PUBLIC_APP_BASE_URL: "https://ledgerlink.highvolt.tech"
+  PUBLIC_API_BASE_URL: "https://ledgerlink.highvolt.tech/api"
+  PUBLIC_APP_URL: "https://ledgerlink.highvolt.tech"
+  POSTGRES_HOST: "<production-postgres-host>"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "<production-db-name>"
+  POSTGRES_USER: "<production-db-user>"
+  REDIS_HOST: "<production-redis-host>"
+  REDIS_SSL_PORT: "6380"
+  UPLOAD_DIR: "/app/uploads"
+  RULE_BOOK_CONFIG_PATH: "/app/app/rule_book_config.json"
+  CHART_OF_ACCOUNTS_PATH: "/app/app/chart_of_accounts.json"
+  CORS_ORIGINS: "https://ledgerlink.highvolt.tech"
+  AZURE_WEBAPP_URL: "https://ledgerlink.highvolt.tech"
+  GRAPH_OAUTH_REDIRECT_URI: "https://ledgerlink.highvolt.tech/api/mailboxes/oauth/callback"
+  GRAPH_OAUTH_FRONTEND_RETURN_URL: "https://ledgerlink.highvolt.tech/integrations"
+  LOG_LEVEL: "INFO"
+  AUTH_REQUIRED: "true"
+  STRIPE_MODE: "live"
+  STRIPE_RETURN_URL: "https://ledgerlink.highvolt.tech/payments"
+  STRIPE_REFRESH_URL: "https://ledgerlink.highvolt.tech/payments"
+  STRIPE_OAUTH_REDIRECT_URL: "https://ledgerlink.highvolt.tech/payments/stripe/oauth/callback"
+  # Safety — keep false until Stripe Global Payouts approval and go-live signoff
+  STRIPE_PAYMENTS_EXECUTION_ENABLED: "false"
+  STRIPE_LIVE_PAYMENTS_ENABLED: "false"
+  STRIPE_GLOBAL_PAYOUTS_ENABLED: "false"
+  STRIPE_GLOBAL_PAYOUTS_ACCESS_STATUS: "not_requested"
+  STRIPE_GLOBAL_PAYOUTS_MAX_AMOUNT_USD: "1000"
+  STRIPE_GLOBAL_PAYOUTS_SUPPORTED_COUNTRIES: "AU"
+  STRIPE_GLOBAL_PAYOUTS_SUPPORTED_CURRENCIES: "AUD,USD"
+  PAYMENT_MANUAL_EXECUTION_ENABLED: "true"
+  PAYMENT_MANUAL_EXECUTION_LIMIT_USD: "1000"
+  PAYMENT_EXECUTION_DISABLED: "false"
+  # app-secrets (production): STRIPE_SECRET_KEY (sk_live_…), STRIPE_WEBHOOK_SECRET,
+  # STRIPE_CONNECT_CLIENT_ID, STRIPE_GLOBAL_PAYOUTS_WEBHOOK_SECRET,
+  # STRIPE_GLOBAL_PAYOUTS_FINANCIAL_ACCOUNT_ID, DATABASE_URL components, JWT_SECRET, etc.
