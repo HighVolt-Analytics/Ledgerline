@@ -8,6 +8,10 @@ from starlette.requests import ClientDisconnect
 
 from app.api.deps import get_db
 from app.config import get_settings
+from app.services.stripe_global_payouts_service import (
+    process_global_payouts_webhook_event,
+    verify_global_payouts_webhook,
+)
 from app.services.stripe_service import (
     StripeServiceError,
     process_stripe_webhook_event,
@@ -69,3 +73,41 @@ async def stripe_webhook_receive(
         duplicate=result.duplicate,
     )
     return {"received": True, "duplicate": result.duplicate}
+
+
+@router.post("/stripe/global-payouts")
+async def stripe_global_payouts_webhook_receive(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
+    """Placeholder receiver for Stripe Global Payouts money management events — no payment mutation yet."""
+    try:
+        payload = await request.body()
+    except ClientDisconnect:
+        logger.info("stripe_global_payouts_webhook_client_disconnect")
+        return {"received": True}
+
+    signature = request.headers.get("Stripe-Signature", "")
+    try:
+        event = verify_global_payouts_webhook(payload, signature)
+    except StripeServiceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    event_type = str(event.get("type") or "")
+    event_id = str(event.get("id") or "")
+    logger.info(
+        "stripe_global_payouts_webhook_received",
+        stripe_event_id=event_id or None,
+        event_type=event_type or None,
+    )
+    try:
+        await process_global_payouts_webhook_event(db, event)
+        await db.commit()
+    except Exception as exc:
+        logger.warning(
+            "stripe_global_payouts_webhook_process_failed",
+            stripe_event_id=event_id or None,
+            event_type=event_type or None,
+            error=str(exc),
+        )
+    return {"received": True}

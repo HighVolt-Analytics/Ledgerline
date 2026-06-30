@@ -24,6 +24,7 @@ from app.schemas.payment import (
     StripeDisconnectResponse,
     StripeOAuthUrlResponse,
     StripeOnboardingLinkResponse,
+    StripeGlobalPayoutsReadinessResponse,
     StripeReadinessResponse,
     StripeTransactionResponse,
     WalletSummaryResponse,
@@ -46,6 +47,7 @@ from app.services.payment_execution_auth import (
     PaymentExecutionUnauthorizedError,
     require_payment_execution_role,
 )
+from app.services.stripe_global_payouts_service import get_stripe_global_payouts_readiness
 from app.services.stripe_service import (
     StripeServiceError,
     create_account_onboarding_link,
@@ -162,6 +164,20 @@ async def get_stripe_readiness(
 ) -> ApiEnvelope[StripeReadinessResponse]:
     readiness = await get_stripe_readiness_for_tenant(db, ctx.tenant_id)
     return ApiEnvelope(data=StripeReadinessResponse.model_validate(readiness))
+
+
+@router.get(
+    "/stripe/global-payouts/readiness",
+    response_model=ApiEnvelope[StripeGlobalPayoutsReadinessResponse],
+)
+async def get_stripe_global_payouts_readiness_endpoint(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[StripeGlobalPayoutsReadinessResponse]:
+    _ = ctx
+    readiness = get_stripe_global_payouts_readiness()
+    return ApiEnvelope(
+        data=StripeGlobalPayoutsReadinessResponse.model_validate(readiness),
+    )
 
 
 @router.post("/stripe/account/refresh", response_model=ApiEnvelope[StripeAccountResponse])

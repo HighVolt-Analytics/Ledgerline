@@ -143,6 +143,21 @@ class StripeReadinessResponse(BaseModel):
     recommended_action: str | None = None
 
 
+class StripeGlobalPayoutsReadinessResponse(BaseModel):
+    enabled: bool
+    access_status: str
+    financial_account_configured: bool
+    supported_countries: list[str] = Field(default_factory=list)
+    supported_currencies: list[str] = Field(default_factory=list)
+    max_amount_usd: float
+    ready: bool
+    blocking_reason: str | None = None
+    recommended_action: str | None = None
+    environment: str
+    stripe_mode: str
+    live_execution_enabled: bool
+
+
 class StripeBalanceAmountResponse(BaseModel):
     amount: float | None = None
     currency: str | None = None
@@ -203,3 +218,11 @@ class PaymentExecutionReadinessResponse(BaseModel):
     tenant_execution_enabled: bool = True
     recommended_action: str | None = None
     payments_execution_enabled: bool = False
+    selected_payment_rail: str = "manual_instruction"
+    stripe_global_payouts_ready: bool = False
+    stripe_global_payouts_blocking_reason: str | None = None
+    payment_rail_ready: bool = False
+    payment_rail_recommended_action: str | None = None
+    app_env: str = "preview"
+    stripe_mode: str = "test"
+    live_execution_enabled: bool = False

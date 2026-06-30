@@ -23,6 +23,12 @@ from app.services.payment_execution_rules import (
     check_payment_manual_execution_limit,
     vendor_payout_method_verified,
 )
+from app.services.payment_rail_service import (
+    get_selected_payment_rail,
+    payment_rail_context,
+    validate_payment_rail_readiness,
+)
+from app.services.stripe_global_payouts_service import get_stripe_global_payouts_readiness
 from app.services.stripe_service import StripeReadiness, get_stripe_readiness_for_tenant
 from app.services.vendor_payout_method_service import (
     PAYOUT_METHOD_TYPES,
@@ -53,6 +59,14 @@ class PaymentExecutionReadiness:
     tenant_execution_enabled: bool
     recommended_action: str | None
     payments_execution_enabled: bool
+    selected_payment_rail: str = "manual_instruction"
+    stripe_global_payouts_ready: bool = False
+    stripe_global_payouts_blocking_reason: str | None = None
+    payment_rail_ready: bool = False
+    payment_rail_recommended_action: str | None = None
+    app_env: str = "preview"
+    stripe_mode: str = "test"
+    live_execution_enabled: bool = False
 
 
 @dataclass
@@ -326,6 +340,14 @@ def _to_readiness_result(
             "Dry-run validation passed for Stripe rails. Real Stripe execution remains disabled; "
             "use manual payment instruction orchestration."
         )
+    rail_ctx = payment_rail_context(settings)
+    selected_rail = get_selected_payment_rail(settings)
+    gp = get_stripe_global_payouts_readiness(settings)
+    rail_ready, _, rail_action = validate_payment_rail_readiness(
+        selected_rail,
+        global_payouts=gp,
+        settings=settings,
+    )
     return PaymentExecutionReadiness(
         payment_id=payment_id,
         can_execute=can_execute or stripe_can_execute,
@@ -342,6 +364,14 @@ def _to_readiness_result(
         tenant_execution_enabled=checks.tenant_execution_enabled,
         recommended_action=recommended,
         payments_execution_enabled=settings.stripe_payment_execution_enabled,
+        selected_payment_rail=rail_ctx["selected_payment_rail"],
+        stripe_global_payouts_ready=bool(rail_ctx["stripe_global_payouts_ready"]),
+        stripe_global_payouts_blocking_reason=rail_ctx["stripe_global_payouts_blocking_reason"],
+        payment_rail_ready=rail_ready,
+        payment_rail_recommended_action=rail_action,
+        app_env=str(rail_ctx["app_env"]),
+        stripe_mode=str(rail_ctx["stripe_mode"]),
+        live_execution_enabled=bool(rail_ctx["live_execution_enabled"]),
     )
 
 

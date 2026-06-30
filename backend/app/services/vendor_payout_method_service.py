@@ -22,6 +22,9 @@ PAYOUT_METHOD_TYPES = frozenset(
         "manual_bank",
         "stripe_connected_account",
         "external_bank_phase2",
+        "stripe_global_payouts",
+        "stripe_treasury",
+        "external_ap_provider",
     }
 )
 PAYOUT_METHOD_STATUSES = frozenset(
@@ -92,7 +95,32 @@ def _validate_stripe_account_id(value: str | None) -> str | None:
     return cleaned
 
 
+def _provider_metadata(row: VendorPaymentMethod) -> dict[str, str | None]:
+    raw = row.raw_json if isinstance(row.raw_json, dict) else {}
+    method_type = row.method_type or "manual_bank"
+    provider = str(raw.get("provider") or method_type)
+    if method_type == "stripe_global_payouts":
+        provider = "stripe_global_payouts"
+    elif method_type == "stripe_treasury":
+        provider = "stripe_treasury"
+    elif method_type == "external_ap_provider":
+        provider = "external_ap_provider"
+    elif method_type == "manual_bank":
+        provider = "manual_bank"
+    recipient_status = str(raw.get("recipient_status") or row.status or "pending")
+    if method_type == "stripe_global_payouts" and recipient_status == "verified":
+        recipient_status = "pending"
+    return {
+        "provider": provider,
+        "provider_recipient_id": raw.get("provider_recipient_id"),
+        "recipient_status": recipient_status,
+        "recipient_country": raw.get("recipient_country"),
+        "recipient_currency": raw.get("recipient_currency") or row.currency,
+    }
+
+
 def payout_method_to_response(row: VendorPaymentMethod) -> VendorPayoutMethodResponse:
+    meta = _provider_metadata(row)
     return VendorPayoutMethodResponse(
         id=row.id,
         vendor_id=row.vendor_id,
@@ -103,6 +131,11 @@ def payout_method_to_response(row: VendorPaymentMethod) -> VendorPayoutMethodRes
         currency=row.currency or "AUD",
         status=row.status or "not_configured",
         is_default=bool(row.is_default),
+        provider=meta["provider"],
+        provider_recipient_id=meta["provider_recipient_id"],
+        recipient_status=meta["recipient_status"],
+        recipient_country=meta["recipient_country"],
+        recipient_currency=meta["recipient_currency"],
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

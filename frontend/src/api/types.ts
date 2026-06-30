@@ -594,6 +594,14 @@ export interface PaymentExecutionReadinessResponse {
   tenant_execution_enabled: boolean;
   recommended_action: string | null;
   payments_execution_enabled: boolean;
+  selected_payment_rail: string;
+  stripe_global_payouts_ready: boolean;
+  stripe_global_payouts_blocking_reason: string | null;
+  payment_rail_ready: boolean;
+  payment_rail_recommended_action: string | null;
+  app_env: string;
+  stripe_mode: string;
+  live_execution_enabled: boolean;
 }
 
 export interface DashboardStats {
@@ -753,12 +761,16 @@ export interface Vendor {
 export type VendorPayoutMethodType =
   | "manual_bank"
   | "stripe_connected_account"
-  | "external_bank_phase2";
+  | "external_bank_phase2"
+  | "stripe_global_payouts"
+  | "stripe_treasury"
+  | "external_ap_provider";
 
 export type VendorPayoutMethodStatus =
   | "not_configured"
   | "pending"
   | "verified"
+  | "failed"
   | "disabled";
 
 export interface VendorPayoutMethod {
@@ -771,6 +783,11 @@ export interface VendorPayoutMethod {
   currency: string;
   status: VendorPayoutMethodStatus | string;
   is_default: boolean;
+  provider?: string | null;
+  provider_recipient_id?: string | null;
+  recipient_status?: string | null;
+  recipient_country?: string | null;
+  recipient_currency?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -817,9 +834,15 @@ export interface AppSettings {
   rule_book_config_path: string;
   cors_origins: string;
   whatsapp_configured: boolean;
+  app_env: string;
+  payment_environment_label: string;
+  public_app_base_url: string;
+  public_api_base_url: string;
   stripe_mode: string;
   xero_configured: boolean;
   quickbooks_configured: boolean;
+  stripe_global_payouts_enabled: boolean;
+  stripe_global_payouts_access_status: string;
   stripe_payments_execution_enabled: boolean;
   stripe_live_payments_enabled: boolean;
   payment_manual_execution_enabled: boolean;
@@ -1361,6 +1384,21 @@ export interface StripeReadinessResponse {
   ready_for_payouts: boolean;
   blocking_reason: string | null;
   recommended_action: string | null;
+}
+
+export interface StripeGlobalPayoutsReadinessResponse {
+  enabled: boolean;
+  access_status: string;
+  financial_account_configured: boolean;
+  supported_countries: string[];
+  supported_currencies: string[];
+  max_amount_usd: number;
+  ready: boolean;
+  blocking_reason: string | null;
+  recommended_action: string | null;
+  environment: string;
+  stripe_mode: string;
+  live_execution_enabled: boolean;
 }
 
 export interface StripeBalanceAmount {

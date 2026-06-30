@@ -17,6 +17,7 @@ import {
   useRefreshStripeAccount,
   useStripeAccount,
   useStripeBalance,
+  useStripeGlobalPayoutsReadiness,
   useStripeOnboardingLink,
   useStripeOAuthUrl,
   useStripeReadiness,
@@ -81,6 +82,43 @@ function sumStripeBalanceAmounts(
   return { total, currency };
 }
 
+function globalPayoutsAccessLabel(status: string | undefined): string {
+  const normalized = (status || "not_requested").toLowerCase();
+  if (normalized === "pending_approval") return "Pending approval";
+  if (normalized === "enabled") return "Enabled";
+  if (normalized === "rejected") return "Rejected";
+  return "Not requested";
+}
+
+function paymentEnvironmentBanner(
+  appSettings: {
+    app_env?: string;
+    payment_environment_label?: string;
+    stripe_global_payouts_access_status?: string;
+    stripe_live_payments_enabled?: boolean;
+    stripe_payments_execution_enabled?: boolean;
+  } | null | undefined,
+  globalPayoutsLiveExecution: boolean | undefined
+): { message: string; tone: "info" | "warning" } | null {
+  if (!appSettings) return null;
+  const env = (appSettings.app_env || "preview").toLowerCase();
+  const label = appSettings.payment_environment_label || "Preview";
+  if (env !== "production") {
+    return {
+      tone: "info",
+      message: `${label} environment — no real money movement`,
+    };
+  }
+  if (!globalPayoutsLiveExecution) {
+    return {
+      tone: "warning",
+      message:
+        "Production environment — live payout execution disabled until Stripe Global Payouts approval is complete.",
+    };
+  }
+  return null;
+}
+
 function stripeReadinessBanner(
   readiness: StripeReadinessResponse | undefined
 ): { message: string; tone: "success" | "warning" | "neutral" } | null {
@@ -125,6 +163,8 @@ export function PaymentsPage() {
   const { updateStatus, approvePayment } = usePaymentMutations();
   const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount();
   const { data: stripeReadiness } = useStripeReadiness();
+  const { data: globalPayoutsReadiness, isLoading: globalPayoutsLoading } =
+    useStripeGlobalPayoutsReadiness();
   const stripeConnected = stripeAccount != null;
   const { data: stripeBalance, isLoading: stripeBalanceLoading } = useStripeBalance(
     stripeConnected
@@ -152,6 +192,10 @@ export function PaymentsPage() {
   const stripeWalletAvailable = sumStripeBalanceAmounts(stripeBalance?.available ?? []);
   const stripeWalletPending = sumStripeBalanceAmounts(stripeBalance?.pending ?? []);
   const readinessBanner = stripeReadinessBanner(stripeReadiness);
+  const environmentBanner = paymentEnvironmentBanner(
+    appSettings,
+    globalPayoutsReadiness?.live_execution_enabled
+  );
 
   useEffect(() => {
     const stripeReturn = searchParams.get("stripe");
@@ -269,6 +313,21 @@ export function PaymentsPage() {
         title="Payments"
         subtitle="Disbursement workflow for processed payables — tiered approval by amount with Stripe-ready scheduling."
       />
+
+      {environmentBanner ? (
+        <div
+          className={cn(
+            "rounded-md border px-3 py-2 text-xs mb-4",
+            environmentBanner.tone === "info" &&
+              "border-border bg-muted/40 text-muted-foreground",
+            environmentBanner.tone === "warning" &&
+              "border-[hsl(36_80%_70%)] bg-[hsl(36_80%_96%)] text-[hsl(36_80%_28%)] dark:border-[hsl(43_74%_35%)] dark:bg-[hsl(43_74%_12%)] dark:text-[hsl(43_74%_72%)]"
+          )}
+          data-testid="banner-payment-environment"
+        >
+          {environmentBanner.message}
+        </div>
+      ) : null}
 
       <div className="grid gap-3 grid-cols-1 lg:grid-cols-[1fr_1fr_1fr_1.4fr] mb-5">
         <KpiCard
@@ -525,9 +584,83 @@ export function PaymentsPage() {
         )}
 
         <p className="text-[11px] text-muted-foreground mt-3 border-t border-border/60 pt-3">
-          External supplier bank payouts — Phase 2. Vendor payout rails are not enabled yet; Top Up
-          and Withdraw remain unavailable until supported by the backend.
+          Stripe Connect is used for account connection and visibility. Australia/AUD supplier AP
+          payments require Stripe Global Payouts approval.
         </p>
+      </Card>
+
+      <Card className="p-4 mb-5" data-testid="card-stripe-global-payouts">
+        <div className="flex items-start gap-2.5 mb-3">
+          <Shield className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+          <div>
+            <h2 className="text-sm font-medium">Stripe Global Payouts</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Configuration readiness for Australia/AUD supplier AP payments. No outbound payment
+              APIs are called until Stripe approval and explicit live execution flags are enabled.
+            </p>
+          </div>
+        </div>
+        {globalPayoutsLoading || !globalPayoutsReadiness ? (
+          <p className="text-xs text-muted-foreground">Loading Global Payouts readiness…</p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-xs">
+            <div>
+              <span className="text-muted-foreground">Environment</span>
+              <div className="text-foreground capitalize">{globalPayoutsReadiness.environment}</div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Stripe mode</span>
+              <div className="text-foreground uppercase">{globalPayoutsReadiness.stripe_mode}</div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Access status</span>
+              <div className="text-foreground">
+                {globalPayoutsAccessLabel(globalPayoutsReadiness.access_status)}
+              </div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Financial account</span>
+              <div className="text-foreground">
+                {globalPayoutsReadiness.financial_account_configured
+                  ? "Configured"
+                  : "Not configured"}
+              </div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Supported</span>
+              <div className="text-foreground">
+                {globalPayoutsReadiness.supported_countries.join(", ") || "—"} ·{" "}
+                {globalPayoutsReadiness.supported_currencies.join(", ") || "—"}
+              </div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Launch limit</span>
+              <div className="text-foreground tnum">
+                USD {globalPayoutsReadiness.max_amount_usd.toLocaleString()}
+              </div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Ready</span>
+              <div className={globalPayoutsReadiness.ready ? "text-primary" : "text-foreground"}>
+                {globalPayoutsReadiness.ready ? "Yes" : "No"}
+              </div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Live execution</span>
+              <div className="text-foreground">
+                {globalPayoutsReadiness.live_execution_enabled ? "Enabled" : "Disabled"}
+              </div>
+            </div>
+          </div>
+        )}
+        {globalPayoutsReadiness?.blocking_reason ? (
+          <p className="text-xs text-muted-foreground mt-3">{globalPayoutsReadiness.blocking_reason}</p>
+        ) : null}
+        {globalPayoutsReadiness?.recommended_action ? (
+          <p className="text-xs text-muted-foreground mt-1">
+            {globalPayoutsReadiness.recommended_action}
+          </p>
+        ) : null}
       </Card>
 
       <Card className="p-3 mb-5 border-amber-500/30 bg-amber-500/5">
