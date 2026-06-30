@@ -50,3 +50,20 @@ def validate_deliverable_email_or_raise(email: str) -> None:
             status_code=400,
             detail="Please use a real email address. Test domains cannot receive email.",
         )
+
+
+def mask_email_for_log(email: str) -> str:
+    """Mask local part for logs; keep domain visible for deliverability debugging."""
+    normalized = email.strip().lower()
+    if "@" not in normalized:
+        return "***"
+    local, domain = normalized.rsplit("@", 1)
+    if not local:
+        return f"***@{domain}"
+    if len(local) == 1:
+        masked_local = "*"
+    elif len(local) == 2:
+        masked_local = f"{local[0]}*"
+    else:
+        masked_local = f"{local[0]}***{local[-1]}"
+    return f"{masked_local}@{domain}"
