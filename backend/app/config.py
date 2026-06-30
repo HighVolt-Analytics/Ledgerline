@@ -326,6 +326,16 @@ class Settings(BaseSettings):
     otp_expire_minutes: int = Field(default=5, validation_alias="OTP_EXPIRE_MINUTES")
     dev_otp_code: str = Field(default="123456", validation_alias="DEV_OTP_CODE")
     app_env: str = Field(default="development", validation_alias="APP_ENV")
+    environment: str = Field(
+        default="",
+        validation_alias="ENVIRONMENT",
+        description="Deployment environment label (falls back to APP_ENV when unset)",
+    )
+    api_base_path: str = Field(
+        default="/api",
+        validation_alias="API_BASE_PATH",
+        description="Public API path prefix (e.g. /api or /ledgerlink/api)",
+    )
     default_tenant_slug: str = Field(default="testing", validation_alias="DEFAULT_TENANT_SLUG")
     default_tenant_name: str = Field(default="Testing", validation_alias="DEFAULT_TENANT_NAME")
     approval_policy_unlock_code: str = "000000"
@@ -503,6 +513,29 @@ class Settings(BaseSettings):
         if not text.startswith("/"):
             text = f"/{text}"
         return text.rstrip("/")
+
+    @field_validator("api_base_path", mode="before")
+    @classmethod
+    def normalize_api_base_path(cls, value: object) -> str:
+        if value is None:
+            return "/api"
+        text = str(value).strip() or "/api"
+        if not text.startswith("/"):
+            text = f"/{text}"
+        return text.rstrip("/") or "/api"
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def normalize_environment(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @model_validator(mode="after")
+    def resolve_environment_default(self) -> Self:
+        if not self.environment.strip():
+            self.environment = self.app_env.strip()
+        return self
 
     @model_validator(mode="after")
     def normalize_azure_connection_strings(self) -> Self:
