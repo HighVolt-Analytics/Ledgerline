@@ -73,6 +73,10 @@ from app.tenant_settings import tenant_locale, tenant_onboarding_completed, tena
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
 
+_OTP_EMAIL_FAILURE_MESSAGE = (
+    "Could not send verification email. Please try again later or contact your administrator."
+)
+
 
 def _user_response(
     user: User,
@@ -196,6 +200,14 @@ def _require_token_type(creds: HTTPAuthorizationCredentials | None, expected: st
     return payload
 
 
+async def _send_login_otp_or_raise(*, account: AuthAccount, otp: str) -> None:
+    delivery = await send_login_otp_email(to_email=account.email, otp=otp)
+    if delivery.sent:
+        return
+    await clear_otp(auth_account_id=account.id, email=account.email)
+    raise HTTPException(status_code=503, detail=_OTP_EMAIL_FAILURE_MESSAGE)
+
+
 @router.post("/login", response_model=ApiEnvelope[LoginChallengeResponse])
 async def login(
     body: LoginRequest,
@@ -217,7 +229,7 @@ async def login(
         otp=otp,
         ttl_seconds=settings.otp_expire_minutes * 60,
     )
-    await send_login_otp_email(to_email=account.email, otp=otp)
+    await _send_login_otp_or_raise(account=account, otp=otp)
 
     token = create_challenge_token(auth_account_id=account.id, email=account.email)
     return ApiEnvelope(
@@ -297,7 +309,7 @@ async def resend_otp(
         otp=otp,
         ttl_seconds=settings.otp_expire_minutes * 60,
     )
-    await send_login_otp_email(to_email=account.email, otp=otp)
+    await _send_login_otp_or_raise(account=account, otp=otp)
     token = create_challenge_token(auth_account_id=account.id, email=account.email)
     return ApiEnvelope(data=LoginChallengeResponse(challenge_token=token))
 

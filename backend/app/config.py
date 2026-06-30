@@ -752,6 +752,19 @@ class Settings(BaseSettings):
         return self.app_env.strip().lower() == "preview"
 
     @property
+    def smtp_explicitly_configured(self) -> bool:
+        """True when SMTP_HOST points to a real relay (not dev localhost defaults)."""
+        host = self.smtp_host.strip().lower()
+        return host not in ("", "localhost", "127.0.0.1")
+
+    @property
+    def smtp_allowed_for_outbound(self) -> bool:
+        """Production must not use implicit localhost:1025; dev/preview may."""
+        if self.is_production:
+            return self.smtp_explicitly_configured
+        return True
+
+    @property
     def payment_environment_label_resolved(self) -> str:
         explicit = self.payment_environment_label.strip()
         if explicit:
