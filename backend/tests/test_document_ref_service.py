@@ -52,19 +52,19 @@ async def test_next_document_ref_ignores_deleted_gaps(db_session: AsyncSession) 
 
 
 def test_display_document_ref_prefers_assigned_value() -> None:
-    inv = Invoice(tenant_id=1, currency="AUD", document_ref="DOC-2")
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, currency="AUD", document_ref="DOC-2")
     inv.id = 93
     assert display_document_ref(inv) == "DOC-2"
 
 
 def test_dossier_public_id_uses_assigned_ref() -> None:
-    inv = Invoice(tenant_id=1, currency="AUD", document_ref="DOC-2")
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, currency="AUD", document_ref="DOC-2")
     inv.id = 93
     assert dossier_public_id(inv) == "DOC-2"
 
 
 def test_dossier_public_id_fallback_uses_invoice_id() -> None:
-    inv = Invoice(tenant_id=1, currency="AUD")
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, currency="AUD")
     inv.id = 93
     assert dossier_public_id(inv) == "DOC-93"
 

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
+from app.services.processing_override_catalog import skip_steps_for
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 
 
@@ -64,3 +65,39 @@ async def clear_invoice_posting_artifacts(session: AsyncSession, inv: Invoice) -
         await session.delete(line)
 
     await session.flush()
+
+
+async def should_preserve_extracted_on_requeue(
+    session: AsyncSession,
+    inv: Invoice,
+    *,
+    manual_edits: bool | None = None,
+) -> bool:
+    """Keep clerk-corrected header fields when re-queuing from the review queue."""
+    if inv.status != InvoiceStatus.EXCEPTION:
+        return False
+    from app.services.approval_pipeline_service import payable_fields_complete
+    from app.services.invoice_edit_service import invoice_has_manual_field_edits
+
+    if manual_edits is None:
+        manual_edits = await invoice_has_manual_field_edits(
+            session,
+            inv.id,
+            tenant_id=inv.tenant_id,
+        )
+    return manual_edits or payable_fields_complete(inv)
+
+
+async def requeue_invoice_for_pipeline(
+    session: AsyncSession,
+    inv: Invoice,
+    *,
+    preserve_document_type: bool = False,
+    preserve_extracted_fields: bool = False,
+) -> None:
+    """Reset posting artifacts; optionally wipe or keep extracted header fields."""
+    if preserve_extracted_fields:
+        await reset_invoice_for_approval(session, inv)
+        return
+    keep_dt = preserve_document_type or "classification" in skip_steps_for(inv)
+    await reset_invoice_for_reprocess(session, inv, preserve_document_type=keep_dt)

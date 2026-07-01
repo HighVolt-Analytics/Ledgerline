@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Purchase Management rule book §4.3 and coding inheritance."""
 
 from decimal import Decimal
@@ -150,9 +152,11 @@ def test_purchase_rule_vendor_narrowing_is_anded_with_po() -> None:
 async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
     db_session: AsyncSession,
 ) -> None:
-    config = validate_rule_book_config_payload(load_rule_book_config_dict(1))
+    config = validate_rule_book_config_payload(
+        await load_rule_book_config_dict(db_session, TESTING_TENANT_UUID)
+    )
     po_doc = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
         po_reference="PO-CLOUD-2026-999",
         invoice_no="PO-CLOUD-2026-999",
@@ -189,7 +193,7 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
     assert po.purchase_rule_id == "pr-1"
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
         po_reference="PO-CLOUD-2026-999",
         invoice_no="AWS-TEST-1",
@@ -227,11 +231,13 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
 
 @pytest.mark.asyncio
 async def test_code_po_from_invoice_persists_ledger(db_session: AsyncSession) -> None:
-    config = validate_rule_book_config_payload(load_rule_book_config_dict(1))
-    po = PurchaseOrder(tenant_id=1, po_number="PO-CLOUD-2026-100")
+    config = validate_rule_book_config_payload(
+        await load_rule_book_config_dict(db_session, TESTING_TENANT_UUID)
+    )
+    po = PurchaseOrder(tenant_id=TESTING_TENANT_UUID, po_number="PO-CLOUD-2026-100")
     db_session.add(po)
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
         po_reference="PO-CLOUD-2026-100",
         invoice_no="AWS-2",

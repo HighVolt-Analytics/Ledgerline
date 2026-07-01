@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for purchase dossier (drawer PO Match tab)."""
 
 from decimal import Decimal
@@ -13,7 +15,7 @@ from app.services.purchase_document_service import sync_purchase_document
 
 @pytest.mark.asyncio
 async def test_dossier_without_po_reference(db_session: AsyncSession) -> None:
-    inv = Invoice(tenant_id=1, vendor="Acme", status=InvoiceStatus.MAPPING)
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, vendor="Acme", status=InvoiceStatus.MAPPING)
     db_session.add(inv)
     await db_session.flush()
 
@@ -30,7 +32,7 @@ async def test_dossier_po_and_invoice_linked(db_session: AsyncSession) -> None:
     from sqlalchemy.orm import selectinload
 
     po_doc = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-200",
         invoice_no="PO-MKT-2026-200",
@@ -54,7 +56,7 @@ async def test_dossier_po_and_invoice_linked(db_session: AsyncSession) -> None:
     await sync_purchase_document(db_session, po_doc)
 
     commercial = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Meta Platforms Ireland",
         po_reference="PO-MKT-2026-200",
         invoice_no="META-INV-200",
@@ -95,3 +97,10 @@ async def test_dossier_po_and_invoice_linked(db_session: AsyncSession) -> None:
     assert by_role["grn"].present is False
     assert dossier.match is not None
     assert dossier.match_status == "No GRN"
+    assert dossier.purchase_register is not None
+    assert dossier.purchase_register.po_qty == 10
+    assert dossier.purchase_register.invoice_qty == 10
+    assert dossier.purchase_register.invoice_unit_price == 50
+    assert dossier.match_summary is not None
+    assert dossier.match_summary.po_qty == 10
+    assert dossier.match_summary.invoice_qty == 10

@@ -107,17 +107,16 @@ def vr12_vendor_master(
     *,
     vendor_masters: list[VendorMaster],
 ) -> ValidationResult:
-    if not vendor_masters:
-        return ValidationResult(
-            "VR12",
-            True,
-            "Vendor master check skipped — no masters configured",
-            skipped=True,
-        )
-
     vendor_name = (data.vendor or "").strip()
     if not vendor_name:
         return ValidationResult("VR12", False, "Vendor name required for master check")
+
+    if not vendor_masters:
+        return ValidationResult(
+            "VR12",
+            False,
+            "Vendor not registered — add vendor to master",
+        )
 
     master = find_matching_vendor_master(vendor_name, data.abn, vendor_masters)
     if master is None:

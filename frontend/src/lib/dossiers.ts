@@ -67,9 +67,13 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
     auditEvents: ["document_classified", "routing_review_required"],
   },
   bundle: { auditEvents: ["playbook_evaluated", "routing_review_required"] },
-  vendor_hold: { auditEvents: ["vendor_registration_hold"] },
+  vendor_hold: { auditEvents: ["vendor_registration_hold", "vendor_registration_cleared", "vendor_registration_waived", "vendor_registration_released"] },
   validate: {
-    auditEvents: ["validation_passed", "validation_failed"],
+    auditEvents: [
+      "validation_passed",
+      "validation_failed",
+      "validation_bypassed_after_human_approval",
+    ],
     invoiceStatus: "validating",
   },
   match: { auditEvents: ["three_way_match_evaluated", "purchase_variance_approved"] },

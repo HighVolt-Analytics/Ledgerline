@@ -4,6 +4,14 @@ from __future__ import annotations
 
 import re
 
+# Populated by ingest/OCR — never block playbook posting when starred by mistake.
+INFRASTRUCTURE_EXTRACTION_FIELD_KEYS: frozenset[str] = frozenset(
+    {
+        "attachment_name",
+        "document_text",
+    }
+)
+
 CANONICAL_EXTRACTION_FIELD_KEYS: frozenset[str] = frozenset(
     {
         "vendor",
@@ -37,6 +45,15 @@ def is_valid_extraction_field_key(key: str) -> bool:
     if normalized in CANONICAL_EXTRACTION_FIELD_KEYS:
         return True
     return bool(_CUSTOM_FIELD_KEY.match(normalized))
+
+
+def playbook_blockable_field_keys(keys: list[str] | None) -> list[str]:
+    """Compulsory keys that may block playbook — excludes ingest/OCR infrastructure."""
+    return [
+        key
+        for key in normalize_extraction_field_keys(keys)
+        if key not in INFRASTRUCTURE_EXTRACTION_FIELD_KEYS
+    ]
 
 
 def normalize_extraction_field_keys(values: list[str] | None) -> list[str]:

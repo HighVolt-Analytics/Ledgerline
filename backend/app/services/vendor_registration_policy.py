@@ -13,10 +13,6 @@ from app.services.document_type_catalog import (
     get_document_type_definition,
 )
 from app.services.document_type_playbook_profile_service import allows_posting_pipeline
-from app.services.document_type_validation_service import (
-    PROFILE_NON_ACTIONABLE,
-    effective_validation_profile,
-)
 from app.services.validation_rule_catalog import effective_validation_rules, enabled_rule_codes
 
 _PAYABLE_ROUTES = frozenset({ROUTE_PURCHASE, ROUTE_EXPENSES})
@@ -36,10 +32,7 @@ def resolve_document_type_definition(
 
 
 def vendor_master_check_enabled(definition: DocumentTypeDefinition) -> bool:
-    """True when VR12 is enabled on this document type's validation profile."""
-    profile = effective_validation_profile(definition)
-    if profile == PROFILE_NON_ACTIONABLE:
-        return False
+    """True when VR12 is enabled in this document type's effective validation rules."""
     rules = effective_validation_rules(definition)
     return "VR12" in enabled_rule_codes(rules)
 
@@ -73,3 +66,14 @@ def vendor_registration_required(
         return route in _PAYABLE_ROUTES
 
     return route in _PAYABLE_ROUTES
+
+
+def persisted_vendor_confidence(
+    *,
+    confidence: float,
+    registration_required: bool,
+) -> float | None:
+    """Persist vendor match score when master registration applies (including 0 = no match)."""
+    if not registration_required:
+        return None
+    return float(confidence)

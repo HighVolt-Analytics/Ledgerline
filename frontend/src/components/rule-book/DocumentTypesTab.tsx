@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Layers, Pencil, Plus, Trash2, X, Eye } from "lucide-react";
+import { Layers, Pencil, Plus, Star, Trash2, X, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,14 +15,7 @@ import {
   type DocumentTypeDefinition,
   type DocumentTypeFraudRisk,
 } from "@/lib/v5DocumentTypes";
-import { DocumentConditionBuilder } from "@/components/rule-book/DocumentConditionBuilder";
-import { DocumentTypeSamplesSection } from "@/components/rule-book/DocumentTypeSamplesSection";
-import {
-  buildSampleAnalysisRecord,
-  markSampleAnalysisApplied,
-} from "@/lib/documentTypeSampleAnalysis";
 import { DocumentTypeTemplateDialog } from "@/components/rule-book/DocumentTypeTemplateDialog";
-import { SimpleClassifierSection } from "@/components/rule-book/SimpleClassifierSection";
 import {
   ValidationDetailSection,
   ValidationRulesEditor,
@@ -34,14 +27,9 @@ import {
   PlaybookPolicyEditor,
 } from "@/components/rule-book/DocumentPlaybookSection";
 import {
-  bundleMemberDetailLabel,
-  documentTypeLabel,
-  mergeBundleItems,
-  normalizeDtCodeList,
-  PURCHASE_BUNDLE_ROLE_OPTIONS,
-  splitBundleItems,
-  type PurchaseBundleRole,
-} from "@/lib/documentBundleConfig";
+  BundleRulesDetailSection,
+  BundleRulesEditor,
+} from "@/components/rule-book/BundleRulesEditor";
 import {
   EXTRACTION_FIELD_OPTIONS,
   extractionFieldLabel,
@@ -49,11 +37,26 @@ import {
   normalizeExtractionFieldKeys,
   sanitizeExtractionFieldKey,
 } from "@/lib/documentExtractionFields";
-import { defaultValidationRulesForProfile } from "@/lib/documentValidationChecks";
+import {
+  ensureExtractionSuperset,
+  normalizeCompulsoryFields,
+  optionalExtractionFields,
+} from "@/lib/documentCompulsoryFields";
 import {
   documentTypeFromTemplate,
+  documentTypesFromStarterPack,
   inferTemplateIdFromDefinition,
+  type StarterPackApplyResult,
 } from "@/lib/documentTypeTemplates";
+import { bundleConfigWarnings } from "@/lib/documentTypeBundleValidation";
+import { DocumentConditionBuilder } from "@/components/rule-book/DocumentConditionBuilder";
+import { DocumentMatchRulesEditor } from "@/components/rule-book/DocumentMatchRulesEditor";
+import {
+  FxPostingPolicyEditor,
+  FxPostingPolicySummary,
+} from "@/components/rule-book/FxPostingPolicyEditor";
+import { documentTypeReadiness } from "@/lib/documentMatchRules";
+import type { MatchRulesForm } from "@/lib/documentMatchRules";
 
 const CLASS_BADGE_CLASSES: Record<DocumentTypeClass, string> = {
   Transactional: "text-primary bg-primary/10 border-primary/20",
@@ -91,20 +94,10 @@ type Tone = keyof typeof TONE_CLASSES;
 type DocumentTypesTabProps = {
   documentTypes: DocumentTypeDefinition[];
   onChange: (documentTypes: DocumentTypeDefinition[]) => void;
+  onStarterPackApplied?: (result: StarterPackApplyResult) => void;
   onDeleteType?: (code: string) => void | Promise<void>;
   canEdit?: boolean;
 };
-
-function linesToList(value: string): string[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function listToLines(items: string[]): string {
-  return items.join("\n");
-}
 
 function ClassBadge({ klass }: { klass: DocumentTypeClass }) {
   return (
@@ -208,21 +201,6 @@ function DetailChipList({
   );
 }
 
-function DetailSubsection({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      {children}
-    </div>
-  );
-}
-
 function cardPostingTone(posting: string): Tone {
   if (posting === "Yes") return "pass";
   if (posting === "No") return "skipped";
@@ -239,21 +217,43 @@ function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor?: stri
 
 function ExtractionFieldsPicker({
   id,
-  value,
+  extractionFields,
+  requiredFields,
   onChange,
 }: {
   id: string;
-  value: string[];
-  onChange: (value: string[]) => void;
+  extractionFields: string[];
+  requiredFields: string[];
+  onChange: (next: { extractionFields: string[]; requiredFields: string[] }) => void;
 }) {
   const [customInput, setCustomInput] = useState("");
   const [customError, setCustomError] = useState<string | null>(null);
-  const normalized = normalizeExtractionFieldKeys(value);
+  const normalized = normalizeExtractionFieldKeys(extractionFields);
+  const compulsory = new Set(normalizeCompulsoryFields(requiredFields, normalized));
   const selected = new Set(normalized);
   const availablePresets = EXTRACTION_FIELD_OPTIONS.filter((row) => !selected.has(row.key));
 
+  function emit(extraction: string[], required: string[]) {
+    const extractionNorm = normalizeExtractionFieldKeys(extraction);
+    const requiredNorm = normalizeCompulsoryFields(required, extractionNorm);
+    onChange({
+      extractionFields: ensureExtractionSuperset(requiredNorm, extractionNorm),
+      requiredFields: requiredNorm,
+    });
+  }
+
   function removeField(key: string) {
-    onChange(normalized.filter((item) => item !== key));
+    emit(
+      normalized.filter((item) => item !== key),
+      [...compulsory].filter((item) => item !== key)
+    );
+  }
+
+  function toggleCompulsory(key: string) {
+    const nextRequired = compulsory.has(key)
+      ? [...compulsory].filter((item) => item !== key)
+      : [...compulsory, key];
+    emit(normalized, nextRequired);
   }
 
   function addPreset(key: string) {
@@ -262,7 +262,7 @@ function ExtractionFieldsPicker({
       (item) => selected.has(item) || item === key
     );
     const customs = normalized.filter((item) => !isPresetExtractionFieldKey(item));
-    onChange([...presetOrder, ...customs]);
+    emit([...presetOrder, ...customs], [...compulsory]);
   }
 
   function addCustomField() {
@@ -276,7 +276,7 @@ function ExtractionFieldsPicker({
       return;
     }
     setCustomError(null);
-    onChange([...normalized, key]);
+    emit([...normalized, key], [...compulsory]);
     setCustomInput("");
   }
 
@@ -284,33 +284,60 @@ function ExtractionFieldsPicker({
     <div className="space-y-3 sm:col-span-2">
       <FieldLabel htmlFor={id}>Extraction fields</FieldLabel>
       <p className="text-[11px] text-muted-foreground">
-        Choose standard fields or add custom keys. These drive the invoice drawer Fields tab and OCR
-        completeness checks.
+        Choose fields to extract and show in the invoice drawer. Starred fields are{" "}
+        <span className="font-medium text-foreground">compulsory</span> — they drive VR03,
+        playbook blocking, and Approve. Unstarred fields are optional (warn-only if missing).
       </p>
 
       <div className="space-y-2 rounded-md border border-input bg-background p-3">
         <p className="text-[11px] font-medium text-foreground">Selected fields</p>
         {normalized.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
-            {normalized.map((key) => (
-              <span
-                key={key}
-                className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary"
-              >
-                <span>{extractionFieldLabel(key)}</span>
-                {!isPresetExtractionFieldKey(key) ? (
-                  <span className="font-mono text-[10px] text-primary/70">({key})</span>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => removeField(key)}
-                  className="rounded-full p-0.5 text-primary/70 transition-colors hover:bg-primary/10 hover:text-primary"
-                  aria-label={`Remove ${extractionFieldLabel(key)}`}
+            {normalized.map((key) => {
+              const isCompulsory = compulsory.has(key);
+              return (
+                <span
+                  key={key}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                    isCompulsory
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+                      : "border-primary/30 bg-primary/5 text-primary"
+                  )}
                 >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
+                  <button
+                    type="button"
+                    onClick={() => toggleCompulsory(key)}
+                    className={cn(
+                      "rounded-full p-0.5 transition-colors",
+                      isCompulsory
+                        ? "text-amber-700 hover:bg-amber-500/20 dark:text-amber-200"
+                        : "text-primary/50 hover:bg-primary/10 hover:text-primary"
+                    )}
+                    aria-label={
+                      isCompulsory
+                        ? `Mark ${extractionFieldLabel(key)} as optional`
+                        : `Mark ${extractionFieldLabel(key)} as compulsory`
+                    }
+                    title={isCompulsory ? "Compulsory" : "Optional — click to require"}
+                  >
+                    <Star className={cn("h-3 w-3", isCompulsory && "fill-current")} />
+                  </button>
+                  <span>{extractionFieldLabel(key)}</span>
+                  {!isPresetExtractionFieldKey(key) ? (
+                    <span className="font-mono text-[10px] opacity-70">({key})</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => removeField(key)}
+                    className="rounded-full p-0.5 opacity-70 transition-colors hover:bg-black/5 hover:opacity-100"
+                    aria-label={`Remove ${extractionFieldLabel(key)}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
           </div>
         ) : (
           <p className="text-[11px] text-muted-foreground">
@@ -374,117 +401,6 @@ function ExtractionFieldsPicker({
   );
 }
 
-function BundleDtCodePicker({
-  id,
-  label,
-  description,
-  documentTypes,
-  currentCode,
-  value,
-  onChange,
-  tone = "primary",
-}: {
-  id: string;
-  label: string;
-  description: string;
-  documentTypes: DocumentTypeDefinition[];
-  currentCode: string;
-  value: string[];
-  onChange: (value: string[]) => void;
-  tone?: "primary" | "warn";
-}) {
-  const selected = new Set(normalizeDtCodeList(value));
-  const exclude = currentCode.trim().toUpperCase();
-  const options = documentTypes
-    .filter((dt) => dt.code.toUpperCase() !== exclude)
-    .sort((a, b) => a.code.localeCompare(b.code));
-
-  function toggle(code: string) {
-    const next = new Set(selected);
-    const normalized = code.toUpperCase();
-    if (next.has(normalized)) next.delete(normalized);
-    else next.add(normalized);
-    onChange(
-      options.map((row) => row.code.toUpperCase()).filter((item) => next.has(item))
-    );
-  }
-
-  const toneClasses =
-    tone === "warn"
-      ? {
-          active: "border-amber-500 bg-amber-500/10 text-amber-800 dark:text-amber-300",
-          idle: "border-border bg-muted/40 text-muted-foreground hover:border-amber-500/40",
-        }
-      : {
-          active: "border-primary bg-primary/10 text-primary",
-          idle: "border-border bg-muted/40 text-muted-foreground hover:border-primary/40",
-        };
-
-  return (
-    <div className="space-y-2 sm:col-span-2">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <p className="text-[11px] text-muted-foreground">{description}</p>
-      {options.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Add more document types to the catalogue first.</p>
-      ) : (
-        <div id={id} className="flex flex-wrap gap-2 rounded-md border border-input bg-background p-3">
-          {options.map((row) => {
-            const code = row.code.toUpperCase();
-            const active = selected.has(code);
-            return (
-              <button
-                key={code}
-                type="button"
-                onClick={() => toggle(code)}
-                className={cn(
-                  "rounded-full border px-2.5 py-1 text-left text-[11px] font-medium transition-colors",
-                  active ? toneClasses.active : toneClasses.idle
-                )}
-                title={row.title}
-              >
-                {documentTypeLabel(documentTypes, code)}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {selected.size > 0 ? (
-        <p className="text-[11px] font-mono text-muted-foreground">{Array.from(selected).join(", ")}</p>
-      ) : (
-        <p className="text-[11px] text-muted-foreground">None selected.</p>
-      )}
-    </div>
-  );
-}
-
-function ListField({
-  id,
-  label,
-  value,
-  onChange,
-  rows = 4,
-}: {
-  id: string;
-  label: string;
-  value: string[];
-  onChange: (value: string[]) => void;
-  rows?: number;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <textarea
-        id={id}
-        rows={rows}
-        value={listToLines(value)}
-        onChange={(e) => onChange(linesToList(e.target.value))}
-        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        placeholder="One item per line"
-      />
-    </div>
-  );
-}
-
 function useDialogLock() {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -515,7 +431,6 @@ function DocumentTypeDetailDialog({
   onViewValidation: () => void;
 }) {
   useDialogLock();
-  const conditionalBundle = splitBundleItems(docType.bundleConditional);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -602,64 +517,26 @@ function DocumentTypeDetailDialog({
                 {docType.fraudRisk}
               </span>
             </DetailFact>
-            <DetailFact label="Classifier">
-              {docType.classifier.enabled
-                ? `On · priority ${docType.classifier.priority}`
-                : "Off"}
-            </DetailFact>
           </dl>
         </div>
 
         <div className="detail-dialog-body">
           <DetailCard
             title="Bundle rules"
-            hint="Required and recommended documents on the same PO reference"
+            hint="PO dossier members — context depends on payable vs supporting type"
           >
-            <div className="space-y-4">
-              <DetailSubsection label="Required before posting">
-                <DetailChipList
-                  items={docType.bundleMandatory.map((code) =>
-                    bundleMemberDetailLabel(code, documentTypes)
-                  )}
-                  emptyLabel="No required bundle members"
-                />
-              </DetailSubsection>
-              {conditionalBundle.dtCodes.length || conditionalBundle.advisories.length ? (
-                <DetailSubsection label="Recommended (advisory)">
-                  <div className="space-y-3">
-                    {conditionalBundle.dtCodes.length ? (
-                      <DetailChipList
-                        tone="warn"
-                        items={conditionalBundle.dtCodes.map((code) =>
-                          documentTypeLabel(documentTypes, code)
-                        )}
-                        emptyLabel=""
-                      />
-                    ) : null}
-                    {conditionalBundle.advisories.length ? (
-                      <ul className="space-y-1 text-sm text-foreground">
-                        {conditionalBundle.advisories.map((item, index) => (
-                          <li key={index} className="flex gap-2 text-muted-foreground">
-                            <span className="text-primary/40">·</span>
-                            <span>{item}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
-                </DetailSubsection>
-              ) : (
-                <DetailSubsection label="Recommended (advisory)">
-                  <p className="text-sm text-muted-foreground">None configured</p>
-                </DetailSubsection>
-              )}
-            </div>
+            <BundleRulesDetailSection docType={docType} documentTypes={documentTypes} />
           </DetailCard>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <DetailCard title="Processing playbook" hint="Match and approval preset">
               <PlaybookDetailSection docType={docType} />
             </DetailCard>
+            {(docType.routeTarget === "Purchase Management" || docType.posting !== "No") && (
+              <DetailCard title="Currency & FX" hint="Booking and payment FX policy">
+                <FxPostingPolicySummary policy={docType.fxPolicy} />
+              </DetailCard>
+            )}
             <DetailCard
               title="Validation"
               hint="Standard, custom, and duplicate checks"
@@ -675,10 +552,25 @@ function DocumentTypeDetailDialog({
           </div>
 
           <DetailCard title="Extraction fields" hint="Shown in invoice drawer → Fields tab">
-            <DetailChipList
-              items={docType.extractionFields.map((key) => extractionFieldLabel(key))}
-              emptyLabel="No fields configured — drawer uses defaults"
-            />
+            <div className="space-y-3">
+              <div>
+                <p className="text-[11px] font-medium text-foreground">Compulsory</p>
+                <DetailChipList
+                  items={docType.requiredFields.map((key) => extractionFieldLabel(key))}
+                  emptyLabel="None — approve falls back to vendor, total, due date"
+                />
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-foreground">Optional extract</p>
+                <DetailChipList
+                  items={optionalExtractionFields(
+                    docType.extractionFields,
+                    docType.requiredFields
+                  ).map((key) => extractionFieldLabel(key))}
+                  emptyLabel="No optional fields"
+                />
+              </div>
+            </div>
           </DetailCard>
         </div>
       </div>
@@ -705,12 +597,33 @@ function DocumentTypeEditDialog({
   onSave: () => void;
 }) {
   useDialogLock();
-  const conditionalBundle = splitBundleItems(draft.bundleConditional);
   const templateId = useMemo(
     () => inferTemplateIdFromDefinition(draft),
     [draft]
   );
   const advancedMode = Boolean(draft.classifierCustomized);
+  const isUserDefinedType = templateId === "custom" || !draft.matrixTemplateCode?.trim();
+  const [showAdvancedIdentity, setShowAdvancedIdentity] = useState(!isNew);
+  const [matchRulesForm, setMatchRulesForm] = useState<MatchRulesForm | null>(null);
+
+  const readiness = useMemo(
+    () =>
+      documentTypeReadiness(
+        {
+          title: draft.title,
+          oneLine: draft.oneLine,
+          code: draft.code,
+          classifier: draft.classifier,
+        },
+        matchRulesForm ?? undefined
+      ),
+    [draft.title, draft.oneLine, draft.code, draft.classifier, matchRulesForm]
+  );
+
+  const bundleWarnings = useMemo(
+    () => bundleConfigWarnings(draft, documentTypes),
+    [draft, documentTypes]
+  );
 
   function patchClassifier(
     classifier: Partial<DocumentTypeDefinition["classifier"]>
@@ -771,8 +684,8 @@ function DocumentTypeEditDialog({
               </div>
               <p className="text-sm text-muted-foreground">
                 {isNew
-                  ? "Name the type and confirm how we recognise it. Advanced options are optional."
-                  : "Update labels, recognition signals, extraction, and processing rules."}
+                  ? "Set recognition, then configure extraction, validation, playbook, and bundle rules before creating."
+                  : "Update labels, recognition rules, extraction, and processing rules."}
               </p>
             </div>
             <button
@@ -787,19 +700,17 @@ function DocumentTypeEditDialog({
         </div>
 
         <div className="detail-dialog-body">
-          <DetailCard title="Identity" hint="Code, labels, routing, and enablement">
+          <DetailCard title="Identity" hint="Name, route, and enablement">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-code">Code</FieldLabel>
+              <div className="space-y-1.5 sm:col-span-2">
+                <FieldLabel htmlFor="dt-title">Document name</FieldLabel>
                 <Input
-                  id="dt-code"
-                  value={draft.code}
-                  onChange={(e) => onChange({ ...draft, code: e.target.value.toUpperCase() })}
-                  className="h-9 font-mono text-sm"
+                  id="dt-title"
+                  value={draft.title}
+                  onChange={(e) => onChange({ ...draft, title: e.target.value })}
+                  className="h-9 text-sm"
+                  placeholder="e.g. Handwritten GRN"
                 />
-                {codeTaken ? (
-                  <p className="text-xs text-destructive">That code is already in use.</p>
-                ) : null}
               </div>
               <div className="space-y-1.5">
                 <FieldLabel htmlFor="dt-short">Short title</FieldLabel>
@@ -810,137 +721,149 @@ function DocumentTypeEditDialog({
                   className="h-9 text-sm"
                 />
               </div>
+              {(showAdvancedIdentity || !isNew) && (
+                <div className="space-y-1.5">
+                  <FieldLabel htmlFor="dt-code">Code</FieldLabel>
+                  <Input
+                    id="dt-code"
+                    value={draft.code}
+                    onChange={(e) => onChange({ ...draft, code: e.target.value.toUpperCase() })}
+                    className="h-9 font-mono text-sm"
+                  />
+                  {codeTaken ? (
+                    <p className="text-xs text-destructive">That code is already in use.</p>
+                  ) : null}
+                </div>
+              )}
               <div className="space-y-1.5 sm:col-span-2">
-                <FieldLabel htmlFor="dt-title">Title</FieldLabel>
-                <Input
-                  id="dt-title"
-                  value={draft.title}
-                  onChange={(e) => onChange({ ...draft, title: e.target.value })}
-                  className="h-9 text-sm"
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <FieldLabel htmlFor="dt-oneline">Summary</FieldLabel>
+                <FieldLabel htmlFor="dt-oneline">
+                  {isUserDefinedType
+                    ? "Notes for operators (optional)"
+                    : "How to recognise this document (AI + humans)"}
+                </FieldLabel>
                 <textarea
                   id="dt-oneline"
                   rows={2}
                   value={draft.oneLine}
                   onChange={(e) => onChange({ ...draft, oneLine: e.target.value })}
+                  placeholder={
+                    isUserDefinedType
+                      ? "Optional — match rules below are required for recognition."
+                      : "e.g. Goods received note with PO ref; often handwritten. Not a tax invoice."
+                  }
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 />
               </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-klass">Class</FieldLabel>
-                <select
-                  id="dt-klass"
-                  value={draft.klass}
-                  onChange={(e) =>
-                    onChange({ ...draft, klass: e.target.value as DocumentTypeClass })
-                  }
-                  className={selectClass}
-                >
-                  {KLASS_OPTIONS.map((klass) => (
-                    <option key={klass} value={klass}>
-                      {klass}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-posting">Posting</FieldLabel>
-                <select
-                  id="dt-posting"
-                  value={draft.posting}
-                  onChange={(e) => onChange({ ...draft, posting: e.target.value })}
-                  className={selectClass}
-                >
-                  {POSTING_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-fraud">Fraud risk</FieldLabel>
-                <select
-                  id="dt-fraud"
-                  value={draft.fraudRisk}
-                  onChange={(e) =>
-                    onChange({ ...draft, fraudRisk: e.target.value as DocumentTypeFraudRisk })
-                  }
-                  className={cn(selectClass, "capitalize")}
-                >
-                  {FRAUD_RISK_OPTIONS.map((risk) => (
-                    <option key={risk} value={risk}>
-                      {risk}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-route">Workspace route</FieldLabel>
-                <select
-                  id="dt-route"
-                  value={draft.routeTarget}
-                  onChange={(e) => onChange({ ...draft, routeTarget: e.target.value })}
-                  className={selectClass}
-                >
-                  {ROUTE_TARGETS.map((route) => (
-                    <option key={route} value={route}>
-                      {route}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-2 sm:col-span-2">
-                <Switch
-                  id="dt-enabled"
-                  checked={draft.enabled}
-                  onCheckedChange={(enabled) => onChange({ ...draft, enabled })}
-                />
-                <FieldLabel htmlFor="dt-enabled">Enabled for classification and routing</FieldLabel>
-              </div>
+              {isNew && !showAdvancedIdentity ? (
+                <div className="sm:col-span-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => setShowAdvancedIdentity(true)}
+                  >
+                    Show code, class, posting, fraud risk
+                  </Button>
+                </div>
+              ) : null}
+              {(showAdvancedIdentity || !isNew) && (
+                <>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="dt-klass">Class</FieldLabel>
+                    <select
+                      id="dt-klass"
+                      value={draft.klass}
+                      onChange={(e) =>
+                        onChange({ ...draft, klass: e.target.value as DocumentTypeClass })
+                      }
+                      className={selectClass}
+                    >
+                      {KLASS_OPTIONS.map((klass) => (
+                        <option key={klass} value={klass}>
+                          {klass}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="dt-posting">Posting</FieldLabel>
+                    <select
+                      id="dt-posting"
+                      value={draft.posting}
+                      onChange={(e) => onChange({ ...draft, posting: e.target.value })}
+                      className={selectClass}
+                    >
+                      {POSTING_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="dt-fraud">Fraud risk</FieldLabel>
+                    <select
+                      id="dt-fraud"
+                      value={draft.fraudRisk}
+                      onChange={(e) =>
+                        onChange({ ...draft, fraudRisk: e.target.value as DocumentTypeFraudRisk })
+                      }
+                      className={cn(selectClass, "capitalize")}
+                    >
+                      {FRAUD_RISK_OPTIONS.map((risk) => (
+                        <option key={risk} value={risk}>
+                          {risk}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="dt-route">Workspace route</FieldLabel>
+                    <select
+                      id="dt-route"
+                      value={draft.routeTarget}
+                      onChange={(e) => onChange({ ...draft, routeTarget: e.target.value })}
+                      className={selectClass}
+                    >
+                      {ROUTE_TARGETS.map((route) => (
+                        <option key={route} value={route}>
+                          {route}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {!isUserDefinedType ? (
+                    <div className="flex items-center gap-2 sm:col-span-2">
+                      <Switch
+                        id="dt-enabled"
+                        checked={draft.enabled}
+                        onCheckedChange={(enabled) => onChange({ ...draft, enabled })}
+                      />
+                      <FieldLabel htmlFor="dt-enabled">
+                        Enabled for classification and routing
+                      </FieldLabel>
+                    </div>
+                  ) : null}
+                </>
+              )}
             </div>
-          </DetailCard>
-
-          <DetailCard
-            title="Sample files"
-            hint={
-              draft.sampleAnalysis
-                ? "Sample analysis on record — upload new files to re-analyze"
-                : "Detect recognition signals and extraction fields from examples"
-            }
-          >
-            <DocumentTypeSamplesSection
-              draft={draft}
-              templateId={templateId}
-              sampleAnalysis={draft.sampleAnalysis}
-              onRecordAnalysis={(sampleAnalysis) => onChange({ ...draft, sampleAnalysis })}
-              onApply={(next, proposal, filenames) => {
-                onChange({
-                  ...next,
-                  sampleAnalysis: markSampleAnalysisApplied(
-                    buildSampleAnalysisRecord(filenames, proposal, { afterApply: true })
-                  ),
-                });
-              }}
-            />
           </DetailCard>
 
           <DetailCard
             title="Recognition"
             hint={
               advancedMode
-                ? "Advanced condition tree — for power users"
-                : "How we identify this document after OCR"
+                ? "Advanced condition tree — AND/OR rules on OCR fields"
+                : "Match / exclude rules on headings, OCR text, and field presence"
             }
           >
             {advancedMode ? (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
-                    Editing raw AND/OR conditions. Switch back to simple mode when finished.
+                    Build AND/OR condition trees on attachment name, document text, headings, and
+                    field presence flags.
                   </p>
                   <Button type="button" size="sm" variant="outline" className="h-8" onClick={useSimpleMode}>
                     Use simple recognition
@@ -995,20 +918,22 @@ function DocumentTypeEditDialog({
                 {draft.classifier.enabled ? (
                   <DocumentConditionBuilder
                     root={draft.classifier.root}
+                    extractionFields={draft.extractionFields}
                     onChange={(root) => onChange(patchClassifier({ root }))}
                   />
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    Built-in heuristics apply when the classifier is off.
+                    Enable the classifier to add deterministic recognition rules.
                   </p>
                 )}
               </div>
             ) : (
-              <SimpleClassifierSection
+              <DocumentMatchRulesEditor
                 draft={draft}
-                templateId={templateId}
                 onChange={onChange}
                 onOpenAdvanced={() => onChange({ ...draft, classifierCustomized: true })}
+                onFormChange={setMatchRulesForm}
+                rulesOnly
               />
             )}
           </DetailCard>
@@ -1033,26 +958,6 @@ function DocumentTypeEditDialog({
                   className="h-9 text-sm font-mono"
                 />
               </div>
-              {advancedMode ? (
-                <div className="space-y-1.5">
-                  <FieldLabel htmlFor="dt-min-route-confidence">Min route confidence</FieldLabel>
-                  <Input
-                    id="dt-min-route-confidence"
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={draft.minRouteConfidence}
-                    onChange={(e) =>
-                      onChange({
-                        ...draft,
-                        minRouteConfidence: Math.min(1, Math.max(0, Number(e.target.value) || 0)),
-                      })
-                    }
-                    className="h-9 text-sm"
-                  />
-                </div>
-              ) : null}
               <div className="space-y-1.5">
                 <FieldLabel htmlFor="dt-validation-profile">Validation profile</FieldLabel>
                 <select
@@ -1074,107 +979,85 @@ function DocumentTypeEditDialog({
             <PlaybookPolicyEditor draft={draft} onChange={onChange} />
           </DetailCard>
 
-          <DetailCard title="Validation" hint="Standard checks and custom field rules">
+          {(draft.routeTarget === "Purchase Management" || draft.posting !== "No") && (
+            <DetailCard
+              title="Currency & FX"
+              hint="Booking rate at invoice date; FX variance at payment"
+            >
+              <FxPostingPolicyEditor
+                value={draft.fxPolicy}
+                onChange={(fxPolicy) => onChange({ ...draft, fxPolicy })}
+              />
+            </DetailCard>
+          )}
+
+          <DetailCard title="Extraction fields" hint="Star compulsory fields; drives VR03 and Approve">
+            <ExtractionFieldsPicker
+              id="dt-extraction-fields"
+              extractionFields={draft.extractionFields}
+              requiredFields={draft.requiredFields}
+              onChange={({ extractionFields, requiredFields }) =>
+                onChange({ ...draft, extractionFields, requiredFields })
+              }
+            />
+          </DetailCard>
+
+          <DetailCard title="Validation" hint="Finance checks; matching and bundle run from playbook">
             <ValidationRulesEditor
               documentTypeCode={draft.code}
               validationProfile={draft.validationProfile}
               validationRules={draft.validationRules}
               customValidationRules={draft.customValidationRules}
+              requiredFields={draft.requiredFields}
+              extractionFields={draft.extractionFields}
               onChange={(patch) => onChange({ ...draft, ...patch })}
-            />
-          </DetailCard>
-
-          <DetailCard title="Extraction fields" hint="Parsed fields shown in invoice drawer → Fields tab">
-            <ExtractionFieldsPicker
-              id="dt-extraction-fields"
-              value={draft.extractionFields}
-              onChange={(extractionFields) => onChange({ ...draft, extractionFields })}
             />
           </DetailCard>
 
           <DetailCard
             title="Bundle rules"
-            hint="Required and recommended documents on the same PO reference"
+            hint="PO dossier — payable types require members; supporting types declare PO/GRN link"
           >
-            <div className="space-y-5">
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-purchase-bundle-role">Purchase bundle link</FieldLabel>
-                <p className="text-xs text-muted-foreground">
-                  How this type is verified on the PO when it is a bundle member.
-                </p>
-                <select
-                  id="dt-purchase-bundle-role"
-                  value={draft.purchaseBundleRole}
-                  onChange={(e) =>
-                    onChange({
-                      ...draft,
-                      purchaseBundleRole: e.target.value as PurchaseBundleRole,
-                    })
-                  }
-                  className={selectClass}
-                >
-                  {PURCHASE_BUNDLE_ROLE_OPTIONS.map((row) => (
-                    <option key={row.value || "none"} value={row.value}>
-                      {row.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <DetailSubsection label="Required before posting">
-                <BundleDtCodePicker
-                  id="dt-bundle-mandatory"
-                  label="Required types"
-                  description="Blocks posting until each selected type is on the PO."
-                  documentTypes={documentTypes}
-                  currentCode={draft.code}
-                  value={draft.bundleMandatory}
-                  onChange={(bundleMandatory) => onChange({ ...draft, bundleMandatory })}
-                />
-              </DetailSubsection>
-              <DetailSubsection label="Recommended (advisory)">
-                <BundleDtCodePicker
-                  id="dt-bundle-conditional"
-                  label="Companion types"
-                  description="Flagged when missing but do not block posting."
-                  documentTypes={documentTypes}
-                  currentCode={draft.code}
-                  value={conditionalBundle.dtCodes}
-                  tone="warn"
-                  onChange={(dtCodes) =>
-                    onChange({
-                      ...draft,
-                      bundleConditional: mergeBundleItems(dtCodes, conditionalBundle.advisories),
-                    })
-                  }
-                />
-                <ListField
-                  id="dt-bundle-conditional-notes"
-                  label="Advisory notes"
-                  value={conditionalBundle.advisories}
-                  onChange={(advisories) =>
-                    onChange({
-                      ...draft,
-                      bundleConditional: mergeBundleItems(conditionalBundle.dtCodes, advisories),
-                    })
-                  }
-                  rows={3}
-                />
-              </DetailSubsection>
-            </div>
+            <BundleRulesEditor
+              draft={draft}
+              documentTypes={documentTypes}
+              bundleWarnings={bundleWarnings}
+              onChange={onChange}
+              selectClass={selectClass}
+            />
           </DetailCard>
         </div>
 
-        <div className="detail-dialog-footer">
+        <div className="detail-dialog-footer flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+          {isNew ? (
+            <ul className="flex-1 space-y-0.5 text-xs text-muted-foreground">
+              {readiness.items.map((item) => (
+                <li key={item.label} className={item.done ? "text-primary" : undefined}>
+                  {item.done ? "✓" : "○"} {item.label}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span className="flex-1" />
+          )}
+          <div className="flex gap-2 justify-end">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button
             type="button"
             onClick={onSave}
-            disabled={!draft.code.trim() || !draft.title.trim() || codeTaken}
+            disabled={
+              !draft.code.trim() ||
+              !draft.title.trim() ||
+              codeTaken ||
+              (isNew && !readiness.ready)
+            }
+            title={isNew && !readiness.ready ? "Complete the readiness checklist" : undefined}
           >
             {isNew ? "Create type" : "Save changes"}
           </Button>
+          </div>
         </div>
       </div>
     </div>,
@@ -1185,6 +1068,7 @@ function DocumentTypeEditDialog({
 export function DocumentTypesTab({
   documentTypes,
   onChange,
+  onStarterPackApplied,
   onDeleteType,
   canEdit = false,
 }: DocumentTypesTabProps) {
@@ -1255,6 +1139,16 @@ export function DocumentTypesTab({
     );
   };
 
+  const applyStarterPack = (packId: Parameters<typeof documentTypesFromStarterPack>[0]) => {
+    const result = documentTypesFromStarterPack(packId, documentTypes);
+    if (!result.types.length) return;
+    if (onStarterPackApplied) {
+      onStarterPackApplied(result);
+      return;
+    }
+    onChange([...documentTypes, ...result.types]);
+  };
+
   const saveEdit = () => {
     if (!editing) return;
     const normalized = editing.code.trim().toUpperCase();
@@ -1295,8 +1189,8 @@ export function DocumentTypesTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Add a type by uploading sample files (recommended) or from a template. Recognition
-          rules drive routing; GL accounts are set under Purchase, Expenses, and Team tabs.
+          Configure document types for AI classification and routing. GL accounts are set under
+          Purchase, Expenses, and Team tabs.
         </p>
         {canEdit ? (
           <Button
@@ -1375,9 +1269,6 @@ export function DocumentTypesTab({
                 <ToneBadge tone={cardPostingTone(docType.posting)}>
                   Post: {docType.posting}
                 </ToneBadge>
-                {docType.sampleAnalysis ? (
-                  <ToneBadge tone="primary">Samples analyzed</ToneBadge>
-                ) : null}
                 {!docType.enabled ? <ToneBadge tone="fail">Off</ToneBadge> : null}
               </div>
             </button>
@@ -1431,6 +1322,10 @@ export function DocumentTypesTab({
           setIsNew(true);
           setEditing(documentTypeFromTemplate(templateId, documentTypes));
           setSelectedCode(null);
+        }}
+        onSelectStarterPack={(packId) => {
+          setTemplateDialogOpen(false);
+          applyStarterPack(packId);
         }}
       />
     </div>

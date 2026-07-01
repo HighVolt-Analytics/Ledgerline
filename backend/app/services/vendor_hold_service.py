@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,9 +16,17 @@ from app.services.bundle_vendor_service import (
     vendors_align_to_same_master,
 )
 from app.services.expense_vendor_policy import is_unmatched_expense_vendor_status
-from app.services.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_PENDING_VENDOR, ROUTE_PURCHASE
+from app.services.invoice_evaluation_service import (
+    EVAL_AUTO_CODED,
+    EVAL_PENDING_VENDOR,
+    ROUTE_EXPENSES,
+    ROUTE_PURCHASE,
+)
 from app.services.invoice_reset import reset_invoice_for_reprocess
-from app.services.master_data_service import list_pending_vendors
+from app.services.master_data_service import (
+    classification_config_with_db_masters,
+    list_pending_vendors,
+)
 from app.services.rule_book_mapper import load_classification_config
 from app.services.vendor_registration_policy import (
     resolve_document_type_definition,
@@ -84,15 +94,40 @@ async def purchase_invoice_trusts_po_register(
     session: AsyncSession,
     invoice: Invoice,
 ) -> bool:
-    """Commercial purchase invoice linked to an existing PO register row."""
+    """Commercial purchase invoice linked to a PO whose vendor is in the registered master."""
     if (invoice.route_target or "").strip() != ROUTE_PURCHASE:
         return False
     if _is_purchase_supporting_document(invoice):
         return False
 
     from app.services.purchase_match_service import load_purchase_order_for_invoice
+    from app.services.vendor_detection import find_matching_vendor_master
 
-    return await load_purchase_order_for_invoice(session, invoice) is not None
+    po = await load_purchase_order_for_invoice(session, invoice)
+    if po is None:
+        return False
+
+    po_vendor = (po.vendor or "").strip()
+    if not po_vendor:
+        return False
+
+    config = await load_classification_config(session, invoice.tenant_id)
+    config = await classification_config_with_db_masters(session, invoice.tenant_id, config)
+    if not find_matching_vendor_master(po_vendor, None, config.vendor_masters):
+        return False
+
+    inv_vendor = (invoice.vendor or "").strip()
+    if inv_vendor and not vendors_align_to_same_master(
+        invoice.tenant_id,
+        inv_vendor,
+        invoice.abn,
+        po_vendor,
+        None,
+        config=config,
+    ):
+        return False
+
+    return True
 
 
 async def _release_hold_when_po_linked_purchase_invoice(
@@ -137,6 +172,14 @@ async def _release_hold_when_po_vendor_matches(
     if po is None or not (po.vendor or "").strip():
         return False
 
+    config = await load_classification_config(session, invoice.tenant_id)
+    config = await classification_config_with_db_masters(session, invoice.tenant_id, config)
+    from app.services.vendor_detection import find_matching_vendor_master
+
+    po_vendor = (po.vendor or "").strip()
+    if not find_matching_vendor_master(po_vendor, None, config.vendor_masters):
+        return False
+
     inv_vendor = (invoice.vendor or "").strip()
     if not inv_vendor:
         invoice.vendor = po.vendor
@@ -146,9 +189,9 @@ async def _release_hold_when_po_vendor_matches(
         invoice.tenant_id,
         inv_vendor,
         invoice.abn,
-        po.vendor,
+        po_vendor,
         None,
-        config=await load_config_for_tenant(session, invoice.tenant_id),
+        config=config,
     ):
         return False
 
@@ -159,63 +202,210 @@ async def _release_hold_when_po_vendor_matches(
     return True
 
 
+_VENDOR_OUTCOME_EVENTS = frozenset(
+    {
+        "vendor_registration_hold",
+        "vendor_registration_cleared",
+        "vendor_registration_waived",
+    }
+)
+
+
+async def _log_vendor_outcome_if_changed(
+    session: AsyncSession,
+    invoice: Invoice,
+    event: str,
+    *,
+    detail: dict[str, object],
+) -> None:
+    """Record vendor-hold evaluation once per outcome (avoids triple-logging in pipeline)."""
+    from app.models.audit import AuditLog
+
+    latest = (
+        await session.execute(
+            select(AuditLog.event, AuditLog.detail)
+            .where(
+                AuditLog.invoice_id == invoice.id,
+                AuditLog.event.in_(_VENDOR_OUTCOME_EVENTS),
+            )
+            .order_by(AuditLog.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if latest is not None:
+        last_event, last_detail = latest
+        last_reason = ""
+        if isinstance(last_detail, dict):
+            last_reason = str(last_detail.get("reason") or "").strip()
+        new_reason = str(detail.get("reason") or "").strip()
+        if last_event == event and last_reason == new_reason:
+            return
+
+    await log_event(session, event, invoice_id=invoice.id, detail=detail)
+
+
+async def _unknown_vendor_needs_registration(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    """True when vendor is not in masters and registration is required for this document."""
+    if not await _registration_required_for_invoice(session, invoice):
+        return False
+    if _is_purchase_supporting_document(invoice):
+        return False
+    if await purchase_invoice_trusts_po_register(session, invoice):
+        return False
+
+    name = (invoice.vendor or "").strip()
+    if not name:
+        return False
+
+    from app.services.master_data_service import list_vendor_masters
+    from app.services.vendor_detection import find_matching_vendor_master
+
+    db_masters = await list_vendor_masters(session, invoice.tenant_id)
+    if find_matching_vendor_master(name, invoice.abn, db_masters):
+        return False
+
+    route = (invoice.route_target or "").strip()
+    if route == ROUTE_EXPENSES:
+        config = await load_classification_config(session, invoice.tenant_id)
+        threshold = float(config.vendor_detection_config.threshold)
+        confidence = float(invoice.vendor_confidence or 0)
+        if confidence >= threshold:
+            return False
+        from app.services.expense_vendor_policy import expense_vendor_hold_above
+
+        amount = float(invoice.total) if invoice.total is not None else None
+        if amount is None:
+            return True
+        return amount > expense_vendor_hold_above(config)
+
+    # Purchase and other payable routes: no master match always requires registration.
+    return True
+
+
 async def apply_vendor_hold_if_needed(
     session: AsyncSession,
     invoice: Invoice,
 ) -> bool:
     """Set exception + pending_vendor when registration is required. Returns True if held."""
     if not await _registration_required_for_invoice(session, invoice):
+        await _log_vendor_outcome_if_changed(
+            session,
+            invoice,
+            "vendor_registration_waived",
+            detail={"reason": "registration_not_required"},
+        )
         return False
 
     if _is_purchase_supporting_document(invoice):
+        await _log_vendor_outcome_if_changed(
+            session,
+            invoice,
+            "vendor_registration_waived",
+            detail={
+                "reason": "supporting_purchase_document",
+                "purchase_document_type": invoice.purchase_document_type,
+            },
+        )
         return False
 
     if await _release_hold_when_po_linked_purchase_invoice(session, invoice):
+        await _log_vendor_outcome_if_changed(
+            session,
+            invoice,
+            "vendor_registration_waived",
+            detail={
+                "reason": "po_register_trusted",
+                "vendor": invoice.vendor,
+                "po_reference": invoice.po_reference,
+            },
+        )
         return False
 
     if await _release_hold_when_po_vendor_matches(session, invoice):
+        await _log_vendor_outcome_if_changed(
+            session,
+            invoice,
+            "vendor_registration_cleared",
+            detail={
+                "reason": "po_vendor_aligned",
+                "vendor": invoice.vendor,
+            },
+        )
         return False
 
     if not await invoice_is_vendor_held(session, invoice):
-        return False
+        if not await _unknown_vendor_needs_registration(session, invoice):
+            from app.services.master_data_service import list_vendor_masters
+            from app.services.vendor_detection import find_matching_vendor_master
+
+            name = (invoice.vendor or "").strip()
+            db_masters = await list_vendor_masters(session, invoice.tenant_id)
+            known = find_matching_vendor_master(name, invoice.abn, db_masters) if name else None
+            reason = "vendor_in_master" if known else "confidence_above_threshold"
+            await _log_vendor_outcome_if_changed(
+                session,
+                invoice,
+                "vendor_registration_cleared",
+                detail={
+                    "reason": reason,
+                    "vendor": invoice.vendor,
+                    "vendor_confidence": invoice.vendor_confidence,
+                },
+            )
+            return False
 
     invoice.evaluation_status = EVAL_PENDING_VENDOR
+    if invoice.vendor_confidence is None:
+        invoice.vendor_confidence = 0.0
     if invoice.status not in (
-        InvoiceStatus.PROCESSED,
         InvoiceStatus.REJECTED,
         InvoiceStatus.DUPLICATE_SKIPPED,
     ):
         invoice.status = InvoiceStatus.EXCEPTION
 
-    await log_event(
+    await _log_vendor_outcome_if_changed(
         session,
+        invoice,
         "vendor_registration_hold",
-        invoice_id=invoice.id,
         detail={
             "vendor": invoice.vendor,
             "vendor_confidence": invoice.vendor_confidence,
             "reason": "pending_vendor_registration",
         },
     )
+    from app.services.invoice_evaluation_service import ensure_pending_vendor_queued
+
+    await ensure_pending_vendor_queued(session, invoice)
     await session.flush()
+    from app.services.notifier import send_notification
+
+    send_notification(invoice, InvoiceStatus.EXCEPTION)
     return True
 
 
 async def release_invoices_after_vendor_promotion(
     session: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID | int | str,
     *,
     vendor_name: str,
     source_invoice_id: int | None = None,
 ) -> int:
     """Re-evaluate and release held invoices tied to a promoted vendor."""
     from app.services.invoice_evaluation_service import apply_invoice_evaluation
+    from app.tenant_scoped import coerce_tenant_uuid
+
+    tid = coerce_tenant_uuid(tenant_id)
+    if tid is None:
+        return 0
 
     name_key = vendor_name.strip().lower()
     stmt = (
         select(Invoice)
         .where(
-            Invoice.tenant_id == tenant_id,
+            Invoice.tenant_id == tid,
             Invoice.evaluation_status == EVAL_PENDING_VENDOR,
             Invoice.status.in_(
                 (

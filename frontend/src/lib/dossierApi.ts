@@ -76,10 +76,27 @@ export type DossierLinkedDocumentsApi = {
   documents: DossierLinkedDocumentApi[];
   match_summary?: {
     status: string;
-    po_value: number;
-    invoice_total: number;
-    deviation: number;
     currency: string;
+    po_number?: string | null;
+    po_qty?: number | null;
+    po_unit_price?: number | null;
+    po_value: number;
+    po_date?: string | null;
+    grn_present?: boolean;
+    grn_qty?: number | null;
+    grn_date?: string | null;
+    grn_receiver?: string | null;
+    grn_condition?: string | null;
+    invoice_no?: string | null;
+    invoice_qty?: number | null;
+    invoice_unit_price?: number | null;
+    invoice_value?: number;
+    invoice_gst?: number;
+    invoice_total: number;
+    qty_variance_value?: number;
+    price_variance_value?: number;
+    total_deviation?: number;
+    deviation: number;
   } | null;
   purchase_order_id?: number | null;
 };
@@ -219,10 +236,28 @@ function mapLinkedDocuments(linked: DossierLinkedDocumentsApi): DossierLinkedDoc
     matchSummary: linked.match_summary
       ? {
           status: linked.match_summary.status,
-          poValue: linked.match_summary.po_value,
-          invoiceTotal: linked.match_summary.invoice_total,
-          deviation: linked.match_summary.deviation,
           currency: linked.match_summary.currency,
+          poNumber: linked.match_summary.po_number ?? null,
+          poQty: linked.match_summary.po_qty ?? null,
+          poUnitPrice: linked.match_summary.po_unit_price ?? null,
+          poValue: linked.match_summary.po_value,
+          poDate: linked.match_summary.po_date ?? null,
+          grnPresent: linked.match_summary.grn_present ?? false,
+          grnQty: linked.match_summary.grn_qty ?? null,
+          grnDate: linked.match_summary.grn_date ?? null,
+          grnReceiver: linked.match_summary.grn_receiver ?? null,
+          grnCondition: linked.match_summary.grn_condition ?? null,
+          invoiceNo: linked.match_summary.invoice_no ?? null,
+          invoiceQty: linked.match_summary.invoice_qty ?? null,
+          invoiceUnitPrice: linked.match_summary.invoice_unit_price ?? null,
+          invoiceValue: linked.match_summary.invoice_value ?? 0,
+          invoiceGst: linked.match_summary.invoice_gst ?? 0,
+          invoiceTotal: linked.match_summary.invoice_total,
+          qtyVarianceValue: linked.match_summary.qty_variance_value ?? 0,
+          priceVarianceValue: linked.match_summary.price_variance_value ?? 0,
+          totalDeviation:
+            linked.match_summary.total_deviation ?? linked.match_summary.deviation ?? 0,
+          deviation: linked.match_summary.deviation,
         }
       : undefined,
     purchaseOrderId: linked.purchase_order_id ?? null,

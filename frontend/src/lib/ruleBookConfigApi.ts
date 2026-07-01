@@ -16,9 +16,14 @@ import {
   playbookPresetForProfile,
 } from "@/lib/documentPlaybookConfig";
 import { normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
+import {
+  ensureExtractionSuperset,
+  normalizeCompulsoryFields,
+} from "@/lib/documentCompulsoryFields";
 import type { PurchaseBundleRole } from "@/lib/documentBundleConfig";
 import { normalizeDtCodeList } from "@/lib/documentBundleConfig";
 import {
+  mergeConfigurableRules,
   normalizeValidationRules,
   normalizeCustomValidationRules,
   type CustomValidationRule,
@@ -303,6 +308,10 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
   const extractionFields = normalizeExtractionFieldKeys(
     (raw.extraction_fields ?? raw.extractionFields ?? []) as string[]
   );
+  const requiredFields = normalizeCompulsoryFields(
+    (raw.required_fields ?? raw.requiredFields ?? []) as string[],
+    extractionFields
+  );
   const playbookProfile = inferPlaybookProfileFromRaw(raw);
   const preset = playbookPresetForProfile(playbookProfile);
   const rawMatchMode = (raw.match_policy as { mode?: string } | undefined)?.mode;
@@ -319,7 +328,7 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     enabled: raw.enabled !== false,
     classifier: mapClassifier(raw.classifier as Record<string, unknown> | undefined),
     classifierCustomized: Boolean(raw.classifier_customized ?? raw.classifierCustomized),
-    requiredFields: extractionFields,
+    requiredFields,
     absentFields: (raw.absent_fields ?? raw.absentFields ?? []) as string[],
     minRouteConfidence: Number(raw.min_route_confidence ?? raw.minRouteConfidence ?? 0.65),
     validationProfile: String(raw.validation_profile ?? raw.validationProfile ?? ""),
@@ -330,8 +339,12 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     approvalPolicy: {
       mode: (rawApprovalMode ? String(rawApprovalMode) : preset.approvalMode) as ApprovalMode,
     },
-    validationRules: normalizeValidationRules(
-      (raw.validation_rules ?? raw.validationRules ?? []) as ValidationRuleConfig[]
+    validationRules: mergeConfigurableRules(
+      String(raw.code),
+      String(raw.validation_profile ?? raw.validationProfile ?? ""),
+      normalizeValidationRules(
+        (raw.validation_rules ?? raw.validationRules ?? []) as ValidationRuleConfig[]
+      )
     ),
     customValidationRules: normalizeCustomValidationRules(
       (raw.custom_validation_rules ?? raw.customValidationRules ?? []) as CustomValidationRule[]
@@ -355,6 +368,11 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
 function documentTypeToApi(
   docType: DocumentTypeDefinition
 ): RuleBookRulesPayload["document_types"][number] {
+  const extractionFields = ensureExtractionSuperset(
+    docType.requiredFields,
+    docType.extractionFields
+  );
+  const requiredFields = normalizeCompulsoryFields(docType.requiredFields, extractionFields);
   return {
     code: docType.code,
     title: docType.title,
@@ -374,7 +392,7 @@ function documentTypeToApi(
       ),
     },
     ...(docType.classifierCustomized ? { classifier_customized: true } : {}),
-    required_fields: docType.extractionFields,
+    required_fields: requiredFields,
     absent_fields: docType.absentFields,
     ...(docType.minRouteConfidence != null
       ? { min_route_confidence: docType.minRouteConfidence }
@@ -397,7 +415,7 @@ function documentTypeToApi(
       enabled: row.enabled,
       severity: row.severity,
     })),
-    extraction_fields: docType.extractionFields,
+    extraction_fields: extractionFields,
     extraction: [],
     checks: [],
     match: [],

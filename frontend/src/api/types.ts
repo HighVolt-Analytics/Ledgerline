@@ -89,9 +89,31 @@ export interface Tenant {
 }
 
 export interface InstitutionSettings {
+  name: string;
   country: string;
   timezone: string;
   locale: string;
+}
+
+export interface OrgAiBrief {
+  legal_name: string;
+  abn: string;
+  aliases: string[];
+  default_perspective: "buyer" | "seller" | "mixed" | string;
+  intake_summary: string;
+  classification_hints: string;
+}
+
+export type ChartOfAccountType = "Expense" | "Asset" | "Liability" | "Revenue" | "Equity";
+
+export interface ChartOfAccountRow {
+  code: string;
+  name: string;
+  type: ChartOfAccountType;
+}
+
+export interface ChartOfAccountsPayload {
+  accounts: ChartOfAccountRow[];
 }
 
 export interface PlatformTenantModule {
@@ -270,6 +292,10 @@ export interface ValidationResult {
   skipped: boolean;
 }
 
+export interface ProcessingOverrides {
+  skip_steps: string[];
+}
+
 export interface Invoice {
   id: number;
   document_ref?: string | null;
@@ -299,14 +325,19 @@ export interface Invoice {
   evaluation_status:
     | "auto_coded"
     | "needs_review"
+    | "awaiting_classification"
+    | "needs_rescan"
     | "pending_vendor"
     | "unmatched_expense_vendor"
     | "awaiting_po"
     | null;
   validation_results: ValidationResult[] | null;
+  validation_pass_rate?: number | null;
   purchase_document_type?: string | null;
   document_type_code?: string | null;
   document_type_confidence?: number | null;
+  llm_suggested_dt?: string | null;
+  llm_confidence?: number | null;
   document_type_extraction_fields?: string[] | null;
   bank_bsb?: string | null;
   bank_account?: string | null;
@@ -314,12 +345,16 @@ export interface Invoice {
   billing_address?: string | null;
   email_subject?: string | null;
   document_text?: string | null;
+  document_heading?: string | null;
+  extracted_fields?: Record<string, string> | null;
   extraction_field_confidence?: Record<string, number> | null;
   created_at: string;
   has_stored_file: boolean;
   published_to_ledger?: boolean;
   current_stage?: string;
   current_stage_state?: "done" | "pending" | "fail" | "skipped";
+  approval_board_column?: "review" | "processing" | "approved" | "rejected";
+  processing_overrides?: ProcessingOverrides | null;
 }
 
 export interface LineItem {
@@ -363,6 +398,7 @@ export interface InvoiceUpdatePayload {
   invoice_no?: string | null;
   po_reference?: string | null;
   cost_centre?: string | null;
+  billing_address?: string | null;
   invoice_date?: string | null;
   due_date?: string | null;
   currency?: string | null;
@@ -372,15 +408,60 @@ export interface InvoiceUpdatePayload {
   account_code?: string | null;
   account_name?: string | null;
   line_items?: LineItemUpdatePayload[];
+  processing_overrides?: ProcessingOverrides | null;
 }
 
 export interface NavBadges {
   inbox_count: number;
   pending_approval: number;
+  pending_classification: number;
   team_expenses_count: number;
   business_expenses_count: number;
   payments_queue_count: number;
   integrations_connected: number;
+}
+
+export interface ClassificationReviewItem {
+  invoice_id: number;
+  document_ref?: string | null;
+  status: string;
+  evaluation_status?: string | null;
+  llm_suggested_dt?: string | null;
+  llm_confidence?: number | null;
+  policy_winner_dt?: string | null;
+  document_type_code?: string | null;
+  review_reasons?: string[];
+  document_ai_provider?: string | null;
+}
+
+export interface AiProviderStatus {
+  available: boolean;
+  label: string;
+  reason?: string;
+}
+
+export interface AiProvidersResponse {
+  azure_di: AiProviderStatus;
+  azure_foundry_vision: AiProviderStatus;
+  gemini_vision: AiProviderStatus;
+}
+
+export interface MatchAmountLineApi {
+  qty: number;
+  uom?: string | null;
+  unit_price?: number | null;
+  line_value?: number | null;
+}
+
+export interface ThreeWayMatchDisplayApi {
+  base_uom: string;
+  po_on_document: MatchAmountLineApi;
+  po_for_match: MatchAmountLineApi;
+  grn_on_document?: MatchAmountLineApi | null;
+  grn_for_match?: MatchAmountLineApi | null;
+  invoice_on_document?: MatchAmountLineApi | null;
+  invoice_for_match?: MatchAmountLineApi | null;
+  match_explanation?: string | null;
 }
 
 export interface ThreeWayMatchApi {
@@ -392,6 +473,7 @@ export interface ThreeWayMatchApi {
   invoice_value: number;
   invoice_gst: number;
   invoice_total: number;
+  display?: ThreeWayMatchDisplayApi | null;
 }
 
 export interface PurchaseDossierMember {
@@ -411,6 +493,31 @@ export interface PurchaseDossier {
   purchase_order_id: number | null;
   match: ThreeWayMatchApi | null;
   match_status: string | null;
+  match_summary?: {
+    status: string;
+    currency: string;
+    po_number?: string | null;
+    po_qty?: number | null;
+    po_unit_price?: number | null;
+    po_value: number;
+    po_date?: string | null;
+    grn_present?: boolean;
+    grn_qty?: number | null;
+    grn_date?: string | null;
+    grn_receiver?: string | null;
+    grn_condition?: string | null;
+    invoice_no?: string | null;
+    invoice_qty?: number | null;
+    invoice_unit_price?: number | null;
+    invoice_value?: number;
+    invoice_gst?: number;
+    invoice_total: number;
+    qty_variance_value?: number;
+    price_variance_value?: number;
+    total_deviation?: number;
+    deviation?: number;
+  } | null;
+  purchase_register?: PurchaseOrderApi | null;
 }
 
 export interface PurchaseOrderApi {
@@ -447,6 +554,59 @@ export interface PurchaseOrderApi {
   purchase_rule_id?: string | null;
 }
 
+export type PaymentExecutionEligibilityStatus =
+  | "not_ready"
+  | "awaiting_approval"
+  | "blocked_stripe_setup"
+  | "blocked_vendor_payout_setup"
+  | "ready_dry_run"
+  | "manual_instruction_available"
+  | "instruction_created"
+  | "blocked_limit"
+  | "blocked_tenant_disabled"
+  | "scheduled"
+  | "paid"
+  | "failed";
+
+export interface PaymentExecutionInstructionApi {
+  id: number;
+  payment_id: number;
+  instruction_reference: string;
+  vendor_name: string | null;
+  vendor_payout_method_label: string | null;
+  amount: number;
+  currency: string;
+  due_date: string | null;
+  execution_mode: string;
+  status: string;
+  created_by_name: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
+export interface PaymentExecutionInstructionExportApi {
+  payment_id: number;
+  instruction_reference: string;
+  vendor_name: string | null;
+  vendor_payout_method_label: string | null;
+  amount: number;
+  currency: string;
+  due_date: string | null;
+  execution_mode: string;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  export_format: string;
+  disclaimer: string;
+}
+
+export interface PaymentMarkPaidManualPayload {
+  reference: string;
+  paid_date: string;
+  proof_reference: string;
+  note?: string;
+}
+
 export interface PaymentApi {
   id: number;
   invoice_id: number;
@@ -462,6 +622,29 @@ export interface PaymentApi {
   approvers: Array<Record<string, unknown>>;
   payment_intent: string | null;
   failure_reason: string | null;
+  vendor_payout_status: string | null;
+  vendor_payout_method_type: string | null;
+  execution_readiness_status: PaymentExecutionEligibilityStatus | null;
+  execution_blocking_reason: string | null;
+  execution_instruction: PaymentExecutionInstructionApi | null;
+}
+
+export interface PaymentExecutionReadinessResponse {
+  payment_id: number;
+  can_execute: boolean;
+  execution_mode: "dry_run";
+  blocking_reasons: string[];
+  warnings: string[];
+  tenant_stripe_ready: boolean;
+  vendor_payout_ready: boolean;
+  approval_ready: boolean;
+  amount_ready: boolean;
+  manual_execution_ready: boolean;
+  role_ready: boolean | null;
+  limit_ready: boolean;
+  tenant_execution_enabled: boolean;
+  recommended_action: string | null;
+  payments_execution_enabled: boolean;
 }
 
 export interface DashboardStats {
@@ -618,6 +801,51 @@ export interface Vendor {
   approved: boolean;
 }
 
+export type VendorPayoutMethodType =
+  | "manual_bank"
+  | "stripe_connected_account"
+  | "external_bank_phase2";
+
+export type VendorPayoutMethodStatus =
+  | "not_configured"
+  | "pending"
+  | "verified"
+  | "disabled";
+
+export interface VendorPayoutMethod {
+  id: number;
+  vendor_id: number;
+  method_type: VendorPayoutMethodType | string;
+  display_label: string | null;
+  stripe_account_id: string | null;
+  last4: string | null;
+  currency: string;
+  status: VendorPayoutMethodStatus | string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorPayoutMethodCreate {
+  method_type: VendorPayoutMethodType;
+  display_label?: string | null;
+  stripe_account_id?: string | null;
+  last4?: string | null;
+  currency?: string;
+  status?: VendorPayoutMethodStatus;
+  is_default?: boolean;
+}
+
+export interface VendorPayoutMethodUpdate {
+  method_type?: VendorPayoutMethodType;
+  display_label?: string | null;
+  stripe_account_id?: string | null;
+  last4?: string | null;
+  currency?: string;
+  status?: VendorPayoutMethodStatus;
+  is_default?: boolean;
+}
+
 export interface AppSettings {
   graph_mailbox: string;
   graph_enabled: boolean;
@@ -628,6 +856,9 @@ export interface AppSettings {
   blob_enabled: boolean;
   azure_storage_container: string;
   azure_di_enabled: boolean;
+  gemini_vision_available: boolean;
+  azure_foundry_vision_available: boolean;
+  default_document_ai_provider: string;
   azure_postgres_enabled: boolean;
   azure_redis_enabled: boolean;
   appinsights_enabled: boolean;
@@ -637,6 +868,11 @@ export interface AppSettings {
   rule_book_config_path: string;
   cors_origins: string;
   whatsapp_configured: boolean;
+  stripe_payments_execution_enabled: boolean;
+  stripe_live_payments_enabled: boolean;
+  payment_manual_execution_enabled: boolean;
+  payment_manual_execution_limit_usd: number;
+  payment_execution_disabled: boolean;
 }
 
 export interface WhatsappConnection {
@@ -660,6 +896,23 @@ export interface WhatsappStatus {
   webhook_callback_url: string;
   oauth_callback_url: string;
   connections: WhatsappConnection[];
+}
+
+export interface ViberConnection {
+  id: number;
+  tenant_id: string;
+  bot_id: string;
+  connection_status: string;
+  integration_health: string;
+  created_at: string;
+}
+
+export interface ViberStatus {
+  configured: boolean;
+  webhook_callback_url: string;
+  webhook_reachable: boolean;
+  webhook_reachability_hint?: string | null;
+  connections: ViberConnection[];
 }
 
 export interface DocumentSetRule {
@@ -756,6 +1009,9 @@ export interface RuleBookConfig {
     tax_account: string;
     payable_account: string;
     fallback_account: string;
+    functional_currency?: string;
+    fx_gain_loss_account?: string;
+    bank_account?: string;
   };
   document_sets: Array<{
     id: string;
@@ -763,9 +1019,35 @@ export interface RuleBookConfig {
     set_name: string;
     isolated?: boolean;
   }>;
+  purchase_match?: {
+    base_uom?: string;
+    qty_tolerance_pct?: number;
+    uom_conversions?: Array<{
+      id: string;
+      vendor_key?: string;
+      sku?: string;
+      from_uom: string;
+      to_uom: string;
+      factor: number;
+    }>;
+  };
   document_classification?: {
     unclassified_document_type_code: string;
     unclassified_min_confidence: number;
+  };
+  org_context?: {
+    legal_name: string;
+    abn: string;
+    aliases: string[];
+    default_perspective: string;
+    intake_summary?: string;
+    classification_hints?: string;
+  };
+  ai_classification?: {
+    document_ai_provider?: "azure_di" | "azure_foundry_vision" | "gemini_vision";
+    auto_route_min_confidence?: number;
+    llm_min_confidence?: number;
+    policy_min_confidence?: number;
   };
   document_types: Array<{
     code: string;
@@ -814,6 +1096,7 @@ export interface RuleBookConfig {
     bundle_mandatory: string[];
     bundle_conditional: string[];
     purchase_bundle_role?: string;
+    llm_hint?: string;
   }>;
 }
 
@@ -837,6 +1120,22 @@ export interface RuleBookEvaluationRow {
   category_rule: { label: string; kind: string } | null;
   category_rule_disabled: { label: string; kind: string } | null;
   auto_coded: boolean;
+}
+
+export interface DocumentTypeRecognitionTestRequest {
+  draft_document_type: Record<string, unknown>;
+  document_text?: string;
+  document_heading?: string;
+  email_sender?: string;
+  attachment_name?: string;
+}
+
+export interface DocumentTypeRecognitionTestResponse {
+  matches: boolean;
+  match_rules_passed: boolean;
+  exclude_rules_passed: boolean;
+  summary: string;
+  classifier_enabled: boolean;
 }
 
 export interface RuleBookEvaluateResult {
@@ -1012,6 +1311,7 @@ export interface MatrixRow {
   flag: string;
   flag_reason?: string | null;
   payment_status: string;
+  paid_date?: string | null;
   conflict_with?: string | null;
   conflict_detail?: MatrixConflictRow[] | null;
 }
@@ -1051,6 +1351,71 @@ export interface WalletSummary {
   available: number;
   last_top_up: string;
   transactions: WalletTransaction[];
+}
+
+export interface StripeAccount {
+  id: number;
+  tenant_id: string;
+  stripe_account_id: string;
+  account_type: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  details_submitted: boolean;
+  onboarding_status: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StripeConnectResponse {
+  account: StripeAccount;
+  onboarding_url: string | null;
+}
+
+export interface StripeOnboardingLinkResponse {
+  url: string;
+}
+
+export interface StripeOAuthUrlResponse {
+  url: string;
+}
+
+export interface StripeDisconnectResponse {
+  disconnected: boolean;
+}
+
+export interface StripeReadinessResponse {
+  connected: boolean;
+  account_id: string | null;
+  onboarding_status: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  ready_for_charges: boolean;
+  ready_for_payouts: boolean;
+  blocking_reason: string | null;
+  recommended_action: string | null;
+}
+
+export interface StripeBalanceAmount {
+  amount: number | null;
+  currency: string | null;
+}
+
+export interface StripeBalanceResponse {
+  available: StripeBalanceAmount[];
+  pending: StripeBalanceAmount[];
+  livemode: boolean;
+  snapshot_id: number;
+}
+
+export interface StripeTransaction {
+  id: number;
+  stripe_transaction_id: string;
+  type: string | null;
+  amount: number | null;
+  currency: string | null;
+  status: string | null;
+  description: string | null;
+  available_on: string | null;
 }
 
 export interface CreditPack {
@@ -1100,4 +1465,21 @@ export interface InvoiceClassificationAudit {
   min_route_confidence?: number;
   signal_conflicts?: string[];
   score_breakdown?: InvoiceClassificationScoreBreakdown;
+  llm_suggested_dt?: string;
+  llm_confidence?: number;
+  llm_reasoning?: string;
+  policy_winner_dt?: string;
+  policy_winner_confidence?: number;
+  policy_scores?: Array<{
+    code: string;
+    confidence: number;
+    required_missing?: string[];
+    absent_violations?: string[];
+  }>;
+  confirmed_dt?: string;
+  confirmed_confidence?: number;
+  review_reasons?: string[];
+  compare_passed?: boolean;
+  auto_route_min_confidence?: number;
+  perspective?: string;
 }

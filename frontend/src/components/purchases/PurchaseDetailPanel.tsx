@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
-import { fmtAud, type PurchaseOrder, type ThreeWayMatch } from "@/lib/v4MockData";
+import { formatQty } from "@/lib/format";
+import {
+  fmtAud,
+  type MatchAmountLine,
+  type PurchaseOrder,
+  type ThreeWayMatch,
+} from "@/lib/v4MockData";
 
 function MatchDocCard({
   icon: Icon,
@@ -46,6 +52,87 @@ function MatchDocCard({
       </div>
       <div className="space-y-1">{children}</div>
     </div>
+  );
+}
+
+function fmtQtyUom(qty: number, uom?: string | null): string {
+  const q = formatQty(qty);
+  return uom ? `${q} ${uom}` : q;
+}
+
+function fmtMoneyOrDash(v: number | null | undefined): string {
+  if (v == null) return "—";
+  return fmtAud(v);
+}
+
+function shouldShowCompared(onDoc: MatchAmountLine, forMatch: MatchAmountLine): boolean {
+  const uomA = (onDoc.uom || "EA").toUpperCase();
+  const uomB = (forMatch.uom || "EA").toUpperCase();
+  if (uomA !== uomB) return true;
+  if (Math.abs(onDoc.qty - forMatch.qty) > 0.0001) return true;
+  const a = onDoc.unitPrice ?? null;
+  const b = forMatch.unitPrice ?? null;
+  if (a != null && b != null && Math.abs(a - b) > 0.01) return true;
+  if (onDoc.unitPrice == null && forMatch.unitPrice != null) return true;
+  if (onDoc.lineValue == null && forMatch.lineValue != null) return true;
+  return false;
+}
+
+function MatchLegAmounts({
+  onDocument,
+  forMatch,
+  baseUom,
+}: {
+  onDocument: MatchAmountLine;
+  forMatch: MatchAmountLine;
+  baseUom: string;
+}) {
+  const showCompared = shouldShowCompared(onDocument, forMatch);
+  return (
+    <>
+      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">
+        On document
+      </div>
+      <MatchLineRow label="Qty" value={fmtQtyUom(onDocument.qty, onDocument.uom)} />
+      {onDocument.unitPrice != null && (
+        <MatchLineRow label="Unit price" value={fmtMoneyOrDash(onDocument.unitPrice)} />
+      )}
+      {onDocument.lineValue != null && !showCompared && (
+        <MatchLineRow label="Line value" value={fmtMoneyOrDash(onDocument.lineValue)} strong />
+      )}
+      {showCompared && (
+        <>
+          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mt-2 mb-1">
+            Compared ({forMatch.uom || baseUom})
+          </div>
+          <MatchLineRow label="Qty" value={fmtQtyUom(forMatch.qty, forMatch.uom)} />
+          {forMatch.unitPrice != null && (
+            <MatchLineRow label="Unit price" value={fmtMoneyOrDash(forMatch.unitPrice)} />
+          )}
+          {forMatch.lineValue != null && (
+            <MatchLineRow label="Line value" value={fmtMoneyOrDash(forMatch.lineValue)} strong />
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function LegacyDocAmounts({
+  qty,
+  unitPrice,
+  value,
+}: {
+  qty: number | string;
+  unitPrice: number;
+  value: number;
+}) {
+  return (
+    <>
+      <MatchLineRow label="Qty" value={String(qty)} />
+      <MatchLineRow label="Unit price" value={fmtAud(unitPrice)} />
+      <MatchLineRow label="Value" value={fmtAud(value)} strong />
+    </>
   );
 }
 
@@ -213,6 +300,15 @@ export function PurchaseDetailContent({
   onOpenPoDocument?: () => void;
   onOpenGrnDocument?: () => void;
 }) {
+  const display = match.display;
+  const baseUom = display?.baseUom ?? "EA";
+  const varianceSubQty = display
+    ? `Compared in ${baseUom} after UOM conversion`
+    : "(inv_qty − grn_qty) × inv_unit_price";
+  const varianceSubPrice = display
+    ? `Normalized unit prices in ${baseUom}`
+    : "(inv_unit_price − po_unit_price) × inv_qty";
+
   return (
     <>
       <div className="flex items-center justify-end gap-2 mb-3">
@@ -231,6 +327,12 @@ export function PurchaseDetailContent({
         )}
       </div>
 
+      {display?.matchExplanation && (
+        <div className="text-xs text-muted-foreground bg-muted/40 border border-border/60 rounded-md p-2.5 mb-3">
+          {display.matchExplanation}
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-2">
         <MatchDocCard
           icon={ShoppingCart}
@@ -238,9 +340,15 @@ export function PurchaseDetailContent({
           tone="muted"
           onOpenDocument={onOpenPoDocument}
         >
-          <MatchLineRow label="Qty" value={String(po.poQty)} />
-          <MatchLineRow label="Unit price" value={fmtAud(po.poUnitPrice)} />
-          <MatchLineRow label="Value" value={fmtAud(match.poValue)} strong />
+          {display ? (
+            <MatchLegAmounts
+              onDocument={display.poOnDocument}
+              forMatch={display.poForMatch}
+              baseUom={baseUom}
+            />
+          ) : (
+            <LegacyDocAmounts qty={po.poQty} unitPrice={po.poUnitPrice} value={match.poValue} />
+          )}
           <MatchLineRow label="Date" value={po.date} />
         </MatchDocCard>
 
@@ -254,6 +362,17 @@ export function PurchaseDetailContent({
             <div className="text-xs text-destructive py-2">
               No GRN received. Invoice cannot be matched until goods are receipted.
             </div>
+          ) : display?.grnOnDocument && display.grnForMatch ? (
+            <>
+              <MatchLegAmounts
+                onDocument={display.grnOnDocument}
+                forMatch={display.grnForMatch}
+                baseUom={baseUom}
+              />
+              <MatchLineRow label="Received" value={po.grnDate ?? "—"} />
+              <MatchLineRow label="By" value={po.grnReceiver ?? "—"} />
+              <MatchLineRow label="Condition" value={po.grnCondition ?? "—"} />
+            </>
           ) : (
             <>
               <MatchLineRow label="Qty" value={String(po.grnQty)} />
@@ -271,9 +390,19 @@ export function PurchaseDetailContent({
           onOpenDocument={onOpenInvoice}
         >
           <MatchLineRow label="No." value={po.invoiceNo} />
-          <MatchLineRow label="Qty" value={String(po.invoiceQty)} />
-          <MatchLineRow label="Unit price" value={fmtAud(po.invoiceUnitPrice)} />
-          <MatchLineRow label="Value" value={fmtAud(match.invoiceValue)} strong />
+          {display?.invoiceOnDocument && display.invoiceForMatch ? (
+            <MatchLegAmounts
+              onDocument={display.invoiceOnDocument}
+              forMatch={display.invoiceForMatch}
+              baseUom={baseUom}
+            />
+          ) : (
+            <LegacyDocAmounts
+              qty={po.invoiceQty}
+              unitPrice={po.invoiceUnitPrice}
+              value={match.invoiceValue}
+            />
+          )}
         </MatchDocCard>
       </div>
 
@@ -292,12 +421,12 @@ export function PurchaseDetailContent({
         <div className="grid grid-cols-2 gap-2 text-sm">
           <VarianceRow
             label="Quantity variance"
-            sub="(inv_qty − grn_qty) × inv_unit_price"
+            sub={varianceSubQty}
             value={match.qtyVarianceValue}
           />
           <VarianceRow
             label="Price variance"
-            sub="(inv_unit_price − po_unit_price) × inv_qty"
+            sub={varianceSubPrice}
             value={match.priceVarianceValue}
           />
         </div>

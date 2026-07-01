@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Hard guard against duplicate rule_book_updated audit rows."""
 
 import pytest
@@ -34,7 +36,7 @@ async def test_log_rule_book_updated_suppresses_identical_content(
 
     first = await log_rule_book_updated(
         db_session,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         after_config=config,
         detail={"changes": {"email_capture_rules": {"modified": ["ec-1"]}}},
         actor_name="Admin",
@@ -42,11 +44,11 @@ async def test_log_rule_book_updated_suppresses_identical_content(
     assert first is not None
     await db_session.commit()
 
-    assert await is_duplicate_rule_book_update(db_session, 1, config) is True
+    assert await is_duplicate_rule_book_update(db_session, TESTING_TENANT_UUID, config) is True
 
     second = await log_rule_book_updated(
         db_session,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         after_config=config,
         detail={"changes": {"email_capture_rules": {"modified": ["ec-1"]}}},
         actor_name="Admin",
@@ -85,17 +87,17 @@ async def test_log_rule_book_updated_allows_real_change(
 
     await log_rule_book_updated(
         db_session,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         after_config=base,
         detail={"changes": {}},
     )
     await db_session.commit()
 
-    assert await is_duplicate_rule_book_update(db_session, 1, changed) is False
+    assert await is_duplicate_rule_book_update(db_session, TESTING_TENANT_UUID, changed) is False
 
     row = await log_rule_book_updated(
         db_session,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         after_config=changed,
         detail={"changes": {}},
     )

@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Auth context resolves tenant_slug from JWT tenant_id."""
 
 import pytest
@@ -27,9 +29,9 @@ def _fake_request() -> Request:
 async def test_context_from_token_uses_jwt_tenant_slug(
     db_session: AsyncSession,
 ) -> None:
-    db_session.add(Tenant(id=2, name="Demo Child Co", slug="demo-child"))
+    db_session.add(Tenant(id=PLATFORM_TENANT_UUID, name="Demo Child Co", slug="demo-child"))
     user = User(
-        tenant_id=2,
+        tenant_id=PLATFORM_TENANT_UUID,
         email="admin@demo.com",
         password_hash=hash_password("x"),
         full_name="Admin",
@@ -37,11 +39,11 @@ async def test_context_from_token_uses_jwt_tenant_slug(
     )
     db_session.add(user)
     await db_session.flush()
-    await ensure_membership(db_session, user_id=user.id, tenant_id=2)
+    await ensure_membership(db_session, user_id=user.id, tenant_id=PLATFORM_TENANT_UUID)
 
     token = create_access_token(
         user_id=user.id,
-        tenant_id=2,
+        tenant_id=PLATFORM_TENANT_UUID,
         tenant_slug="demo-child",
         email="admin@demo.com",
         role="admin",
@@ -50,7 +52,7 @@ async def test_context_from_token_uses_jwt_tenant_slug(
     ctx = await _context_from_token(creds, db_session, _fake_request())
 
     assert ctx is not None
-    assert ctx.tenant_id == 2
+    assert ctx.tenant_id == PLATFORM_TENANT_UUID
     assert ctx.tenant_slug == "demo-child"
 
 
@@ -59,7 +61,7 @@ async def test_context_from_token_default_tenant_slug(
     db_session: AsyncSession,
 ) -> None:
     user = User(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         email="admin@hv.com",
         password_hash=hash_password("x"),
         full_name="Admin",
@@ -67,12 +69,12 @@ async def test_context_from_token_default_tenant_slug(
     )
     db_session.add(user)
     await db_session.flush()
-    await ensure_membership(db_session, user_id=user.id, tenant_id=1)
+    await ensure_membership(db_session, user_id=user.id, tenant_id=TESTING_TENANT_UUID)
 
     token = create_access_token(
         user_id=user.id,
-        tenant_id=1,
-        tenant_slug="testing",
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
         email="admin@hv.com",
         role="admin",
     )
@@ -80,4 +82,4 @@ async def test_context_from_token_default_tenant_slug(
     ctx = await _context_from_token(creds, db_session, _fake_request())
 
     assert ctx is not None
-    assert ctx.tenant_slug == "testing"
+    assert ctx.tenant_slug == "hv-org"

@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for config-driven document type classification."""
 
 import json
@@ -16,7 +18,7 @@ from app.services.invoice_data import InvoiceData, ParsedLineItem
 
 
 def _invoice(**kwargs) -> Invoice:
-    base = dict(id=1, tenant_id=1, status=InvoiceStatus.PARSING, currency="AUD")
+    base = dict(id=1, tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PARSING, currency="AUD")
     base.update(kwargs)
     return Invoice(**base)
 

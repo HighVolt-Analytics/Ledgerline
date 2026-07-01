@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for Excel workbook export."""
 
 from datetime import date
@@ -26,6 +28,7 @@ from app.services.workbook_writer import (
     workbook_filename,
     write_workbook,
 )
+from tests.rule_book_test_helpers import demo_rule_book_config
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +44,7 @@ def _clear_settings() -> None:
 
 @pytest.mark.asyncio
 async def test_map_with_details_po_match() -> None:
-    inv = Invoice(tenant_id=1,
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID,
         vendor="Google Australia Pty Ltd",
         invoice_no="GOOG-AU-99102",
         po_reference="PO-MKT-2026-014",
@@ -49,7 +52,7 @@ async def test_map_with_details_po_match() -> None:
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
-    detail = map_with_details(inv, line_description="Campaign spend")
+    detail = await map_with_details(inv, line_description="Campaign spend", config=demo_rule_book_config())
     assert detail.rule_type == "Purchase rule"
     assert detail.expense_category == "Marketing Expense"
 
@@ -61,7 +64,7 @@ async def test_write_workbook_sheets(db_session: AsyncSession, tmp_path: Path) -
 
     original = Path(get_settings().upload_dir)
 
-    inv = Invoice(tenant_id=1,
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID,
         vendor="Google Australia Pty Ltd",
         abn="33102417032",
         invoice_no="GOOG-INV-7781032",
@@ -83,6 +86,7 @@ async def test_write_workbook_sheets(db_session: AsyncSession, tmp_path: Path) -
     db_session.add_all(
         [
             LineItem(
+                tenant_id=TESTING_TENANT_UUID,
                 invoice_id=inv.id,
                 description="Google Ads - May",
                 qty=Decimal("1"),
@@ -90,6 +94,7 @@ async def test_write_workbook_sheets(db_session: AsyncSession, tmp_path: Path) -
                 amount=Decimal("5350.00"),
             ),
             JournalEntry(
+                tenant_id=TESTING_TENANT_UUID,
                 invoice_id=inv.id,
                 date=date(2026, 5, 6),
                 account_code="6130",
@@ -99,6 +104,7 @@ async def test_write_workbook_sheets(db_session: AsyncSession, tmp_path: Path) -
                 entry_type=EntryType.DEBIT,
             ),
             JournalEntry(
+                tenant_id=TESTING_TENANT_UUID,
                 invoice_id=inv.id,
                 date=date(2026, 5, 6),
                 account_code="1400",
@@ -108,6 +114,7 @@ async def test_write_workbook_sheets(db_session: AsyncSession, tmp_path: Path) -
                 entry_type=EntryType.DEBIT,
             ),
             JournalEntry(
+                tenant_id=TESTING_TENANT_UUID,
                 invoice_id=inv.id,
                 date=date(2026, 5, 6),
                 account_code="2000",
@@ -123,12 +130,12 @@ async def test_write_workbook_sheets(db_session: AsyncSession, tmp_path: Path) -
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True)
 
-    def fake_reports_dir() -> Path:
+    def fake_reports_dir(_tenant_id=None) -> Path:
         return reports_dir
 
     ww._reports_dir = fake_reports_dir  # type: ignore[method-assign]
 
-    path = await write_workbook(db_session, 1, date(2026, 5, 6))
+    path = await write_workbook(db_session, TESTING_TENANT_UUID, date(2026, 5, 6))
     assert path.is_file()
     assert path.name == "output_workbook_hv-org_2026-05-06.xlsx"
 

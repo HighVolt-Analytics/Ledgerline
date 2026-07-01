@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 from datetime import date
 from decimal import Decimal
 
@@ -7,7 +9,7 @@ from app.services.journal_generator import generate_entries, is_balanced
 
 
 def test_balanced() -> None:
-    inv = Invoice(tenant_id=1,
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID,
         invoice_date=date(2026, 1, 15),
         subtotal=Decimal("1000"),
         gst=Decimal("100"),
@@ -21,7 +23,7 @@ def test_balanced() -> None:
 
 
 def test_ap_credit() -> None:
-    inv = Invoice(tenant_id=1,
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID,
         invoice_date=date(2026, 1, 15),
         subtotal=Decimal("500"),
         gst=Decimal("50"),

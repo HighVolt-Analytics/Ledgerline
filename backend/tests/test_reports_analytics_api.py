@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Reports analytics API tests."""
 
 from datetime import date
@@ -28,7 +30,7 @@ async def test_reports_analytics_processed_invoices(
     db_session.add_all(
         [
             Invoice(
-                tenant_id=1,
+                tenant_id=TESTING_TENANT_UUID,
                 vendor="AWS",
                 invoice_no="INV-001",
                 invoice_date=date(2026, 5, 2),
@@ -41,7 +43,7 @@ async def test_reports_analytics_processed_invoices(
                 file_hash="rep1",
             ),
             Invoice(
-                tenant_id=1,
+                tenant_id=TESTING_TENANT_UUID,
                 vendor="Atlassian",
                 invoice_date=date(2026, 5, 4),
                 account_name="Software Subscription Expense",
@@ -53,7 +55,7 @@ async def test_reports_analytics_processed_invoices(
                 file_hash="rep2",
             ),
             Invoice(
-                tenant_id=1,
+                tenant_id=TESTING_TENANT_UUID,
                 vendor="Pending Co",
                 invoice_date=date(2026, 5, 6),
                 total=Decimal("999.00"),
@@ -83,8 +85,9 @@ async def test_reports_documents_date_range(
 ) -> None:
     db_session.add(
         Invoice(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor="Telstra",
+            document_ref="BILL-040",
             invoice_no="BILL-040",
             invoice_date=date(2026, 4, 14),
             account_name="Telephone & Internet",

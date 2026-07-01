@@ -37,7 +37,7 @@ async def test_current_stage_processed_before_post(db_session: AsyncSession) -> 
     ]
     label, state = derive_current_stage(inv, logs)
     assert label == "Processed"
-    assert state == "pending"
+    assert state == "done"
 
 
 @pytest.mark.asyncio
@@ -127,3 +127,49 @@ async def test_current_stage_rejected(db_session: AsyncSession) -> None:
     )
     assert label == "Rejected"
     assert state == "fail"
+
+
+@pytest.mark.asyncio
+async def test_current_stage_vault_stored_shows_processed_even_if_status_stale(
+    db_session: AsyncSession,
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Spectra",
+        status=InvoiceStatus.PENDING,
+        route_target="Vault",
+        currency="AUD",
+        file_hash="vault-stale-status",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    logs = [
+        _log("parse_completed", invoice_id=inv.id),
+        _log("vault_stored", invoice_id=inv.id),
+    ]
+    label, state = derive_current_stage(inv, logs)
+    assert label == "Processed"
+    assert state == "done"
+
+
+@pytest.mark.asyncio
+async def test_current_stage_purchase_supporting_processed(db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Sysco",
+        status=InvoiceStatus.EXCEPTION,
+        purchase_document_type="po",
+        currency="AUD",
+        file_hash="po-support-processed",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    logs = [
+        _log("parse_completed", invoice_id=inv.id),
+        _log("purchase_document_processed", invoice_id=inv.id),
+    ]
+    label, state = derive_current_stage(inv, logs)
+    assert label == "Processed"
+    assert state == "done"

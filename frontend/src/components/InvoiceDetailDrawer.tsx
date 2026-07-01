@@ -7,6 +7,7 @@ import {
   Plus,
   Send,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { api, ApiError } from "@/api/client";
@@ -17,6 +18,7 @@ import {
   type PreviewPaneMode,
 } from "@/components/InvoiceFilePreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
+import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,15 +28,17 @@ import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
   canApproveClaim,
-  canQueuePipeline,
+  canReprocessInvoice,
   canRejectClaim,
   canRequestInfo,
   reprocessAndWatch,
+  validateInvoiceFieldsForApproval,
 } from "@/lib/invoiceActions";
 import {
   invoiceCanPublishToLedger,
   invoiceFieldConfidence,
 } from "@/lib/invoice";
+import { InvoiceProcessingOverridesSection } from "@/components/invoices/InvoiceProcessingOverridesSection";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import {
@@ -43,12 +47,21 @@ import {
   isPresetExtractionFieldKey,
   normalizeExtractionFieldKeys,
 } from "@/lib/documentExtractionFields";
+import { compulsoryFieldsForDocumentType } from "@/lib/documentCompulsoryFields";
+import {
+  processingOverridesPatchFromDraft,
+  processingOverridesPayload,
+  skipStepsFromInvoice,
+  toggleStepRunning,
+  type ProcessingOverrideStepId,
+} from "@/lib/processingOverrides";
+
 import {
   documentTypeLabelForCode,
   effectiveDocumentTypeCode,
 } from "@/lib/documentTypeResolve";
 
-const TABS = ["fields", "lines", "po", "tax", "audit"] as const;
+const TABS = ["fields", "lines", "po", "tax", "audit", "overrides", "pipeline"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -57,6 +70,8 @@ const TAB_LABELS: Record<Tab, string> = {
   po: "PO Match",
   tax: "Tax",
   audit: "Audit log",
+  overrides: "Processing overrides",
+  pipeline: "Pipeline (dev)",
 };
 
 const EXPENSE_GL_ACCOUNTS = [
@@ -179,11 +194,27 @@ function isEditableExtractionField(key: string): boolean {
 }
 
 function invoiceScalarValue(inv: InvoiceDetails, key: string): string | null {
-  const record = inv as Record<string, unknown>;
+  const record = inv as unknown as Record<string, unknown>;
+  const extracted = inv.extracted_fields;
+  if (extracted && typeof extracted === "object") {
+    const custom = extracted[key];
+    if (custom != null && String(custom).trim()) {
+      return String(custom).trim();
+    }
+  }
   const val = record[key];
   if (val == null) return null;
   const text = String(val).trim();
   return text || null;
+}
+
+function headingFromDocumentText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  for (const line of text.split(/\r?\n/)) {
+    const token = line.trim();
+    if (token.length >= 4) return token.slice(0, 120);
+  }
+  return null;
 }
 
 function readExtractionFieldValue(
@@ -209,6 +240,10 @@ function readExtractionFieldValue(
     if (!body) return "—";
     const max = 280;
     return body.length > max ? `${body.slice(0, max)}… (${body.length.toLocaleString()} chars)` : body;
+  }
+  if (key === "document_heading") {
+    const direct = invoiceScalarValue(inv, key) ?? headingFromDocumentText(inv.document_text);
+    return direct || "—";
   }
   if (editing && draft && isEditableExtractionField(key)) {
     const draftValue = draft[key as keyof InvoiceEditDraft];
@@ -244,6 +279,8 @@ function updateDraftExtractionField(
       return { ...draft, po_reference: value };
     case "cost_centre":
       return { ...draft, cost_centre: value };
+    case "billing_address":
+      return { ...draft, billing_address: value };
     case "invoice_date":
       return { ...draft, invoice_date: value };
     case "due_date":
@@ -274,8 +311,9 @@ function ConfidenceDot({ value }: { value: number }) {
   );
 }
 
-function strField(v: string | null | undefined): string {
-  return v ?? "";
+function strField(v: string | number | null | undefined): string {
+  if (v == null) return "";
+  return String(v);
 }
 
 type LineItemDraft = {
@@ -292,12 +330,14 @@ type InvoiceEditDraft = {
   invoice_no: string;
   po_reference: string;
   cost_centre: string;
+  billing_address: string;
   invoice_date: string;
   due_date: string;
   subtotal: string;
   gst: string;
   total: string;
   line_items: LineItemDraft[];
+  skip_steps: ProcessingOverrideStepId[];
 };
 
 function draftFromInvoice(inv: InvoiceDetails): InvoiceEditDraft {
@@ -307,6 +347,7 @@ function draftFromInvoice(inv: InvoiceDetails): InvoiceEditDraft {
     invoice_no: strField(inv.invoice_no),
     po_reference: strField(inv.po_reference),
     cost_centre: strField(inv.cost_centre),
+    billing_address: strField(inv.billing_address),
     invoice_date: strField(inv.invoice_date),
     due_date: strField(inv.due_date),
     subtotal: strField(inv.subtotal),
@@ -319,6 +360,7 @@ function draftFromInvoice(inv: InvoiceDetails): InvoiceEditDraft {
       unit_price: strField(line.unit_price),
       amount: strField(line.amount),
     })),
+    skip_steps: skipStepsFromInvoice(inv.processing_overrides),
   };
 }
 
@@ -331,13 +373,14 @@ function optionalText(value: string): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-function payloadFromDraft(draft: InvoiceEditDraft): InvoiceUpdatePayload {
-  return {
+function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): InvoiceUpdatePayload {
+  const payload: InvoiceUpdatePayload = {
     vendor: optionalText(draft.vendor),
     abn: optionalText(draft.abn),
     invoice_no: optionalText(draft.invoice_no),
     po_reference: optionalText(draft.po_reference),
     cost_centre: optionalText(draft.cost_centre),
+    billing_address: optionalText(draft.billing_address),
     invoice_date: optionalText(draft.invoice_date),
     due_date: optionalText(draft.due_date),
     subtotal: optionalText(draft.subtotal),
@@ -351,6 +394,13 @@ function payloadFromDraft(draft: InvoiceEditDraft): InvoiceUpdatePayload {
       amount: optionalText(line.amount),
     })),
   };
+  const overridesPatch = inv
+    ? processingOverridesPatchFromDraft(draft.skip_steps, inv.processing_overrides)
+    : processingOverridesPayload(draft.skip_steps);
+  if (overridesPatch !== undefined) {
+    payload.processing_overrides = overridesPatch;
+  }
+  return payload;
 }
 
 function FieldRow({
@@ -515,6 +565,7 @@ type InvoiceDetailDrawerProps = {
   onClose: () => void;
   onUpdated?: () => void;
   onPipelineStart?: (invoice: InvoiceDetails) => void;
+  onEditingChange?: (editing: boolean) => void;
   startInEditMode?: boolean;
   initialTab?: Tab;
 };
@@ -525,6 +576,7 @@ export function InvoiceDetailDrawer({
   onClose,
   onUpdated,
   onPipelineStart,
+  onEditingChange,
   startInEditMode = false,
   initialTab = "fields",
 }: InvoiceDetailDrawerProps) {
@@ -548,6 +600,36 @@ export function InvoiceDetailDrawer({
   const [dossierLoading, setDossierLoading] = useState(false);
 
   const activeInvoiceId = viewId ?? invoiceId;
+
+  const catalogueCodes = useMemo(
+    () =>
+      (ruleBook?.documentTypes ?? [])
+        .filter((dt) => dt.enabled)
+        .map((dt) => dt.code),
+    [ruleBook?.documentTypes]
+  );
+
+  const resolveClassification = async (confirmedDt: string) => {
+    if (!activeInvoiceId) return;
+    setActionBusy(true);
+    try {
+      await api.resolveInvoiceClassification(activeInvoiceId, {
+        confirmed_dt: confirmedDt,
+        reprocess: true,
+      });
+      const [freshInv, freshAudit] = await Promise.all([
+        api.getInvoice(activeInvoiceId, { fresh: true }),
+        api.getInvoiceClassificationAudit(activeInvoiceId, { fresh: true }),
+      ]);
+      setInv(freshInv);
+      setClassificationAudit(freshAudit);
+      onUpdated?.();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setActionBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -601,7 +683,12 @@ export function InvoiceDetailDrawer({
     api
       .getInvoiceClassificationAudit(inv.id, { fresh: true })
       .then((detail) => {
-        setClassificationAudit(detail?.document_type_code ? detail : null);
+        const hasAudit =
+          detail &&
+          (detail.document_type_code ||
+            detail.llm_suggested_dt ||
+            (Array.isArray(detail.review_reasons) && detail.review_reasons.length > 0));
+        setClassificationAudit(hasAudit ? detail : null);
       })
       .catch(() => setClassificationAudit(null))
       .finally(() => setClassificationLoading(false));
@@ -635,6 +722,10 @@ export function InvoiceDetailDrawer({
   }, [open]);
 
   useEffect(() => {
+    onEditingChange?.(editing);
+  }, [editing, onEditingChange]);
+
+  useEffect(() => {
     if (!inv) return;
     if (startInEditMode && canEdit(inv.status)) {
       setEditing(true);
@@ -643,7 +734,7 @@ export function InvoiceDetailDrawer({
     } else if (!editing) {
       setDraft(null);
     }
-  }, [inv, startInEditMode]);
+  }, [inv, startInEditMode, editing]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -668,6 +759,11 @@ export function InvoiceDetailDrawer({
     }
     return [];
   }, [inv, ruleBook, resolvedDocumentTypeCode]);
+
+  const approvalCompulsoryFields = useMemo(() => {
+    if (!ruleBook || !resolvedDocumentTypeCode) return [];
+    return compulsoryFieldsForDocumentType(ruleBook.documentTypes, resolvedDocumentTypeCode);
+  }, [ruleBook, resolvedDocumentTypeCode]);
 
   const documentTypeInCatalogue = useMemo(() => {
     const code = resolvedDocumentTypeCode;
@@ -709,7 +805,7 @@ export function InvoiceDetailDrawer({
     if (!inv || !draft) return;
     setActionBusy(true);
     try {
-      const updated = await api.updateInvoice(inv.id, payloadFromDraft(draft));
+      const updated = await api.updateInvoice(inv.id, payloadFromDraft(draft, inv));
       setInv(updated);
       setEditing(false);
       setDraft(null);
@@ -743,12 +839,56 @@ export function InvoiceDetailDrawer({
     if (!inv || !canEdit(inv.status)) return;
     setEditing(true);
     setDraft(draftFromInvoice(inv));
-    setTab("fields");
+    if (tab !== "overrides") {
+      setTab("fields");
+    }
+  }
+
+  function ensureOverridesEditMode() {
+    if (!inv || !canEdit(inv.status)) return;
+    setEditing(true);
+    setDraft((current) => current ?? draftFromInvoice(inv));
+  }
+
+  function ensureLineItemsEditMode() {
+    if (!inv || !canEdit(inv.status)) return;
+    setEditing(true);
+    setDraft((current) => current ?? draftFromInvoice(inv));
+  }
+
+  function selectTab(next: Tab) {
+    if (next === "lines") {
+      ensureLineItemsEditMode();
+    } else if (next === "overrides") {
+      ensureOverridesEditMode();
+    }
+    setTab(next);
   }
 
   function cancelEditing() {
     setEditing(false);
     setDraft(null);
+  }
+
+  function approvalFieldsFromDraftOrInvoice() {
+    const source = editing && draft ? draft : inv;
+    if (!source) {
+      return { vendor: null, total: null, due_date: null };
+    }
+    return {
+      vendor: source.vendor ?? null,
+      total: source.total ?? null,
+      due_date: source.due_date ?? null,
+      invoice_no: source.invoice_no ?? null,
+      po_reference: source.po_reference ?? null,
+      invoice_date: source.invoice_date ?? null,
+      subtotal: source.subtotal ?? null,
+      gst: source.gst ?? null,
+      abn: source.abn ?? null,
+      cost_centre: source.cost_centre ?? null,
+      billing_address: source.billing_address ?? null,
+      line_items: "line_items" in source ? source.line_items ?? null : null,
+    };
   }
 
   async function handleReject() {
@@ -785,7 +925,7 @@ export function InvoiceDetailDrawer({
   }
 
   async function handleReprocess() {
-    if (!inv || !canQueuePipeline(inv.status)) return;
+    if (!inv || !canReprocessInvoice(inv.status)) return;
     if (!inv.has_stored_file) {
       alert("Upload a PDF before reprocessing this invoice.");
       return;
@@ -793,6 +933,11 @@ export function InvoiceDetailDrawer({
     setActionBusy(true);
     onPipelineStart?.(inv);
     try {
+      if (editing && draft) {
+        await api.updateInvoice(inv.id, payloadFromDraft(draft, inv));
+        setEditing(false);
+        setDraft(null);
+      }
       await reprocessAndWatch(inv.id, async () => {
         onUpdated?.();
         await reloadInvoice();
@@ -821,13 +966,34 @@ export function InvoiceDetailDrawer({
       alert("Upload a PDF before approving this invoice.");
       return;
     }
+
+    const fieldCheck = validateInvoiceFieldsForApproval(
+      approvalFieldsFromDraftOrInvoice(),
+      approvalCompulsoryFields.length ? approvalCompulsoryFields : undefined
+    );
+    if (!fieldCheck.ok) {
+      alert(fieldCheck.message);
+      return;
+    }
+
+    const pendingEdits = draft ? payloadFromDraft(draft, fresh) : undefined;
+
     setActionBusy(true);
     onPipelineStart?.(fresh);
     try {
-      await approveAndProcess(inv.id, async () => {
-        onUpdated?.();
-        await reloadInvoice();
-      });
+      const result = await approveAndProcess(
+        inv.id,
+        async () => {
+          onUpdated?.();
+          await reloadInvoice();
+        },
+        pendingEdits
+      );
+      if (pendingEdits) {
+        setEditing(false);
+        setDraft(null);
+      }
+      setInv(result.invoice);
       onUpdated?.();
       onClose();
     } catch (e) {
@@ -965,7 +1131,7 @@ export function InvoiceDetailDrawer({
                       type="button"
                       role="tab"
                       aria-selected={tab === t}
-                      onClick={() => setTab(t)}
+                      onClick={() => selectTab(t)}
                       className={cn(
                         "inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all",
                         tab === t
@@ -983,14 +1149,17 @@ export function InvoiceDetailDrawer({
                     <InvoiceClassificationPanel
                       audit={classificationAudit}
                       loading={classificationLoading}
+                      catalogueCodes={catalogueCodes}
+                      onConfirmDt={(code) => void resolveClassification(code)}
+                      onChangeDt={(code) => void resolveClassification(code)}
                     />
                     {extractionFieldKeys.length === 0 ? (
                       <p className="text-sm text-muted-foreground">
                         {!resolvedDocumentTypeCode
-                          ? "No document type matched. Configure classifiers in Rule Book → Document types, then reprocess."
+                          ? "Document type needs review. Confirm or change DT above, then reprocess."
                           : !documentTypeInCatalogue
-                            ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or reprocess after fixing classifiers.`
-                            : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type card in Rule Book.`}
+                            ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or confirm a valid DT.`
+                            : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type in Rule Book.`}
                       </p>
                     ) : (
                       extractionFieldKeys.map((key) => (
@@ -1016,7 +1185,15 @@ export function InvoiceDetailDrawer({
                                 : undefined
                             }
                           />
-                          {key === "line_items" && inv.line_items.length > 0 ? (
+                          {key === "line_items" && canEdit(inv.status) ? (
+                            <button
+                              type="button"
+                              onClick={() => selectTab("lines")}
+                              className="mt-1 text-xs text-primary hover:underline"
+                            >
+                              {editing ? "Edit line items →" : "Open line items to edit →"}
+                            </button>
+                          ) : key === "line_items" && inv.line_items.length > 0 ? (
                             <button
                               type="button"
                               onClick={() => setTab("lines")}
@@ -1033,6 +1210,9 @@ export function InvoiceDetailDrawer({
 
                 {tab === "lines" && draft && editing && (
                   <div className="mt-4 space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      Edit rows below, then use <span className="font-medium text-foreground">Save changes</span> at the bottom of the drawer.
+                    </p>
                     <div className="overflow-x-auto rounded-md border border-border">
                       <table className="invoice-drawer-lines-table w-full text-sm">
                         <thead>
@@ -1045,13 +1225,14 @@ export function InvoiceDetailDrawer({
                             <th className="px-2 py-2 font-medium text-right whitespace-nowrap">
                               Total
                             </th>
+                            <th className="px-2 py-2 w-10" aria-label="Remove row" />
                           </tr>
                         </thead>
                         <tbody>
                           {draft.line_items.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={4}
+                                colSpan={5}
                                 className="px-3 py-6 text-center text-sm text-muted-foreground"
                               >
                                 No line items — add one below
@@ -1080,6 +1261,7 @@ export function InvoiceDetailDrawer({
                                       setDraft({ ...draft, line_items: next });
                                     }}
                                     className="h-8 text-sm text-right tnum"
+                                    inputMode="decimal"
                                   />
                                 </td>
                                 <td className="px-2 py-2">
@@ -1091,6 +1273,7 @@ export function InvoiceDetailDrawer({
                                       setDraft({ ...draft, line_items: next });
                                     }}
                                     className="h-8 text-sm text-right tnum"
+                                    inputMode="decimal"
                                   />
                                 </td>
                                 <td className="px-2 py-2">
@@ -1102,7 +1285,23 @@ export function InvoiceDetailDrawer({
                                       setDraft({ ...draft, line_items: next });
                                     }}
                                     className="h-8 text-sm text-right tnum"
+                                    inputMode="decimal"
                                   />
+                                </td>
+                                <td className="px-2 py-2 text-center">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                                    aria-label="Remove line item"
+                                    onClick={() => {
+                                      const next = draft.line_items.filter((_, i) => i !== index);
+                                      setDraft({ ...draft, line_items: next });
+                                    }}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
                                 </td>
                               </tr>
                             ))
@@ -1126,7 +1325,21 @@ export function InvoiceDetailDrawer({
                   </div>
                 )}
 
-                {tab === "lines" && !(draft && editing) && (
+                {tab === "lines" && !(draft && editing) && inv && canEdit(inv.status) && (
+                  <div className="mt-4 rounded-md border border-dashed border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+                    This document is in the review queue.{" "}
+                    <button
+                      type="button"
+                      className="text-primary hover:underline font-medium"
+                      onClick={() => selectTab("lines")}
+                    >
+                      Click here to edit line items
+                    </button>
+                    .
+                  </div>
+                )}
+
+                {tab === "lines" && !(draft && editing) && (!inv || !canEdit(inv.status)) && (
                   <div className="mt-4 overflow-x-auto rounded-md border border-border">
                     <table className="invoice-drawer-lines-table w-full text-sm">
                       <thead>
@@ -1182,6 +1395,7 @@ export function InvoiceDetailDrawer({
                   <InvoicePurchaseDossierSection
                     dossier={dossier}
                     loading={dossierLoading}
+                    vendor={inv.vendor ?? undefined}
                     onOpenSibling={(id) => setViewId(id)}
                   />
                 )}
@@ -1233,6 +1447,34 @@ export function InvoiceDetailDrawer({
                     )}
                   </div>
                 )}
+
+                {tab === "overrides" && inv && (
+                  <div className="mt-4">
+                    <InvoiceProcessingOverridesSection
+                      skipSteps={
+                        editing && draft
+                          ? draft.skip_steps
+                          : skipStepsFromInvoice(inv.processing_overrides)
+                      }
+                      editable={Boolean(editing && draft && canEdit(inv.status))}
+                      failedStage={
+                        pipelineSteps.find((s) => s.state === "fail")?.stage ??
+                        (inv.current_stage_state === "fail" ? inv.current_stage : null)
+                      }
+                      onToggle={
+                        editing && draft && canEdit(inv.status)
+                          ? (stepId, run) =>
+                              setDraft({
+                                ...draft,
+                                skip_steps: toggleStepRunning(draft.skip_steps, stepId, run),
+                              })
+                          : undefined
+                      }
+                    />
+                  </div>
+                )}
+
+                {tab === "pipeline" && inv && <PipelineDebugPanel invoice={inv} />}
               </div>
             </div>
 
@@ -1270,7 +1512,7 @@ export function InvoiceDetailDrawer({
                     Reject
                   </Button>
                   <div className="flex gap-2">
-                    {canQueuePipeline(inv.status) && (
+                    {canReprocessInvoice(inv.status) && (
                         <Button
                           variant="outline"
                           size="sm"

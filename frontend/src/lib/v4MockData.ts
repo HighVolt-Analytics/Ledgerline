@@ -91,6 +91,24 @@ export type MatchStatus =
   | "Routed for Approval"
   | "No GRN";
 
+export type MatchAmountLine = {
+  qty: number;
+  uom?: string | null;
+  unitPrice?: number | null;
+  lineValue?: number | null;
+};
+
+export type ThreeWayMatchDisplay = {
+  baseUom: string;
+  poOnDocument: MatchAmountLine;
+  poForMatch: MatchAmountLine;
+  grnOnDocument?: MatchAmountLine | null;
+  grnForMatch?: MatchAmountLine | null;
+  invoiceOnDocument?: MatchAmountLine | null;
+  invoiceForMatch?: MatchAmountLine | null;
+  matchExplanation?: string | null;
+};
+
 export type ThreeWayMatch = {
   status: MatchStatus;
   qtyVarianceValue: number;
@@ -100,6 +118,7 @@ export type ThreeWayMatch = {
   invoiceValue: number;
   invoiceGst: number;
   invoiceTotal: number;
+  display?: ThreeWayMatchDisplay | null;
 };
 
 export type PaymentTab = "queue" | "awaiting" | "scheduled" | "paid" | "failed";

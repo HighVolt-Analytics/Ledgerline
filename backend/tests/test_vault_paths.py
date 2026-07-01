@@ -80,13 +80,13 @@ def test_build_vault_blob_name_with_document_type() -> None:
     )
     assert (
         path
-        == f"{_PREFIX}invoice/Vault/DT-25 · Tax authority notice/ATO/2026/April/GST-001_2026-04-01_id9.pdf"
+        == f"{_PREFIX}invoice/Vault/DT-25  -  Tax authority notice/ATO/2026/April/GST-001_2026-04-01_id9.pdf"
     )
 
 
 def test_vault_document_type_folder_label() -> None:
     assert vault_document_type_folder("DT-13", short_title="Vendor statement") == (
-        "DT-13 · Vendor statement"
+        "DT-13  -  Vendor statement"
     )
 
 

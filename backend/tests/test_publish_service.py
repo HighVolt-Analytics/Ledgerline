@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for ledger publish service."""
 
 from datetime import date
@@ -31,7 +33,7 @@ async def test_publish_records_audit_and_charges_credits(
     get_settings.cache_clear()
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         invoice_no="PUB-001",
         document_ref="DOC-9",
@@ -65,7 +67,7 @@ async def test_publish_records_audit_and_charges_credits(
     )
     await db_session.commit()
 
-    balance_before = load_billing_for_tenant(1).balance
+    balance_before = load_billing_for_tenant(TESTING_TENANT_UUID).balance
     published = await publish_invoice_to_ledger(
         db_session,
         inv,
@@ -76,7 +78,7 @@ async def test_publish_records_audit_and_charges_credits(
 
     assert published is True
     assert await is_published_to_ledger(db_session, inv.id)
-    assert load_billing_for_tenant(1).balance == balance_before - PUBLISH_CREDIT_COST
+    assert load_billing_for_tenant(TESTING_TENANT_UUID).balance == balance_before - PUBLISH_CREDIT_COST
 
     row = (
         await db_session.execute(
@@ -102,7 +104,7 @@ async def test_publish_is_idempotent(db_session: AsyncSession, tmp_path, monkeyp
     get_settings.cache_clear()
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         invoice_date=date(2026, 6, 2),
         total=Decimal("50.00"),
@@ -123,12 +125,12 @@ async def test_publish_is_idempotent(db_session: AsyncSession, tmp_path, monkeyp
     )
     await db_session.commit()
 
-    balance_before = load_billing_for_tenant(1).balance
+    balance_before = load_billing_for_tenant(TESTING_TENANT_UUID).balance
     assert await publish_invoice_to_ledger(db_session, inv) is True
     await db_session.commit()
     assert await publish_invoice_to_ledger(db_session, inv) is False
     await db_session.commit()
-    assert load_billing_for_tenant(1).balance == balance_before - PUBLISH_CREDIT_COST
+    assert load_billing_for_tenant(TESTING_TENANT_UUID).balance == balance_before - PUBLISH_CREDIT_COST
 
 
 @pytest.mark.asyncio
@@ -144,7 +146,7 @@ async def test_reprocess_invalidates_stale_publish_flag(
     get_settings.cache_clear()
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         invoice_date=date(2026, 6, 4),
         total=Decimal("75.00"),
@@ -188,12 +190,12 @@ async def test_manual_publish_fails_without_credits(
     from app.config import get_settings
 
     get_settings.cache_clear()
-    state = load_billing_for_tenant(1)
+    state = load_billing_for_tenant(TESTING_TENANT_UUID)
     state.balance = 0
-    save_billing_for_tenant(1, state)
+    save_billing_for_tenant(TESTING_TENANT_UUID, state)
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         invoice_date=date(2026, 6, 3),
         total=Decimal("20.00"),

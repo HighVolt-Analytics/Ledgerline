@@ -23,8 +23,20 @@ from app.services.document_duplicate_service import (
 )
 from app.services.document_ref_service import assign_document_ref, audit_document_detail
 from app.services.ingest_capture_service import apply_ingest_capture, evaluate_ingest_capture
-from app.services.invoice_reset import reset_invoice_for_reprocess
+from app.services.approval_pipeline_service import (
+    human_approval_may_bypass_validation,
+    human_approved_payable_bypass,
+)
+from app.services.ingest_fanout_service import IngestSourceMetadata, ingest_file_with_fanout
+from app.services.processing_override_catalog import (
+    clear_processing_overrides,
+    override_bypasses_purchase_hold,
+    should_skip,
+)
 from app.services.invoice_evaluation_service import (
+    EVAL_AUTO_CODED as EVAL_STATUS_AUTO_CODED,
+    EVAL_AWAITING_CLASSIFICATION,
+    EVAL_NEEDS_RESCAN,
     EVAL_NEEDS_REVIEW,
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
@@ -33,16 +45,46 @@ from app.services.invoice_evaluation_service import (
     apply_invoice_evaluation,
     load_config_for_tenant,
 )
-from app.services.segment_heading_classification import (
-    list_heading_aware_document_type_matches,
-    load_segment_heading_kind_from_audit,
-)
-from app.services.vault_paths import filename_from_stored
 from app.services.routing_review_service import (
-    requires_classification_review,
     requires_gl_mapping_review,
     requires_playbook_review,
 )
+from app.services.classification_learning_service import (
+    few_shot_examples_for_tenant,
+    human_confirmed_document_type,
+    resolve_vendor_learning_key,
+)
+from app.services.classification_drift_service import (
+    check_vendor_classification_drift,
+    drift_audit_detail,
+)
+from app.services.di_extract_service import OcrFailed
+from app.services.document_ai_provider import (
+    DocumentAiProvider,
+    extract_fields,
+)
+from app.services.invoice_pipeline_phases import (
+    apply_user_defined_classifier_gate,
+    evaluate_confidence_gate,
+    evaluate_field_confidence_gate,
+    evaluate_image_quality_gate,
+    field_confidence_audit_detail,
+    gate_audit_detail,
+    image_quality_audit_detail,
+    phase_llm_classify,
+    phase_ocr,
+    phase_storage_verify,
+)
+from app.services.llm_document_service import (
+    apply_document_type_to_invoice,
+    llm_result_to_invoice_data,
+)
+from app.schemas.classification_decision import ReviewReason
+from app.services.tenant_org_context import ai_classification_from_config
+from app.schemas.llm_document import LlmDocumentResult
+from app.services.tenant_org_context import org_context_from_config
+from app.services.vault_paths import filename_from_stored
+from app.services.document_type_catalog import get_document_type_definition
 from app.services.document_type_playbook_service import (
     evaluate_playbook_gates,
     resolve_definition_for_invoice,
@@ -56,29 +98,18 @@ from app.services.team_expense_validator import has_receipt_attachment
 from app.services.vendor_hold_service import apply_vendor_hold_if_needed
 from app.services.bundle_vendor_service import reconcile_dossier_vendor, resolve_canonical_vendor_name
 from app.services.vendor_name_utils import is_plausible_vendor_name
-from app.services.invoice_data import ParsedLineItem
+from app.services.invoice_data import InvoiceData, ParsedLineItem, invoice_data_from_invoice
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 from app.services.attachment_filter import filter_invoice_attachments
 from app.services.audit_detail_helpers import validation_audit_detail
 from app.services.audit_service import log_event
 from app.services.capture_channel import infer_capture_channel, is_staff_claim_sender
-from app.services.document_type_classifier import (
-    apply_document_type_classification,
-    classification_audit_detail,
-    classify_document_type,
-)
 from app.services.email_ingestion import RawEmail, mark_message_read
-from app.services.file_storage import (
-    open_pdf_for_reading,
-    repair_invoice_stored_path,
-    store_invoice_pdf,
-    stored_file_available,
-)
+from app.services.file_storage import open_pdf_for_reading
 from app.services.vault_blob_sync import sync_invoice_blob_path
 from app.services.graph_mail_folders import folder_moves_enabled
 from app.services.journal_generator import generate_entries
 from app.services.notifier import send_notification
-from app.services.pdf_parser import parse_invoice
 from app.services.reconciliation_service import reconcile_daily, save_reconciliation
 from app.services.validator import all_passed, results_to_json, run_all_validations
 from app.services.vendor_resolver import (
@@ -88,6 +119,54 @@ from app.services.vendor_resolver import (
     resolve_vendor_slug,
 )
 from app.utils.hashing import compute_sha256_bytes
+
+
+async def _log_processing_override_skip(
+    session: AsyncSession,
+    invoice: Invoice,
+    step_id: str,
+) -> None:
+    await log_event(
+        session,
+        "pipeline_step_skipped",
+        invoice_id=invoice.id,
+        detail={"step_id": step_id, "source": "processing_override"},
+    )
+
+
+async def _vendor_hold_unless_skipped(
+    session: AsyncSession,
+    invoice: Invoice,
+) -> bool:
+    if should_skip(invoice, "vendor_registration"):
+        await _log_processing_override_skip(session, invoice, "vendor_registration")
+        return False
+    return await apply_vendor_hold_if_needed(session, invoice)
+
+
+async def _clear_purchase_awaiting_po_if_overridden(
+    session: AsyncSession,
+    invoice: Invoice,
+    loaded: Invoice,
+) -> None:
+    from app.services.invoice_evaluation_service import EVAL_AUTO_CODED
+    from app.services.purchase_document_service import EVAL_AWAITING_PO
+
+    if not override_bypasses_purchase_hold(invoice):
+        return
+    if loaded.evaluation_status != EVAL_AWAITING_PO:
+        return
+    await _log_processing_override_skip(session, invoice, "playbook")
+    loaded.evaluation_status = EVAL_AUTO_CODED
+    loaded.status = InvoiceStatus.PARSING
+    invoice.evaluation_status = EVAL_AUTO_CODED
+    invoice.status = InvoiceStatus.PARSING
+    await session.flush()
+
+
+def _mark_invoice_processed(invoice: Invoice) -> None:
+    clear_processing_overrides(invoice)
+    invoice.status = InvoiceStatus.PROCESSED
 
 
 @dataclass
@@ -100,6 +179,20 @@ class EmailIngestResult:
 def _filename_from_stored(stored: str, invoice_id: int, file_hash: str) -> str:
     _ = (invoice_id, file_hash)
     return filename_from_stored(stored)
+
+
+def _scalar_field_empty(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
+def _apply_parsed_scalar(invoice: Invoice, field: str, value: object) -> None:
+    if not _scalar_field_empty(getattr(invoice, field)):
+        return
+    setattr(invoice, field, value)
 
 
 async def _replace_line_items(
@@ -427,50 +520,45 @@ async def ingest_email_attachments(
             vendor_slug = await resolve_vendor_slug(
                 session, email.sender, tenant_id=tenant_id
             )
-            inv = Invoice(
-                tenant_id=tenant_id,
-                connected_mailbox_id=connected_mailbox_id,
-                status=InvoiceStatus.PENDING,
-                file_hash=file_hash,
-                currency="AUD",
-                email_sender=email.sender or None,
-                email_subject=email.subject or None,
-                email_attachment_name=att.filename,
-                email_message_id=email.message_id,
-                storage_vendor_slug=vendor_slug,
-            )
-            session.add(inv)
-            await session.flush()
-            await assign_document_ref(session, inv)
-
-            await apply_ingest_capture(session, inv, email, att)
-
-            stored = store_invoice_pdf(
-                att.data,
-                tenant_id,
-                tenant_slug,
-                vendor_slug,
-                inv.id,
-                file_hash,
-                att.filename,
-                tenant_name=tenant_name,
-                route_target=inv.route_target,
-            )
-            inv.raw_file_path = stored
-
-            await log_event(
+            fanout = await ingest_file_with_fanout(
                 session,
-                "email_ingested",
-                invoice_id=inv.id,
-                detail={
-                    "subject": email.subject,
-                    "sender": email.sender,
-                    "message_id": email.message_id,
-                    "vendor_slug": vendor_slug,
-                    "storage": stored,
-                },
+                tenant_id=tenant_id,
+                tenant_slug=tenant_slug,
+                tenant_name=tenant_name,
+                filename=att.filename,
+                data=att.data,
+                source=IngestSourceMetadata(
+                    storage_vendor_slug=vendor_slug,
+                    email_sender=email.sender or None,
+                    email_subject=email.subject or None,
+                    email_message_id=email.message_id,
+                    email_attachment_name=att.filename,
+                    connected_mailbox_id=connected_mailbox_id,
+                    capture_source="email",
+                ),
             )
-            result.ingested_count += 1
+
+            for segment_index, invoice_id in enumerate(fanout.invoice_ids):
+                inv = await session.get(Invoice, invoice_id)
+                assert inv is not None
+                await apply_ingest_capture(session, inv, email, att)
+                await log_event(
+                    session,
+                    "email_ingested",
+                    invoice_id=inv.id,
+                    detail={
+                        "subject": email.subject,
+                        "sender": email.sender,
+                        "message_id": email.message_id,
+                        "vendor_slug": vendor_slug,
+                        "storage": inv.raw_file_path,
+                        "parent_file_hash": fanout.parent_file_hash,
+                        "segment_index": segment_index,
+                        "segment_count": fanout.segment_count,
+                    },
+                )
+
+            result.ingested_count += len(fanout.invoice_ids)
 
         _maybe_finish_email_message(
             email,
@@ -539,7 +627,7 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
         )
     invoice.evaluation_status = EVAL_AUTO_CODED
 
-    invoice.status = InvoiceStatus.PROCESSED
+    _mark_invoice_processed(invoice)
     await session.flush()
     await _auto_learn_sender(session, invoice)
     await log_event(
@@ -551,73 +639,72 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
     send_notification(invoice, InvoiceStatus.PROCESSED)
 
 
-async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
-    """Parse → validate → map → journal → reconcile for one invoice."""
-    if invoice.status in (
-        InvoiceStatus.PROCESSED,
-        InvoiceStatus.DUPLICATE_SKIPPED,
-        InvoiceStatus.REJECTED,
-    ):
-        return
+async def _apply_parsed_to_invoice(
+    session: AsyncSession,
+    *,
+    invoice: Invoice,
+    loaded: Invoice,
+    parsed: InvoiceData,
+    config,
+    preserve_existing: bool = False,
+) -> str | None:
+    """Write extracted AP fields onto invoice rows (post-classification extract phase)."""
+    if preserve_existing:
+        from app.utils.abn_validator import storage_abn
 
-    await assign_document_ref(session, invoice)
+        resolved_vendor = (loaded.vendor or "").strip() or None
+        if not resolved_vendor:
+            resolved_vendor = resolve_canonical_vendor_name(
+                invoice.tenant_id,
+                vendor_names=[parsed.vendor],
+                abns=[parsed.abn],
+                config=config,
+            )
+            if not resolved_vendor and parsed.vendor and is_plausible_vendor_name(parsed.vendor):
+                resolved_vendor = parsed.vendor
+            if resolved_vendor:
+                invoice.vendor = resolved_vendor
+                loaded.vendor = resolved_vendor
 
-    if not invoice.raw_file_path:
-        invoice.status = InvoiceStatus.EXCEPTION
-        await log_event(
-            session,
-            "parsing_failed",
-            invoice_id=invoice.id,
-            detail=audit_document_detail(invoice, reason="no_stored_path"),
-        )
-        return
+        _apply_parsed_scalar(invoice, "abn", storage_abn(parsed.abn) if parsed.abn else None)
+        _apply_parsed_scalar(invoice, "billing_address", parsed.billing_address)
+        _apply_parsed_scalar(invoice, "bank_bsb", parsed.bank_bsb)
+        _apply_parsed_scalar(invoice, "bank_account", parsed.bank_account)
+        _apply_parsed_scalar(invoice, "invoice_no", parsed.invoice_no)
+        _apply_parsed_scalar(invoice, "po_reference", parsed.po_reference)
+        _apply_parsed_scalar(invoice, "cost_centre", parsed.cost_centre)
+        _apply_parsed_scalar(invoice, "invoice_date", parsed.invoice_date)
+        _apply_parsed_scalar(invoice, "due_date", parsed.due_date)
+        _apply_parsed_scalar(invoice, "subtotal", plausible_money(parsed.subtotal))
+        _apply_parsed_scalar(invoice, "gst", plausible_money(parsed.gst))
+        _apply_parsed_scalar(invoice, "total", plausible_money(parsed.total))
+        if _scalar_field_empty(invoice.currency):
+            invoice.currency = parsed.currency
+        if _scalar_field_empty(invoice.document_text):
+            from app.services.document_text import cap_document_text
 
-    await repair_invoice_stored_path(session, invoice)
+            invoice.document_text = cap_document_text(parsed.document_text)
+        if not loaded.line_items:
+            await _replace_line_items(session, loaded, parsed.line_items)
 
-    if not stored_file_available(invoice.raw_file_path, tenant_id=invoice.tenant_id):
-        invoice.status = InvoiceStatus.EXCEPTION
-        await log_event(
-            session,
-            "parsing_failed",
-            invoice_id=invoice.id,
-            detail=audit_document_detail(
-                invoice,
-                reason="stored_file_missing",
-                path=invoice.raw_file_path,
-            ),
-        )
-        send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
+        loaded.abn = invoice.abn
+        loaded.billing_address = invoice.billing_address
+        loaded.bank_bsb = invoice.bank_bsb
+        loaded.bank_account = invoice.bank_account
+        loaded.invoice_no = invoice.invoice_no
+        loaded.po_reference = invoice.po_reference
+        loaded.cost_centre = invoice.cost_centre
+        loaded.invoice_date = invoice.invoice_date
+        loaded.due_date = invoice.due_date
+        loaded.subtotal = invoice.subtotal
+        loaded.gst = invoice.gst
+        loaded.total = invoice.total
+        loaded.currency = invoice.currency
+        loaded.document_text = invoice.document_text
+        loaded.document_heading = invoice.document_heading
+        loaded.extracted_fields = invoice.extracted_fields
+        return resolved_vendor
 
-    invoice.status = InvoiceStatus.PARSING
-    await session.flush()
-    try:
-        with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
-            parse_result = parse_invoice(path)
-    except (OSError, FileNotFoundError) as exc:
-        invoice.status = InvoiceStatus.EXCEPTION
-        await log_event(
-            session,
-            "parsing_failed",
-            invoice_id=invoice.id,
-            detail=audit_document_detail(invoice, reason="file_read_failed", error=str(exc)),
-        )
-        send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
-
-    parsed = parse_result.data
-    await log_event(
-        session,
-        "parse_completed",
-        invoice_id=invoice.id,
-        detail={
-            "source": parse_result.source,
-            "confidence": parse_result.confidence,
-            "text_length": parse_result.text_length,
-        },
-    )
-
-    config = await load_config_for_tenant(session, invoice.tenant_id)
     resolved_vendor = resolve_canonical_vendor_name(
         invoice.tenant_id,
         vendor_names=[parsed.vendor],
@@ -627,8 +714,11 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     if not resolved_vendor and parsed.vendor and is_plausible_vendor_name(parsed.vendor):
         resolved_vendor = parsed.vendor
 
+    from app.utils.abn_validator import storage_abn
+
     invoice.vendor = resolved_vendor
-    invoice.abn = parsed.abn
+    invoice.abn = storage_abn(parsed.abn)
+    parsed.abn = invoice.abn
     invoice.billing_address = parsed.billing_address
     invoice.bank_bsb = parsed.bank_bsb
     invoice.bank_account = parsed.bank_account
@@ -645,13 +735,310 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     from app.services.po_reference import effective_po_reference, extract_po_reference_from_text
 
     invoice.document_text = cap_document_text(parsed.document_text)
+    from app.services.extraction_field_values import apply_parsed_extraction_fields
+
+    apply_parsed_extraction_fields(invoice, parsed)
     if not effective_po_reference(invoice.po_reference):
         extracted = extract_po_reference_from_text(invoice.document_text)
         if extracted:
             invoice.po_reference = extracted
             parsed.po_reference = extracted
 
-    await _replace_line_items(session, invoice, parsed.line_items)
+    loaded.vendor = invoice.vendor
+    loaded.abn = invoice.abn
+    loaded.billing_address = invoice.billing_address
+    loaded.bank_bsb = invoice.bank_bsb
+    loaded.bank_account = invoice.bank_account
+    loaded.invoice_no = invoice.invoice_no
+    loaded.po_reference = invoice.po_reference
+    loaded.cost_centre = invoice.cost_centre
+    loaded.invoice_date = invoice.invoice_date
+    loaded.due_date = invoice.due_date
+    loaded.subtotal = invoice.subtotal
+    loaded.gst = invoice.gst
+    loaded.total = invoice.total
+    loaded.currency = invoice.currency
+    loaded.document_text = invoice.document_text
+    loaded.document_heading = invoice.document_heading
+    loaded.extracted_fields = invoice.extracted_fields
+
+    await _replace_line_items(session, loaded, parsed.line_items)
+    return resolved_vendor
+
+
+async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
+    """Parse → validate → map → journal → reconcile for one invoice."""
+    if invoice.status in (
+        InvoiceStatus.PROCESSED,
+        InvoiceStatus.DUPLICATE_SKIPPED,
+        InvoiceStatus.REJECTED,
+    ):
+        return
+
+    await assign_document_ref(session, invoice)
+
+    bypass_review_gates = await human_approved_payable_bypass(session, invoice)
+    from app.services.invoice_edit_service import invoice_has_manual_field_edits
+
+    await session.refresh(invoice, attribute_names=["processing_overrides"])
+
+    preserve_extracted_fields = bypass_review_gates or await invoice_has_manual_field_edits(
+        session,
+        invoice.id,
+        tenant_id=invoice.tenant_id,
+    )
+
+    if not invoice.raw_file_path:
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "parsing_failed",
+            invoice_id=invoice.id,
+            detail=audit_document_detail(invoice, reason="no_stored_path"),
+        )
+        return
+
+    invoice.status = InvoiceStatus.PARSING
+    await session.flush()
+
+    tenant_row = await session.get(Tenant, invoice.tenant_id)
+    config = await load_config_for_tenant(session, invoice.tenant_id)
+    org = org_context_from_config(config, tenant_row)
+    ai_cfg = ai_classification_from_config(config)
+    doc_provider = DocumentAiProvider.from_config(ai_cfg.document_ai_provider)
+    provider_token = doc_provider.value
+
+    human_locked_dt = await human_confirmed_document_type(session, invoice_id=invoice.id)
+    if human_locked_dt:
+        locked_defn = get_document_type_definition(
+            human_locked_dt,
+            document_types=config.document_types,
+        )
+        if locked_defn is None or not locked_defn.enabled:
+            human_locked_dt = None
+
+    try:
+        await phase_storage_verify(
+            session,
+            invoice,
+            document_ai_provider=provider_token,
+        )
+    except OcrFailed:
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "parsing_failed",
+            invoice_id=invoice.id,
+            detail=audit_document_detail(
+                invoice,
+                reason="stored_file_missing",
+                path=invoice.raw_file_path,
+            ),
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    skip_classify_gate = bool(human_locked_dt)
+    locked_dt_code = (invoice.document_type_code or "").strip().upper()
+    classification_override = should_skip(invoice, "classification") and bool(locked_dt_code)
+    if classification_override and not human_locked_dt:
+        skip_classify_gate = True
+    classify_llm: LlmDocumentResult | None = None
+    gate_result = None
+    vendor_drift_result = None
+    confirmed_dt = human_locked_dt or (locked_dt_code if classification_override else "")
+
+    try:
+        ocr = await phase_ocr(
+            session,
+            invoice,
+            org=org,
+            document_types=config.document_types,
+            doc_provider=doc_provider,
+            provider_token=provider_token,
+            human_locked_dt=human_locked_dt,
+        )
+    except OcrFailed as exc:
+        invoice.status = InvoiceStatus.EXCEPTION
+        if human_locked_dt:
+            invoice.evaluation_status = EVAL_NEEDS_REVIEW
+        else:
+            invoice.evaluation_status = EVAL_AWAITING_CLASSIFICATION
+        await log_event(
+            session,
+            "parsing_failed",
+            invoice_id=invoice.id,
+            detail=audit_document_detail(
+                invoice,
+                reason="ocr_failed",
+                error=str(exc),
+                document_ai_provider=provider_token,
+            ),
+        )
+        if not human_locked_dt:
+            await log_event(
+                session,
+                "routing_review_required",
+                invoice_id=invoice.id,
+                detail={
+                    "gate": "classification",
+                    "review_reasons": [ReviewReason.PROVIDER_UNAVAILABLE.value],
+                    "document_ai_provider": provider_token,
+                    "provider_unavailable": True,
+                },
+            )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    quality_result = evaluate_image_quality_gate(ocr, ai_cfg=ai_cfg)
+    await log_event(
+        session,
+        "image_quality_gate_passed" if quality_result.passed else "image_quality_gate_failed",
+        invoice_id=invoice.id,
+        detail=image_quality_audit_detail(quality_result, provider_token=provider_token),
+    )
+    if not quality_result.passed:
+        if should_skip(invoice, "image_quality"):
+            await _log_processing_override_skip(session, invoice, "image_quality")
+        else:
+            invoice.status = InvoiceStatus.EXCEPTION
+            invoice.evaluation_status = EVAL_NEEDS_RESCAN
+            await log_event(
+                session,
+                "routing_review_required",
+                invoice_id=invoice.id,
+                detail={
+                    "gate": "image_quality",
+                    "review_reasons": quality_result.review_reasons,
+                    "text_length": quality_result.text_length,
+                    "sparse": quality_result.sparse,
+                    "min_text_chars": quality_result.min_text_chars,
+                    "document_ai_provider": provider_token,
+                    "resubmit_hint": "Please resend a flat, well-lit scan or PDF.",
+                },
+            )
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
+            return
+
+    enabled_dt_codes = {
+        (dt.code or "").strip().upper()
+        for dt in config.document_types
+        if dt.enabled and (dt.code or "").strip()
+    }
+    vendor_learning_key = resolve_vendor_learning_key(invoice)
+    few_shots = await few_shot_examples_for_tenant(
+        session,
+        tenant_id=invoice.tenant_id,
+        valid_dt_codes=enabled_dt_codes,
+        vendor_key=vendor_learning_key,
+        vendor_limit=ai_cfg.vendor_few_shot_limit,
+    )
+
+    if not skip_classify_gate:
+        with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+            classify_llm = await phase_llm_classify(
+                session,
+                invoice,
+                ocr=ocr,
+                org=org,
+                document_types=config.document_types,
+                few_shots=few_shots,
+                doc_provider=doc_provider,
+                provider_token=provider_token,
+                file_path=path,
+            )
+
+        vendor_drift_result = await check_vendor_classification_drift(
+            session,
+            tenant_id=invoice.tenant_id,
+            invoice_id=invoice.id,
+            vendor_key=vendor_learning_key,
+            classify_llm=classify_llm,
+            ai_cfg=ai_cfg,
+        )
+        if vendor_drift_result is not None:
+            await log_event(
+                session,
+                "vendor_classification_drift"
+                if vendor_drift_result.detected
+                else "vendor_classification_baseline",
+                invoice_id=invoice.id,
+                detail=drift_audit_detail(vendor_drift_result),
+            )
+
+        gate_result = evaluate_confidence_gate(
+            classify_llm,
+            document_types=config.document_types,
+            ai_cfg=ai_cfg,
+            provider_token=provider_token,
+        )
+        gate_result = apply_user_defined_classifier_gate(
+            gate_result,
+            invoice=invoice,
+            ocr=ocr,
+            document_types=config.document_types,
+        )
+
+        await log_event(
+            session,
+            "classification_gate_passed" if gate_result.passed else "classification_gate_failed",
+            invoice_id=invoice.id,
+            detail=gate_audit_detail(gate_result, provider_token=provider_token),
+        )
+
+        if not gate_result.passed:
+            stmt = (
+                select(Invoice)
+                .where(Invoice.id == invoice.id)
+                .options(selectinload(Invoice.line_items))
+            )
+            loaded = (await session.execute(stmt)).scalar_one()
+            loaded.document_type_code = None
+            loaded.document_type_confidence = None
+            invoice.document_type_code = None
+            invoice.document_type_confidence = None
+            loaded.evaluation_status = EVAL_AWAITING_CLASSIFICATION
+            invoice.evaluation_status = EVAL_AWAITING_CLASSIFICATION
+            loaded.llm_suggested_dt = invoice.llm_suggested_dt
+            loaded.llm_confidence = invoice.llm_confidence
+            invoice.status = InvoiceStatus.EXCEPTION
+            await log_event(
+                session,
+                "routing_review_required",
+                invoice_id=invoice.id,
+                detail={
+                    "gate": "classification",
+                    "document_type_code": None,
+                    "document_type_confidence": None,
+                    "route_target": None,
+                    "review_reasons": gate_result.review_reasons,
+                    "llm_suggested_dt": gate_result.llm_suggested_dt,
+                    "llm_confidence": gate_result.llm_confidence,
+                    "llm_reasoning": gate_result.llm_reasoning,
+                    "document_ai_provider": provider_token,
+                },
+            )
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
+            return
+
+        confirmed_dt = gate_result.confirmed_dt
+
+    if skip_classify_gate and (human_locked_dt or classification_override):
+        override_dt = locked_dt_code if classification_override and not human_locked_dt else human_locked_dt
+        if classification_override and not human_locked_dt:
+            await _log_processing_override_skip(session, invoice, "classification")
+        await log_event(
+            session,
+            "classification_gate_passed",
+            invoice_id=invoice.id,
+            detail={
+                "human_locked": bool(human_locked_dt),
+                "processing_override": classification_override and not human_locked_dt,
+                "confirmed_dt": override_dt,
+                "confirmed_confidence": float(invoice.document_type_confidence or 0.95),
+                "document_ai_provider": provider_token,
+            },
+        )
 
     stmt = (
         select(Invoice)
@@ -660,29 +1047,187 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
     loaded = (await session.execute(stmt)).scalar_one()
 
-    segment_heading_kind = await load_segment_heading_kind_from_audit(session, invoice.id)
-    classification = classify_document_type(
-        invoice=loaded,
-        parsed=parsed,
+    if classify_llm is not None:
+        loaded.llm_suggested_dt = invoice.llm_suggested_dt
+        loaded.llm_confidence = invoice.llm_confidence
+
+    extract_llm = await extract_fields(
+        ocr,
+        file_path=invoice.raw_file_path,
+        org=org,
         document_types=config.document_types,
-        parse_confidence=parse_result.confidence,
-        unclassified=config.document_classification,
-        segment_heading_kind=segment_heading_kind,
+        confirmed_dt=confirmed_dt,
+        few_shots=few_shots,
+        provider=doc_provider,
     )
-    apply_document_type_classification(loaded, classification)
-    invoice.document_type_code = loaded.document_type_code
-    invoice.document_type_confidence = loaded.document_type_confidence
+    llm_result = extract_llm
+    field_conf_result = evaluate_field_confidence_gate(llm_result, ai_cfg=ai_cfg)
     await log_event(
         session,
-        "document_classified",
+        "field_confidence_evaluated",
         invoice_id=invoice.id,
-        detail=classification_audit_detail(
-            classification,
-            document_types=config.document_types,
-        ),
+        detail=field_confidence_audit_detail(field_conf_result),
+    )
+    from dataclasses import replace
+
+    from app.services.extraction_field_values import (
+        apply_parsed_extraction_fields,
+        custom_extraction_field_keys_for_dt,
+        enrich_parsed_from_ocr,
+        ensure_extraction_baseline,
+    )
+    from app.services.pdf_parser import parse_local_text
+
+    custom_keys = custom_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
+    if llm_result is not None:
+        parsed = llm_result_to_invoice_data(
+            llm_result,
+            ocr=ocr,
+            custom_keys=custom_keys or None,
+        )
+    else:
+        local = parse_local_text(ocr.text or "")
+        parsed = replace(local, document_text=ocr.text or local.document_text)
+    parsed = enrich_parsed_from_ocr(parsed, ocr)
+
+    await log_event(
+        session,
+        "parse_completed",
+        invoice_id=invoice.id,
+        detail={
+            "source": provider_token,
+            "confidence": "high" if not ocr.sparse else "low",
+            "text_length": ocr.text_length,
+            "di_model": ocr.di_model,
+            "document_ai_provider": provider_token,
+            "confirmed_dt": confirmed_dt,
+        },
     )
 
+    resolved_vendor = await _apply_parsed_to_invoice(
+        session,
+        invoice=invoice,
+        loaded=loaded,
+        parsed=parsed,
+        config=config,
+        preserve_existing=preserve_extracted_fields,
+    )
+
+    if preserve_extracted_fields:
+        parsed = invoice_data_from_invoice(loaded)
+
+    stmt = (
+        select(Invoice)
+        .where(Invoice.id == invoice.id)
+        .options(selectinload(Invoice.line_items))
+    )
+    loaded = (await session.execute(stmt)).scalar_one()
+
+    if human_locked_dt:
+        apply_document_type_to_invoice(
+            loaded,
+            code=human_locked_dt,
+            confidence=0.95,
+            llm_suggested_dt=classify_llm.suggested_dt if classify_llm else None,
+            llm_confidence=classify_llm.confidence if classify_llm else None,
+        )
+        await log_event(
+            session,
+            "document_classified",
+            invoice_id=invoice.id,
+            detail={
+                "human_locked": True,
+                "confirmed_dt": human_locked_dt,
+                "llm_suggested_dt": classify_llm.suggested_dt if classify_llm else None,
+                "llm_confidence": classify_llm.confidence if classify_llm else None,
+                "document_ai_provider": provider_token,
+                "extract_phase": True,
+            },
+        )
+    elif gate_result is not None and gate_result.passed:
+        apply_document_type_to_invoice(
+            loaded,
+            code=gate_result.confirmed_dt,
+            confidence=gate_result.confirmed_confidence,
+            llm_suggested_dt=gate_result.llm_suggested_dt,
+            llm_confidence=gate_result.llm_confidence,
+        )
+        if llm_result is not None:
+            loaded.llm_suggested_dt = llm_result.suggested_dt or gate_result.llm_suggested_dt
+            loaded.llm_confidence = round(llm_result.confidence, 4)
+        await log_event(
+            session,
+            "document_classified",
+            invoice_id=invoice.id,
+            detail={
+                **gate_audit_detail(gate_result, provider_token=provider_token),
+                "extract_phase": True,
+            },
+        )
+
+    invoice.document_type_code = loaded.document_type_code
+    invoice.document_type_confidence = loaded.document_type_confidence
+    invoice.llm_suggested_dt = loaded.llm_suggested_dt
+    invoice.llm_confidence = loaded.llm_confidence
+
     await apply_invoice_evaluation(session, loaded, config=config)
+    invoice.evaluation_status = loaded.evaluation_status
+    invoice.route_target = loaded.route_target
+    invoice.matched_rule_ids = loaded.matched_rule_ids
+    invoice.vendor_confidence = loaded.vendor_confidence
+    await _clear_purchase_awaiting_po_if_overridden(session, invoice, loaded)
+
+    dt_definition = resolve_definition_for_invoice(loaded, list(config.document_types))
+    skip_field_conf_review = False
+    if dt_definition is not None:
+        from app.services.document_type_playbook_profile_service import effective_approval_policy
+
+        skip_field_conf_review = effective_approval_policy(dt_definition).mode == "no_posting"
+
+    if (
+        not field_conf_result.passed
+        and not bypass_review_gates
+        and not skip_field_conf_review
+        and not should_skip(invoice, "field_confidence")
+    ):
+        loaded.evaluation_status = EVAL_NEEDS_REVIEW
+        invoice.evaluation_status = EVAL_NEEDS_REVIEW
+        await log_event(
+            session,
+            "routing_review_required",
+            invoice_id=invoice.id,
+            detail={
+                "gate": "field_confidence",
+                "review_reasons": field_conf_result.review_reasons,
+                "low_confidence_fields": field_conf_result.low_confidence_fields,
+                "min_field_extract_confidence": field_conf_result.min_confidence,
+            },
+        )
+    elif (
+        not field_conf_result.passed
+        and should_skip(invoice, "field_confidence")
+    ):
+        await _log_processing_override_skip(session, invoice, "field_confidence")
+    elif vendor_drift_result is not None and vendor_drift_result.detected and not bypass_review_gates and not should_skip(invoice, "vendor_drift"):
+        loaded.evaluation_status = EVAL_NEEDS_REVIEW
+        invoice.evaluation_status = EVAL_NEEDS_REVIEW
+        await log_event(
+            session,
+            "routing_review_required",
+            invoice_id=invoice.id,
+            detail={
+                "gate": "vendor_classification_drift",
+                "review_reasons": vendor_drift_result.review_reasons,
+                **drift_audit_detail(vendor_drift_result),
+            },
+        )
+    elif (
+        vendor_drift_result is not None
+        and vendor_drift_result.detected
+        and should_skip(invoice, "vendor_drift")
+    ):
+        await _log_processing_override_skip(session, invoice, "vendor_drift")
+
     from app.services.purchase_document_service import apply_purchase_document_type_after_eval
 
     await apply_purchase_document_type_after_eval(session, loaded)
@@ -692,35 +1237,14 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.storage_vendor_slug = loaded.storage_vendor_slug
     invoice.route_target = loaded.route_target
 
-    classifier_matches = list_heading_aware_document_type_matches(
-        list(config.document_types),
-        invoice=loaded,
-        parsed=parsed,
-        heading_kind=segment_heading_kind,
-    )
-    no_classifier_match = not classifier_matches
-    dt_definition = resolve_definition_for_invoice(loaded, list(config.document_types))
+    parsed = ensure_extraction_baseline(loaded, parsed, ocr=ocr)
+    apply_parsed_extraction_fields(loaded, parsed)
+    invoice.extracted_fields = loaded.extracted_fields
+    invoice.document_text = loaded.document_text
+    invoice.email_attachment_name = loaded.email_attachment_name
 
-    if requires_classification_review(loaded, classification):
-        loaded.evaluation_status = EVAL_NEEDS_REVIEW
-        invoice.evaluation_status = EVAL_NEEDS_REVIEW
-        invoice.status = InvoiceStatus.EXCEPTION
-        await log_event(
-            session,
-            "routing_review_required",
-            invoice_id=invoice.id,
-            detail={
-                "gate": "classification",
-                "document_type_code": loaded.document_type_code,
-                "document_type_confidence": loaded.document_type_confidence,
-                "route_target": invoice.route_target,
-                "reason": classification.reason,
-                "no_classifier_match": no_classifier_match,
-                "needs_review": classification.needs_review,
-            },
-        )
-        send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
+    if dt_definition is None:
+        dt_definition = resolve_definition_for_invoice(loaded, list(config.document_types))
 
     playbook = await evaluate_playbook_gates(
         session,
@@ -742,10 +1266,23 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             ),
         },
     )
-    if requires_playbook_review(playbook, definition=dt_definition):
+    if (
+        requires_playbook_review(playbook, definition=dt_definition)
+        and not bypass_review_gates
+        and not should_skip(invoice, "playbook")
+    ):
         loaded.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.status = InvoiceStatus.EXCEPTION
+        from app.services.document_type_playbook_service import (
+            suggest_reclassify_direct_expense_code,
+        )
+
+        suggest_dt = suggest_reclassify_direct_expense_code(
+            playbook,
+            dt_definition,
+            list(config.document_types),
+        )
         await log_event(
             session,
             "routing_review_required",
@@ -755,9 +1292,11 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 "document_type_code": loaded.document_type_code,
                 "document_type_confidence": loaded.document_type_confidence,
                 "route_target": invoice.route_target,
-                "reason": classification.reason,
-                "no_classifier_match": no_classifier_match,
+                "review_reasons": (
+                    gate_result.review_reasons if gate_result else []
+                ),
                 "playbook": playbook.audit_detail(),
+                "suggest_reclassify_dt": suggest_dt,
                 **(
                     playbook_policy_audit_detail(dt_definition)
                     if dt_definition is not None
@@ -767,6 +1306,10 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
+    elif requires_playbook_review(playbook, definition=dt_definition) and should_skip(
+        invoice, "playbook"
+    ):
+        await _log_processing_override_skip(session, invoice, "playbook")
 
     await _post_parse_relocate(session, loaded, resolved_vendor)
     invoice.raw_file_path = loaded.raw_file_path
@@ -780,11 +1323,25 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         invoice.po_reference = loaded.po_reference
         invoice.evaluation_status = loaded.evaluation_status
         if loaded.status == InvoiceStatus.EXCEPTION:
-            invoice.status = InvoiceStatus.EXCEPTION
-            return
+            purchase_hold_bypass = bypass_review_gates or override_bypasses_purchase_hold(invoice)
+            if purchase_hold_bypass:
+                from app.services.invoice_evaluation_service import EVAL_AUTO_CODED
+                from app.services.purchase_document_service import EVAL_AWAITING_PO
 
-    if await apply_vendor_hold_if_needed(session, loaded):
+                if loaded.evaluation_status == EVAL_AWAITING_PO:
+                    if override_bypasses_purchase_hold(invoice) and not bypass_review_gates:
+                        await _log_processing_override_skip(session, invoice, "playbook")
+                    loaded.evaluation_status = EVAL_AUTO_CODED
+                    invoice.evaluation_status = EVAL_AUTO_CODED
+                loaded.status = InvoiceStatus.PARSING
+                invoice.status = InvoiceStatus.PARSING
+            else:
+                invoice.status = InvoiceStatus.EXCEPTION
+                return
+
+    if await _vendor_hold_unless_skipped(session, loaded):
         invoice.status = InvoiceStatus.EXCEPTION
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
     invoice.status = InvoiceStatus.VALIDATING
@@ -794,7 +1351,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     validation_profile = (
         PROFILE_STANDARD
-        if no_classifier_match and not (loaded.document_type_code or "").strip()
+        if not (loaded.document_type_code or "").strip()
         else None
     )
     results = await run_all_validations(
@@ -815,32 +1372,57 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.validation_results = results_to_json(results)
     invoice.abn = parsed.abn
     if not all_passed(results):
-        stmt = (
-            select(Invoice)
-            .where(Invoice.id == invoice.id)
-            .options(selectinload(Invoice.line_items))
-        )
-        loaded = (await session.execute(stmt)).scalar_one()
-        await apply_invoice_evaluation(session, loaded)
-        await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
-        invoice.raw_file_path = loaded.raw_file_path
-        invoice.route_target = loaded.route_target
-        if await apply_vendor_hold_if_needed(session, loaded):
+        if bypass_review_gates and human_approval_may_bypass_validation(results):
+            await log_event(
+                session,
+                "validation_bypassed_after_human_approval",
+                invoice_id=invoice.id,
+                detail=validation_audit_detail(
+                    results,
+                    route_target=invoice.route_target,
+                    has_receipt_file=has_receipt_attachment(invoice.raw_file_path),
+                ),
+            )
+        elif should_skip(invoice, "validation"):
+            await _log_processing_override_skip(session, invoice, "validation")
+            await log_event(
+                session,
+                "validation_bypassed_processing_override",
+                invoice_id=invoice.id,
+                detail=validation_audit_detail(
+                    results,
+                    route_target=invoice.route_target,
+                    has_receipt_file=has_receipt_attachment(invoice.raw_file_path),
+                ),
+            )
+        else:
+            stmt = (
+                select(Invoice)
+                .where(Invoice.id == invoice.id)
+                .options(selectinload(Invoice.line_items))
+            )
+            loaded = (await session.execute(stmt)).scalar_one()
+            await apply_invoice_evaluation(session, loaded)
+            await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
+            invoice.raw_file_path = loaded.raw_file_path
+            invoice.route_target = loaded.route_target
+            if await _vendor_hold_unless_skipped(session, loaded):
+                invoice.status = InvoiceStatus.EXCEPTION
+                send_notification(invoice, InvoiceStatus.EXCEPTION)
+                return
             invoice.status = InvoiceStatus.EXCEPTION
+            await log_event(
+                session,
+                "validation_failed",
+                invoice_id=invoice.id,
+                detail=validation_audit_detail(
+                    results,
+                    route_target=invoice.route_target,
+                    has_receipt_file=has_receipt_attachment(invoice.raw_file_path),
+                ),
+            )
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
-        invoice.status = InvoiceStatus.EXCEPTION
-        await log_event(
-            session,
-            "validation_failed",
-            invoice_id=invoice.id,
-            detail=validation_audit_detail(
-                results,
-                route_target=invoice.route_target,
-                has_receipt_file=has_receipt_attachment(invoice.raw_file_path),
-            ),
-        )
-        send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
 
     await log_event(
         session,
@@ -858,13 +1440,15 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         invoice,
         definition=dt_definition,
         validation_results=results,
+        human_approval_bypass=bypass_review_gates,
     ):
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
     if (invoice.route_target or "").strip() == ROUTE_VAULT:
-        invoice.status = InvoiceStatus.PROCESSED
-        invoice.evaluation_status = "needs_review"
+        _mark_invoice_processed(invoice)
+        invoice.evaluation_status = EVAL_STATUS_AUTO_CODED
+        loaded.evaluation_status = EVAL_STATUS_AUTO_CODED
         await log_event(
             session,
             "vault_stored",
@@ -877,7 +1461,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         send_notification(invoice, InvoiceStatus.PROCESSED)
         return
 
-    if doc_type in ("po", "grn"):
+    if doc_type in ("po", "grn") and not bypass_review_gates:
         await _finish_purchase_supporting_document(session, invoice)
         return
 
@@ -888,8 +1472,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             .options(selectinload(Invoice.line_items))
         )
     ).scalar_one()
-    if await apply_vendor_hold_if_needed(session, post_validate):
+    if await _vendor_hold_unless_skipped(session, post_validate):
         invoice.status = InvoiceStatus.EXCEPTION
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
     invoice.status = InvoiceStatus.MAPPING
@@ -915,6 +1500,11 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
     invoice.raw_file_path = loaded.raw_file_path
     invoice.route_target = loaded.route_target
+    if await _vendor_hold_unless_skipped(session, loaded):
+        invoice.status = InvoiceStatus.EXCEPTION
+        invoice.evaluation_status = loaded.evaluation_status
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
     await log_event(
         session,
         "mapping_applied",
@@ -931,7 +1521,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         loaded,
         mapping_detail,
         document_types=list(config.document_types),
-    ):
+    ) and not bypass_review_gates and not should_skip(invoice, "mapping_review"):
         invoice.status = InvoiceStatus.EXCEPTION
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
         await log_event(
@@ -948,6 +1538,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
+    elif requires_gl_mapping_review(
+        loaded,
+        mapping_detail,
+        document_types=list(config.document_types),
+    ) and should_skip(invoice, "mapping_review"):
+        await _log_processing_override_skip(session, invoice, "mapping_review")
 
     from app.services.rule_book_mapper import ROUTE_EXPENSES
 
@@ -1005,7 +1601,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await save_reconciliation(session, recon, tenant_id=invoice.tenant_id)
     if recon.halted:
         route = (invoice.route_target or "").strip()
-        non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES)
+        non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES) or bypass_review_gates
         if non_blocking_recon:
             await log_event(
                 session,
@@ -1024,7 +1620,20 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
 
-    invoice.status = InvoiceStatus.PROCESSED
+    pre_post = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.id == invoice.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+    if await _vendor_hold_unless_skipped(session, pre_post):
+        invoice.status = InvoiceStatus.EXCEPTION
+        invoice.evaluation_status = pre_post.evaluation_status
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    _mark_invoice_processed(invoice)
     await session.flush()
     await record_team_expense_processed(session, invoice)
     from app.services.payment_service import ensure_payment_for_invoice
@@ -1035,10 +1644,17 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     await sync_purchase_document(session, invoice)
     if invoice.evaluation_status == "awaiting_po":
-        invoice.status = InvoiceStatus.EXCEPTION
-        await session.flush()
-        send_notification(invoice, InvoiceStatus.EXCEPTION)
-        return
+        if bypass_review_gates or override_bypasses_purchase_hold(invoice):
+            from app.services.invoice_evaluation_service import EVAL_AUTO_CODED
+
+            if override_bypasses_purchase_hold(invoice) and not bypass_review_gates:
+                await _log_processing_override_skip(session, invoice, "playbook")
+            invoice.evaluation_status = EVAL_AUTO_CODED
+        else:
+            invoice.status = InvoiceStatus.EXCEPTION
+            await session.flush()
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
+            return
     if is_commercial_purchase_invoice(invoice):
         await ensure_payment_for_invoice(session, invoice)
     await _auto_learn_sender(session, invoice)

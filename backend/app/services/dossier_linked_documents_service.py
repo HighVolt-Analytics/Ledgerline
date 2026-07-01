@@ -127,16 +127,8 @@ async def build_dossier_linked_documents(
             )
 
         match_summary = None
-        if purchase.match is not None:
-            po_value = float(purchase.match.po_value or 0)
-            invoice_total = float(purchase.match.invoice_total or 0)
-            match_summary = DossierMatchSummaryResponse(
-                status=purchase.match_status or purchase.match.status,
-                po_value=po_value,
-                invoice_total=invoice_total,
-                deviation=invoice_total - po_value,
-                currency=(invoice.currency or "AUD").strip() or "AUD",
-            )
+        if purchase.match is not None and purchase.match_summary is not None:
+            match_summary = purchase.match_summary
 
         return await _finalize_linked_documents(
             session,

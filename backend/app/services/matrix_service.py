@@ -3,26 +3,40 @@
 from __future__ import annotations
 
 import json
+import uuid
+from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
-from app.schemas.pipeline import MatrixConflictRow
+from app.schemas.matrix_api import MatrixListRequest
+from app.schemas.pipeline import MatrixConflictRow, MatrixRowResponse
+from app.services.invoice_related_query_service import (
+    audit_logs_for_invoice_ids,
+    payments_for_invoice_ids,
+)
+from app.services.invoice_response_service import invoice_to_response
+from app.services.pipeline_stages import build_matrix_cells
+from app.services.publish_service import published_invoice_ids
 
 
 def _parse_validation_results(raw: str | list | None) -> list[dict[str, Any]]:
+    from app.services.validator import normalize_stored_validation_results
+
     if not raw:
         return []
     if isinstance(raw, list):
-        return [r for r in raw if isinstance(r, dict)]
+        return normalize_stored_validation_results(raw)
     try:
-        data = json.loads(raw)
-        return [r for r in data if isinstance(r, dict)] if isinstance(data, list) else []
+        parsed = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return []
+    if not isinstance(parsed, list):
+        return []
+    return normalize_stored_validation_results(parsed)
 
 
 def _first_validation_failure(inv: Invoice) -> str | None:
@@ -183,3 +197,88 @@ async def duplicate_conflict_for_invoice(
     if other is None:
         return None, []
     return _document_ref(other), _conflict_detail(inv, other)
+
+
+@dataclass(frozen=True)
+class MatrixListResult:
+    rows: list[MatrixRowResponse]
+    page: int
+    total: int
+    pages: int
+
+
+async def fetch_document_matrix(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    params: MatrixListRequest,
+) -> MatrixListResult:
+    stmt = (
+        select(Invoice)
+        .where(Invoice.tenant_id == tenant_id)
+        .order_by(Invoice.created_at.desc(), Invoice.id.desc())
+    )
+    count_stmt = select(func.count(Invoice.id)).where(Invoice.tenant_id == tenant_id)
+    if params.status:
+        try:
+            status_enum = InvoiceStatus(params.status)
+            stmt = stmt.where(Invoice.status == status_enum)
+            count_stmt = count_stmt.where(Invoice.status == status_enum)
+        except ValueError:
+            pass
+    if params.route_target and params.route_target.strip():
+        stmt = stmt.where(Invoice.route_target == params.route_target.strip())
+        count_stmt = count_stmt.where(Invoice.route_target == params.route_target.strip())
+    if params.evaluation_status and params.evaluation_status.strip():
+        token = params.evaluation_status.strip()
+        stmt = stmt.where(Invoice.evaluation_status == token)
+        count_stmt = count_stmt.where(Invoice.evaluation_status == token)
+
+    total = (await db.execute(count_stmt)).scalar() or 0
+    pages = max(1, (total + params.page_size - 1) // params.page_size)
+    invoices = (
+        await db.execute(
+            stmt.offset((params.page - 1) * params.page_size).limit(params.page_size)
+        )
+    ).scalars().all()
+
+    invoice_ids = [inv.id for inv in invoices]
+    audit_by_id = await audit_logs_for_invoice_ids(
+        db, invoice_ids, tenant_id=tenant_id
+    )
+    payments_by_id = await payments_for_invoice_ids(db, tenant_id, invoice_ids)
+    published_ids = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
+
+    rows: list[MatrixRowResponse] = []
+    for inv in invoices:
+        flag, flag_reason = derive_matrix_flag(inv)
+        payment = payments_by_id.get(inv.id)
+        conflict_with, conflict_detail = await duplicate_conflict_for_invoice(
+            db, tenant_id, inv
+        )
+        paid_date = None
+        if payment is not None and payment.paid_date is not None:
+            paid_date = payment.paid_date.isoformat()
+
+        rows.append(
+            MatrixRowResponse(
+                invoice=invoice_to_response(
+                    inv,
+                    published_to_ledger=inv.id in published_ids,
+                    audit_logs=audit_by_id.get(inv.id, []),
+                ),
+                stages=build_matrix_cells(inv, audit_by_id.get(inv.id, [])),
+                flag=flag,
+                flag_reason=flag_reason,
+                payment_status=derive_matrix_payment_status(inv, payment),
+                paid_date=paid_date,
+                conflict_with=conflict_with,
+                conflict_detail=conflict_detail or None,
+            )
+        )
+    return MatrixListResult(
+        rows=rows,
+        page=params.page,
+        total=total,
+        pages=pages,
+    )

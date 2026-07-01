@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.custom_validation_rule import (
     CustomValidationRule,
@@ -182,6 +182,32 @@ class DocumentTypeDefinition(BaseModel):
         if not isinstance(value, list):
             return []
         return normalize_extraction_field_keys([str(item) for item in value])
+
+    @field_validator("required_fields", mode="before")
+    @classmethod
+    def _normalize_required_fields(cls, value: Any) -> list[str]:
+        from app.services.document_type_field_keys import normalize_extraction_field_keys
+
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        return normalize_extraction_field_keys([str(item) for item in value])
+
+    @model_validator(mode="after")
+    def _align_compulsory_with_extraction(self) -> DocumentTypeDefinition:
+        extraction = list(self.extraction_fields or [])
+        required = list(self.required_fields or [])
+        if not required and extraction:
+            object.__setattr__(self, "required_fields", list(extraction))
+            return self
+        if not extraction:
+            return self
+        extraction_set = set(extraction)
+        clamped = [key for key in required if key in extraction_set]
+        if clamped != required:
+            object.__setattr__(self, "required_fields", clamped)
+        return self
 
     @field_validator("bundle_mandatory", mode="before")
     @classmethod

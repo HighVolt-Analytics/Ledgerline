@@ -96,7 +96,7 @@ VR_CHECK_NAMES: dict[str, str] = {
     "VR14": "PO status & currency",
     "VR15": "3-way match",
     "VR16": "Freight / surcharges",
-    "VR-PB01": "Extraction completeness",
+    "VR-PB01": "Optional extraction fields",
     "VR-PB02": "Mandatory bundle",
     "VR-PB04": "Conditional bundle advisories",
 }
@@ -186,9 +186,23 @@ def three_way_match_audit_detail(
     po: PurchaseOrder,
     match: ThreeWayMatchResult,
     status: str,
+    *,
+    inv: object | None = None,
 ) -> dict[str, object]:
+    from app.services.purchase_match_service import _invoice_qty_and_price
+
     grn = _latest_grn(po)
     amounts_reconciled = match.status == "3-Way Match"
+    inv_qty: float | None = None
+    inv_unit: float | None = None
+    invoice_no: str | None = None
+    currency = "AUD"
+    if inv is not None:
+        qty, unit, _ = _invoice_qty_and_price(inv)  # type: ignore[arg-type]
+        inv_qty = float(qty)
+        inv_unit = float(unit)
+        invoice_no = getattr(inv, "invoice_no", None)
+        currency = (getattr(inv, "currency", None) or "AUD").strip() or "AUD"
     return {
         "po_present": po.po_document_id is not None,
         "grn_present": grn is not None,
@@ -198,4 +212,22 @@ def three_way_match_audit_detail(
         "match_status": match.status,
         "purchase_order_id": po.id,
         "po_number": po.po_number,
+        "po_qty": float(po.po_qty),
+        "po_unit_price": float(po.po_unit_price),
+        "po_value": match.po_value,
+        "po_date": po.po_date.isoformat() if po.po_date else None,
+        "grn_qty": float(grn.grn_qty) if grn is not None else None,
+        "grn_date": grn.grn_date.isoformat() if grn is not None and grn.grn_date else None,
+        "grn_receiver": grn.receiver if grn is not None else None,
+        "grn_condition": grn.condition_note if grn is not None else None,
+        "invoice_no": invoice_no,
+        "invoice_qty": inv_qty,
+        "invoice_unit_price": inv_unit,
+        "invoice_value": match.invoice_value,
+        "invoice_gst": match.invoice_gst,
+        "invoice_total": match.invoice_total,
+        "qty_variance_value": match.qty_variance_value,
+        "price_variance_value": match.price_variance_value,
+        "total_deviation": match.total_deviation,
+        "currency": currency,
     }

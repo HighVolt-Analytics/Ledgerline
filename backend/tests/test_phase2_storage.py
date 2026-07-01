@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for vendor slug resolution and blob path helpers."""
 
 import pytest
@@ -7,6 +9,7 @@ from app.models.vendor import VendorRegistry
 from app.services.account_mapper import clear_rule_book_cache
 from app.services.rule_book_mapper import clear_classification_config_cache
 from app.services import blob_storage
+from tests.rule_book_test_helpers import demo_rule_book_config
 from app.services.vendor_resolver import (
     UNKNOWN_SLUG,
     is_plausible_vendor_name,
@@ -45,7 +48,7 @@ async def test_resolve_storage_slug_rejects_boilerplate(db_session: AsyncSession
     slug = await resolve_storage_slug_for_parsed_vendor(
         db_session,
         "Invoice Date: Please reference the invoice number with payment",
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
     )
     assert slug == UNKNOWN_SLUG
 
@@ -53,19 +56,20 @@ async def test_resolve_storage_slug_rejects_boilerplate(db_session: AsyncSession
 def test_match_rule_book_vendor_name() -> None:
     clear_rule_book_cache()
     clear_classification_config_cache()
+    config = demo_rule_book_config()
     assert (
-        match_rule_book_vendor_name("Amazon Web Services", tenant_id=1)
+        match_rule_book_vendor_name("Amazon Web Services", config=config)
         == "Amazon Web Services"
     )
-    assert match_rule_book_vendor_name("SYSCO AU", tenant_id=1) == "Sysco Australia"
-    assert match_rule_book_vendor_name("Random Corp", tenant_id=1) is None
+    assert match_rule_book_vendor_name("SYSCO AU", config=config) == "Sysco Australia"
+    assert match_rule_book_vendor_name("Random Corp", config=config) is None
 
 
 @pytest.mark.asyncio
 async def test_resolve_storage_slug_rule_book_registry(db_session: AsyncSession) -> None:
     db_session.add(
         VendorRegistry(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor_slug="qantas",
             vendor_name="Qantas Airways Limited",
             sender_pattern="@qantas.com.au",
@@ -74,7 +78,7 @@ async def test_resolve_storage_slug_rule_book_registry(db_session: AsyncSession)
     )
     await db_session.flush()
     slug = await resolve_storage_slug_for_parsed_vendor(
-        db_session, "Qantas", tenant_id=1
+        db_session, "Qantas", tenant_id=TESTING_TENANT_UUID
     )
     assert slug == "qantas"
 
@@ -83,7 +87,7 @@ async def test_resolve_storage_slug_rule_book_registry(db_session: AsyncSession)
 async def test_resolve_vendor_slug_exact(db_session: AsyncSession) -> None:
     db_session.add(
         VendorRegistry(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor_slug="atlassian",
             vendor_name="Atlassian Pty Ltd",
             sender_pattern="billing@atlassian.com",
@@ -91,7 +95,7 @@ async def test_resolve_vendor_slug_exact(db_session: AsyncSession) -> None:
         )
     )
     await db_session.flush()
-    slug = await resolve_vendor_slug(db_session, "billing@atlassian.com", tenant_id=1)
+    slug = await resolve_vendor_slug(db_session, "billing@atlassian.com", tenant_id=TESTING_TENANT_UUID)
     assert slug == "atlassian"
 
 
@@ -99,7 +103,7 @@ async def test_resolve_vendor_slug_exact(db_session: AsyncSession) -> None:
 async def test_resolve_vendor_slug_domain(db_session: AsyncSession) -> None:
     db_session.add(
         VendorRegistry(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor_slug="atlassian",
             vendor_name="Atlassian Pty Ltd",
             sender_pattern="@atlassian.com",
@@ -107,17 +111,16 @@ async def test_resolve_vendor_slug_domain(db_session: AsyncSession) -> None:
         )
     )
     await db_session.flush()
-    slug = await resolve_vendor_slug(db_session, "noreply@atlassian.com", tenant_id=1)
+    slug = await resolve_vendor_slug(db_session, "noreply@atlassian.com", tenant_id=TESTING_TENANT_UUID)
     assert slug == "atlassian"
 
 
 @pytest.mark.asyncio
 async def test_resolve_vendor_slug_unknown(db_session: AsyncSession) -> None:
-    slug = await resolve_vendor_slug(db_session, "random@example.com", tenant_id=1)
+    slug = await resolve_vendor_slug(db_session, "random@example.com", tenant_id=TESTING_TENANT_UUID)
     assert slug == UNKNOWN_SLUG
 
 
-from app.tenant_ids import TESTING_TENANT_UUID
 
 _TID = TESTING_TENANT_UUID
 

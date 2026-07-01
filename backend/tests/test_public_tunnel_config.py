@@ -34,6 +34,23 @@ def test_public_tunnel_overrides_local_urls(monkeypatch: pytest.MonkeyPatch) -> 
     assert "https://abridge-landowner-nutlike.ngrok-free.dev" in settings.cors_origin_list
 
 
+def test_public_tunnel_overrides_gmail_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "PUBLIC_TUNNEL_URL",
+        "https://abridge-landowner-nutlike.ngrok-free.dev",
+    )
+    monkeypatch.setenv(
+        "GMAIL_OAUTH_REDIRECT_URI",
+        "http://localhost:8001/api/mailboxes/gmail/oauth/callback",
+    )
+
+    settings = Settings()
+    assert (
+        settings.gmail_oauth_redirect_uri
+        == "https://abridge-landowner-nutlike.ngrok-free.dev/api/mailboxes/gmail/oauth/callback"
+    )
+
+
 def test_azure_webapp_overrides_localhost_public_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBLIC_TUNNEL_URL", "")
     monkeypatch.setenv("NGROK_URL", "")

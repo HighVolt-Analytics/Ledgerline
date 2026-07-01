@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for per-field extraction confidence scoring."""
 
 from datetime import date
@@ -9,7 +11,7 @@ from app.services.field_extraction_confidence import compute_extraction_field_co
 
 
 def _invoice(**kwargs) -> Invoice:
-    inv = Invoice(tenant_id=1, currency="AUD")
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, currency="AUD")
     for key, value in kwargs.items():
         setattr(inv, key, value)
     return inv

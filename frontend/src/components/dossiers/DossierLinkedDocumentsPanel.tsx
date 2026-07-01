@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { MatchStatusBadge } from "@/components/purchases/MatchStatusBadge";
+import { money } from "@/lib/format";
 
 import { SectionBlock } from "@/components/SectionBlock";
 
@@ -48,7 +49,6 @@ import {
 
 import type { MatchStatus } from "@/lib/v4MockData";
 
-import { money } from "@/lib/format";
 
 import { cn } from "@/lib/cn";
 
@@ -636,6 +636,27 @@ export function DossierLinkedDocumentsPanel({
 
         </div>
 
+        {linked.enforceBundle && !linked.linkageKey ? (
+          <p
+            className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100"
+            data-testid="bundle-linkage-hint"
+          >
+            Enter or extract a valid PO number on this invoice to link mandatory supporting
+            documents (PO copy and GRN). If this is not a PO purchase, reclassify as Direct
+            expense in the invoice drawer.
+          </p>
+        ) : null}
+
+        {linked.enforceBundle && linked.linkageKey && present < required ? (
+          <p
+            className="mb-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground"
+            data-testid="bundle-upload-hint"
+          >
+            Upload missing supporting documents classified as the required bundle types, all
+            using PO <span className="font-mono font-semibold">{linked.linkageKey}</span>.
+          </p>
+        ) : null}
+
 
 
         {linked.documents.length === 0 ? (
@@ -709,51 +730,28 @@ export function DossierLinkedDocumentsPanel({
 
 
         {linked.matchSummary ? (
-
           <div className="dossier-linked-match">
-
             <div className="dossier-linked-match__row">
-
               <span>PO value</span>
-
               <span className="tnum">
-
                 {money(linked.matchSummary.poValue, linked.matchSummary.currency)}
-
               </span>
-
             </div>
-
             <div className="dossier-linked-match__row">
-
               <span>Invoice total</span>
-
               <span className="tnum">
-
                 {money(linked.matchSummary.invoiceTotal, linked.matchSummary.currency)}
-
               </span>
-
             </div>
-
-            {linked.matchSummary.deviation !== 0 ? (
-
+            {linked.matchSummary.totalDeviation !== 0 ? (
               <div className="dossier-linked-match__row dossier-linked-match__row--emph">
-
                 <span>Deviation</span>
-
                 <span className="tnum">
-
-                  {money(linked.matchSummary.deviation, linked.matchSummary.currency)}
-
+                  {money(linked.matchSummary.totalDeviation, linked.matchSummary.currency)}
                 </span>
-
               </div>
-
             ) : null}
-
           </div>
-
         ) : null}
 
 

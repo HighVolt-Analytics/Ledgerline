@@ -1,97 +1,28 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  BarChart3,
-  BookOpen,
-  CheckCircle2,
   ChevronDown,
   Coins,
-  CreditCard,
-  FolderKanban,
-  Upload,
-  LayoutDashboard,
-  Link2,
   Moon,
-  Plug,
-  Receipt,
-  Search,
-  Settings,
-  ShoppingCart,
   Sun,
-  Users,
-  Vault,
-  Wallet,
 } from "lucide-react";
 import { LogoBlock } from "@/components/Logo";
+import { GlobalSearchBar } from "@/components/GlobalSearchBar";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
 import { canAccessModulePath } from "@/lib/tenantModules";
+import {
+  flattenNavItems,
+  MOBILE_NAV,
+  NAV_GROUPS,
+  type NavItem,
+} from "@/lib/appNavigation";
 import { queryClient, queryKeys } from "@/lib/queryClient";
 import { cn } from "@/lib/cn";
-
-type NavItem = {
-  to: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  badge?: "upload" | "approvals" | "team_expenses" | "business_expenses" | "payments";
-  moduleKey?: string;
-};
-
-type NavGroup = {
-  label: string;
-  items: NavItem[];
-};
-
-const NAV_GROUPS: NavGroup[] = [
-  {
-    label: "Workspace",
-    items: [
-      { to: "/", label: "Dashboard", icon: LayoutDashboard },
-      { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses" },
-      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses" },
-      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart, moduleKey: "purchase" },
-    ],
-  },
-  {
-    label: "Operations",
-    items: [
-      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
-      { to: "/dossiers", label: "Dossiers", icon: FolderKanban, moduleKey: "dossiers" },
-      { to: "/vendors", label: "Vendors", icon: Users },
-      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
-    ],
-  },
-  {
-    label: "Finance",
-    items: [
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
-      { to: "/ledger-link", label: "Ledger Link", icon: Link2, moduleKey: "ledger_link" },
-      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
-      { to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" },
-    ],
-  },
-  {
-    label: "Admin",
-    items: [
-      { to: "/integrations", label: "Integrations", icon: Plug },
-      { to: "/billing", label: "Billing & Credits", icon: CreditCard },
-      { to: "/settings", label: "Settings", icon: Settings },
-    ],
-  },
-];
-
-const MOBILE_NAV: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-  { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
-  { to: "/settings", label: "Settings", icon: Settings },
-];
 
 const TRUST = ["SOC 2 Type II", "ISO 27001", "Bank-level encryption", "7-year retention"];
 
@@ -136,6 +67,16 @@ export function Layout() {
   };
   const connected = badges?.integrations_connected ?? 0;
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  const searchableNavItems = useMemo(
+    () =>
+      flattenNavItems(NAV_GROUPS).filter(
+        (item) =>
+          canAccessModulePath(item.to, enabledModules, item.moduleKey) &&
+          canAccessNavPath(item.to, permissions)
+      ),
+    [enabledModules, permissions]
+  );
 
   const refreshCounts = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
@@ -220,49 +161,41 @@ export function Layout() {
       </aside>
 
       <div className="flex flex-col overflow-hidden min-w-0">
-        <header className="flex items-center gap-2 sm:gap-3 border-b border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 h-12 md:h-14 shrink-0 z-10">
-          <div className="md:hidden text-primary">
-            <LogoBlock collapsed />
+        <header className="relative flex items-center gap-2 sm:gap-3 border-b border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 h-12 md:h-14 shrink-0 z-20 overflow-visible">
+          <div className="flex items-center gap-2 min-w-0 shrink-0">
+            <div className="md:hidden text-primary shrink-0">
+              <LogoBlock collapsed />
+            </div>
+            <TenantSwitcher />
           </div>
-          <TenantSwitcher />
-          <button
-            type="button"
-            className="hidden md:flex items-center gap-2 h-9 px-3 rounded-md border border-border bg-card text-sm text-muted-foreground hover-elevate flex-1 max-w-md"
-            data-testid="button-global-search"
-          >
-            <Search className="h-4 w-4" />
-            <span className="flex-1 text-left">Search…</span>
-            <kbd className="text-[10px] rounded border border-border px-1.5 py-0.5 tnum">
-              ⌘K
-            </kbd>
-          </button>
-          <div className="flex-1" />
-          <button
-            type="button"
-            onClick={() => navigate("/billing")}
-            data-testid="button-credits-badge"
-            className="flex items-center gap-1.5 h-9 px-2.5 rounded-md border border-border bg-card text-sm hover-elevate"
-          >
-            <Coins className="h-4 w-4 text-primary" />
-            <span className="tnum font-medium">{(1240).toLocaleString()}</span>
-            <span className="hidden sm:inline text-muted-foreground text-xs">credits</span>
-          </button>
-          <Badge
-            variant="outline"
-            className="hidden sm:inline-flex border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)] font-medium shrink-0"
-          >
-            Sandbox
-          </Badge>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleTheme}
-            data-testid="button-theme-toggle"
-            aria-label="Toggle theme"
-          >
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
-          <div className="relative">
+
+          <GlobalSearchBar
+            navItems={searchableNavItems}
+            className="w-44 sm:w-56 md:w-64 lg:w-72 max-w-[40vw] shrink-0"
+          />
+
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
+            <button
+              type="button"
+              onClick={() => navigate("/billing")}
+              data-testid="button-credits-badge"
+              className="flex items-center gap-1.5 h-9 px-2.5 rounded-md border border-border bg-card text-sm hover-elevate whitespace-nowrap"
+            >
+              <Coins className="h-4 w-4 text-primary shrink-0" />
+              <span className="tnum font-medium">{(1240).toLocaleString()}</span>
+              <span className="hidden sm:inline text-muted-foreground text-xs">credits</span>
+            </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleTheme}
+              data-testid="button-theme-toggle"
+              aria-label="Toggle theme"
+              className="shrink-0"
+            >
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
+            <div className="relative shrink-0">
             <button
               type="button"
               className="flex items-center gap-2 rounded-md pl-1 pr-2 py-1 hover-elevate"
@@ -272,7 +205,7 @@ export function Layout() {
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
                 {user ? initials(user.full_name) : "?"}
               </span>
-              <span className="hidden sm:block text-sm font-medium">
+              <span className="hidden md:block text-sm font-medium max-w-[10rem] lg:max-w-[14rem] truncate">
                 {user?.full_name ?? "User"}
               </span>
               <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
@@ -314,6 +247,7 @@ export function Layout() {
                 </div>
               </>
             )}
+            </div>
           </div>
         </header>
 
@@ -346,7 +280,7 @@ export function Layout() {
               {t}
             </span>
           ))}
-          <span className="ml-auto hidden sm:inline">© 2026 Ledgerline · Sandbox environment</span>
+          <span className="ml-auto hidden sm:inline">© 2026 Ledgerline</span>
           <span className="ml-auto sm:hidden">© 2026</span>
         </footer>
 

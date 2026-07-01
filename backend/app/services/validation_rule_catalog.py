@@ -16,7 +16,7 @@ from app.services.document_type_validation_service import (
 
 VALIDATION_CHECK_DESCRIPTIONS: dict[str, str] = {
     "VR02": "Exact, normalized, and fuzzy duplicate detection (always on for the organisation).",
-    "VR03": "Required header fields and line items must be present after OCR.",
+    "VR03": "Compulsory fields for this document type must be present after OCR.",
     "VR05": "ABN / tax ID format and checksum validation.",
     "VR06": "Invoice date and due date must be valid.",
     "VR07": "Currency must be AUD unless configured otherwise.",
@@ -29,13 +29,13 @@ VALIDATION_CHECK_DESCRIPTIONS: dict[str, str] = {
     "VR14": "PO must be open and invoice currency must match PO.",
     "VR15": "PO, GRN, and invoice quantities and prices must match.",
     "VR16": "Freight and surcharges must be within tolerance against PO.",
-    "VR-PB01": "Configured extraction fields should be captured on the invoice.",
+    "VR-PB01": "Warns when optional (unstarred) extraction targets are missing. Compulsory gaps use VR03.",
     "VR-PB02": "Mandatory bundle document types must exist on the PO.",
     "VR-PB04": "Conditional bundle advisories for companion documents.",
 }
 
 VALIDATION_CHECK_LABELS: dict[str, str] = {
-    "VR03": "Required fields & line items",
+    "VR03": "Compulsory fields",
     "VR05": "ABN / tax ID",
     "VR06": "Invoice & due dates",
     "VR07": "Currency AUD",
@@ -49,7 +49,7 @@ VALIDATION_CHECK_LABELS: dict[str, str] = {
     "VR14": "PO status & currency",
     "VR15": "Document match",
     "VR16": "Freight / surcharges",
-    "VR-PB01": "Extraction completeness",
+    "VR-PB01": "Optional extraction fields",
     "VR-PB02": "Mandatory bundle",
     "VR-PB04": "Conditional bundle advisories",
 }
@@ -89,42 +89,58 @@ PROFILE_STANDARD_RULES: list[ValidationRuleConfig] = [
     _rule("VR09"),
     _rule("VR10"),
     _rule("VR11"),
-    _rule("VR12", severity="warn"),
-    _rule("VR14", enabled=False),
-    _rule("VR15", enabled=False),
-    _rule("VR16", enabled=False),
-    _rule("VR-PB01", severity="warn"),
-    _rule("VR-PB02"),
-    _rule("VR-PB04", severity="warn"),
+    _rule("VR12", severity="block"),
 ]
 
-PROFILE_PO_GOODS_RULES: list[ValidationRuleConfig] = [
-    _rule("VR03"),
-    _rule("VR05"),
-    _rule("VR06"),
-    _rule("VR07"),
-    _rule("VR08"),
-    _rule("VR01"),
-    _rule("VR09"),
-    _rule("VR10"),
-    _rule("VR11"),
-    _rule("VR12"),
-    _rule("VR14"),
-    _rule("VR15"),
-    _rule("VR16", severity="warn"),
-    _rule("VR-PB01", severity="warn"),
-    _rule("VR-PB02"),
-    _rule("VR-PB04", severity="warn"),
-]
+PROFILE_PO_GOODS_RULES: list[ValidationRuleConfig] = list(PROFILE_STANDARD_RULES)
 
 PROFILE_DIRECT_EXPENSE_RULES: list[ValidationRuleConfig] = [
     _rule("VR03"),
     _rule("VR09", severity="warn"),
     _rule("VR11", severity="warn"),
-    _rule("VR-PB01", severity="warn"),
 ]
 
 PROFILE_NON_ACTIONABLE_RULES: list[ValidationRuleConfig] = []
+
+FINANCE_RULE_ORDER: tuple[str, ...] = (
+    "VR03",
+    "VR05",
+    "VR06",
+    "VR07",
+    "VR08",
+    "VR01",
+    "VR09",
+    "VR10",
+    "VR11",
+    "VR12",
+)
+
+
+def merge_configurable_validation_rules(
+    explicit: Sequence[ValidationRuleConfig],
+    *,
+    validation_profile: str,
+    document_type_code: str = "",
+) -> list[ValidationRuleConfig]:
+    """Fill missing finance rules — saved toggles win; gaps use profile defaults or disabled."""
+    normalized = normalize_validation_rules(list(explicit))
+    if not normalized:
+        return []
+    defaults = default_validation_rules_for_profile(
+        validation_profile,
+        document_type_code=document_type_code,
+    )
+    by_code = {row.code: row for row in normalized}
+    default_by_code = {row.code: row for row in defaults}
+    out: list[ValidationRuleConfig] = []
+    for code in FINANCE_RULE_ORDER:
+        if code in by_code:
+            out.append(by_code[code])
+        elif code in default_by_code:
+            out.append(default_by_code[code])
+        else:
+            out.append(_rule(code, enabled=False))
+    return out
 
 
 def default_validation_rules_for_profile(profile: str, *, document_type_code: str = "") -> list[ValidationRuleConfig]:
@@ -141,9 +157,13 @@ def default_validation_rules_for_profile(profile: str, *, document_type_code: st
 
 def effective_validation_rules(definition: DocumentTypeDefinition) -> list[ValidationRuleConfig]:
     explicit = normalize_validation_rules(definition.validation_rules)
-    if explicit:
-        return explicit
     profile = effective_validation_profile(definition)
+    if explicit:
+        return merge_configurable_validation_rules(
+            explicit,
+            validation_profile=profile,
+            document_type_code=definition.code,
+        )
     return default_validation_rules_for_profile(profile, document_type_code=definition.code)
 
 
@@ -169,12 +189,23 @@ def resolve_validation_rules(
         return default_validation_rules_for_profile(profile, document_type_code=code)
 
     explicit = normalize_validation_rules(definition.validation_rules)
-    if explicit:
-        return explicit
-
     profile = validation_profile or effective_validation_profile(definition)
+    if explicit:
+        return merge_configurable_validation_rules(
+            explicit,
+            validation_profile=profile,
+            document_type_code=code,
+        )
+
     return default_validation_rules_for_profile(profile, document_type_code=code)
 
 
 def enabled_rule_codes(rules: Sequence[ValidationRuleConfig]) -> set[str]:
     return {row.code for row in rules if row.enabled}
+
+
+def has_explicit_finance_validation_rules(definition: DocumentTypeDefinition | None) -> bool:
+    """True when the Validation tab has saved per-rule toggles (not profile defaults only)."""
+    if definition is None:
+        return False
+    return bool(normalize_validation_rules(definition.validation_rules))

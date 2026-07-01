@@ -382,6 +382,28 @@ def vr03_direct_expense(data: InvoiceData) -> ValidationResult:
     return ValidationResult("VR03", True, "Direct expense fields present")
 
 
+def vr03_compulsory_fields(
+    invoice: Invoice,
+    data: InvoiceData,
+    compulsory_keys: list[str],
+) -> ValidationResult:
+    """Validate document-type compulsory field keys."""
+    from app.services.document_type_field_checks import field_is_present
+    from app.services.document_type_rule_engine import build_document_classifier_context
+
+    if not compulsory_keys:
+        return ValidationResult("VR03", True, "No compulsory fields configured", skipped=True)
+
+    ctx = build_document_classifier_context(invoice=invoice, parsed=data)
+    missing: list[str] = []
+    for key in compulsory_keys:
+        if not field_is_present(key, invoice=invoice, parsed=data, ctx=ctx):
+            missing.append(key)
+    if missing:
+        return ValidationResult("VR03", False, f"Missing compulsory: {', '.join(missing)}")
+    return ValidationResult("VR03", True, "All compulsory fields present")
+
+
 def _skipped(rule: str, reason: str) -> ValidationResult:
     return ValidationResult(rule, True, reason, skipped=True)
 
@@ -436,11 +458,28 @@ async def run_all_validations(
     return await run_configured_validations(ctx)
 
 
+def normalize_stored_validation_row(row: dict) -> dict:
+    """Upgrade legacy VR12 rows that skipped when the tenant had no vendor masters."""
+    rule = str(row.get("rule", "")).strip().upper()
+    if rule != "VR12" or not row.get("skipped"):
+        return row
+    message = str(row.get("message", "")).lower()
+    if "no masters" in message or "check skipped" in message:
+        return {
+            **row,
+            "rule": rule,
+            "passed": False,
+            "skipped": False,
+            "message": "Vendor not registered — add vendor to master",
+        }
+    return row
 
+
+def normalize_stored_validation_results(rows: list[dict]) -> list[dict]:
+    return [normalize_stored_validation_row(row) for row in rows if isinstance(row, dict)]
 
 
 def all_passed(results: list[ValidationResult]) -> bool:
-
     return all(
         r.passed or r.skipped or (not r.passed and r.severity == "warn")
         for r in results

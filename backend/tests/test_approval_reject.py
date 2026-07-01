@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
+from tests.approval_test_helpers import patch_approval_file_checks
 from app.services.vault_paths import build_rejected_blob_name
 from app.tenant_ids import TESTING_TENANT_UUID
 
@@ -35,7 +36,7 @@ def test_build_rejected_blob_name() -> None:
     from app.services.tenant_storage_paths import tenant_root
 
     assert path == (
-        f"{tenant_root(_TID)}/rejected/HvOrg/Unrouted/Atlassian Pty Ltd/2026/May/INV-007_2026-05-12_id7.pdf"
+        f"{tenant_root(_TID)}/rejected/Unrouted/Atlassian Pty Ltd/2026/May/INV-007_2026-05-12_id7.pdf"
     )
 
 
@@ -49,7 +50,7 @@ async def test_reject_moves_file_and_sets_status(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    vault_path = upload_dir / "invoice" / "Testing" / "Unrouted" / "Bad Co" / "2026" / "May"
+    vault_path = upload_dir / "invoice" / "HvOrg" / "Unrouted" / "Bad Co" / "2026" / "May"
     vault_path.mkdir(parents=True)
     pdf = vault_path / "INV-001_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -76,14 +77,13 @@ async def test_reject_moves_file_and_sets_status(
     body = res.json()["data"]
     assert body["status"] == "rejected"
     assert "rejected" in body["raw_file_path"].replace("\\", "/")
-    assert "Testing/Unrouted/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
+    assert "rejected/Unrouted/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
     assert not pdf.is_file()
 
     rejected_pdf = (
         upload_dir
         / _TENANT_PREFIX
         / "rejected"
-        / "Testing"
         / "Unrouted"
         / "Bad Co"
         / "2026"
@@ -106,7 +106,7 @@ async def test_reject_processed_clears_journal_entries(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    vault_path = upload_dir / "invoice" / "Testing" / "Posted Co" / "2026" / "May"
+    vault_path = upload_dir / "invoice" / "HvOrg" / "Posted Co" / "2026" / "May"
     vault_path.mkdir(parents=True)
     pdf = vault_path / "INV-004_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -163,7 +163,7 @@ async def test_reject_processed_invoice(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    vault_path = upload_dir / "invoice" / "Testing" / "Done Co" / "2026" / "May"
+    vault_path = upload_dir / "invoice" / "HvOrg" / "Done Co" / "2026" / "May"
     vault_path.mkdir(parents=True)
     pdf = vault_path / "INV-003_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -198,7 +198,7 @@ async def test_reject_skips_relocate_when_file_already_in_rejected(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "Testing" / "Vault" / "DT-03" / "Done Co" / "2026" / "May"
+    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "HvOrg" / "Vault" / "DT-03" / "Done Co" / "2026" / "May"
     rejected_path.mkdir(parents=True)
     pdf = rejected_path / "INV-171_2026-05-04_id171.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -293,13 +293,14 @@ async def test_reject_requires_rejectable_status(
 async def test_approve_from_rejected_restores_vault_path(
     client: AsyncClient, db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    patch_approval_file_checks(monkeypatch)
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
     monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "Testing" / "Bad Co" / "2026" / "May"
+    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "Unrouted" / "Bad Co" / "2026" / "May"
     rejected_path.mkdir(parents=True)
     pdf = rejected_path / "INV-002_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -315,6 +316,7 @@ async def test_approve_from_rejected_restores_vault_path(
         storage_vendor_slug="bad-co",
         raw_file_path=str(pdf),
         total=Decimal("50"),
+        due_date=date(2026, 6, 1),
     )
     db_session.add(inv)
     await db_session.flush()
@@ -324,14 +326,13 @@ async def test_approve_from_rejected_restores_vault_path(
     body = res.json()["data"]
     assert body["status"] == "pending"
     assert "invoice" in body["raw_file_path"].replace("\\", "/")
-    assert "Testing/Unrouted/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
+    assert "Unrouted/Bad Co/2026/May" in body["raw_file_path"].replace("\\", "/")
     assert not pdf.is_file()
 
     vault_pdf = (
         upload_dir
         / _TENANT_PREFIX
         / "invoice"
-        / "Testing"
         / "Unrouted"
         / "Bad Co"
         / "2026"
@@ -351,7 +352,7 @@ async def test_permanently_delete_rejected_invoice(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "Testing" / "Gone Co" / "2026" / "May"
+    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "HvOrg" / "Gone Co" / "2026" / "May"
     rejected_path.mkdir(parents=True)
     pdf = rejected_path / "INV-099_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -410,7 +411,7 @@ async def test_permanent_delete_processed_with_rejected_blob(
     monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "")
     get_settings.cache_clear()
 
-    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "Testing" / "Orphan Co" / "2026" / "May"
+    rejected_path = upload_dir / _TENANT_PREFIX / "rejected" / "HvOrg" / "Orphan Co" / "2026" / "May"
     rejected_path.mkdir(parents=True)
     pdf = rejected_path / "INV-orph_2026-05-04_id1.pdf"
     pdf.write_bytes(b"%PDF-1.4")

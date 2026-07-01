@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Architecture §2.1 / §2.2 — evaluation sequence and priority."""
 
 from app.schemas.rule_book_config import (
@@ -64,15 +66,15 @@ def test_category_rules_use_priority_first_match_wins() -> None:
 
 def test_gl_cascade_expense_before_team() -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Local Cafe",
         invoice_no="MEAL-001",
         route_target="Expenses Management",
         status=InvoiceStatus.MAPPING,
     )
-    from app.services.rule_book_mapper import load_classification_config
+    from tests.rule_book_test_helpers import demo_rule_book_config
 
-    config = load_classification_config(1)
+    config = demo_rule_book_config()
     expense_rules = [
         *config.expense_rules,
         ExpenseRule(
@@ -106,14 +108,14 @@ def test_gl_cascade_expense_before_team() -> None:
 
 def test_routing_expense_before_team_without_email() -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Local Cafe",
         invoice_no="MEAL-002",
         status=InvoiceStatus.MAPPING,
     )
-    from app.services.rule_book_mapper import load_classification_config
+    from tests.rule_book_test_helpers import demo_rule_book_config
 
-    config = load_classification_config(1)
+    config = demo_rule_book_config()
     expense_rules = [
         ExpenseRule(
             id="er-routing",

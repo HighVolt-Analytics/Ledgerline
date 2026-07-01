@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Reconciliation overview API tests."""
 
 from datetime import date
@@ -27,8 +29,9 @@ async def test_reconciliation_overview_processed_with_journals(
 ) -> None:
     inv_date = date(2026, 5, 2)
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
+        document_ref="DOC-1",
         invoice_no="AWS-AU-204815",
         invoice_date=inv_date,
         subtotal=Decimal("1000.00"),
@@ -47,6 +50,7 @@ async def test_reconciliation_overview_processed_with_journals(
     ]:
         db_session.add(
             JournalEntry(
+                tenant_id=TESTING_TENANT_UUID,
                 invoice_id=inv.id,
                 date=inv_date,
                 account_code=code,
@@ -59,7 +63,7 @@ async def test_reconciliation_overview_processed_with_journals(
     await db_session.flush()
 
     pending = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Pending Co",
         invoice_date=date(2026, 5, 3),
         total=Decimal("500.00"),
@@ -80,7 +84,7 @@ async def test_reconciliation_overview_processed_with_journals(
     day = data["by_date"][0]
     assert day["date"] == "2026-05-02"
     assert day["count"] == 1
-    assert day["invoices"][0]["id"] == "AWS-AU-204815"
+    assert day["invoices"][0]["id"] == "DOC-1"
     assert len(day["invoices"][0]["postings"]) == 3
 
 
@@ -90,7 +94,7 @@ async def test_reconciliation_overview_excludes_other_org(
 ) -> None:
     inv_date = date(2026, 4, 10)
     inv = Invoice(
-        tenant_id=2,
+        tenant_id=PLATFORM_TENANT_UUID,
         vendor="Other Org",
         invoice_date=inv_date,
         total=Decimal("200.00"),

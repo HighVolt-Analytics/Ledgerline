@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Phase A: email capture gate, legacy cascade, upload routing."""
 
 import json
@@ -76,7 +78,7 @@ def _unmatched_email() -> RawEmail:
 
 def test_legacy_cascade_vendor_match(capture_config) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Qantas Airways Limited",
         invoice_no="QAN-001",
         status=InvoiceStatus.MAPPING,
@@ -89,7 +91,7 @@ def test_legacy_cascade_vendor_match(capture_config) -> None:
 
 def test_legacy_cascade_po_code_match(capture_config) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Campaign Vendor",
         po_reference="PO-MKT-2026-014",
         status=InvoiceStatus.MAPPING,
@@ -104,7 +106,7 @@ def test_legacy_cascade_maps_before_suspense(capture_config) -> None:
     from app.services.rule_book_mapper import resolve_config_mapping
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Hilton Sydney",
         invoice_no="HTL-LEGACY-1",
         status=InvoiceStatus.MAPPING,
@@ -137,7 +139,7 @@ async def test_ingest_skips_email_without_capture_rule(
     result = await ingest_email_attachments(
         db_session,
         [_unmatched_email()],
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         tenant_slug="hv-org",
     )
     assert result.ingested_count == 0
@@ -163,7 +165,7 @@ async def test_ingest_creates_invoice_when_capture_rule_matches(
     result = await ingest_email_attachments(
         db_session,
         [_aws_billing_email()],
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         tenant_slug="hv-org",
     )
     assert result.ingested_count == 1
@@ -175,8 +177,9 @@ async def test_upload_routing_from_category_rules_after_parse(
     capture_config,
 ) -> None:
     """Uploads without email metadata get route_target from purchase/expense rules."""
+
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",

@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Validation behaviour for PO / GRN supporting documents."""
 
 from decimal import Decimal
@@ -33,7 +35,7 @@ async def test_po_document_skips_vr02_duplicate_check(db_session: AsyncSession) 
     ctx = ValidationRunContext(
         data=data,
         session=db_session,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         purchase_document_type="po",
     )
     results = await run_configured_validations(ctx)
@@ -44,8 +46,9 @@ async def test_po_document_skips_vr02_duplicate_check(db_session: AsyncSession) 
 
 def test_three_way_match_clean_after_grn_before_invoice_pending() -> None:
     """Invoice arriving after GRN should match when qty/price align (no false Routed for Approval)."""
+
     po = PurchaseOrder(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         po_number="PO-MKT-2026-JUN17",
         po_qty=Decimal("10"),
         po_unit_price=Decimal("50"),
@@ -56,7 +59,7 @@ def test_three_way_match_clean_after_grn_before_invoice_pending() -> None:
         GoodsReceipt(purchase_order_id=1, grn_qty=Decimal("10"), grn_date=None)
     ]
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Sysco Australia",
         po_reference="PO-MKT-2026-JUN17",
         subtotal=Decimal("500.00"),

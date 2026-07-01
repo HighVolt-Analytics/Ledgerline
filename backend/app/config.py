@@ -108,8 +108,14 @@ class Settings(BaseSettings):
         validation_alias="GRAPH_OAUTH_MULTI_TENANT",
         description="Use login.microsoftonline.com/common for mailbox invites (requires multi-tenant Entra app)",
     )
-    google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
-    google_client_secret: str = Field(default="", validation_alias="GOOGLE_CLIENT_SECRET")
+    google_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID"),
+    )
+    google_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET"),
+    )
     gmail_oauth_redirect_uri: str = Field(
         default="http://localhost:8001/api/mailboxes/gmail/oauth/callback",
         validation_alias="GMAIL_OAUTH_REDIRECT_URI",

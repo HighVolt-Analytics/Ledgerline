@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 from decimal import Decimal
 
 
@@ -21,6 +23,8 @@ from app.services.validator import (
 
     vr02_unique,
 
+    vr03_compulsory_fields,
+
     vr03_required,
 
     vr05_abn,
@@ -42,7 +46,17 @@ def test_vr03_pass(sample_invoice_data: InvoiceData) -> None:
     assert vr03_required(sample_invoice_data).passed
 
 
+def test_vr03_compulsory_fields_subset() -> None:
+    from app.tenant_ids import TESTING_TENANT_UUID
 
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, vendor="Acme", total=Decimal("100"))
+    parsed = InvoiceData(
+        vendor="Acme",
+        total=Decimal("100"),
+        line_items=[ParsedLineItem(description="Item", amount=Decimal("100"))],
+    )
+    assert vr03_compulsory_fields(invoice, parsed, ["vendor", "total"]).passed
+    assert not vr03_compulsory_fields(invoice, parsed, ["vendor", "invoice_no"]).passed
 
 
 def test_vr03_fail() -> None:
@@ -67,7 +81,7 @@ def test_vr03_fail_no_line_items(sample_invoice_data: InvoiceData) -> None:
 
 async def test_vr05_pass(db_session: AsyncSession, sample_invoice_data: InvoiceData) -> None:
 
-    assert (await vr05_abn(sample_invoice_data, db_session, tenant_id=1)).passed
+    assert (await vr05_abn(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)).passed
 
 
 
@@ -79,7 +93,7 @@ async def test_vr05_fail_wrong_length(db_session: AsyncSession, sample_invoice_d
 
     sample_invoice_data.abn = "12345"
 
-    assert not (await vr05_abn(sample_invoice_data, db_session, tenant_id=1)).passed
+    assert not (await vr05_abn(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)).passed
 
 
 
@@ -95,7 +109,7 @@ async def test_vr05_pass_eleven_digits_without_checksum(
 
     sample_invoice_data.abn = "63110305305"
 
-    result = await vr05_abn(sample_invoice_data, db_session, tenant_id=1)
+    result = await vr05_abn(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)
 
     assert result.passed
 
@@ -119,7 +133,7 @@ async def test_vr05_foreign_tax_id_requires_checksum_mode(
 
     sample_invoice_data.abn = "IE6388047V"
 
-    assert (await vr05_abn(sample_invoice_data, db_session, tenant_id=1)).passed
+    assert (await vr05_abn(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)).passed
 
     get_settings.cache_clear()
 
@@ -241,7 +255,7 @@ def test_vr01_fail(sample_invoice_data: InvoiceData) -> None:
 
 async def test_vr02_unique(db_session: AsyncSession, sample_invoice_data: InvoiceData) -> None:
 
-    assert (await vr02_unique(sample_invoice_data, db_session, tenant_id=1)).passed
+    assert (await vr02_unique(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)).passed
 
 
 
@@ -265,7 +279,7 @@ async def test_vr02_duplicate_same_vendor(
 
     db_session.add(
 
-        Invoice(tenant_id=1,
+        Invoice(tenant_id=TESTING_TENANT_UUID,
             vendor="Acme Pty Ltd",
 
             invoice_no="INV-DUP",
@@ -284,7 +298,7 @@ async def test_vr02_duplicate_same_vendor(
 
     sample_invoice_data.invoice_no = "INV-DUP"
 
-    assert not (await vr02_unique(sample_invoice_data, db_session, tenant_id=1)).passed
+    assert not (await vr02_unique(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)).passed
 
     get_settings.cache_clear()
 
@@ -309,7 +323,7 @@ async def test_vr02_disabled_allows_duplicate(
 
         Invoice(
 
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
 
             vendor="Acme Pty Ltd",
 
@@ -329,7 +343,7 @@ async def test_vr02_disabled_allows_duplicate(
 
     sample_invoice_data.invoice_no = "INV-DUP"
 
-    result = await vr02_unique(sample_invoice_data, db_session, tenant_id=1)
+    result = await vr02_unique(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)
 
     assert result.passed
 
@@ -361,7 +375,7 @@ async def test_vr02_same_no_different_org_ok(
 
         Invoice(
 
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
 
             vendor="Atlassian Pty Ltd",
 
@@ -383,7 +397,7 @@ async def test_vr02_same_no_different_org_ok(
 
     sample_invoice_data.invoice_no = "ATL-2026-55721"
 
-    assert (await vr02_unique(sample_invoice_data, db_session, tenant_id=2)).passed
+    assert (await vr02_unique(sample_invoice_data, db_session, tenant_id=PLATFORM_TENANT_UUID)).passed
 
     get_settings.cache_clear()
 
@@ -401,7 +415,7 @@ async def test_vr02_same_no_different_vendor_ok(
 
     db_session.add(
 
-        Invoice(tenant_id=1,
+        Invoice(tenant_id=TESTING_TENANT_UUID,
             vendor="Other Co",
 
             invoice_no="INV-DUP",
@@ -420,7 +434,7 @@ async def test_vr02_same_no_different_vendor_ok(
 
     sample_invoice_data.invoice_no = "INV-DUP"
 
-    assert (await vr02_unique(sample_invoice_data, db_session, tenant_id=1)).passed
+    assert (await vr02_unique(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)).passed
 
 
 
@@ -430,7 +444,7 @@ async def test_vr02_same_no_different_vendor_ok(
 
 async def test_all_pass(db_session: AsyncSession, sample_invoice_data: InvoiceData) -> None:
 
-    results = await run_all_validations(sample_invoice_data, db_session, tenant_id=1)
+    results = await run_all_validations(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)
 
     blocking = [r for r in results if not r.skipped and r.severity == "block"]
     assert all(r.passed for r in blocking)

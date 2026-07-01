@@ -1,12 +1,18 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_auth_context, get_db
-from app.config import get_settings
-from app.models.connected_mailbox import ConnectedMailbox
+from app.api.http_errors import http_bad_request, http_not_found
 from app.schemas.common import ApiEnvelope
-from app.workers.tasks import get_processing_status, run_pipeline_background
+from app.schemas.processing_api import TriggerProcessingRequest
+from app.services.processing_api_service import (
+    queue_processing,
+    validate_mailbox_for_processing,
+)
+from app.workers.tasks import get_processing_status
 
 router = APIRouter(prefix="/process", tags=["processing"])
 
@@ -17,50 +23,30 @@ class ProcessingStatus(BaseModel):
     active_tasks: int = 0
 
 
-class TriggerProcessingBody(BaseModel):
-    mailbox_id: int | None = None
-
-
 @router.post("/trigger", response_model=ApiEnvelope[dict[str, str]])
 async def trigger_processing(
     background_tasks: BackgroundTasks,
-    body: TriggerProcessingBody | None = None,
+    body: TriggerProcessingRequest | None = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[dict[str, str]]:
     mailbox_id = body.mailbox_id if body else None
-    tenant_id = ctx.tenant_id
     if mailbox_id is not None:
-        mb = await db.get(ConnectedMailbox, mailbox_id)
-        if not mb or mb.tenant_id != ctx.tenant_id:
-            raise HTTPException(404, "Mailbox not found")
-        if not mb.is_active:
-            raise HTTPException(400, "Mailbox is paused")
+        try:
+            await validate_mailbox_for_processing(
+                db, tenant_id=ctx.tenant_id, mailbox_id=mailbox_id
+            )
+        except LookupError as exc:
+            raise http_not_found(exc) from exc
+        except ValueError as exc:
+            raise http_bad_request(exc) from exc
 
-    settings = get_settings()
-    poll_inbox = True
-    if settings.sync_processing:
-        background_tasks.add_task(
-            run_pipeline_background,
-            mailbox_id=mailbox_id,
-            tenant_id=tenant_id,
-            poll_inbox=poll_inbox,
-        )
-        return ApiEnvelope(data={"task_id": "inline", "status": "running"})
-
-    try:
-        from app.workers.tasks import process_inbox_task
-
-        task = process_inbox_task.delay(mailbox_id=mailbox_id, tenant_id=tenant_id)
-        return ApiEnvelope(data={"task_id": task.id, "status": "queued"})
-    except Exception:
-        background_tasks.add_task(
-            run_pipeline_background,
-            mailbox_id=mailbox_id,
-            tenant_id=tenant_id,
-            poll_inbox=poll_inbox,
-        )
-        return ApiEnvelope(data={"task_id": "inline", "status": "running"})
+    result = await queue_processing(
+        mailbox_id=mailbox_id,
+        tenant_id=ctx.tenant_id,
+        background_tasks=background_tasks,
+    )
+    return ApiEnvelope(data={"task_id": result.task_id, "status": result.status})
 
 
 @router.get("/status", response_model=ApiEnvelope[ProcessingStatus])

@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """HTTP tests for vault API."""
 
 from datetime import date
@@ -26,7 +28,7 @@ async def test_vault_tree_empty(client: AsyncClient) -> None:
 async def test_vault_tree_uses_hv_org_folder(
     client: AsyncClient, db_session: AsyncSession, tmp_path
 ) -> None:
-    org = await db_session.get(Tenant, 1)
+    org = await db_session.get(Tenant, TESTING_TENANT_UUID)
     assert org is not None
     org.slug = "hv-org"
     org.name = "High Volt Analytics"
@@ -37,7 +39,7 @@ async def test_vault_tree_uses_hv_org_folder(
 
     db_session.add(
         Invoice(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor="Atlassian Pty Ltd",
             invoice_no="INV-001",
             invoice_date=date(2026, 5, 4),
@@ -68,7 +70,7 @@ async def test_vault_tree_with_stored_file(
 
     db_session.add(
         Invoice(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor="Atlassian Pty Ltd",
             invoice_no="INV-001",
             invoice_date=date(2026, 5, 4),
@@ -92,8 +94,8 @@ async def test_vault_tree_with_stored_file(
     assert file_entry["vendor"] == "Atlassian Pty Ltd"
     assert file_entry["year"] == "2026"
     assert file_entry["month"] == "May"
-    assert file_entry["has_stored_file"] is True
-    assert file_entry["virtual_path"].startswith("invoice/")
+    assert file_entry["blob_path"]
+    assert "/invoice/" in file_entry["virtual_path"]
     assert len(data["tree"]) == 1
     assert data["tree"][0]["kind"] == "org"
     assert data["tree"][0]["label"] == "HvOrg"
@@ -110,7 +112,7 @@ async def test_vault_tree_vault_document_type_folder(
 
     db_session.add(
         Invoice(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor="Sysco Australia",
             invoice_no="STMT-001",
             invoice_date=date(2026, 5, 4),
@@ -142,7 +144,7 @@ async def test_vault_tree_excludes_no_file_path(
 ) -> None:
     db_session.add(
         Invoice(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor="Demo Vendor",
             status=InvoiceStatus.PROCESSED,
             total=Decimal("50.00"),
@@ -166,7 +168,7 @@ async def test_vault_tree_excludes_duplicate_skipped(
 
     db_session.add(
         Invoice(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor="Dup Vendor",
             status=InvoiceStatus.DUPLICATE_SKIPPED,
             raw_file_path=str(pdf_path),

@@ -31,17 +31,20 @@ class Base(DeclarativeBase):
 
 def _build_engine() -> AsyncEngine:
     """Celery workers use NullPool to avoid stale asyncpg connections across asyncio.run()."""
-    url = strip_ssl_query_params(get_settings().database_url)
-    connect_args = asyncpg_connect_args(get_settings().database_url)
+    settings = get_settings()
+    url = strip_ssl_query_params(settings.database_url)
+    connect_args = asyncpg_connect_args(settings.database_url)
     if os.getenv("CELERY_WORKER") == "1":
         return create_async_engine(url, poolclass=NullPool, connect_args=connect_args)
+    # Azure closes idle connections aggressively; recycle before the server does.
+    pool_recycle = 600 if "postgres.database.azure.com" in settings.database_url else 1800
     return create_async_engine(
         url,
         echo=False,
         pool_pre_ping=True,
         pool_size=10,
         max_overflow=20,
-        pool_recycle=1800,
+        pool_recycle=pool_recycle,
         connect_args=connect_args,
     )
 

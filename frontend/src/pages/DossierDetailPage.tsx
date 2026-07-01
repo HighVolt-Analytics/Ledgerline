@@ -14,7 +14,54 @@ import {
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageEyebrowHeader } from "@/components/PageEyebrowHeader";
 import { fetchDossierById, addDossierManualLink, removeDossierManualLink } from "@/lib/dossierApi";
-import { isLegacyMockDossierId, type DossierSummary } from "@/lib/dossiers";
+import { firstPipelineFailure, isLegacyMockDossierId, type DossierSummary } from "@/lib/dossiers";
+
+function DossierPlaybookRemedy({
+  dossier,
+  onOpenInvoice,
+}: {
+  dossier: DossierSummary;
+  onOpenInvoice: () => void;
+}) {
+  const fail = firstPipelineFailure(dossier.pipeline);
+  if (!fail || fail.stageId !== "bundle" || fail.state !== "fail") return null;
+
+  const isLinkage = fail.exceptionCode === "LINKAGE_KEY_MISSING" || !dossier.poReference;
+  const isBundle = fail.exceptionCode === "BUNDLE_INCOMPLETE";
+
+  if (!isLinkage && !isBundle) return null;
+
+  return (
+    <div
+      className="mb-4 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm"
+      data-testid="dossier-playbook-remedy"
+    >
+      <p className="font-medium text-foreground">Next step</p>
+      {isLinkage ? (
+        <p className="mt-1 text-muted-foreground">
+          This dossier needs a PO linkage key for 3-way match. Capture the PO number, or{" "}
+          {dossier.invoiceId ? (
+            <button
+              type="button"
+              className="text-primary underline underline-offset-2"
+              onClick={onOpenInvoice}
+            >
+              reclassify as Direct expense
+            </button>
+          ) : (
+            "reclassify as Direct expense"
+          )}{" "}
+          if this is not a PO-backed invoice.
+        </p>
+      ) : (
+        <p className="mt-1 text-muted-foreground">
+          Upload PO and GRN supporting documents on the same PO number below, or open the
+          invoice to complete the dossier.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function captureLabel(channel: string): string {
   const base = channel.replace(/\s+capture$/i, "").trim();
@@ -126,6 +173,12 @@ export function DossierDetailPage() {
 
       <DossierSummaryStrip dossier={dossier} />
       <DossierOutcomeBanner message={dossier.outcomeBanner} />
+      <DossierPlaybookRemedy dossier={dossier} onOpenInvoice={() => {
+        if (dossier.invoiceId) {
+          setDrawerId(dossier.invoiceId);
+          setDrawerOpen(true);
+        }
+      }} />
 
       <div className="dossier-detail-grid">
         <DossierPipelinePanel pipeline={dossier.pipeline} />

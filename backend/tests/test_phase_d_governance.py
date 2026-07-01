@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Phase D — rule book governance (audit trail + admin permissions)."""
 
 import json
@@ -133,7 +135,7 @@ async def test_rule_book_put_writes_audit_event(
         )
     ).scalars().first()
     assert row is not None
-    assert row.tenant_id == 1
+    assert row.tenant_id == TESTING_TENANT_UUID
     assert row.detail is not None
     assert "changes" in row.detail
     assert "ec-1" in row.detail["changes"]["email_capture_rules"]["modified"]
@@ -225,7 +227,7 @@ async def test_member_cannot_put_rule_book_when_auth_required(
     clear_rule_book_cache()
 
     member = User(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         email="member@hv.com",
         password_hash=hash_password("memberpass1"),
         full_name="Member User",
@@ -236,7 +238,7 @@ async def test_member_cannot_put_rule_book_when_auth_required(
 
     token = create_access_token(
         user_id=member.id,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         tenant_slug="hv-org",
         email=member.email,
         role=member.role.value,

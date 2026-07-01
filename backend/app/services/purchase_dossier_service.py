@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
+from app.schemas.dossier import DossierMatchSummaryResponse
 from app.schemas.purchase import PurchaseDossierMember, PurchaseDossierResponse, ThreeWayMatchResult
+from app.services.dossier_match_service import build_dossier_match_summary
 from app.services.file_storage import has_stored_path, stored_file_available
 from app.services.document_ref_service import dossier_public_id
 from app.services.po_reference import is_plausible_po_reference
@@ -16,6 +18,7 @@ from app.services.purchase_match_service import (
     _latest_grn,
     compute_three_way_match,
     load_purchase_order_for_invoice,
+    purchase_order_to_response,
 )
 
 _ROLE_LABELS = {
@@ -215,6 +218,8 @@ async def build_purchase_dossier(
 
     match: ThreeWayMatchResult | None = None
     match_status: str | None = None
+    match_summary: DossierMatchSummaryResponse | None = None
+    purchase_register = None
     purchase_order_id: int | None = None
 
     if po_row is not None:
@@ -222,8 +227,28 @@ async def build_purchase_dossier(
         commercial_for_match = (
             loaded.get(commercial_match_id) if commercial_match_id is not None else None
         )
+        if commercial_for_match is None and po_row.invoice_id is not None:
+            commercial_for_match = loaded.get(po_row.invoice_id)
+            if commercial_for_match is None:
+                commercial_for_match = await _invoice_by_id(session, po_row.invoice_id)
         match = compute_three_way_match(po_row, commercial_for_match)
         match_status = match.status
+        match_summary = build_dossier_match_summary(
+            po_row=po_row,
+            commercial=commercial_for_match,
+            match=match,
+            currency=(invoice.currency or "AUD").strip() or "AUD",
+            po_doc=po_doc,
+            grn_doc=grn_doc,
+        )
+        from app.services.invoice_evaluation_service import load_posting_config_for_tenant
+
+        config = await load_posting_config_for_tenant(session, invoice.tenant_id)
+        purchase_register = purchase_order_to_response(
+            po_row,
+            commercial_for_match,
+            config=config,
+        )
 
     return PurchaseDossierResponse(
         po_reference=po_reference,
@@ -232,4 +257,6 @@ async def build_purchase_dossier(
         purchase_order_id=purchase_order_id,
         match=match,
         match_status=match_status,
+        match_summary=match_summary,
+        purchase_register=purchase_register,
     )

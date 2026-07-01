@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Org-scoped API access (IDOR prevention)."""
 
 from datetime import date
@@ -26,12 +28,13 @@ async def test_line_items_cross_org_returns_404(
     monkeypatch.setenv("AUTH_REQUIRED", "true")
     get_settings.cache_clear()
 
-    db_session.add(Tenant(id=2, name="Other Org", slug="other-org"))
-    inv = Invoice(tenant_id=1, status=InvoiceStatus.PENDING, currency="AUD")
+    db_session.add(Tenant(id=PLATFORM_TENANT_UUID, name="Other Org", slug="other-org"))
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING, currency="AUD")
     db_session.add(inv)
     await db_session.flush()
     db_session.add(
         LineItem(
+            tenant_id=TESTING_TENANT_UUID,
             invoice_id=inv.id,
             description="Secret line",
             qty=Decimal("1"),
@@ -41,7 +44,7 @@ async def test_line_items_cross_org_returns_404(
     )
 
     outsider = User(
-        tenant_id=2,
+        tenant_id=PLATFORM_TENANT_UUID,
         email="outsider@other.com",
         password_hash=hash_password("outsiderpass1"),
         full_name="Outsider",
@@ -49,18 +52,18 @@ async def test_line_items_cross_org_returns_404(
     )
     db_session.add(outsider)
     await db_session.flush()
-    await ensure_membership(db_session, user_id=outsider.id, tenant_id=2)
+    await ensure_membership(db_session, user_id=outsider.id, tenant_id=PLATFORM_TENANT_UUID)
 
     token = create_access_token(
         user_id=outsider.id,
-        tenant_id=2,
+        tenant_id=PLATFORM_TENANT_UUID,
         tenant_slug="other-org",
         email=outsider.email,
         role=outsider.role.value,
     )
     res = await client.get(
         f"/api/invoices/{inv.id}/line-items",
-        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "2"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": str(PLATFORM_TENANT_UUID)},
     )
     assert res.status_code == 404
 
@@ -76,12 +79,13 @@ async def test_journal_entries_cross_org_returns_404(
     monkeypatch.setenv("AUTH_REQUIRED", "true")
     get_settings.cache_clear()
 
-    db_session.add(Tenant(id=2, name="Other Org", slug="other-org"))
-    inv = Invoice(tenant_id=1, status=InvoiceStatus.PROCESSED, currency="AUD")
+    db_session.add(Tenant(id=PLATFORM_TENANT_UUID, name="Other Org", slug="other-org"))
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PROCESSED, currency="AUD")
     db_session.add(inv)
     await db_session.flush()
     db_session.add(
         JournalEntry(
+            tenant_id=TESTING_TENANT_UUID,
             invoice_id=inv.id,
             date=date(2026, 6, 1),
             account_code="5000",
@@ -93,7 +97,7 @@ async def test_journal_entries_cross_org_returns_404(
     )
 
     outsider = User(
-        tenant_id=2,
+        tenant_id=PLATFORM_TENANT_UUID,
         email="outsider2@other.com",
         password_hash=hash_password("outsiderpass1"),
         full_name="Outsider",
@@ -101,18 +105,18 @@ async def test_journal_entries_cross_org_returns_404(
     )
     db_session.add(outsider)
     await db_session.flush()
-    await ensure_membership(db_session, user_id=outsider.id, tenant_id=2)
+    await ensure_membership(db_session, user_id=outsider.id, tenant_id=PLATFORM_TENANT_UUID)
 
     token = create_access_token(
         user_id=outsider.id,
-        tenant_id=2,
+        tenant_id=PLATFORM_TENANT_UUID,
         tenant_slug="other-org",
         email=outsider.email,
         role=outsider.role.value,
     )
     res = await client.get(
         f"/api/invoices/{inv.id}/journal-entries",
-        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "2"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": str(PLATFORM_TENANT_UUID)},
     )
     assert res.status_code == 404
 

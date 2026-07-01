@@ -6,13 +6,6 @@
 import shippedCatalog from "@/lib/v5DocumentTypes.json";
 import shippedDefaults from "@/lib/documentTypeDefaults.json";
 import classifierPresets from "@/lib/documentTypeClassifierPresets.json";
-import {
-  buildClassifierFromSignals,
-  inferClassifierLayout,
-  parseSignalsFromClassifier,
-  type ClassifierLayout,
-  type RecognitionSignalId,
-} from "@/lib/documentClassifierBuilder";
 import { playbookPresetForProfile, type PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import type {
   DocumentTypeClass,
@@ -28,7 +21,23 @@ import {
   templateSignalMetaForCode,
   type RecognitionSignalOption,
   type RouteConfidencePreset,
+  type ClassifierLayout,
+  type RecognitionSignalId,
 } from "@/lib/documentTypeTemplateMeta";
+import {
+  buildClassifierFromSignals,
+  inferClassifierLayout,
+  parseSignalsFromClassifier,
+} from "@/lib/documentClassifierBuilder";
+import {
+  compileMatchRulesToClassifier,
+  matchRulesFormFromClassifier,
+} from "@/lib/documentMatchRules";
+import {
+  defaultCompulsoryForTemplate,
+  ensureExtractionSuperset,
+} from "@/lib/documentCompulsoryFields";
+import { initializeCustomDocumentTypeRecognition } from "@/lib/documentUserRecognition";
 
 export type { RouteConfidencePreset, RecognitionSignalOption };
 
@@ -77,6 +86,41 @@ export const SHIPPED_DOCUMENT_TYPE_CODES = SHIPPED_ROWS.map((row) => row.code.to
 
 export type ShippedDocumentTypeCode = (typeof SHIPPED_DOCUMENT_TYPE_CODES)[number];
 export type DocumentTypeTemplateId = ShippedDocumentTypeCode | "custom";
+
+/** Finance-standard catalogue packs (mixed AP). */
+export type DocumentTypeStarterPackId = "procurement_3way" | "direct_opex";
+
+export type DocumentTypeStarterPack = {
+  id: DocumentTypeStarterPackId;
+  label: string;
+  description: string;
+  matrixTemplates: readonly ShippedDocumentTypeCode[];
+  /** When set, apply as tenant unclassified fallback after pack add. */
+  unclassifiedMatrixTemplate?: ShippedDocumentTypeCode;
+};
+
+export const DOCUMENT_TYPE_STARTER_PACKS: DocumentTypeStarterPack[] = [
+  {
+    id: "procurement_3way",
+    label: "Procurement 3-way match",
+    description:
+      "PO goods invoice plus PO copy and GRN supporting types, cross-linked on PO number.",
+    matrixTemplates: ["DT-01", "DT-02", "DT-03"],
+  },
+  {
+    id: "direct_opex",
+    label: "Direct opex (mixed AP)",
+    description:
+      "Direct expense for non-PO spend and non-actionable quote/spam filter.",
+    matrixTemplates: ["DT-08", "DT-24"],
+    unclassifiedMatrixTemplate: "DT-08",
+  },
+];
+
+export type StarterPackApplyResult = {
+  types: DocumentTypeDefinition[];
+  unclassifiedDocumentTypeCode?: string;
+};
 
 export type DocumentTypeTemplate = {
   id: DocumentTypeTemplateId;
@@ -163,7 +207,7 @@ export const DOCUMENT_TYPE_TEMPLATES: DocumentTypeTemplate[] = [
   {
     id: "custom",
     label: "Custom type",
-    description: "Start blank and configure recognition manually.",
+    description: "Blank type with match / exclude rules and processing sections.",
     shippedCode: "",
     routeTarget: "Vault",
     klass: "Transactional",
@@ -190,7 +234,7 @@ function shippedRowForCode(code: string) {
   return SHIPPED_ROWS.find((row) => row.code.toUpperCase() === code.toUpperCase());
 }
 
-function classifierFromTemplate(template: DocumentTypeTemplate): DocumentTypeClassifier {
+function legacyClassifierFromTemplate(template: DocumentTypeTemplate): DocumentTypeClassifier {
   const preset = template.shippedCode
     ? CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]
     : undefined;
@@ -219,9 +263,99 @@ function classifierFromTemplate(template: DocumentTypeTemplate): DocumentTypeCla
   return createBlankDocumentType([]).classifier;
 }
 
+/** Shipped templates use the same match/exclude rules editor as custom types. */
+function matchRulesClassifierFromTemplate(
+  template: DocumentTypeTemplate
+): DocumentTypeClassifier {
+  const legacy = legacyClassifierFromTemplate(template);
+  const form = matchRulesFormFromClassifier(legacy.root);
+  return {
+    enabled: legacy.enabled,
+    priority: legacy.priority,
+    confidence: legacy.confidence,
+    root: compileMatchRulesToClassifier(form),
+  };
+}
+
 /** Org catalogue codes always follow the org sequence — never the shipped matrix code. */
 function orgCodeForNewType(existing: DocumentTypeDefinition[]): string {
   return nextOrgDocumentTypeCode(existing);
+}
+
+/** Map shipped matrix ids (e.g. DT-02) to org codes where matrixTemplateCode matches. */
+export function resolveBundleCodesFromMatrix(
+  existing: DocumentTypeDefinition[],
+  matrixCodes: string[]
+): string[] {
+  const resolved: string[] = [];
+  for (const raw of matrixCodes) {
+    const token = raw.trim().toUpperCase();
+    if (!token) continue;
+    const match = existing.find(
+      (dt) => (dt.matrixTemplateCode ?? "").trim().toUpperCase() === token
+    );
+    if (match?.code) {
+      resolved.push(match.code.trim().toUpperCase());
+    }
+  }
+  return resolved;
+}
+
+function wireProcurementBundleMandatory(
+  types: DocumentTypeDefinition[]
+): DocumentTypeDefinition[] {
+  const invoiceIdx = types.findIndex(
+    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-01"
+  );
+  if (invoiceIdx < 0) return types;
+  const poCode = types.find(
+    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-02"
+  )?.code;
+  const grnCode = types.find(
+    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-03"
+  )?.code;
+  const mandatory = [poCode, grnCode]
+    .map((code) => (code ?? "").trim().toUpperCase())
+    .filter(Boolean);
+  if (!mandatory.length) return types;
+  return types.map((dt, idx) =>
+    idx === invoiceIdx ? { ...dt, bundleMandatory: mandatory } : dt
+  );
+}
+
+/** Add a finance-standard starter pack with org codes and cross-linked bundle rules. */
+export function documentTypesFromStarterPack(
+  packId: DocumentTypeStarterPackId,
+  existing: DocumentTypeDefinition[]
+): StarterPackApplyResult {
+  const pack = DOCUMENT_TYPE_STARTER_PACKS.find((row) => row.id === packId);
+  if (!pack) return { types: [] };
+
+  let working = [...existing];
+  const created: DocumentTypeDefinition[] = [];
+  for (const matrixId of pack.matrixTemplates) {
+    const def = documentTypeFromTemplate(matrixId, working);
+    working = [...working, def];
+    created.push(def);
+  }
+
+  let types =
+    packId === "procurement_3way"
+      ? wireProcurementBundleMandatory(created)
+      : created.map((dt) => ({
+          ...dt,
+          bundleMandatory: [],
+          bundleConditional: [],
+        }));
+
+  const unclassifiedToken = pack.unclassifiedMatrixTemplate?.toUpperCase();
+  const unclassifiedDocumentTypeCode = unclassifiedToken
+    ? types.find(
+        (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === unclassifiedToken
+      )?.code
+    : undefined;
+
+  return { types, unclassifiedDocumentTypeCode };
 }
 
 export function inferTemplateIdFromDefinition(
@@ -256,21 +390,34 @@ export function documentTypeFromTemplate(
   const shipped = template.shippedCode ? shippedRowForCode(template.shippedCode) : null;
   const preset = playbookPresetForProfile(template.playbookProfile);
   const defaults = template.shippedCode ? defaultsRowForCode(template.shippedCode) : {};
-  const classifier = classifierFromTemplate(template);
+  const classifier =
+    templateId === "custom"
+      ? base.classifier
+      : matchRulesClassifierFromTemplate(template);
   const code = orgCodeForNewType(existing);
   const matrixTemplateCode =
     templateId !== "custom" && template.shippedCode ? template.shippedCode.toUpperCase() : "";
   const requiredFields = defaults.required_fields?.length
     ? [...defaults.required_fields]
-    : [...template.defaultExtractionFields];
+    : template.shippedCode
+      ? defaultCompulsoryForTemplate(template.shippedCode)
+      : [...template.defaultExtractionFields];
   const absentFields = defaults.absent_fields?.length ? [...defaults.absent_fields] : [];
+  const baseExtraction =
+    templateId === "custom"
+      ? ["document_heading", "document_text"]
+      : [...template.defaultExtractionFields];
+  const extractionFields = ensureExtractionSuperset(requiredFields, baseExtraction);
+  const oneLine =
+    shipped?.oneLine ?? (templateId === "custom" ? "" : template.description);
 
-  return {
+  const payload: DocumentTypeDefinition = {
     ...base,
     code,
-    title: shipped?.title ?? template.label,
-    shortTitle: shipped?.shortTitle ?? template.label,
-    oneLine: shipped?.oneLine ?? template.description,
+    title: shipped?.title ?? (templateId === "custom" ? "" : template.label),
+    shortTitle: shipped?.shortTitle ?? (templateId === "custom" ? "" : template.label),
+    oneLine,
+    llmHint: templateId === "custom" ? "" : oneLine,
     klass: template.klass,
     posting: template.posting,
     fraudRisk: template.fraudRisk,
@@ -279,18 +426,36 @@ export function documentTypeFromTemplate(
     matchPolicy: { mode: preset.matchMode },
     approvalPolicy: { mode: preset.approvalMode },
     purchaseBundleRole: template.purchaseBundleRole,
-    validationProfile: template.validationProfile,
-    extractionFields: [...template.defaultExtractionFields],
+    validationProfile:
+      templateId === "custom" ? "non_actionable" : template.validationProfile,
+    extractionFields,
     requiredFields,
     absentFields,
     minRouteConfidence:
-      defaults.min_route_confidence ?? ROUTE_CONFIDENCE_VALUES[template.defaultRouteConfidence],
+      templateId === "custom"
+        ? 0.75
+        : defaults.min_route_confidence ?? ROUTE_CONFIDENCE_VALUES[template.defaultRouteConfidence],
     classifier,
     classifierCustomized: false,
     matrixTemplateCode,
     enabled: true,
-    bundleMandatory: shipped?.bundleMandatory ? [...shipped.bundleMandatory] : [],
+    bundleMandatory: (() => {
+      const shippedMandatory = shipped?.bundleMandatory ?? [];
+      if (!shippedMandatory.length) return [];
+      const resolved = resolveBundleCodesFromMatrix(existing, shippedMandatory);
+      return resolved.length === shippedMandatory.length ? resolved : [...shippedMandatory];
+    })(),
     bundleConditional: shipped?.bundleConditional ? [...shipped.bundleConditional] : [],
+  };
+
+  if (templateId === "custom") {
+    return initializeCustomDocumentTypeRecognition(payload);
+  }
+
+  return {
+    ...payload,
+    enabled: true,
+    classifierCustomized: false,
   };
 }
 

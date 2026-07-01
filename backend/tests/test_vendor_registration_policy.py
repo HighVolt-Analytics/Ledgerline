@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Vendor registration policy — route, document type, and VR12 driven."""
 
 from decimal import Decimal
@@ -12,9 +14,16 @@ from app.services.invoice_evaluation_service import (
     evaluate_invoice_routing,
 )
 from app.services.vendor_registration_policy import (
+    persisted_vendor_confidence,
     vendor_master_check_enabled,
     vendor_registration_required,
 )
+
+
+def test_persisted_vendor_confidence_omits_when_not_applicable() -> None:
+    assert persisted_vendor_confidence(confidence=85.0, registration_required=False) is None
+    assert persisted_vendor_confidence(confidence=0.0, registration_required=True) == 0.0
+    assert persisted_vendor_confidence(confidence=72.5, registration_required=True) == 72.5
 
 
 def _contract_type() -> DocumentTypeDefinition:
@@ -65,6 +74,36 @@ def test_vendor_registration_required_for_purchase_when_vr12_on() -> None:
         ],
         classifier=DocumentTypeClassifier(enabled=True, priority=10, confidence=0.85),
     )
+    assert (
+        vendor_registration_required(
+            route_target=ROUTE_PURCHASE,
+            document_type=definition,
+        )
+        is True
+    )
+
+
+def test_vendor_registration_required_when_non_actionable_profile_but_vr12_explicit() -> None:
+    """Seeded non_actionable profile must not override explicit VR12 on the rule book."""
+    from app.schemas.validation_rule import ValidationRuleConfig
+
+    definition = DocumentTypeDefinition(
+        code="DT-03",
+        title="Goods receipt",
+        shortTitle="GRN",
+        klass="Supporting",
+        posting="Yes",
+        fraudRisk="low",
+        oneLine="Goods receipt note",
+        routeTarget=ROUTE_PURCHASE,
+        validation_profile="non_actionable",
+        validation_rules=[
+            ValidationRuleConfig(code="VR03", enabled=True, severity="block"),
+            ValidationRuleConfig(code="VR12", enabled=True, severity="block"),
+        ],
+        classifier=DocumentTypeClassifier(enabled=True, priority=5, confidence=0.85),
+    )
+    assert vendor_master_check_enabled(definition) is True
     assert (
         vendor_registration_required(
             route_target=ROUTE_PURCHASE,
@@ -126,7 +165,7 @@ def test_evaluate_routing_vault_contract_needs_review_not_pending_vendor(
         update={"document_types": [*capture_config.document_types, contract]}
     )
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Permagen Pty Ltd",
         invoice_no="CON-001",
         total=Decimal("4000"),
@@ -139,3 +178,4 @@ def test_evaluate_routing_vault_contract_needs_review_not_pending_vendor(
     result = evaluate_invoice_routing(inv, config, route_override=ROUTE_VAULT)
     assert result.evaluation_status != EVAL_PENDING_VENDOR
     assert result.evaluation_status in {EVAL_NEEDS_REVIEW, "auto_coded"}
+    assert result.vendor_confidence is None

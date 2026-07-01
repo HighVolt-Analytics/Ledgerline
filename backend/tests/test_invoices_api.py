@@ -1,3 +1,8 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
+from datetime import date
+from decimal import Decimal
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +21,7 @@ async def test_list_empty(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_get_invoice(client: AsyncClient, db_session: AsyncSession) -> None:
-    inv = Invoice(tenant_id=1,
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         invoice_no="INV-1",
         status=InvoiceStatus.PROCESSED,
@@ -40,8 +45,8 @@ async def test_not_found(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_filter_status(client: AsyncClient, db_session: AsyncSession) -> None:
     db_session.add_all([
-        Invoice(tenant_id=1, vendor="A", status=InvoiceStatus.PROCESSED, currency="AUD", file_hash="f1"),
-        Invoice(tenant_id=1, vendor="B", status=InvoiceStatus.EXCEPTION, currency="AUD", file_hash="f2"),
+        Invoice(tenant_id=TESTING_TENANT_UUID, vendor="A", status=InvoiceStatus.PROCESSED, currency="AUD", file_hash="f1"),
+        Invoice(tenant_id=TESTING_TENANT_UUID, vendor="B", status=InvoiceStatus.EXCEPTION, currency="AUD", file_hash="f2"),
     ])
     await db_session.flush()
 
@@ -51,11 +56,42 @@ async def test_filter_status(client: AsyncClient, db_session: AsyncSession) -> N
 
 
 @pytest.mark.asyncio
+async def test_patch_invoice_refreshes_vendor_evaluation(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Saving vendor corrections re-runs evaluation so approve uses fresh routing."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Totally Unknown Supplier Ltd",
+        route_target="Purchase Management",
+        evaluation_status="auto_coded",
+        vendor_confidence=0.9,
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        file_hash="patch-eval-1",
+        total=Decimal("500.00"),
+        due_date=date(2026, 7, 1),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.patch(
+        f"/api/invoices/{inv.id}",
+        json={"vendor": "Another Unknown Vendor Pty Ltd"},
+    )
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["vendor"] == "Another Unknown Vendor Pty Ltd"
+    assert data["vendor_confidence"] == 0.0
+    assert data["evaluation_status"] == "pending_vendor"
+
+
+@pytest.mark.asyncio
 async def test_patch_invoice_in_review_queue(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor=None,
         invoice_no=None,
         status=InvoiceStatus.EXCEPTION,
@@ -89,7 +125,7 @@ async def test_patch_invoice_rejects_processed(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         status=InvoiceStatus.PROCESSED,
         currency="AUD",

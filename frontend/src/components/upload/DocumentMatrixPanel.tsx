@@ -17,6 +17,7 @@ import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
+import { approveAndProcess } from "@/lib/invoiceActions";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 
 const MATRIX_POLL_MS = 15_000;
@@ -209,9 +210,8 @@ export function DocumentMatrixPanel({
     try {
       if (action === "unique") {
         if (QUEUE_STATUSES.has(inv.status)) {
-          await api.approve(inv.id);
-          await api.triggerProcess();
-          setToast(`${documentDisplayRef(inv)} approved for reprocessing`);
+          await approveAndProcess(inv.id, () => load({ silent: true, fresh: true }));
+          setToast(`${documentDisplayRef(inv)} approved and processed`);
         } else {
           setToast(`${documentDisplayRef(inv)} marked as reviewed`);
         }

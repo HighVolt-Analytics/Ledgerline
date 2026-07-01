@@ -22,8 +22,10 @@ import type {
   PaymentRecord,
   PurchaseOrder,
   ThreeWayMatch,
+  ThreeWayMatchDisplay,
+  MatchAmountLine,
 } from "@/lib/v4MockData";
-import type { PaymentApi, PurchaseOrderApi } from "@/api/types";
+import type { PaymentApi, PurchaseOrderApi, MatchAmountLineApi, ThreeWayMatchApi, ThreeWayMatchDisplayApi } from "@/api/types";
 
 function parseAmount(value: string | null | undefined): number {
   if (value == null || value === "") return 0;
@@ -365,6 +367,42 @@ export function purchaseNeedsVarianceApproval(
   );
 }
 
+function mapMatchAmountLine(line: MatchAmountLineApi): MatchAmountLine {
+  return {
+    qty: line.qty,
+    uom: line.uom ?? null,
+    unitPrice: line.unit_price ?? null,
+    lineValue: line.line_value ?? null,
+  };
+}
+
+function mapMatchDisplay(d: ThreeWayMatchDisplayApi): ThreeWayMatchDisplay {
+  return {
+    baseUom: d.base_uom,
+    poOnDocument: mapMatchAmountLine(d.po_on_document),
+    poForMatch: mapMatchAmountLine(d.po_for_match),
+    grnOnDocument: d.grn_on_document ? mapMatchAmountLine(d.grn_on_document) : null,
+    grnForMatch: d.grn_for_match ? mapMatchAmountLine(d.grn_for_match) : null,
+    invoiceOnDocument: d.invoice_on_document ? mapMatchAmountLine(d.invoice_on_document) : null,
+    invoiceForMatch: d.invoice_for_match ? mapMatchAmountLine(d.invoice_for_match) : null,
+    matchExplanation: d.match_explanation ?? null,
+  };
+}
+
+export function mapThreeWayMatchFromApi(match: ThreeWayMatchApi): ThreeWayMatch {
+  return {
+    status: match.status as MatchStatus,
+    qtyVarianceValue: match.qty_variance_value,
+    priceVarianceValue: match.price_variance_value,
+    totalDeviation: match.total_deviation,
+    poValue: match.po_value,
+    invoiceValue: match.invoice_value,
+    invoiceGst: match.invoice_gst,
+    invoiceTotal: match.invoice_total,
+    display: match.display ? mapMatchDisplay(match.display) : null,
+  };
+}
+
 export function apiPurchaseToRow(row: PurchaseOrderApi): {
   purchaseId: number;
   invoiceId: number | null;
@@ -396,16 +434,7 @@ export function apiPurchaseToRow(row: PurchaseOrderApi): {
     poDocumentId: row.po_document_id ?? null,
     grnDocumentId: row.grn_document_id ?? null,
   };
-  const m: ThreeWayMatch = {
-    status: row.match.status as MatchStatus,
-    qtyVarianceValue: row.match.qty_variance_value,
-    priceVarianceValue: row.match.price_variance_value,
-    totalDeviation: row.match.total_deviation,
-    poValue: row.match.po_value,
-    invoiceValue: row.match.invoice_value,
-    invoiceGst: row.match.invoice_gst,
-    invoiceTotal: row.match.invoice_total,
-  };
+  const m: ThreeWayMatch = mapThreeWayMatchFromApi(row.match);
   return {
     purchaseId: row.id,
     invoiceId: row.invoice_id,

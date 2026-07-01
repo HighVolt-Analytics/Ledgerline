@@ -61,7 +61,7 @@ EVAL_PENDING_VENDOR = "pending_vendor"
 class InvoiceEvaluationResult:
     route_target: str | None
     matched_rule_ids: list[str]
-    vendor_confidence: float
+    vendor_confidence: float | None
     evaluation_status: str
 
 
@@ -144,6 +144,7 @@ def evaluate_invoice_routing(
     known_master = find_matching_vendor_master(doc.vendor, doc.abn, config.vendor_masters)
 
     from app.services.vendor_registration_policy import (
+        persisted_vendor_confidence,
         resolve_document_type_definition,
         vendor_registration_required,
     )
@@ -153,6 +154,11 @@ def evaluate_invoice_routing(
         document_types=config.document_types,
     )
     route_for_vendor = (route_override or route_target or "").strip()
+    registration_required = vendor_registration_required(
+        route_target=route_for_vendor or route_target,
+        document_type=dt_definition,
+        purchase_document_type=invoice.purchase_document_type,
+    )
     vendor_flag = vendor_detection_evaluation_status(
         route_target=route_for_vendor or None,
         confidence=confidence,
@@ -160,11 +166,7 @@ def evaluate_invoice_routing(
         known_master=known_master,
         amount=_invoice_amount(invoice),
         hold_above=expense_vendor_hold_above(config),
-        registration_required=vendor_registration_required(
-            route_target=route_for_vendor or route_target,
-            document_type=dt_definition,
-            purchase_document_type=invoice.purchase_document_type,
-        ),
+        registration_required=registration_required,
     )
 
     if vendor_flag:
@@ -186,7 +188,10 @@ def evaluate_invoice_routing(
     return InvoiceEvaluationResult(
         route_target=route_target,
         matched_rule_ids=matched_rule_ids,
-        vendor_confidence=confidence,
+        vendor_confidence=persisted_vendor_confidence(
+            confidence=confidence,
+            registration_required=registration_required,
+        ),
         evaluation_status=evaluation_status,
     )
 
@@ -284,7 +289,7 @@ async def apply_invoice_evaluation(
 
     route = (prior_route or result.route_target or "").strip()
     threshold = config.vendor_detection_config.threshold
-    if route == ROUTE_TEAM and result.vendor_confidence < threshold:
+    if route == ROUTE_TEAM and (result.vendor_confidence or 0) < threshold:
         from app.services.team_expense_validator import resolve_employee_for_sender
 
         employee = await resolve_employee_for_sender(

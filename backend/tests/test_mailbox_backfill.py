@@ -6,6 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from app.config import get_settings
+from app.tenant_ids import TESTING_TENANT_UUID
+from tests.auth_test_helpers import seed_admin_user
 from app.services.email_ingestion import build_historical_inbox_filter
 from app.services.mailbox_backfill_service import validate_backfill_dates
 
@@ -35,20 +37,14 @@ def test_validate_backfill_dates_rejects_long_span(monkeypatch: pytest.MonkeyPat
 async def test_start_backfill_api(client, db_session) -> None:
     from app.models.connected_mailbox import ConnectedMailbox
 
-    reg = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "backfill@example.com",
-            "password": "securepass1",
-            "full_name": "Backfill User",
-            "tenant_name": "Backfill Org",
-            "tenant_slug": "backfill-org",
-        },
+    _, token = await seed_admin_user(
+        db_session,
+        email="backfill@example.com",
+        tenant_slug="hv-org",
+        full_name="Backfill User",
     )
-    assert reg.status_code == 201
-    reg_body = reg.json()["data"]
-    token = reg_body["access_token"]
-    tenant_id = reg_body["user"]["org_id"]
+    await db_session.flush()
+    tenant_id = TESTING_TENANT_UUID
 
     mb = ConnectedMailbox(
         tenant_id=tenant_id,
@@ -93,20 +89,14 @@ async def test_start_backfill_api(client, db_session) -> None:
 async def test_start_backfill_from_date_only_defaults_to_today(client, db_session) -> None:
     from app.models.connected_mailbox import ConnectedMailbox
 
-    reg = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "backfill-start@example.com",
-            "password": "securepass1",
-            "full_name": "Backfill Start User",
-            "tenant_name": "Backfill Start Org",
-            "tenant_slug": "backfill-start-org",
-        },
+    _, token = await seed_admin_user(
+        db_session,
+        email="backfill-start@example.com",
+        tenant_slug="hv-org",
+        full_name="Backfill Start User",
     )
-    assert reg.status_code == 201
-    reg_body = reg.json()["data"]
-    token = reg_body["access_token"]
-    tenant_id = reg_body["user"]["org_id"]
+    await db_session.flush()
+    tenant_id = TESTING_TENANT_UUID
 
     mb = ConnectedMailbox(
         tenant_id=tenant_id,

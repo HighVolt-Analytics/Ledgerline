@@ -116,6 +116,20 @@ def purchase_pack(tenant_id: uuid.UUID | int, pack_id: str) -> BillingStateRespo
     return save_billing_for_tenant(tenant_id, state)
 
 
+def update_billing_settings(
+    tenant_id: uuid.UUID | int,
+    *,
+    auto_recharge: bool | None = None,
+    threshold: int | None = None,
+) -> BillingStateResponse:
+    state = load_billing_for_tenant(tenant_id)
+    if auto_recharge is not None:
+        state.auto_recharge = auto_recharge
+    if threshold is not None:
+        state.threshold = threshold
+    return save_billing_for_tenant(tenant_id, state)
+
+
 def remove_billing_for_tenant(tenant_id: uuid.UUID | int) -> None:
     path = _billing_path(tenant_id)
     if path.is_file():

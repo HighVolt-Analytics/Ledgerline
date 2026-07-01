@@ -121,6 +121,28 @@ async def test_po_goods_touchless_passes_clean_match() -> None:
     assert held is False
 
 
+@pytest.mark.asyncio
+async def test_variance_workflow_skipped_after_human_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    definition = _definition(
+        playbookProfile="po_goods",
+        approvalPolicy={"mode": "variance_workflow"},
+    )
+    invoice = MagicMock()
+    invoice.id = 99
+    invoice.route_target = "Purchase Management"
+
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=1)))
+
+    held = await apply_document_type_approval_gate(
+        session,
+        invoice,
+        definition=definition,
+        validation_results=[ValidationResult("VR15", False, "Qty Variance")],
+    )
+    assert held is False
+
+
 def test_backfill_playbook_profile_on_save() -> None:
     from app.schemas.rule_book_config import validate_rule_book_config_payload
 

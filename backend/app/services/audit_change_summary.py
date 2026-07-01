@@ -136,6 +136,30 @@ def _summarize_vendor_hold(detail: dict[str, Any]) -> str:
     return "Vendor registration hold"
 
 
+def _summarize_vendor_cleared(detail: dict[str, Any]) -> str:
+    vendor = str(detail.get("vendor") or "").strip()
+    reason = str(detail.get("reason") or "").strip()
+    labels = {
+        "vendor_in_master": "registered vendor master match",
+        "confidence_above_threshold": "vendor confidence above threshold",
+        "po_vendor_aligned": "aligned with PO register vendor",
+    }
+    label = labels.get(reason, reason.replace("_", " ") if reason else "vendor check passed")
+    if vendor:
+        return f"{vendor}: {label}"
+    return label.capitalize() if label else "Vendor registration check passed"
+
+
+def _summarize_vendor_waived(detail: dict[str, Any]) -> str:
+    reason = str(detail.get("reason") or "").strip()
+    labels = {
+        "registration_not_required": "VR12 not required for this document route",
+        "supporting_purchase_document": "supporting PO/GRN document",
+        "po_register_trusted": "PO register vendor trusted",
+    }
+    return labels.get(reason, reason.replace("_", " ") if reason else "Vendor hold not required")
+
+
 def _summarize_parse_completed(detail: dict[str, Any]) -> str:
     source = str(detail.get("source") or "").strip()
     confidence = str(detail.get("confidence") or "").strip()
@@ -278,6 +302,10 @@ def summarize_audit_change(
         return _summarize_mapping_applied(d)
     if event == "vendor_registration_hold":
         return _summarize_vendor_hold(d)
+    if event == "vendor_registration_cleared":
+        return _summarize_vendor_cleared(d)
+    if event == "vendor_registration_waived":
+        return _summarize_vendor_waived(d)
     if event == "unmatched_team_vendor":
         vendor = str(d.get("vendor_name") or d.get("vendor") or "").strip()
         score = d.get("confidence_score", d.get("vendor_confidence"))

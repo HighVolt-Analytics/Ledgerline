@@ -1,0 +1,27 @@
+﻿python : C:\Users\VISHN\AppData\Roaming\Python\Python313\site-packages\requests\__init__.py:113: 
+RequestsDependencyWarning: urllib3 (2.5.0) or chardet (7.4.3)/charset_normalizer (3.4.3) doesn't match a supported 
+version!
+At C:\Users\VISHN\AppData\Local\Temp\ps-script-cf702c6c-0264-41fa-a98b-651251f13d0c.ps1:95 char:86
++ ... \Desktop\Email_to_Acc_proj\backend"; $env:PYTHONPATH="."; python -c "
++                                                               ~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\VISHN\...ported version!:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  warnings.warn(
+status: processed
+tenant_id: 550e8400-e29b-41d4-a716-446655440001
+raw_file_path: azureblob://invoices/tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Vault/DT-03 ╖ Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+blob_enabled: True
+stored_file_available: False
+candidates: 8
+  tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Vault/DT-03 ╖ Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+  tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Vault/DT-03  -  Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+  tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Vault/DT-03 - Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+  tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Vault/DT-03 ╖  Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+  tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Testing/Vault/DT-03 ╖ Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+  tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Testing/Vault/DT-03  -  Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+  tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Testing/Vault/DT-03 - Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+  tenants/550e8400-e29b-41d4-a716-446655440001/invoice/Testing/Vault/DT-03 ╖  Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+find_blob: azureblob://invoices/tenants/550e8400-e29b-41d4-a716-446655440001/rejected/Vault/DT-03 ╖ Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf
+2026-06-25 23:45:56 [info     ] audit                          actor_name=None event_name=blob_path_repaired invoice_id=171
+repaired: True new path: azureblob://invoices/tenants/550e8400-e29b-41d4-a716-446655440001/rejected/Vault/DT-03 ╖ Cargo Clearance Permit/OECL (SINGAPORE) PTE LTD/Unknown/Unknown/NO-260371344-260571496_undated_id171.pdf

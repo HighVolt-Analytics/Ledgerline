@@ -2,22 +2,22 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tests.auth_test_helpers import seed_admin_user
 
 
 @pytest.mark.asyncio
-async def test_list_tenants_and_switch_denied_for_extra_org(client: AsyncClient) -> None:
-    reg = await client.post(
-        "/api/auth/register",
-        json={
-            "tenant_name": "Demo Parent Co",
-            "tenant_slug": "demo-parent",
-            "email": "demo-parent@test.com",
-            "password": "securepass1",
-            "full_name": "Demo Admin",
-        },
+async def test_list_tenants_and_switch_denied_for_extra_org(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _, token = await seed_admin_user(
+        db_session,
+        email="demo-parent@test.com",
+        tenant_slug="hv-org",
+        full_name="Demo Admin",
     )
-    assert reg.status_code == 201
-    token = reg.json()["data"]["access_token"]
+    await db_session.commit()
     headers = {"Authorization": f"Bearer {token}"}
 
     listed = await client.get("/api/tenants", headers=headers)

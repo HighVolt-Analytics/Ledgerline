@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice
 from app.schemas.custom_validation_rule import CustomValidationRule
+from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.validation_rule import ValidationRuleConfig
 from app.services.custom_validation_service import run_custom_validation_rules
 from app.services.document_type_catalog import get_document_type_definition
@@ -19,12 +20,14 @@ from app.services.validation_rule_catalog import (
     PROFILE_DIRECT_EXPENSE_RULES,
     PROFILE_NON_ACTIONABLE_RULES,
     default_validation_rules_for_profile,
+    has_explicit_finance_validation_rules,
     resolve_validation_rules,
 )
 from app.services.validator import (
     ValidationResult,
     _skipped,
     vr01_total,
+    vr03_compulsory_fields,
     vr03_direct_expense,
     vr03_grn_document,
     vr03_po_document,
@@ -35,6 +38,67 @@ from app.services.validator import (
     vr08_gst,
     vr02_unique,
 )
+
+PLAYBOOK_RULE_DEFAULT_SEVERITY: dict[str, str] = {
+    "VR-PB01": "warn",
+    "VR-PB02": "block",
+    "VR-PB04": "warn",
+}
+
+
+def _definition_for_context(ctx: ValidationRunContext) -> DocumentTypeDefinition | None:
+    code = (ctx.document_type_code or "").strip().upper()
+    if not code:
+        return None
+    return get_document_type_definition(
+        code,
+        document_types=ctx.document_types,
+        tenant_id=ctx.tenant_id,
+    )
+
+
+def _procurement_rules_for_definition(
+    definition: DocumentTypeDefinition | None,
+) -> list[ValidationRuleConfig]:
+    """Match-mode checks (VR14–VR16) — configured via Processing playbook, not Validation."""
+    if definition is None:
+        return []
+    from app.services.document_type_playbook_profile_service import (
+        effective_match_policy,
+        match_mode_requires_po,
+    )
+
+    mode = effective_match_policy(definition).mode
+    if mode == "none":
+        return []
+
+    rules: list[ValidationRuleConfig] = [
+        ValidationRuleConfig(code="VR15", enabled=True, severity="block"),
+    ]
+    if match_mode_requires_po(mode) or mode in {"shipment", "receipt_line"}:
+        rules.insert(
+            0,
+            ValidationRuleConfig(code="VR14", enabled=True, severity="block"),
+        )
+    if mode in {"three_way_po_grn", "shipment", "receipt_line"}:
+        rules.append(ValidationRuleConfig(code="VR16", enabled=True, severity="warn"))
+    return rules
+
+
+def _runtime_validation_rules(
+    finance_rules: list[ValidationRuleConfig],
+    definition: DocumentTypeDefinition | None,
+) -> list[ValidationRuleConfig]:
+    """Finance rules from Validation tab; VR14–VR16 only when profile defaults apply."""
+    if has_explicit_finance_validation_rules(definition):
+        return list(finance_rules)
+    merged = list(finance_rules)
+    seen = {row.code for row in merged}
+    for row in _procurement_rules_for_definition(definition):
+        if row.code not in seen:
+            merged.append(row)
+            seen.add(row.code)
+    return merged
 
 
 @dataclass
@@ -66,7 +130,6 @@ def _with_severity(result: ValidationResult, severity: str) -> ValidationResult:
 
 def _playbook_results_for_rules(
     playbook_gates: object | None,
-    rules: list[ValidationRuleConfig],
     *,
     document_type_code: str | None = None,
     document_types: list | None = None,
@@ -87,14 +150,11 @@ def _playbook_results_for_rules(
         )
     enforce_bundle = should_enforce_bundle_mandatory(definition) if definition else True
 
-    severity_by_code = {row.code: row.severity for row in rules if row.enabled}
     rows: list[ValidationResult] = []
     for raw in playbook_validation_results(playbook_gates):
         if raw.rule == "VR-PB02" and not enforce_bundle:
             continue
-        severity = severity_by_code.get(raw.rule)
-        if severity is None:
-            continue
+        severity = PLAYBOOK_RULE_DEFAULT_SEVERITY.get(raw.rule, "warn")
         rows.append(
             ValidationResult(
                 raw.rule,
@@ -114,10 +174,23 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
             return vr03_po_document(data)
         if doc_type == "grn":
             return vr03_grn_document(data)
+        from app.services.document_type_playbook_service import effective_required_fields
         from app.services.document_type_validation_service import (
             PROFILE_DIRECT_EXPENSE,
             resolve_validation_profile,
         )
+
+        definition = None
+        dt_code = (ctx.document_type_code or "").strip().upper()
+        if dt_code:
+            definition = get_document_type_definition(
+                dt_code,
+                document_types=ctx.document_types,
+                tenant_id=ctx.tenant_id,
+            )
+        compulsory = effective_required_fields(definition) if definition else []
+        if compulsory and ctx.invoice is not None:
+            return vr03_compulsory_fields(ctx.invoice, data, compulsory)
 
         profile = ctx.validation_profile or resolve_validation_profile(
             ctx.document_type_code,
@@ -253,7 +326,6 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
         results.extend(
             _playbook_results_for_rules(
                 ctx.playbook_gates,
-                rules,
                 document_type_code=ctx.document_type_code,
                 document_types=ctx.document_types,
                 tenant_id=ctx.tenant_id,
@@ -261,7 +333,9 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
         )
         return results
 
-    rules = _rules_for_context(ctx)
+    finance_rules = _rules_for_context(ctx)
+    definition = _definition_for_context(ctx)
+    rules = _runtime_validation_rules(finance_rules, definition)
     results: list[ValidationResult] = []
 
     duplicate = await _run_universal_duplicate(ctx)
@@ -275,25 +349,14 @@ async def run_configured_validations(ctx: ValidationRunContext) -> list[Validati
             raw = await _run_core_rule(row.code, ctx)
             results.append(_with_severity(raw, row.severity))
 
-        results.extend(
-            _playbook_results_for_rules(
-                ctx.playbook_gates,
-                rules,
-                document_type_code=ctx.document_type_code,
-                document_types=ctx.document_types,
-                tenant_id=ctx.tenant_id,
-            )
+    results.extend(
+        _playbook_results_for_rules(
+            ctx.playbook_gates,
+            document_type_code=ctx.document_type_code,
+            document_types=ctx.document_types,
+            tenant_id=ctx.tenant_id,
         )
-    else:
-        results.extend(
-            _playbook_results_for_rules(
-                ctx.playbook_gates,
-                rules,
-                document_type_code=ctx.document_type_code,
-                document_types=ctx.document_types,
-                tenant_id=ctx.tenant_id,
-            )
-        )
+    )
 
     if ctx.invoice is not None:
         custom_rules = _custom_rules_for_context(ctx)

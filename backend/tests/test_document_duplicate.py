@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """File-hash and VR02 duplicate detection."""
 
 import shutil
@@ -43,6 +45,7 @@ def _clear_config_cache() -> None:
 
 def _matching_capture_email(data: bytes, *, message_id: str = "msg-dup") -> RawEmail:
     """Matches ec-1 in tests/fixtures/rule_book_demo.json."""
+
     return RawEmail(
         message_id=message_id,
         subject="Your AWS invoice for May 2026",
@@ -68,7 +71,7 @@ def _matching_capture_email(data: bytes, *, message_id: str = "msg-dup") -> RawE
     ],
 )
 def test_evaluate_file_hash_duplicate(status: InvoiceStatus, expected: str) -> None:
-    existing = Invoice(tenant_id=1, status=status, file_hash="abc", currency="AUD")
+    existing = Invoice(tenant_id=TESTING_TENANT_UUID, status=status, file_hash="abc", currency="AUD")
     decision = evaluate_file_hash_duplicate(existing)
     assert decision.action == expected
     assert decision.existing is existing
@@ -88,7 +91,7 @@ async def test_email_duplicate_preserves_processed_invoice(
     file_hash = compute_sha256_bytes(pdf_bytes)
 
     processed = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Vendor Co",
         invoice_no="INV-100",
         status=InvoiceStatus.PROCESSED,
@@ -107,7 +110,7 @@ async def test_email_duplicate_preserves_processed_invoice(
     result = await ingest_email_attachments(
         db_session,
         [_matching_capture_email(pdf_bytes)],
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         tenant_slug="hv-org",
     )
     assert result.ingested_count == 0
@@ -134,7 +137,7 @@ async def test_email_duplicate_in_progress_logs_without_second_row(
     file_hash = compute_sha256_bytes(pdf_bytes)
 
     pending = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.PARSING,
         file_hash=file_hash,
         currency="AUD",
@@ -150,7 +153,7 @@ async def test_email_duplicate_in_progress_logs_without_second_row(
     result = await ingest_email_attachments(
         db_session,
         [_matching_capture_email(pdf_bytes, message_id="msg-2")],
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         tenant_slug="hv-org",
     )
     assert result.ingested_count == 0
@@ -170,7 +173,7 @@ async def test_vr02_ignores_rejected_invoice(
 
     db_session.add(
         Invoice(
-            tenant_id=1,
+            tenant_id=TESTING_TENANT_UUID,
             vendor="Acme Pty Ltd",
             invoice_no="INV-DUP",
             status=InvoiceStatus.REJECTED,
@@ -182,7 +185,7 @@ async def test_vr02_ignores_rejected_invoice(
 
     sample_invoice_data.invoice_no = "INV-DUP"
     sample_invoice_data.vendor = "Acme Pty Ltd"
-    result = await vr02_unique(sample_invoice_data, db_session, tenant_id=1)
+    result = await vr02_unique(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)
     assert result.passed
 
     get_settings.cache_clear()
@@ -198,7 +201,7 @@ async def test_pipeline_stages_show_duplicate_skipped(
     from app.services.pipeline_stages import build_pipeline_stages
 
     shadow = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         invoice_no="INV-1",
         status=InvoiceStatus.DUPLICATE_SKIPPED,

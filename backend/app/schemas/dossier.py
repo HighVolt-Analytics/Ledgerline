@@ -72,10 +72,27 @@ class DossierLinkedDocumentResponse(BaseModel):
 
 class DossierMatchSummaryResponse(BaseModel):
     status: str
-    po_value: float
-    invoice_total: float
-    deviation: float
     currency: str
+    po_number: str | None = None
+    po_qty: float | None = None
+    po_unit_price: float | None = None
+    po_value: float
+    po_date: str | None = None
+    grn_present: bool = False
+    grn_qty: float | None = None
+    grn_date: str | None = None
+    grn_receiver: str | None = None
+    grn_condition: str | None = None
+    invoice_no: str | None = None
+    invoice_qty: float | None = None
+    invoice_unit_price: float | None = None
+    invoice_value: float = 0.0
+    invoice_gst: float = 0.0
+    invoice_total: float
+    qty_variance_value: float = 0.0
+    price_variance_value: float = 0.0
+    total_deviation: float = 0.0
+    deviation: float = 0.0
 
 
 class DossierLinkedDocumentsResponse(BaseModel):

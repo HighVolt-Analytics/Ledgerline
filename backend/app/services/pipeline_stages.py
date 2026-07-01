@@ -15,6 +15,11 @@ from app.services.publish_service import is_published_from_audit_logs
 
 MATRIX_STAGES = ("Received", "Parsed", "Validated", "Mapped", "Approved", "Posted")
 StageState = Literal["done", "pending", "fail", "skipped"]
+_PROCESSING_COMPLETE_EVENTS = (
+    "vault_stored",
+    "purchase_document_processed",
+    "invoice_processed",
+)
 
 
 class PipelineStage(BaseModel):
@@ -115,15 +120,22 @@ def _validation_detail(inv: Invoice, logs: list[AuditLog]) -> tuple[str, StageSt
 
 
 def _validation_results(inv: Invoice) -> list[dict[str, Any]]:
+    from app.services.validator import normalize_stored_validation_results
+
     raw = inv.validation_results
     if not raw:
         return []
     if isinstance(raw, str):
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
             return []
-    return raw if isinstance(raw, list) else []
+        if not isinstance(parsed, list):
+            return []
+        return normalize_stored_validation_results(parsed)
+    if isinstance(raw, list):
+        return normalize_stored_validation_results(raw)
+    return []
 
 
 def _stage_index(status: InvoiceStatus) -> int:
@@ -140,6 +152,19 @@ def _stage_index(status: InvoiceStatus) -> int:
         InvoiceStatus.DUPLICATE_SKIPPED: 0,
     }
     return mapping.get(status, 0)
+
+
+def _processing_complete_log(logs: list[AuditLog]) -> AuditLog | None:
+    return _latest_log(logs, *_PROCESSING_COMPLETE_EVENTS)
+
+
+def _processing_finished(inv: Invoice, logs: list[AuditLog]) -> bool:
+    """True when the document finished the pipeline (DB status or terminal audit)."""
+    if inv.status == InvoiceStatus.PROCESSED:
+        return True
+    if inv.status in (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED):
+        return False
+    return _processing_complete_log(logs) is not None
 
 
 def _source_label(inv: Invoice) -> str:
@@ -166,6 +191,8 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     mapped_log = _latest_log(logs, "mapping_applied")
     approved_log = _latest_log(logs, "invoice_approved")
     published_log = _latest_log(logs, "invoice_published_to_ledger", "invoice_processed")
+    terminal_log = _processing_complete_log(logs)
+    processing_finished = _processing_finished(inv, logs)
 
     source = _source_label(inv)
     received_via = inv.email_sender or source
@@ -175,8 +202,8 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     if parsed_log and parsed_log.detail:
         parse_conf = parsed_log.detail.get("confidence")
     parsed_at = parsed_log.created_at if parsed_log else None
-    if parsed_at is None and _stage_index(inv.status) >= 1:
-        parsed_at = inv.created_at
+    if parsed_at is None and (_stage_index(inv.status) >= 1 or processing_finished):
+        parsed_at = terminal_log.created_at if terminal_log else inv.created_at
 
     awaiting_reparse = (
         inv.status == InvoiceStatus.PENDING
@@ -191,10 +218,18 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     validated_at = validated_log.created_at if validated_log else None
     if validated_at is None and _stage_index(inv.status) >= 2 and not awaiting_reparse:
         validated_at = parsed_at or inv.created_at
+    if processing_finished:
+        if terminal_log and terminal_log.event == "vault_stored":
+            validation_text, validation_state = "Stored in document vault", "done"
+        elif terminal_log and terminal_log.event == "purchase_document_processed":
+            validation_text, validation_state = "Supporting document processed", "done"
+        elif validation_state != "fail":
+            validation_text, validation_state = "Passed", "done"
+        validated_at = validated_at or (terminal_log.created_at if terminal_log else inv.created_at)
 
     account = inv.account_name or ("Pending" if awaiting_reparse else "Suspense Account")
     mapped_at = mapped_log.created_at if mapped_log else None
-    if mapped_at is None and _stage_index(inv.status) >= 3 and not awaiting_reparse:
+    if mapped_at is None and (_stage_index(inv.status) >= 3 and not awaiting_reparse or processing_finished):
         mapped_at = validated_at or inv.created_at
     mapped_suspense = (
         not awaiting_reparse and inv.account_name and "suspense" in inv.account_name.lower()
@@ -231,6 +266,10 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         approved_at = published_log.created_at if published_log else inv.created_at
         approved_detail = "System · Within policy"
         approved_state = "done"
+    elif processing_finished:
+        approved_at = terminal_log.created_at if terminal_log else inv.created_at
+        approved_detail = "System · Within policy"
+        approved_state = "done"
     elif inv.status == InvoiceStatus.EXCEPTION:
         approved_detail = "Awaiting review"
 
@@ -247,6 +286,13 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     elif inv.status == InvoiceStatus.PROCESSED:
         published_at = published_log.created_at if published_log else inv.created_at
         published_detail = f"{doc_ref} · ready to post"
+        published_state = "pending"
+    elif processing_finished:
+        published_at = terminal_log.created_at if terminal_log else inv.created_at
+        if terminal_log and terminal_log.event == "vault_stored":
+            published_detail = f"{doc_ref} · archived in vault"
+        else:
+            published_detail = f"{doc_ref} · ready to post"
         published_state = "pending"
 
     if inv.status == InvoiceStatus.REJECTED:
@@ -301,6 +347,8 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     parsed_state: StageState = (
         "fail"
         if parsed_log and parsed_log.event == "parsing_failed"
+        else "done"
+        if processing_finished
         else "pending"
         if awaiting_reparse
         else "done"
@@ -321,9 +369,9 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
 
     mapped_state: StageState = (
         "fail"
-        if mapped_suspense and inv.status == InvoiceStatus.EXCEPTION
+        if mapped_suspense and inv.status == InvoiceStatus.EXCEPTION and not processing_finished
         else "done"
-        if _stage_index(inv.status) >= 3
+        if processing_finished or _stage_index(inv.status) >= 3
         else "pending"
     )
 
@@ -413,8 +461,8 @@ def derive_current_stage(inv: Invoice, logs: list[AuditLog]) -> tuple[str, Stage
     if posted and posted.state == "done":
         return "Posted", "done"
 
-    if inv.status == InvoiceStatus.PROCESSED:
-        return "Processed", posted.state if posted else "done"
+    if _processing_finished(inv, logs):
+        return "Processed", "done"
 
     last_done: tuple[str, StageState] | None = None
     for name in MATRIX_STAGES:

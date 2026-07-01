@@ -1,4 +1,5 @@
 import { api, ApiError } from "@/api/client";
+import { PIPELINE_STATUSES } from "@/lib/invoiceActions";
 
 /** Serial uploads avoid overloading the API/pipeline; backend still accepts parallel clients. */
 export const BULK_UPLOAD_CONCURRENCY = 1;
@@ -54,6 +55,42 @@ export function formatBulkUploadNotice(summary: BulkUploadSummary): string {
     notice += ` Failed: ${failedNames.slice(0, 3).join(", ")} (+${failedNames.length - 3} more).`;
   }
   return notice;
+}
+
+const PIPELINE_ACTIVE = new Set<string>(PIPELINE_STATUSES);
+
+/** Poll uploaded invoice ids until pipeline settles; return notice when vendor hold applies. */
+export async function watchInvoiceIdsForVendorHold(
+  invoiceIds: number[],
+  options?: { timeoutMs?: number; onPoll?: () => Promise<void> }
+): Promise<string | null> {
+  if (invoiceIds.length === 0) return null;
+  const deadline = Date.now() + (options?.timeoutMs ?? 90_000);
+  while (Date.now() < deadline) {
+    if (options?.onPoll) {
+      await options.onPoll();
+    }
+    const invoices = await Promise.all(
+      invoiceIds.map((id) => api.getInvoice(id, { fresh: true }).catch(() => null))
+    );
+    const held = invoices.filter(
+      (inv): inv is NonNullable<(typeof invoices)[number]> =>
+        inv != null && inv.evaluation_status === "pending_vendor"
+    );
+    if (held.length > 0) {
+      const names = [...new Set(held.map((inv) => inv.vendor?.trim()).filter(Boolean))];
+      const vendorHint =
+        names.length > 0 && names.length <= 2 ? ` (${names.join(", ")})` : "";
+      return `${held.length} document(s) held for vendor registration${vendorHint} — register in Vendors → Pending vendor registration before processing can complete.`;
+    }
+    if (
+      invoices.every((inv) => inv != null && !PIPELINE_ACTIVE.has(inv.status))
+    ) {
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return null;
 }
 
 function fileExtension(name: string): string {

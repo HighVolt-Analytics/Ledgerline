@@ -17,7 +17,7 @@ async def test_trigger_inline_when_sync_processing(
 ) -> None:
     monkeypatch.setenv("SYNC_PROCESSING", "true")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.api.processing.run_pipeline_background", _noop_pipeline)
+    monkeypatch.setattr("app.workers.tasks.run_pipeline_background", _noop_pipeline)
 
     res = await client.post("/api/process/trigger", json={})
     assert res.status_code == 200
@@ -38,7 +38,7 @@ async def test_trigger_falls_back_when_celery_unavailable(
         raise ConnectionError("redis down")
 
     monkeypatch.setattr("app.workers.tasks.process_inbox_task.delay", _boom)
-    monkeypatch.setattr("app.api.processing.run_pipeline_background", _noop_pipeline)
+    monkeypatch.setattr("app.workers.tasks.run_pipeline_background", _noop_pipeline)
 
     res = await client.post("/api/process/trigger", json={})
     assert res.status_code == 200

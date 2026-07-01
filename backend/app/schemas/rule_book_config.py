@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.document_type import DocumentTypeDefinition
+from app.schemas.uom_conversion import PurchaseMatchConfig
 
 
 class RuleCondition(BaseModel):
@@ -195,12 +196,33 @@ class EmployeeMaster(BaseModel):
     status: str = ""
 
 
+ChartOfAccountType = Literal["Expense", "Asset", "Liability", "Revenue", "Equity"]
+
+
+class ChartOfAccountEntry(BaseModel):
+    """GL account row stored per tenant in rule book config."""
+
+    code: str = Field(..., min_length=1, max_length=32)
+    name: str = Field(..., min_length=1, max_length=128)
+    type: ChartOfAccountType = "Expense"
+
+    @field_validator("code", "name", mode="before")
+    @classmethod
+    def _strip_text(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
 class PostingDefaults(BaseModel):
     """Journal posting accounts shared across all documents."""
 
     tax_account: str = "GST Paid"
     payable_account: str = "Accounts Payable"
     fallback_account: str = "Suspense Account"
+    functional_currency: str = "AUD"
+    fx_gain_loss_account: str = "FX Gain/Loss"
+    bank_account: str = "Bank"
 
 
 class DocumentSetRule(BaseModel):
@@ -264,6 +286,84 @@ class DocumentClassificationConfig(BaseModel):
     unclassified_min_confidence: float = Field(default=0.45, ge=0.0, le=1.0)
 
 
+class OrgContextConfig(BaseModel):
+    legal_name: str = Field(default="", alias="legalName")
+    abn: str = ""
+    aliases: list[str] = Field(default_factory=list)
+    default_perspective: str = Field(default="buyer", alias="defaultPerspective")
+    intake_summary: str = Field(default="", alias="intakeSummary")
+    classification_hints: str = Field(default="", alias="classificationHints")
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
+    @field_validator("default_perspective", mode="before")
+    @classmethod
+    def _normalize_perspective(cls, value: object) -> str:
+        token = str(value or "buyer").strip().lower()
+        if token in {"buyer", "seller", "mixed"}:
+            return token
+        return "buyer"
+
+
+def _default_document_ai_provider() -> str:
+    from app.config import get_settings
+
+    return get_settings().default_document_ai_provider
+
+
+class AiClassificationConfig(BaseModel):
+    """Gates for auto-routing without human review."""
+
+    document_ai_provider: str = Field(
+        default_factory=_default_document_ai_provider,
+        alias="documentAiProvider",
+        description="azure_di | azure_foundry_vision | gemini_vision",
+    )
+    auto_route_min_confidence: float = Field(
+        default=0.85, ge=0.0, le=1.0, alias="autoRouteMinConfidence"
+    )
+    ocr_quality_min_text_chars: int | None = Field(
+        default=None,
+        ge=0,
+        alias="ocrQualityMinTextChars",
+        description="Minimum OCR text length before classify; defaults to OCR_MIN_TEXT_CHARS env",
+    )
+    block_sparse_ocr: bool = Field(
+        default=True,
+        alias="blockSparseOcr",
+        description="Reject sparse OCR (mobile photo, skewed scan) before classification",
+    )
+    min_field_extract_confidence: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        alias="minFieldExtractConfidence",
+        description="Per-field LLM/OCR confidence floor after extract",
+    )
+    vendor_few_shot_limit: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        alias="vendorFewShotLimit",
+        description="Vendor-specific few-shot examples to prefer before tenant-wide",
+    )
+    vendor_drift_min_samples: int = Field(
+        default=5,
+        ge=1,
+        alias="vendorDriftMinSamples",
+        description="Minimum prior invoices before vendor drift alerts activate",
+    )
+    vendor_drift_confidence_drop: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        alias="vendorDriftConfidenceDrop",
+        description="Alert when LLM confidence drops this far below vendor baseline",
+    )
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
+
 class RuleBookConfigPayload(BaseModel):
     """Org-scoped rule book — single source of truth for classification and posting."""
 
@@ -271,6 +371,10 @@ class RuleBookConfigPayload(BaseModel):
     document_types: list[DocumentTypeDefinition] = Field(default_factory=list)
     document_classification: DocumentClassificationConfig = Field(
         default_factory=DocumentClassificationConfig
+    )
+    org_context: OrgContextConfig | None = Field(default=None, alias="orgContext")
+    ai_classification: AiClassificationConfig | None = Field(
+        default=None, alias="aiClassification"
     )
     email_capture_rules: list[EmailCaptureRule] = Field(default_factory=list)
     purchase_rules: list[PurchaseRule] = Field(default_factory=list)
@@ -282,8 +386,15 @@ class RuleBookConfigPayload(BaseModel):
     )
     employee_masters: list[EmployeeMaster] = Field(default_factory=list)
     posting_defaults: PostingDefaults = Field(default_factory=PostingDefaults)
+    chart_of_accounts: list[ChartOfAccountEntry] = Field(default_factory=list)
     document_sets: list[DocumentSetRule] = Field(default_factory=list)
     legacy_cascade: LegacyCascadeConfig = Field(default_factory=LegacyCascadeConfig)
+    purchase_match: PurchaseMatchConfig = Field(
+        default_factory=PurchaseMatchConfig,
+        alias="purchaseMatch",
+    )
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
 
     @model_validator(mode="after")
     def _unique_document_type_codes(self) -> RuleBookConfigPayload:
@@ -305,6 +416,16 @@ class RuleBookConfigPayload(BaseModel):
         )
         return self
 
+    @model_validator(mode="after")
+    def _unique_chart_of_account_codes(self) -> RuleBookConfigPayload:
+        codes = [item.code.strip().upper() for item in self.chart_of_accounts]
+        if len(codes) != len(set(codes)):
+            raise ValueError("chart of account codes must be unique")
+        names = [item.name.strip().lower() for item in self.chart_of_accounts]
+        if len(names) != len(set(names)):
+            raise ValueError("chart of account names must be unique")
+        return self
+
 
 class RuleBookRulesPayload(BaseModel):
     """Rule book rules for PUT/evaluate — masters are managed via dedicated APIs."""
@@ -313,6 +434,10 @@ class RuleBookRulesPayload(BaseModel):
     document_types: list[DocumentTypeDefinition] = Field(default_factory=list)
     document_classification: DocumentClassificationConfig = Field(
         default_factory=DocumentClassificationConfig
+    )
+    org_context: OrgContextConfig | None = Field(default=None, alias="orgContext")
+    ai_classification: AiClassificationConfig | None = Field(
+        default=None, alias="aiClassification"
     )
     email_capture_rules: list[EmailCaptureRule] = Field(default_factory=list)
     purchase_rules: list[PurchaseRule] = Field(default_factory=list)
@@ -324,6 +449,12 @@ class RuleBookRulesPayload(BaseModel):
     posting_defaults: PostingDefaults = Field(default_factory=PostingDefaults)
     document_sets: list[DocumentSetRule] = Field(default_factory=list)
     legacy_cascade: LegacyCascadeConfig = Field(default_factory=LegacyCascadeConfig)
+    purchase_match: PurchaseMatchConfig = Field(
+        default_factory=PurchaseMatchConfig,
+        alias="purchaseMatch",
+    )
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
 
     @model_validator(mode="after")
     def _unique_document_type_codes(self) -> RuleBookRulesPayload:
@@ -430,6 +561,10 @@ def _merge_document_type_fields(data: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, Any] = {}
         if row.get("min_route_confidence") is None and row.get("minRouteConfidence") is None:
             updates["min_route_confidence"] = 0.65
+        extraction = row.get("extraction_fields") or row.get("extractionFields") or []
+        required = row.get("required_fields") or row.get("requiredFields") or []
+        if isinstance(extraction, list) and isinstance(required, list) and not required and extraction:
+            updates["required_fields"] = list(extraction)
         for legacy_key in ("extraction", "checks", "match", "approval", "accounting", "special"):
             if row.get(legacy_key):
                 updates[legacy_key] = []
@@ -471,12 +606,138 @@ def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _backfill_validation_rules(data: dict[str, Any]) -> dict[str, Any]:
+    """Ensure each document type has the full finance validation rule catalogue."""
+    from app.schemas.validation_rule import normalize_validation_rules
+    from app.services.document_type_validation_service import effective_validation_profile
+    from app.services.validation_rule_catalog import merge_configurable_validation_rules
+
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        raw_rules = row.get("validation_rules") or row.get("validationRules")
+        explicit = normalize_validation_rules(raw_rules)
+        if not explicit:
+            merged.append(row)
+            continue
+        try:
+            definition = DocumentTypeDefinition.model_validate(row)
+            profile = effective_validation_profile(definition)
+            code = definition.code
+        except Exception:
+            profile = str(row.get("validation_profile") or row.get("validationProfile") or "standard")
+            code = str(row.get("code") or "").strip().upper()
+        rules = merge_configurable_validation_rules(
+            explicit,
+            validation_profile=profile,
+            document_type_code=code,
+        )
+        merged.append(
+            {
+                **row,
+                "validation_rules": [
+                    {"code": item.code, "enabled": item.enabled, "severity": item.severity}
+                    for item in rules
+                ],
+            }
+        )
+    data["document_types"] = merged
+    return data
+
+
+def _migrate_ai_classification(data: dict[str, Any]) -> dict[str, Any]:
+    """Collapse legacy LLM/policy thresholds into a single auto-route gate."""
+    raw = data.get("ai_classification") or data.get("aiClassification")
+    if not isinstance(raw, dict):
+        return data
+    if raw.get("auto_route_min_confidence") is not None or raw.get("autoRouteMinConfidence") is not None:
+        return data
+    llm = raw.get("llm_min_confidence", raw.get("llmMinConfidence"))
+    policy = raw.get("policy_min_confidence", raw.get("policyMinConfidence"))
+    values = [v for v in (llm, policy) if isinstance(v, (int, float))]
+    auto_route = max(values) if values else 0.85
+    migrated = dict(data)
+    migrated["ai_classification"] = {
+        "auto_route_min_confidence": auto_route,
+        "document_ai_provider": _default_document_ai_provider(),
+    }
+    return migrated
+
+
+def _normalize_ai_classification_provider(data: dict[str, Any]) -> dict[str, Any]:
+    raw = data.get("ai_classification") or data.get("aiClassification")
+    if not isinstance(raw, dict):
+        return data
+    from app.services.document_ai_provider import DocumentAiProvider, provider_available
+
+    token = str(
+        raw.get("document_ai_provider") or raw.get("documentAiProvider") or ""
+    ).strip()
+    provider = DocumentAiProvider.from_config(
+        token or _default_document_ai_provider()
+    )
+    if not provider_available(provider):
+        for candidate in (
+            DocumentAiProvider.from_config(_default_document_ai_provider()),
+            DocumentAiProvider.AZURE_FOUNDRY_VISION,
+            DocumentAiProvider.AZURE_DI,
+            DocumentAiProvider.GEMINI_VISION,
+        ):
+            if provider_available(candidate):
+                provider = candidate
+                break
+    merged = dict(data)
+    ai = dict(raw)
+    ai["document_ai_provider"] = provider.value
+    merged["ai_classification"] = ai
+    return merged
+
+
+def _infer_chart_of_account_type(name: str) -> ChartOfAccountType:
+    lower = name.strip().lower()
+    if "payable" in lower or "suspense" in lower:
+        return "Liability"
+    if "gst" in lower or "bank" in lower or "receivable" in lower:
+        return "Asset"
+    if "revenue" in lower or "income" in lower or "sales" in lower:
+        return "Revenue"
+    if "equity" in lower or "retained" in lower:
+        return "Equity"
+    return "Expense"
+
+
+def default_chart_of_accounts_entries() -> list[dict[str, str]]:
+    """Seed tenant COA from the global chart_of_accounts.json file."""
+    from app.services.chart_of_accounts_defaults import global_default_chart_entries
+
+    return global_default_chart_entries()
+
+
+def _backfill_chart_of_accounts(data: dict[str, Any]) -> dict[str, Any]:
+    raw = data.get("chart_of_accounts")
+    if isinstance(raw, list) and raw:
+        return data
+    migrated = dict(data)
+    migrated["chart_of_accounts"] = default_chart_of_accounts_entries()
+    return migrated
+
+
 def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPayload:
     if isinstance(data, dict):
         data = _migrate_root_legacy_fields(dict(data))
         data = _backfill_category_rule_priorities(data)
         data = _backfill_document_types(data)
+        data = _backfill_chart_of_accounts(data)
         data = _merge_document_type_classifiers(data)
         data = _merge_document_type_fields(data)
         data = _backfill_playbook_profiles(data)
+        data = _backfill_validation_rules(data)
+        data = _migrate_ai_classification(data)
+        data = _normalize_ai_classification_provider(data)
     return RuleBookConfigPayload.model_validate(data)

@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Expenses Management vendor hold policy (amount-gated)."""
 
 import json
@@ -85,7 +87,7 @@ def test_vendor_detection_team_route_never_flags() -> None:
 
 def test_evaluate_routing_expense_small_unknown(capture_config) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Unknown SaaS Co",
         invoice_no="EXP-SMALL-001",
         total=Decimal("120.00"),
@@ -103,7 +105,7 @@ def test_evaluate_routing_expense_small_unknown(capture_config) -> None:
 
 def test_evaluate_routing_expense_large_unknown(capture_config) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Unknown SaaS Co",
         invoice_no="EXP-LARGE-001",
         total=Decimal("800.00"),
@@ -121,7 +123,7 @@ def test_evaluate_routing_expense_large_unknown(capture_config) -> None:
 
 def test_evaluate_routing_purchase_still_pending_vendor(capture_config) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Unknown Supplier",
         invoice_no="PO-UNK-001",
         total=Decimal("120.00"),
@@ -140,7 +142,7 @@ def test_evaluate_routing_purchase_still_pending_vendor(capture_config) -> None:
 @pytest.mark.asyncio
 async def test_unmatched_expense_vendor_not_pipeline_held(db_session: AsyncSession) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Small Vendor Pty Ltd",
         route_target=ROUTE_EXPENSES,
         evaluation_status=EVAL_UNMATCHED_EXPENSE_VENDOR,
@@ -161,7 +163,7 @@ async def test_unmatched_expense_vendor_not_pipeline_held(db_session: AsyncSessi
 @pytest.mark.asyncio
 async def test_large_expense_unknown_still_held(db_session: AsyncSession) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Big Vendor Pty Ltd",
         route_target=ROUTE_EXPENSES,
         evaluation_status=EVAL_PENDING_VENDOR,
@@ -180,7 +182,7 @@ async def test_large_expense_unknown_still_held(db_session: AsyncSession) -> Non
 
 def test_evaluate_routing_expense_matched_rule_auto_coded(capture_config) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Telstra Corporation",
         invoice_no="TEL-2026-4410",
         total=Decimal("189.00"),

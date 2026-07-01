@@ -15,6 +15,7 @@ from app.services.mailbox_oauth_service import (
 )
 from app.services.token_vault import decrypt_secret, encrypt_secret
 from app.tenant_ids import TESTING_TENANT_UUID, parse_tenant_id
+from tests.auth_test_helpers import seed_admin_user
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +57,7 @@ def test_token_vault_roundtrip() -> None:
 @pytest.mark.asyncio
 async def test_resolve_delegated_access_token_uses_cached_access() -> None:
     mailbox = ConnectedMailbox(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         email="user@example.com",
         auth_type=AUTH_DELEGATED,
         connection_status="connected",
@@ -69,7 +70,7 @@ async def test_resolve_delegated_access_token_uses_cached_access() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_oauth_callback_rejects_invalid_user(db_session) -> None:
-    state = create_oauth_state(tenant_id=1, user_id=999_999)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=999_999)
     with pytest.raises(RuntimeError, match="OAuth session invalid"):
         await complete_oauth_callback(
             db_session,
@@ -90,7 +91,7 @@ async def test_mailbox_oauth_callback_sanitizes_internal_errors(
         "app.api.mailboxes.complete_oauth_callback",
         _boom,
     )
-    state = create_oauth_state(tenant_id=1, user_id=1)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=1)
     res = await client.get(
         "/api/mailboxes/oauth/callback",
         params={"code": "code", "state": state},
@@ -115,19 +116,11 @@ async def test_mailbox_oauth_authorize_requires_auth(
 
 
 @pytest.mark.asyncio
-async def test_mailbox_oauth_authorize_returns_url(client) -> None:
-    reg = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "admin@acme.com",
-            "password": "securepass1",
-            "full_name": "Admin",
-            "tenant_name": "Acme",
-            "tenant_slug": "acme",
-        },
+async def test_mailbox_oauth_authorize_returns_url(client, db_session) -> None:
+    _, token = await seed_admin_user(
+        db_session, email="admin@acme.com", tenant_slug="hv-org", full_name="Admin"
     )
-    assert reg.status_code == 201
-    token = reg.json()["data"]["access_token"]
+    await db_session.commit()
     res = await client.get(
         "/api/mailboxes/oauth/authorize",
         headers={"Authorization": f"Bearer {token}"},
@@ -139,7 +132,7 @@ async def test_mailbox_oauth_authorize_returns_url(client) -> None:
 @pytest.mark.asyncio
 async def test_mailbox_oauth_callback_does_not_require_auth(client) -> None:
     """Microsoft redirect must not hit require_user (401)."""
-    state = create_oauth_state(tenant_id=1, user_id=1)
+    state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=1)
     res = await client.get(
         "/api/mailboxes/oauth/callback",
         params={"code": "invalid-code", "state": state},
@@ -152,18 +145,11 @@ async def test_mailbox_oauth_callback_does_not_require_auth(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_direct_add_mailbox_blocked_when_oauth_configured(client) -> None:
-    reg = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "admin2@acme.com",
-            "password": "securepass1",
-            "full_name": "Admin",
-            "tenant_name": "Acme",
-            "tenant_slug": "acme",
-        },
+async def test_direct_add_mailbox_blocked_when_oauth_configured(client, db_session) -> None:
+    _, token = await seed_admin_user(
+        db_session, email="admin2@acme.com", tenant_slug="hv-org", full_name="Admin"
     )
-    token = reg.json()["data"]["access_token"]
+    await db_session.commit()
     res = await client.post(
         "/api/mailboxes",
         headers={"Authorization": f"Bearer {token}"},

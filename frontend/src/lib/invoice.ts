@@ -1,4 +1,8 @@
 import type { Invoice, InvoiceDetails } from "@/api/types";
+import {
+  effectiveValidationRules,
+  type ValidationRuleConfig,
+} from "@/lib/documentValidationChecks";
 
 const VALIDATION_RULE_FIELDS: Record<string, readonly string[]> = {
   VR01: ["subtotal", "gst", "total"],
@@ -96,8 +100,100 @@ export function invoiceFieldConfidence(inv: InvoiceDetails, fieldKey: string): n
   return fallbackFieldConfidence(inv, fieldKey);
 }
 
-/** Validation pass rate from API rules — null when not yet validated. */
-export function invoiceValidationConfidence(inv: Invoice): number | null {
+const VALIDATION_PASS_EXEMPT_ROUTES = new Set(["Vault", "Team Expenses"]);
+
+export type ValidationPassDocumentType = {
+  code: string;
+  validation_profile?: string | null;
+  validationProfile?: string | null;
+  posting?: string | null;
+  validationRules?: ValidationRuleConfig[];
+  validation_rules?: ValidationRuleConfig[];
+};
+
+function vendorMasterCheckEnabled(definition: ValidationPassDocumentType): boolean {
+  const rules = effectiveValidationRules({
+    code: definition.code,
+    validationProfile:
+      definition.validationProfile ?? definition.validation_profile ?? undefined,
+    validationRules: definition.validationRules ?? definition.validation_rules,
+  });
+  return rules.some((row) => row.code === "VR12" && row.enabled);
+}
+
+function postingPipelineAllowed(posting: string | null | undefined): boolean {
+  const token = (posting ?? "").trim().toLowerCase();
+  return token === "yes" || token === "conditional" || token === "down-payment";
+}
+
+/** Whether inbox VR pass % applies to this document (mirrors backend validation_pass_applicable). */
+export function validationPassApplicable(
+  inv: Pick<Invoice, "route_target" | "purchase_document_type" | "document_type_code">,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): boolean {
+  const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
+  if (purchaseDoc === "po" || purchaseDoc === "grn") return false;
+
+  const route = (inv.route_target ?? "").trim();
+  if (VALIDATION_PASS_EXEMPT_ROUTES.has(route)) return false;
+
+  const code = (inv.document_type_code ?? "").trim().toUpperCase();
+  if (code && documentTypes?.length) {
+    const definition = documentTypes.find((row) => row.code.toUpperCase() === code);
+    if (definition) {
+      const profile = (
+        definition.validation_profile ??
+        definition.validationProfile ??
+        ""
+      )
+        .trim()
+        .toLowerCase();
+      if (profile === "non_actionable") return false;
+      if (!postingPipelineAllowed(definition.posting)) return false;
+    }
+  }
+
+  return true;
+}
+
+/** Whether vendor master match % applies (mirrors backend vendor_registration_required). */
+export function vendorMatchApplicable(
+  inv: Pick<
+    Invoice,
+    "route_target" | "purchase_document_type" | "document_type_code" | "evaluation_status"
+  >,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): boolean {
+  if (inv.evaluation_status === "pending_vendor") return true;
+
+  const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
+  if (purchaseDoc === "po" || purchaseDoc === "grn") return false;
+
+  const route = (inv.route_target ?? "").trim();
+  if (VALIDATION_PASS_EXEMPT_ROUTES.has(route)) return false;
+  if (route !== "Purchase Management" && route !== "Expenses Management") return false;
+
+  const code = (inv.document_type_code ?? "").trim().toUpperCase();
+    if (code && documentTypes?.length) {
+    const definition = documentTypes.find((row) => row.code.toUpperCase() === code);
+    if (definition) {
+      if (!postingPipelineAllowed(definition.posting)) return false;
+      return vendorMasterCheckEnabled(definition);
+    }
+  }
+
+  return true;
+}
+
+/** Validation pass rate from API rules — null when not validated or not applicable. */
+export function invoiceValidationConfidence(
+  inv: Invoice,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): number | null {
+  if (inv.validation_pass_rate != null) {
+    return inv.validation_pass_rate;
+  }
+  if (!validationPassApplicable(inv, documentTypes)) return null;
   const rules = inv.validation_results;
   if (!rules?.length) return null;
   const evaluated = rules.filter((r) => !r.skipped);
@@ -106,10 +202,25 @@ export function invoiceValidationConfidence(inv: Invoice): number | null {
   return Math.round((passed / evaluated.length) * 100);
 }
 
-/** Vendor match confidence from rule book evaluation — null before MAP step. */
-export function invoiceVendorConfidence(inv: Invoice): number | null {
-  if (inv.vendor_confidence == null) return null;
-  return Math.round(inv.vendor_confidence);
+/** Vendor match confidence when master registration applies — null when not scored. */
+export function invoiceVendorConfidence(
+  inv: Invoice,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): number | null {
+  if (inv.evaluation_status === "pending_vendor") {
+    return inv.vendor_confidence != null ? Math.round(inv.vendor_confidence) : 0;
+  }
+  if (!vendorMatchApplicable(inv, documentTypes)) return null;
+  if (inv.vendor_confidence != null) return Math.round(inv.vendor_confidence);
+  if (
+    inv.vendor?.trim() &&
+    inv.evaluation_status &&
+    (inv.evaluation_status === "unmatched_expense_vendor" ||
+      inv.evaluation_status === "needs_review")
+  ) {
+    return 0;
+  }
+  return null;
 }
 
 export function evaluationStatusLabel(
@@ -169,16 +280,17 @@ export function invoiceCanPublishToLedger(inv: Invoice): boolean {
   return Boolean(inv.invoice_date);
 }
 
-export type InvoiceSource = "email" | "upload" | "onedrive" | "vault";
-export type InvoiceDocType = "invoice" | "credit_note" | "po" | "grn";
+export type InvoiceSource = "email" | "upload" | "onedrive" | "whatsapp" | "viber";
 
 export function invoiceSourceKind(inv: Invoice): InvoiceSource {
+  const capture = (inv.capture_source ?? "").trim().toLowerCase();
+  if (capture === "whatsapp") return "whatsapp";
+  if (capture === "viber") return "viber";
+  if (capture === "email") return "email";
+
   const sender = (inv.email_sender ?? "").toLowerCase();
   if (sender.includes("onedrive") || sender.includes("sharepoint")) {
     return "onedrive";
-  }
-  if (inv.storage_vendor_slug && !inv.email_sender && !inv.connected_mailbox_id) {
-    return "vault";
   }
   if (inv.email_sender || inv.connected_mailbox_id) {
     return "email";
@@ -189,9 +301,12 @@ export function invoiceSourceKind(inv: Invoice): InvoiceSource {
 export function invoiceSourceLabel(source: InvoiceSource): string {
   if (source === "email") return "Email";
   if (source === "onedrive") return "OneDrive";
-  if (source === "vault") return "Vault";
+  if (source === "whatsapp") return "WhatsApp";
+  if (source === "viber") return "Viber";
   return "Direct upload";
 }
+
+export type InvoiceDocType = "invoice" | "credit_note" | "po" | "grn";
 
 export function invoiceDocumentType(inv: Invoice): InvoiceDocType {
   const purchaseType = inv.purchase_document_type?.toLowerCase();

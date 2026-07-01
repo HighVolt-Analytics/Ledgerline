@@ -15,6 +15,7 @@ from app.services.employee_import_service import (
     import_employee_masters,
     parse_employee_import_file,
 )
+from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.rule_book_mapper import clear_classification_config_cache
 
 
@@ -72,7 +73,7 @@ async def test_register_import_creates_and_updates(db_session: AsyncSession) -> 
     rows = parse_employee_import_file(csv_bytes, "register.csv")
 
     result = await import_employee_masters(
-        db_session, 1, mode="register", rows=rows, dry_run=False
+        db_session, TESTING_TENANT_UUID, mode="register", rows=rows, dry_run=False
     )
     assert result.created == 1
     assert result.updated == 1
@@ -81,7 +82,7 @@ async def test_register_import_creates_and_updates(db_session: AsyncSession) -> 
     row = (
         await db_session.execute(
             select(EmployeeMasterRecord).where(
-                EmployeeMasterRecord.tenant_id == 1,
+                EmployeeMasterRecord.tenant_id == TESTING_TENANT_UUID,
                 EmployeeMasterRecord.email == "alex@example.com",
             )
         )
@@ -98,11 +99,11 @@ async def test_payment_import_requires_existing_employee(db_session: AsyncSessio
         _register_csv([["Pat Jones", "pat@example.com", "", "HR", "Pending verification"]]),
         "register.csv",
     )
-    await import_employee_masters(db_session, 1, mode="register", rows=register_rows)
+    await import_employee_masters(db_session, TESTING_TENANT_UUID, mode="register", rows=register_rows)
 
     missing = await import_employee_masters(
         db_session,
-        1,
+        TESTING_TENANT_UUID,
         mode="payment",
         rows=parse_employee_import_file(
             _payment_xlsx([["ghost@example.com", "062-001", "12345678", "Ghost", "CBA", "", "", "", "Active"]]),
@@ -115,7 +116,7 @@ async def test_payment_import_requires_existing_employee(db_session: AsyncSessio
 
     ok = await import_employee_masters(
         db_session,
-        1,
+        TESTING_TENANT_UUID,
         mode="payment",
         rows=parse_employee_import_file(
             _payment_xlsx(
@@ -143,7 +144,7 @@ async def test_register_dry_run_no_persist(db_session: AsyncSession) -> None:
         _register_csv([["Dry Run", "dry@example.com", "", "", "Pending verification"]]),
         "register.csv",
     )
-    result = await import_employee_masters(db_session, 1, mode="register", rows=rows, dry_run=True)
+    result = await import_employee_masters(db_session, TESTING_TENANT_UUID, mode="register", rows=rows, dry_run=True)
     assert result.created == 1
     row = (
         await db_session.execute(

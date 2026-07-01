@@ -14,6 +14,7 @@ from app.schemas.rule_book_config import validate_rule_book_config_payload
 from app.services.invoice_evaluation_service import ROUTE_PURCHASE, apply_invoice_evaluation
 from app.services.rule_book_mapper import FALLBACK_RULE_TYPE, resolve_config_mapping
 from app.services.capture_channel import is_staff_claim_sender
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 
 
 def _template_config():
@@ -25,7 +26,7 @@ def test_aws_purchase_route_uses_purchase_book_only() -> None:
     """AWS + PO-CLOUD on Purchase Management → Book 2, not expense rules."""
     config = _template_config()
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
         abn="63110305305",
         invoice_no="AWS-AU-204815",
@@ -51,7 +52,7 @@ def test_telstra_purchase_route_skips_expense_book() -> None:
     config.legacy_cascade.vendors["Telstra Corporation"] = "Software Subscription Expense"
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Telstra Corporation",
         abn="33051775556",
         invoice_no="TEL-2026-4410",
@@ -74,7 +75,7 @@ def test_expense_route_skips_rules_for_staff_mob_sender() -> None:
     assert is_staff_claim_sender(employee.whatsapp_number, config.employee_masters)
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Telstra Corporation",
         invoice_no="TEL-MOB-1",
         route_target="Expenses Management",
@@ -90,7 +91,7 @@ def test_expense_route_skips_rules_for_staff_mob_sender() -> None:
 def test_vault_route_skips_category_books() -> None:
     config = _template_config()
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
         invoice_no="AWS-AU-204815",
         po_reference="PO-CLOUD-2026-001",
@@ -109,7 +110,7 @@ async def test_aws_pipeline_mapping_after_evaluation(db_session: AsyncSession) -
     """End-to-end: evaluated AWS invoice maps via purchase book when routed to Purchase."""
     config = _template_config()
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Amazon Web Services",
         abn="63110305305",
         invoice_no="AWS-AU-204815",
@@ -152,7 +153,7 @@ async def test_telstra_purchase_pipeline_skips_expense_book(db_session: AsyncSes
     config.legacy_cascade.vendors["Telstra Corporation"] = "Software Subscription Expense"
 
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Telstra Corporation",
         abn="33051775556",
         invoice_no="TEL-2026-4410",

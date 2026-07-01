@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for custom validation rules and universal duplicate check."""
 
 from datetime import date
@@ -18,7 +20,7 @@ from app.services.validator import run_all_validations
 def _invoice(**kwargs) -> Invoice:
     base = dict(
         id=1,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.VALIDATING,
         currency="AUD",
         vendor="Acme Pty Ltd",
@@ -72,7 +74,7 @@ async def test_universal_duplicate_always_runs(db_session: AsyncSession) -> None
     results = await run_all_validations(
         data,
         db_session,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         document_type_code="DT-03",
         document_types=[
             DocumentTypeDefinition.model_validate(

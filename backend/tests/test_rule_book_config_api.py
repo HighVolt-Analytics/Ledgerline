@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Classification rule book config API."""
 
 import json
@@ -129,7 +131,6 @@ async def test_delete_document_type_persists(
 ) -> None:
     """DELETE removes a catalogue row immediately even when a PUT is still buffered."""
     from app.services.rule_book_save_buffer import clear_rule_book_save_buffers, flush_rule_book_save_buffer
-    from app.tenant_ids import TESTING_TENANT_UUID
 
     template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
     catalog = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "document_types_test_catalog.json"

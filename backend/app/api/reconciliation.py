@@ -1,13 +1,17 @@
 from datetime import date
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_auth_context, get_db
-from app.models.reconciliation import DailyReconciliation
+from app.api.http_errors import http_bad_request
 from app.schemas.common import ApiEnvelope
 from app.schemas.reconciliation import ReconciliationOverview, ReconciliationResponse
+from app.services.reconciliation_api_service import (
+    get_daily_reconciliation,
+    list_daily_reconciliations,
+)
 from app.services.reconciliation_overview import build_reconciliation_overview
 
 router = APIRouter(prefix="/reconciliation", tags=["reconciliation"])
@@ -30,15 +34,8 @@ async def list_daily(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[ReconciliationResponse]]:
     """Daily closed-loop batch summaries (legacy ledger table)."""
-    rows = (
-        await db.execute(
-            select(DailyReconciliation)
-            .where(DailyReconciliation.tenant_id == ctx.tenant_id)
-            .order_by(DailyReconciliation.date.desc())
-        )
-    ).scalars().all()
     return ApiEnvelope(
-        data=[ReconciliationResponse.model_validate(r) for r in rows]
+        data=await list_daily_reconciliations(db, tenant_id=ctx.tenant_id)
     )
 
 
@@ -48,14 +45,9 @@ async def get_daily(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[ReconciliationResponse]:
-    row = (
-        await db.execute(
-            select(DailyReconciliation).where(
-                DailyReconciliation.date == recon_date,
-                DailyReconciliation.tenant_id == ctx.tenant_id,
-            )
-        )
-    ).scalar_one_or_none()
+    row = await get_daily_reconciliation(
+        db, tenant_id=ctx.tenant_id, recon_date=recon_date
+    )
     if not row:
         raise HTTPException(404, "Reconciliation not found")
-    return ApiEnvelope(data=ReconciliationResponse.model_validate(row))
+    return ApiEnvelope(data=row)

@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for vault document-type folder resolution."""
 
 from app.models.invoice import Invoice, InvoiceStatus
@@ -13,7 +15,7 @@ def test_vault_document_type_segment_only_for_vault_route() -> None:
 
 def test_vault_document_type_folder_for_invoice_without_catalog() -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.PROCESSED,
         route_target=ROUTE_VAULT,
         document_type_code="DT-25",

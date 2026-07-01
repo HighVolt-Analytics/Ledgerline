@@ -7,9 +7,17 @@
     "playbook_profile": "po_goods"
   },
   "DT-02": {
-    "required_fields": ["po_reference"],
-    "absent_fields": ["invoice_no"],
-    "min_route_confidence": 0.65,
+    "required_fields": ["vendor", "permit_no"],
+    "extraction_fields": [
+      "vendor",
+      "permit_no",
+      "consignment_ref",
+      "document_heading",
+      "attachment_name",
+      "document_text"
+    ],
+    "absent_fields": ["invoice_no", "due_date", "po_reference", "total"],
+    "min_route_confidence": 0.55,
     "validation_profile": "non_actionable",
     "playbook_profile": "supporting"
   },
@@ -40,6 +48,13 @@
     "min_route_confidence": 0.65,
     "validation_profile": "",
     "playbook_profile": "pre_transactional"
+  },
+  "DT-08": {
+    "required_fields": ["vendor", "total", "due_date"],
+    "absent_fields": ["po_reference"],
+    "min_route_confidence": 0.65,
+    "validation_profile": "direct_expense",
+    "playbook_profile": "direct_expense"
   },
   "DT-12": {
     "required_fields": ["vendor", "total"],

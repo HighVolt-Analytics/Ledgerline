@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Matrix flag and payment derivation."""
 
 from datetime import date
@@ -10,7 +12,7 @@ from app.services.matrix_service import derive_matrix_flag, derive_matrix_paymen
 
 def test_derive_matrix_flag_exception() -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         status=InvoiceStatus.EXCEPTION,
         validation_results='[{"rule":"VR01","passed":false,"message":"Total mismatch"}]',
@@ -21,9 +23,9 @@ def test_derive_matrix_flag_exception() -> None:
 
 
 def test_derive_matrix_payment_status_paid() -> None:
-    inv = Invoice(tenant_id=1, vendor="Acme", status=InvoiceStatus.PROCESSED, total=Decimal("100"))
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, vendor="Acme", status=InvoiceStatus.PROCESSED, total=Decimal("100"))
     payment = Payment(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         invoice_id=1,
         amount=Decimal("100"),
         status=PaymentStatus.PAID,
@@ -33,7 +35,7 @@ def test_derive_matrix_payment_status_paid() -> None:
 
 def test_derive_matrix_payment_status_on_hold() -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         status=InvoiceStatus.EXCEPTION,
         evaluation_status="needs_review",

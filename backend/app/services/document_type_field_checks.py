@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from app.models.invoice import Invoice
 from app.services.document_type_rule_engine import DocumentClassifierContext
 from app.services.invoice_data import InvoiceData
@@ -10,6 +12,53 @@ from app.services.po_reference import is_plausible_po_reference
 
 def _invoice_po(invoice: Invoice, parsed: InvoiceData) -> str:
     return (parsed.po_reference or invoice.po_reference or "").strip()
+
+
+def _line_items_amount_sum(parsed: InvoiceData) -> Decimal | None:
+    if not parsed.line_items:
+        return None
+    total = Decimal("0")
+    saw_amount = False
+    for line in parsed.line_items:
+        if line.amount is not None:
+            total += line.amount
+            saw_amount = True
+        elif line.qty is not None and line.unit_price is not None:
+            total += line.qty * line.unit_price
+            saw_amount = True
+    return total if saw_amount else None
+
+
+def _numeric_field_present(
+    key: str,
+    *,
+    invoice: Invoice,
+    parsed: InvoiceData,
+) -> bool:
+    from app.services.extraction_field_values import read_extraction_field_value
+
+    if key == "total":
+        if parsed.total is not None or invoice.total is not None:
+            return True
+    elif key == "subtotal":
+        if parsed.subtotal is not None or invoice.subtotal is not None:
+            return True
+    else:
+        return False
+
+    extracted = read_extraction_field_value(key, invoice=invoice, parsed=parsed)
+    if extracted:
+        return True
+
+    line_sum = _line_items_amount_sum(parsed)
+    if line_sum is not None and line_sum > 0:
+        return True
+
+    if key == "total" and parsed.subtotal is not None and parsed.gst is not None:
+        return True
+    if key == "total" and invoice.subtotal is not None and invoice.gst is not None:
+        return True
+    return False
 
 
 def field_is_present(
@@ -28,9 +77,9 @@ def field_is_present(
         po = _invoice_po(invoice, parsed)
         return bool(po and is_plausible_po_reference(po))
     if key == "total":
-        return parsed.total is not None or invoice.total is not None
+        return _numeric_field_present("total", invoice=invoice, parsed=parsed)
     if key == "subtotal":
-        return parsed.subtotal is not None or invoice.subtotal is not None
+        return _numeric_field_present("subtotal", invoice=invoice, parsed=parsed)
     if key == "gst":
         return parsed.gst is not None or invoice.gst is not None
     if key == "abn":
@@ -47,9 +96,14 @@ def field_is_present(
             or (parsed.bank_account or invoice.bank_account or "").strip()
         )
     if key == "attachment_name":
-        return bool(
-            ctx.attachment_name or (invoice.email_attachment_name or "").strip()
-        )
+        from pathlib import Path
+
+        attach = ctx.attachment_name or (invoice.email_attachment_name or "").strip()
+        if not attach:
+            raw_path = (getattr(invoice, "raw_file_path", None) or "").strip()
+            if raw_path:
+                attach = Path(raw_path).name.strip()
+        return bool(attach)
     if key == "cost_centre":
         return bool((parsed.cost_centre or invoice.cost_centre or "").strip())
     if key == "billing_address":

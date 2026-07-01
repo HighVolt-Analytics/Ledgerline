@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for document-type match executors."""
 
 from datetime import date
@@ -24,7 +26,7 @@ from app.services.invoice_data import InvoiceData, ParsedLineItem
 def _invoice(**kwargs) -> Invoice:
     base = dict(
         id=10,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.VALIDATING,
         currency="AUD",
         po_reference="PO-100",
@@ -40,7 +42,7 @@ def _invoice(**kwargs) -> Invoice:
 def _po(**kwargs) -> PurchaseOrder:
     base = dict(
         id=1,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         po_number="PO-100",
         po_qty=Decimal("2"),
         po_unit_price=Decimal("50.00"),
@@ -127,7 +129,7 @@ async def test_reference_invoice_match_found(monkeypatch: pytest.MonkeyPatch) ->
     outcome = await execute_document_match(
         "reference_invoice",
         session=AsyncMock(),
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         invoice=invoice,
         data=data,
     )
@@ -150,7 +152,7 @@ async def test_shipment_match_with_awb(monkeypatch: pytest.MonkeyPatch) -> None:
     outcome = await execute_document_match(
         "shipment",
         session=AsyncMock(),
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         invoice=invoice,
         data=data,
     )
@@ -170,7 +172,7 @@ async def test_three_way_still_requires_grn(monkeypatch: pytest.MonkeyPatch) -> 
     outcome = await execute_document_match(
         "three_way_po_grn",
         session=AsyncMock(),
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         invoice=inv,
         data=InvoiceData(po_reference="PO-100", total=Decimal("110")),
     )
@@ -194,7 +196,7 @@ async def test_three_way_clean_with_grn(monkeypatch: pytest.MonkeyPatch) -> None
     outcome = await execute_document_match(
         "three_way_po_grn",
         session=AsyncMock(),
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         invoice=inv,
         data=InvoiceData(po_reference="PO-100", total=Decimal("55")),
     )

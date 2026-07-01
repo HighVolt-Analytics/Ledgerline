@@ -7,6 +7,30 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.dossier import DossierMatchSummaryResponse
+
+
+class MatchAmountLine(BaseModel):
+    """Quantity / unit price / line value for one leg of the match."""
+
+    qty: float
+    uom: str | None = None
+    unit_price: float | None = None
+    line_value: float | None = None
+
+
+class ThreeWayMatchDisplay(BaseModel):
+    """Human-readable document amounts vs normalized match basis."""
+
+    base_uom: str = "EA"
+    po_on_document: MatchAmountLine
+    po_for_match: MatchAmountLine
+    grn_on_document: MatchAmountLine | None = None
+    grn_for_match: MatchAmountLine | None = None
+    invoice_on_document: MatchAmountLine | None = None
+    invoice_for_match: MatchAmountLine | None = None
+    match_explanation: str | None = None
+
 
 class ThreeWayMatchResult(BaseModel):
     status: str
@@ -17,6 +41,7 @@ class ThreeWayMatchResult(BaseModel):
     invoice_value: float
     invoice_gst: float
     invoice_total: float
+    display: ThreeWayMatchDisplay | None = None
 
 
 class PurchaseOrderResponse(BaseModel):
@@ -77,3 +102,5 @@ class PurchaseDossierResponse(BaseModel):
     purchase_order_id: int | None = None
     match: ThreeWayMatchResult | None = None
     match_status: str | None = None
+    match_summary: DossierMatchSummaryResponse | None = None
+    purchase_register: PurchaseOrderResponse | None = None

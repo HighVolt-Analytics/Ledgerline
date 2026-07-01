@@ -214,6 +214,7 @@ export function PurchaseManagementPage() {
         open={drawerInvoiceId != null}
         onClose={() => setDrawerInvoiceId(null)}
         onUpdated={() => void refetchAll()}
+        initialTab="po"
       />
     </div>
   );

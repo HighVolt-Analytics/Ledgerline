@@ -10,7 +10,8 @@ ValidationSeverity = Literal["block", "warn"]
 
 UNIVERSAL_VALIDATION_RULE_CODES = frozenset({"VR02"})
 
-CONFIGURABLE_VALIDATION_RULE_CODES = frozenset(
+# User-configurable per document type (Rule Book → Validation).
+FINANCE_VALIDATION_RULE_CODES = frozenset(
     {
         "VR03",
         "VR05",
@@ -22,6 +23,12 @@ CONFIGURABLE_VALIDATION_RULE_CODES = frozenset(
         "VR10",
         "VR11",
         "VR12",
+    }
+)
+
+# Driven by playbook match mode, bundle rules, or extraction fields — not Validation toggles.
+AUTOMATIC_VALIDATION_RULE_CODES = frozenset(
+    {
         "VR14",
         "VR15",
         "VR16",
@@ -31,7 +38,13 @@ CONFIGURABLE_VALIDATION_RULE_CODES = frozenset(
     }
 )
 
-KNOWN_VALIDATION_RULE_CODES = UNIVERSAL_VALIDATION_RULE_CODES | CONFIGURABLE_VALIDATION_RULE_CODES
+CONFIGURABLE_VALIDATION_RULE_CODES = FINANCE_VALIDATION_RULE_CODES
+
+KNOWN_VALIDATION_RULE_CODES = (
+    UNIVERSAL_VALIDATION_RULE_CODES
+    | FINANCE_VALIDATION_RULE_CODES
+    | AUTOMATIC_VALIDATION_RULE_CODES
+)
 
 
 class ValidationRuleConfig(BaseModel):
@@ -43,8 +56,8 @@ class ValidationRuleConfig(BaseModel):
     @classmethod
     def _normalize_code(cls, value: str) -> str:
         token = value.strip().upper()
-        if token not in CONFIGURABLE_VALIDATION_RULE_CODES:
-            raise ValueError(f"Unknown or non-configurable validation rule code: {value}")
+        if token not in KNOWN_VALIDATION_RULE_CODES:
+            raise ValueError(f"Unknown validation rule code: {value}")
         return token
 
 
@@ -66,6 +79,8 @@ def normalize_validation_rules(value: Any) -> list[ValidationRuleConfig]:
         else:
             continue
         if row.code in seen or row.code in UNIVERSAL_VALIDATION_RULE_CODES:
+            continue
+        if row.code not in FINANCE_VALIDATION_RULE_CODES:
             continue
         seen.add(row.code)
         out.append(row)

@@ -4,6 +4,11 @@ from pathlib import Path
 
 # Force auth off for API tests (local .env often sets AUTH_REQUIRED=true).
 os.environ["AUTH_REQUIRED"] = "false"
+os.environ["DEFAULT_TENANT_SLUG"] = "hv-org"
+os.environ["DEFAULT_TENANT_NAME"] = "High Volt Analytics"
+# Prevent local ngrok/tunnel URLs from breaking URL builder tests.
+os.environ.pop("PUBLIC_TUNNEL_URL", None)
+os.environ.pop("NGROK_URL", None)
 
 from collections.abc import AsyncGenerator
 from datetime import date
@@ -17,6 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config import get_settings
 from app.database import Base, get_db, get_preauth_db
+from tests.legacy_tenant_support import install_legacy_tenant_coercion
+
+install_legacy_tenant_coercion()
 from app.main import app
 
 get_settings.cache_clear()
@@ -51,7 +59,11 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         session.add(
-            Tenant(id=TESTING_TENANT_UUID, name="Testing", slug="testing")
+            Tenant(
+                id=TESTING_TENANT_UUID,
+                name="High Volt Analytics",
+                slug="hv-org",
+            )
         )
         session.add(
             TenantRuleBookConfig(
@@ -68,6 +80,11 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 @pytest.fixture(autouse=True)
 def _disable_auth_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTH_REQUIRED", "false")
+    monkeypatch.setenv("DEFAULT_TENANT_SLUG", "hv-org")
+    monkeypatch.setenv("DEFAULT_TENANT_NAME", "High Volt Analytics")
+    monkeypatch.setenv("PUBLIC_TUNNEL_URL", "")
+    monkeypatch.setenv("NGROK_URL", "")
+    monkeypatch.setenv("AZURE_WEBAPP_URL", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

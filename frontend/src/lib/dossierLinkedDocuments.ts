@@ -45,11 +45,45 @@ export type DossierLinkedDocument = {
 
 export type DossierMatchSummary = {
   status: string;
-  poValue: number;
-  invoiceTotal: number;
-  deviation: number;
   currency: string;
+  poNumber?: string | null;
+  poQty?: number | null;
+  poUnitPrice?: number | null;
+  poValue: number;
+  poDate?: string | null;
+  grnPresent?: boolean;
+  grnQty?: number | null;
+  grnDate?: string | null;
+  grnReceiver?: string | null;
+  grnCondition?: string | null;
+  invoiceNo?: string | null;
+  invoiceQty?: number | null;
+  invoiceUnitPrice?: number | null;
+  invoiceValue: number;
+  invoiceGst: number;
+  invoiceTotal: number;
+  qtyVarianceValue: number;
+  priceVarianceValue: number;
+  totalDeviation: number;
+  deviation: number;
 };
+
+export function dossierMatchSummary(
+  partial: Partial<DossierMatchSummary> &
+    Pick<DossierMatchSummary, "status" | "poValue" | "invoiceTotal" | "currency">
+): DossierMatchSummary {
+  const deviation = partial.deviation ?? partial.totalDeviation ?? 0;
+  return {
+    invoiceValue: partial.invoiceValue ?? partial.poValue,
+    invoiceGst: partial.invoiceGst ?? 0,
+    qtyVarianceValue: partial.qtyVarianceValue ?? 0,
+    priceVarianceValue: partial.priceVarianceValue ?? 0,
+    totalDeviation: partial.totalDeviation ?? deviation,
+    deviation,
+    grnPresent: partial.grnPresent ?? false,
+    ...partial,
+  };
+}
 
 export type DossierLinkedDocuments = {
   linkageKind: DossierLinkageKind;
@@ -111,7 +145,8 @@ export function poGoodsLinkedDocuments(opts: {
   anchorRef: string;
   po: { present: boolean; ref?: string | null; dossierId?: string | null; source?: DossierDocumentSource };
   grn: { present: boolean; ref?: string | null; dossierId?: string | null; source?: DossierDocumentSource };
-  match?: DossierMatchSummary;
+  match?: Partial<DossierMatchSummary> &
+    Pick<DossierMatchSummary, "status" | "poValue" | "invoiceTotal" | "currency">;
   purchaseOrderId?: number | null;
 }): DossierLinkedDocuments {
   return {
@@ -121,7 +156,7 @@ export function poGoodsLinkedDocuments(opts: {
     enforceBundle: true,
     conditionalAdvisories: [],
     purchaseOrderId: opts.purchaseOrderId ?? null,
-    matchSummary: opts.match,
+    matchSummary: opts.match ? dossierMatchSummary(opts.match) : undefined,
     documents: [
       doc({
         documentTypeCode: "DT-14",

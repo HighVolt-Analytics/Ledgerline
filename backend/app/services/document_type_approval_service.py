@@ -61,6 +61,7 @@ async def apply_document_type_approval_gate(
     *,
     definition: DocumentTypeDefinition | None,
     validation_results: list[ValidationResult],
+    human_approval_bypass: bool = False,
 ) -> bool:
     """
     Hold invoice for manual approval when the document-type policy requires it.
@@ -68,6 +69,9 @@ async def apply_document_type_approval_gate(
     Returns True when the invoice is held (status set to exception).
     """
     if definition is None:
+        return False
+
+    if human_approval_bypass or await has_document_approval(session, invoice.id):
         return False
 
     policy = effective_approval_policy(definition)
@@ -104,8 +108,6 @@ async def apply_document_type_approval_gate(
         return True
 
     if mode in {"full_doa", "never_touchless", "supervisor_on_exception"}:
-        if await has_document_approval(session, invoice.id):
-            return False
         if mode == "supervisor_on_exception" and _match_is_clean_for_touchless(
             validation_results,
             match_mode=effective_match_policy(definition).mode,

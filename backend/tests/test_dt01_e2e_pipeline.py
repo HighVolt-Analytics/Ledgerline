@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
+
+from contextlib import contextmanager
 
 import pytest
 from httpx import AsyncClient
@@ -14,7 +18,12 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.purchase_order import PurchaseOrder
+from app.schemas.ocr_artifact import OcrArtifact
+from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.services.pipeline import process_invoice
+from app.services.reconciliation_service import ReconciliationResult
+from app.services.validator import ValidationResult
+from tests.pipeline_test_helpers import patch_confidence_gate_pass
 
 ASSETS = Path(__file__).resolve().parents[2] / "test-assets"
 PO_FILE = ASSETS / "test-po-PO-MKT-2026-TEST.pdf"
@@ -82,6 +91,103 @@ async def test_dt01_po_grn_invoice_happy_path(
 ) -> None:
     monkeypatch.setenv("SYNC_PROCESSING", "true")
     get_settings.cache_clear()
+
+    ocr_text = (
+        "PURCHASE ORDER PO-MKT-2026-TEST Sysco Foods Australia Pty Ltd "
+        "TAX INVOICE goods received note GRN total $550.00 GST included "
+        "sufficient OCR text length for image quality gate and classification"
+    )
+
+    @contextmanager
+    def _fake_open(path: str, **_kwargs):
+        for candidate in (PO_FILE, GRN_FILE, INV_FILE):
+            if candidate.name in path or str(candidate) in path:
+                yield str(candidate)
+                return
+        yield path
+
+    async def _fake_ocr_read(_path: str, **_kwargs) -> OcrArtifact:
+        return OcrArtifact(
+            success=True,
+            sparse=False,
+            text=ocr_text,
+            text_length=len(ocr_text),
+            di_model="test",
+        )
+
+    def _llm_result(*, file_path: str | None = None) -> LlmDocumentResult:
+        path = (file_path or "").lower()
+        common = dict(
+            suggested_dt="DT-01",
+            confidence=0.95,
+            reasoning="DT-01 purchase document",
+            perspective="purchase",
+            vendor="Sysco Foods Australia Pty Ltd",
+            po_reference=PO_NUMBER,
+            seller=LlmParty(name="Sysco Foods Australia Pty Ltd"),
+        )
+        if "grn" in path:
+            return LlmDocumentResult(**common, total="500.00")
+        if "test-po" in path or "po_" in path:
+            return LlmDocumentResult(**common, total="500.00")
+        return LlmDocumentResult(
+            **common,
+            total="550.00",
+            gst="50.00",
+            invoice_no="INV-003",
+        )
+
+    async def _fake_classify(_ocr, *, file_path=None, **_kwargs) -> LlmDocumentResult:
+        return _llm_result(file_path=str(file_path) if file_path else None)
+
+    async def _fake_extract(*_args, **_kwargs) -> LlmDocumentResult:
+        file_path = _kwargs.get("file_path")
+        if file_path is None and _args:
+            file_path = _args[0] if isinstance(_args[0], str) else None
+        return _llm_result(file_path=str(file_path) if file_path else None)
+
+    async def _noop_sync(*_args, **_kwargs) -> None:
+        return None
+
+    async def _passing_validations(*_args, **_kwargs):
+        return [ValidationResult(rule="VR01", passed=True, message="ok", skipped=False)]
+
+    async def _no_vendor_hold(_session, _inv) -> bool:
+        return False
+
+    async def _balanced_recon(*_args, **_kwargs) -> ReconciliationResult:
+        return ReconciliationResult(
+            date=date.today(),
+            total_invoices=1,
+            total_ap_credits=Decimal("550"),
+            total_debits=Decimal("550"),
+            total_credits=Decimal("550"),
+            rc1_passed=True,
+            rc2_passed=True,
+            is_balanced=True,
+            halted=False,
+            halt_reason=None,
+        )
+
+    patch_confidence_gate_pass(monkeypatch, dt="DT-01", confidence=0.95)
+    monkeypatch.setattr("app.services.pipeline.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr(
+        "app.services.invoice_pipeline_phases.read_for_classification",
+        _fake_ocr_read,
+    )
+    monkeypatch.setattr(
+        "app.services.invoice_pipeline_phases.classify_only",
+        _fake_classify,
+    )
+    monkeypatch.setattr("app.services.pipeline.extract_fields", _fake_extract)
+    monkeypatch.setattr("app.services.pipeline.sync_invoice_blob_path", _noop_sync)
+    monkeypatch.setattr("app.services.pipeline.run_all_validations", _passing_validations)
+    monkeypatch.setattr("app.services.pipeline.reconcile_daily", _balanced_recon)
+    monkeypatch.setattr(
+        "app.services.vendor_hold_service.apply_vendor_hold_if_needed",
+        _no_vendor_hold,
+    )
 
     for path in (PO_FILE, GRN_FILE, INV_FILE):
         assert path.is_file(), f"missing test asset: {path}"

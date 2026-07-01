@@ -214,6 +214,19 @@ export function RulesPage() {
         <DocumentTypesTab
           documentTypes={ruleBook.documentTypes}
           onChange={(documentTypes) => patch({ documentTypes })}
+          onStarterPackApplied={(result) => {
+            patch({
+              documentTypes: [...ruleBook.documentTypes, ...result.types],
+              ...(result.unclassifiedDocumentTypeCode
+                ? {
+                    documentClassification: {
+                      ...ruleBook.documentClassification,
+                      unclassifiedDocumentTypeCode: result.unclassifiedDocumentTypeCode,
+                    },
+                  }
+                : {}),
+            });
+          }}
           onDeleteType={(code) => {
             if (!canEdit) return;
             cancelPendingSave();

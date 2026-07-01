@@ -1,9 +1,12 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_auth_context, get_db, AuthContext
 from app.schemas.common import ApiEnvelope
 from app.schemas.dashboard import ActivityItem, DashboardOverview, DashboardStats, NavBadges
+from app.schemas.dashboard_api import DashboardActivityRequest, DashboardOverviewRequest
 from app.services.dashboard_service import (
     build_nav_badges,
     build_overview,
@@ -34,12 +37,7 @@ async def stats(
 
 @router.get("/overview", response_model=ApiEnvelope[DashboardOverview])
 async def overview(
-    activity_limit: int = Query(8, ge=1, le=50),
-    month: str | None = Query(
-        None,
-        description="Period as YYYY-MM (defaults to current month)",
-        pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
-    ),
+    params: Annotated[DashboardOverviewRequest, Query()],
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[DashboardOverview]:
@@ -48,16 +46,18 @@ async def overview(
         data=await build_overview(
             db,
             tenant_id=ctx.tenant_id,
-            activity_limit=activity_limit,
-            month=month,
+            activity_limit=params.activity_limit,
+            month=params.month,
         )
     )
 
 
 @router.get("/activity", response_model=ApiEnvelope[list[ActivityItem]])
 async def activity(
-    limit: int = Query(20, ge=1, le=100),
+    params: Annotated[DashboardActivityRequest, Query()],
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[ActivityItem]]:
-    return ApiEnvelope(data=await fetch_activity(db, limit, tenant_id=ctx.tenant_id))
+    return ApiEnvelope(
+        data=await fetch_activity(db, params.limit, tenant_id=ctx.tenant_id)
+    )

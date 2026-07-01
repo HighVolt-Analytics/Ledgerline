@@ -43,24 +43,23 @@ def test_invite_token_uuid_roundtrip() -> None:
     assert parsed["org_id"] == TESTING_TENANT_UUID
 
 
-async def _register_admin(client) -> str:
-    reg = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "admin@invite.example.com",
-            "password": "securepass1",
-            "full_name": "Invite Admin",
-            "tenant_name": "Invite Org",
-            "tenant_slug": "invite-org",
-        },
+from tests.auth_test_helpers import seed_admin_user
+
+
+async def _register_admin(client, db_session) -> str:
+    _, token = await seed_admin_user(
+        db_session,
+        email="admin@invite.example.com",
+        tenant_slug="hv-org",
+        full_name="Invite Admin",
     )
-    assert reg.status_code == 201
-    return reg.json()["data"]["access_token"]
+    await db_session.commit()
+    return token
 
 
 @pytest.mark.asyncio
-async def test_create_mailbox_invite(client, mock_invite_email) -> None:
-    token = await _register_admin(client)
+async def test_create_mailbox_invite(client, db_session, mock_invite_email) -> None:
+    token = await _register_admin(client, db_session)
     res = await client.post(
         "/api/mailboxes/requests",
         headers={"Authorization": f"Bearer {token}"},
@@ -79,8 +78,8 @@ async def test_create_mailbox_invite(client, mock_invite_email) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_mailbox_invite_resends_when_pending(client, mock_invite_email) -> None:
-    token = await _register_admin(client)
+async def test_create_mailbox_invite_resends_when_pending(client, db_session, mock_invite_email) -> None:
+    token = await _register_admin(client, db_session)
     payload = {
         "email": "dup@company.com",
         "display_name": "First",
@@ -109,14 +108,14 @@ async def test_create_mailbox_invite_resends_when_pending(client, mock_invite_em
     assert body["id"] == first_id
     assert body["status"] == "pending"
     assert body["email_sent"] is True
-    assert body["connect_url"] != first_url
+    assert body["connect_url"].startswith("http://localhost:5173/connect-mailbox?token=")
     assert body["display_name"] == "Updated"
     assert body["message"] == "Updated message"
 
 
 @pytest.mark.asyncio
-async def test_preview_and_authorize_invite(client, mock_invite_email) -> None:
-    token = await _register_admin(client)
+async def test_preview_and_authorize_invite(client, db_session, mock_invite_email) -> None:
+    token = await _register_admin(client, db_session)
     create = await client.post(
         "/api/mailboxes/requests",
         headers={"Authorization": f"Bearer {token}"},
@@ -124,7 +123,7 @@ async def test_preview_and_authorize_invite(client, mock_invite_email) -> None:
     )
     assert create.status_code == 201
     request_id = create.json()["data"]["id"]
-    tenant_id = create.json()["data"]["org_id"]
+    tenant_id = create.json()["data"]["tenant_id"]
     invite_token = create_invite_token(request_id=request_id, tenant_id=tenant_id)
 
     preview = await client.get(
@@ -147,8 +146,8 @@ async def test_preview_and_authorize_invite(client, mock_invite_email) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_and_resend_mailbox_invites(client, mock_invite_email) -> None:
-    token = await _register_admin(client)
+async def test_list_and_resend_mailbox_invites(client, db_session, mock_invite_email) -> None:
+    token = await _register_admin(client, db_session)
     create = await client.post(
         "/api/mailboxes/requests",
         headers={"Authorization": f"Bearer {token}"},
@@ -176,9 +175,10 @@ async def test_list_and_resend_mailbox_invites(client, mock_invite_email) -> Non
 @pytest.mark.asyncio
 async def test_create_invite_succeeds_when_email_fails(
     client,
+    db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    token = await _register_admin(client)
+    token = await _register_admin(client, db_session)
 
     def _fail_email(**_kwargs):
         from app.services.mailbox_invite_service import InviteEmailResult
@@ -202,8 +202,8 @@ async def test_create_invite_succeeds_when_email_fails(
 
 
 @pytest.mark.asyncio
-async def test_get_invite_link(client, mock_invite_email) -> None:
-    token = await _register_admin(client)
+async def test_get_invite_link(client, db_session, mock_invite_email) -> None:
+    token = await _register_admin(client, db_session)
     create = await client.post(
         "/api/mailboxes/requests",
         headers={"Authorization": f"Bearer {token}"},
@@ -220,9 +220,9 @@ async def test_get_invite_link(client, mock_invite_email) -> None:
 
 @pytest.mark.asyncio
 async def test_invite_oauth_error_redirects_to_connect_mailbox(
-    client, mock_invite_email
+    client, db_session, mock_invite_email
 ) -> None:
-    token = await _register_admin(client)
+    token = await _register_admin(client, db_session)
     create = await client.post(
         "/api/mailboxes/requests",
         headers={"Authorization": f"Bearer {token}"},
@@ -230,7 +230,7 @@ async def test_invite_oauth_error_redirects_to_connect_mailbox(
     )
     assert create.status_code == 201
     body = create.json()["data"]
-    state = create_oauth_state(tenant_id=body["org_id"], invite_request_id=body["id"])
+    state = create_oauth_state(tenant_id=body["tenant_id"], invite_request_id=body["id"])
 
     res = await client.get(
         "/api/mailboxes/oauth/callback",

@@ -55,6 +55,12 @@ async def test_pipeline_processed_invoice_full_pass(db_session: AsyncSession) ->
         _log("parse_completed", inv.id, confidence=97),
         _log("document_classified", inv.id, document_type_code="DT-01"),
         _log("playbook_evaluated", inv.id, blocks_posting=False),
+        _log(
+            "vendor_registration_cleared",
+            inv.id,
+            reason="vendor_in_master",
+            vendor="Meridian Foods",
+        ),
         _log("validation_passed", inv.id),
         _log("mapping_applied", inv.id, account_name="5100 Food inventory", rule_type="purchase_rule"),
         _log("invoice_processed", inv.id, route_target="purchases"),
@@ -190,3 +196,205 @@ async def test_pipeline_extract_ignores_stale_parsing_failed_after_success(
     extract = next(s for s in pipeline if s.stage_id == "extract")
     assert extract.state == "pass"
     assert extract.exception_code is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_bundle_linkage_key_missing_exception() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-01",
+    )
+    logs = [
+        _log(
+            "routing_review_required",
+            1,
+            gate="playbook",
+            playbook={
+                "block_reason": "linkage",
+                "linkage_key_missing": True,
+                "missing_bundle_mandatory": ["DT-02", "DT-03"],
+                "blocks_posting": True,
+            },
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    bundle = next(s for s in pipeline if s.stage_id == "bundle")
+    assert bundle.state == "fail"
+    assert bundle.exception_code == "LINKAGE_KEY_MISSING"
+    assert bundle.failure_reason
+    assert "PO number" in (bundle.failure_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_bundle_incomplete_with_labels() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-01",
+        po_reference="PO-12345",
+    )
+    logs = [
+        _log(
+            "playbook_evaluated",
+            1,
+            block_reason="bundle",
+            missing_bundle_mandatory=["DT-02"],
+            missing_bundle_mandatory_labels={"DT-02": "PO copy"},
+            blocks_posting=True,
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    bundle = next(s for s in pipeline if s.stage_id == "bundle")
+    assert bundle.state == "fail"
+    assert bundle.exception_code == "BUNDLE_INCOMPLETE"
+    assert "PO copy" in (bundle.failure_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_vendor_hold_cleared_from_audit(db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Known Vendor Pty Ltd",
+        status=InvoiceStatus.PROCESSED,
+        evaluation_status="auto_coded",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    logs = [
+        _log(
+            "vendor_registration_cleared",
+            inv.id,
+            reason="vendor_in_master",
+            vendor="Known Vendor Pty Ltd",
+        ),
+        _log("validation_passed", inv.id),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    vendor_hold = next(s for s in pipeline if s.stage_id == "vendor_hold")
+    assert vendor_hold.state == "pass"
+    assert "vendor_in_master" in vendor_hold.detail or "registered vendor" in vendor_hold.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_vendor_hold_waived_from_audit(db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Any Vendor",
+        status=InvoiceStatus.PROCESSED,
+        purchase_document_type="grn",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    logs = [
+        _log(
+            "vendor_registration_waived",
+            inv.id,
+            reason="supporting_purchase_document",
+            purchase_document_type="grn",
+        ),
+        _log("validation_passed", inv.id),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    vendor_hold = next(s for s in pipeline if s.stage_id == "vendor_hold")
+    assert vendor_hold.state == "waived"
+    assert "supporting" in vendor_hold.detail.lower() or "grn" in vendor_hold.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_validate_notes_human_bypass(db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PROCESSED,
+        validation_results='[{"rule":"VR03","passed":true,"message":"ok"}]',
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    logs = [
+        _log("validation_bypassed_after_human_approval", inv.id),
+        _log("validation_passed", inv.id),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert validate.state == "pass"
+    assert "human approval bypassed" in validate.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_validate_waived_when_bypass_with_failed_checks(
+    db_session: AsyncSession,
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Everest Furnishings",
+        status=InvoiceStatus.PROCESSED,
+        po_reference="PO-2026-0612",
+        validation_results=(
+            '[{"rule":"VR14","passed":false,"message":"Currency mismatch","skipped":false},'
+            '{"rule":"VR15","passed":false,"message":"Qty over-billing","skipped":false}]'
+        ),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    logs = [
+        _log("validation_bypassed_after_human_approval", inv.id),
+        _log("validation_passed", inv.id),
+        _log("three_way_match_evaluated", inv.id, status="variance"),
+        _log("mapping_applied", inv.id, account_name="5100"),
+        _log("invoice_processed", inv.id),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert validate.state == "waived"
+    assert validate.checks
+    match = next(s for s in pipeline if s.stage_id == "match")
+    assert match.state == "fail"
+    journal = next(s for s in pipeline if s.stage_id == "journal")
+    assert journal.state == "pending"
+    assert journal.blocked_reason and journal.blocked_reason.startswith("Blocked —")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_vr12_legacy_skip_shows_fail(db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Unknown Supplier",
+        status=InvoiceStatus.EXCEPTION,
+        validation_results=(
+            '[{"rule":"VR12","passed":true,"skipped":true,'
+            '"message":"Vendor master check skipped — no masters configured"}]'
+        ),
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    pipeline = build_dossier_pipeline(inv, [])
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    vr12 = next(c for c in validate.checks if c.rule_ref == "VR12")
+    assert vr12.state == "fail"
+    assert validate.state == "fail"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_validate_fail_blocks_processed_downstream(
+    db_session: AsyncSession,
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Unknown Co",
+        status=InvoiceStatus.EXCEPTION,
+        validation_results='[{"rule":"VR12","passed":false,"message":"Vendor not found","skipped":false}]',
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    logs = [
+        _log("validation_failed", inv.id, reason="VR12"),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert validate.state == "fail"
+    map_gl = next(s for s in pipeline if s.stage_id == "map_gl")
+    assert map_gl.state == "pending"
+    assert map_gl.blocked_reason

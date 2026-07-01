@@ -41,19 +41,18 @@ async def test_admin_consent_url_endpoint_requires_admin(
     get_settings.cache_clear()
 
 
+from tests.auth_test_helpers import seed_admin_user
+
+
 @pytest.mark.asyncio
-async def test_admin_consent_url_endpoint_returns_url(client: AsyncClient) -> None:
-    reg = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "ga@consent.example.com",
-            "password": "securepass1",
-            "full_name": "GA Admin",
-            "tenant_name": "Consent Org",
-            "tenant_slug": "consent-org",
-        },
+async def test_admin_consent_url_endpoint_returns_url(client: AsyncClient, db_session) -> None:
+    _, token = await seed_admin_user(
+        db_session,
+        email="ga@consent.example.com",
+        tenant_slug="hv-org",
+        full_name="GA Admin",
     )
-    token = reg.json()["data"]["access_token"]
+    await db_session.commit()
     res = await client.get(
         "/api/mailboxes/oauth/admin-consent-url",
         headers={"Authorization": f"Bearer {token}"},

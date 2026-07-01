@@ -13,6 +13,7 @@ import {
   customRuleSummary,
   defaultValidationRulesForProfile,
   effectiveValidationRules,
+  mergeConfigurableRules,
   newCustomValidationRule,
   normalizeCustomValidationRules,
   validationCheckDescription,
@@ -21,6 +22,8 @@ import {
   type CustomValidationRule,
   type ValidationRuleConfig,
 } from "@/lib/documentValidationChecks";
+
+export { mergeConfigurableRules } from "@/lib/documentValidationChecks";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
 function SeveritySelect({
@@ -225,44 +228,23 @@ export function ValidationViewDialog({
   );
 }
 
-export function mergeConfigurableRules(
-  documentTypeCode: string,
-  validationProfile: string,
-  value: ValidationRuleConfig[]
-): ValidationRuleConfig[] {
-  const defaults = defaultValidationRulesForProfile(validationProfile, documentTypeCode);
-  const byCode = new Map(value.map((row) => [row.code, row]));
-  const codes = new Set([
-    ...defaults.map((row) => row.code),
-    ...value.map((row) => row.code),
-    ...CONFIGURABLE_VALIDATION_CHECKS.map((row) => row.code),
-  ]);
-  return [...codes].map((code) => {
-    const existing = byCode.get(code);
-    const fallback = defaults.find((row) => row.code === code);
-    return (
-      existing ??
-      fallback ?? {
-        code,
-        enabled: false,
-        severity: "block" as const,
-      }
-    );
-  });
-}
-
 export function ValidationChecksEditor({
   documentTypeCode,
   validationProfile,
+  requiredFields = [],
+  extractionFields: _extractionFields = [],
   value,
   onChange,
 }: {
   documentTypeCode: string;
   validationProfile: string;
+  requiredFields?: string[];
+  extractionFields?: string[];
   value: ValidationRuleConfig[];
   onChange: (value: ValidationRuleConfig[]) => void;
 }) {
   const rules = mergeConfigurableRules(documentTypeCode, validationProfile, value);
+  const compulsory = requiredFields;
 
   function updateRule(code: string, patch: Partial<ValidationRuleConfig>) {
     onChange(
@@ -278,7 +260,10 @@ export function ValidationChecksEditor({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground">
-          Turn checks on or off for this document type. Duplicate check is always on organisation-wide.
+          Finance checks only (tax, dates, currency, arithmetic, vendor). Compulsory field
+          presence uses starred fields in Extraction fields above (VR03). Matching, bundle, and
+          optional extraction run automatically from Processing playbook and Bundle rules.
+          Duplicate check is always on org-wide.
         </p>
         <Button type="button" variant="outline" size="sm" onClick={loadProfilePreset}>
           Load profile preset
@@ -292,10 +277,17 @@ export function ValidationChecksEditor({
             enabled: false,
             severity: "block" as const,
           };
+          const description = validationCheckDescription(meta.code);
+          const fieldHint =
+            meta.code === "VR03" && row.enabled
+              ? compulsory.length
+                ? compulsory.map((key) => extractionFieldLabel(key)).join(", ")
+                : "No compulsory fields starred — configure in Extraction fields"
+              : null;
           return (
             <div
               key={meta.code}
-              className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 py-2 last:border-0"
+              className="flex flex-wrap items-start justify-between gap-2 border-b border-border/60 py-2 last:border-0"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -307,6 +299,14 @@ export function ValidationChecksEditor({
                   <div>
                     <p className="text-[11px] font-medium text-foreground">{meta.label}</p>
                     <p className="text-[10px] text-muted-foreground">{meta.group}</p>
+                    {description ? (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">{description}</p>
+                    ) : null}
+                    {fieldHint ? (
+                      <p className="mt-1 text-[10px] font-medium text-foreground/80">
+                        Fields: {fieldHint}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -453,12 +453,16 @@ export function ValidationRulesEditor({
   validationProfile,
   validationRules,
   customValidationRules,
+  requiredFields,
+  extractionFields,
   onChange,
 }: {
   documentTypeCode: string;
   validationProfile: string;
   validationRules: ValidationRuleConfig[];
   customValidationRules: CustomValidationRule[];
+  requiredFields?: string[];
+  extractionFields?: string[];
   onChange: (patch: {
     validationRules?: ValidationRuleConfig[];
     customValidationRules?: CustomValidationRule[];
@@ -469,6 +473,8 @@ export function ValidationRulesEditor({
       <ValidationChecksEditor
         documentTypeCode={documentTypeCode}
         validationProfile={validationProfile}
+        requiredFields={requiredFields}
+        extractionFields={extractionFields}
         value={validationRules}
         onChange={(next) => onChange({ validationRules: next })}
       />

@@ -1,3 +1,5 @@
+
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for per-DT validation profiles and reclassification."""
 
 import json
@@ -13,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
 from app.schemas.rule_book_config import DocumentClassificationConfig, validate_rule_book_config_payload
+from app.schemas.classification_decision import PolicyScoreResult
 from app.services.document_type_classifier import classify_document_type
 from app.services.document_type_reclassify_service import reclassify_invoice_document_type
 from app.services.invoice_data import InvoiceData, ParsedLineItem
@@ -20,7 +23,7 @@ from app.services.validator import all_passed, run_all_validations
 
 
 def _invoice(**kwargs) -> Invoice:
-    base = dict(id=1, tenant_id=1, status=InvoiceStatus.PARSING, currency="AUD")
+    base = dict(id=1, tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PARSING, currency="AUD")
     base.update(kwargs)
     return Invoice(**base)
 
@@ -44,7 +47,7 @@ async def test_dt21_direct_expense_omits_abn_and_gst(
     results = await run_all_validations(
         _directus_parsed(),
         db_session,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         document_type_code="DT-21",
         validation_profile="direct_expense",
         document_types=list(capture_config.document_types),
@@ -58,9 +61,10 @@ async def test_dt21_direct_expense_omits_abn_and_gst(
 async def test_reclassify_updates_document_type_from_fields(
     db_session: AsyncSession,
     capture_config,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inv = Invoice(
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.EXCEPTION,
         currency="USD",
         vendor="Directus Cloud",
@@ -74,6 +78,7 @@ async def test_reclassify_updates_document_type_from_fields(
     await db_session.flush()
     db_session.add(
         LineItem(
+            tenant_id=TESTING_TENANT_UUID,
             invoice_id=inv.id,
             description="SaaS subscription",
             amount=Decimal("99.00"),
@@ -88,21 +93,67 @@ async def test_reclassify_updates_document_type_from_fields(
         )
     ).scalar_one()
 
+    def _mock_policy_score(**_kwargs) -> PolicyScoreResult:
+        return PolicyScoreResult(winner_dt="DT-21", winner_confidence=0.85, scores=[])
+
+    monkeypatch.setattr(
+        "app.services.document_type_reclassify_service.score_all_enabled_dts",
+        _mock_policy_score,
+    )
+
     changed = await reclassify_invoice_document_type(
         db_session,
         inv,
         config=capture_config,
         parse_confidence="high",
+        force=True,
     )
     assert changed is True
-    assert inv.document_type_code in {"DT-03", "DT-04", "DT-21"}
+    assert inv.document_type_code == "DT-21"
     assert float(inv.document_type_confidence or 0) >= 0.65
+
+
+@pytest.mark.asyncio
+async def test_reclassify_skips_when_catalogue_code_already_set(
+    db_session: AsyncSession,
+    capture_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        currency="USD",
+        vendor="Directus Cloud",
+        invoice_no="INV-9",
+        total=Decimal("99.00"),
+        email_attachment_name="saas-invoice.pdf",
+        document_type_code="DT-24",
+        document_type_confidence=0.45,
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    def _mock_policy_score(**_kwargs) -> PolicyScoreResult:
+        return PolicyScoreResult(winner_dt="DT-21", winner_confidence=0.85, scores=[])
+
+    monkeypatch.setattr(
+        "app.services.document_type_reclassify_service.score_all_enabled_dts",
+        _mock_policy_score,
+    )
+
+    changed = await reclassify_invoice_document_type(
+        db_session,
+        inv,
+        config=capture_config,
+    )
+    assert changed is False
+    assert inv.document_type_code == "DT-24"
 
 
 def test_catalogue_present_no_classifier_match_returns_unclassified(capture_config) -> None:
     invoice = Invoice(
         id=1,
-        tenant_id=1,
+        tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.PARSING,
         currency="AUD",
         email_attachment_name="totally-unknown.pdf",

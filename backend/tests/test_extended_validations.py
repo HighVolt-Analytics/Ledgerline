@@ -89,6 +89,37 @@ def test_vr12_vendor_master_ok() -> None:
     assert result.passed is True
 
 
+def test_vr12_fails_when_no_masters_configured() -> None:
+    data = InvoiceData(vendor="Unknown Supplier Pty Ltd")
+    result = vr12_vendor_master(data, vendor_masters=[])
+    assert result.passed is False
+    assert result.skipped is False
+    assert "not registered" in result.message.lower()
+
+
+def test_vr12_requires_vendor_name_when_no_masters() -> None:
+    data = InvoiceData(vendor="")
+    result = vr12_vendor_master(data, vendor_masters=[])
+    assert result.passed is False
+    assert "vendor name required" in result.message.lower()
+
+
+def test_normalize_legacy_vr12_skip_when_no_masters() -> None:
+    from app.services.validator import normalize_stored_validation_row
+
+    row = normalize_stored_validation_row(
+        {
+            "rule": "VR12",
+            "passed": True,
+            "skipped": True,
+            "message": "Vendor master check skipped — no masters configured",
+        }
+    )
+    assert row["skipped"] is False
+    assert row["passed"] is False
+    assert "not registered" in row["message"].lower()
+
+
 def test_vr16_freight_above_tolerance() -> None:
     data = InvoiceData(
         po_reference="PO-100",

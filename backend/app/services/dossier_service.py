@@ -19,7 +19,12 @@ from app.services.document_ref_service import display_document_ref, dossier_publ
 from app.services.document_type_playbook_service import resolve_definition_for_invoice
 from app.services.dossier_approval_service import build_dossier_approval_chain
 from app.services.dossier_linked_documents_service import build_dossier_linked_documents
-from app.services.dossier_pipeline_service import build_dossier_pipeline, first_pipeline_failure
+from app.services.dossier_match_service import enrich_match_pipeline_step
+from app.services.dossier_pipeline_service import (
+    build_dossier_pipeline,
+    classification_review_pending,
+    first_pipeline_failure,
+)
 from app.services.file_storage import has_stored_path
 from app.services.invoice_evaluation_service import load_posting_config_for_tenant
 from app.services.matrix_service import derive_matrix_payment_status
@@ -283,20 +288,9 @@ async def build_dossier_summary(
         payment_status=pay_key,
         payment_detail=pay_detail,
         compact=compact,
+        document_types=config.document_types,
     )
     fail = first_pipeline_failure(pipeline)
-    approved_human = any(log.event == "invoice_approved" for log in logs)
-    outcome, banner = _derive_outcome(
-        invoice,
-        logs,
-        fail is not None,
-        published=published,
-        payment=payment,
-        fail_detail=fail.detail if fail else None,
-    )
-    if invoice.status == InvoiceStatus.PROCESSED and published and approved_human:
-        outcome = "manual_posted"
-        banner = banner or "Manual post — approved before ledger posting"
 
     linked, approval = await asyncio.gather(
         build_dossier_linked_documents(
@@ -315,15 +309,51 @@ async def build_dossier_summary(
         ),
     )
 
+    match_log = _latest_log(logs, "three_way_match_evaluated")
+    match_log_detail = match_log.detail if match_log and isinstance(match_log.detail, dict) else None
+    if not compact:
+        pipeline = enrich_match_pipeline_step(
+            pipeline,
+            match_summary=linked.match_summary,
+            match_log_detail=match_log_detail,
+        )
+        fail = first_pipeline_failure(pipeline)
+    approved_human = any(log.event == "invoice_approved" for log in logs)
+    outcome, banner = _derive_outcome(
+        invoice,
+        logs,
+        fail is not None,
+        published=published,
+        payment=payment,
+        fail_detail=fail.detail if fail else None,
+    )
+    if invoice.status == InvoiceStatus.PROCESSED and published and approved_human:
+        outcome = "manual_posted"
+        banner = banner or "Manual post — approved before ledger posting"
+
     code = (invoice.document_type_code or "").strip().upper()
+    suggested = (invoice.llm_suggested_dt or "").strip().upper()
+    display_code = code or suggested
+    pending_classify = classification_review_pending(logs)
+    dt_title = _document_type_title(display_code, config.document_types) if display_code else ""
+    if dt_title:
+        classification_label = dt_title
+    elif pending_classify:
+        classification_label = "Needs classification review"
+    else:
+        classification_label = (invoice.route_target or "Unclassified").replace("_", " ").title()
+    if pending_classify and not code:
+        classification_confidence = _confidence_pct(invoice.llm_confidence)
+    else:
+        classification_confidence = _confidence_pct(invoice.document_type_confidence)
     sla_label, sla_breached = _sla(invoice, today=institution_today)
     inv_date = invoice.invoice_date.isoformat() if invoice.invoice_date else ""
 
     return DossierSummaryResponse(
         id=dossier_public_id(invoice),
         invoice_id=invoice.id,
-        document_type_code=code,
-        document_type_title=_document_type_title(code, config.document_types),
+        document_type_code=display_code,
+        document_type_title=_document_type_title(display_code, config.document_types) if display_code else "Unclassified",
         vendor=(invoice.vendor or "Unknown vendor").strip(),
         buyer=(tenant_name or "Tenant").strip(),
         invoice_ref=(invoice.invoice_no or display_document_ref(invoice)).strip(),
@@ -333,8 +363,8 @@ async def build_dossier_summary(
         subtotal=_money(invoice.subtotal),
         tax=_money(invoice.gst),
         total=_money(invoice.total),
-        classification_label=(invoice.route_target or "Transactional").replace("_", " ").title(),
-        classification_confidence=_confidence_pct(invoice.document_type_confidence),
+        classification_label=classification_label,
+        classification_confidence=classification_confidence,
         fraud_risk=_fraud_risk(invoice),
         po_reference=(invoice.po_reference or "").strip() or None,
         sla_label=sla_label,

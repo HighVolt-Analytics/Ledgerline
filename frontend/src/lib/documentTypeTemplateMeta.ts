@@ -41,7 +41,14 @@ export const TEMPLATE_SIGNAL_META: Record<string, TemplateSignalMetaRaw> = {
     purchaseBundleRole: "po",
     signalIds: ["heading_po", "text_po", "filename_po"],
     defaultSignalIds: ["heading_po", "text_po", "filename_po"],
-    extractionFields: ["vendor", "po_reference", "attachment_name"],
+    extractionFields: [
+      "vendor",
+      "permit_no",
+      "consignment_ref",
+      "document_heading",
+      "attachment_name",
+      "document_text",
+    ],
   },
   "DT-03": {
     classifierLayout: "supporting_doc",
