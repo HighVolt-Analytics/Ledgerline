@@ -10,6 +10,7 @@ from app.schemas.custom_validation_rule import (
     CustomValidationRule,
     normalize_custom_validation_rules,
 )
+from app.schemas.fx_posting import FxPostingPolicy, normalize_fx_posting_policy
 from app.schemas.playbook_policy import (
     ApprovalPolicy,
     MatchPolicy,
@@ -71,6 +72,7 @@ class DocumentTypeDefinition(BaseModel):
     posting: str
     fraud_risk: str = Field(alias="fraudRisk")
     one_line: str = Field(alias="oneLine")
+    llm_hint: str = Field(default="", alias="llmHint")
     route_target: DocumentTypeRouteTarget = Field(
         default="Vault",
         alias="routeTarget",
@@ -99,6 +101,7 @@ class DocumentTypeDefinition(BaseModel):
         default=None,
         alias="approvalPolicy",
     )
+    fx_policy: FxPostingPolicy | None = Field(default=None, alias="fxPolicy")
     validation_rules: list[ValidationRuleConfig] = Field(default_factory=list, alias="validationRules")
     custom_validation_rules: list[CustomValidationRule] = Field(
         default_factory=list,
@@ -161,6 +164,11 @@ class DocumentTypeDefinition(BaseModel):
         if value is None:
             return None
         return normalize_approval_policy(value)
+
+    @field_validator("fx_policy", mode="before")
+    @classmethod
+    def _normalize_fx_policy_field(cls, value: Any) -> FxPostingPolicy | None:
+        return normalize_fx_posting_policy(value)
 
     @field_validator("validation_rules", mode="before")
     @classmethod

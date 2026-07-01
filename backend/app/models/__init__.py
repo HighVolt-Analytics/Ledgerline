@@ -1,6 +1,9 @@
+from app.models.accounting_integration import AccountingIntegration
 from app.models.audit import AuditLog
 from app.models.auth_account import AuthAccount
+from app.models.classification_learning import ClassificationLearningEvent, InvoiceOcrArtifact
 from app.models.connected_mailbox import ConnectedMailbox
+from app.models.connected_viber import ConnectedViberAccount
 from app.models.connected_whatsapp import ConnectedWhatsapp
 from app.models.meta_webhook_dedupe import MetaWebhookDedupe
 from app.models.dossier_manual_link import DossierManualLink
@@ -14,6 +17,15 @@ from app.models.tenant import Tenant
 from app.models.tenant_module import TenantModule
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
 from app.models.payment import Payment
+from app.models.payment_execution_instruction import PaymentExecutionInstruction
+from app.models.stripe_payments import (
+    PaymentAttempt,
+    StripeAccount,
+    StripeBalanceSnapshot,
+    StripeTransaction,
+    StripeWebhookEvent,
+    VendorPaymentMethod,
+)
 from app.models.purchase_order import PurchaseOrder
 from app.models.reconciliation import DailyReconciliation
 from app.models.tenant_member_invite import TenantMemberInvite
@@ -27,23 +39,33 @@ from app.models.vendor_master import VendorMasterRecord
 import app.tenant_child_tables  # noqa: F401 — register child-table tenant listeners
 
 __all__ = [
+    "AccountingIntegration",
     "AuditLog",
     "AuthAccount",
+    "ClassificationLearningEvent",
     "ConnectedMailbox",
+    "ConnectedViberAccount",
     "ConnectedWhatsapp",
     "MetaWebhookDedupe",
     "DailyReconciliation",
     "DossierManualLink",
     "EmployeeMasterRecord",
     "GoodsReceipt",
+    "InvoiceOcrArtifact",
     "Invoice",
     "JournalEntry",
     "LineItem",
     "MailboxConnectionRequest",
     "MailboxSyncJob",
     "Payment",
+    "PaymentAttempt",
+    "PaymentExecutionInstruction",
     "PendingVendor",
     "PurchaseOrder",
+    "StripeAccount",
+    "StripeBalanceSnapshot",
+    "StripeTransaction",
+    "StripeWebhookEvent",
     "Tenant",
     "TenantMemberInvite",
     "TenantModule",
@@ -52,5 +74,6 @@ __all__ = [
     "UserTenantMapping",
     "UserRole",
     "VendorMasterRecord",
+    "VendorPaymentMethod",
     "VendorRegistry",
 ]

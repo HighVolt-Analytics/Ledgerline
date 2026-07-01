@@ -41,16 +41,16 @@ def test_send_invite_email_uses_graph_when_configured(
     )
 
     result = send_invite_email(
-        to_email="owner@example.com",
+        to_email="owner@gmail.com",
         tenant_name="Acme",
-        requested_email="owner@example.com",
+        requested_email="owner@gmail.com",
         connect_url="http://localhost:5173/connect-mailbox?token=abc",
         personal_message="Please connect",
         expires_at=datetime.now(timezone.utc),
     )
     assert result.sent is True
     assert len(calls) == 1
-    assert calls[0]["to_email"] == "owner@example.com"
+    assert calls[0]["to_email"] == "owner@gmail.com"
     assert "Connect my mailbox" in calls[0]["body_html"]
 
 

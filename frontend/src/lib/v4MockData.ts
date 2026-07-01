@@ -137,6 +137,35 @@ export type PaymentRecord = {
   paidDate?: string;
   paymentIntent?: string;
   failureReason?: string;
+  vendorPayoutStatus?: string;
+  vendorPayoutMethodType?: string;
+  executionReadinessStatus?:
+    | "not_ready"
+    | "awaiting_approval"
+    | "blocked_stripe_setup"
+    | "blocked_vendor_payout_setup"
+    | "ready_dry_run"
+    | "manual_instruction_available"
+    | "instruction_created"
+    | "blocked_limit"
+    | "blocked_tenant_disabled"
+    | "scheduled"
+    | "paid"
+    | "failed";
+  executionBlockingReason?: string;
+  executionInstruction?: {
+    id: number;
+    instructionReference: string;
+    vendorName: string;
+    vendorPayoutMethodLabel: string;
+    amount: number;
+    currency: string;
+    dueDate?: string;
+    executionMode: string;
+    status: string;
+    createdByName?: string;
+    createdAt: string;
+  };
 };
 
 export type WalletTxn = {
@@ -240,14 +269,6 @@ export const PAYMENT_TABS: { value: PaymentTab; label: string }[] = [
   { value: "paid", label: "Paid" },
   { value: "failed", label: "Failed" },
 ];
-
-export const SANDBOX_APPROVER_ID = "u2";
-
-export const SANDBOX_CURRENT_USER = {
-  id: SANDBOX_APPROVER_ID,
-  name: "Marcus Webb",
-  role: "Finance Lead",
-};
 
 export const MOCK_LEDGER_RECON: LedgerRecon = {
   balanced: true,

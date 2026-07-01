@@ -11,8 +11,7 @@ body {
 
 /* Shared dropdown option list — matches period picker month menu */
 .app-dropdown-menu {
-  z-index: 250;
-  max-height: 14rem;
+  z-index: 320;
   overflow-y: auto;
   border-radius: 0.5rem;
   border: 1px solid hsl(var(--border));
@@ -21,6 +20,15 @@ body {
     0 4px 6px -1px hsl(var(--foreground) / 0.06),
     0 10px 24px -4px hsl(var(--foreground) / 0.12);
   padding: 0.25rem;
+}
+
+.match-rule-field-menu {
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--popover));
+  box-shadow:
+    0 4px 6px -1px hsl(var(--foreground) / 0.06),
+    0 10px 24px -4px hsl(var(--foreground) / 0.12);
 }
 
 .app-dropdown-option {

@@ -119,7 +119,7 @@ async def test_ingest_email_attachments_does_not_set_early_route(
     clean_org_rule_book,
 ) -> None:
     monkeypatch.setattr(
-        "app.services.pipeline.store_invoice_pdf",
+        "app.services.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/test.pdf",
     )
     monkeypatch.setattr(
@@ -292,3 +292,73 @@ async def test_run_all_validations_includes_team_rules(
         "VR-TE05",
         "VR-TE06",
     ]
+
+
+@pytest.fixture
+def _enable_pdf_split(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PDF_MULTI_DOCUMENT_SPLIT", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_ingest_email_attachments_splits_mixed_bundle(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_org_rule_book,
+    _enable_pdf_split,
+) -> None:
+    from app.models.audit import AuditLog
+    from app.services.pdf_page_text_service import PdfPageText
+
+    pages = [
+        PdfPageText(0, "PURCHASE ORDER\nPO Number: PO-9001\nVendor: Acme"),
+        PdfPageText(1, "GOODS RECEIPT NOTE\nPO 9001\nReceived qty 10"),
+        PdfPageText(2, "TAX INVOICE\nInvoice No: INV-9001\nTotal $110.00"),
+    ]
+    monkeypatch.setattr(
+        "app.services.ingest_fanout_service.extract_pdf_page_texts",
+        lambda _path: pages,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest_fanout_service.extract_pdf_page_range_bytes",
+        lambda _path, start, end: f"%PDF-part-{start}-{end}".encode(),
+    )
+    monkeypatch.setattr(
+        "app.services.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/segment.pdf",
+    )
+    monkeypatch.setattr(
+        "app.services.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
+
+    email = _aws_billing_email()
+    email.attachments[0] = EmailAttachment(
+        filename="bundle.pdf",
+        content_type="application/pdf",
+        data=b"%PDF bundle",
+    )
+    result = await ingest_email_attachments(
+        db_session,
+        [email],
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
+    )
+    await db_session.flush()
+
+    assert result.ingested_count == 3
+    rows = (
+        await db_session.execute(select(Invoice).where(Invoice.tenant_id == TESTING_TENANT_UUID))
+    ).scalars().all()
+    assert len(rows) == 3
+    assert {row.purchase_document_type for row in rows} == {"po", "grn", "invoice"}
+    assert all(row.email_message_id == email.message_id for row in rows)
+
+    audit = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.event == "pdf_segmented")
+        )
+    ).scalars().all()
+    assert len(audit) == 3

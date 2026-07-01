@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 
-from app.azure_env import asyncpg_connect_args, strip_ssl_query_params
+from app.azure_env import asyncpg_connect_args, install_azure_dns_fallback, strip_ssl_query_params
 from app.config import get_settings
 from app.tenant_rls import (
     apply_platform_lookup_session,
@@ -27,6 +27,9 @@ from app.tenant_scoped import coerce_tenant_uuid
 
 class Base(DeclarativeBase):
     pass
+
+
+install_azure_dns_fallback()
 
 
 def _build_engine() -> AsyncEngine:

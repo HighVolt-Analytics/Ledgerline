@@ -12,6 +12,7 @@ class NavBadges(BaseModel):
 
     inbox_count: int
     pending_approval: int
+    pending_classification: int = 0
     team_expenses_count: int = 0
     business_expenses_count: int = 0
     payments_queue_count: int = 0

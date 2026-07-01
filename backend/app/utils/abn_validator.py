@@ -9,6 +9,16 @@ def normalize_abn(value: str) -> str:
     return re.sub(r"\D", "", value)
 
 
+def storage_abn(value: str | None) -> str | None:
+    """Digits-only ABN for invoice.abn (VARCHAR(11)); None if not exactly 11 digits."""
+    if value is None or not str(value).strip():
+        return None
+    digits = normalize_abn(str(value))
+    if len(digits) != 11:
+        return None
+    return digits
+
+
 def is_abn_format(abn: str) -> bool:
     """Test-phase check: exactly 11 digits after normalisation."""
     digits_str = normalize_abn(abn)

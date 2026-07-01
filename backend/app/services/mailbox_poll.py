@@ -1,5 +1,6 @@
 """Poll all connected mailboxes and ingest attachments."""
 
+import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -52,7 +53,8 @@ async def poll_all_and_ingest(
             logger.warning("poll_mailbox_token_failed", mailbox=mb.email, error=str(exc))
             continue
 
-        emails = poll_connected_mailbox(
+        emails = await asyncio.to_thread(
+            poll_connected_mailbox,
             mb.email,
             access_token=access_token,
             mail_provider=mb.mail_provider,
@@ -90,7 +92,8 @@ async def poll_mailbox_and_ingest(
         raise ValueError("Tenant not found")
 
     access_token = await resolve_mailbox_access_token(session, mb)
-    emails = poll_connected_mailbox(
+    emails = await asyncio.to_thread(
+        poll_connected_mailbox,
         mb.email,
         access_token=access_token,
         mail_provider=mb.mail_provider,

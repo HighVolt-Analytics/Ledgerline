@@ -1,8 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Activity, ArrowLeftRight, Cloud, Copy, Database, FileSearch, Link2, Mail, MessageCircle, Plus, Server, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import {
+  Activity,
+  ArrowLeftRight,
+  Cloud,
+  Copy,
+  CreditCard,
+  Database,
+  FileSearch,
+  Link2,
+  Mail,
+  MessageCircle,
+  Plus,
+  Server,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { api } from "@/api/client";
-import type { AppSettings, ConnectedMailbox, MailboxConnectionRequest, WhatsappConnection } from "@/api/types";
+import type {
+  AccountingIntegrationItem,
+  AppSettings,
+  ConnectedMailbox,
+  MailboxConnectionRequest,
+  ViberConnection,
+  WhatsappConnection,
+} from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +32,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useStripeAccount, useStripeReadiness } from "@/hooks/useStripe";
+import { useAccountingIntegrations } from "@/hooks/useAccountingIntegrations";
 
 function statusBadge(ok: boolean) {
   return ok ? (
@@ -19,6 +43,77 @@ function statusBadge(ok: boolean) {
   ) : (
     <Badge variant="secondary">Not connected</Badge>
   );
+}
+
+function comingSoonBadge() {
+  return <Badge variant="secondary">Coming soon</Badge>;
+}
+
+function maskStripeAccountId(id: string): string {
+  if (id.length <= 12) return id;
+  return `${id.slice(0, 8)}…${id.slice(-4)}`;
+}
+
+function stripeModeLabel(mode: string | undefined): string {
+  const normalized = (mode || "sandbox").toLowerCase();
+  if (normalized === "live") return "Live";
+  return "Sandbox";
+}
+
+function accountingStatusBadge(item: AccountingIntegrationItem | undefined) {
+  const status = item?.status ?? "disconnected";
+  if (status === "connected") {
+    return (
+      <Badge variant="outline" className="border-[hsl(var(--chart-1)/0.4)] text-[hsl(var(--chart-1))]">
+        Connected
+      </Badge>
+    );
+  }
+  if (status === "error") {
+    return (
+      <Badge variant="outline" className="border-destructive/40 text-destructive">
+        Error
+      </Badge>
+    );
+  }
+  if (status === "expired") {
+    return <Badge variant="secondary">Expired</Badge>;
+  }
+  return <Badge variant="secondary">Not connected</Badge>;
+}
+
+function accountingConnected(item: AccountingIntegrationItem | undefined): boolean {
+  return item?.status === "connected";
+}
+
+function accountingTagline(
+  item: AccountingIntegrationItem | undefined,
+  fallback: string
+): string {
+  if (!item || item.status === "disconnected") return fallback;
+  if (item.display_name) return item.display_name;
+  if (item.status === "error") {
+    return item.last_error || "Connection error — try reconnecting";
+  }
+  if (item.status === "expired") return "Session expired — reconnect to continue";
+  return fallback;
+}
+
+const ACCOUNTING_OAUTH_ERRORS: Record<string, string> = {
+  not_configured: "Accounting credentials are not configured on the server.",
+  invalid_state: "Connection session expired — try Connect again.",
+  not_admin: "Only tenant admins can connect accounting integrations.",
+  oauth_failed: "OAuth connection failed or was cancelled.",
+  missing_code: "Authorization code missing from provider callback.",
+  missing_realm: "QuickBooks company id missing from callback.",
+};
+
+function globalPayoutsAccessLabel(status: string | undefined): string {
+  const normalized = (status || "not_requested").toLowerCase();
+  if (normalized === "pending_approval") return "Pending approval";
+  if (normalized === "enabled") return "Enabled";
+  if (normalized === "rejected") return "Rejected";
+  return "Not requested";
 }
 
 function requestStatusLabel(status: string) {
@@ -48,6 +143,22 @@ export function IntegrationsPage() {
   const [waOAuthUrl, setWaOAuthUrl] = useState<string>("");
   const [waError, setWaError] = useState<string | null>(null);
   const [waBusy, setWaBusy] = useState(false);
+  const [accountingBusy, setAccountingBusy] = useState<string | null>(null);
+  const [accountingError, setAccountingError] = useState<string | null>(null);
+  const {
+    status: accountingStatus,
+    loading: accountingLoading,
+    reload: reloadAccounting,
+  } = useAccountingIntegrations(Boolean(s));
+  const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount(Boolean(s));
+  const { data: stripeReadiness, isLoading: stripeReadinessLoading } = useStripeReadiness(Boolean(s));
+  const [vbConnections, setVbConnections] = useState<ViberConnection[]>([]);
+  const [vbWebhookUrl, setVbWebhookUrl] = useState<string>("");
+  const [vbWebhookReachable, setVbWebhookReachable] = useState<boolean | null>(null);
+  const [vbWebhookHint, setVbWebhookHint] = useState<string | null>(null);
+  const [vbError, setVbError] = useState<string | null>(null);
+  const [vbBusy, setVbBusy] = useState(false);
+  const [vbAuthToken, setVbAuthToken] = useState("");
 
   async function copyInviteLink(url: string) {
     try {
@@ -84,12 +195,31 @@ export function IntegrationsPage() {
       });
   }, []);
 
+  const loadViber = useCallback((fresh = false) => {
+    api
+      .getViberStatus({ fresh })
+      .then((status) => {
+        setVbConnections(status.connections);
+        setVbWebhookUrl(status.webhook_callback_url);
+        setVbWebhookReachable(status.webhook_reachable);
+        setVbWebhookHint(status.webhook_reachability_hint ?? null);
+        setVbError(null);
+      })
+      .catch(() => {
+        setVbConnections([]);
+        setVbWebhookUrl("");
+        setVbWebhookReachable(null);
+        setVbWebhookHint(null);
+      });
+  }, []);
+
   useEffect(() => {
     api.getSettings().then(setS);
     loadMailboxes();
     loadRequests();
     loadWhatsapp();
-  }, [loadMailboxes, loadRequests, loadWhatsapp]);
+    loadViber();
+  }, [loadMailboxes, loadRequests, loadWhatsapp, loadViber]);
 
   useEffect(() => {
     if (user?.role !== "admin") return;
@@ -160,6 +290,123 @@ export function IntegrationsPage() {
     setSearchParams(searchParams, { replace: true });
   }, [searchParams, setSearchParams, toast, loadWhatsapp]);
 
+  useEffect(() => {
+    const xero = searchParams.get("xero");
+    if (!xero) return;
+    const company = searchParams.get("company");
+    const reason = searchParams.get("reason");
+    if (xero === "connected") {
+      toast({
+        title: "Xero connected",
+        description: company ? `${company} is linked to this tenant.` : undefined,
+      });
+      void reloadAccounting(true);
+    } else if (xero === "error") {
+      const msg = ACCOUNTING_OAUTH_ERRORS[reason ?? ""] ?? reason ?? "Xero connection failed";
+      setAccountingError(msg);
+      toast({ title: "Xero connection failed", description: msg, variant: "destructive" });
+      void reloadAccounting(true);
+    }
+    searchParams.delete("xero");
+    searchParams.delete("company");
+    searchParams.delete("reason");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, toast, reloadAccounting]);
+
+  useEffect(() => {
+    const quickbooks = searchParams.get("quickbooks");
+    if (!quickbooks) return;
+    const company = searchParams.get("company");
+    const reason = searchParams.get("reason");
+    if (quickbooks === "connected") {
+      toast({
+        title: "QuickBooks connected",
+        description: company ? `${company} is linked to this tenant.` : undefined,
+      });
+      void reloadAccounting(true);
+    } else if (quickbooks === "error") {
+      const msg =
+        ACCOUNTING_OAUTH_ERRORS[reason ?? ""] ?? reason ?? "QuickBooks connection failed";
+      setAccountingError(msg);
+      toast({
+        title: "QuickBooks connection failed",
+        description: msg,
+        variant: "destructive",
+      });
+      void reloadAccounting(true);
+    }
+    searchParams.delete("quickbooks");
+    searchParams.delete("company");
+    searchParams.delete("reason");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, toast, reloadAccounting]);
+
+  async function startAccountingConnect(provider: "xero" | "quickbooks_online") {
+    setAccountingBusy(provider);
+    setAccountingError(null);
+    try {
+      const { connect_url } =
+        provider === "xero" ? await api.connectXero() : await api.connectQuickBooks();
+      window.location.href = connect_url;
+    } catch (err) {
+      setAccountingError(err instanceof Error ? err.message : "Could not start OAuth");
+      setAccountingBusy(null);
+    }
+  }
+
+  async function disconnectAccounting(provider: "xero" | "quickbooks_online") {
+    setAccountingBusy(provider);
+    setAccountingError(null);
+    try {
+      await api.disconnectAccountingIntegration(provider);
+      await reloadAccounting(true);
+      toast({
+        title: provider === "xero" ? "Xero disconnected" : "QuickBooks disconnected",
+      });
+    } catch (err) {
+      setAccountingError(err instanceof Error ? err.message : "Disconnect failed");
+    } finally {
+      setAccountingBusy(null);
+    }
+  }
+
+  function accountingCardFooter(
+    provider: "xero" | "quickbooks_online",
+    item: AccountingIntegrationItem | undefined,
+    configured: boolean
+  ) {
+    if (user?.role !== "admin") return null;
+    if (!configured) {
+      return (
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          Set provider OAuth credentials in backend environment (see docs).
+        </p>
+      );
+    }
+    const connected = accountingConnected(item);
+    return (
+      <div className="mt-1.5">
+        <Button
+          size="sm"
+          variant={connected ? "outline" : "default"}
+          className="h-7 text-xs"
+          disabled={accountingBusy === provider || accountingLoading}
+          onClick={() =>
+            void (connected ? disconnectAccounting(provider) : startAccountingConnect(provider))
+          }
+        >
+          {accountingBusy === provider
+            ? connected
+              ? "Disconnecting…"
+              : "Redirecting…"
+            : connected
+              ? "Disconnect"
+              : "Connect"}
+        </Button>
+      </div>
+    );
+  }
+
   async function sendInvitation(e: React.FormEvent) {
     e.preventDefault();
     setMbError(null);
@@ -198,11 +445,48 @@ export function IntegrationsPage() {
     }
   }
 
-  if (!s) {
-    return <p className="text-sm text-muted-foreground">Loading integrations…</p>;
-  }
+  const stripePaymentsConnected =
+    stripeReadiness?.connected === true ||
+    (stripeAccount != null && stripeAccount.onboarding_status !== "disconnected");
 
-  const items = [
+  const stripePaymentsTagline = useMemo(() => {
+    if (stripeAccountLoading || stripeReadinessLoading) {
+      return "Loading Stripe Connect status…";
+    }
+    if (!stripePaymentsConnected) {
+      return "Payables disbursement & balance visibility — connect on Payments";
+    }
+    const mode = stripeModeLabel(s?.stripe_mode);
+    const accountId =
+      stripeReadiness?.account_id ??
+      stripeAccount?.stripe_account_id ??
+      null;
+    const masked = accountId ? maskStripeAccountId(accountId) : "account linked";
+    if (stripeReadiness?.ready_for_charges && stripeReadiness.ready_for_payouts) {
+      return `${mode} · ${masked} · Ready for charges & payouts`;
+    }
+    if (stripeReadiness?.blocking_reason) {
+      return `${mode} · ${masked} · ${stripeReadiness.blocking_reason}`;
+    }
+    const gpStatus = globalPayoutsAccessLabel(s?.stripe_global_payouts_access_status);
+    return `${mode} · ${masked} · Global Payouts: ${gpStatus}`;
+  }, [
+    s?.stripe_mode,
+    s?.stripe_global_payouts_access_status,
+    stripeAccount,
+    stripeAccountLoading,
+    stripePaymentsConnected,
+    stripeReadiness,
+    stripeReadinessLoading,
+  ]);
+
+  const xeroItem = accountingStatus?.xero;
+  const qboItem = accountingStatus?.quickbooks_online;
+
+  const items = useMemo(
+    () => {
+      if (!s) return [];
+      return [
     {
       id: "graph",
       name: "Microsoft Graph",
@@ -218,6 +502,13 @@ export function IntegrationsPage() {
       icon: MessageCircle,
     },
     {
+      id: "viber",
+      name: "Viber",
+      tagline: vbConnections[0]?.bot_id || "Team expense capture",
+      ok: vbConnections.some((c) => c.connection_status === "connected"),
+      icon: MessageCircle,
+    },
+    {
       id: "blob",
       name: "Azure Blob Storage",
       tagline: s.azure_storage_container,
@@ -230,6 +521,20 @@ export function IntegrationsPage() {
       tagline: "Invoice OCR & extraction",
       ok: s.azure_di_enabled,
       icon: FileSearch,
+    },
+    {
+      id: "foundry-vision",
+      name: "Azure AI Foundry (GPT-4o Vision)",
+      tagline: "Vision LLM document AI provider",
+      ok: Boolean(s.azure_foundry_vision_available),
+      icon: Sparkles,
+    },
+    {
+      id: "gemini",
+      name: "Gemini Vision",
+      tagline: "Legacy optional document AI provider",
+      ok: Boolean(s.gemini_vision_available),
+      icon: Sparkles,
     },
     {
       id: "postgres",
@@ -255,16 +560,20 @@ export function IntegrationsPage() {
     {
       id: "xero",
       name: "Xero",
-      tagline: "Chart of accounts & journals",
-      ok: false,
+      tagline: accountingTagline(xeroItem, "Chart of accounts & journals"),
+      ok: accountingConnected(xeroItem),
       icon: ArrowLeftRight,
+      badge: accountingStatusBadge(xeroItem),
+      footer: accountingCardFooter("xero", xeroItem, s.xero_configured),
     },
     {
       id: "qbo",
       name: "QuickBooks Online",
-      tagline: "Bills & journals (coming soon)",
-      ok: false,
+      tagline: accountingTagline(qboItem, "Bills & journals"),
+      ok: accountingConnected(qboItem),
       icon: ArrowLeftRight,
+      badge: accountingStatusBadge(qboItem),
+      footer: accountingCardFooter("quickbooks_online", qboItem, s.quickbooks_configured),
     },
     {
       id: "myob",
@@ -274,16 +583,72 @@ export function IntegrationsPage() {
       icon: ArrowLeftRight,
     },
     {
-      id: "stripe",
-      name: "Stripe",
-      tagline: "Credit pack billing (coming soon)",
+      id: "stripe-payments",
+      name: "Stripe Payments / Connect",
+      tagline: stripePaymentsTagline,
+      ok: stripePaymentsConnected,
+      icon: CreditCard,
+      badge: statusBadge(stripePaymentsConnected),
+      footer: stripePaymentsConnected ? (
+        <div className="space-y-1">
+          <Link
+            to="/payments"
+            className="text-[11px] text-primary hover:underline"
+          >
+            Manage on Payments
+          </Link>
+          <p className="text-[11px] text-muted-foreground">
+            Global Payouts: {globalPayoutsAccessLabel(s.stripe_global_payouts_access_status)}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          <Link
+            to="/payments"
+            className="text-[11px] text-primary hover:underline"
+          >
+            Connect on Payments
+          </Link>
+          <p className="text-[11px] text-muted-foreground">
+            Global Payouts: {globalPayoutsAccessLabel(s.stripe_global_payouts_access_status)}
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: "stripe-billing",
+      name: "Stripe Billing / Credits",
+      tagline: "Credit pack billing for LedgerLink usage (not enabled)",
       ok: false,
       icon: ArrowLeftRight,
+      badge: comingSoonBadge(),
     },
   ];
+    },
+    [
+      s,
+      waConnections,
+      vbConnections,
+      xeroItem,
+      qboItem,
+      stripePaymentsTagline,
+      stripePaymentsConnected,
+      accountingBusy,
+      accountingLoading,
+      user?.role,
+    ]
+  );
+
+  if (!s) {
+    return <p className="text-sm text-muted-foreground">Loading integrations…</p>;
+  }
 
   const connected = items.filter((i) => i.ok).length;
   const pendingRequests = requests.filter((r) => r.status === "pending");
+  const isProductionEnv = (s.app_env || "").toLowerCase() === "production";
+  const livePayoutsDisabled =
+    isProductionEnv &&
+    !(s.stripe_live_payments_enabled && s.stripe_payments_execution_enabled);
 
   return (
     <div>
@@ -291,6 +656,21 @@ export function IntegrationsPage() {
         title="Integrations"
         subtitle={`${connected} of ${items.length} services connected`}
       />
+
+      <div
+        className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground mb-4"
+        data-testid="banner-integrations-environment"
+      >
+        {isProductionEnv
+          ? livePayoutsDisabled
+            ? "Production environment — live payout execution disabled until Stripe Global Payouts approval is complete."
+            : `${s.payment_environment_label} environment`
+          : `${s.payment_environment_label} environment — no real money movement`}
+      </div>
+
+      {accountingError && (
+        <p className="text-sm text-destructive mb-4">{accountingError}</p>
+      )}
 
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
         {items.map((h) => (
@@ -303,11 +683,12 @@ export function IntegrationsPage() {
               <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-primary">
                 <h.icon className="h-5 w-5" />
               </div>
-              {statusBadge(h.ok)}
+              {"badge" in h && h.badge ? h.badge : statusBadge(h.ok)}
             </div>
             <div>
               <p className="text-sm font-medium">{h.name}</p>
               <p className="text-xs text-muted-foreground">{h.tagline}</p>
+              {"footer" in h && h.footer ? <div className="mt-1.5">{h.footer}</div> : null}
             </div>
           </Card>
         ))}
@@ -408,7 +789,11 @@ export function IntegrationsPage() {
         )}
 
         {pendingRequests.length === 0 && requests.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No connection requests yet.</p>
+          <p className="text-sm text-muted-foreground">
+            {user?.role === "admin"
+              ? "No connection requests yet."
+              : "No connection requests yet. Only admins can send mailbox invitations."}
+          </p>
         ) : (
           <ul className="space-y-2">
             {requests.map((req) => (
@@ -494,8 +879,14 @@ export function IntegrationsPage() {
         </div>
         {mailboxes.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No mailboxes connected yet. Send an invitation above, or set GRAPH_MAILBOX in
-            backend .env for legacy application-permission polling.
+            {user?.role === "admin" ? (
+              <>
+                No mailboxes connected yet. Send an invitation above, or set GRAPH_MAILBOX in
+                backend .env for legacy application-permission polling.
+              </>
+            ) : (
+              <>No mailboxes connected yet. Ask an admin to send a connection invitation.</>
+            )}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -725,10 +1116,181 @@ export function IntegrationsPage() {
         )}
       </Card>
 
+      <Card className="p-5 mb-6" id="viber-integration">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold">Viber</h2>
+            <p className="text-xs text-muted-foreground">
+              Connect your Viber Public Account bot so employees can submit expense receipts via
+              Viber. Identity is matched by Viber user ID or phone in Rule Book → Employees.
+            </p>
+          </div>
+          <MessageCircle className="h-5 w-5 text-muted-foreground" />
+        </div>
+
+        {vbError && <p className="text-sm text-destructive mb-2">{vbError}</p>}
+
+        {vbWebhookUrl && (
+          <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 space-y-2 max-w-2xl">
+            <p className="text-xs text-muted-foreground">
+              Webhook URL (registered automatically on connect; must be HTTPS and reachable by
+              Viber):
+            </p>
+            <div className="flex gap-2">
+              <Input readOnly value={vbWebhookUrl} className="text-xs font-mono" />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => void copyInviteLink(vbWebhookUrl)}
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Copy
+              </Button>
+            </div>
+            {vbWebhookReachable === false && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive space-y-1">
+                <p className="font-medium">Webhook not reachable from the internet</p>
+                <p>{vbWebhookHint ?? "Start ngrok and update PUBLIC_TUNNEL_URL in backend .env"}</p>
+                <ol className="list-decimal list-inside text-muted-foreground mt-1 space-y-0.5">
+                  <li>In a new terminal: <code className="text-[10px]">ngrok http 8001</code></li>
+                  <li>
+                    Copy the <code className="text-[10px]">https://….ngrok-free.dev</code> URL into{" "}
+                    <code className="text-[10px]">PUBLIC_TUNNEL_URL</code> in{" "}
+                    <code className="text-[10px]">backend/.env</code>
+                  </li>
+                  <li>Restart uvicorn, refresh this page, then Connect or Test Viber again</li>
+                </ol>
+              </div>
+            )}
+            {vbWebhookReachable === true && (
+              <p className="text-xs text-[hsl(var(--chart-1))]">Webhook is reachable (tunnel OK).</p>
+            )}
+          </div>
+        )}
+
+        {user?.role === "admin" && (
+          <div className="mb-4 space-y-2 max-w-md">
+            <label className="text-xs text-muted-foreground" htmlFor="viber-auth-token">
+              Viber auth token (from partners.viber.com → your Public Account)
+            </label>
+            <div className="flex gap-2">
+              <Input
+                id="viber-auth-token"
+                type="password"
+                autoComplete="off"
+                placeholder="Paste auth token"
+                value={vbAuthToken}
+                onChange={(e) => setVbAuthToken(e.target.value)}
+                className="text-xs font-mono"
+              />
+              <Button
+                size="sm"
+                disabled={vbBusy || vbAuthToken.trim().length < 8}
+                onClick={async () => {
+                  setVbBusy(true);
+                  setVbError(null);
+                  try {
+                    const result = await api.connectViber(vbAuthToken.trim());
+                    setVbAuthToken("");
+                    loadViber(true);
+                    toast({
+                      title: "Viber connected",
+                      description: result.bot_name
+                        ? `${result.bot_name} is ready for expense capture.`
+                        : `Bot ${result.connection.bot_id} connected.`,
+                    });
+                  } catch (e) {
+                    setVbError(e instanceof Error ? e.message : "Could not connect Viber bot");
+                  } finally {
+                    setVbBusy(false);
+                  }
+                }}
+              >
+                {vbBusy ? "Connecting…" : "Connect Viber"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Use the same ngrok URL as <code className="text-[10px]">PUBLIC_TUNNEL_URL</code> in{" "}
+              <code className="text-[10px]">backend/.env</code>. Free ngrok URLs change every time
+              you restart ngrok — update .env and reconnect Viber after each restart.
+            </p>
+          </div>
+        )}
+
+        {vbConnections.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No Viber bots connected yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {vbConnections.map((conn) => (
+              <li
+                key={conn.id}
+                className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm gap-3"
+              >
+                <div className="min-w-0">
+                  <span className="font-medium font-mono text-xs">{conn.bot_id}</span>
+                  <Badge variant="outline" className="ml-2 text-[10px]">
+                    {conn.integration_health}
+                  </Badge>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Status: {conn.connection_status}
+                  </p>
+                </div>
+                {user?.role === "admin" && (
+                  <div className="flex gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={async () => {
+                        try {
+                          const result = await api.testViberConnection(conn.id);
+                          if (result.ok) {
+                            toast({ title: "Viber test passed", description: "Webhook resubscribed." });
+                          } else {
+                            toast({
+                              title: "Viber needs attention",
+                              description: result.warnings.join(" · ") || result.integration_health,
+                              variant: "destructive",
+                            });
+                          }
+                          loadViber(true);
+                        } catch (e) {
+                          setVbError(e instanceof Error ? e.message : "Test failed");
+                        }
+                      }}
+                    >
+                      Test
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive"
+                      onClick={async () => {
+                        try {
+                          await api.disconnectViber(conn.id);
+                          loadViber(true);
+                          toast({ title: "Viber disconnected" });
+                        } catch (e) {
+                          setVbError(e instanceof Error ? e.message : "Disconnect failed");
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
       <Card className="p-5">
-        <h2 className="text-sm font-semibold mb-1">What syncs when connected to Xero?</h2>
+        <h2 className="text-sm font-semibold mb-1">Planned Xero & QuickBooks sync</h2>
         <p className="text-xs text-muted-foreground mb-4">
-          Bidirectional sync keeps your ledger and Ledgerline aligned.
+          OAuth connection is live; bill and journal sync is not enabled yet. Planned features:
         </p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {["Chart of accounts", "Contacts", "Bills & payments", "Tax rates", "Tracking categories"].map(

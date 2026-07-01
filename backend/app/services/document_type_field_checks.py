@@ -118,6 +118,16 @@ def field_is_present(
         return bool(ctx.document_text.strip())
     if key == "document_heading":
         return bool(ctx.document_heading.strip())
+    from app.services.extraction_field_values import read_extraction_field_value
+
+    custom_val = read_extraction_field_value(
+        key,
+        invoice=invoice,
+        parsed=parsed,
+        document_heading=ctx.document_heading,
+    )
+    if custom_val:
+        return True
     for source in (parsed, invoice):
         if hasattr(source, key):
             val = getattr(source, key, None)

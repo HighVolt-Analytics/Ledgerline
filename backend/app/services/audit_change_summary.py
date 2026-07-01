@@ -435,6 +435,24 @@ def summarize_audit_change(
     if event == "vendor_registration_released":
         vendor = str(d.get("vendor") or "").strip()
         return f"Hold released for {vendor}" if vendor else "Vendor registration released"
+    if event == "accounting_integration_connected":
+        label = str(d.get("provider_label") or d.get("provider") or "").strip()
+        company = str(d.get("display_name") or "").strip()
+        if label and company:
+            return f"{label} connected — {company}"
+        return f"{label} connected" if label else "Accounting integration connected"
+    if event == "accounting_integration_disconnected":
+        label = str(d.get("provider_label") or d.get("provider") or "").strip()
+        company = str(d.get("display_name") or "").strip()
+        if label and company:
+            return f"{label} disconnected — {company}"
+        return f"{label} disconnected" if label else "Accounting integration disconnected"
+    if event == "accounting_integration_error":
+        label = str(d.get("provider_label") or d.get("provider") or "").strip()
+        reason = truncate_audit_error(str(d.get("reason") or ""))
+        if label and reason:
+            return f"{label} error — {reason}"
+        return reason or "Accounting integration error"
 
     reason = str(d.get("hold_reason") or d.get("reason") or "").strip()
     if reason:

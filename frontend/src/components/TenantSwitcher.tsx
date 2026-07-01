@@ -13,7 +13,7 @@ import { AddOrganisationDialog } from "@/components/AddOrganisationDialog";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/context/AuthContext";
 import { fetchMyMemberships, type TenantAccountSummary } from "@/lib/authApi";
-import { getAccessToken, loadMembershipsFromSession } from "@/lib/authSession";
+import { getAccessToken, loadMembershipsFromSession, PROFILE_UPDATED_EVENT } from "@/lib/authSession";
 import { cn } from "@/lib/cn";
 
 type TenantSwitcherProps = {
@@ -90,6 +90,14 @@ export function TenantSwitcher({
       void refreshMemberships();
     }
   }, [memberships.length, refreshMemberships]);
+
+  useEffect(() => {
+    const onProfileUpdated = () => {
+      void refreshMemberships();
+    };
+    window.addEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
+    return () => window.removeEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
+  }, [refreshMemberships]);
 
   const currentTenantId = user?.tenant_id;
   const visibleMemberships = useMemo(

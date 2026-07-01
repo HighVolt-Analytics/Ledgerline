@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -45,10 +46,19 @@ def _embedding_url() -> str:
     )
 
 
-def chat_json(*, system: str, user: str) -> dict[str, Any] | None:
-    if not is_azure_openai_enabled():
-        return None
+def chat_json(
+    *,
+    system: str,
+    user: str,
+    timeout_seconds: int | None = None,
+    require_runtime: bool = False,
+) -> dict[str, Any] | None:
     settings = get_settings()
+    if require_runtime:
+        if not settings.runtime_llm_available:
+            return None
+    elif not is_azure_openai_enabled():
+        return None
     payload: dict[str, Any] = {
         "messages": [
             {"role": "system", "content": system},
@@ -59,8 +69,9 @@ def chat_json(*, system: str, user: str) -> dict[str, Any] | None:
     deployment = settings.azure_openai_chat_deployment.lower()
     if "gpt-5" not in deployment:
         payload["temperature"] = 0.1
+    timeout = timeout_seconds or settings.sample_proposal_llm_timeout_seconds
     try:
-        with httpx.Client(timeout=settings.sample_proposal_llm_timeout_seconds) as client:
+        with httpx.Client(timeout=timeout) as client:
             response = client.post(
                 _chat_url(),
                 headers={
@@ -87,6 +98,23 @@ def chat_json(*, system: str, user: str) -> dict[str, Any] | None:
         logger.warning("azure_openai_chat_invalid_json")
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+async def chat_json_async(
+    *,
+    system: str,
+    user: str,
+    timeout_seconds: int | None = None,
+    require_runtime: bool = False,
+) -> dict[str, Any] | None:
+    """Non-blocking wrapper for use inside async request handlers and pipeline."""
+    return await asyncio.to_thread(
+        chat_json,
+        system=system,
+        user=user,
+        timeout_seconds=timeout_seconds,
+        require_runtime=require_runtime,
+    )
 
 
 def embed_texts(texts: list[str]) -> list[list[float]] | None:

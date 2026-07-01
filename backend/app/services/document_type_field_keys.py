@@ -32,6 +32,7 @@ CANONICAL_EXTRACTION_FIELD_KEYS: frozenset[str] = frozenset(
         "account_code",
         "account_name",
         "document_text",
+        "document_heading",
     }
 )
 

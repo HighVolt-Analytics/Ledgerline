@@ -58,7 +58,7 @@ class PlaybookGateResult:
 
     @property
     def blocks_posting(self) -> bool:
-        return bool(self.missing_bundle_mandatory)
+        return bool(self.missing_bundle_mandatory or self.missing_extraction_fields)
 
     def audit_detail(self) -> dict[str, object]:
         payload: dict[str, object] = {

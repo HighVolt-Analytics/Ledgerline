@@ -14,6 +14,7 @@ from app.services.master_data_service import (
     classification_config_with_db_masters,
     create_pending_vendor,
     list_pending_vendors,
+    list_vendor_masters,
 )
 from app.services.rule_book_config_io import load_rule_book_config_with_masters
 from app.services.rule_book_evaluate_service import invoice_to_eval_document
@@ -54,6 +55,8 @@ ROUTE_VAULT = "Vault"
 
 EVAL_AUTO_CODED = "auto_coded"
 EVAL_NEEDS_REVIEW = "needs_review"
+EVAL_AWAITING_CLASSIFICATION = "awaiting_classification"
+EVAL_NEEDS_RESCAN = "needs_rescan"
 EVAL_PENDING_VENDOR = "pending_vendor"
 
 
@@ -224,6 +227,10 @@ async def apply_invoice_evaluation(
     enqueue_pending: bool = True,
 ) -> InvoiceEvaluationResult:
     """Evaluate and persist routing fields; optionally enqueue unknown vendors."""
+    if invoice.evaluation_status == EVAL_AWAITING_CLASSIFICATION:
+        code = (invoice.document_type_code or "").strip().upper()
+        if code:
+            invoice.evaluation_status = None
     if config is None:
         config = await load_classification_config(session, invoice.tenant_id)
     config = await classification_config_with_db_masters(session, invoice.tenant_id, config)
@@ -320,13 +327,14 @@ async def apply_invoice_evaluation(
     return result
 
 
-async def _maybe_enqueue_pending_vendor(
+async def ensure_pending_vendor_queued(
     session: AsyncSession,
     invoice: Invoice,
-    result: InvoiceEvaluationResult,
     *,
     config: RuleBookConfigPayload | None = None,
-) -> None:
+    confidence: float | None = None,
+) -> bool:
+    """Ensure a pending_vendors row exists for an invoice awaiting registration."""
     if config is None:
         config = await load_classification_config(session, invoice.tenant_id)
 
@@ -344,23 +352,22 @@ async def _maybe_enqueue_pending_vendor(
         document_type=definition,
         purchase_document_type=invoice.purchase_document_type,
     ):
-        return
+        return False
 
     name = (invoice.vendor or "").strip()
     if not name:
-        return
+        return False
 
-    from app.services.master_data_service import list_vendor_masters
     from app.services.vendor_detection import find_matching_vendor_master
 
     db_masters = await list_vendor_masters(session, invoice.tenant_id)
     if find_matching_vendor_master(name, invoice.abn, db_masters):
-        return
+        return False
 
     existing = await list_pending_vendors(session, invoice.tenant_id)
     for row in existing:
         if row.detected_name.strip().lower() == name.lower():
-            return
+            return True
 
     try:
         await create_pending_vendor(
@@ -370,12 +377,29 @@ async def _maybe_enqueue_pending_vendor(
                 detected_name=name,
                 detected_abn=invoice.abn,
                 source_invoice_id=invoice.id,
-                confidence=result.vendor_confidence,
+                confidence=confidence if confidence is not None else float(invoice.vendor_confidence or 0),
             ),
         )
+        return True
     except ValueError:
-        # Vendor registered in masters since evaluation started — safe to skip.
+        return False
+
+
+async def _maybe_enqueue_pending_vendor(
+    session: AsyncSession,
+    invoice: Invoice,
+    result: InvoiceEvaluationResult,
+    *,
+    config: RuleBookConfigPayload | None = None,
+) -> None:
+    if invoice.evaluation_status != EVAL_PENDING_VENDOR:
         return
+    await ensure_pending_vendor_queued(
+        session,
+        invoice,
+        config=config,
+        confidence=result.vendor_confidence,
+    )
 
 
 async def load_config_for_tenant(

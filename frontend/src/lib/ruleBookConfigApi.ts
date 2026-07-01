@@ -2,13 +2,18 @@ import type { RuleBookConfig, RuleBookRulesPayload } from "@/api/types";
 import type {
   EmployeeMaster,
   ExpenseRule,
+  OrgContextConfig,
   PurchaseRule,
   RuleBookConfigState,
   RuleConditionGroup,
   TeamExpenseRule,
   VendorMaster,
 } from "@/lib/v4RuleBookTypes";
-import { INGEST_ACTION_ROUTE_PLACEHOLDER, ROUTE_TARGETS } from "@/lib/v4RuleBookTypes";
+import {
+  emptyOrgContextConfig,
+  INGEST_ACTION_ROUTE_PLACEHOLDER,
+  ROUTE_TARGETS,
+} from "@/lib/v4RuleBookTypes";
 import { emptyDocumentClassifier, type DocumentTypeDefinition, type DocumentTypeSampleAnalysis } from "@/lib/v5DocumentTypes";
 import type { ApprovalMode, MatchMode, PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import {
@@ -324,6 +329,7 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     posting: String(raw.posting ?? "No"),
     fraudRisk: (raw.fraud_risk ?? raw.fraudRisk ?? "low") as DocumentTypeDefinition["fraudRisk"],
     oneLine: String(raw.one_line ?? raw.oneLine ?? ""),
+    llmHint: String(raw.llm_hint ?? raw.llmHint ?? ""),
     routeTarget: String(raw.route_target ?? raw.routeTarget ?? ROUTE_TARGETS[3]),
     enabled: raw.enabled !== false,
     classifier: mapClassifier(raw.classifier as Record<string, unknown> | undefined),
@@ -362,6 +368,42 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     bundleConditional: (raw.bundle_conditional ?? raw.bundleConditional ?? []) as string[],
     purchaseBundleRole: mapPurchaseBundleRole(raw),
     sampleAnalysis: mapSampleAnalysis(raw),
+    matrixTemplateCode: String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? ""),
+    fxPolicy: mapFxPolicy(raw.fx_policy ?? raw.fxPolicy),
+  };
+}
+
+function mapFxPolicy(raw: unknown): DocumentTypeDefinition["fxPolicy"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  return {
+    functionalCurrency: String(row.functional_currency ?? row.functionalCurrency ?? "AUD"),
+    fxGainLossAccount: String(row.fx_gain_loss_account ?? row.fxGainLossAccount ?? "FX Gain/Loss"),
+    bankAccount: String(row.bank_account ?? row.bankAccount ?? "Bank"),
+    bookingRateSource: (row.booking_rate_source ?? row.bookingRateSource ?? "invoice_date") as
+      | "invoice_date"
+      | "payment_date"
+      | "po_date"
+      | "manual"
+      | "static_table",
+    paymentRateSource: (row.payment_rate_source ?? row.paymentRateSource ?? "payment_date") as
+      | "invoice_date"
+      | "payment_date"
+      | "po_date"
+      | "manual"
+      | "static_table",
+    requirePoInvoiceCurrencyMatch:
+      typeof row.require_po_invoice_currency_match === "boolean"
+        ? row.require_po_invoice_currency_match
+        : typeof row.requirePoInvoiceCurrencyMatch === "boolean"
+          ? row.requirePoInvoiceCurrencyMatch
+          : true,
+    grnCurrencyOperationalOnly:
+      typeof row.grn_currency_operational_only === "boolean"
+        ? row.grn_currency_operational_only
+        : typeof row.grnCurrencyOperationalOnly === "boolean"
+          ? row.grnCurrencyOperationalOnly
+          : true,
   };
 }
 
@@ -381,6 +423,7 @@ function documentTypeToApi(
     posting: docType.posting,
     fraud_risk: docType.fraudRisk,
     one_line: docType.oneLine,
+    llm_hint: docType.llmHint ?? "",
     route_target: docType.routeTarget,
     enabled: docType.enabled,
     classifier: {
@@ -427,6 +470,9 @@ function documentTypeToApi(
     ...(docType.purchaseBundleRole
       ? { purchase_bundle_role: docType.purchaseBundleRole }
       : {}),
+    ...(docType.matrixTemplateCode
+      ? { matrix_template_code: docType.matrixTemplateCode }
+      : {}),
     ...(docType.sampleAnalysis
       ? {
           sample_analysis: {
@@ -440,6 +486,56 @@ function documentTypeToApi(
           },
         }
       : {}),
+    ...(docType.fxPolicy
+      ? {
+          fx_policy: {
+            functional_currency: docType.fxPolicy.functionalCurrency ?? "AUD",
+            fx_gain_loss_account: docType.fxPolicy.fxGainLossAccount ?? "FX Gain/Loss",
+            bank_account: docType.fxPolicy.bankAccount ?? "Bank",
+            booking_rate_source: docType.fxPolicy.bookingRateSource ?? "invoice_date",
+            payment_rate_source: docType.fxPolicy.paymentRateSource ?? "payment_date",
+            require_po_invoice_currency_match:
+              docType.fxPolicy.requirePoInvoiceCurrencyMatch ?? true,
+            grn_currency_operational_only: docType.fxPolicy.grnCurrencyOperationalOnly ?? true,
+          },
+        }
+      : {}),
+  };
+}
+
+export function documentTypeDefinitionToApi(
+  docType: DocumentTypeDefinition
+): RuleBookRulesPayload["document_types"][number] {
+  return documentTypeToApi(docType);
+}
+
+function normalizeOrgPerspective(value: string | undefined): OrgContextConfig["defaultPerspective"] {
+  const token = (value ?? "buyer").trim().toLowerCase();
+  if (token === "seller" || token === "mixed") return token;
+  return "buyer";
+}
+
+function mapOrgContextFromApi(raw: RuleBookConfig["org_context"] | undefined): OrgContextConfig {
+  if (!raw) return emptyOrgContextConfig();
+  return {
+    legalName: raw.legal_name ?? "",
+    abn: raw.abn ?? "",
+    aliases: [...(raw.aliases ?? [])],
+    defaultPerspective: normalizeOrgPerspective(raw.default_perspective),
+    intakeSummary: raw.intake_summary ?? "",
+    classificationHints: raw.classification_hints ?? "",
+  };
+}
+
+function orgContextToApi(org: OrgContextConfig | undefined): RuleBookRulesPayload["org_context"] {
+  const value = org ?? emptyOrgContextConfig();
+  return {
+    legal_name: value.legalName,
+    abn: value.abn,
+    aliases: [...value.aliases],
+    default_perspective: value.defaultPerspective,
+    intake_summary: value.intakeSummary,
+    classification_hints: value.classificationHints,
   };
 }
 
@@ -454,6 +550,15 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       unclassifiedMinConfidence:
         api.document_classification?.unclassified_min_confidence ?? 0.45,
     },
+    aiClassification: {
+      documentAiProvider:
+        (api.ai_classification?.document_ai_provider as
+          | "azure_di"
+          | "azure_foundry_vision"
+          | "gemini_vision") ?? "azure_di",
+      autoRouteMinConfidence: api.ai_classification?.auto_route_min_confidence ?? 0.85,
+    },
+    orgContext: mapOrgContextFromApi(api.org_context),
     emailCaptureRules: api.email_capture_rules.map((rule) => ({
       id: rule.id,
       name: rule.name,
@@ -517,6 +622,9 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       taxAccount: api.posting_defaults?.tax_account ?? "GST Paid",
       payableAccount: api.posting_defaults?.payable_account ?? "Accounts Payable",
       fallbackAccount: api.posting_defaults?.fallback_account ?? "Suspense Account",
+      functionalCurrency: api.posting_defaults?.functional_currency ?? "AUD",
+      fxGainLossAccount: api.posting_defaults?.fx_gain_loss_account ?? "FX Gain/Loss",
+      bankAccount: api.posting_defaults?.bank_account ?? "Bank",
     },
     documentSets: (api.document_sets ?? []).map((set) => ({
       id: set.id,
@@ -524,6 +632,20 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       setName: set.set_name,
       isolated: set.isolated,
     })),
+    purchaseMatch: api.purchase_match
+      ? {
+          baseUom: api.purchase_match.base_uom ?? "EA",
+          qtyTolerancePct: api.purchase_match.qty_tolerance_pct ?? 0,
+          uomConversions: (api.purchase_match.uom_conversions ?? []).map((row) => ({
+            id: row.id,
+            vendorKey: row.vendor_key ?? "",
+            sku: row.sku ?? "",
+            fromUom: row.from_uom,
+            toUom: row.to_uom ?? "EA",
+            factor: row.factor,
+          })),
+        }
+      : undefined,
   };
 }
 
@@ -536,6 +658,11 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       unclassified_min_confidence:
         state.documentClassification?.unclassifiedMinConfidence ?? 0.45,
     },
+    ai_classification: {
+      document_ai_provider: state.aiClassification?.documentAiProvider ?? "azure_di",
+      auto_route_min_confidence: state.aiClassification?.autoRouteMinConfidence ?? 0.85,
+    },
+    org_context: orgContextToApi(state.orgContext),
     document_types: state.documentTypes.map(documentTypeToApi),
     email_capture_rules: state.emailCaptureRules.map((rule) => ({
       id: rule.id,
@@ -596,6 +723,9 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       tax_account: state.postingDefaults.taxAccount,
       payable_account: state.postingDefaults.payableAccount,
       fallback_account: state.postingDefaults.fallbackAccount,
+      functional_currency: state.postingDefaults.functionalCurrency ?? "AUD",
+      fx_gain_loss_account: state.postingDefaults.fxGainLossAccount ?? "FX Gain/Loss",
+      bank_account: state.postingDefaults.bankAccount ?? "Bank",
     },
     document_sets: state.documentSets.map((set) => ({
       id: set.id,
@@ -603,5 +733,21 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       set_name: set.setName,
       ...(set.isolated != null ? { isolated: set.isolated } : {}),
     })),
+    ...(state.purchaseMatch
+      ? {
+          purchase_match: {
+            base_uom: state.purchaseMatch.baseUom,
+            qty_tolerance_pct: state.purchaseMatch.qtyTolerancePct,
+            uom_conversions: state.purchaseMatch.uomConversions.map((row) => ({
+              id: row.id,
+              vendor_key: row.vendorKey ?? "",
+              sku: row.sku ?? "",
+              from_uom: row.fromUom,
+              to_uom: row.toUom,
+              factor: row.factor,
+            })),
+          },
+        }
+      : {}),
   };
 }

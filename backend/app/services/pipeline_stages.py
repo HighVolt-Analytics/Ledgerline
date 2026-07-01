@@ -183,6 +183,115 @@ def _actor_name(detail: dict[str, Any] | None) -> str | None:
     return str(name) if name else None
 
 
+def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineStage]:
+    """Pre-extract phases when the strict 5-step pipeline audit trail exists."""
+    storage_log = _latest_log(logs, "storage_verified")
+    if storage_log is None:
+        return []
+
+    ocr_log = _latest_log(logs, "ocr_completed")
+    quality_pass = _latest_log(logs, "image_quality_gate_passed")
+    quality_fail = _latest_log(logs, "image_quality_gate_failed")
+    quality_log = quality_pass or quality_fail
+    classify_log = _latest_log(logs, "llm_classified")
+    gate_pass = _latest_log(logs, "classification_gate_passed")
+    gate_fail = _latest_log(logs, "classification_gate_failed")
+    resolved = _latest_log(logs, "classification_resolved")
+    if gate_pass and gate_fail:
+        gate_log = gate_pass if _is_after(gate_pass, gate_fail) else gate_fail
+    else:
+        gate_log = gate_pass or gate_fail
+
+    def _provider_detail(entry: AuditLog | None) -> str:
+        if entry and entry.detail:
+            provider = entry.detail.get("document_ai_provider")
+            if provider:
+                return str(provider)
+        return "Document AI"
+
+    stages: list[PipelineStage] = [
+        PipelineStage(
+            stage="Storage",
+            at=storage_log.created_at,
+            detail=f"File verified · {_provider_detail(storage_log)}",
+            state="done",
+        ),
+    ]
+
+    if ocr_log:
+        conf = (ocr_log.detail or {}).get("confidence", "high")
+        stages.append(
+            PipelineStage(
+                stage="OCR",
+                at=ocr_log.created_at,
+                detail=f"Layout read · {conf} confidence",
+                state="done",
+            )
+        )
+
+    if quality_log:
+        passed = quality_log.event == "image_quality_gate_passed"
+        detail = quality_log.detail or {}
+        text_len = detail.get("text_length")
+        stages.append(
+            PipelineStage(
+                stage="Image quality",
+                at=quality_log.created_at,
+                detail=(
+                    f"OCR readable · {text_len} chars"
+                    if passed
+                    else "Rescan required — poor image or sparse OCR"
+                ),
+                state="done" if passed else "fail",
+            )
+        )
+
+    if classify_log:
+        detail = classify_log.detail or {}
+        dt = detail.get("llm_suggested_dt") or "—"
+        conf = detail.get("llm_confidence")
+        conf_text = f"{int(float(conf) * 100)}%" if conf is not None else "—"
+        stages.append(
+            PipelineStage(
+                stage="Classified",
+                at=classify_log.created_at,
+                detail=f"LLM · {dt} · {conf_text}",
+                state="done",
+            )
+        )
+
+    if resolved and (gate_fail is None or _is_after(resolved, gate_fail)):
+        resolved_detail = resolved.detail if isinstance(resolved.detail, dict) else {}
+        dt = str(resolved_detail.get("confirmed_dt") or "—")
+        stages.append(
+            PipelineStage(
+                stage="Gate",
+                at=resolved.created_at,
+                detail=f"Human confirmed · {dt}",
+                state="done",
+            )
+        )
+    elif gate_log:
+        passed = gate_log.event == "classification_gate_passed"
+        detail = gate_log.detail or {}
+        conf = detail.get("llm_confidence") or detail.get("confirmed_confidence")
+        conf_text = f"{int(float(conf) * 100)}%" if conf is not None else "—"
+        stages.append(
+            PipelineStage(
+                stage="Gate",
+                at=gate_log.created_at,
+                detail=(
+                    f"Auto-route · {conf_text}"
+                    if passed
+                    else "Awaiting human classification"
+                ),
+                state="done" if passed else "fail",
+            )
+        )
+
+    return stages
+
+
 def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineStage]:
     """Six-step narrative for audit UI."""
     received_log = _latest_log(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
@@ -382,6 +491,7 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
             detail=f"{source} · {received_via}",
             state="done",
         ),
+        *_early_pipeline_stages(inv, logs),
         PipelineStage(
             stage="Parsed",
             at=parsed_at,
@@ -481,40 +591,99 @@ def derive_current_stage(inv: Invoice, logs: list[AuditLog]) -> tuple[str, Stage
     return "Received", "pending"
 
 
+def _matrix_cell(
+    stage: str,
+    *,
+    state: StageState,
+    at: datetime | None = None,
+    detail: str = "Pending",
+) -> dict[str, str]:
+    return {
+        "stage": stage,
+        "state": state,
+        "when": _relative_time(at),
+        "detail": detail,
+    }
+
+
 def build_matrix_cells(inv: Invoice, logs: list[AuditLog]) -> list[dict[str, str]]:
     """Matrix grid cells derived from pipeline stages (plain dicts for API schemas)."""
     steps = build_pipeline_stages(inv, logs)
     by_name = {step.stage: step for step in steps}
-    cells: list[dict[str, str]] = []
 
     if inv.status == InvoiceStatus.DUPLICATE_SKIPPED:
-        for i, stage in enumerate(MATRIX_STAGES):
-            cells.append(
-                {
-                    "stage": stage,
-                    "state": "fail" if i == 0 else "pending",
-                    "when": "—",
-                    "detail": "Duplicate skipped",
-                }
-            )
+        received = by_name.get("Received")
+        dup = by_name.get("Duplicate skipped")
+        dup_detail = dup.detail if dup else "Duplicate file skipped"
+        cells: list[dict[str, str]] = []
+        for stage in MATRIX_STAGES:
+            if stage == "Received":
+                cells.append(
+                    _matrix_cell(
+                        stage,
+                        state="done",
+                        at=received.at if received else inv.created_at,
+                        detail=received.detail if received else "Received",
+                    )
+                )
+            elif stage == "Parsed":
+                cells.append(
+                    _matrix_cell(
+                        stage,
+                        state="fail",
+                        at=dup.at if dup else inv.created_at,
+                        detail=dup_detail,
+                    )
+                )
+            else:
+                cells.append(
+                    _matrix_cell(stage, state="pending", detail="Blocked — duplicate skipped")
+                )
         return cells
 
+    if inv.status == InvoiceStatus.REJECTED:
+        received = by_name.get("Received")
+        rejected = by_name.get("Rejected")
+        reject_detail = rejected.detail if rejected else "Document rejected"
+        cells = []
+        for stage in MATRIX_STAGES:
+            if stage == "Received":
+                cells.append(
+                    _matrix_cell(
+                        stage,
+                        state="done",
+                        at=received.at if received else inv.created_at,
+                        detail=received.detail if received else "Received",
+                    )
+                )
+            elif stage == "Parsed":
+                cells.append(
+                    _matrix_cell(
+                        stage,
+                        state="fail",
+                        at=rejected.at if rejected else inv.created_at,
+                        detail=reject_detail,
+                    )
+                )
+            else:
+                cells.append(_matrix_cell(stage, state="pending", detail="Blocked — rejected"))
+        return cells
+
+    cells = []
     for stage in MATRIX_STAGES:
         step = by_name.get(stage)
         if step:
             state: StageState = step.state if step.state != "skipped" else "pending"
             cells.append(
-                {
-                    "stage": stage,
-                    "state": state,
-                    "when": _relative_time(step.at),
-                    "detail": step.detail,
-                }
+                _matrix_cell(
+                    stage,
+                    state=state,
+                    at=step.at,
+                    detail=step.detail,
+                )
             )
             continue
-        cells.append(
-            {"stage": stage, "state": "pending", "when": "—", "detail": "Pending"}
-        )
+        cells.append(_matrix_cell(stage, state="pending"))
 
     return cells
 

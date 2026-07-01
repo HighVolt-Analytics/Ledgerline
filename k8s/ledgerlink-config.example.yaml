@@ -8,6 +8,10 @@ metadata:
   namespace: quantum-ledgerlink
 data:
   BASE_PATH: "/ledgerlink"
+  APP_ENV: "preview"
+  PAYMENT_ENVIRONMENT_LABEL: "Preview"
+  PUBLIC_APP_BASE_URL: "https://staging.highvolt.tech/ledgerlink"
+  PUBLIC_API_BASE_URL: "https://staging.highvolt.tech/ledgerlink/api"
   POSTGRES_HOST: "<your-postgres-host>"
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "<your-db-name>"
@@ -24,6 +28,27 @@ data:
   GRAPH_OAUTH_FRONTEND_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/integrations"
   LOG_LEVEL: "INFO"
   AUTH_REQUIRED: "true"
+  STRIPE_MODE: "sandbox"
+  STRIPE_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/payments"
+  STRIPE_REFRESH_URL: "https://staging.highvolt.tech/ledgerlink/payments"
+  STRIPE_OAUTH_REDIRECT_URL: "https://staging.highvolt.tech/ledgerlink/payments/stripe/oauth/callback"
+  # Production safety — keep false until live cutover is explicitly approved
+  STRIPE_PAYMENTS_EXECUTION_ENABLED: "false"
+  STRIPE_LIVE_PAYMENTS_ENABLED: "false"
+  STRIPE_GLOBAL_PAYOUTS_ENABLED: "false"
+  STRIPE_GLOBAL_PAYOUTS_ACCESS_STATUS: "not_requested"
+  STRIPE_GLOBAL_PAYOUTS_MAX_AMOUNT_USD: "1000"
+  STRIPE_GLOBAL_PAYOUTS_SUPPORTED_COUNTRIES: "AU"
+  STRIPE_GLOBAL_PAYOUTS_SUPPORTED_CURRENCIES: "AUD,USD"
+  # Manual instruction orchestration for staging dry-run (no real Stripe payouts)
+  PAYMENT_MANUAL_EXECUTION_ENABLED: "true"
+  PAYMENT_MANUAL_EXECUTION_LIMIT_USD: "1000"
+  PAYMENT_EXECUTION_DISABLED: "false"
   # app-secrets (not ConfigMap): META_APP_ID, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN,
+  # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_CLIENT_ID,
   # WHATSAPP_OAUTH_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/auth/whatsapp/callback
   # WHATSAPP_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
+  # XERO_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/xero/callback
+  # QUICKBOOKS_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback
+  # ACCOUNTING_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
+  # app-secrets: XERO_CLIENT_ID, XERO_CLIENT_SECRET, QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET

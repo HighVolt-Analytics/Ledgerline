@@ -10,9 +10,7 @@ export type {
 } from "@/lib/dossierLinkedDocuments";
 
 /**
- * Stage order mirrors Ledgerline capture + `process_invoice`:
- * ingest → duplicate file hash → parse → classify → playbook → vendor hold →
- * validate → match → approve → map → journal → reconcile → process → pay → archive.
+ * Stage order mirrors `process_invoice` (Storage → OCR → quality → LLM → gate → extract → DT → …).
  */
 export const DOSSIER_PIPELINE_PHASES = [
   { id: "capture", label: "Capture" },
@@ -26,20 +24,25 @@ export type DossierPipelinePhaseId = (typeof DOSSIER_PIPELINE_PHASES)[number]["i
 
 export const DOSSIER_PIPELINE_STAGES = [
   { id: "ingest", order: 1, label: "Ingest", phase: "capture" as const },
-  { id: "duplicate", order: 2, label: "Duplicate file check", phase: "capture" as const },
-  { id: "extract", order: 3, label: "Extract", phase: "capture" as const },
-  { id: "classify", order: 4, label: "Classify", phase: "capture" as const },
-  { id: "bundle", order: 5, label: "Bundle / Playbook", phase: "process" as const },
-  { id: "vendor_hold", order: 6, label: "Vendor hold", phase: "process" as const },
-  { id: "validate", order: 7, label: "Validate", phase: "process" as const },
-  { id: "match", order: 8, label: "Match", phase: "process" as const },
-  { id: "approve", order: 9, label: "Approve", phase: "approve_map" as const },
-  { id: "map_gl", order: 10, label: "Map GL", phase: "approve_map" as const },
-  { id: "journal", order: 11, label: "Journal", phase: "ledger" as const },
-  { id: "reconcile", order: 12, label: "Reconcile", phase: "ledger" as const },
-  { id: "post", order: 13, label: "Process", phase: "ledger" as const },
-  { id: "pay", order: 14, label: "Pay", phase: "finish" as const },
-  { id: "archive", order: 15, label: "Archive", phase: "finish" as const },
+  { id: "duplicate", order: 2, label: "Duplicate check", phase: "capture" as const },
+  { id: "storage", order: 3, label: "Storage", phase: "capture" as const },
+  { id: "ocr", order: 4, label: "OCR", phase: "capture" as const },
+  { id: "quality", order: 5, label: "Image quality", phase: "capture" as const },
+  { id: "llm_classify", order: 6, label: "LLM classify", phase: "capture" as const },
+  { id: "confidence_gate", order: 7, label: "Confidence gate", phase: "capture" as const },
+  { id: "extract", order: 8, label: "Field extract", phase: "capture" as const },
+  { id: "document_type", order: 9, label: "Document type", phase: "capture" as const },
+  { id: "bundle", order: 10, label: "Bundle / Playbook", phase: "process" as const },
+  { id: "vendor_hold", order: 11, label: "Vendor hold", phase: "process" as const },
+  { id: "validate", order: 12, label: "Validate", phase: "process" as const },
+  { id: "match", order: 13, label: "Match", phase: "process" as const },
+  { id: "approve", order: 14, label: "Approve", phase: "approve_map" as const },
+  { id: "map_gl", order: 15, label: "Map GL", phase: "approve_map" as const },
+  { id: "journal", order: 16, label: "Journal", phase: "ledger" as const },
+  { id: "reconcile", order: 17, label: "Reconcile", phase: "ledger" as const },
+  { id: "post", order: 18, label: "Post", phase: "ledger" as const },
+  { id: "pay", order: 19, label: "Pay", phase: "finish" as const },
+  { id: "archive", order: 20, label: "Archive", phase: "finish" as const },
 ] as const;
 
 export type DossierPipelineStageId = (typeof DOSSIER_PIPELINE_STAGES)[number]["id"];
@@ -59,12 +62,36 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
       "duplicate_reingest_rejected",
     ],
   },
-  extract: {
-    auditEvents: ["parse_completed", "invoice_parsed", "parsing_failed"],
+  storage: {
+    auditEvents: ["storage_verified"],
+  },
+  ocr: {
+    auditEvents: ["ocr_completed", "parsing_failed"],
     invoiceStatus: "parsing",
   },
-  classify: {
-    auditEvents: ["document_classified", "routing_review_required"],
+  quality: {
+    auditEvents: ["image_quality_gate_passed", "image_quality_gate_failed"],
+  },
+  llm_classify: {
+    auditEvents: [
+      "llm_classified",
+      "vendor_classification_drift",
+      "vendor_classification_baseline",
+    ],
+  },
+  confidence_gate: {
+    auditEvents: [
+      "classification_gate_passed",
+      "classification_gate_failed",
+      "routing_review_required",
+    ],
+  },
+  extract: {
+    auditEvents: ["parse_completed", "invoice_parsed", "field_confidence_evaluated"],
+    invoiceStatus: "parsing",
+  },
+  document_type: {
+    auditEvents: ["document_classified", "classification_resolved"],
   },
   bundle: { auditEvents: ["playbook_evaluated", "routing_review_required"] },
   vendor_hold: { auditEvents: ["vendor_registration_hold", "vendor_registration_cleared", "vendor_registration_waived", "vendor_registration_released"] },
@@ -144,6 +171,7 @@ export type DossierPipelineStep = {
 
 export type DossierSummary = {
   id: string;
+  invoiceId?: number;
   documentTypeCode: string;
   documentTypeTitle: string;
   vendor: string;
@@ -221,7 +249,7 @@ export type DossierPipelinePhaseSummary = {
   state: DossierStageState;
 };
 
-/** Roll 15 stages into 5 phase dots for list cards. */
+/** Roll capture/process stages into 5 phase dots for list cards. */
 export function dossierPipelinePhases(pipeline: DossierPipelineStep[]): DossierPipelinePhaseSummary[] {
   const byStage = new Map(pipeline.map((step) => [step.stageId, step.state]));
   return DOSSIER_PIPELINE_PHASES.map((phase) => {
@@ -281,8 +309,13 @@ export function dossierStageDescription(stageId: DossierPipelineStageId): string
   const descriptions: Record<DossierPipelineStageId, string> = {
     ingest: "Document received and stored.",
     duplicate: "Checked for duplicate uploads.",
-    extract: "Fields extracted from the file.",
-    classify: "Document type assigned from the rule book.",
+    storage: "Stored file verified before OCR.",
+    ocr: "Layout and text read from the document.",
+    quality: "Image quality and OCR readability gate.",
+    llm_classify: "LLM suggests document type from OCR.",
+    confidence_gate: "Auto-route confidence and catalogue gate.",
+    extract: "Invoice fields extracted from the document.",
+    document_type: "Confirmed document type applied to the invoice.",
     bundle: "Required supporting documents checked.",
     vendor_hold: "Vendor registration status verified.",
     validate: "Business rules and validation checks run.",

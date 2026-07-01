@@ -3,43 +3,30 @@ import type { InvoiceClassificationAudit } from "@/api/types";
 type InvoiceClassificationPanelProps = {
   audit: InvoiceClassificationAudit | null;
   loading?: boolean;
+  onConfirmDt?: (code: string) => void;
+  onChangeDt?: (code: string) => void;
+  catalogueCodes?: string[];
 };
 
-function pct(value: number | undefined): string {
+function pct(value: number | undefined | null): string {
   if (value == null || Number.isNaN(value)) return "—";
   return `${Math.round(value * 100)}%`;
 }
 
-const WEIGHT_RULE = 0.45;
-const WEIGHT_FIELDS = 0.30;
-const WEIGHT_PARSE = 0.15;
-const WEIGHT_HEADING = 0.10;
-
-function blendedConfidence(breakdown: NonNullable<InvoiceClassificationAudit["score_breakdown"]>): number {
-  const rule = breakdown.rule_strength ?? 0;
-  const fields = breakdown.field_completeness ?? 0;
-  const parse = breakdown.parse_score ?? 0;
-  const heading = breakdown.heading_alignment ?? 0;
-  return (
-    WEIGHT_RULE * rule +
-    WEIGHT_FIELDS * fields +
-    WEIGHT_PARSE * parse +
-    WEIGHT_HEADING * heading
-  );
+function reasonChips(audit: InvoiceClassificationAudit): string[] {
+  const raw = audit.review_reasons;
+  if (Array.isArray(raw) && raw.length) return raw.map(String);
+  if (audit.needs_review) return ["NEEDS_REVIEW"];
+  return [];
 }
 
-function displayConfidence(audit: InvoiceClassificationAudit): string {
-  const breakdown = audit.score_breakdown;
-  if (breakdown?.confidence != null) {
-    return pct(breakdown.confidence);
-  }
-  if (breakdown) {
-    return pct(blendedConfidence(breakdown));
-  }
-  return pct(audit.document_type_confidence);
-}
-
-export function InvoiceClassificationPanel({ audit, loading }: InvoiceClassificationPanelProps) {
+export function InvoiceClassificationPanel({
+  audit,
+  loading,
+  onConfirmDt,
+  onChangeDt,
+  catalogueCodes = [],
+}: InvoiceClassificationPanelProps) {
   if (loading) {
     return (
       <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -47,53 +34,90 @@ export function InvoiceClassificationPanel({ audit, loading }: InvoiceClassifica
       </div>
     );
   }
-  if (!audit?.document_type_code) {
+  if (!audit) {
     return null;
   }
-  const conflicts =
-    audit.signal_conflicts ?? audit.score_breakdown?.signal_conflicts ?? [];
-  const breakdown = audit.score_breakdown;
+
+  const llmDt = audit.llm_suggested_dt ?? "";
+  const policyDt = audit.policy_winner_dt ?? "";
+  const confirmed = audit.confirmed_dt ?? audit.document_type_code ?? "";
+  const chips = reasonChips(audit);
+  const showActions = Boolean(onConfirmDt || onChangeDt);
 
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs space-y-2">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-medium text-foreground">Document type</span>
-        <span className="text-foreground">
-          {audit.document_type_code}
-          {audit.document_type_title ? ` · ${audit.document_type_title}` : ""}
-        </span>
-        <span className="text-muted-foreground tnum">
-          {displayConfidence(audit)} confidence
-        </span>
-        {audit.needs_review ? (
-          <span className="text-amber-700 dark:text-amber-400">Needs review</span>
-        ) : null}
+    <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs space-y-3">
+      <div className="font-medium text-foreground">AI classification</div>
+
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div className="rounded border border-border/60 bg-background/50 p-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">LLM suggested</div>
+          <div className="mt-1 font-medium text-foreground">{llmDt || "—"}</div>
+          <div className="text-muted-foreground tnum">{pct(audit.llm_confidence)}</div>
+        </div>
+        <div className="rounded border border-border/60 bg-background/50 p-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Policy winner</div>
+          <div className="mt-1 font-medium text-foreground">{policyDt || "—"}</div>
+          <div className="text-muted-foreground tnum">{pct(audit.policy_winner_confidence)}</div>
+        </div>
+        <div className="rounded border border-border/60 bg-background/50 p-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Confirmed</div>
+          <div className="mt-1 font-medium text-foreground">{confirmed || "—"}</div>
+          <div className="text-muted-foreground tnum">{pct(audit.confirmed_confidence ?? audit.document_type_confidence)}</div>
+        </div>
       </div>
-      {audit.reason ? <p className="text-muted-foreground">{audit.reason}</p> : null}
-      {conflicts.length ? (
-        <p className="text-amber-700 dark:text-amber-400">
-          Signal conflicts: {conflicts.join("; ")}
-        </p>
+
+      {audit.llm_reasoning ? (
+        <p className="text-muted-foreground">{audit.llm_reasoning}</p>
+      ) : audit.reason ? (
+        <p className="text-muted-foreground">{audit.reason}</p>
       ) : null}
-      {breakdown ? (
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground sm:grid-cols-4">
-          <div>
-            <dt>Rule match</dt>
-            <dd className="text-foreground tnum">{pct(breakdown.rule_strength)}</dd>
-          </div>
-          <div>
-            <dt>Fields</dt>
-            <dd className="text-foreground tnum">{pct(breakdown.field_completeness)}</dd>
-          </div>
-          <div>
-            <dt>Parse</dt>
-            <dd className="text-foreground tnum">{pct(breakdown.parse_score)}</dd>
-          </div>
-          <div>
-            <dt>Heading</dt>
-            <dd className="text-foreground tnum">{pct(breakdown.heading_alignment)}</dd>
-          </div>
-        </dl>
+
+      {chips.length ? (
+        <div className="flex flex-wrap gap-1">
+          {chips.map((chip) => (
+            <span
+              key={chip}
+              className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-800 dark:text-amber-300"
+            >
+              {chip}
+            </span>
+          ))}
+        </div>
+      ) : audit.compare_passed ? (
+        <p className="text-emerald-700 dark:text-emerald-400">Auto-classified — LLM and policy agree.</p>
+      ) : null}
+
+      {showActions && catalogueCodes.length ? (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {onConfirmDt && llmDt ? (
+            <button
+              type="button"
+              className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted"
+              onClick={() => onConfirmDt(llmDt)}
+            >
+              Confirm {llmDt}
+            </button>
+          ) : null}
+          {onChangeDt ? (
+            <select
+              className="rounded-md border border-border bg-background px-2 py-1 text-[11px]"
+              defaultValue=""
+              onChange={(e) => {
+                const code = e.target.value;
+                if (code) onChangeDt(code);
+              }}
+            >
+              <option value="" disabled>
+                Change DT…
+              </option>
+              {catalogueCodes.map((code) => (
+                <option key={code} value={code}>
+                  {code}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

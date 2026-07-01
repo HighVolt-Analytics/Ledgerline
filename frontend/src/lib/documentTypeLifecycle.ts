@@ -2,7 +2,7 @@
 
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
-import { normalizeDtCode, normalizeDtCodeList } from "@/lib/documentBundleConfig";
+import { normalizeDtCodeList } from "@/lib/documentBundleConfig";
 
 export function normalizeDocumentTypeCode(code: string | null | undefined): string {
   return (code ?? "").trim().toUpperCase();

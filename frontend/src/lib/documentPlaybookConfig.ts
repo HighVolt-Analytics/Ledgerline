@@ -208,8 +208,11 @@ export function playbookPresetForProfile(profile: PlaybookProfile) {
 }
 
 export function defaultPlaybookProfileForCode(
-  code: string,
-  docType?: Pick<DocumentTypeDefinition, "klass" | "posting" | "purchaseBundleRole">
+  _code: string,
+  docType?: Pick<
+    DocumentTypeDefinition,
+    "klass" | "posting" | "purchaseBundleRole" | "playbookProfile"
+  >
 ): PlaybookProfile {
   if (docType) return inferPlaybookProfileFromDefinition(docType);
   return "standard_transactional";

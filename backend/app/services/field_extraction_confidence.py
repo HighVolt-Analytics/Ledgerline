@@ -196,8 +196,15 @@ def _score_scalar_on_invoice(invoice: Invoice, attr: str, field_key: str) -> flo
     return 84.0
 
 
+def _score_document_heading(data: InvoiceData, invoice: Invoice) -> float:
+    heading = (data.document_heading or getattr(invoice, "document_heading", None) or "").strip()
+    if heading:
+        return 90.0 if len(heading) >= 4 else 72.0
+    return _empty_score("document_heading")
+
+
 def _base_scores(data: InvoiceData, invoice: Invoice) -> dict[str, float]:
-    return {
+    scores = {
         "vendor": _score_vendor(data),
         "abn": _score_abn(data),
         "invoice_no": _score_invoice_no(data),
@@ -212,12 +219,21 @@ def _base_scores(data: InvoiceData, invoice: Invoice) -> dict[str, float]:
         "bank_details": _score_bank_details(data),
         "attachment_name": _score_attachment_name(invoice),
         "document_text": _score_document_text(data),
+        "document_heading": _score_document_heading(data, invoice),
         "billing_address": _score_scalar_on_invoice(invoice, "billing_address", "billing_address"),
         "email_subject": _score_scalar_on_invoice(invoice, "email_subject", "email_subject"),
         "account_code": _score_scalar_on_invoice(invoice, "account_code", "account_code"),
         "account_name": _score_scalar_on_invoice(invoice, "account_name", "account_name"),
         "currency": 90.0 if (data.currency or "").strip() else _empty_score("currency"),
     }
+    extracted = getattr(invoice, "extracted_fields", None) or {}
+    if isinstance(extracted, dict):
+        for key, value in extracted.items():
+            token = str(key).strip().lower()
+            if not token or token in scores:
+                continue
+            scores[token] = 86.0 if str(value).strip() else _empty_score(token)
+    return scores
 
 
 def compute_extraction_field_confidence(invoice: Invoice) -> dict[str, float]:

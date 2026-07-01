@@ -1,0 +1,39 @@
+# Public LoadBalancer services for Azure Front Door origin routing (production).
+# Front Door routes https://ledgerlink.highvolt.tech/* to these origins.
+# ClusterIP services (ledgerlink-services.yaml) remain for in-cluster access.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledgerlink-backend-public
+  namespace: quantum-ledgerlink-prod
+  labels:
+    app: ledgerlink-api
+    exposure: public
+spec:
+  type: LoadBalancer
+  selector:
+    app: ledgerlink-api
+  ports:
+    - name: http
+      port: 8001
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledgerlink-frontend-public
+  namespace: quantum-ledgerlink-prod
+  labels:
+    app: ledgerlink-frontend
+    exposure: public
+spec:
+  type: LoadBalancer
+  selector:
+    app: ledgerlink-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

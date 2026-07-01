@@ -27,10 +27,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Azure login
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -51,6 +51,8 @@ jobs:
           docker build \
             --build-arg VITE_BASE_PATH=/ledgerlink/ \
             --build-arg VITE_API_BASE=/ledgerlink \
+            --build-arg DEPLOY_BASE=prefix \
+            --build-arg HEALTHCHECK_PATH=/ledgerlink/ \
             -t "${{ env.FRONTEND_IMAGE }}:${{ github.sha }}" \
             -t "${{ env.FRONTEND_IMAGE }}:latest" \
             ./frontend
@@ -102,6 +104,12 @@ jobs:
         run: |
           kubectl rollout status deployment/ledgerlink-api -n "${{ env.NAMESPACE }}" --timeout=10m
           kubectl rollout status deployment/ledgerlink-frontend -n "${{ env.NAMESPACE }}" --timeout=10m
+
+      - name: Run database migrations
+        run: |
+          kubectl exec deployment/ledgerlink-api \
+            -n "${{ env.NAMESPACE }}" \
+            -- sh -lc "cd /app && alembic upgrade head"
 
       - name: Verify API health via cluster service
         run: |

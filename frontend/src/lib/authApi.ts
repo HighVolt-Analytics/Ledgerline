@@ -1,9 +1,7 @@
-import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
+import { resolveApiBase } from "@/lib/apiBase";
 import type { AuthUser } from "@/api/types";
 
-const BASE =
-  import.meta.env.VITE_API_BASE ??
-  (import.meta.env.PROD ? LEDGERLINK_BASENAME : "");
+const BASE = resolveApiBase();
 
 export type TenantAccountSummary = {
   user_id: number;

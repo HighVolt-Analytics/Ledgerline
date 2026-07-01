@@ -1,6 +1,7 @@
 import type { AuthUser } from "@/api/types";
 import type { TenantAccountSummary } from "@/lib/authApi";
 
+export const PROFILE_UPDATED_EVENT = "ledgerline:profile-updated";
 const ACCESS_KEY = "ledgerline_access_token";
 const REFRESH_KEY = "ledgerline_refresh_token";
 const USER_KEY = "ledgerline_user";
@@ -15,11 +16,9 @@ export function rememberLastTenant(tenantId: string) {
   localStorage.setItem(LAST_TENANT_KEY, String(tenantId));
 }
 
-export function getLastTenantId(): number | null {
-  const raw = localStorage.getItem(LAST_TENANT_KEY);
-  if (!raw) return null;
-  const id = Number(raw);
-  return Number.isFinite(id) ? id : null;
+export function getLastTenantId(): string | null {
+  const raw = localStorage.getItem(LAST_TENANT_KEY)?.trim();
+  return raw || null;
 }
 
 export function getAccessToken(): string | null {

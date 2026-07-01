@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from app.api import (
+    accounting_integrations,
     approval_policy,
     approvals,
     billing,
@@ -31,9 +32,11 @@ from app.api import (
     reports,
     rule_book,
     settings as settings_api,
+    stripe_webhooks,
     vault,
     vendor_masters,
     vendors,
+    viber,
     whatsapp,
 )
 from app.api.deps import CorrelationIdMiddleware, require_super_admin, require_user
@@ -45,6 +48,7 @@ from app.services.inline_mailbox_poller import (
     start_inline_mailbox_poller,
     stop_inline_mailbox_poller,
 )
+from app.services.rule_book_save_buffer import flush_all_rule_book_save_buffers
 from app.services.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.tenant_module_service import require_module
 from app.telemetry import setup_application_insights
@@ -68,6 +72,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("app_started")
     start_inline_mailbox_poller()
     yield
+    await flush_all_rule_book_save_buffers()
     await stop_inline_mailbox_poller()
     logger.info("app_stopped")
 
@@ -93,12 +98,19 @@ if _settings.root_path:
     app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
 
 app.include_router(auth.router, prefix="/api")
+# Stripe webhooks — no JWT.
+app.include_router(stripe_webhooks.router, prefix="/api")
 # OAuth Microsoft redirect — no JWT (must be before authenticated mailboxes router).
 app.include_router(mailboxes.oauth_public_router, prefix="/api")
+# Stripe Connect OAuth callback — no JWT (must be before authenticated payments router).
+app.include_router(payments.oauth_public_router, prefix="/api")
+# Accounting OAuth callbacks (Xero, QuickBooks) — no JWT.
+app.include_router(accounting_integrations.oauth_public_router, prefix="/api")
 # Meta / WhatsApp OAuth callback and webhooks — no JWT.
 # Paths: /webhook/meta, /auth/whatsapp/callback (Front Door routes /ledgerlink/webhook/* and /ledgerlink/auth/*).
 app.include_router(whatsapp.public_router)
 app.include_router(whatsapp.webhook_router)
+app.include_router(viber.webhook_router)
 
 _api_deps = [Depends(require_user)]
 
@@ -129,6 +141,8 @@ app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)
 app.include_router(dossiers.router, prefix="/api", dependencies=_module_deps("dossiers"))
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
+app.include_router(accounting_integrations.router, prefix="/api", dependencies=_api_deps)
+app.include_router(viber.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenant_members.router, prefix="/api", dependencies=_api_deps)
 app.include_router(platform.router, prefix="/api", dependencies=[Depends(require_super_admin)])

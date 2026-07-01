@@ -7,8 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.audit import AuditLog
-from app.models.invoice import Invoice
-from app.services.ingest_fanout_service import ingest_upload_file
+from app.models.invoice import Invoice, InvoiceStatus
+from app.services.ingest_fanout_service import (
+    IngestSourceMetadata,
+    ingest_file_with_fanout,
+    ingest_upload_file,
+)
 from app.services.pdf_page_text_service import PdfPageText
 from app.services.pdf_split_service import extract_pdf_page_range_bytes, segment_upload_filename
 
@@ -156,3 +160,77 @@ async def test_upload_api_returns_segment_meta(
     body = res.json()
     assert body["meta"]["segment_count"] == 2
     assert len(body["meta"]["segment_invoice_ids"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_ingest_file_with_fanout_applies_source_metadata(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.tenant import Tenant
+
+    org = Tenant(name="Meta Org", slug="meta-org")
+    db_session.add(org)
+    await db_session.flush()
+
+    monkeypatch.setattr(
+        "app.services.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/channel.pdf",
+    )
+
+    result = await ingest_file_with_fanout(
+        db_session,
+        tenant_id=org.id,
+        tenant_slug=org.slug,
+        tenant_name=org.name,
+        filename="receipt.pdf",
+        data=b"%PDF channel",
+        source=IngestSourceMetadata(
+            storage_vendor_slug="acme",
+            email_sender="+61400111222",
+            email_subject="Expense",
+            email_message_id="wa-msg-1",
+            email_attachment_name="receipt.pdf",
+            capture_source="whatsapp",
+            matched_rule_ids='["ingest:whatsapp"]',
+        ),
+    )
+    assert result.segment_count == 1
+    inv = await db_session.get(Invoice, result.invoice_ids[0])
+    assert inv is not None
+    assert inv.capture_source == "whatsapp"
+    assert inv.email_sender == "+61400111222"
+    assert inv.storage_vendor_slug == "acme"
+
+
+@pytest.mark.asyncio
+async def test_load_segment_heading_kind_from_pdf_segmented_audit(
+    db_session: AsyncSession,
+) -> None:
+    from app.models.tenant import Tenant
+    from app.services.audit_service import log_event
+    from app.services.segment_heading_classification import load_segment_heading_kind_from_audit
+
+    org = Tenant(name="Audit Org", slug="audit-org")
+    db_session.add(org)
+    await db_session.flush()
+
+    inv = Invoice(
+        tenant_id=org.id,
+        status=InvoiceStatus.PENDING,
+        currency="AUD",
+        file_hash="seg-audit-hash",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    await log_event(
+        db_session,
+        "pdf_segmented",
+        invoice_id=inv.id,
+        detail={"heading_kind": "purchase_order", "segment_index": 0},
+    )
+    await db_session.flush()
+
+    kind = await load_segment_heading_kind_from_audit(db_session, inv.id)
+    assert kind == "purchase_order"

@@ -57,7 +57,7 @@ type Props = {
   style?: CSSProperties;
 };
 
-/** 5 phase dots for list cards — full 15-stage detail stays on dossier page. */
+/** Phase dots for list cards — full stage detail stays on dossier page. */
 export function DossierPipelinePhaseStrip({ pipeline, className, style }: Props) {
   const phases = dossierPipelinePhases(pipeline);
 

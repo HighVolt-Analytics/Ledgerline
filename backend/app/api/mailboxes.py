@@ -1,5 +1,6 @@
 """Connected Outlook mailboxes for the organisation."""
 
+import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 import uuid

@@ -464,6 +464,25 @@ export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
     paidDate: row.paid_date ?? undefined,
     paymentIntent: row.payment_intent ?? undefined,
     failureReason: row.failure_reason ?? undefined,
+    vendorPayoutStatus: row.vendor_payout_status ?? undefined,
+    vendorPayoutMethodType: row.vendor_payout_method_type ?? undefined,
+    executionReadinessStatus: row.execution_readiness_status ?? undefined,
+    executionBlockingReason: row.execution_blocking_reason ?? undefined,
+    executionInstruction: row.execution_instruction
+      ? {
+          id: row.execution_instruction.id,
+          instructionReference: row.execution_instruction.instruction_reference,
+          vendorName: row.execution_instruction.vendor_name ?? "—",
+          vendorPayoutMethodLabel: row.execution_instruction.vendor_payout_method_label ?? "—",
+          amount: row.execution_instruction.amount,
+          currency: row.execution_instruction.currency,
+          dueDate: row.execution_instruction.due_date ?? undefined,
+          executionMode: row.execution_instruction.execution_mode,
+          status: row.execution_instruction.status,
+          createdByName: row.execution_instruction.created_by_name ?? undefined,
+          createdAt: row.execution_instruction.created_at,
+        }
+      : undefined,
   };
 }
 

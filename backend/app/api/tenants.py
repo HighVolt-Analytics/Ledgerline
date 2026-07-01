@@ -14,8 +14,16 @@ from app.schemas.institution_settings import (
     UpdateInstitutionSettingsRequest,
 )
 from app.schemas.onboarding import OnboardingStatusResponse, UpdateOnboardingRequest
+from app.schemas.org_ai_brief import OrgAiBriefResponse, UpdateOrgAiBriefRequest
 from app.schemas.tenant import CreateTenantRequest, TenantResponse
 from app.services.membership_service import ensure_membership, list_user_tenants
+from app.services.org_ai_brief_service import (
+    load_org_ai_brief,
+    save_org_ai_brief,
+    sync_org_legal_name_on_tenant_rename,
+)
+from app.schemas.chart_of_accounts import ChartOfAccountsResponse, UpdateChartOfAccountsRequest
+from app.services.chart_of_accounts_service import load_chart_of_accounts, save_chart_of_accounts
 from app.tenant_settings import (
     default_institution_settings,
     institution_settings_view,
@@ -77,6 +85,11 @@ async def create_tenant(
     )
 
 
+def _institution_response(tenant: Tenant) -> InstitutionSettingsResponse:
+    view = institution_settings_view(tenant)
+    return InstitutionSettingsResponse(name=tenant.name, **view)
+
+
 @router.get("/current/institution", response_model=ApiEnvelope[InstitutionSettingsResponse])
 async def get_institution_settings(
     db: AsyncSession = Depends(get_db),
@@ -85,8 +98,7 @@ async def get_institution_settings(
     tenant = await db.get(Tenant, ctx.tenant_id)
     if not tenant:
         raise HTTPException(404, "Tenant not found")
-    view = institution_settings_view(tenant)
-    return ApiEnvelope(data=InstitutionSettingsResponse(**view))
+    return ApiEnvelope(data=_institution_response(tenant))
 
 
 def _onboarding_steps(*, completed: bool, has_industry: bool) -> list[str]:
@@ -156,6 +168,58 @@ async def update_onboarding(
     )
 
 
+@router.get("/current/org-ai-brief", response_model=ApiEnvelope[OrgAiBriefResponse])
+async def get_org_ai_brief(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[OrgAiBriefResponse]:
+    """Tenant org context for AI classification (stored in rule book config JSON)."""
+    return ApiEnvelope(data=await load_org_ai_brief(db, ctx.tenant_id))
+
+
+@router.patch("/current/org-ai-brief", response_model=ApiEnvelope[OrgAiBriefResponse])
+async def update_org_ai_brief(
+    body: UpdateOrgAiBriefRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[OrgAiBriefResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit org AI brief")
+    saved = await save_org_ai_brief(
+        db,
+        ctx.tenant_id,
+        body,
+        updated_by_user_id=ctx.user_id,
+    )
+    return ApiEnvelope(data=saved)
+
+
+@router.get("/current/chart-of-accounts", response_model=ApiEnvelope[ChartOfAccountsResponse])
+async def get_chart_of_accounts(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    """Tenant chart of accounts (stored in rule book config JSON with RLS)."""
+    return ApiEnvelope(data=await load_chart_of_accounts(db, ctx.tenant_id))
+
+
+@router.patch("/current/chart-of-accounts", response_model=ApiEnvelope[ChartOfAccountsResponse])
+async def update_chart_of_accounts(
+    body: UpdateChartOfAccountsRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[ChartOfAccountsResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot edit chart of accounts")
+    saved = await save_chart_of_accounts(
+        db,
+        ctx.tenant_id,
+        body,
+        updated_by_user_id=ctx.user_id,
+    )
+    return ApiEnvelope(data=saved)
+
+
 @router.patch("/current/institution", response_model=ApiEnvelope[InstitutionSettingsResponse])
 async def update_institution_settings(
     body: UpdateInstitutionSettingsRequest,
@@ -165,8 +229,24 @@ async def update_institution_settings(
     tenant = await db.get(Tenant, ctx.tenant_id)
     if not tenant:
         raise HTTPException(404, "Tenant not found")
-    if body.country is None and body.timezone is None and body.locale is None:
+    if (
+        body.name is None
+        and body.country is None
+        and body.timezone is None
+        and body.locale is None
+    ):
         raise HTTPException(400, "No settings to update")
+
+    if body.name is not None:
+        old_name = tenant.name
+        tenant.name = body.name.strip()
+        await sync_org_legal_name_on_tenant_rename(
+            db,
+            ctx.tenant_id,
+            old_name=old_name,
+            new_name=tenant.name,
+            updated_by_user_id=ctx.user_id,
+        )
 
     tenant.settings_json = merge_institution_settings(
         tenant.settings_json,
@@ -176,5 +256,4 @@ async def update_institution_settings(
     )
     await db.commit()
     await db.refresh(tenant)
-    view = institution_settings_view(tenant)
-    return ApiEnvelope(data=InstitutionSettingsResponse(**view))
+    return ApiEnvelope(data=_institution_response(tenant))

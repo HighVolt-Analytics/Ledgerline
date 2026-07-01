@@ -38,7 +38,7 @@ def test_routing_target_missing() -> None:
 def test_requires_classification_review_when_unclassified() -> None:
     inv = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.VALIDATING, route_target=None)
     classification = DocumentTypeClassification(
-        "DT-24",
+        "",
         0.44,
         "No classifier matched in rule book catalogue",
         min_route_confidence=0.85,
@@ -48,7 +48,36 @@ def test_requires_classification_review_when_unclassified() -> None:
     assert requires_routing_review(inv, classification) is True
 
 
-def test_requires_gl_mapping_review_for_posting_fallback_only(document_types) -> None:
+def test_requires_gl_mapping_review_for_posting_fallback_only() -> None:
+    from app.schemas.document_type import DocumentTypeDefinition
+
+    posting_dt = DocumentTypeDefinition.model_validate(
+        {
+            "code": "DT-03",
+            "title": "Tax Invoice",
+            "shortTitle": "Tax",
+            "klass": "Transactional",
+            "posting": "Yes",
+            "fraudRisk": "low",
+            "oneLine": "x",
+            "routeTarget": "Purchase Management",
+            "enabled": True,
+        }
+    )
+    non_posting_dt = DocumentTypeDefinition.model_validate(
+        {
+            "code": "DT-16",
+            "title": "Bank",
+            "shortTitle": "Bank",
+            "klass": "Reconciliation",
+            "posting": "No",
+            "fraudRisk": "low",
+            "oneLine": "x",
+            "routeTarget": "Vault",
+            "enabled": True,
+        }
+    )
+    document_types = [posting_dt, non_posting_dt]
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.MAPPING,

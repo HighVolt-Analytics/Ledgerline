@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.services.email_recipient_validation import validate_deliverable_email_or_raise
 from app.models.mailbox_connection_request import (
     STATUS_CONNECTED,
     STATUS_EXPIRED,
@@ -159,6 +160,8 @@ def send_invite_email(
     expires_at: datetime,
 ) -> InviteEmailResult:
     settings = get_settings()
+    if settings.is_production or graph_mail_send_configured():
+        validate_deliverable_email_or_raise(to_email)
     subject = f"{tenant_name} — connect your mailbox to LedgerLink"
     expiry_label = expires_at.astimezone(timezone.utc).strftime("%d %b %Y")
 

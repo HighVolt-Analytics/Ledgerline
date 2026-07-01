@@ -6,10 +6,6 @@ from app.models.invoice import Invoice
 from app.models.journal import EntryType
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.account_mapper import AccountMapping
-from app.services.rule_book_mapper import (
-    get_payable_account_mapping,
-    get_tax_account_mapping,
-)
 
 
 @dataclass
@@ -26,41 +22,13 @@ def generate_entries(
     invoice: Invoice,
     mapping: AccountMapping,
     *,
-    config: RuleBookConfigPayload,
+    config: RuleBookConfigPayload | None = None,
 ) -> list[JournalLine]:
-    entry_date = invoice.invoice_date or date.today()
-    subtotal = invoice.subtotal or Decimal("0")
-    gst = invoice.gst or Decimal("0")
-    total = invoice.total or subtotal + gst
-    tax = get_tax_account_mapping(config)
-    payable = get_payable_account_mapping(config)
+    from app.schemas.rule_book_config import RuleBookConfigPayload as ConfigPayload
+    from app.services.fx_posting_service import generate_booking_entries
 
-    return [
-        JournalLine(
-            entry_date,
-            mapping.account_code,
-            mapping.account_name,
-            subtotal,
-            Decimal("0"),
-            EntryType.DEBIT,
-        ),
-        JournalLine(
-            entry_date,
-            tax.account_code,
-            tax.account_name,
-            gst,
-            Decimal("0"),
-            EntryType.DEBIT,
-        ),
-        JournalLine(
-            entry_date,
-            payable.account_code,
-            payable.account_name,
-            Decimal("0"),
-            total,
-            EntryType.CREDIT,
-        ),
-    ]
+    cfg = config or ConfigPayload()
+    return generate_booking_entries(invoice, mapping, config=cfg)
 
 
 def is_balanced(lines: list[JournalLine]) -> bool:

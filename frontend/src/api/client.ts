@@ -5,6 +5,7 @@ import type {
   ActivityItem,
   ApiEnvelope,
   AppSettings,
+  AccountingIntegrationsStatus,
   AuthUser,
   ConnectedMailbox,
   MailboxBackfillJob,
@@ -16,6 +17,10 @@ import type {
   DailyReconciliation,
   NavBadges,
   PaymentApi,
+  PaymentExecutionInstructionApi,
+  PaymentExecutionInstructionExportApi,
+  PaymentExecutionReadinessResponse,
+  PaymentMarkPaidManualPayload,
   PurchaseOrderApi,
   PurchaseDossier,
   DashboardOverview,
@@ -26,7 +31,6 @@ import type {
   InvoiceDetails,
   LedgerLinkResponse,
   InvoiceUpdatePayload,
-  Organisation,
   Tenant,
   PlatformTenantSummary,
   PlatformTenantDetail,
@@ -48,21 +52,35 @@ import type {
   InvitePreview,
   InviteAcceptResult,
   InstitutionSettings,
+  OrgAiBrief,
+  ChartOfAccountsPayload,
   OnboardingStatus,
   UserPermissions,
   Vendor,
+  VendorPayoutMethod,
+  VendorPayoutMethodCreate,
+  VendorPayoutMethodUpdate,
   VaultTreeResponse,
   VaultMigrateResponse,
   WalletSummary,
+  StripeAccount,
+  StripeBalanceResponse,
+  StripeConnectResponse,
+  StripeOnboardingLinkResponse,
+  StripeOAuthUrlResponse,
+  StripeDisconnectResponse,
+  StripeGlobalPayoutsReadinessResponse,
+  StripeReadinessResponse,
+  StripeTransaction,
   WhatsappStatus,
+  ViberStatus,
 } from "./types";
 
-import { LEDGERLINK_BASENAME } from "@/lib/routerBasename";
+import { resolveApiBase } from "@/lib/apiBase";
+import { decodeJwtPayload } from "@/lib/authToken";
 
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
-const BASE =
-  import.meta.env.VITE_API_BASE ??
-  (import.meta.env.PROD ? LEDGERLINK_BASENAME : "");
+const BASE = resolveApiBase();
 
 /** Dedupe concurrent GETs and cache briefly to avoid StrictMode double-fetch. */
 const GET_CACHE_MS = 30_000;
@@ -137,7 +155,12 @@ export function setAuthUser(user: AuthUser | null) {
 
 function getScopedAuthHeaders(init?: RequestInit): Headers {
   const headers = withAuthHeaders(init);
-  const tid = authUser?.tenant_id;
+  // JWT is the source of truth; cached authUser can lag after tenant UUID migration.
+  let tid = authUser?.tenant_id;
+  if (!tid && authToken) {
+    const payload = decodeJwtPayload(authToken);
+    tid = payload?.tenant_id ?? payload?.org_id;
+  }
   if (tid) {
     headers.set("X-Tenant-Id", String(tid));
   }
@@ -151,8 +174,12 @@ export function clearGetCache() {
 }
 
 function getRequestKey(path: string, method: string) {
-  const tid = tenantIdFromToken(authToken) ?? authUser?.tenant_id ?? "anon";
-  return `${tid}:${method}:${path}`;
+  let tid = authUser?.tenant_id;
+  if (!tid && authToken) {
+    const payload = decodeJwtPayload(authToken);
+    tid = payload?.tenant_id ?? payload?.org_id;
+  }
+  return `${tid ?? "anon"}:${method}:${path}`;
 }
 
 function invalidateGetCache() {
@@ -206,7 +233,14 @@ async function parseErrorResponse(res: Response): Promise<string> {  /* Convert 
     if (typeof detail === "string") {
       msg = detail;
     } else if (Array.isArray(detail)) {
-      msg = detail.map((d: { msg?: string }) => d.msg ?? JSON.stringify(d)).join("; ");
+      const parts = detail.map((d: { msg?: string; loc?: unknown[] }) => {
+        const field = Array.isArray(d.loc)
+          ? d.loc.filter((x) => x !== "body").join(".")
+          : "";
+        const reason = d.msg ?? JSON.stringify(d);
+        return field ? `${field} — ${reason}` : reason;
+      });
+      msg = parts.length ? `Validation error: ${parts.join("; ")}` : res.statusText;
     } else if (detail != null) {
       msg = JSON.stringify(detail);
     }
@@ -413,11 +447,27 @@ export const api = {
   getInstitutionSettings: () =>
     request<InstitutionSettings>("/api/tenants/current/institution"),
   updateInstitutionSettings: (body: {
+    name?: string;
     country?: string;
     timezone?: string;
     locale?: string;
   }) =>
     request<InstitutionSettings>("/api/tenants/current/institution", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getOrgAiBrief: () => request<OrgAiBrief>("/api/tenants/current/org-ai-brief"),
+  updateOrgAiBrief: (body: OrgAiBrief) =>
+    request<OrgAiBrief>("/api/tenants/current/org-ai-brief", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getChartOfAccounts: () =>
+    request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts"),
+  updateChartOfAccounts: (body: ChartOfAccountsPayload) =>
+    request<ChartOfAccountsPayload>("/api/tenants/current/chart-of-accounts", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -619,6 +669,51 @@ export const api = {
     }>(`/api/integrations/whatsapp/test/${id}`, { method: "POST" });
   },
 
+  getAccountingIntegrationsStatus: (options?: FreshRequestOptions) => {
+    const path = "/api/integrations/status";
+    if (options?.fresh) bustGetCache(path);
+    return request<AccountingIntegrationsStatus>(path);
+  },
+  connectXero: () =>
+    request<{ connect_url: string }>("/api/integrations/xero/connect"),
+  connectQuickBooks: () =>
+    request<{ connect_url: string }>("/api/integrations/quickbooks/connect"),
+  disconnectAccountingIntegration: (provider: "xero" | "quickbooks_online") => {
+    bustGetCache("/api/integrations/status");
+    return request<{ disconnected: boolean; provider: string }>(
+      `/api/integrations/${provider}/disconnect`,
+      { method: "POST" }
+    );
+  },
+  getViberStatus: (options?: FreshRequestOptions) => {
+    const path = "/api/integrations/viber/status";
+    if (options?.fresh) bustGetCache(path);
+    return request<ViberStatus>(path);
+  },
+  connectViber: (auth_token: string) => {
+    bustGetCache("/api/integrations/viber/status");
+    return request<{ connection: ViberStatus["connections"][number]; bot_name: string | null }>(
+      "/api/integrations/viber/connect",
+      { method: "POST", body: JSON.stringify({ auth_token }) }
+    );
+  },
+  disconnectViber: (id: number) => {
+    bustGetCache("/api/integrations/viber/status");
+    return request<{ disconnected: boolean; id: number }>(
+      `/api/integrations/viber/disconnect/${id}`,
+      { method: "DELETE" }
+    );
+  },
+  testViberConnection: (id: number) => {
+    bustGetCache("/api/integrations/viber/status");
+    return request<{
+      ok: boolean;
+      integration_health: string;
+      warnings: string[];
+      profile: Record<string, unknown>;
+    }>(`/api/integrations/viber/test/${id}`, { method: "POST" });
+  },
+
   getNavBadges: () => request<NavBadges>("/api/dashboard/badges"),
   getStats: () => request<DashboardStats>("/api/dashboard/stats"),
   getDashboardOverview: (activityLimit = 10, month?: string) => {
@@ -647,12 +742,15 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<InvoiceDetails>(path);
   },
-  updateInvoice: (id: number, body: InvoiceUpdatePayload) =>
-    request<InvoiceDetails>(`/api/invoices/${id}`, {
+  updateInvoice: (id: number, body: InvoiceUpdatePayload) => {
+    bustGetCacheByPrefix("/api/invoices");
+    bustGetCacheByPrefix("/api/approvals");
+    return request<InvoiceDetails>(`/api/invoices/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }),
+    });
+  },
   getInvoicePipeline: (id: number, options?: FreshRequestOptions) => {
     const path = `/api/invoices/${id}/pipeline`;
     if (options?.fresh) bustGetCache(path);
@@ -662,6 +760,20 @@ export const api = {
     const path = `/api/invoices/${id}/classification-audit`;
     if (options?.fresh) bustGetCache(path);
     return request<InvoiceClassificationAudit>(path);
+  },
+  resolveInvoiceClassification: (
+    id: number,
+    body: { confirmed_dt: string; reprocess?: boolean }
+  ) =>
+    request<Invoice>(`/api/invoices/${id}/classification/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getClassificationReviewQueue: (options?: FreshRequestOptions) => {
+    const path = "/api/invoices/classification-review";
+    if (options?.fresh) bustGetCache(path);
+    return request<import("@/api/types").ClassificationReviewItem[]>(path);
   },
   getPurchaseDossier: (id: number, options?: FreshRequestOptions) => {
     const path = `/api/invoices/${id}/purchase-dossier`;
@@ -862,6 +974,31 @@ export const api = {
     }),
   deleteVendor: (id: number) =>
     request<void>(`/api/vendors/${id}`, { method: "DELETE" }),
+  listVendorPayoutMethods: (vendorId: number, options?: FreshRequestOptions) => {
+    const path = `/api/vendors/${vendorId}/payout-methods`;
+    if (options?.fresh) bustGetCache(path);
+    return request<VendorPayoutMethod[]>(path);
+  },
+  createVendorPayoutMethod: (vendorId: number, body: VendorPayoutMethodCreate) =>
+    request<VendorPayoutMethod>(`/api/vendors/${vendorId}/payout-methods`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateVendorPayoutMethod: (
+    vendorId: number,
+    methodId: number,
+    body: VendorPayoutMethodUpdate
+  ) =>
+    request<VendorPayoutMethod>(`/api/vendors/${vendorId}/payout-methods/${methodId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteVendorPayoutMethod: (vendorId: number, methodId: number) =>
+    request<void>(`/api/vendors/${vendorId}/payout-methods/${methodId}`, {
+      method: "DELETE",
+    }),
   listVendorMasters: (options?: FreshRequestOptions) => {
     const path = "/api/vendor-masters";
     if (options?.fresh) bustGetCache(path);
@@ -936,6 +1073,8 @@ export const api = {
   dismissPendingVendor: (pendingId: number) =>
     request<void>(`/api/pending-vendors/${pendingId}/dismiss`, { method: "POST" }),
   getRuleBookConfig: () => request<RuleBookConfig>("/api/rule-book/config"),
+  getAiProviders: () =>
+    request<import("@/api/types").AiProvidersResponse>("/api/rule-book/ai-providers"),
   getRecognitionSignalCatalog: () =>
     request<{
       weak_signal_ids: string[];
@@ -958,6 +1097,15 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  testDocumentTypeRecognition: (body: import("@/api/types").DocumentTypeRecognitionTestRequest) =>
+    request<import("@/api/types").DocumentTypeRecognitionTestResponse>(
+      "/api/rule-book/document-types/test-recognition",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ),
   getVaultTree: (options?: FreshRequestOptions) => {
     const path = "/api/vault/tree";
     if (options?.fresh) bustGetCache(path);
@@ -975,14 +1123,6 @@ export const api = {
     request<RuleBookConfig>(
       `/api/rule-book/document-types/${encodeURIComponent(code.trim())}`,
       { method: "DELETE" }
-    ),
-  analyzeDocumentTypeSamples: (
-    formData: FormData,
-    options?: { timeoutMs?: number }
-  ) =>
-    request<import("@/lib/documentTypeSampleAnalysis").DocumentTypeSampleProposal>(
-      "/api/rule-book/document-types/analyze-samples",
-      { method: "POST", body: formData, timeoutMs: options?.timeoutMs }
     ),
   getRuleBookChangelog: (limit = 20) =>
     request<RuleBookChangelogEntry[]>(`/api/rule-book/changelog?limit=${limit}`),
@@ -1081,6 +1221,74 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  getStripeAccount: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/account";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeAccount>(path);
+  },
+  refreshStripeAccount: () =>
+    request<StripeAccount>("/api/payments/stripe/account/refresh", {
+      method: "POST",
+    }),
+  connectStripe: () =>
+    request<StripeConnectResponse>("/api/payments/stripe/connect", {
+      method: "POST",
+    }),
+  getStripeOnboardingLink: () =>
+    request<StripeOnboardingLinkResponse>("/api/payments/stripe/onboarding-link"),
+  getStripeOAuthUrl: () =>
+    request<StripeOAuthUrlResponse>("/api/payments/stripe/oauth-url"),
+  deleteStripeAccount: () =>
+    request<StripeDisconnectResponse>("/api/payments/stripe/account", {
+      method: "DELETE",
+    }),
+  getStripeReadiness: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/readiness";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeReadinessResponse>(path);
+  },
+  getStripeGlobalPayoutsReadiness: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/global-payouts/readiness";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeGlobalPayoutsReadinessResponse>(path);
+  },
+  getStripeBalance: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/stripe/balance";
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeBalanceResponse>(path);
+  },
+  listStripeTransactions: (limit = 20, options?: FreshRequestOptions) => {
+    const path = `/api/payments/stripe/transactions?limit=${encodeURIComponent(String(limit))}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<StripeTransaction[]>(path);
+  },
+  validatePaymentExecutionReadiness: (paymentId: number) =>
+    request<PaymentExecutionReadinessResponse>(
+      `/api/payments/${paymentId}/execution-readiness`,
+      { method: "POST" }
+    ),
+  approvePayment: (paymentId: number) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentApi>(`/api/payments/${paymentId}/approve`, { method: "POST" });
+  },
+  createPaymentExecutionInstruction: (paymentId: number) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentExecutionInstructionApi>(
+      `/api/payments/${paymentId}/execution-instruction`,
+      { method: "POST" }
+    );
+  },
+  exportPaymentExecutionInstruction: (paymentId: number) =>
+    request<PaymentExecutionInstructionExportApi>(
+      `/api/payments/${paymentId}/execution-instruction/export`
+    ),
+  markPaymentPaidManual: (paymentId: number, body: PaymentMarkPaidManualPayload) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaymentApi>(`/api/payments/${paymentId}/mark-paid-manual`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
 };
 
 /** Inclusive invoice-date range for workbook export; omit both for all invoices. */

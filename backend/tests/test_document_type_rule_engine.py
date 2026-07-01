@@ -82,34 +82,23 @@ def test_config_classifier_vendor_contains() -> None:
     assert source == "config_classifier"
 
 
-def test_config_classifier_wins_over_heuristic(capture_config) -> None:
-    invoice = _invoice(email_attachment_name="tax-invoice-mkt.pdf")
-    parsed = _parsed(po_reference=None)
-    doc_types = list(capture_config.document_types)
-    doc_types.append(
-        _dt_with_classifier(
-            "DT-88",
-            priority=1,
-            confidence=0.91,
-            children=[
-                RuleCondition(field="attachment_name", operator="contains", value="tax-invoice")
-            ],
-        )
-    )
+def test_classify_document_type_without_classifier_returns_unclassified() -> None:
+    invoice = _invoice(vendor="Acme Supplies", invoice_no="INV-100", total=Decimal("1200"))
+    parsed = _parsed(vendor="Acme Supplies", invoice_no="INV-100", total=Decimal("1200"))
+    doc_types = [
+        DocumentTypeDefinition(
+            code="DT-03",
+            title="Tax Invoice",
+            shortTitle="Tax",
+            klass="Transactional",
+            posting="Yes",
+            fraudRisk="low",
+            oneLine="test",
+            routeTarget="Purchase Management",
+            enabled=True,
+            required_fields=["vendor", "invoice_no", "total"],
+        ),
+    ]
     result = classify_document_type(invoice=invoice, parsed=parsed, document_types=doc_types)
-    assert result.code == "DT-88"
-    assert result.confidence >= 0.85
-    assert "Rule book classifier" in result.reason
-
-
-def test_seeded_dt03_classifier_matches_grn_upload(capture_config) -> None:
-    invoice = _invoice(email_attachment_name="GRN-PO-44871.pdf")
-    parsed = _parsed(po_reference="PO-44871", invoice_no=None)
-    result = classify_document_type(
-        invoice=invoice,
-        parsed=parsed,
-        document_types=capture_config.document_types,
-        parse_confidence="high",
-    )
-    assert result.code == "DT-03"
-    assert result.confidence >= 0.85
+    assert result.code == ""
+    assert "No classifier matched" in result.reason

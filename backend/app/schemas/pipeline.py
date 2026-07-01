@@ -26,6 +26,7 @@ class MatrixRowResponse(BaseModel):
     flag: str = "Clean"
     flag_reason: str | None = None
     payment_status: str = "—"
+    paid_date: str | None = None
     conflict_with: str | None = None
     conflict_detail: list[MatrixConflictRow] | None = None
 

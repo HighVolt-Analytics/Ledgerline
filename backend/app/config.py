@@ -221,6 +221,69 @@ class Settings(BaseSettings):
         le=120,
         validation_alias="SAMPLE_PROPOSAL_LLM_TIMEOUT_SECONDS",
     )
+    runtime_llm_enabled: bool = Field(
+        default=True,
+        validation_alias="RUNTIME_LLM_ENABLED",
+    )
+    runtime_llm_timeout_seconds: int = Field(
+        default=45,
+        ge=5,
+        le=180,
+        validation_alias="RUNTIME_LLM_TIMEOUT_SECONDS",
+    )
+    runtime_llm_min_confidence: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        validation_alias="RUNTIME_LLM_MIN_CONFIDENCE",
+    )
+    google_gemini_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "GOOGLE_GEMINI_API_KEY",
+            "GEMINI_API_KEY",
+        ),
+    )
+    gemini_vision_model: str = Field(
+        default="gemini-2.5-flash",
+        validation_alias="GEMINI_VISION_MODEL",
+    )
+    vision_llm_provider: str = Field(
+        default="azure_di",
+        validation_alias="VISION_LLM_PROVIDER",
+        description="Default vision document AI: azure_di | azure_foundry | gemini_vision",
+    )
+    azure_ai_foundry_endpoint: str = Field(
+        default="",
+        validation_alias="AZURE_AI_FOUNDRY_ENDPOINT",
+    )
+    azure_ai_foundry_api_key: str = Field(
+        default="",
+        validation_alias="AZURE_AI_FOUNDRY_API_KEY",
+    )
+    azure_ai_foundry_deployment: str = Field(
+        default="gpt-4o",
+        validation_alias="AZURE_AI_FOUNDRY_DEPLOYMENT",
+    )
+    azure_ai_foundry_api_version: str = Field(
+        default="2024-08-01-preview",
+        validation_alias="AZURE_AI_FOUNDRY_API_VERSION",
+    )
+    policy_min_confidence: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        validation_alias="POLICY_MIN_CONFIDENCE",
+    )
+    ocr_min_text_chars: int = Field(
+        default=80,
+        ge=0,
+        validation_alias="OCR_MIN_TEXT_CHARS",
+    )
+    llm_classification_prompt_version: str = Field(
+        default="v1",
+        validation_alias="LLM_CLASSIFICATION_PROMPT_VERSION",
+    )
     abn_validation_mode: str = Field(default="format")
     duplicate_invoice_check_enabled: bool = Field(
         default=True,
@@ -269,6 +332,16 @@ class Settings(BaseSettings):
     otp_expire_minutes: int = Field(default=5, validation_alias="OTP_EXPIRE_MINUTES")
     dev_otp_code: str = Field(default="123456", validation_alias="DEV_OTP_CODE")
     app_env: str = Field(default="development", validation_alias="APP_ENV")
+    environment: str = Field(
+        default="",
+        validation_alias="ENVIRONMENT",
+        description="Deployment environment label (falls back to APP_ENV when unset)",
+    )
+    api_base_path: str = Field(
+        default="/api",
+        validation_alias="API_BASE_PATH",
+        description="Public API path prefix (e.g. /api or /ledgerlink/api)",
+    )
     default_tenant_slug: str = Field(default="testing", validation_alias="DEFAULT_TENANT_SLUG")
     default_tenant_name: str = Field(default="Testing", validation_alias="DEFAULT_TENANT_NAME")
     approval_policy_unlock_code: str = "000000"
@@ -307,6 +380,134 @@ class Settings(BaseSettings):
         validation_alias="WHATSAPP_OAUTH_FRONTEND_RETURN_URL",
     )
 
+    # Xero accounting OAuth (optional)
+    xero_client_id: str = Field(default="", validation_alias="XERO_CLIENT_ID")
+    xero_client_secret: str = Field(default="", validation_alias="XERO_CLIENT_SECRET")
+    xero_redirect_uri: str = Field(default="", validation_alias="XERO_REDIRECT_URI")
+    xero_oauth_scopes: str = Field(
+        default="openid profile email accounting.settings.read offline_access",
+        validation_alias="XERO_OAUTH_SCOPES",
+    )
+    xero_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="XERO_OAUTH_FRONTEND_RETURN_URL",
+    )
+
+    # QuickBooks Online accounting OAuth (optional)
+    quickbooks_client_id: str = Field(default="", validation_alias="QUICKBOOKS_CLIENT_ID")
+    quickbooks_client_secret: str = Field(
+        default="",
+        validation_alias="QUICKBOOKS_CLIENT_SECRET",
+    )
+    quickbooks_redirect_uri: str = Field(default="", validation_alias="QUICKBOOKS_REDIRECT_URI")
+    quickbooks_environment: str = Field(
+        default="sandbox",
+        validation_alias="QUICKBOOKS_ENVIRONMENT",
+    )
+    quickbooks_oauth_scopes: str = Field(
+        default="com.intuit.quickbooks.accounting",
+        validation_alias="QUICKBOOKS_OAUTH_SCOPES",
+    )
+    quickbooks_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="QUICKBOOKS_OAUTH_FRONTEND_RETURN_URL",
+    )
+    accounting_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="ACCOUNTING_OAUTH_FRONTEND_RETURN_URL",
+    )
+
+    # Stripe Connect / payments (optional — empty until configured)
+    stripe_secret_key: str = Field(default="", validation_alias="STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str = Field(default="", validation_alias="STRIPE_WEBHOOK_SECRET")
+    stripe_connect_client_id: str = Field(
+        default="",
+        validation_alias="STRIPE_CONNECT_CLIENT_ID",
+    )
+    stripe_mode: str = Field(default="sandbox", validation_alias="STRIPE_MODE")
+    stripe_return_url: str = Field(default="", validation_alias="STRIPE_RETURN_URL")
+    stripe_refresh_url: str = Field(default="", validation_alias="STRIPE_REFRESH_URL")
+    stripe_oauth_redirect_url: str = Field(
+        default="",
+        validation_alias="STRIPE_OAUTH_REDIRECT_URL",
+        description="Stripe Connect OAuth redirect URI (must match Stripe Dashboard Connect/OAuth settings)",
+    )
+    stripe_payments_execution_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_PAYMENTS_EXECUTION_ENABLED",
+    )
+    stripe_live_payments_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_LIVE_PAYMENTS_ENABLED",
+    )
+    payment_manual_execution_enabled: bool = Field(
+        default=False,
+        validation_alias="PAYMENT_MANUAL_EXECUTION_ENABLED",
+    )
+    payment_manual_execution_limit_usd: float = Field(
+        default=1000.0,
+        ge=0,
+        validation_alias=AliasChoices(
+            "PAYMENT_MANUAL_EXECUTION_LIMIT_USD",
+            "PAYMENT_MANUAL_EXECUTION_LIMIT_AUD",
+        ),
+    )
+    payment_execution_disabled: bool = Field(
+        default=False,
+        validation_alias="PAYMENT_EXECUTION_DISABLED",
+        description="Emergency kill switch for all payment execution orchestration endpoints",
+    )
+
+    payment_environment_label: str = Field(
+        default="",
+        validation_alias="PAYMENT_ENVIRONMENT_LABEL",
+    )
+    public_app_base_url: str = Field(
+        default="",
+        validation_alias="PUBLIC_APP_BASE_URL",
+        description="Public LedgerLink app URL (e.g. https://ledgerlink.highvolt.tech)",
+    )
+    public_api_base_url: str = Field(
+        default="",
+        validation_alias="PUBLIC_API_BASE_URL",
+        description="Public LedgerLink API base URL (e.g. https://ledgerlink.highvolt.tech/api)",
+    )
+
+    # Stripe Global Payouts (configuration only — no outbound API calls until approved)
+    stripe_global_payouts_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_ENABLED",
+    )
+    stripe_global_payouts_access_status: str = Field(
+        default="not_requested",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_ACCESS_STATUS",
+    )
+    stripe_global_payouts_financial_account_id: str = Field(
+        default="",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_FINANCIAL_ACCOUNT_ID",
+    )
+    stripe_global_payouts_webhook_secret: str = Field(
+        default="",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_WEBHOOK_SECRET",
+    )
+    stripe_global_payouts_max_amount_usd: float = Field(
+        default=1000.0,
+        ge=0,
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_MAX_AMOUNT_USD",
+    )
+    stripe_global_payouts_supported_countries: str = Field(
+        default="AU",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_SUPPORTED_COUNTRIES",
+    )
+    stripe_global_payouts_supported_currencies: str = Field(
+        default="AUD,USD",
+        validation_alias="STRIPE_GLOBAL_PAYOUTS_SUPPORTED_CURRENCIES",
+    )
+
+    # Viber Public Account Bot API
+    viber_auth_token: str = Field(default="", validation_alias="VIBER_AUTH_TOKEN")
+    viber_webhook_url: str = Field(default="", validation_alias="VIBER_WEBHOOK_URL")
+
     @field_validator("root_path", mode="before")
     @classmethod
     def normalize_root_path(cls, value: object) -> str:
@@ -318,6 +519,29 @@ class Settings(BaseSettings):
         if not text.startswith("/"):
             text = f"/{text}"
         return text.rstrip("/")
+
+    @field_validator("api_base_path", mode="before")
+    @classmethod
+    def normalize_api_base_path(cls, value: object) -> str:
+        if value is None:
+            return "/api"
+        text = str(value).strip() or "/api"
+        if not text.startswith("/"):
+            text = f"/{text}"
+        return text.rstrip("/") or "/api"
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def normalize_environment(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @model_validator(mode="after")
+    def resolve_environment_default(self) -> Self:
+        if not self.environment.strip():
+            self.environment = self.app_env.strip()
+        return self
 
     @model_validator(mode="after")
     def normalize_azure_connection_strings(self) -> Self:
@@ -448,6 +672,39 @@ class Settings(BaseSettings):
         return bool(self.sample_proposal_llm_enabled and self.azure_openai_configured)
 
     @property
+    def runtime_llm_available(self) -> bool:
+        return bool(self.runtime_llm_enabled and self.azure_openai_configured)
+
+    @property
+    def gemini_configured(self) -> bool:
+        return bool(self.google_gemini_api_key.strip())
+
+    @property
+    def gemini_vision_available(self) -> bool:
+        return self.gemini_configured
+
+    @property
+    def azure_foundry_vision_configured(self) -> bool:
+        return bool(
+            self.azure_ai_foundry_endpoint.strip()
+            and self.azure_ai_foundry_api_key.strip()
+            and self.azure_ai_foundry_deployment.strip()
+        )
+
+    @property
+    def azure_foundry_vision_available(self) -> bool:
+        return self.azure_foundry_vision_configured
+
+    @property
+    def default_document_ai_provider(self) -> str:
+        token = self.vision_llm_provider.strip().lower()
+        if token in {"azure_foundry", "azure_foundry_vision"}:
+            return "azure_foundry_vision"
+        if token in {"gemini", "gemini_vision"}:
+            return "gemini_vision"
+        return "azure_di"
+
+    @property
     def azure_postgres_enabled(self) -> bool:
         return "postgres.database.azure.com" in self.database_url
 
@@ -485,8 +742,60 @@ class Settings(BaseSettings):
         )
 
     @property
+    def viber_effective_auth_token(self) -> str:
+        return self.viber_auth_token.strip()
+
+    @property
+    def viber_configured(self) -> bool:
+        return bool(self.viber_effective_auth_token)
+
+    @property
     def is_production(self) -> bool:
         return self.app_env.strip().lower() in ("production", "prod")
+
+    @property
+    def is_preview(self) -> bool:
+        return self.app_env.strip().lower() == "preview"
+
+    @property
+    def smtp_explicitly_configured(self) -> bool:
+        """True when SMTP_HOST points to a real relay (not dev localhost defaults)."""
+        host = self.smtp_host.strip().lower()
+        return host not in ("", "localhost", "127.0.0.1")
+
+    @property
+    def smtp_allowed_for_outbound(self) -> bool:
+        """Production must not use implicit localhost:1025; dev/preview may."""
+        if self.is_production:
+            return self.smtp_explicitly_configured
+        return True
+
+    @property
+    def payment_environment_label_resolved(self) -> str:
+        explicit = self.payment_environment_label.strip()
+        if explicit:
+            return explicit
+        if self.is_production:
+            return "Production"
+        if self.is_preview:
+            return "Preview"
+        return "Development"
+
+    @property
+    def public_app_base_url_resolved(self) -> str:
+        explicit = self.public_app_base_url.strip() or self.public_app_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        webapp = self.azure_webapp_url.strip().rstrip("/")
+        return webapp
+
+    @property
+    def public_api_base_url_resolved(self) -> str:
+        explicit = self.public_api_base_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        base = self.public_app_base_url_resolved
+        return f"{base}/api" if base else ""
 
     @property
     def whatsapp_frontend_return_url(self) -> str:
@@ -494,6 +803,64 @@ class Settings(BaseSettings):
         if explicit:
             return explicit.rstrip("/")
         return self.graph_oauth_frontend_return_url.rstrip("/")
+
+    @property
+    def xero_configured(self) -> bool:
+        return bool(self.xero_client_id.strip() and self.xero_client_secret.strip())
+
+    @property
+    def quickbooks_configured(self) -> bool:
+        return bool(
+            self.quickbooks_client_id.strip() and self.quickbooks_client_secret.strip()
+        )
+
+    @property
+    def quickbooks_sandbox_mode(self) -> bool:
+        return self.quickbooks_environment.strip().lower() in ("sandbox", "test")
+
+    @property
+    def accounting_oauth_frontend_return_url_resolved(self) -> str:
+        explicit = self.accounting_oauth_frontend_return_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        xero_explicit = self.xero_oauth_frontend_return_url.strip()
+        if xero_explicit:
+            return xero_explicit.rstrip("/")
+        qbo_explicit = self.quickbooks_oauth_frontend_return_url.strip()
+        if qbo_explicit:
+            return qbo_explicit.rstrip("/")
+        return self.graph_oauth_frontend_return_url.rstrip("/")
+
+    @property
+    def stripe_sandbox_mode(self) -> bool:
+        return self.stripe_mode.strip().lower() in ("sandbox", "test")
+
+    @property
+    def stripe_mode_normalized(self) -> str:
+        mode = self.stripe_mode.strip().lower()
+        if mode in ("live", "production"):
+            return "live"
+        return "test"
+
+    @property
+    def stripe_configured(self) -> bool:
+        return bool(self.stripe_secret_key.strip())
+
+    @property
+    def stripe_connect_configured(self) -> bool:
+        return bool(
+            self.stripe_secret_key.strip() and self.stripe_connect_client_id.strip()
+        )
+
+    @property
+    def stripe_webhooks_configured(self) -> bool:
+        return bool(
+            self.stripe_secret_key.strip() and self.stripe_webhook_secret.strip()
+        )
+
+    @property
+    def stripe_payment_execution_enabled(self) -> bool:
+        return bool(self.stripe_payments_execution_enabled)
 
     @property
     def application_insights_runtime_enabled(self) -> bool:

@@ -30,7 +30,7 @@ export function MatrixStageCell({
 }) {
   const tooltip = blocked
     ? `Blocked — clear the ${flag} flag before this document can progress to ${stage}.`
-    : `${cell.state} · ${stage}\n${cell.ts} · ${cell.actor}`;
+    : `${cell.state} · ${stage}\n${cell.ts}\n${cell.detail}`;
 
   return (
     <span
@@ -56,7 +56,13 @@ export function MatrixStageCell({
             <span className="text-muted-foreground"> · {stage}</span>
             <br />
             <span className="text-[11px] text-muted-foreground tnum">
-              {cell.ts} · {cell.actor}
+              {cell.ts}
+              {cell.detail !== "—" ? (
+                <>
+                  <br />
+                  {cell.detail}
+                </>
+              ) : null}
             </span>
           </>
         )}
