@@ -9,6 +9,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import inspect
 
 revision: str = "049"
 down_revision: Union[str, None] = "048"
@@ -17,6 +18,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if "processing_overrides" in {c["name"] for c in inspect(bind).get_columns("invoices")}:
+        return
     op.add_column(
         "invoices",
         sa.Column("processing_overrides", sa.JSON().with_variant(JSONB, "postgresql"), nullable=True),

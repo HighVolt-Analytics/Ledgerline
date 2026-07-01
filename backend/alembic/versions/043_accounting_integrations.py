@@ -1,16 +1,17 @@
 """Accounting provider OAuth connections (Xero, QuickBooks Online).
 
-Revision ID: 049
-Revises: 048
+Revision ID: 050
+Revises: 049
 """
 
 from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import inspect
 
-revision: str = "049"
-down_revision: Union[str, None] = "048"
+revision: str = "050"
+down_revision: Union[str, None] = "049"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -35,6 +36,9 @@ def _enable_tenant_rls(conn, table: str) -> None:
 
 
 def upgrade() -> None:
+    if inspect(op.get_bind()).has_table("accounting_integrations"):
+        return
+
     op.create_table(
         "accounting_integrations",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
