@@ -413,7 +413,9 @@ export function UploadPage() {
       if (uploadedIds.length > 0) {
         void (async () => {
           const holdNotice = await watchInvoiceIdsForVendorHold(uploadedIds, {
-            onPoll: () => load({ silent: true, fresh: true }),
+            onPoll: async () => {
+              await load({ silent: true, fresh: true });
+            },
           });
           if (holdNotice) {
             void queryClient.invalidateQueries({ queryKey: queryKeys.pendingVendors() });

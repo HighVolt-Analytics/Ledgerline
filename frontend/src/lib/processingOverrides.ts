@@ -69,7 +69,9 @@ export function normaliseSkipSteps(
   raw: ProcessingOverrides | null | undefined
 ): ProcessingOverrideStepId[] {
   if (!raw?.skip_steps?.length) return [];
-  return raw.skip_steps.filter((id) => SKIPPABLE_STEP_IDS.has(id));
+  return raw.skip_steps.filter((id): id is ProcessingOverrideStepId =>
+    SKIPPABLE_STEP_IDS.has(id as ProcessingOverrideStepId)
+  );
 }
 
 export function skipStepsFromInvoice(
