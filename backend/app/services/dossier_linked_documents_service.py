@@ -1,10 +1,10 @@
-"""Build dossier linked-documents panel from purchase dossier + playbook bundle."""
+"""Build dossier linked-documents panel from sales/purchase dossier + playbook bundle."""
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.invoice import Invoice, PurchaseDocumentType
+from app.models.invoice import Invoice, PurchaseDocumentType, SalesDocumentType
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.dossier import (
     DossierLinkedDocumentResponse,
@@ -12,11 +12,14 @@ from app.schemas.dossier import (
     DossierMatchSummaryResponse,
 )
 from app.services.document_ref_service import display_document_ref, dossier_public_id
+from app.services.document_type_catalog import ROUTE_SALES
 from app.services.document_type_playbook_profile_service import should_enforce_bundle_mandatory
-from app.services.document_type_playbook_service import split_bundle_items
+from app.services.document_type_playbook_service import invoice_dt_present_by_invoice_no, split_bundle_items
 from app.services.dossier_manual_link_service import apply_manual_links
 from app.services.po_reference import is_plausible_po_reference
 from app.services.purchase_dossier_service import build_purchase_dossier
+from app.services.sales_dossier_service import build_sales_dossier
+from app.services.so_reference import is_plausible_so_reference, resolve_so_reference_from_invoice
 
 _ROLE_TO_DT = {
     PurchaseDocumentType.PO.value: ("DT-14", "Purchase order"),
@@ -24,10 +27,22 @@ _ROLE_TO_DT = {
     PurchaseDocumentType.INVOICE.value: ("DT-01", "Commercial invoice"),
 }
 
-_BUNDLE_ROLE = {
+_PURCHASE_BUNDLE_ROLE = {
     PurchaseDocumentType.PO.value: "po",
     PurchaseDocumentType.GRN.value: "grn",
     PurchaseDocumentType.INVOICE.value: "invoice",
+}
+
+_SALES_BUNDLE_ROLE = {
+    SalesDocumentType.SO.value: "so",
+    SalesDocumentType.DN.value: "dn",
+    SalesDocumentType.INVOICE.value: "invoice",
+}
+
+_SALES_ROLE_FALLBACK_DT = {
+    SalesDocumentType.SO.value: ("DT-27", "Sales order"),
+    SalesDocumentType.DN.value: ("DT-28", "Delivery note"),
+    SalesDocumentType.INVOICE.value: ("DT-26", "Customer invoice"),
 }
 
 
@@ -50,6 +65,45 @@ def _anchor_document_type(
     if not code:
         return "", "Unclassified"
     return code, _dt_label(code, document_types)
+
+
+def _is_sales_dossier_invoice(
+    invoice: Invoice,
+    definition: DocumentTypeDefinition | None,
+) -> bool:
+    route = (invoice.route_target or (definition.route_target if definition else None) or "").strip()
+    if route == ROUTE_SALES:
+        return True
+    profile = ((definition.playbook_profile if definition else None) or "").strip().lower()
+    return profile == "ar_goods"
+
+
+def _dt_for_sales_role(
+    role: str,
+    document_types: list[DocumentTypeDefinition],
+) -> tuple[str, str]:
+    token = (role or "").strip().lower()
+    for row in document_types:
+        if (row.sales_bundle_role or "").strip().lower() == token:
+            label = (row.short_title or row.title or row.code).strip() or row.code
+            return row.code.upper(), label
+    return _SALES_ROLE_FALLBACK_DT.get(token, (token.upper(), token))
+
+
+def _linked_dossier_id(
+    *,
+    anchor_id: str,
+    member_invoice_id: int | None,
+    member_document_ref: str | None,
+    is_current: bool,
+) -> str | None:
+    if member_invoice_id is None:
+        return None
+    if is_current:
+        return anchor_id
+    if member_document_ref and member_document_ref != "—":
+        return member_document_ref
+    return f"DOC-{member_invoice_id}"
 
 
 async def _finalize_linked_documents(
@@ -75,6 +129,56 @@ async def _finalize_linked_documents(
     )
 
 
+async def _build_invoice_no_linked_documents(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    document_types: list[DocumentTypeDefinition],
+) -> DossierLinkedDocumentsResponse | None:
+    """Automatic advisory bundle when sibling uploads share the same invoice_no."""
+    invoice_no = (invoice.invoice_no or "").strip()
+    if not invoice_no:
+        return None
+    from app.services.dossier_service import fetch_linked_invoices_by_invoice_no
+
+    siblings = await fetch_linked_invoices_by_invoice_no(session, invoice)
+    if not siblings:
+        return None
+
+    anchor_id = _dossier_id_for_invoice(invoice)
+    documents: list[DossierLinkedDocumentResponse] = []
+
+    def _row_doc(row: Invoice, *, is_anchor: bool) -> DossierLinkedDocumentResponse:
+        code, label = _anchor_document_type(row, document_types)
+        return DossierLinkedDocumentResponse(
+            id=f"invoice-no-{row.id}",
+            document_type_code=code,
+            label=label,
+            document_ref=display_document_ref(row),
+            invoice_no=invoice_no,
+            present=True,
+            requirement="advisory",
+            linked_dossier_id=anchor_id if is_anchor else dossier_public_id(row),
+            invoice_id=row.id,
+            is_anchor=is_anchor,
+            has_file=bool(row.raw_file_path),
+            linkage_detail=f"Linked on invoice no {invoice_no}",
+            link_kind="system" if is_anchor else "invoice_no",
+        )
+
+    documents.append(_row_doc(invoice, is_anchor=True))
+    for row in siblings:
+        documents.append(_row_doc(row, is_anchor=False))
+
+    return DossierLinkedDocumentsResponse(
+        linkage_kind="invoice_no",
+        linkage_key=invoice_no,
+        linkage_label=f"Invoice no · {invoice_no}",
+        enforce_bundle=False,
+        documents=documents,
+    )
+
+
 async def build_dossier_linked_documents(
     session: AsyncSession,
     invoice: Invoice,
@@ -89,25 +193,27 @@ async def build_dossier_linked_documents(
 
     anchor_id = _dossier_id_for_invoice(invoice)
     po_ref = (invoice.po_reference or "").strip() or None
+    so_ref = resolve_so_reference_from_invoice(invoice)
 
-    if po_ref and is_plausible_po_reference(po_ref):
-        purchase = await build_purchase_dossier(session, invoice, verify_stored_file=False)
+    if (
+        _is_sales_dossier_invoice(invoice, definition)
+        and so_ref
+        and is_plausible_so_reference(so_ref)
+    ):
+        sales = await build_sales_dossier(session, invoice, verify_stored_file=False)
         documents: list[DossierLinkedDocumentResponse] = []
-        for member in purchase.members:
+        for member in sales.members:
             if member.is_current:
                 dt_code, default_label = _anchor_document_type(invoice, document_types)
             else:
-                dt_code, default_label = _ROLE_TO_DT.get(
-                    member.role, (member.role.upper(), member.label)
-                )
-            linked_id = None
-            if member.invoice_id is not None:
-                if member.is_current:
-                    linked_id = anchor_id
-                elif member.document_ref and member.document_ref != "—":
-                    linked_id = member.document_ref
-                elif member.invoice_id is not None:
-                    linked_id = f"DOC-{member.invoice_id}"
+                dt_code, default_label = _dt_for_sales_role(member.role, document_types)
+            linked_id = _linked_dossier_id(
+                anchor_id=anchor_id,
+                member_invoice_id=member.invoice_id,
+                member_document_ref=member.document_ref,
+                is_current=member.is_current,
+            )
+            sales_role = _SALES_BUNDLE_ROLE.get(member.role)
             documents.append(
                 DossierLinkedDocumentResponse(
                     id=f"{dt_code or member.role}-bundle-{member.role}",
@@ -116,13 +222,67 @@ async def build_dossier_linked_documents(
                     document_ref=member.document_ref,
                     present=member.present,
                     requirement="mandatory",
-                    purchase_bundle_role=_BUNDLE_ROLE.get(member.role),
+                    sales_bundle_role=sales_role,
                     source="erp_register" if member.present else None,
                     linked_dossier_id=linked_id,
                     invoice_id=member.invoice_id,
                     is_anchor=member.is_current,
                     has_file=member.has_stored_file,
-                    linkage_detail=f"Linked on {po_ref}" if member.present else "VR-PB01 required",
+                    linkage_detail=f"Linked on SO {so_ref}" if member.present else "VR-PB02 required",
+                )
+            )
+
+        match_summary: DossierMatchSummaryResponse | None = None
+        if sales.match is not None and sales.match_summary is not None:
+            match_summary = sales.match_summary
+
+        enforce = should_enforce_bundle_mandatory(definition) if definition else True
+        return await _finalize_linked_documents(
+            session,
+            invoice,
+            DossierLinkedDocumentsResponse(
+                linkage_kind="so_reference",
+                linkage_key=so_ref,
+                linkage_label=f"SO reference · {so_ref}",
+                enforce_bundle=enforce,
+                documents=documents,
+                match_summary=match_summary,
+                sales_order_id=sales.sales_order_id,
+            ),
+            document_types,
+        )
+
+    if po_ref and is_plausible_po_reference(po_ref):
+        purchase = await build_purchase_dossier(session, invoice, verify_stored_file=False)
+        documents = []
+        for member in purchase.members:
+            if member.is_current:
+                dt_code, default_label = _anchor_document_type(invoice, document_types)
+            else:
+                dt_code, default_label = _ROLE_TO_DT.get(
+                    member.role, (member.role.upper(), member.label)
+                )
+            linked_id = _linked_dossier_id(
+                anchor_id=anchor_id,
+                member_invoice_id=member.invoice_id,
+                member_document_ref=member.document_ref,
+                is_current=member.is_current,
+            )
+            documents.append(
+                DossierLinkedDocumentResponse(
+                    id=f"{dt_code or member.role}-bundle-{member.role}",
+                    document_type_code=dt_code,
+                    label=default_label if member.is_current else (member.label or default_label),
+                    document_ref=member.document_ref,
+                    present=member.present,
+                    requirement="mandatory",
+                    purchase_bundle_role=_PURCHASE_BUNDLE_ROLE.get(member.role),
+                    source="erp_register" if member.present else None,
+                    linked_dossier_id=linked_id,
+                    invoice_id=member.invoice_id,
+                    is_anchor=member.is_current,
+                    has_file=member.has_stored_file,
+                    linkage_detail=f"Linked on {po_ref}" if member.present else "VR-PB02 required",
                 )
             )
 
@@ -153,30 +313,60 @@ async def build_dossier_linked_documents(
 
     if mandatory_codes:
         anchor_code = (invoice.document_type_code or "").upper()
-        documents = [
-            DossierLinkedDocumentResponse(
-                id=f"{code}-bundle",
-                document_type_code=code,
-                label=_dt_label(code, document_types),
-                document_ref=display_document_ref(invoice) if code == anchor_code else None,
-                present=code == anchor_code,
-                requirement="mandatory",
-                linked_dossier_id=anchor_id if code == anchor_code else None,
-                invoice_id=invoice.id if code == anchor_code else None,
-                is_anchor=code == anchor_code,
-                has_file=bool(invoice.raw_file_path),
-                linkage_detail=po_ref or "Bundle member",
+        invoice_no = (invoice.invoice_no or "").strip()
+        linkage_key = so_ref if so_ref and is_plausible_so_reference(so_ref) else po_ref
+        if not linkage_key and invoice_no:
+            linkage_key = invoice_no
+        documents = []
+        for code in mandatory_codes:
+            is_anchor = code == anchor_code
+            present = is_anchor
+            if not present and invoice_no:
+                present = await invoice_dt_present_by_invoice_no(
+                    session,
+                    tenant_id=invoice.tenant_id,
+                    invoice_no=invoice_no,
+                    dt_code=code,
+                    exclude_invoice_id=invoice.id,
+                )
+            documents.append(
+                DossierLinkedDocumentResponse(
+                    id=f"{code}-bundle",
+                    document_type_code=code,
+                    label=_dt_label(code, document_types),
+                    document_ref=display_document_ref(invoice) if is_anchor else None,
+                    invoice_no=invoice_no or None,
+                    present=present,
+                    requirement="mandatory",
+                    linked_dossier_id=anchor_id if is_anchor else None,
+                    invoice_id=invoice.id if is_anchor else None,
+                    is_anchor=is_anchor,
+                    has_file=bool(invoice.raw_file_path) if is_anchor else False,
+                    linkage_detail=linkage_key or "Supporting document member",
+                )
             )
-            for code in mandatory_codes
-        ]
-        linkage_kind = "shipment_ref" if po_ref else "standalone"
+        if linkage_key and is_plausible_so_reference(linkage_key):
+            linkage_kind = "so_reference"
+            linkage_label = f"SO reference · {linkage_key}"
+        elif linkage_key and is_plausible_po_reference(linkage_key):
+            linkage_kind = "po_reference"
+            linkage_label = f"Linked on {linkage_key}"
+        elif linkage_key and invoice_no and linkage_key == invoice_no:
+            linkage_kind = "invoice_no"
+            linkage_label = f"Invoice no · {invoice_no}"
+        elif linkage_key:
+            linkage_kind = "shipment_ref"
+            linkage_label = linkage_key
+        else:
+            linkage_kind = "standalone"
+            linkage_label = "Supporting document requirements"
         return await _finalize_linked_documents(
             session,
             invoice,
             DossierLinkedDocumentsResponse(
                 linkage_kind=linkage_kind,
-                linkage_key=po_ref,
-                linkage_label=po_ref or "Playbook bundle",
+                linkage_key=linkage_key,
+                linkage_label=linkage_label,
                 enforce_bundle=enforce,
                 conditional_advisories=advisories,
                 documents=documents,
@@ -185,6 +375,19 @@ async def build_dossier_linked_documents(
         )
 
     code, label = _anchor_document_type(invoice, document_types)
+    invoice_no_bundle = await _build_invoice_no_linked_documents(
+        session,
+        invoice,
+        document_types=document_types,
+    )
+    if invoice_no_bundle is not None:
+        return await _finalize_linked_documents(
+            session,
+            invoice,
+            invoice_no_bundle,
+            document_types,
+        )
+
     return await _finalize_linked_documents(
         session,
         invoice,

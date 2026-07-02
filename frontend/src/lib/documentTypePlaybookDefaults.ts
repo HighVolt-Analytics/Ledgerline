@@ -26,6 +26,9 @@ export const DEFAULT_PLAYBOOK_PROFILE_BY_CODE: Record<string, PlaybookProfile> =
   "DT-23": "master_data",
   "DT-24": "non_actionable",
   "DT-25": "compliance_route",
+  "DT-26": "ar_goods",
+  "DT-27": "supporting",
+  "DT-28": "supporting",
 };
 
 export function defaultPlaybookProfileForCode(code: string): PlaybookProfile {

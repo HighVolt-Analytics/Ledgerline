@@ -155,6 +155,35 @@ async def test_list_dossiers_api(client: AsyncClient, db_session: AsyncSession) 
 
 
 @pytest.mark.asyncio
+async def test_get_sales_dossier_api_fields(client: AsyncClient, db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View Hotel",
+        invoice_no="INV-9001",
+        document_type_code="DT-06",
+        route_target="Sales Management",
+        so_reference="SO-DEMO-100",
+        sales_document_type="invoice",
+        status=InvoiceStatus.EXCEPTION,
+        file_hash="dossier-sales-api",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    await assign_document_ref(db_session, inv)
+    await db_session.flush()
+
+    res = await client.get(f"/api/dossiers/{inv.document_ref}")
+    assert res.status_code == 200
+    body = res.json()["data"]
+    assert body["counterparty_label"] == "Customer"
+    assert body["route_target"] == "Sales Management"
+    assert body["so_reference"] == "SO-DEMO-100"
+    assert body["linkage_reference"] == "SO-DEMO-100"
+    assert body["po_reference"] is None
+    assert body["linked_documents"]["linkage_kind"] == "so_reference"
+
+
+@pytest.mark.asyncio
 async def test_resolve_invoice_for_dossier(db_session: AsyncSession) -> None:
     inv = Invoice(tenant_id=TESTING_TENANT_UUID, vendor="X", status=InvoiceStatus.PENDING, file_hash="resolve-1")
     db_session.add(inv)

@@ -14,6 +14,7 @@ from app.schemas.playbook_policy import (
 )
 
 PROFILE_PO_GOODS: PlaybookProfile = "po_goods"
+PROFILE_AR_GOODS: PlaybookProfile = "ar_goods"
 PROFILE_PO_SERVICES: PlaybookProfile = "po_services"
 PROFILE_DIRECT_EXPENSE: PlaybookProfile = "direct_expense"
 PROFILE_CREDIT_ADJUSTMENT: PlaybookProfile = "credit_adjustment"
@@ -42,6 +43,11 @@ class PlaybookProfilePreset:
 PROFILE_PRESETS: dict[PlaybookProfile, PlaybookProfilePreset] = {
     PROFILE_PO_GOODS: PlaybookProfilePreset(
         match_mode="three_way_po_grn",
+        approval_mode="touchless_on_clean_match",
+        enforce_bundle_mandatory=True,
+    ),
+    PROFILE_AR_GOODS: PlaybookProfilePreset(
+        match_mode="three_way_so_dn",
         approval_mode="touchless_on_clean_match",
         enforce_bundle_mandatory=True,
     ),
@@ -154,6 +160,9 @@ DEFAULT_PROFILE_BY_CODE: dict[str, PlaybookProfile] = {
     "DT-23": PROFILE_MASTER_DATA,
     "DT-24": PROFILE_NON_ACTIONABLE,
     "DT-25": PROFILE_COMPLIANCE_ROUTE,
+    "DT-26": PROFILE_AR_GOODS,
+    "DT-27": PROFILE_SUPPORTING,
+    "DT-28": PROFILE_SUPPORTING,
 }
 
 
@@ -163,8 +172,11 @@ def default_playbook_profile_for_code(code: str) -> PlaybookProfile:
 
 
 def infer_playbook_profile_from_definition(definition: DocumentTypeDefinition) -> PlaybookProfile:
-    role = (definition.purchase_bundle_role or "").strip().lower()
-    if role in {"po", "grn"}:
+    purchase_role = (definition.purchase_bundle_role or "").strip().lower()
+    if purchase_role in {"po", "grn"}:
+        return PROFILE_SUPPORTING
+    sales_role = (definition.sales_bundle_role or "").strip().lower()
+    if sales_role in {"so", "dn"}:
         return PROFILE_SUPPORTING
     klass = (definition.klass or "").strip().lower()
     posting = (definition.posting or "").strip().lower()

@@ -20,6 +20,7 @@ _RULE_LIST_KEYS = (
     "document_types",
     "email_capture_rules",
     "purchase_rules",
+    "sales_rules",
     "expense_rules",
     "team_expense_rules",
     "document_sets",

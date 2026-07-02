@@ -86,10 +86,16 @@ def generate_booking_entries(
     *,
     config: RuleBookConfigPayload,
     policy: FxPostingPolicy | None = None,
+    sales_order=None,
 ) -> list[JournalLine]:
     """Invoice accrual in functional currency; stores rate on invoice when foreign."""
-    from app.services.account_mapper import AccountMapping
-    from app.services.rule_book_mapper import get_payable_account_mapping, get_tax_account_mapping
+    from app.services.account_mapper import AccountMapping, resolve_category_for_config
+    from app.services.rule_book_mapper import (
+        ROUTE_SALES,
+        get_payable_account_mapping,
+        get_tax_account_mapping,
+        resolve_sales_post_accounts,
+    )
 
     if not isinstance(mapping, AccountMapping):
         raise TypeError("mapping must be AccountMapping")
@@ -113,6 +119,41 @@ def generate_booking_entries(
     invoice.booking_fx_rate = rate if doc_currency != fx.functional_currency.upper() else None
     invoice.functional_currency = fx.functional_currency
     invoice.functional_total = total_fn
+
+    if (invoice.route_target or "").strip() == ROUTE_SALES:
+        recv_label, tax_label = resolve_sales_post_accounts(
+            invoice,
+            config,
+            sales_order=sales_order,
+        )
+        receivable = resolve_category_for_config(recv_label, config)
+        tax = resolve_category_for_config(tax_label, config)
+        return [
+            JournalLine(
+                entry_date,
+                receivable.account_code,
+                receivable.account_name,
+                total_fn,
+                Decimal("0"),
+                EntryType.DEBIT,
+            ),
+            JournalLine(
+                entry_date,
+                mapping.account_code,
+                mapping.account_name,
+                Decimal("0"),
+                subtotal_fn,
+                EntryType.CREDIT,
+            ),
+            JournalLine(
+                entry_date,
+                tax.account_code,
+                tax.account_name,
+                Decimal("0"),
+                gst_fn,
+                EntryType.CREDIT,
+            ),
+        ]
 
     tax = get_tax_account_mapping(config)
     payable = get_payable_account_mapping(config)

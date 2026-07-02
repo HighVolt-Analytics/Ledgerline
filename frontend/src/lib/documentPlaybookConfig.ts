@@ -4,6 +4,7 @@ import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
 export type PlaybookProfile =
   | "po_goods"
+  | "ar_goods"
   | "po_services"
   | "direct_expense"
   | "credit_adjustment"
@@ -24,6 +25,7 @@ export type PlaybookProfile =
 export type MatchMode =
   | "none"
   | "three_way_po_grn"
+  | "three_way_so_dn"
   | "two_way_po_ses"
   | "reference_invoice"
   | "subledger_reconcile"
@@ -49,6 +51,7 @@ export type ApprovalPolicy = {
 
 export const PLAYBOOK_PROFILE_OPTIONS: Array<{ value: PlaybookProfile; label: string }> = [
   { value: "po_goods", label: "PO goods (3-way)" },
+  { value: "ar_goods", label: "AR goods (3-way)" },
   { value: "po_services", label: "PO services (2-way)" },
   { value: "direct_expense", label: "Direct expense" },
   { value: "credit_adjustment", label: "Credit / adjustment" },
@@ -70,6 +73,7 @@ export const PLAYBOOK_PROFILE_OPTIONS: Array<{ value: PlaybookProfile; label: st
 export const MATCH_MODE_OPTIONS: Array<{ value: MatchMode; label: string }> = [
   { value: "none", label: "None" },
   { value: "three_way_po_grn", label: "3-way PO ↔ GRN ↔ Invoice" },
+  { value: "three_way_so_dn", label: "3-way SO ↔ DN ↔ Invoice" },
   { value: "two_way_po_ses", label: "2-way PO ↔ service entry" },
   { value: "reference_invoice", label: "Reference original invoice" },
   { value: "subledger_reconcile", label: "Subledger reconciliation" },
@@ -90,11 +94,13 @@ export const APPROVAL_MODE_OPTIONS: Array<{ value: ApprovalMode; label: string }
 export function inferPlaybookProfileFromDefinition(
   docType: Pick<
     DocumentTypeDefinition,
-    "klass" | "posting" | "purchaseBundleRole" | "playbookProfile"
+    "klass" | "posting" | "purchaseBundleRole" | "salesBundleRole" | "playbookProfile"
   >
 ): PlaybookProfile {
-  const role = (docType.purchaseBundleRole || "").trim().toLowerCase();
-  if (role === "po" || role === "grn") return "supporting";
+  const purchaseRole = (docType.purchaseBundleRole || "").trim().toLowerCase();
+  if (purchaseRole === "po" || purchaseRole === "grn") return "supporting";
+  const salesRole = (docType.salesBundleRole || "").trim().toLowerCase();
+  if (salesRole === "so" || salesRole === "dn") return "supporting";
   const klass = (docType.klass || "").trim().toLowerCase();
   const posting = (docType.posting || "").trim().toLowerCase();
   if (
@@ -118,6 +124,11 @@ const PROFILE_PRESETS: Record<
 > = {
   po_goods: {
     matchMode: "three_way_po_grn",
+    approvalMode: "touchless_on_clean_match",
+    enforceBundle: true,
+  },
+  ar_goods: {
+    matchMode: "three_way_so_dn",
     approvalMode: "touchless_on_clean_match",
     enforceBundle: true,
   },

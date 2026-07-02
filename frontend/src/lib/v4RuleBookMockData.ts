@@ -669,6 +669,7 @@ export function createDefaultRuleBookConfig(): RuleBookConfigState {
     orgContext: emptyOrgContextConfig(),
     emailCaptureRules: EMAIL_CAPTURE_RULES,
     purchaseRules: PURCHASE_RULES,
+    salesRules: [],
     expenseRules: EXPENSE_RULES,
     teamExpenseRules: TEAM_EXPENSE_RULES,
     vendorMasters: VENDOR_MASTERS,

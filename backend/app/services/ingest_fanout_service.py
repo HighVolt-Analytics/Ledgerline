@@ -110,6 +110,10 @@ async def _create_invoice_from_bytes(
     )
     inv.raw_file_path = stored
 
+    from app.services.so_reference import ensure_invoice_so_reference
+
+    ensure_invoice_so_reference(inv)
+
     if log_upload_event:
         await log_event(
             session,

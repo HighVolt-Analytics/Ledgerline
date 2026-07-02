@@ -75,7 +75,7 @@ export function PlaybookPolicyEditor({
           ))}
         </select>
         <p className="text-[11px] text-muted-foreground">
-          Preset for match, approval, and bundle enforcement. Override below if needed.
+          Preset for 3-way match, approval, and supporting-document enforcement. Override below if needed.
         </p>
       </div>
 

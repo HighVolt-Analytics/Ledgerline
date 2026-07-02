@@ -53,6 +53,13 @@ async def test_register_and_login(
     assert refresh.json()["data"]["access_token"]
     assert refresh.json()["data"]["user"]["email"] == "admin@acme.com"
 
+    # Old refresh token remains valid briefly after rotation (multi-tab grace).
+    refresh_again = await client.post(
+        "/api/auth/refresh",
+        json={"refresh_token": refresh_token},
+    )
+    assert refresh_again.status_code == 200
+
     get_settings.cache_clear()
 
 

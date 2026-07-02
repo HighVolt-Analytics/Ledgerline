@@ -23,12 +23,18 @@ def generate_entries(
     mapping: AccountMapping,
     *,
     config: RuleBookConfigPayload | None = None,
+    sales_order=None,
 ) -> list[JournalLine]:
     from app.schemas.rule_book_config import RuleBookConfigPayload as ConfigPayload
     from app.services.fx_posting_service import generate_booking_entries
 
     cfg = config or ConfigPayload()
-    return generate_booking_entries(invoice, mapping, config=cfg)
+    return generate_booking_entries(
+        invoice,
+        mapping,
+        config=cfg,
+        sales_order=sales_order,
+    )
 
 
 def is_balanced(lines: list[JournalLine]) -> bool:

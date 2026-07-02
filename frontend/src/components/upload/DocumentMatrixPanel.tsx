@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type MutableRefObject } from "react";
-import { AlertTriangle, Ban, Check, Clock, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { AlertTriangle, Ban, Check, Clock, Minus, RefreshCw } from "lucide-react";
 import type { Invoice, MatrixRow } from "@/api/types";
-import { api } from "@/api/client";
+import { api, clearGetCache } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -13,13 +13,15 @@ import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
-import { MATRIX_STAGES, type MatrixCellState, type MatrixStage } from "@/lib/matrix";
+import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
+import { MATRIX_STAGES, matrixStageSettled, type MatrixCellState, type MatrixStage } from "@/lib/matrix";
 import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { approveAndProcess } from "@/lib/invoiceActions";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
+import { useAuth } from "@/context/AuthContext";
 
 const MATRIX_POLL_MS = 15_000;
 const PAGE_SIZE = 10;
@@ -106,6 +108,9 @@ export function DocumentMatrixPanel({
   onGoUpload?: () => void;
   refreshRef?: MutableRefObject<(() => void) | null>;
 }) {
+  const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const [matrixData, setMatrixData] = useState<MatrixRow[]>([]);
   const [filter, setFilter] = useState<MatrixFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -118,29 +123,43 @@ export function DocumentMatrixPanel({
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  useEffect(() => {
+    loadSeq.current += 1;
+    setMatrixData([]);
+    setPage(1);
+    setError(null);
+    setFlagDrawerId(null);
+    setDrawerInvoiceId(null);
+    setDrawerOpen(false);
+  }, [tenantScope]);
+
   function openInvoiceDrawer(invoiceId: number) {
     setDrawerInvoiceId(invoiceId);
     setDrawerOpen(true);
   }
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const seq = ++loadSeq.current;
     if (!options?.silent) {
       setLoading(true);
       setError(null);
     }
+    const fresh = options?.fresh ?? true;
+    if (fresh) clearGetCache();
     try {
-      const fresh = options?.fresh ?? !options?.silent;
       const data = await fetchAllMatrixRows(fresh);
+      if (seq !== loadSeq.current) return;
       setMatrixData(data);
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load document matrix");
         setMatrixData([]);
       }
     } finally {
-      if (!options?.silent) setLoading(false);
+      if (seq === loadSeq.current && !options?.silent) setLoading(false);
     }
-  }, []);
+  }, [tenantScope]);
 
   useEffect(() => {
     void load();
@@ -157,7 +176,7 @@ export function DocumentMatrixPanel({
   }, [load, refreshRef]);
 
   useVisibilityPolling(() => {
-    void load({ silent: true });
+    void load({ silent: true, fresh: true });
   }, MATRIX_POLL_MS);
 
   useEffect(() => {
@@ -373,8 +392,8 @@ export function DocumentMatrixPanel({
               {pagedRows.map(({ inv, cells, flag, payment }) => {
                 const docRef = documentDisplayRef(inv);
                 const flagged = flag !== "Clean";
-                const completedStages = MATRIX_STAGES.filter(
-                  (stage) => cells[stage as MatrixStage]?.state === "done"
+                const completedStages = MATRIX_STAGES.filter((stage) =>
+                  matrixStageSettled(cells[stage as MatrixStage]?.state ?? "pending")
                 ).length;
                 return (
                   <div
@@ -395,7 +414,7 @@ export function DocumentMatrixPanel({
                       <div className="min-w-0 flex-1">
                         <div className="font-medium tnum">{docRef}</div>
                         <div className="text-xs text-muted-foreground truncate">
-                          {inv.invoice_no ?? "—"} · {inv.vendor ?? "—"}
+                          {inv.invoice_no ?? "—"} · {counterpartyName(inv)}
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-1">
                           {completedStages}/{MATRIX_STAGES.length} stages complete
@@ -437,7 +456,9 @@ export function DocumentMatrixPanel({
                     <th className="px-4 py-2.5 text-left font-medium sticky left-0 bg-card z-10">
                       Document
                     </th>
-                    <th className="px-3 py-2.5 text-left font-medium">Vendor</th>
+                    <th className="px-3 py-2.5 text-left font-medium">
+                      {counterpartyColumnLabel({ mixed: true })}
+                    </th>
                     {MATRIX_STAGES.map((stage) => (
                       <th key={stage} className="px-3 py-2.5 text-center font-medium">
                         {stage}
@@ -478,7 +499,7 @@ export function DocumentMatrixPanel({
                           </div>
                         </td>
                         <td className="px-3 py-2 max-w-[150px] truncate text-muted-foreground">
-                          {inv.vendor ?? "—"}
+                          {counterpartyName(inv)}
                         </td>
                         {MATRIX_STAGES.map((stage) => {
                           const cell = cells[stage as MatrixStage];
@@ -581,6 +602,10 @@ export function DocumentMatrixPanel({
               Failed / blocked
             </span>
             <span className="inline-flex items-center gap-1">
+              <Minus className="h-3.5 w-3.5 text-muted-foreground/70" />
+              Skipped (not applicable)
+            </span>
+            <span className="inline-flex items-center gap-1">
               <AlertTriangle className="h-3.5 w-3.5 text-[hsl(43_74%_49%)]" />
               Anomaly routes through approval before payment
             </span>
@@ -597,6 +622,7 @@ export function DocumentMatrixPanel({
                 reason: flagDrawerRow.reason,
                 conflictWith: flagDrawerRow.conflictWith,
                 conflictDetail: flagDrawerRow.conflictDetail,
+                cells: flagDrawerRow.cells,
               }
             : null
         }

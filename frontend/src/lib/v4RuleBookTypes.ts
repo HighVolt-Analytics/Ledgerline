@@ -85,6 +85,26 @@ export type ExpenseRule = {
   matchedCount: number;
 };
 
+export type SalesRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority?: number;
+  matchOn: {
+    docNumberContains?: string;
+    referenceContains?: string;
+    descriptionContains?: string;
+    customerContains?: string;
+  };
+  postTo: {
+    ledger: string;
+    subLedger: string;
+    taxAccount?: string;
+    receivableAccount?: string;
+  };
+  matchedCount: number;
+};
+
 export type TeamExpenseRule = {
   id: string;
   name: string;
@@ -104,6 +124,27 @@ export type TeamExpenseRule = {
     autoApproveBelow: number;
   };
   matchedCount: number;
+};
+
+export type CustomerMaster = {
+  id: string;
+  name: string;
+  aliases: string[];
+  abn: string;
+  billingAddress: {
+    street: string;
+    suburb: string;
+    postcode: string;
+    country: string;
+  };
+  defaultLedger: string;
+  defaultSubLedger: string;
+  paymentTerms: string;
+  status: string;
+  registeredOn: string;
+  totalRevenueYTD: number;
+  invoiceCount: number;
+  matchConfidence: number;
 };
 
 export type VendorMaster = {
@@ -260,6 +301,7 @@ export type RuleBookConfigState = {
   orgContext: OrgContextConfig;
   emailCaptureRules: EmailCaptureRule[];
   purchaseRules: PurchaseRule[];
+  salesRules: SalesRule[];
   expenseRules: ExpenseRule[];
   teamExpenseRules: TeamExpenseRule[];
   vendorMasters: VendorMaster[];
@@ -287,6 +329,7 @@ export type V4RuleBookState = RuleBookConfigState;
 
 export const ROUTE_TARGETS = [
   "Purchase Management",
+  "Sales Management",
   "Expenses Management",
   "Team Expenses",
   "Vault",
@@ -302,6 +345,8 @@ export const TAX_ACCOUNTS = [
 ] as const;
 
 export const PAYABLE_ACCOUNTS = ["Accounts Payable"] as const;
+
+export const RECEIVABLE_ACCOUNTS = ["Accounts Receivable"] as const;
 
 export const FX_GAIN_LOSS_ACCOUNTS = ["FX Gain/Loss", "Foreign Exchange Gain/Loss"] as const;
 

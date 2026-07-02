@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { api, ApiError } from "@/api/client";
-import type { InvoiceDetails, InvoiceClassificationAudit, InvoiceUpdatePayload, LineItem, PipelineAuditStep, PurchaseDossier } from "@/api/types";
+import type { InvoiceDetails, InvoiceClassificationAudit, InvoiceUpdatePayload, LineItem, PipelineAuditStep, PurchaseDossier, SalesDossierResponse } from "@/api/types";
 import {
   InvoiceDocumentViewer,
   InvoicePreviewModeToggle,
@@ -35,14 +35,19 @@ import {
   validateInvoiceFieldsForApproval,
 } from "@/lib/invoiceActions";
 import {
+  counterpartyName,
+  counterpartyUnknownLabel,
+  extractionFieldLabelForInvoice,
   invoiceCanPublishToLedger,
   invoiceFieldConfidence,
+  glPostingApplicable,
 } from "@/lib/invoice";
+import { threeWayMatchTabLabel } from "@/lib/documentBundleConfig";
 import { InvoiceProcessingOverridesSection } from "@/components/invoices/InvoiceProcessingOverridesSection";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
+import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDossierSection";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import {
-  extractionFieldLabel,
   extractionFieldsForDocumentType,
   isPresetExtractionFieldKey,
   normalizeExtractionFieldKeys,
@@ -64,15 +69,19 @@ import {
 const TABS = ["fields", "lines", "po", "tax", "audit", "overrides", "pipeline"] as const;
 type Tab = (typeof TABS)[number];
 
-const TAB_LABELS: Record<Tab, string> = {
+const TAB_LABELS: Record<Exclude<Tab, "po">, string> = {
   fields: "Fields",
   lines: "Line items",
-  po: "PO Match",
   tax: "Tax",
   audit: "Audit log",
   overrides: "Processing overrides",
   pipeline: "Pipeline (dev)",
 };
+
+function tabLabel(tab: Tab, routeTarget?: string | null): string {
+  if (tab === "po") return threeWayMatchTabLabel(routeTarget);
+  return TAB_LABELS[tab];
+}
 
 const EXPENSE_GL_ACCOUNTS = [
   "Raw Materials",
@@ -84,7 +93,12 @@ const EXPENSE_GL_ACCOUNTS = [
   "Suspense Account",
 ];
 
-function suggestLineAccount(inv: InvoiceDetails, line: LineItem): string {
+function suggestLineAccount(
+  inv: InvoiceDetails,
+  line: LineItem,
+  postingApplies: boolean,
+): string {
+  if (!postingApplies) return "Not posted — reference document";
   const desc = (line.description ?? "").toLowerCase();
   if (
     desc.includes("steel") ||
@@ -104,6 +118,9 @@ function suggestLineAccount(inv: InvoiceDetails, line: LineItem): string {
 }
 
 function lineAccountReason(account: string, vendor: string | null): string {
+  if (account === "Not posted — reference document") {
+    return "Supporting / compliance document — no ledger entry";
+  }
   if (account === "Suspense Account") return "Awaiting rule book mapping";
   const who = vendor ?? "vendor";
   if (account === "Raw Materials") return `${account} match: ${who} vendor rule`;
@@ -113,16 +130,24 @@ function lineAccountReason(account: string, vendor: string | null): string {
 function LineGlAccountCell({
   inv,
   line,
+  postingApplies,
 }: {
   inv: InvoiceDetails;
   line: LineItem;
+  postingApplies: boolean;
 }) {
-  const defaultAccount = suggestLineAccount(inv, line);
+  if (!postingApplies) {
+    return (
+      <span className="text-xs text-muted-foreground">Not posted — reference document</span>
+    );
+  }
+
+  const defaultAccount = suggestLineAccount(inv, line, postingApplies);
   const [account, setAccount] = useState(defaultAccount);
 
   useEffect(() => {
-    setAccount(suggestLineAccount(inv, line));
-  }, [inv, line]);
+    setAccount(suggestLineAccount(inv, line, postingApplies));
+  }, [inv, line, postingApplies]);
 
   const options = Array.from(
     new Set(
@@ -181,10 +206,10 @@ function taxMeta(currency: string): { label: string; rate: number } {
 
 function extractionFieldDisplayLabel(
   key: string,
+  inv: InvoiceDetails,
   tax: { label: string; rate: number }
 ): string {
-  if (key === "gst") return `${tax.label} ${tax.rate}%`;
-  return extractionFieldLabel(key);
+  return extractionFieldLabelForInvoice(key, inv, tax);
 }
 
 function isEditableExtractionField(key: string): boolean {
@@ -470,7 +495,7 @@ function InvoiceHtmlPreview({
       <div className="flex items-start justify-between gap-4 mb-6">
         <div className="min-w-0 space-y-1">
           <div className="font-semibold text-base leading-snug">
-            {inv.vendor ?? "Unknown vendor"}
+            {inv.vendor?.trim() || counterpartyUnknownLabel(inv)}
           </div>
           {inv.abn && (
             <div className="text-xs text-muted-foreground tnum">{inv.abn}</div>
@@ -597,6 +622,7 @@ export function InvoiceDetailDrawer({
   const [previewMode, setPreviewMode] = useState<PreviewPaneMode>("summary");
   const [viewId, setViewId] = useState<number | null>(null);
   const [dossier, setDossier] = useState<PurchaseDossier | null>(null);
+  const [salesDossier, setSalesDossier] = useState<SalesDossierResponse | null>(null);
   const [dossierLoading, setDossierLoading] = useState(false);
 
   const activeInvoiceId = viewId ?? invoiceId;
@@ -607,6 +633,11 @@ export function InvoiceDetailDrawer({
         .filter((dt) => dt.enabled)
         .map((dt) => dt.code),
     [ruleBook?.documentTypes]
+  );
+
+  const postingApplies = useMemo(
+    () => (inv ? glPostingApplicable(inv, ruleBook?.documentTypes) : true),
+    [inv, ruleBook?.documentTypes]
   );
 
   const resolveClassification = async (confirmedDt: string) => {
@@ -697,10 +728,15 @@ export function InvoiceDetailDrawer({
   useEffect(() => {
     if (!inv || tab !== "po") return;
     setDossierLoading(true);
-    api
-      .getPurchaseDossier(inv.id, { fresh: true })
-      .then(setDossier)
-      .catch(() => setDossier(null))
+    const isSales = (inv.route_target ?? "").toLowerCase().includes("sales");
+    const request = isSales
+      ? api.fetchSalesDossier(inv.id, { fresh: true }).then(setSalesDossier)
+      : api.getPurchaseDossier(inv.id, { fresh: true }).then(setDossier);
+    void request
+      .catch(() => {
+        if (isSales) setSalesDossier(null);
+        else setDossier(null);
+      })
       .finally(() => setDossierLoading(false));
   }, [inv, tab]);
 
@@ -1045,7 +1081,7 @@ export function InvoiceDetailDrawer({
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-border shrink-0">
               <div className="min-w-0 pr-4">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-base font-semibold truncate">{inv.vendor ?? "—"}</span>
+                  <span className="text-base font-semibold truncate">{counterpartyName(inv)}</span>
                   <Badge variant="outline" className="tnum">
                     {documentDisplayRef(inv)}
                   </Badge>
@@ -1139,7 +1175,7 @@ export function InvoiceDetailDrawer({
                           : "hover:text-foreground"
                       )}
                     >
-                      {TAB_LABELS[t]}
+                      {tabLabel(t, inv?.route_target)}
                     </button>
                   ))}
                 </div>
@@ -1165,7 +1201,7 @@ export function InvoiceDetailDrawer({
                       extractionFieldKeys.map((key) => (
                         <div key={key}>
                           <FieldRow
-                            label={extractionFieldDisplayLabel(key, tax)}
+                            label={extractionFieldDisplayLabel(key, inv, tax)}
                             value={readExtractionFieldValue(
                               key,
                               inv,
@@ -1381,7 +1417,11 @@ export function InvoiceDetailDrawer({
                                 {fmt(line.amount)}
                               </td>
                               <td className="px-3 py-2">
-                                <LineGlAccountCell inv={inv} line={line} />
+                                <LineGlAccountCell
+                                  inv={inv}
+                                  line={line}
+                                  postingApplies={postingApplies}
+                                />
                               </td>
                             </tr>
                           ))
@@ -1392,12 +1432,21 @@ export function InvoiceDetailDrawer({
                 )}
 
                 {tab === "po" && (
-                  <InvoicePurchaseDossierSection
-                    dossier={dossier}
-                    loading={dossierLoading}
-                    vendor={inv.vendor ?? undefined}
-                    onOpenSibling={(id) => setViewId(id)}
-                  />
+                  (inv.route_target ?? "").toLowerCase().includes("sales") ? (
+                    <InvoiceSalesDossierSection
+                      dossier={salesDossier}
+                      loading={dossierLoading}
+                      customer={inv.vendor ?? undefined}
+                      onOpenSibling={(id) => setViewId(id)}
+                    />
+                  ) : (
+                    <InvoicePurchaseDossierSection
+                      dossier={dossier}
+                      loading={dossierLoading}
+                      vendor={inv.vendor ?? undefined}
+                      onOpenSibling={(id) => setViewId(id)}
+                    />
+                  )
                 )}
 
                 {tab === "tax" && (

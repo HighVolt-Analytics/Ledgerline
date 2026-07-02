@@ -63,6 +63,8 @@ class InvoiceResponse(BaseModel):
     abn: str | None
     invoice_no: str | None
     po_reference: str | None = None
+    so_reference: str | None = None
+    sales_document_type: str | None = None
     cost_centre: str | None = None
     invoice_date: date | None
     due_date: date | None
@@ -103,6 +105,7 @@ class InvoiceResponse(BaseModel):
     created_at: datetime
     has_stored_file: bool = False
     published_to_ledger: bool = False
+    gl_posting_applicable: bool = True
     current_stage: str = "Received"
     current_stage_state: PipelineStageState = "pending"
     approval_board_column: ApprovalBoardColumn | None = None
@@ -128,6 +131,7 @@ class InvoiceUpdateRequest(BaseModel):
     abn: str | None = None
     invoice_no: str | None = None
     po_reference: str | None = None
+    so_reference: str | None = None
     cost_centre: str | None = None
     billing_address: str | None = None
     invoice_date: date | None = None

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 MatchMode = Literal[
     "none",
     "three_way_po_grn",
+    "three_way_so_dn",
     "two_way_po_ses",
     "reference_invoice",
     "subledger_reconcile",
@@ -28,6 +29,7 @@ ApprovalMode = Literal[
 
 PlaybookProfile = Literal[
     "po_goods",
+    "ar_goods",
     "po_services",
     "direct_expense",
     "credit_adjustment",
@@ -50,6 +52,7 @@ KNOWN_MATCH_MODES = frozenset(
     {
         "none",
         "three_way_po_grn",
+        "three_way_so_dn",
         "two_way_po_ses",
         "reference_invoice",
         "subledger_reconcile",
@@ -73,6 +76,7 @@ KNOWN_APPROVAL_MODES = frozenset(
 KNOWN_PLAYBOOK_PROFILES = frozenset(
     {
         "po_goods",
+        "ar_goods",
         "po_services",
         "direct_expense",
         "credit_adjustment",

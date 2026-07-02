@@ -7,16 +7,79 @@ import {
 } from "@/lib/documentPlaybookConfig";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
+export const ROUTE_PURCHASE = "Purchase Management";
+export const ROUTE_SALES = "Sales Management";
+
+export function isSalesManagementRoute(routeTarget?: string | null): boolean {
+  return (routeTarget ?? "").trim() === ROUTE_SALES;
+}
+
+export function isPurchaseManagementRoute(routeTarget?: string | null): boolean {
+  return (routeTarget ?? "").trim() === ROUTE_PURCHASE;
+}
+
+/** Short finance label for the dossier linkage key (PO vs SO). */
+export function linkageReferenceShort(routeTarget?: string | null): string {
+  return isSalesManagementRoute(routeTarget) ? "SO" : "PO";
+}
+
+/** Full label for linkage reference field in copy. */
+export function linkageReferenceLabel(routeTarget?: string | null): string {
+  return isSalesManagementRoute(routeTarget) ? "SO reference" : "PO reference";
+}
+
+/** Rule Book section title — avoids overloaded “bundle” term. */
+export function supportingDocumentRequirementsTitle(): string {
+  return "Supporting document requirements";
+}
+
+/** Pipeline stage — dossier completeness before posting. */
+export function dossierCompletenessStageLabel(): string {
+  return "Supporting documents";
+}
+
+/** Invoice drawer tab — separates dossier completeness from generic “bundle”. */
+export function threeWayMatchTabLabel(routeTarget?: string | null): string {
+  if (isSalesManagementRoute(routeTarget)) return "3-way match (SO · DN · Invoice)";
+  if (isPurchaseManagementRoute(routeTarget)) return "3-way match (PO · GRN · Invoice)";
+  return "3-way match";
+}
+
+/** Finance book name for dossier copy. */
+export function dossierBookLabel(routeTarget?: string | null): string {
+  if (isSalesManagementRoute(routeTarget)) return "sales order dossier";
+  if (isPurchaseManagementRoute(routeTarget)) return "purchase order dossier";
+  return "document dossier";
+}
+
+/** Required supporting docs pill in dossier UI. */
+export function requiredSupportingDocsLabel(present: number, required: number): string {
+  return `${present}/${required} required supporting docs`;
+}
+
 const DT_CODE_PATTERN = /^DT-\d{2}$/i;
 
 export type PurchaseBundleRole = "" | "po" | "grn";
+export type SalesBundleRole = "" | "so" | "dn";
 
 export type BundleEditorMode = "inactive" | "member" | "consumer";
 
 export const PURCHASE_BUNDLE_ROLE_OPTIONS: Array<{ value: PurchaseBundleRole; label: string }> = [
-  { value: "", label: "By document type — match another invoice on the same PO" },
-  { value: "po", label: "PO — purchase order register or PO upload" },
-  { value: "grn", label: "GRN — goods receipt register or GRN upload" },
+  {
+    value: "",
+    label: "Classified copy on the same PO reference (by document type)",
+  },
+  { value: "po", label: "PO — purchase order register or uploaded PO copy" },
+  { value: "grn", label: "GRN — goods receipt register or uploaded GRN copy" },
+];
+
+export const SALES_BUNDLE_ROLE_OPTIONS: Array<{ value: SalesBundleRole; label: string }> = [
+  {
+    value: "",
+    label: "Classified copy on the same SO reference (by document type)",
+  },
+  { value: "so", label: "SO — sales order register or uploaded SO copy" },
+  { value: "dn", label: "DN — delivery note register or uploaded DN copy" },
 ];
 
 export function isDtCode(value: string): boolean {
@@ -69,6 +132,12 @@ export function documentTypeLabel(
   return `${row.code} · ${row.shortTitle || row.title}`;
 }
 
+export function salesBundleRoleLabel(role: SalesBundleRole | string | undefined): string | null {
+  const token = (role || "").trim().toLowerCase() as SalesBundleRole;
+  const row = SALES_BUNDLE_ROLE_OPTIONS.find((option) => option.value === token);
+  return row && row.value ? row.label : null;
+}
+
 export function purchaseBundleRoleLabel(role: PurchaseBundleRole | string | undefined): string | null {
   const token = (role || "").trim().toLowerCase() as PurchaseBundleRole;
   const row = PURCHASE_BUNDLE_ROLE_OPTIONS.find((option) => option.value === token);
@@ -81,14 +150,14 @@ export function bundleMemberDetailLabel(
 ): string {
   const row = documentTypes.find((dt) => dt.code.toUpperCase() === code.toUpperCase());
   const base = documentTypeLabel(documentTypes, code);
-  if (!row?.purchaseBundleRole) return base;
-  const roleHint =
-    row.purchaseBundleRole === "po"
-      ? "PO register / upload"
-      : row.purchaseBundleRole === "grn"
-        ? "GRN register / upload"
-        : null;
-  return roleHint ? `${base} (${roleHint})` : base;
+  if (!row) return base;
+  const purchaseRole = (row.purchaseBundleRole || "").trim().toLowerCase();
+  if (purchaseRole === "po") return `${base} (PO register / upload)`;
+  if (purchaseRole === "grn") return `${base} (GRN register / upload)`;
+  const salesRole = (row.salesBundleRole || "").trim().toLowerCase();
+  if (salesRole === "so") return `${base} (SO register / upload)`;
+  if (salesRole === "dn") return `${base} (DN register / upload)`;
+  return base;
 }
 
 function postingIsPayable(posting: string): boolean {
@@ -97,7 +166,7 @@ function postingIsPayable(posting: string): boolean {
 }
 
 /** Supporting purchase documents (PO copy, GRN) that link on a dossier. */
-export function isBundleMemberCandidate(
+export function isPurchaseBundleMemberCandidate(
   docType: Pick<DocumentTypeDefinition, "code" | "klass" | "routeTarget" | "posting" | "purchaseBundleRole" | "enabled">
 ): boolean {
   if (docType.enabled === false) return false;
@@ -110,6 +179,37 @@ export function isBundleMemberCandidate(
     docType.routeTarget === "Purchase Management" &&
     posting === "no"
   );
+}
+
+/** Supporting sales documents (SO copy, DN) that link on a dossier. */
+export function isSalesBundleMemberCandidate(
+  docType: Pick<DocumentTypeDefinition, "code" | "klass" | "routeTarget" | "posting" | "salesBundleRole" | "enabled">
+): boolean {
+  if (docType.enabled === false) return false;
+  const role = (docType.salesBundleRole || "").trim().toLowerCase();
+  if (role === "so" || role === "dn") return true;
+  const klass = (docType.klass || "").trim().toLowerCase();
+  const posting = (docType.posting || "").trim().toLowerCase();
+  return (
+    klass === "supporting" &&
+    docType.routeTarget === "Sales Management" &&
+    posting === "no"
+  );
+}
+
+export function isBundleMemberCandidate(
+  docType: Pick<
+    DocumentTypeDefinition,
+    | "code"
+    | "klass"
+    | "routeTarget"
+    | "posting"
+    | "purchaseBundleRole"
+    | "salesBundleRole"
+    | "enabled"
+  >
+): boolean {
+  return isPurchaseBundleMemberCandidate(docType) || isSalesBundleMemberCandidate(docType);
 }
 
 export function playbookEnforcesBundle(
@@ -128,13 +228,17 @@ export function bundleEditorMode(
     | "playbookProfile"
     | "posting"
     | "purchaseBundleRole"
+    | "salesBundleRole"
     | "klass"
     | "routeTarget"
     | "bundleMandatory"
   >
 ): BundleEditorMode {
-  const role = (draft.purchaseBundleRole || "").trim().toLowerCase();
-  if (role === "po" || role === "grn") return "member";
+  const purchaseRole = (draft.purchaseBundleRole || "").trim().toLowerCase();
+  if (purchaseRole === "po" || purchaseRole === "grn") return "member";
+
+  const salesRole = (draft.salesBundleRole || "").trim().toLowerCase();
+  if (salesRole === "so" || salesRole === "dn") return "member";
 
   const klass = (draft.klass || "").trim().toLowerCase();
   const posting = (draft.posting || "").trim().toLowerCase();
@@ -145,10 +249,20 @@ export function bundleEditorMode(
   ) {
     return "member";
   }
+  if (
+    klass === "supporting" &&
+    draft.routeTarget === "Sales Management" &&
+    posting === "no"
+  ) {
+    return "member";
+  }
 
   if (playbookEnforcesBundle(draft)) return "consumer";
   if (normalizeDtCodeList(draft.bundleMandatory).length > 0) return "consumer";
   if (postingIsPayable(draft.posting) && draft.routeTarget === "Purchase Management") {
+    return "consumer";
+  }
+  if (postingIsPayable(draft.posting) && draft.routeTarget === "Sales Management") {
     return "consumer";
   }
 
@@ -157,16 +271,26 @@ export function bundleEditorMode(
 
 export function bundleMemberCandidates(
   documentTypes: DocumentTypeDefinition[],
-  currentCode: string
+  currentCode: string,
+  consumerRouteTarget?: string
 ): DocumentTypeDefinition[] {
   const exclude = currentCode.trim().toUpperCase();
+  const consumerRoute = (consumerRouteTarget || "").trim();
   return documentTypes
-    .filter((dt) => dt.code.trim().toUpperCase() !== exclude && isBundleMemberCandidate(dt))
+    .filter((dt) => {
+      if (dt.code.trim().toUpperCase() === exclude) return false;
+      if (consumerRoute === "Sales Management") return isSalesBundleMemberCandidate(dt);
+      if (consumerRoute === "Purchase Management") return isPurchaseBundleMemberCandidate(dt);
+      return isBundleMemberCandidate(dt);
+    })
     .sort((a, b) => {
       const roleOrder = (dt: DocumentTypeDefinition) => {
-        const role = (dt.purchaseBundleRole || "").toLowerCase();
-        if (role === "po") return 0;
-        if (role === "grn") return 1;
+        const purchaseRole = (dt.purchaseBundleRole || "").toLowerCase();
+        if (purchaseRole === "po") return 0;
+        if (purchaseRole === "grn") return 1;
+        const salesRole = (dt.salesBundleRole || "").toLowerCase();
+        if (salesRole === "so") return 0;
+        if (salesRole === "dn") return 1;
         return 2;
       };
       const byRole = roleOrder(a) - roleOrder(b);
@@ -177,8 +301,26 @@ export function bundleMemberCandidates(
 
 export function suggestedMandatoryBundleMembers(
   documentTypes: DocumentTypeDefinition[],
-  currentCode: string
+  currentCode: string,
+  consumerRouteTarget?: string
 ): string[] {
+  const route = (consumerRouteTarget || "").trim();
+  if (route === "Sales Management") {
+    const so = documentTypes.find(
+      (dt) =>
+        dt.enabled !== false &&
+        (dt.salesBundleRole || "").toLowerCase() === "so" &&
+        dt.code.trim().toUpperCase() !== currentCode.trim().toUpperCase()
+    );
+    const dn = documentTypes.find(
+      (dt) =>
+        dt.enabled !== false &&
+        (dt.salesBundleRole || "").toLowerCase() === "dn" &&
+        dt.code.trim().toUpperCase() !== currentCode.trim().toUpperCase()
+    );
+    return normalizeDtCodeList([so?.code ?? "", dn?.code ?? ""]);
+  }
+
   const po = documentTypes.find(
     (dt) =>
       dt.enabled !== false &&
@@ -194,9 +336,13 @@ export function suggestedMandatoryBundleMembers(
   return normalizeDtCodeList([po?.code ?? "", grn?.code ?? ""]);
 }
 
-export function bundleRoleBadge(role: PurchaseBundleRole | string | undefined): string | null {
+export function bundleRoleBadge(
+  role: PurchaseBundleRole | SalesBundleRole | string | undefined
+): string | null {
   const token = (role || "").trim().toLowerCase();
   if (token === "po") return "PO";
   if (token === "grn") return "GRN";
+  if (token === "so") return "SO";
+  if (token === "dn") return "DN";
   return null;
 }

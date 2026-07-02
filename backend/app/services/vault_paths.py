@@ -13,6 +13,7 @@ from app.services.tenant_storage_paths import tenant_blob_name
 from app.services.vendor_resolver import UNKNOWN_SLUG
 
 ROUTE_PURCHASE = "Purchase Management"
+ROUTE_SALES = "Sales Management"
 ROUTE_EXPENSES = "Expenses Management"
 ROUTE_TEAM = "Team Expenses"
 ROUTE_VAULT = "Vault"
@@ -23,6 +24,7 @@ UNCLASSIFIED_DT_FOLDER = "Unclassified"
 _KNOWN_BOOKS = frozenset(
     {
         ROUTE_PURCHASE,
+        ROUTE_SALES,
         ROUTE_EXPENSES,
         ROUTE_TEAM,
         ROUTE_VAULT,

@@ -76,6 +76,12 @@ def derive_matrix_flag(inv: Invoice) -> tuple[str, str | None]:
     failure = _first_validation_failure(inv)
     if failure:
         return "Anomaly Detected", failure
+    from app.services.document_type_playbook_profile_service import (
+        gl_posting_applicable_for_invoice,
+    )
+
+    if not gl_posting_applicable_for_invoice(inv):
+        return "Clean", None
     account = (inv.account_name or "").lower()
     if "suspense" in account:
         return "Anomaly Detected", "GL mapping unresolved — routed to suspense"

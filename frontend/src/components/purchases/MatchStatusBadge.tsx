@@ -23,6 +23,12 @@ export function MatchStatusBadge({ status }: { status: MatchStatus }) {
           <X className="h-3 w-3" /> No GRN
         </StatusPill>
       );
+    case "No DN":
+      return (
+        <StatusPill className={pillTones.bad}>
+          <X className="h-3 w-3" /> No DN
+        </StatusPill>
+      );
     case "Routed for Approval":
       return <StatusPill className={pillTones.amber}>Routed for Approval</StatusPill>;
   }

@@ -59,6 +59,7 @@ class DossierLinkedDocumentResponse(BaseModel):
     present: bool
     requirement: str
     purchase_bundle_role: str | None = None
+    sales_bundle_role: str | None = None
     source: str | None = None
     linked_dossier_id: str | None = None
     invoice_id: int | None = None
@@ -104,6 +105,7 @@ class DossierLinkedDocumentsResponse(BaseModel):
     documents: list[DossierLinkedDocumentResponse] = Field(default_factory=list)
     match_summary: DossierMatchSummaryResponse | None = None
     purchase_order_id: int | None = None
+    sales_order_id: int | None = None
 
 
 class DossierApprovalStepResponse(BaseModel):
@@ -131,6 +133,8 @@ class DossierSummaryResponse(BaseModel):
     document_type_code: str
     document_type_title: str
     vendor: str
+    counterparty_label: str = "Counterparty"
+    route_target: str | None = None
     buyer: str
     invoice_ref: str
     capture_channel: str
@@ -143,6 +147,8 @@ class DossierSummaryResponse(BaseModel):
     classification_confidence: int
     fraud_risk: str
     po_reference: str | None = None
+    so_reference: str | None = None
+    linkage_reference: str | None = None
     sla_label: str
     sla_breached: bool = False
     owner: str

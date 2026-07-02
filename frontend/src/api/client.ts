@@ -23,6 +23,11 @@ import type {
   PaymentMarkPaidManualPayload,
   PurchaseOrderApi,
   PurchaseDossier,
+  SalesOrderApi,
+  SalesDossierResponse,
+  CollectionApi,
+  CollectionMarkReceivedPayload,
+  Customer,
   DashboardOverview,
   DashboardStats,
   ReportsAnalytics,
@@ -78,6 +83,7 @@ import type {
 
 import { resolveApiBase } from "@/lib/apiBase";
 import { decodeJwtPayload } from "@/lib/authToken";
+import { getRefreshToken } from "@/lib/authSession";
 
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE = resolveApiBase();
@@ -144,25 +150,54 @@ async function notifyUnauthorized() {
   }
 }
 
+const AUTH_RETRY_PATHS = new Set([
+  "/api/auth/me",
+  "/api/auth/refresh",
+  "/api/auth/login",
+  "/api/auth/logout",
+]);
+
+async function tryRefreshSession(): Promise<boolean> {
+  if (!getRefreshToken()) return false;
+  try {
+    const { refreshAccessTokenSingleFlight } = await import("@/lib/authTokenRefresh");
+    await refreshAccessTokenSingleFlight();
+    return true;
+  } catch {
+    void notifyUnauthorized();
+    return false;
+  }
+}
+
 export function setAuthToken(token: string | null) {
   authToken = token;
   clearGetCache();
 }
 
 export function setAuthUser(user: AuthUser | null) {
+  const prevTenant = authUser?.tenant_id ?? null;
+  const nextTenant = user?.tenant_id ?? null;
   authUser = user;
+  if (prevTenant !== nextTenant) {
+    clearGetCache();
+  }
+}
+
+function resolveTenantScopeId(): string | null {
+  if (authToken) {
+    const payload = decodeJwtPayload(authToken);
+    const fromJwt = payload?.tenant_id ?? payload?.org_id;
+    if (fromJwt) return String(fromJwt);
+  }
+  if (authUser?.tenant_id) return String(authUser.tenant_id);
+  return null;
 }
 
 function getScopedAuthHeaders(init?: RequestInit): Headers {
   const headers = withAuthHeaders(init);
-  // JWT is the source of truth; cached authUser can lag after tenant UUID migration.
-  let tid = authUser?.tenant_id;
-  if (!tid && authToken) {
-    const payload = decodeJwtPayload(authToken);
-    tid = payload?.tenant_id ?? payload?.org_id;
-  }
+  const tid = resolveTenantScopeId();
   if (tid) {
-    headers.set("X-Tenant-Id", String(tid));
+    headers.set("X-Tenant-Id", tid);
   }
   return headers;
 }
@@ -174,11 +209,7 @@ export function clearGetCache() {
 }
 
 function getRequestKey(path: string, method: string) {
-  let tid = authUser?.tenant_id;
-  if (!tid && authToken) {
-    const payload = decodeJwtPayload(authToken);
-    tid = payload?.tenant_id ?? payload?.org_id;
-  }
+  const tid = resolveTenantScopeId();
   return `${tid ?? "anon"}:${method}:${path}`;
 }
 
@@ -305,7 +336,11 @@ async function requestBlob(
   };
 }
 
-async function fetchEnvelope<T>(path: string, init?: ApiRequestOptions): Promise<T> {
+async function fetchEnvelope<T>(
+  path: string,
+  init?: ApiRequestOptions,
+  retriedAfterRefresh = false
+): Promise<T> {
   const { timeoutMs, ...fetchInit } = init ?? {};
   const controller = timeoutMs != null && timeoutMs > 0 ? new AbortController() : null;
   const timer =
@@ -320,12 +355,13 @@ async function fetchEnvelope<T>(path: string, init?: ApiRequestOptions): Promise
     });
     if (!res.ok) {
       const msg = await parseErrorResponse(res);
-      if (
-        res.status === 401 &&
-        authToken &&
-        path !== "/api/auth/me" &&
-        path !== "/api/auth/refresh"
-      ) {
+      if (res.status === 401 && !retriedAfterRefresh && !AUTH_RETRY_PATHS.has(path)) {
+        const refreshed = await tryRefreshSession();
+        if (refreshed) {
+          return fetchEnvelope<T>(path, init, true);
+        }
+      }
+      if (res.status === 401 && authToken && !AUTH_RETRY_PATHS.has(path)) {
         void notifyUnauthorized();
       }
       throw new ApiError(msg, res.status);
@@ -780,6 +816,11 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<PurchaseDossier>(path);
   },
+  getSalesDossier: (id: number, options?: FreshRequestOptions) => {
+    const path = `/api/invoices/${id}/sales-dossier`;
+    if (options?.fresh) bustGetCache(path);
+    return request<SalesDossierResponse>(path);
+  },
   getMatrixWithMeta: (params?: Record<string, string>, options?: FreshRequestOptions) => {
     const q = new URLSearchParams(params).toString();
     const path = `/api/matrix${q ? `?${q}` : ""}`;
@@ -1197,6 +1238,80 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  listSales: (options?: FreshRequestOptions) => {
+    const path = "/api/sales";
+    if (options?.fresh) bustGetCache(path);
+    return request<SalesOrderApi[]>(path);
+  },
+  approveSalesVariance: (salesOrderId: number) =>
+    request<SalesOrderApi>(`/api/sales/${salesOrderId}/approve-variance`, {
+      method: "POST",
+    }),
+  recordDeliveryNote: (
+    salesOrderId: number,
+    body: { dn_qty: number; dn_date?: string; shipper?: string; condition_note?: string }
+  ) =>
+    request<SalesOrderApi>(`/api/sales/${salesOrderId}/dn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  fetchSalesDossier: (invoiceId: number, options?: FreshRequestOptions) => {
+    const path = `/api/invoices/${invoiceId}/sales-dossier`;
+    if (options?.fresh) bustGetCache(path);
+    return request<SalesDossierResponse>(path);
+  },
+  listCollections: (options?: FreshRequestOptions) => {
+    const path = "/api/collections";
+    if (options?.fresh) bustGetCache(path);
+    return request<CollectionApi[]>(path);
+  },
+  markCollectionReceived: (collectionId: number, body?: CollectionMarkReceivedPayload) => {
+    bustGetCacheByPrefix("/api/collections");
+    return request<CollectionApi>(`/api/collections/${collectionId}/mark-received`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+  },
+  listCustomers: (options?: FreshRequestOptions) => {
+    const path = "/api/customers";
+    if (options?.fresh) bustGetCache(path);
+    return request<Customer[]>(path);
+  },
+  createCustomer: (body: Omit<Customer, "id" | "created_at">) =>
+    request<Customer>("/api/customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateCustomer: (id: number, body: Partial<Customer>) =>
+    request<Customer>(`/api/customers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteCustomer: (id: number) =>
+    request<void>(`/api/customers/${id}`, { method: "DELETE" }),
+  listCustomerMasters: (options?: FreshRequestOptions) => {
+    const path = "/api/customer-masters";
+    if (options?.fresh) bustGetCache(path);
+    return request<Array<Record<string, unknown>>>(path);
+  },
+  createCustomerMaster: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/api/customer-masters", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateCustomerMaster: (masterId: string, body: Record<string, unknown>) =>
+    request<Record<string, unknown>>(`/api/customer-masters/${encodeURIComponent(masterId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteCustomerMaster: (masterId: string) =>
+    request<void>(`/api/customer-masters/${encodeURIComponent(masterId)}`, { method: "DELETE" }),
   getWalletSummary: (options?: FreshRequestOptions) => {
     const path = "/api/payments/wallet-summary";
     if (options?.fresh) bustGetCache(path);

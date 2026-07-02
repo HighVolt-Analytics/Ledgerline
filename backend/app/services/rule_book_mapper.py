@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice
 from app.models.purchase_order import PurchaseOrder
+from app.models.sales_order import SalesOrder
 from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
 from app.services.account_mapper import AccountMapping, MappingDetail, resolve_category_for_config
 from app.services.capture_channel import is_staff_claim_sender
@@ -16,6 +17,7 @@ from app.services.rule_book_config_io import load_rule_book_config_with_masters
 from app.services.rule_book_evaluate_service import invoice_to_eval_document
 
 ROUTE_PURCHASE = "Purchase Management"
+ROUTE_SALES = "Sales Management"
 ROUTE_EXPENSES = "Expenses Management"
 ROUTE_TEAM = "Team Expenses"
 ROUTE_VAULT = "Vault"
@@ -23,6 +25,7 @@ from app.services.legacy_cascade import legacy_rule_type, match_legacy_cascade
 from app.services.rule_engine import (
     match_expense_rule,
     match_purchase_rule,
+    match_sales_rule,
     match_team_expense_rule,
 )
 
@@ -64,6 +67,25 @@ def _ledger_to_mapping(ledger: str, config: RuleBookConfigPayload) -> AccountMap
         account_code=resolved.account_code,
         account_name=resolved.account_name,
         expense_category=ledger,
+    )
+
+
+def mapping_hit_from_sales_order(
+    so: SalesOrder,
+    config: RuleBookConfigPayload,
+) -> ConfigMappingHit | None:
+    """Coding inheritance — SO ledger applied to linked invoice."""
+    ledger = (so.ledger or "").strip()
+    if not ledger:
+        return None
+    sub = (so.sub_ledger or "").strip()
+    reason = f"Sales coding inherited from SO {so.so_number}"
+    if sub:
+        reason = f"{reason} / {sub}"
+    return ConfigMappingHit(
+        mapping=_ledger_to_mapping(ledger, config),
+        rule_type="Sales rule",
+        match_reason=reason,
     )
 
 
@@ -133,6 +155,21 @@ def _hit_from_expense_rule(
     )
 
 
+def _hit_from_sales_rule(
+    doc,
+    config: RuleBookConfigPayload,
+) -> ConfigMappingHit | None:
+    sales = match_sales_rule(doc, config.sales_rules)
+    if not sales:
+        return None
+    ledger = sales.post_to.ledger
+    return ConfigMappingHit(
+        mapping=_ledger_to_mapping(ledger, config),
+        rule_type="Sales rule",
+        match_reason=_rule_match_reason("Sales rule", sales.name),
+    )
+
+
 def _hit_from_team_rule(
     doc,
     config: RuleBookConfigPayload,
@@ -165,11 +202,37 @@ def _resolve_legacy_and_fallback(
     return _fallback_mapping(config)
 
 
+def resolve_sales_post_accounts(
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+    *,
+    sales_order: SalesOrder | None = None,
+) -> tuple[str, str]:
+    """Return (receivable_account_label, tax_account_label) for sales journals."""
+    rule = match_sales_rule(invoice_to_eval_document(invoice), config.sales_rules)
+    if rule is not None:
+        post = rule.post_to
+        return (
+            (post.receivable_account or "").strip() or "Accounts Receivable",
+            (post.tax_account or "").strip() or "GST Collected",
+        )
+    if sales_order is not None:
+        recv = (sales_order.receivable_account or "").strip()
+        tax = (sales_order.tax_account or "").strip()
+        if recv or tax:
+            return (
+                recv or "Accounts Receivable",
+                tax or "GST Collected",
+            )
+    return ("Accounts Receivable", "GST Collected")
+
+
 def resolve_config_mapping(
     invoice: Invoice,
     config: RuleBookConfigPayload,
     *,
     purchase_order: PurchaseOrder | None = None,
+    sales_order: SalesOrder | None = None,
 ) -> ConfigMappingHit:
     """Map using the routed category book, then legacy cascade → suspense fallback."""
     route = (invoice.route_target or "").strip()
@@ -182,6 +245,16 @@ def resolve_config_mapping(
             if inherited is not None:
                 return inherited
         hit = _hit_from_purchase_rule(doc, config)
+        if hit is not None:
+            return hit
+        return _resolve_legacy_and_fallback(invoice, config)
+
+    if route == ROUTE_SALES:
+        if sales_order is not None:
+            inherited = mapping_hit_from_sales_order(sales_order, config)
+            if inherited is not None:
+                return inherited
+        hit = _hit_from_sales_rule(doc, config)
         if hit is not None:
             return hit
         return _resolve_legacy_and_fallback(invoice, config)
@@ -220,10 +293,16 @@ def map_invoice_with_details(
     config: RuleBookConfigPayload,
     line_description: str | None = None,
     purchase_order: PurchaseOrder | None = None,
+    sales_order: SalesOrder | None = None,
 ) -> MappingDetail:
     """Map invoice with audit metadata using the unified rule book."""
     del line_description  # header-level rules; line text is in invoice line_items for eval
-    hit = resolve_config_mapping(invoice, config, purchase_order=purchase_order)
+    hit = resolve_config_mapping(
+        invoice,
+        config,
+        purchase_order=purchase_order,
+        sales_order=sales_order,
+    )
     return MappingDetail(
         expense_category=hit.mapping.expense_category or hit.mapping.account_name,
         account_code=hit.mapping.account_code,

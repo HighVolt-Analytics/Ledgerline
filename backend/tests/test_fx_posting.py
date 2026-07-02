@@ -16,6 +16,7 @@ from app.services.fx_posting_service import (
     generate_payment_entries,
     po_invoice_currency_mismatch,
 )
+from app.services.invoice_evaluation_service import ROUTE_SALES
 from app.services.journal_generator import generate_entries, is_balanced
 from app.services.purchase_match_service import compute_three_way_match
 
@@ -136,3 +137,49 @@ def test_po_invoice_currency_match_ok() -> None:
     policy = FxPostingPolicy()
     assert not po_invoice_currency_mismatch("USD", "USD", policy=policy)
     assert po_invoice_currency_mismatch("USD", "AUD", policy=policy)
+
+
+def test_sales_invoice_books_ar_revenue_gst_collected() -> None:
+    from app.schemas.rule_book_config import SalesMatchOn, SalesRule, validate_rule_book_config_payload
+
+    config = validate_rule_book_config_payload(
+        {
+            "schema_version": 1,
+            "sales_rules": [
+                SalesRule(
+                    id="sr-1",
+                    name="Harbour View",
+                    match_on=SalesMatchOn(customer_contains="Harbour View"),
+                    post_to={
+                        "ledger": "Operating Revenue",
+                        "tax_account": "GST Collected",
+                        "receivable_account": "Accounts Receivable",
+                    },
+                ).model_dump(),
+            ],
+        }
+    )
+    inv = Invoice(
+        tenant_id=uuid4(),
+        vendor="Harbour View Hotel",
+        invoice_date=date(2026, 3, 1),
+        subtotal=Decimal("1000"),
+        gst=Decimal("100"),
+        total=Decimal("1100"),
+        currency="AUD",
+        route_target=ROUTE_SALES,
+        status=InvoiceStatus.JOURNALING,
+    )
+    lines = generate_entries(
+        inv,
+        AccountMapping("4000", "Operating Revenue", expense_category="Operating Revenue"),
+        config=config,
+    )
+    assert is_balanced(lines)
+    debits = [ln for ln in lines if ln.debit > 0]
+    credits = [ln for ln in lines if ln.credit > 0]
+    assert len(debits) == 1
+    assert debits[0].account_name == "Accounts Receivable"
+    assert debits[0].debit == Decimal("1100")
+    assert any(ln.account_name == "Operating Revenue" and ln.credit == Decimal("1000") for ln in credits)
+    assert any(ln.account_name == "GST Collected" and ln.credit == Decimal("100") for ln in credits)

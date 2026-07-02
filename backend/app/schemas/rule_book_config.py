@@ -55,6 +55,7 @@ class PostToAccounts(BaseModel):
     sub_ledger: str = ""
     tax_account: str | None = None
     payable_account: str | None = None
+    receivable_account: str | None = None
 
 
 class PurchaseMatchOn(BaseModel):
@@ -88,6 +89,23 @@ class ExpenseRule(BaseModel):
     enabled: bool = True
     priority: int = Field(default=100, ge=1)
     match_on: ExpenseMatchOn = Field(default_factory=ExpenseMatchOn)
+    post_to: PostToAccounts
+    matched_count: int = Field(default=0, ge=0)
+
+
+class SalesMatchOn(BaseModel):
+    doc_number_contains: str | None = None
+    reference_contains: str | None = None
+    description_contains: str | None = None
+    customer_contains: str | None = None
+
+
+class SalesRule(BaseModel):
+    id: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=255)
+    enabled: bool = True
+    priority: int = Field(default=100, ge=1)
+    match_on: SalesMatchOn = Field(default_factory=SalesMatchOn)
     post_to: PostToAccounts
     matched_count: int = Field(default=0, ge=0)
 
@@ -378,6 +396,7 @@ class RuleBookConfigPayload(BaseModel):
     )
     email_capture_rules: list[EmailCaptureRule] = Field(default_factory=list)
     purchase_rules: list[PurchaseRule] = Field(default_factory=list)
+    sales_rules: list[SalesRule] = Field(default_factory=list)
     expense_rules: list[ExpenseRule] = Field(default_factory=list)
     team_expense_rules: list[TeamExpenseRule] = Field(default_factory=list)
     vendor_masters: list[VendorMaster] = Field(default_factory=list)
@@ -441,6 +460,7 @@ class RuleBookRulesPayload(BaseModel):
     )
     email_capture_rules: list[EmailCaptureRule] = Field(default_factory=list)
     purchase_rules: list[PurchaseRule] = Field(default_factory=list)
+    sales_rules: list[SalesRule] = Field(default_factory=list)
     expense_rules: list[ExpenseRule] = Field(default_factory=list)
     team_expense_rules: list[TeamExpenseRule] = Field(default_factory=list)
     vendor_detection_config: VendorDetectionConfig = Field(
@@ -479,7 +499,7 @@ class RuleBookRulesPayload(BaseModel):
 
 def _backfill_category_rule_priorities(data: dict[str, Any]) -> dict[str, Any]:
     """Assign priority 100, 110, … when missing (architecture §2.2)."""
-    for key in ("purchase_rules", "expense_rules", "team_expense_rules"):
+    for key in ("purchase_rules", "sales_rules", "expense_rules", "team_expense_rules"):
         rules = data.get(key)
         if not isinstance(rules, list):
             continue

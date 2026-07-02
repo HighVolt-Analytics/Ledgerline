@@ -1,10 +1,13 @@
 import { AlertTriangle, Ban, Check, Shield } from "lucide-react";
 import { DetailDrawer } from "@/components/DetailDrawer";
 import { MatrixFlagBadge } from "@/components/matrix/MatrixFlagBadge";
+import { MatrixPipelineBreakdown } from "@/components/matrix/MatrixPipelineBreakdown";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
 import type { Invoice } from "@/api/types";
+import type { MatrixCell, MatrixStage } from "@/lib/matrix";
+import { failedValidationResults } from "@/lib/matrixIssue";
 import type { MatrixConflictRow, MatrixFlagType } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
 
@@ -14,6 +17,7 @@ export type MatrixFlagRow = {
   reason?: string;
   conflictWith?: string;
   conflictDetail?: MatrixConflictRow[];
+  cells?: Record<MatrixStage, MatrixCell>;
 };
 
 type MatrixFlagDrawerProps = {
@@ -29,6 +33,7 @@ export function MatrixFlagDrawer({ row, open, onClose, busy = false, onResolve }
 
   const docId = documentDisplayRef(row.inv);
   const total = money(row.inv.total, row.inv.currency);
+  const validationFailures = failedValidationResults(row.inv);
 
   return (
     <DetailDrawer
@@ -48,10 +53,36 @@ export function MatrixFlagDrawer({ row, open, onClose, busy = false, onResolve }
           <Card className="p-3 bg-[hsl(43_74%_49%/0.08)] border-[hsl(43_74%_49%/0.3)]">
             <div className="flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 text-[hsl(36_80%_40%)] dark:text-[hsl(43_74%_62%)] mt-0.5 shrink-0" />
-              <p className="text-sm">{row.reason}</p>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                  Primary issue
+                </p>
+                <p className="text-sm">{row.reason}</p>
+              </div>
             </div>
           </Card>
         )}
+
+        {validationFailures.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+              Failed validation checks
+            </p>
+            <ul className="space-y-1.5">
+              {validationFailures.map((rule) => (
+                <li
+                  key={rule.rule}
+                  className="rounded-md border border-destructive/25 bg-destructive/5 px-2.5 py-2 text-xs"
+                >
+                  <span className="font-medium tnum">{rule.rule}</span>
+                  <p className="mt-0.5 text-[11px] text-destructive">{rule.message}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {row.cells ? <MatrixPipelineBreakdown cells={row.cells} /> : null}
 
         {row.conflictDetail && row.conflictWith && (
           <div>

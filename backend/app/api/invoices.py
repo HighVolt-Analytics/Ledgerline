@@ -45,6 +45,8 @@ from app.services.invoice_evaluation_service import (
 from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
 from app.schemas.purchase import PurchaseDossierResponse
+from app.schemas.sales import SalesDossierResponse
+from app.services.sales_dossier_service import build_sales_dossier
 from app.services.audit_service import audit_logs_for_invoices, log_event
 from app.services.file_storage import (
     ensure_invoice_stored_file,
@@ -178,7 +180,7 @@ async def list_invoices(
     ).scalars().all()
 
     return ApiEnvelope(
-        data=await _responses_for_invoices(db, list(rows)),
+        data=await _responses_for_invoices(db, list(rows), tenant_id=ctx.tenant_id),
         meta=ResponseMeta(page=page, total=total, pages=pages),
     )
 
@@ -280,6 +282,7 @@ async def get_invoice(
     base = await _response_for_invoice(
         db,
         inv,
+        tenant_id=ctx.tenant_id,
         verify_stored_file=True,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
@@ -337,6 +340,7 @@ async def patch_invoice(
     base = await _response_for_invoice(
         db,
         inv,
+        tenant_id=ctx.tenant_id,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
     )
@@ -549,7 +553,9 @@ async def upload_invoice(
         segment_invoice_ids=result.invoice_ids if result.segment_count > 1 else None,
     )
     return ApiEnvelope(
-        data=await _response_for_invoice(db, primary, has_stored_file=True),
+        data=await _response_for_invoice(
+            db, primary, tenant_id=ctx.tenant_id, has_stored_file=True
+        ),
         meta=meta,
     )
 
@@ -633,7 +639,9 @@ async def attach_invoice_file(
         invoice_id=inv.id,
         detail={"path": stored, "filename": file.filename},
     )
-    return ApiEnvelope(data=await _response_for_invoice(db, inv, has_stored_file=True))
+    return ApiEnvelope(
+        data=await _response_for_invoice(db, inv, tenant_id=ctx.tenant_id, has_stored_file=True)
+    )
 
 
 _REPROCESSABLE = frozenset(
@@ -687,7 +695,9 @@ async def reprocess_invoice(
     await db.commit()
     background_tasks.add_task(process_invoice_background, inv.id, tenant_id=ctx.tenant_id)
     return ApiEnvelope(
-        data=await _response_for_invoice(db, inv, verify_stored_file=True),
+        data=await _response_for_invoice(
+            db, inv, tenant_id=ctx.tenant_id, verify_stored_file=True
+        ),
     )
 async def invoice_pipeline(
     invoice_id: int,
@@ -823,6 +833,17 @@ async def invoice_purchase_dossier(
     return ApiEnvelope(data=await build_purchase_dossier(db, inv))
 
 
+@router.get("/{invoice_id:int}/sales-dossier", response_model=ApiEnvelope[SalesDossierResponse])
+async def invoice_sales_dossier(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[SalesDossierResponse]:
+    """SO / DN / commercial invoice members for the drawer match tab."""
+    inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    return ApiEnvelope(data=await build_sales_dossier(db, inv))
+
+
 @router.post("/remap", response_model=ApiEnvelope[dict[str, object]])
 async def remap_invoices(
     request: Request,
@@ -892,4 +913,4 @@ async def publish_invoice(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    return ApiEnvelope(data=await _response_for_invoice(db, inv))
+    return ApiEnvelope(data=await _response_for_invoice(db, inv, tenant_id=ctx.tenant_id))

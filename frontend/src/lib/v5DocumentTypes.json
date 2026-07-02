@@ -897,5 +897,101 @@
     ],
     "bundleMandatory": [],
     "bundleConditional": []
+  },
+  {
+    "code": "DT-26",
+    "title": "Customer tax invoice (outbound AR)",
+    "shortTitle": "Customer invoice",
+    "klass": "Transactional",
+    "posting": "Yes",
+    "fraudRisk": "low",
+    "oneLine": "Outbound customer tax invoice — tenant is seller; routes to Sales Management for AR and revenue posting.",
+    "extraction": [
+      "Customer name & tax ID / ABN",
+      "Invoice number, invoice date, due date",
+      "Line items: description, qty, unit price, line value",
+      "Subtotal, tax rate & amount, total, currency",
+      "Payment terms",
+      "Bill-to / ship-to"
+    ],
+    "checks": [
+      "Customer identity on document",
+      "Duplicate check on invoice number + customer",
+      "Arithmetic: lines, subtotal, tax, total",
+      "No PO reference required (outbound sales)"
+    ],
+    "match": [
+      "Optional reference to sales order — anchors SO-number linkage"
+    ],
+    "approval": [
+      "Clean match to sales GL rule → auto-code",
+      "Exceptions route per DOA matrix"
+    ],
+    "accounting": [
+      "Dr Accounts Receivable  /  Cr Revenue",
+      "Dr Accounts Receivable  /  Cr GST payable (output tax) where applicable"
+    ],
+    "special": [
+      "Tenant must appear as seller on document"
+    ],
+    "bundleMandatory": [],
+    "bundleConditional": [
+      "DT-27"
+    ]
+  },
+  {
+    "code": "DT-27",
+    "title": "Sales order (copy)",
+    "shortTitle": "Sales order",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "salesBundleRole": "so",
+    "oneLine": "Supporting bundle member — sales order PDF that anchors the outbound 3-way match dossier.",
+    "extraction": [
+      "SO number",
+      "Customer, lines, prices, currency, terms"
+    ],
+    "checks": [
+      "Reference role — supplies SO price/qty baseline for the 3-way match"
+    ],
+    "match": [
+      "Anchors SO-number linkage"
+    ],
+    "approval": [
+      "Supporting document — no standalone posting"
+    ],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": []
+  },
+  {
+    "code": "DT-28",
+    "title": "Delivery note / dispatch docket (outbound)",
+    "shortTitle": "Delivery note (outbound)",
+    "klass": "Supporting",
+    "posting": "No",
+    "fraudRisk": "low",
+    "salesBundleRole": "dn",
+    "oneLine": "Outbound delivery note or dispatch docket linked to a sales order.",
+    "extraction": [
+      "Delivery note number",
+      "SO reference",
+      "Shipped qty, ship date, shipper"
+    ],
+    "checks": [
+      "Links to sales order for fulfilment match"
+    ],
+    "match": [
+      "DN qty vs SO and customer invoice"
+    ],
+    "approval": [
+      "Supporting document — no standalone posting"
+    ],
+    "accounting": [],
+    "special": [],
+    "bundleMandatory": [],
+    "bundleConditional": []
   }
 ]

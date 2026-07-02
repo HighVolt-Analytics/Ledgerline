@@ -15,7 +15,14 @@ from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.dossier import DossierLinkedDocumentResponse, DossierLinkedDocumentsResponse, DossierSummaryResponse
 from app.schemas.rule_book_config import RuleBookConfigPayload
+from app.services.counterparty_service import (
+    counterparty_side_for_route,
+    resolve_counterparty_from_invoice_context,
+)
 from app.services.document_ref_service import display_document_ref, dossier_public_id, parse_dossier_id_token
+from app.services.document_type_catalog import ROUTE_SALES
+from app.services.po_reference import effective_po_reference, is_plausible_po_reference
+from app.services.so_reference import is_plausible_so_reference, resolve_so_reference_from_invoice
 from app.services.document_type_playbook_service import resolve_definition_for_invoice
 from app.services.dossier_approval_service import build_dossier_approval_chain
 from app.services.dossier_linked_documents_service import build_dossier_linked_documents
@@ -252,16 +259,49 @@ async def append_invoice_no_linked_documents(
 
     linkage_key = response.linkage_key or invoice_no
     linkage_label = response.linkage_label
-    if response.linkage_kind == "standalone":
-        linkage_label = f"Invoice no {invoice_no}"
+    linkage_kind = response.linkage_kind
+    if response.linkage_kind in {"standalone", "shipment_ref"}:
+        linkage_kind = "invoice_no"
+        linkage_label = f"Invoice no · {invoice_no}"
 
     return response.model_copy(
         update={
+            "linkage_kind": linkage_kind,
             "linkage_key": linkage_key,
             "linkage_label": linkage_label,
             "documents": list(response.documents) + extra,
         }
     )
+
+
+def dossier_counterparty_label(route_target: str | None) -> str:
+    side = counterparty_side_for_route(route_target)
+    if side == "customer":
+        return "Customer"
+    if side == "vendor":
+        return "Vendor"
+    return "Counterparty"
+
+
+def dossier_linkage_fields(invoice: Invoice) -> tuple[str | None, str | None, str | None]:
+    """Return (po_reference, so_reference, primary linkage key) for dossier summary."""
+    so_ref = resolve_so_reference_from_invoice(invoice)
+    raw_po = effective_po_reference(invoice.po_reference)
+    route = (invoice.route_target or "").strip()
+    invoice_no = (invoice.invoice_no or "").strip() or None
+
+    if route == ROUTE_SALES:
+        po_display = (
+            raw_po
+            if raw_po
+            and is_plausible_po_reference(raw_po)
+            and not is_plausible_so_reference(raw_po)
+            else None
+        )
+        return po_display, so_ref, so_ref or invoice_no or None
+
+    po_display = raw_po if raw_po and is_plausible_po_reference(raw_po) else None
+    return po_display, so_ref, po_display or invoice_no or None
 
 
 async def build_dossier_summary(
@@ -348,13 +388,22 @@ async def build_dossier_summary(
         classification_confidence = _confidence_pct(invoice.document_type_confidence)
     sla_label, sla_breached = _sla(invoice, today=institution_today)
     inv_date = invoice.invoice_date.isoformat() if invoice.invoice_date else ""
+    route_target = (invoice.route_target or "").strip() or None
+    po_display, so_ref, linkage_ref = dossier_linkage_fields(invoice)
+    counterparty = (
+        resolve_counterparty_from_invoice_context(invoice, config=config)
+        or (invoice.vendor or "").strip()
+        or "Unknown counterparty"
+    )
 
     return DossierSummaryResponse(
         id=dossier_public_id(invoice),
         invoice_id=invoice.id,
         document_type_code=display_code,
         document_type_title=_document_type_title(display_code, config.document_types) if display_code else "Unclassified",
-        vendor=(invoice.vendor or "Unknown vendor").strip(),
+        vendor=counterparty,
+        counterparty_label=dossier_counterparty_label(route_target),
+        route_target=route_target,
         buyer=(tenant_name or "Tenant").strip(),
         invoice_ref=(invoice.invoice_no or display_document_ref(invoice)).strip(),
         capture_channel=dossier_capture_channel(invoice),
@@ -366,7 +415,9 @@ async def build_dossier_summary(
         classification_label=classification_label,
         classification_confidence=classification_confidence,
         fraud_risk=_fraud_risk(invoice),
-        po_reference=(invoice.po_reference or "").strip() or None,
+        po_reference=po_display,
+        so_reference=so_ref,
+        linkage_reference=linkage_ref,
         sla_label=sla_label,
         sla_breached=sla_breached,
         owner=_owner_from_logs(logs),
@@ -435,6 +486,7 @@ async def list_dossier_invoices(
             Invoice.invoice_no.ilike(needle),
             Invoice.document_ref.ilike(needle),
             Invoice.po_reference.ilike(needle),
+            Invoice.so_reference.ilike(needle),
             Invoice.document_type_code.ilike(needle),
         )
         stmt = stmt.where(filt)

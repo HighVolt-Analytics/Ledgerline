@@ -84,7 +84,7 @@ async def list_approvals_board(
         key=lambda inv: (inv.created_at, inv.id),
         reverse=True,
     )
-    responses = await responses_for_invoices(db, list(rows))
+    responses = await responses_for_invoices(db, list(rows), tenant_id=tenant_id)
     by_id_inv = {inv.id: inv for inv in rows}
     enriched: list[InvoiceResponse] = []
     for resp in responses:
@@ -122,7 +122,7 @@ async def list_approvals_queue(
     ).scalars().all()
 
     return ApprovalListResult(
-        rows=await responses_for_invoices(db, list(rows)),
+        rows=await responses_for_invoices(db, list(rows), tenant_id=tenant_id),
         meta=ResponseMeta(page=params.page, total=total, pages=pages),
     )
 
@@ -160,7 +160,7 @@ async def approve_invoice_action(
     await approve_invoice_for_reprocess(
         db, inv, actor_name=actor_name, actor_email=actor_email
     )
-    return await response_for_invoice(db, inv)
+    return await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
 
 
 async def reject_invoice_action(
@@ -172,7 +172,7 @@ async def reject_invoice_action(
     inv = await get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     actor_name, actor_email = await actor_from_context(db, ctx)
     await reject_invoice(db, inv, actor_name=actor_name, actor_email=actor_email)
-    return await response_for_invoice(db, inv)
+    return await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
 
 
 async def request_approval_action(
@@ -184,7 +184,7 @@ async def request_approval_action(
     inv = await get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     actor_name, actor_email = await actor_from_context(db, ctx)
     await request_approval(db, inv, actor_name=actor_name, actor_email=actor_email)
-    return await response_for_invoice(db, inv)
+    return await response_for_invoice(db, inv, tenant_id=ctx.tenant_id)
 
 
 async def permanently_delete_invoice_action(

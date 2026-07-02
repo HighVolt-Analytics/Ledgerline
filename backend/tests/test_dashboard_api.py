@@ -325,6 +325,81 @@ async def test_docs_via_upload_counts_non_email_sources(
 
 
 @pytest.mark.asyncio
+async def test_dashboard_anomaly_label_uses_document_ref_not_db_invoice_id(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Regression: do not synthesize INV-{db_id} — it collides with real invoice numbers."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        document_ref="DOC-88",
+        invoice_no="INV-173",
+        vendor="ONEGLOBE CONSOLIDATORS (S) PTE. LTD.",
+        status=InvoiceStatus.VALIDATING,
+        route_target="Purchase Management",
+        evaluation_status="needs_review",
+        currency="AUD",
+        file_hash="dash-anomaly-doc-ref",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    overview = (await client.get("/api/dashboard/overview")).json()["data"]
+    row = next(
+        r for r in overview["anomalies"] if r.get("invoice_id") == inv.id
+    )
+    assert row["document_ref"] == "DOC-88"
+    assert row["description"].startswith("DOC-88 · INV-173")
+    assert not row["description"].startswith("INV-173 ·")
+
+
+@pytest.mark.asyncio
+async def test_dashboard_anomalies_sales_invoice_no_missing_po(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Harbour View Hotel",
+            invoice_no="INV-9001",
+            status=InvoiceStatus.EXCEPTION,
+            route_target="Sales Management",
+            so_reference="SO-DEMO-100",
+            currency="AUD",
+            file_hash="dash-sales-no-po-anomaly",
+        )
+    )
+    await db_session.flush()
+
+    overview = (await client.get("/api/dashboard/overview")).json()["data"]
+    missing_po = [
+        row for row in overview["anomalies"] if row["tag"] == "Missing PO" and row["invoice_id"]
+    ]
+    assert not any("INV-9001" in row["description"] for row in missing_po)
+
+
+@pytest.mark.asyncio
+async def test_dashboard_top_vendors_marks_sales_as_customer(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Harbour View Hotel",
+            status=InvoiceStatus.PROCESSED,
+            route_target="Sales Management",
+            total=Decimal("450.00"),
+            currency="AUD",
+            file_hash="dash-top-customer",
+        )
+    )
+    await db_session.flush()
+
+    overview = (await client.get("/api/dashboard/overview")).json()["data"]
+    assert overview["top_vendors"]
+    assert overview["top_vendors"][0]["counterparty_label"] == "Customer"
+
+
+@pytest.mark.asyncio
 async def test_dashboard_anomalies_include_rule_book_routing(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

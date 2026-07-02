@@ -522,7 +522,7 @@ function DocumentTypeDetailDialog({
 
         <div className="detail-dialog-body">
           <DetailCard
-            title="Bundle rules"
+            title="Supporting document requirements"
             hint="PO dossier members — context depends on payable vs supporting type"
           >
             <BundleRulesDetailSection docType={docType} documentTypes={documentTypes} />
@@ -1015,7 +1015,7 @@ function DocumentTypeEditDialog({
           </DetailCard>
 
           <DetailCard
-            title="Bundle rules"
+            title="Supporting document requirements"
             hint="PO dossier — payable types require members; supporting types declare PO/GRN link"
           >
             <BundleRulesEditor

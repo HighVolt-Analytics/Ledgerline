@@ -3,6 +3,7 @@ import type {
   EvalDocument,
   ExpenseRule,
   PurchaseRule,
+  SalesRule,
   RuleCondition,
   RuleConditionGroup,
   SampleEmail,
@@ -122,6 +123,43 @@ export function matchPurchaseRule(
     if (
       m.vendorContains &&
       !doc.vendor.toLowerCase().includes(m.vendorContains.toLowerCase())
+    ) {
+      continue;
+    }
+    return rule;
+  }
+  return null;
+}
+
+export function matchSalesRule(doc: EvalDocument, rules: SalesRule[]): SalesRule | null {
+  const desc = doc.lines.map((l) => l.description).join(" ").toLowerCase();
+  const customer = doc.vendor.toLowerCase();
+  const docNumber = doc.docNumber.toLowerCase();
+  const sorted = [...rules]
+    .filter((rule) => rule.enabled)
+    .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+  for (const rule of sorted) {
+    const m = rule.matchOn;
+    if (
+      !m.customerContains &&
+      !m.descriptionContains &&
+      !m.docNumberContains &&
+      !m.referenceContains
+    ) {
+      continue;
+    }
+    if (m.customerContains && !customer.includes(m.customerContains.toLowerCase())) continue;
+    if (m.descriptionContains && !desc.includes(m.descriptionContains.toLowerCase())) continue;
+    if (
+      m.docNumberContains &&
+      !docNumber.includes(m.docNumberContains.toLowerCase()) &&
+      !(doc.invoice_no || "").toLowerCase().includes(m.docNumberContains.toLowerCase())
+    ) {
+      continue;
+    }
+    if (
+      m.referenceContains &&
+      !(doc.invoice_no || "").toLowerCase().includes(m.referenceContains.toLowerCase())
     ) {
       continue;
     }
@@ -295,7 +333,7 @@ export type LiveEvalRow = {
   doc: EvalDocument;
   emailRule: EmailCaptureRule | null;
   vendor: VendorMatch;
-  categoryRule: { label: string; kind: "Purchase" | "Expense" } | null;
+  categoryRule: { label: string; kind: "Sales" | "Purchase" | "Expense" } | null;
   matched: boolean;
 };
 
@@ -303,6 +341,7 @@ export function buildLiveEvaluation(
   docs: EvalDocument[],
   rules: {
     emailCaptureRules: EmailCaptureRule[];
+    salesRules: SalesRule[];
     purchaseRules: PurchaseRule[];
     expenseRules: ExpenseRule[];
     vendorMasters: VendorMaster[];
@@ -312,13 +351,16 @@ export function buildLiveEvaluation(
   return docs.map((doc) => {
     const emailRule = matchEmailCaptureRule(docToSampleEmail(doc), rules.emailCaptureRules);
     const vendor = detectVendor(doc, rules.vendorMasters, rules.vendorDetectionConfig);
+    const sales = matchSalesRule(doc, rules.salesRules);
     const purchase = matchPurchaseRule(doc, rules.purchaseRules);
     const expense = matchExpenseRule(doc, rules.expenseRules);
-    const categoryRule = purchase
-      ? { label: purchase.name, kind: "Purchase" as const }
-      : expense
-        ? { label: expense.name, kind: "Expense" as const }
-        : null;
+    const categoryRule = sales
+      ? { label: sales.name, kind: "Sales" as const }
+      : purchase
+        ? { label: purchase.name, kind: "Purchase" as const }
+        : expense
+          ? { label: expense.name, kind: "Expense" as const }
+          : null;
     const matched = vendor.confidence >= rules.vendorDetectionConfig.threshold;
     return { doc, emailRule, vendor, categoryRule, matched };
   });

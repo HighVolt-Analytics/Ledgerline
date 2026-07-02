@@ -17,6 +17,7 @@ CANONICAL_EXTRACTION_FIELD_KEYS: frozenset[str] = frozenset(
         "vendor",
         "invoice_no",
         "po_reference",
+        "so_reference",
         "total",
         "subtotal",
         "gst",

@@ -11,7 +11,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import ClientDisconnect
 
-from app.api.deps import AuthContext, get_db, require_admin
+from app.api.deps import AuthContext, bind_db_to_tenant, get_db, require_admin
 from app.config import get_settings
 from app.database import db_session_with_rls, platform_lookup_session
 from app.models.connected_whatsapp import ConnectedWhatsapp
@@ -178,6 +178,8 @@ async def whatsapp_oauth_callback(
         logger.warning("whatsapp_oauth_state_invalid", error=str(exc))
         url = _append_query(return_base, {"wa": "error", "reason": "invalid_state"})
         return RedirectResponse(url=url, status_code=302)
+
+    await bind_db_to_tenant(db, tenant_id)
 
     user = await db.get(User, user_id)
     if not user or not user.is_active or user.tenant_id != tenant_id:

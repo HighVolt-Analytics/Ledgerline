@@ -17,6 +17,7 @@ from app.schemas.dossier import (
     DossierPipelineStepResponse,
 )
 from app.services.audit_change_summary import summarize_audit_change
+from app.services.document_type_catalog import ROUTE_SALES
 from app.services.invoice_evaluation_service import EVAL_PENDING_VENDOR
 from app.services.pipeline_stages import (
     _actor_name,
@@ -69,7 +70,7 @@ _STAGE_LABELS = {
     "confidence_gate": "Confidence gate",
     "extract": "Field extract",
     "document_type": "Document type",
-    "bundle": "Bundle / Playbook",
+    "bundle": "Supporting documents",
     "vendor_hold": "Vendor hold",
     "validate": "Validate",
     "match": "Match",
@@ -150,12 +151,15 @@ _REMEDIATION: dict[str, str] = {
     "CLASSIFICATION_GATE": "Confirm document type in the exception queue or adjust rule-book classifiers.",
     "BUNDLE_INCOMPLETE": "Upload the missing mandatory bundle documents on the same linkage key.",
     "LINKAGE_KEY_MISSING": "Extract or enter a valid PO number, then link PO and GRN supporting documents on that PO.",
+    "LINKAGE_KEY_MISSING_SALES": "Extract or enter a valid SO number, then link SO and delivery note supporting documents on that SO.",
     "EXTRACTION_INCOMPLETE": "Capture or correct required invoice fields before posting.",
     "VENDOR_HOLD": "Approve the vendor in Vendor Masters or clear the registration hold.",
+    "VENDOR_HOLD_SALES": "Approve the customer in Customer Masters or clear the registration hold.",
     "VALIDATION_FAILED": "Correct the document or override failed validation rules in the exception queue.",
     "ROUTING_REVIEW": "Confirm document type classification or adjust rule-book routing.",
     "DOCUMENT_UNCLASSIFIED": "Classify the document type in Rule Book or reclassify from the exception queue.",
     "MATCH_FAILED": "Link PO/GRN, approve variance, or update purchase register lines.",
+    "MATCH_FAILED_SALES": "Link SO/DN, approve variance, or update sales register lines.",
     "APPROVAL_REQUIRED": "Route to the approver named in the playbook policy.",
     "MAP_SUSPENSE": "Map to a real GL account in the rule book or approve suspense mapping.",
     "RECON_HALTED": "Clear the daily reconciliation halt before posting.",
@@ -251,6 +255,8 @@ def _playbook_detail_dict(detail_dict: dict[str, object]) -> dict[str, object]:
 def _bundle_checks(detail: dict[str, object]) -> list[DossierPipelineCheckResponse]:
     checks: list[DossierPipelineCheckResponse] = []
     merged = _playbook_detail_dict(detail)
+    book = str(merged.get("linkage_book") or "purchase").strip().lower()
+    ref_label = "SO" if book == "sales" else "PO"
     labels = merged.get("missing_bundle_mandatory_labels")
     label_map = labels if isinstance(labels, dict) else {}
     missing = merged.get("missing_bundle_mandatory") or []
@@ -263,10 +269,10 @@ def _bundle_checks(detail: dict[str, object]) -> list[DossierPipelineCheckRespon
             checks.append(
                 DossierPipelineCheckResponse(
                     id=f"bundle-{token.lower()}",
-                    label=f"Mandatory: {title}",
+                    label=f"Required: {title}",
                     state="fail",
                     rule_ref="VR-PB02",
-                    detail=f"{title} ({token}) not on file for this PO",
+                    detail=f"{title} ({token}) not on file for this {ref_label}",
                 )
             )
     missing_fields = merged.get("missing_extraction_fields") or []
@@ -303,18 +309,18 @@ def _bundle_checks(detail: dict[str, object]) -> list[DossierPipelineCheckRespon
         checks.insert(
             0,
             DossierPipelineCheckResponse(
-                id="linkage-po",
-                label="PO linkage key",
+                id=f"linkage-{ref_label.lower()}",
+                label=f"{ref_label} reference",
                 state="fail",
                 rule_ref="VR-PB02",
-                detail="Valid PO reference required to link bundle members",
+                detail=f"Valid {ref_label} reference required to link supporting documents",
             ),
         )
     if not checks and not merged.get("blocks_posting"):
         checks.append(
             DossierPipelineCheckResponse(
                 id="bundle-ok",
-                label="Playbook bundle satisfied",
+                label="Supporting documents satisfied",
                 state="pass",
                 rule_ref="VR-PB01",
             )
@@ -393,6 +399,24 @@ def _playbook_routing_review(logs: list[AuditLog]) -> AuditLog | None:
     if validate_pass and validate_pass.created_at > routing.created_at:
         return None
     return routing
+
+
+def _is_sales_route(inv: Invoice) -> bool:
+    return (inv.route_target or "").strip() == ROUTE_SALES
+
+
+def _remediation_for(
+    code: str | None,
+    inv: Invoice,
+    fallback: str | None = None,
+) -> str | None:
+    if not code:
+        return fallback
+    if _is_sales_route(inv):
+        sales_key = f"{code}_SALES"
+        if sales_key in _REMEDIATION:
+            return _REMEDIATION[sales_key]
+    return _REMEDIATION.get(code, fallback)
 
 
 def _confidence_label(value: float | int | None) -> str | None:
@@ -790,7 +814,7 @@ def _resolve_bundle(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
             at=playbook_review.created_at,
             exception_code=exc_code,
             failure_reason=failure,
-            remediation=_REMEDIATION.get(exc_code, remediation),
+            remediation=_remediation_for(exc_code, inv, remediation),
             checks=_bundle_checks(merged),
         )
 
@@ -807,7 +831,7 @@ def _resolve_bundle(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
         exception_code = None
         if state == "fail":
             exception_code, failure, remediation = resolve_playbook_exception(merged)
-            remediation = _REMEDIATION.get(exception_code, remediation)
+            remediation = _remediation_for(exception_code, inv, remediation)
         return _step(
             "bundle",
             state=state,
@@ -839,7 +863,7 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
             at=hold_at,
             exception_code="VENDOR_HOLD",
             failure_reason=reason,
-            remediation=_REMEDIATION["VENDOR_HOLD"],
+            remediation=_remediation_for("VENDOR_HOLD", inv),
         )
 
     if hold_log and (
@@ -856,7 +880,7 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
             at=hold_log.created_at,
             exception_code="VENDOR_HOLD",
             failure_reason=reason,
-            remediation=_REMEDIATION["VENDOR_HOLD"],
+            remediation=_remediation_for("VENDOR_HOLD", inv),
         )
 
     if waived_log:
@@ -1010,7 +1034,7 @@ def _resolve_match(
         remediation = None
         if state == "fail":
             failure = detail
-            remediation = _REMEDIATION["MATCH_FAILED"]
+            remediation = _remediation_for("MATCH_FAILED", inv)
         return _step(
             "match",
             state=state,
@@ -1037,12 +1061,18 @@ def _resolve_match(
             at=match_log.created_at if match_log else None,
             exception_code="MATCH_FAILED",
             failure_reason="VR15 three-way match failed",
-            remediation=_REMEDIATION["MATCH_FAILED"],
+            remediation=_remediation_for("MATCH_FAILED", inv),
         )
 
+    from app.services.so_reference import resolve_so_reference_from_invoice
+
     po_ref = (inv.po_reference or "").strip()
-    if wm >= 13 and not po_ref:
-        return _step("match", state="waived", detail="No PO reference — match not required")
+    if wm >= 13:
+        if _is_sales_route(inv):
+            if not resolve_so_reference_from_invoice(inv):
+                return _step("match", state="waived", detail="No SO reference — match not required")
+        elif not po_ref:
+            return _step("match", state="waived", detail="No PO reference — match not required")
     return _step("match", state="pending", detail="—")
 
 

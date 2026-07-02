@@ -102,9 +102,9 @@ const AUTOMATIC_VALIDATION_CHECKS = [
 
   { code: "VR-PB01", label: "Optional extraction fields", group: "Playbook" },
 
-  { code: "VR-PB02", label: "Mandatory bundle", group: "Playbook" },
+  { code: "VR-PB02", label: "Required supporting documents", group: "Playbook" },
 
-  { code: "VR-PB04", label: "Conditional bundle advisories", group: "Playbook" },
+  { code: "VR-PB04", label: "Recommended supporting documents", group: "Playbook" },
 
 ] as const;
 
@@ -142,9 +142,11 @@ export const VALIDATION_CHECK_DESCRIPTIONS: Record<string, string> = {
 
   "VR-PB01": "Warns when optional (unstarred) extraction targets are missing. Driven by Extraction fields.",
 
-  "VR-PB02": "Mandatory bundle document types must exist on the PO. Driven by Bundle rules.",
+  "VR-PB02":
+    "Required supporting documents must be on file on the same PO or SO reference before posting. Configured under Supporting document requirements.",
 
-  "VR-PB04": "Conditional bundle advisories for companion documents. Driven by Bundle rules.",
+  "VR-PB04":
+    "Recommended supporting documents (advisory only). Configured under Supporting document requirements.",
 
 };
 

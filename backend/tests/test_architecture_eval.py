@@ -24,6 +24,7 @@ def test_is_plausible_po_reference_rejects_ocr_junk() -> None:
     assert not is_plausible_po_reference("ab")
     assert is_plausible_po_reference("PO-DEMO-2001")
     assert is_plausible_po_reference("PO1234")
+    assert not is_plausible_po_reference("SO-DEMO-100")
 
 
 def test_category_rules_use_priority_first_match_wins() -> None:

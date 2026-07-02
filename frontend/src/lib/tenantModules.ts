@@ -17,6 +17,12 @@ export const TENANT_MODULE_CATALOG: TenantModuleDef[] = [
     group: "Workspace",
   },
   {
+    key: "sales",
+    label: "Sales Management",
+    description: "Customer invoices, receivables, and sales GL coding.",
+    group: "Workspace",
+  },
+  {
     key: "expenses",
     label: "Expenses Management",
     description: "Business expense claims routed from the rule book.",
@@ -75,6 +81,7 @@ export const MODULE_GROUP_ORDER: TenantModuleGroup[] = [
 /** Nav path → module key. Paths without an entry are always on. */
 export const PATH_TO_MODULE: Record<string, string> = {
   "/purchases": "purchase",
+  "/sales": "sales",
   "/expenses": "expenses",
   "/team-expenses": "team_expenses",
   "/rules": "rule_book",

@@ -3,6 +3,7 @@ import { documentDisplayRef } from "@/lib/format";
 import { invoiceFailedValidations } from "@/lib/invoice";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
 import { purchaseActionRequiredInvoices } from "@/lib/purchaseRegisterQueue";
+import { salesActionRequiredInvoices } from "@/lib/salesRegisterQueue";
 import {
   isDueWithinDays,
   isOverdueDate,
@@ -20,12 +21,14 @@ import type {
   ExpenseState,
   MatchStatus,
   PaymentRecord,
+  CollectionRecord,
   PurchaseOrder,
+  SalesOrder,
   ThreeWayMatch,
   ThreeWayMatchDisplay,
   MatchAmountLine,
 } from "@/lib/v4MockData";
-import type { PaymentApi, PurchaseOrderApi, MatchAmountLineApi, ThreeWayMatchApi, ThreeWayMatchDisplayApi } from "@/api/types";
+import type { PaymentApi, PurchaseOrderApi, SalesOrderApi, MatchAmountLineApi, ThreeWayMatchApi, ThreeWayMatchDisplayApi } from "@/api/types";
 
 function parseAmount(value: string | null | undefined): number {
   if (value == null || value === "") return 0;
@@ -139,6 +142,82 @@ export function invoiceToBusinessExpense(inv: Invoice): ExpenseClaim {
     budgetGroup: inv.account_name ?? "Operating",
     channel: inferClaimChannel(inv.email_sender, inv.capture_source),
   };
+}
+
+export type SalesRegisterRow = {
+  id: string;
+  documentRef: string;
+  customer: string;
+  amount: number;
+  date: string;
+  dueDate: string | null;
+  status: string;
+  state: ExpenseState;
+  submittedTs: string;
+  overdue: boolean;
+};
+
+export function invoiceToSalesRow(inv: Invoice): SalesRegisterRow {
+  const amount = parseAmount(inv.total);
+  return {
+    id: String(inv.id),
+    documentRef: documentDisplayRef(inv),
+    customer: inv.vendor?.trim() || "—",
+    amount,
+    date: inv.invoice_date ?? "—",
+    dueDate: inv.due_date ?? null,
+    status: inv.status,
+    state: invoiceToExpenseState(inv),
+    submittedTs: formatTs(inv.created_at),
+    overdue: inv.due_date ? isOverdueDate(inv.due_date) : false,
+  };
+}
+
+export function salesKpisFromRegister(salesRows: SalesOrderApi[], routed: Invoice[]) {
+  const openSos = salesRows.filter((r) => r.match.status !== "3-Way Match").length;
+  const missingDn = salesRows.filter((r) => r.match.status === "No DN").length;
+  const matched = salesRows.filter((r) => r.match.status === "3-Way Match").length;
+  const matchPct = salesRows.length > 0 ? Math.round((matched / salesRows.length) * 100) : 0;
+  const variancesAwaiting = salesRows.filter((r) =>
+    salesNeedsVarianceApproval(r.match.status, r.variance_approved)
+  ).length;
+  const needsAction = salesActionRequiredInvoices(routed, salesRows).length;
+  const rows = routed.map(invoiceToSalesRow);
+  const open = rows.filter((r) => r.state === "New" || r.state === "In Review").length;
+  const pending = rows.filter((r) => r.state === "In Review").length;
+  const postedInvoices = routed.filter(
+    (inv) => inv.status === "processed" && inv.published_to_ledger
+  );
+  const postedTotal = postedInvoices.reduce(
+    (sum, inv) => sum + (parseFloat(String(inv.total ?? 0)) || 0),
+    0
+  );
+  const overdue = rows.filter((r) => r.overdue && r.state !== "Posted to Ledger").length;
+
+  return {
+    openSos,
+    missingDn,
+    matchPct,
+    variancesAwaiting,
+    needsAction,
+    open,
+    pending,
+    postedCount: postedInvoices.length,
+    postedTotal,
+    overdue,
+  };
+}
+
+export function salesNeedsVarianceApproval(
+  matchStatus: string,
+  varianceApproved: boolean
+): boolean {
+  if (varianceApproved) return false;
+  return (
+    matchStatus === "Routed for Approval" ||
+    matchStatus === "Price Variance" ||
+    matchStatus === "Qty Variance"
+  );
 }
 
 export function invoiceToTeamClaim(inv: Invoice): ExpenseClaim {
@@ -444,6 +523,47 @@ export function apiPurchaseToRow(row: PurchaseOrderApi): {
   };
 }
 
+export function apiSalesToRow(row: SalesOrderApi): {
+  salesId: number;
+  invoiceId: number | null;
+  so: SalesOrder;
+  m: ThreeWayMatch;
+  threeWayAuditStatus: SalesOrderApi["three_way_match_status"];
+} {
+  const so: SalesOrder = {
+    id: row.so_number,
+    customer: row.customer ?? "—",
+    date: row.so_date ?? "—",
+    requestor: row.requestor ?? "—",
+    item: row.item ?? "—",
+    soQty: row.so_qty,
+    soUnitPrice: row.so_unit_price,
+    dnQty: row.dn_qty,
+    dnDate: row.dn_date,
+    dnShipper: row.dn_shipper,
+    dnCondition: row.dn_condition,
+    invoiceNo: row.invoice_no ?? "—",
+    invoiceQty: row.invoice_qty,
+    invoiceUnitPrice: row.invoice_unit_price,
+    gstRate: row.gst_rate,
+    routedForApproval: salesNeedsVarianceApproval(row.match.status, row.variance_approved),
+    matchedRuleName: row.matched_rule_name ?? null,
+    matchedGl: row.matched_gl ?? null,
+    evaluationStatus: row.evaluation_status ?? null,
+    matchedRuleIds: row.matched_rule_ids ?? [],
+    soDocumentId: row.so_document_id ?? null,
+    dnDocumentId: row.dn_document_id ?? null,
+  };
+  const m: ThreeWayMatch = mapThreeWayMatchFromApi(row.match);
+  return {
+    salesId: row.id,
+    invoiceId: row.invoice_id,
+    so,
+    m,
+    threeWayAuditStatus: row.three_way_match_status ?? null,
+  };
+}
+
 export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
   return {
     id: String(row.id),
@@ -484,6 +604,14 @@ export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
         }
       : undefined,
   };
+}
+
+export function collectionsKpis(rows: CollectionRecord[], timeZone: string) {
+  const open = rows.filter((c) => c.tab === "queue" || c.tab === "awaiting");
+  const total = open.reduce((sum, c) => sum + c.amount, 0);
+  const overdue = open.filter((c) => isOverdueDate(c.dueDate, timeZone)).length;
+  const dueSoon = open.filter((c) => isDueWithinDays(c.dueDate, 7, timeZone)).length;
+  return { count: open.length, total, overdue, dueSoon };
 }
 
 export function paymentsKpis(rows: PaymentRecord[], timeZone: string) {

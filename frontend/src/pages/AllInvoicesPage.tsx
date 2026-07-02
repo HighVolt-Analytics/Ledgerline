@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { Card } from "@/components/ui/card";
 import { documentListLabel, money } from "@/lib/format";
+import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
 import { fetchAllInvoices } from "@/lib/invoices";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 
@@ -57,7 +58,7 @@ export function AllInvoicesPage() {
             <thead>
               <tr className="text-left text-xs text-muted-foreground bg-muted/50 border-b border-border">
                 <th className="px-3 py-2.5 font-medium">Document</th>
-                <th className="px-3 py-2.5 font-medium">Vendor</th>
+                <th className="px-3 py-2.5 font-medium">{counterpartyColumnLabel({ mixed: true })}</th>
                 <th className="px-3 py-2.5 font-medium">Date</th>
                 <th className="px-3 py-2.5 font-medium text-right">Total</th>
                 <th className="px-3 py-2.5 font-medium">Stage</th>
@@ -75,7 +76,7 @@ export function AllInvoicesPage() {
               {filtered.map((r) => (
                 <tr key={r.id} className="row-band border-b border-border last:border-0 hover-elevate">
                   <td className="px-3 py-2.5 font-medium tnum">{documentListLabel(r)}</td>
-                  <td className="px-3 py-2.5">{r.vendor ?? "—"}</td>
+                  <td className="px-3 py-2.5">{counterpartyName(r)}</td>
                   <td className="px-3 py-2.5 tnum text-muted-foreground">{r.invoice_date ?? "—"}</td>
                   <td className="px-3 py-2.5 tnum text-right font-medium">{money(r.total)}</td>
                   <td className="px-3 py-2.5">

@@ -3,13 +3,21 @@
  * UI model until GET /api/dossiers/{id} ships.
  */
 
-export type DossierLinkageKind = "po_reference" | "shipment_ref" | "contract_ref" | "standalone";
+export type DossierLinkageKind =
+  | "po_reference"
+  | "so_reference"
+  | "invoice_no"
+  | "shipment_ref"
+  | "contract_ref"
+  | "standalone";
 
 export type DossierDocumentSource = "erp_register" | "upload" | "email_capture" | "edi" | "manual";
 
 export type DossierBundleRequirement = "mandatory" | "conditional" | "advisory";
 
 export type DossierPurchaseBundleRole = "" | "po" | "grn" | "invoice";
+
+export type DossierSalesBundleRole = "" | "so" | "dn" | "invoice";
 
 export type DossierManualLinkInfo = {
   id: number;
@@ -30,6 +38,7 @@ export type DossierLinkedDocument = {
   present: boolean;
   requirement: DossierBundleRequirement;
   purchaseBundleRole?: DossierPurchaseBundleRole;
+  salesBundleRole?: DossierSalesBundleRole;
   source?: DossierDocumentSource;
   /** Sibling dossier when the doc is on file (mock id until API). */
   linkedDossierId?: string | null;
@@ -94,12 +103,26 @@ export type DossierLinkedDocuments = {
   documents: DossierLinkedDocument[];
   matchSummary?: DossierMatchSummary;
   purchaseOrderId?: number | null;
+  salesOrderId?: number | null;
 };
 
-export function linkageKindLabel(kind: DossierLinkageKind): string {
-  if (kind === "po_reference") return "PO linkage key";
-  if (kind === "shipment_ref") return "Shipment linkage key";
-  if (kind === "contract_ref") return "Contract linkage key";
+export function isSalesLinkedDocuments(linked: DossierLinkedDocuments): boolean {
+  if (linked.linkageKind === "so_reference") return true;
+  if ((linked.linkageLabel || "").toLowerCase().includes("so")) return true;
+  return linked.documents.some((doc) => {
+    const salesRole = (doc.salesBundleRole || "").toLowerCase();
+    if (salesRole === "so" || salesRole === "dn") return true;
+    const code = (doc.documentTypeCode || "").toUpperCase();
+    return code === "DT-27" || code === "DT-28";
+  });
+}
+
+export function linkageKindLabel(kind: DossierLinkageKind, salesBook = false): string {
+  if (kind === "invoice_no") return "Invoice no";
+  if (kind === "so_reference") return "SO reference";
+  if (kind === "po_reference") return salesBook ? "SO reference" : "PO reference";
+  if (kind === "shipment_ref") return "Shipment reference";
+  if (kind === "contract_ref") return "Contract reference";
   return "Standalone document";
 }
 
@@ -343,7 +366,7 @@ export function haltedLinkedDocuments(opts: {
   return {
     linkageKind: "standalone",
     linkageKey: null,
-    linkageLabel: "Bundle not assembled",
+    linkageLabel: "Supporting documents not assembled",
     enforceBundle: false,
     conditionalAdvisories: [],
     documents: [

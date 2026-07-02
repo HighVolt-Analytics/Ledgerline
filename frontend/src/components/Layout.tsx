@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
+import { useCollections } from "@/hooks/useCollections";
+import { collectionsOpenCount } from "@/lib/collectionsQueue";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
 import { canAccessModulePath } from "@/lib/tenantModules";
 import {
@@ -53,6 +55,7 @@ export function Layout() {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { data: badges } = useNavBadges();
+  const { data: collectionRows = [] } = useCollections();
   const { permissions } = usePermissions();
   const enabledModules = permissions?.enabled_modules;
   const canShowNavItem = (item: NavItem) =>
@@ -63,7 +66,9 @@ export function Layout() {
     approvals: badges?.pending_approval ?? 0,
     team_expenses: badges?.team_expenses_count ?? 0,
     business_expenses: badges?.business_expenses_count ?? 0,
+    sales: badges?.sales_count ?? 0,
     payments: badges?.payments_queue_count ?? 0,
+    collections: badges?.collections_queue_count ?? collectionsOpenCount(collectionRows),
   };
   const connected = badges?.integrations_connected ?? 0;
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -97,8 +102,14 @@ export function Layout() {
     if (badge === "business_expenses" && counts.business_expenses > 0) {
       badgeEl = <NavBadge>{counts.business_expenses}</NavBadge>;
     }
+    if (badge === "sales" && counts.sales > 0) {
+      badgeEl = <NavBadge>{counts.sales}</NavBadge>;
+    }
     if (badge === "payments" && counts.payments > 0) {
       badgeEl = <NavBadge>{counts.payments}</NavBadge>;
+    }
+    if (badge === "collections" && counts.collections > 0) {
+      badgeEl = <NavBadge>{counts.collections}</NavBadge>;
     }
     return (
       <NavLink

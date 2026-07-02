@@ -7,11 +7,13 @@ import uuid
 from sqlalchemy import event, select
 from sqlalchemy.engine import Connection
 
+from app.models.delivery_note import DeliveryNote
 from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.purchase_order import PurchaseOrder
+from app.models.sales_order import SalesOrder
 
 
 class TenantChildMismatchError(ValueError):
@@ -89,6 +91,30 @@ def _sync_journal_entry_tenant(_mapper, connection: Connection, target: JournalE
     )
 
 
+def _load_so_tenant(connection: Connection, sales_order_id: int) -> uuid.UUID | None:
+    return connection.execute(
+        select(SalesOrder.tenant_id).where(SalesOrder.id == sales_order_id)
+    ).scalar_one_or_none()
+
+
+def _resolve_so_child_tenant(
+    connection: Connection,
+    *,
+    tenant_id: uuid.UUID | None,
+    sales_order_id: int,
+) -> uuid.UUID:
+    parent_tenant = _load_so_tenant(connection, sales_order_id)
+    if parent_tenant is None:
+        raise TenantChildMismatchError(f"delivery note: sales order {sales_order_id} not found")
+    if tenant_id is None:
+        return parent_tenant
+    if tenant_id != parent_tenant:
+        raise TenantChildMismatchError(
+            f"delivery note: tenant_id {tenant_id} does not match SO tenant {parent_tenant}"
+        )
+    return tenant_id
+
+
 @event.listens_for(GoodsReceipt, "before_insert")
 @event.listens_for(GoodsReceipt, "before_update")
 def _sync_goods_receipt_tenant(_mapper, connection: Connection, target: GoodsReceipt) -> None:
@@ -109,3 +135,17 @@ def journal_entries_for_invoice(tenant_id: uuid.UUID, invoice_id: int) -> tuple:
 
 def goods_receipts_for_po(tenant_id: uuid.UUID, purchase_order_id: int) -> tuple:
     return GoodsReceipt.tenant_id == tenant_id, GoodsReceipt.purchase_order_id == purchase_order_id
+
+
+@event.listens_for(DeliveryNote, "before_insert")
+@event.listens_for(DeliveryNote, "before_update")
+def _sync_delivery_note_tenant(_mapper, connection: Connection, target: DeliveryNote) -> None:
+    target.tenant_id = _resolve_so_child_tenant(
+        connection,
+        tenant_id=target.tenant_id,
+        sales_order_id=target.sales_order_id,
+    )
+
+
+def delivery_notes_for_so(tenant_id: uuid.UUID, sales_order_id: int) -> tuple:
+    return DeliveryNote.tenant_id == tenant_id, DeliveryNote.sales_order_id == sales_order_id

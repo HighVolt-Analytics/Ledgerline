@@ -154,6 +154,16 @@ def invoice_to_response(
         document_types=document_types,
         validation_items=validation_items,
     )
+    from app.services.document_type_playbook_profile_service import (
+        gl_posting_applicable_for_invoice,
+    )
+
+    gl_posting_applicable = gl_posting_applicable_for_invoice(
+        inv,
+        document_types=document_types,
+    )
+    display_account_code = inv.account_code if gl_posting_applicable else None
+    display_account_name = inv.account_name if gl_posting_applicable else None
     return InvoiceResponse(
         id=inv.id,
         document_ref=inv.document_ref,
@@ -161,6 +171,8 @@ def invoice_to_response(
         abn=inv.abn,
         invoice_no=inv.invoice_no,
         po_reference=inv.po_reference,
+        so_reference=inv.so_reference,
+        sales_document_type=inv.sales_document_type,
         cost_centre=inv.cost_centre,
         invoice_date=inv.invoice_date,
         due_date=inv.due_date,
@@ -175,8 +187,8 @@ def invoice_to_response(
         capture_source=inv.capture_source,
         connected_mailbox_id=inv.connected_mailbox_id,
         storage_vendor_slug=inv.storage_vendor_slug,
-        account_code=inv.account_code,
-        account_name=inv.account_name,
+        account_code=display_account_code,
+        account_name=display_account_name,
         route_target=inv.route_target,
         matched_rule_ids=parse_matched_rule_ids(inv.matched_rule_ids) or None,
         vendor_confidence=vendor_confidence,
@@ -205,6 +217,7 @@ def invoice_to_response(
         created_at=inv.created_at,
         has_stored_file=stored_ok,
         published_to_ledger=published_to_ledger,
+        gl_posting_applicable=gl_posting_applicable,
         current_stage=current_stage,
         current_stage_state=current_stage_state,
         processing_overrides=normalise_processing_overrides(
@@ -213,14 +226,29 @@ def invoice_to_response(
     )
 
 
+class InvoiceTenantScopeError(ValueError):
+    """Invoice row tenant_id does not match the authenticated tenant scope."""
+
+
+def assert_invoice_tenant_scope(rows: list[Invoice], tenant_id: uuid.UUID) -> None:
+    for row in rows:
+        if row.tenant_id != tenant_id:
+            raise InvoiceTenantScopeError(
+                f"Invoice {row.id} belongs to tenant {row.tenant_id}, expected {tenant_id}"
+            )
+
+
 async def _responses_for_invoices_once(
     db: AsyncSession,
     rows: list[Invoice],
     *,
+    tenant_id: uuid.UUID,
     published_ids: set[int] | None,
 ) -> list[InvoiceResponse]:
+    if not rows:
+        return []
+    assert_invoice_tenant_scope(rows, tenant_id)
     invoice_ids = [row.id for row in rows]
-    tenant_id = rows[0].tenant_id
     if published_ids is None:
         from app.services.publish_service import published_invoice_ids
 
@@ -243,6 +271,7 @@ async def responses_for_invoices(
     db: AsyncSession,
     rows: list[Invoice],
     *,
+    tenant_id: uuid.UUID,
     published_ids: set[int] | None = None,
 ) -> list[InvoiceResponse]:
     if not rows:
@@ -251,7 +280,9 @@ async def responses_for_invoices(
 
     return await run_with_transient_db_retry(
         db,
-        lambda: _responses_for_invoices_once(db, rows, published_ids=published_ids),
+        lambda: _responses_for_invoices_once(
+            db, rows, tenant_id=tenant_id, published_ids=published_ids
+        ),
     )
 
 
@@ -259,10 +290,12 @@ async def response_for_invoice(
     db: AsyncSession,
     inv: Invoice,
     *,
+    tenant_id: uuid.UUID,
     verify_stored_file: bool = False,
     repair_stored_path: bool = False,
     **kwargs,
 ) -> InvoiceResponse:
+    assert_invoice_tenant_scope([inv], tenant_id)
     if repair_stored_path:
         await repair_invoice_stored_path(db, inv)
     if verify_stored_file or repair_stored_path:
@@ -288,7 +321,7 @@ async def response_for_invoice(
         from app.services.publish_service import is_published_to_ledger
 
         published = await is_published_to_ledger(db, inv.id)
-    config = await load_config_for_tenant(db, inv.tenant_id)
+    config = await load_config_for_tenant(db, tenant_id)
     return invoice_to_response(
         inv,
         published_to_ledger=published,

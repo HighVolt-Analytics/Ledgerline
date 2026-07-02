@@ -48,6 +48,9 @@ async def clear_otp(*, auth_account_id: int, email: str) -> None:
         await r.aclose()
 
 
+_REFRESH_GRACE_SECONDS = 90
+
+
 async def register_refresh_session(
     *,
     jti: str,
@@ -78,6 +81,20 @@ async def revoke_refresh_jti(jti: str) -> None:
     r = _redis()
     try:
         await r.delete(f"{_REFRESH_PREFIX}{jti}")
+    finally:
+        await r.aclose()
+
+
+async def grace_revoke_refresh_jti(jti: str, *, grace_seconds: int = _REFRESH_GRACE_SECONDS) -> None:
+    """Short overlap so concurrent refresh (multi-tab) does not brick sibling sessions."""
+    r = _redis()
+    try:
+        key = f"{_REFRESH_PREFIX}{jti}"
+        ttl = await r.ttl(key)
+        if ttl > 0:
+            await r.expire(key, min(ttl, grace_seconds))
+        else:
+            await r.delete(key)
     finally:
         await r.aclose()
 

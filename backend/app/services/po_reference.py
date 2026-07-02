@@ -27,12 +27,18 @@ _PO_TEXT_PATTERNS = (
 )
 
 
+_SO_PREFIX = re.compile(r"^SO[-\s#]?", re.IGNORECASE)
+
+
 def is_plausible_po_reference(po: str | None) -> bool:
     """True when PO text looks like a real reference (not OCR noise like 'the')."""
     if not po or not po.strip():
         return False
     text = po.strip()
     if len(text) < 4:
+        return False
+    # Sales-order keys must not satisfy PO plausibility (common LLM conflation on AR docs).
+    if _SO_PREFIX.match(text):
         return False
     if _PO_PREFIX.match(text):
         return True

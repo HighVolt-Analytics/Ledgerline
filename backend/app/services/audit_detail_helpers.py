@@ -97,8 +97,8 @@ VR_CHECK_NAMES: dict[str, str] = {
     "VR15": "3-way match",
     "VR16": "Freight / surcharges",
     "VR-PB01": "Optional extraction fields",
-    "VR-PB02": "Mandatory bundle",
-    "VR-PB04": "Conditional bundle advisories",
+    "VR-PB02": "Required supporting documents",
+    "VR-PB04": "Recommended supporting documents",
 }
 
 

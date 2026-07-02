@@ -204,6 +204,39 @@ async def test_ingest_file_with_fanout_applies_source_metadata(
 
 
 @pytest.mark.asyncio
+async def test_ingest_sets_so_reference_from_filename(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.tenant import Tenant
+
+    org = Tenant(name="Sales Org", slug="sales-org")
+    db_session.add(org)
+    await db_session.flush()
+
+    monkeypatch.setattr(
+        "app.services.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/sales_order_SO-1001.pdf",
+    )
+
+    result = await ingest_file_with_fanout(
+        db_session,
+        tenant_id=org.id,
+        tenant_slug=org.slug,
+        tenant_name=org.name,
+        filename="sales_order_SO-1001.pdf",
+        data=b"%PDF sales",
+        source=IngestSourceMetadata(
+            email_attachment_name="sales_order_SO-1001.pdf",
+            capture_source="upload",
+        ),
+    )
+    inv = await db_session.get(Invoice, result.invoice_ids[0])
+    assert inv is not None
+    assert inv.so_reference == "SO-1001"
+
+
+@pytest.mark.asyncio
 async def test_load_segment_heading_kind_from_pdf_segmented_audit(
     db_session: AsyncSession,
 ) -> None:

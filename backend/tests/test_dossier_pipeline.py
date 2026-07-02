@@ -292,7 +292,7 @@ async def test_pipeline_bundle_linkage_key_missing_exception() -> None:
     assert bundle.state == "fail"
     assert bundle.exception_code == "LINKAGE_KEY_MISSING"
     assert bundle.failure_reason
-    assert "PO number" in (bundle.failure_reason or "")
+    assert "PO reference" in (bundle.failure_reason or "")
 
 
 @pytest.mark.asyncio

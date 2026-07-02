@@ -334,6 +334,8 @@ export interface Invoice {
   validation_results: ValidationResult[] | null;
   validation_pass_rate?: number | null;
   purchase_document_type?: string | null;
+  sales_document_type?: string | null;
+  so_reference?: string | null;
   document_type_code?: string | null;
   document_type_confidence?: number | null;
   llm_suggested_dt?: string | null;
@@ -355,6 +357,7 @@ export interface Invoice {
   current_stage_state?: "done" | "pending" | "fail" | "skipped";
   approval_board_column?: "review" | "processing" | "approved" | "rejected";
   processing_overrides?: ProcessingOverrides | null;
+  gl_posting_applicable?: boolean;
 }
 
 export interface LineItem {
@@ -417,7 +420,9 @@ export interface NavBadges {
   pending_classification: number;
   team_expenses_count: number;
   business_expenses_count: number;
+  sales_count: number;
   payments_queue_count: number;
+  collections_queue_count: number;
   integrations_connected: number;
 }
 
@@ -518,6 +523,89 @@ export interface PurchaseDossier {
     deviation?: number;
   } | null;
   purchase_register?: PurchaseOrderApi | null;
+}
+
+export interface SalesDossierMember {
+  role: string;
+  label: string;
+  invoice_id: number | null;
+  document_ref: string | null;
+  present: boolean;
+  has_stored_file: boolean;
+  is_current: boolean;
+}
+
+export interface SalesDossierResponse {
+  so_reference: string | null;
+  current_role: string | null;
+  members: SalesDossierMember[];
+  sales_order_id: number | null;
+  match: ThreeWayMatchApi | null;
+  match_status: string | null;
+  match_summary?: PurchaseDossier["match_summary"];
+  sales_register?: SalesOrderApi | null;
+}
+
+export interface SalesOrderApi {
+  id: number;
+  so_number: string;
+  customer: string | null;
+  so_date: string | null;
+  item: string | null;
+  requestor: string | null;
+  so_qty: number;
+  so_unit_price: number;
+  dn_qty: number | null;
+  dn_date: string | null;
+  dn_shipper: string | null;
+  dn_condition: string | null;
+  invoice_id: number | null;
+  so_document_id?: number | null;
+  dn_document_id?: number | null;
+  invoice_no: string | null;
+  invoice_qty: number;
+  invoice_unit_price: number;
+  gst_rate: number;
+  variance_approved: boolean;
+  status: string;
+  three_way_match_status?: "full_match" | "partial" | "mismatch" | null;
+  match: ThreeWayMatchApi;
+  route_target?: string | null;
+  evaluation_status?: string | null;
+  matched_rule_ids?: string[];
+  matched_rule_name?: string | null;
+  matched_gl?: string | null;
+  ledger?: string | null;
+  sub_ledger?: string | null;
+  sales_rule_id?: string | null;
+}
+
+export interface CollectionApi {
+  id: number;
+  invoice_id: number;
+  customer: string | null;
+  amount: number;
+  currency: string;
+  status: string;
+  tab: string;
+  due_date: string | null;
+  received_date: string | null;
+  failure_reason: string | null;
+}
+
+export interface CollectionMarkReceivedPayload {
+  received_date?: string;
+  note?: string;
+}
+
+export interface Customer {
+  id: number;
+  customer_slug: string;
+  customer_name: string;
+  sender_pattern: string;
+  abn: string | null;
+  approved: boolean;
+  created_at: string;
 }
 
 export interface PurchaseOrderApi {
@@ -689,6 +777,7 @@ export interface TopVendorRow {
   vendor: string;
   amount: string | number;
   invoice_count: number;
+  counterparty_label?: string;
 }
 
 export interface CashForecastBucket {
@@ -709,6 +798,7 @@ export interface AnomalyRow {
   tag: string;
   description: string;
   invoice_id: number | null;
+  document_ref?: string | null;
 }
 
 export interface KpiTrend {
@@ -1013,6 +1103,21 @@ export interface RuleBookConfig {
       sub_ledger: string;
       tax_account?: string;
       payable_account?: string;
+      receivable_account?: string;
+    };
+    matched_count: number;
+  }>;
+  sales_rules: Array<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    priority?: number;
+    match_on: Record<string, unknown>;
+    post_to: {
+      ledger: string;
+      sub_ledger: string;
+      tax_account?: string;
+      receivable_account?: string;
     };
     matched_count: number;
   }>;
@@ -1153,10 +1258,17 @@ export interface RuleBookEvaluationRow {
     vendor: string;
     primary_account: string;
     document_type_code?: string | null;
+    route_target?: string | null;
   };
   email_rule: { id: string; name: string } | null;
   email_rule_disabled: { id: string; name: string } | null;
   vendor_match: { vendor_id: string; vendor_name: string; confidence: number } | null;
+  counterparty_match?: {
+    kind: "vendor" | "customer" | string;
+    master_id: string;
+    master_name: string;
+    confidence: number;
+  } | null;
   category_rule: { label: string; kind: string } | null;
   category_rule_disabled: { label: string; kind: string } | null;
   auto_coded: boolean;
@@ -1330,7 +1442,7 @@ export interface ApprovalPolicy {
   matrix: Record<string, Record<string, boolean>>;
 }
 
-export type MatrixCellState = "done" | "pending" | "fail";
+export type MatrixCellState = "done" | "pending" | "fail" | "skipped";
 
 export interface MatrixStageCell {
   stage: string;

@@ -10,6 +10,7 @@ import {
   useOrgAiBrief,
   useSaveOrgAiBrief,
 } from "@/hooks/useOrgAiBrief";
+import { ApiError } from "@/api/client";
 import { cn } from "@/lib/cn";
 import type { OrgContextConfig } from "@/lib/v4RuleBookTypes";
 
@@ -149,9 +150,17 @@ export function OrgAiBriefPanel({
       onSaved?.();
       toast({ title: "AI brief saved", description: "Org context updated for this tenant." });
     } catch (err) {
+      const description =
+        err instanceof ApiError && err.status === 403
+          ? "Only organisation admins can edit the AI brief."
+          : err instanceof ApiError && err.status === 401
+            ? "Your session expired. Sign in again and retry."
+            : err instanceof Error
+              ? err.message
+              : "Request failed";
       toast({
         title: "Could not save AI brief",
-        description: err instanceof Error ? err.message : "Request failed",
+        description,
         variant: "destructive",
       });
     }

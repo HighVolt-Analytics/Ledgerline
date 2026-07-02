@@ -62,7 +62,13 @@ function relativePollTime(iso: string | null): string {
 
 function anomalyBadgeClass(tag: string) {
   if (tag === "Duplicate") return "border-destructive/40 text-destructive text-[10px]";
-  if (tag === "Missing PO" || tag === "Pending vendor" || tag === "Needs review") {
+  if (
+    tag === "Missing PO" ||
+    tag === "Missing SO" ||
+    tag === "Pending vendor" ||
+    tag === "Pending customer" ||
+    tag === "Needs review"
+  ) {
     return "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)] text-[10px]";
   }
   if (tag === "GST mismatch" || tag === "Team policy" || tag === "Validation") {
@@ -273,6 +279,14 @@ export function DashboardPage() {
     avg_processing_seconds: [],
     reconciliation_delta: [],
   };
+
+  const topCounterpartyLabels = new Set(
+    top_vendors.map((x) => x.counterparty_label ?? "Counterparty"),
+  );
+  const topCounterpartyColumn =
+    topCounterpartyLabels.size === 1
+      ? [...topCounterpartyLabels][0]
+      : "Counterparty";
 
   if (stats.total_invoices === 0) {
     return (
@@ -603,15 +617,15 @@ export function DashboardPage() {
 
       <div className="grid gap-4 lg:grid-cols-2 mb-6">
         <Card className="p-4">
-          <h3 className="text-sm font-semibold mb-3">Top vendors</h3>
+          <h3 className="text-sm font-semibold mb-3">Top counterparties</h3>
           {top_vendors.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No vendor data for this period.</p>
+            <p className="text-sm text-muted-foreground">No counterparty data for this period.</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground">
                   <th className="py-1.5 font-medium">#</th>
-                  <th className="py-1.5 font-medium">Vendor</th>
+                  <th className="py-1.5 font-medium">{topCounterpartyColumn}</th>
                   <th className="py-1.5 font-medium text-right">Docs</th>
                   <th className="py-1.5 font-medium text-right">Value</th>
                 </tr>
@@ -620,7 +634,12 @@ export function DashboardPage() {
                 {top_vendors.map((x, g) => (
                   <tr key={x.vendor} className="row-band border-t border-border/60">
                     <td className="py-1.5 tnum text-muted-foreground">{g + 1}</td>
-                    <td className="py-1.5 truncate max-w-[160px]">{x.vendor}</td>
+                    <td className="py-1.5 truncate max-w-[160px]">
+                      <div className="font-medium truncate">{x.vendor}</div>
+                      {topCounterpartyColumn === "Counterparty" && x.counterparty_label ? (
+                        <div className="text-[10px] text-muted-foreground">{x.counterparty_label}</div>
+                      ) : null}
+                    </td>
                     <td className="py-1.5 text-right tnum">{x.invoice_count}</td>
                     <td className="py-1.5 text-right tnum">{fmt(x.amount)}</td>
                   </tr>
@@ -641,13 +660,23 @@ export function DashboardPage() {
             <div className="space-y-2">
               {anomalies.map((a, i) => (
                 <div
-                  key={`${a.tag}-${a.invoice_id ?? i}`}
+                  key={`${a.tag}-${a.document_ref ?? a.invoice_id ?? i}`}
                   className="flex items-start gap-2 text-sm border-b border-border/60 pb-2"
                 >
                   <Badge variant="outline" className={cn("shrink-0", anomalyBadgeClass(a.tag))}>
                     {a.tag}
                   </Badge>
-                  <span className="text-xs text-muted-foreground flex-1">{a.description}</span>
+                  {a.invoice_id != null ? (
+                    <Link
+                      to={vaultInvoiceLink(a.invoice_id)}
+                      className="text-xs text-muted-foreground flex-1 hover:text-primary hover:underline"
+                      title="Open document in Vault"
+                    >
+                      {a.description}
+                    </Link>
+                  ) : (
+                    <span className="text-xs text-muted-foreground flex-1">{a.description}</span>
+                  )}
                 </div>
               ))}
             </div>

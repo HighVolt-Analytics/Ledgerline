@@ -12,7 +12,12 @@ import { StageBadge, invoiceStageBadgeProps } from "@/components/StageBadge";
 import { Card } from "@/components/ui/card";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { documentDisplayRef, money } from "@/lib/format";
-import { invoiceVendorConfidence } from "@/lib/invoice";
+import {
+  counterpartyColumnLabel,
+  counterpartyMatchColumnLabel,
+  counterpartyName,
+  invoiceCounterpartyConfidence,
+} from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
 
@@ -28,23 +33,27 @@ type RoutedInvoicesPanelProps = {
 function InvoiceTable({
   rows,
   showPo,
+  routeTarget,
 }: {
   rows: Invoice[];
   showPo?: boolean;
+  routeTarget: string;
 }) {
+  const partyLabel = counterpartyColumnLabel({ routeTarget });
+  const matchLabel = counterpartyMatchColumnLabel({ routeTarget });
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-muted-foreground border-b border-border">
             <th className="px-4 py-2 font-medium">Document</th>
-            <th className="px-3 py-2 font-medium">Vendor</th>
+            <th className="px-3 py-2 font-medium">{partyLabel}</th>
             {showPo ? <th className="px-3 py-2 font-medium">PO</th> : null}
             <th className="px-3 py-2 font-medium">Route</th>
             <th className="px-3 py-2 font-medium">Evaluation</th>
             <th className="px-3 py-2 font-medium">GL account</th>
             <th className="px-3 py-2 font-medium">Stage</th>
-            <th className="px-3 py-2 font-medium text-right">Vendor match</th>
+            <th className="px-3 py-2 font-medium text-right">{matchLabel}</th>
             <th className="px-4 py-2 font-medium text-right">Total</th>
           </tr>
         </thead>
@@ -70,7 +79,7 @@ function InvoiceTable({
                   {inv.invoice_no ?? "—"}
                 </div>
               </td>
-              <td className="px-3 py-2.5 max-w-[140px] truncate">{inv.vendor ?? "—"}</td>
+              <td className="px-3 py-2.5 max-w-[140px] truncate">{counterpartyName(inv)}</td>
               {showPo ? (
                 <td className="px-3 py-2.5 tnum text-xs text-muted-foreground">
                   {inv.po_reference ?? "—"}
@@ -83,13 +92,16 @@ function InvoiceTable({
                 <EvaluationStatusBadge status={inv.evaluation_status} />
               </td>
               <td className="px-3 py-2.5">
-                <InboxGlAccountBadge account={inv.account_name} />
+                <InboxGlAccountBadge
+                  account={inv.account_name}
+                  glPostingApplicable={inv.gl_posting_applicable ?? true}
+                />
               </td>
               <td className="px-3 py-2.5">
                 <StageBadge {...invoiceStageBadgeProps(inv)} />
               </td>
               <td className="px-3 py-2.5 text-right">
-                <InboxConfidenceBadge value={invoiceVendorConfidence(inv)} />
+                <InboxConfidenceBadge value={invoiceCounterpartyConfidence(inv)} />
               </td>
               <td className="px-4 py-2.5 text-right tnum font-medium">
                 {money(inv.total, inv.currency)}
@@ -144,7 +156,7 @@ export function RoutedInvoicesPanel({
           />
         </div>
       ) : (
-        <InvoiceTable rows={filtered} showPo={showPo} />
+        <InvoiceTable rows={filtered} showPo={showPo} routeTarget={routeTarget} />
       )}
     </Card>
   );

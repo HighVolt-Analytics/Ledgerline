@@ -251,7 +251,23 @@ def test_resolve_playbook_exception_linkage() -> None:
         }
     )
     assert code == "LINKAGE_KEY_MISSING"
-    assert "PO number" in reason
+    assert "PO reference" in reason
+
+
+def test_resolve_playbook_exception_linkage_sales() -> None:
+    from app.services.document_type_playbook_service import resolve_playbook_exception
+
+    code, reason, remediation = resolve_playbook_exception(
+        {
+            "block_reason": "linkage",
+            "linkage_key_missing": True,
+            "linkage_book": "sales",
+            "missing_bundle_mandatory": ["DT-26"],
+        }
+    )
+    assert code == "LINKAGE_KEY_MISSING"
+    assert "SO reference" in reason
+    assert "SO copy" in remediation
 
 
 def test_resolve_playbook_exception_bundle_labels() -> None:

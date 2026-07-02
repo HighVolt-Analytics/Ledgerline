@@ -186,10 +186,13 @@ function summaryLine(step: StepDef, matched: AuditLogEntry | null): string {
           const missing = pb.missing_bundle_mandatory;
           const fields = pb.missing_extraction_fields;
           if (reason === "linkage" || pb.linkage_key_missing) {
-            return "playbook · PO linkage key missing";
+            const book = String(pb.linkage_book ?? "");
+            return book === "sales"
+              ? "playbook · SO reference missing"
+              : "playbook · PO reference missing";
           }
           if (Array.isArray(missing) && missing.length) {
-            return `playbook · bundle missing: ${missing.join(", ")}`;
+            return `playbook · supporting docs missing: ${missing.join(", ")}`;
           }
           if (Array.isArray(fields) && fields.length) {
             return `playbook · fields missing: ${fields.join(", ")}`;

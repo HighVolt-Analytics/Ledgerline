@@ -24,6 +24,9 @@ export const DOCUMENT_TYPE_ROUTE_TARGETS: Record<string, string> = {
   "DT-23": "Vault",
   "DT-24": "Vault",
   "DT-25": "Vault",
+  "DT-26": "Sales Management",
+  "DT-27": "Sales Management",
+  "DT-28": "Sales Management",
 };
 
 export function routeTargetForDocumentTypeCode(code: string): string {

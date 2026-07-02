@@ -15,6 +15,7 @@ import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageEyebrowHeader } from "@/components/PageEyebrowHeader";
 import { fetchDossierById, addDossierManualLink, removeDossierManualLink } from "@/lib/dossierApi";
 import { firstPipelineFailure, isLegacyMockDossierId, type DossierSummary } from "@/lib/dossiers";
+import { ROUTE_SALES } from "@/lib/invoice";
 
 function DossierPlaybookRemedy({
   dossier,
@@ -26,7 +27,12 @@ function DossierPlaybookRemedy({
   const fail = firstPipelineFailure(dossier.pipeline);
   if (!fail || fail.stageId !== "bundle" || fail.state !== "fail") return null;
 
-  const isLinkage = fail.exceptionCode === "LINKAGE_KEY_MISSING" || !dossier.poReference;
+  const isSales =
+    dossier.routeTarget === ROUTE_SALES ||
+    dossier.linkedDocuments.linkageKind === "so_reference";
+  const isLinkage =
+    fail.exceptionCode === "LINKAGE_KEY_MISSING" ||
+    !(isSales ? dossier.soReference || dossier.linkageReference : dossier.poReference);
   const isBundle = fail.exceptionCode === "BUNDLE_INCOMPLETE";
 
   if (!isLinkage && !isBundle) return null;
@@ -39,7 +45,16 @@ function DossierPlaybookRemedy({
       <p className="font-medium text-foreground">Next step</p>
       {isLinkage ? (
         <p className="mt-1 text-muted-foreground">
-          This dossier needs a PO linkage key for 3-way match. Capture the PO number, or{" "}
+          {isSales ? (
+            <>
+              This dossier needs an SO linkage key for sales 3-way match. Capture the sales order
+              number, or{" "}
+            </>
+          ) : (
+            <>
+              This dossier needs a PO linkage key for 3-way match. Capture the PO number, or{" "}
+            </>
+          )}
           {dossier.invoiceId ? (
             <button
               type="button"
@@ -51,12 +66,13 @@ function DossierPlaybookRemedy({
           ) : (
             "reclassify as Direct expense"
           )}{" "}
-          if this is not a PO-backed invoice.
+          if this is not a {isSales ? "SO" : "PO"}-backed invoice.
         </p>
       ) : (
         <p className="mt-1 text-muted-foreground">
-          Upload PO and GRN supporting documents on the same PO number below, or open the
-          invoice to complete the dossier.
+          {isSales
+            ? "Upload SO and delivery note supporting documents on the same SO number below, or open the invoice to complete the dossier."
+            : "Upload PO and GRN supporting documents on the same PO number below, or open the invoice to complete the dossier."}
         </p>
       )}
     </div>
@@ -162,7 +178,7 @@ export function DossierDetailPage() {
       <PageEyebrowHeader
         eyebrow={`${dossier.id} · ${dossier.documentTypeTitle}`}
         title={dossier.vendor}
-        description={`${dossier.invoiceRef} · ${dossier.invoiceDate} · ${captureLabel(dossier.captureChannel)} · ${dossier.buyer}`}
+        description={`${dossier.counterpartyLabel ?? "Counterparty"} · ${dossier.invoiceRef} · ${dossier.invoiceDate} · ${captureLabel(dossier.captureChannel)} · ${dossier.buyer}`}
         actions={
           <>
             <DossierTypeBadge code={dossier.documentTypeCode} title={dossier.documentTypeTitle} />
@@ -181,7 +197,7 @@ export function DossierDetailPage() {
       }} />
 
       <div className="dossier-detail-grid">
-        <DossierPipelinePanel pipeline={dossier.pipeline} />
+        <DossierPipelinePanel pipeline={dossier.pipeline} routeTarget={dossier.routeTarget} />
         <div className="dossier-detail-rail">
           <DossierLinkedDocumentsPanel
             linked={dossier.linkedDocuments}

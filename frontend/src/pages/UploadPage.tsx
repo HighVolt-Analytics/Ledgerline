@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-react";
-import { api } from "@/api/client";
+import { api, clearGetCache } from "@/api/client";
 import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
 import { useAuth } from "@/context/AuthContext";
@@ -27,9 +27,13 @@ import { Select } from "@/components/ui/select";
 import { documentDisplayRef, money } from "@/lib/format";
 import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
 import {
+  counterpartyColumnLabel,
+  counterpartyMatchColumnLabel,
+  counterpartyMatchLabel,
+  counterpartyName,
+  invoiceCounterpartyConfidence,
   invoiceSourceKind,
   invoiceValidationConfidence,
-  invoiceVendorConfidence,
   mailboxDisplayName,
 } from "@/lib/invoice";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
@@ -124,6 +128,7 @@ export function UploadPage() {
   const [matrixFlagged, setMatrixFlagged] = useState(0);
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const loadSeq = useRef(0);
   const { data: ruleBook } = useRuleBookConfig();
   const [all, setAll] = useState<Invoice[]>([]);
   const [mailboxes, setMailboxes] = useState<ConnectedMailbox[]>([]);
@@ -152,15 +157,31 @@ export function UploadPage() {
   const [importJob, setImportJob] = useState<MailboxBackfillJob | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const tenantScope = user?.tenant_id ?? null;
+
+  useEffect(() => {
+    loadSeq.current += 1;
+    setAll([]);
+    setMailboxes([]);
+    setTotalInvoices(0);
+    setTotalPages(1);
+    setPage(1);
+    setError(null);
+    setDrawerId(null);
+    setDrawerOpen(false);
+  }, [tenantScope]);
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const seq = ++loadSeq.current;
     if (!options?.silent) {
       setLoading(true);
       setError(null);
     }
+    const fresh = options?.fresh ?? true;
+    if (fresh) clearGetCache();
     try {
-      const fresh = options?.fresh ?? !options?.silent;
       const mbs = await api.listMailboxes({ fresh }).catch(() => [] as ConnectedMailbox[]);
+      if (seq !== loadSeq.current) return null;
       const selectedMailboxId =
         source === "all" ? null : (mbs.find((m) => m.email === source)?.id ?? null);
       const invoiceRes = await api.listInvoicesWithMeta(
@@ -174,6 +195,7 @@ export function UploadPage() {
         },
         { fresh }
       );
+      if (seq !== loadSeq.current) return null;
       const invoiceRows = invoiceRes.data;
       const metaTotal = invoiceRes.meta?.total ?? invoiceRows.length;
       const metaPages = invoiceRes.meta?.pages ?? 1;
@@ -186,6 +208,7 @@ export function UploadPage() {
         ids: invoiceRows.map((i) => i.id),
       };
     } catch (e) {
+      if (seq !== loadSeq.current) return null;
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load documents");
         setAll([]);
@@ -193,9 +216,9 @@ export function UploadPage() {
       }
       return null;
     } finally {
-      if (!options?.silent) setLoading(false);
+      if (seq === loadSeq.current && !options?.silent) setLoading(false);
     }
-  }, [page, source, debouncedSearch]);
+  }, [page, source, debouncedSearch, tenantScope]);
 
   useEffect(() => {
     setPage(1);
@@ -206,7 +229,7 @@ export function UploadPage() {
   }, [load]);
 
   useVisibilityPolling(() => {
-    void load({ silent: true });
+    void load({ silent: true, fresh: true });
   }, INBOX_POLL_MS);
 
   useEffect(() => {
@@ -783,7 +806,7 @@ export function UploadPage() {
                       {inv.invoice_no ? `${inv.invoice_no} · ` : ""}
                       {invoiceDocumentTypeDisplayLabel(inv, ruleBook?.documentTypes)}
                     </div>
-                    <div className="text-sm truncate mt-0.5">{inv.vendor ?? "—"}</div>
+                    <div className="text-sm truncate mt-0.5">{counterpartyName(inv)}</div>
                   </div>
                   <div className="shrink-0 text-right">
                     <div className="tnum font-medium text-sm">
@@ -797,7 +820,10 @@ export function UploadPage() {
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
                   <InboxSourceBadge kind={invoiceSourceKind(inv)} />
                   <RouteTargetBadge route={inv.route_target} />
-                  <InboxGlAccountBadge account={inv.account_name} />
+                  <InboxGlAccountBadge
+                    account={inv.account_name}
+                    glPostingApplicable={inv.gl_posting_applicable ?? true}
+                  />
                   <StageBadge {...invoiceStageBadgeProps(inv)} />
                   <EvaluationStatusBadge status={inv.evaluation_status} />
                 </div>
@@ -806,10 +832,14 @@ export function UploadPage() {
                     VR pass
                     <InboxConfidenceBadge value={invoiceValidationConfidence(inv, ruleBook?.documentTypes)} />
                   </span>
-                  <span className="inline-flex items-center gap-1">
-                    Vendor match
-                    <InboxConfidenceBadge value={invoiceVendorConfidence(inv, ruleBook?.documentTypes)} />
-                  </span>
+                  {counterpartyMatchLabel(inv, ruleBook?.documentTypes) ? (
+                    <span className="inline-flex items-center gap-1">
+                      {counterpartyMatchLabel(inv, ruleBook?.documentTypes)}
+                      <InboxConfidenceBadge
+                        value={invoiceCounterpartyConfidence(inv, ruleBook?.documentTypes)}
+                      />
+                    </span>
+                  ) : null}
                 </div>
               </button>
             ))}
@@ -820,7 +850,7 @@ export function UploadPage() {
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
                   <th className="px-4 py-2 font-medium">Document</th>
-                  <th className="px-3 py-2 font-medium">Vendor</th>
+                  <th className="px-3 py-2 font-medium">{counterpartyColumnLabel({ mixed: true })}</th>
                   <th className="px-3 py-2 font-medium">Source</th>
                   <th className="px-3 py-2 font-medium">Route</th>
                   <th className="px-3 py-2 font-medium">GL account</th>
@@ -832,7 +862,9 @@ export function UploadPage() {
                     Evaluation
                   </th>
                   <th className="px-3 py-2 font-medium text-right">VR pass</th>
-                  <th className="px-3 py-2 font-medium text-right">Vendor match</th>
+                  <th className="px-3 py-2 font-medium text-right">
+                    {counterpartyMatchColumnLabel({ mixed: true })}
+                  </th>
                   <th className="px-3 py-2 font-medium text-right">Total</th>
                   <th className="px-4 py-2 font-medium text-right">Received</th>
                 </tr>
@@ -859,7 +891,7 @@ export function UploadPage() {
                         {invoiceDocumentTypeDisplayLabel(inv, ruleBook?.documentTypes)}
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 max-w-[160px] truncate">{inv.vendor ?? "—"}</td>
+                    <td className="px-3 py-2.5 max-w-[160px] truncate">{counterpartyName(inv)}</td>
                     <td className="px-3 py-2.5">
                       <InboxSourceBadge kind={invoiceSourceKind(inv)} />
                     </td>
@@ -867,7 +899,10 @@ export function UploadPage() {
                       <RouteTargetBadge route={inv.route_target} />
                     </td>
                     <td className="px-3 py-2.5">
-                      <InboxGlAccountBadge account={inv.account_name} />
+                      <InboxGlAccountBadge
+                    account={inv.account_name}
+                    glPostingApplicable={inv.gl_posting_applicable ?? true}
+                  />
                     </td>
                     <td className="px-3 py-2.5">
                       <StageBadge {...invoiceStageBadgeProps(inv)} />
@@ -879,7 +914,9 @@ export function UploadPage() {
                       <InboxConfidenceBadge value={invoiceValidationConfidence(inv, ruleBook?.documentTypes)} />
                     </td>
                     <td className="px-3 py-2.5 text-right">
-                      <InboxConfidenceBadge value={invoiceVendorConfidence(inv, ruleBook?.documentTypes)} />
+                      <InboxConfidenceBadge
+                        value={invoiceCounterpartyConfidence(inv, ruleBook?.documentTypes)}
+                      />
                     </td>
                     <td className="px-3 py-2.5 text-right tnum font-medium whitespace-nowrap">
                       {money(inv.total, inv.currency)}

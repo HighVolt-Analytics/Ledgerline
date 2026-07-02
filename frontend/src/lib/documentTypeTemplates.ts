@@ -14,7 +14,7 @@ import type {
   DocumentTypeFraudRisk,
 } from "@/lib/v5DocumentTypes";
 import { createBlankDocumentType, nextOrgDocumentTypeCode } from "@/lib/v5DocumentTypes";
-import type { PurchaseBundleRole } from "@/lib/documentBundleConfig";
+import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { routeTargetForDocumentTypeCode } from "@/lib/documentTypeRouteTargets";
 import { defaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
 import {
@@ -56,6 +56,7 @@ type ShippedCatalogRow = {
   fraudRisk: DocumentTypeFraudRisk;
   oneLine: string;
   purchaseBundleRole?: string;
+  salesBundleRole?: string;
   bundleMandatory?: string[];
   bundleConditional?: string[];
 };
@@ -87,8 +88,8 @@ export const SHIPPED_DOCUMENT_TYPE_CODES = SHIPPED_ROWS.map((row) => row.code.to
 export type ShippedDocumentTypeCode = (typeof SHIPPED_DOCUMENT_TYPE_CODES)[number];
 export type DocumentTypeTemplateId = ShippedDocumentTypeCode | "custom";
 
-/** Finance-standard catalogue packs (mixed AP). */
-export type DocumentTypeStarterPackId = "procurement_3way" | "direct_opex";
+/** Finance-standard catalogue packs (mixed AP + AR). */
+export type DocumentTypeStarterPackId = "procurement_3way" | "direct_opex" | "sales_3way";
 
 export type DocumentTypeStarterPack = {
   id: DocumentTypeStarterPackId;
@@ -115,6 +116,13 @@ export const DOCUMENT_TYPE_STARTER_PACKS: DocumentTypeStarterPack[] = [
     matrixTemplates: ["DT-08", "DT-24"],
     unclassifiedMatrixTemplate: "DT-08",
   },
+  {
+    id: "sales_3way",
+    label: "Sales 3-way match",
+    description:
+      "Customer tax invoice plus sales order and outbound delivery note, cross-linked on SO number.",
+    matrixTemplates: ["DT-26", "DT-27", "DT-28"],
+  },
 ];
 
 export type StarterPackApplyResult = {
@@ -133,6 +141,7 @@ export type DocumentTypeTemplate = {
   fraudRisk: DocumentTypeFraudRisk;
   playbookProfile: PlaybookProfile;
   purchaseBundleRole: PurchaseBundleRole;
+  salesBundleRole: SalesBundleRole;
   classifierPriority: number;
   classifierLayout: ClassifierLayout;
   signals: RecognitionSignalOption[];
@@ -191,6 +200,9 @@ function buildTemplateFromShippedRow(row: ShippedCatalogRow): DocumentTypeTempla
     purchaseBundleRole: (signalMeta?.purchaseBundleRole ||
       row.purchaseBundleRole ||
       "") as PurchaseBundleRole,
+    salesBundleRole: (signalMeta?.salesBundleRole ||
+      row.salesBundleRole ||
+      "") as SalesBundleRole,
     classifierPriority: preset?.priority ?? 50,
     classifierLayout,
     signals,
@@ -215,6 +227,7 @@ export const DOCUMENT_TYPE_TEMPLATES: DocumentTypeTemplate[] = [
     fraudRisk: "low",
     playbookProfile: "standard_transactional",
     purchaseBundleRole: "",
+    salesBundleRole: "",
     classifierPriority: 100,
     classifierLayout: "any_signal",
     signals: [],
@@ -301,6 +314,28 @@ export function resolveBundleCodesFromMatrix(
   return resolved;
 }
 
+function wireSalesBundleMandatory(
+  types: DocumentTypeDefinition[]
+): DocumentTypeDefinition[] {
+  const invoiceIdx = types.findIndex(
+    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-26"
+  );
+  if (invoiceIdx < 0) return types;
+  const soCode = types.find(
+    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-27"
+  )?.code;
+  const dnCode = types.find(
+    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-28"
+  )?.code;
+  const mandatory = [soCode, dnCode]
+    .map((code) => (code ?? "").trim().toUpperCase())
+    .filter(Boolean);
+  if (!mandatory.length) return types;
+  return types.map((dt, idx) =>
+    idx === invoiceIdx ? { ...dt, bundleMandatory: mandatory } : dt
+  );
+}
+
 function wireProcurementBundleMandatory(
   types: DocumentTypeDefinition[]
 ): DocumentTypeDefinition[] {
@@ -342,11 +377,13 @@ export function documentTypesFromStarterPack(
   let types =
     packId === "procurement_3way"
       ? wireProcurementBundleMandatory(created)
-      : created.map((dt) => ({
-          ...dt,
-          bundleMandatory: [],
-          bundleConditional: [],
-        }));
+      : packId === "sales_3way"
+        ? wireSalesBundleMandatory(created)
+        : created.map((dt) => ({
+            ...dt,
+            bundleMandatory: [],
+            bundleConditional: [],
+          }));
 
   const unclassifiedToken = pack.unclassifiedMatrixTemplate?.toUpperCase();
   const unclassifiedDocumentTypeCode = unclassifiedToken
@@ -426,6 +463,7 @@ export function documentTypeFromTemplate(
     matchPolicy: { mode: preset.matchMode },
     approvalPolicy: { mode: preset.approvalMode },
     purchaseBundleRole: template.purchaseBundleRole,
+    salesBundleRole: template.salesBundleRole,
     validationProfile:
       templateId === "custom" ? "non_actionable" : template.validationProfile,
     extractionFields,

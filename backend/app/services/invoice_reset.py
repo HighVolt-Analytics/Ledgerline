@@ -46,6 +46,8 @@ async def reset_invoice_for_reprocess(
     inv.route_target = None
     inv.matched_rule_ids = None
     inv.evaluation_status = None
+    inv.so_reference = None
+    inv.sales_document_type = None
 
     for entry in (
         await session.execute(
