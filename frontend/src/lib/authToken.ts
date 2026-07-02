@@ -69,12 +69,17 @@ export function userFromToken(token: string): AuthUser | null {
 
 /** JWT omits display fields — keep persisted profile values when merging. */
 export function mergeStoredUserWithToken(stored: AuthUser, tokenProfile: AuthUser): AuthUser {
+  const tenantChanged = stored.tenant_id !== tokenProfile.tenant_id;
   return {
     ...stored,
     ...tokenProfile,
     tenant_id: tokenProfile.tenant_id,
-    tenant_name: stored.tenant_name || tokenProfile.tenant_name,
-    tenant_slug: stored.tenant_slug || tokenProfile.tenant_slug,
+    tenant_name: tenantChanged
+      ? tokenProfile.tenant_name
+      : stored.tenant_name || tokenProfile.tenant_name,
+    tenant_slug: tenantChanged
+      ? tokenProfile.tenant_slug
+      : stored.tenant_slug || tokenProfile.tenant_slug,
     full_name: tokenProfile.full_name || stored.full_name,
     email: tokenProfile.email || stored.email,
     role: tokenProfile.role || stored.role,

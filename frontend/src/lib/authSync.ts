@@ -1,4 +1,4 @@
-/** Cross-tab auth token sync — keeps sessionStorage aligned after refresh in another tab. */
+/** Cross-tab auth token sync — same-tenant refresh only; never overwrite another tenant's tab. */
 
 import type { AuthUser } from "@/api/types";
 import type { TenantAccountSummary } from "@/lib/authApi";
@@ -11,6 +11,22 @@ export type AuthSyncPayload = {
   user: AuthUser;
   memberships?: TenantAccountSummary[];
 };
+
+export function authSyncTenantId(payload: AuthSyncPayload): string | null {
+  const tid = payload.user?.tenant_id;
+  return tid ? String(tid) : null;
+}
+
+/** Apply cross-tab sync only when the incoming session matches the active tenant. */
+export function shouldApplyAuthSync(
+  currentTenantId: string | null | undefined,
+  payload: AuthSyncPayload,
+): boolean {
+  const incomingTenantId = authSyncTenantId(payload);
+  if (!incomingTenantId) return false;
+  if (!currentTenantId) return true;
+  return currentTenantId === incomingTenantId;
+}
 
 export function broadcastAuthSync(payload: AuthSyncPayload): void {
   if (typeof BroadcastChannel === "undefined") return;
