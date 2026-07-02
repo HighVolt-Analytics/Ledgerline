@@ -371,6 +371,7 @@ function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProf
     klass: raw.klass as DocumentTypeDefinition["klass"],
     posting: String(raw.posting ?? "No"),
     purchaseBundleRole: mapPurchaseBundleRole(raw),
+    salesBundleRole: mapSalesBundleRole(raw),
     playbookProfile: "",
   });
 }

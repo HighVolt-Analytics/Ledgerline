@@ -222,7 +222,7 @@ export function defaultPlaybookProfileForCode(
   _code: string,
   docType?: Pick<
     DocumentTypeDefinition,
-    "klass" | "posting" | "purchaseBundleRole" | "playbookProfile"
+    "klass" | "posting" | "purchaseBundleRole" | "salesBundleRole" | "playbookProfile"
   >
 ): PlaybookProfile {
   if (docType) return inferPlaybookProfileFromDefinition(docType);

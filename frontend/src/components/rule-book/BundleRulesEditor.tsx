@@ -8,7 +8,6 @@ import {
   documentTypeLabel,
   dossierBookLabel,
   linkageReferenceLabel,
-  linkageReferenceShort,
   mergeBundleItems,
   normalizeDtCodeList,
   playbookEnforcesBundle,
@@ -16,8 +15,6 @@ import {
   SALES_BUNDLE_ROLE_OPTIONS,
   splitBundleItems,
   suggestedMandatoryBundleMembers,
-  supportingDocumentRequirementsTitle,
-  threeWayMatchTabLabel,
   type PurchaseBundleRole,
   type SalesBundleRole,
 } from "@/lib/documentBundleConfig";
@@ -310,7 +307,6 @@ export function BundleRulesEditor({
     draft.code,
     draft.routeTarget
   );
-  const linkageLabel = linkageReferenceShort(draft.routeTarget);
   const linkageRef = linkageReferenceLabel(draft.routeTarget);
   const bundlePairLabel = isSalesConsumer ? "SO + DN" : "PO + GRN";
   const dossierBook = dossierBookLabel(draft.routeTarget);
