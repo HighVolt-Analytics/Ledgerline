@@ -1,7 +1,8 @@
-/** Dossier hero view types — UI model until GET /api/dossiers ships. */
+/** Dossier hero view types — aligned with GET /api/dossiers. */
 
 import type { DossierApprovalChain } from "@/lib/dossierApproval";
 import type { DossierLinkedDocuments } from "@/lib/dossierLinkedDocuments";
+import { ROUTE_SALES } from "@/lib/invoice";
 
 export type { DossierApprovalChain, DossierApprovalStep } from "@/lib/dossierApproval";
 export type {
@@ -32,8 +33,8 @@ export const DOSSIER_PIPELINE_STAGES = [
   { id: "confidence_gate", order: 7, label: "Confidence gate", phase: "capture" as const },
   { id: "extract", order: 8, label: "Field extract", phase: "capture" as const },
   { id: "document_type", order: 9, label: "Document type", phase: "capture" as const },
-  { id: "bundle", order: 10, label: "Bundle / Playbook", phase: "process" as const },
-  { id: "vendor_hold", order: 11, label: "Vendor hold", phase: "process" as const },
+  { id: "bundle", order: 10, label: "Supporting documents", phase: "process" as const },
+  { id: "vendor_hold", order: 11, label: "Master hold", phase: "process" as const },
   { id: "validate", order: 12, label: "Validate", phase: "process" as const },
   { id: "match", order: 13, label: "Match", phase: "process" as const },
   { id: "approve", order: 14, label: "Approve", phase: "approve_map" as const },
@@ -175,6 +176,8 @@ export type DossierSummary = {
   documentTypeCode: string;
   documentTypeTitle: string;
   vendor: string;
+  counterpartyLabel?: string;
+  routeTarget?: string | null;
   buyer: string;
   invoiceRef: string;
   captureChannel: string;
@@ -187,6 +190,8 @@ export type DossierSummary = {
   classificationConfidence: number;
   fraudRisk: DossierFraudRisk;
   poReference: string | null;
+  soReference?: string | null;
+  linkageReference?: string | null;
   slaLabel: string;
   slaBreached?: boolean;
   owner: string;
@@ -277,7 +282,13 @@ export function stageShouldDefaultOpen(
   return false;
 }
 
-export function dossierStageLabel(stageId: DossierPipelineStageId): string {
+export function dossierStageLabel(
+  stageId: DossierPipelineStageId,
+  routeTarget?: string | null,
+): string {
+  if (stageId === "vendor_hold" && routeTarget === ROUTE_SALES) {
+    return "Customer hold";
+  }
   return DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.label ?? stageId;
 }
 

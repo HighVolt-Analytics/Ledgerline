@@ -3,11 +3,19 @@
 import json
 from pathlib import Path
 
-from app.schemas.rule_book_config import validate_rule_book_config_payload
+from app.schemas.customer import CustomerMaster
+from app.schemas.rule_book_config import (
+    PostToAccounts,
+    SalesMatchOn,
+    SalesRule,
+    validate_rule_book_config_payload,
+)
 from app.services.rule_book_evaluate_service import _legacy_sample_eval_documents
 from app.services.rule_engine import (
+    EvalDocument,
     SampleEmail,
     build_live_evaluation,
+    detect_customer,
     match_disabled_email_capture_rule,
     match_purchase_rule,
 )
@@ -186,3 +194,44 @@ def test_starts_with_pdf_never_matches_real_filenames() -> None:
         attachment_mime="application/pdf",
     )
     assert match_email_capture_rule(email, [broken], mailbox="vishnu@highvolt.tech") is None
+
+
+def test_build_live_evaluation_sales_uses_customer_match() -> None:
+    config = validate_rule_book_config_payload(
+        {
+            "schema_version": 1,
+            "sales_rules": [
+                SalesRule(
+                    id="sr-harbour",
+                    name="New sales rule",
+                    enabled=True,
+                    priority=100,
+                    match_on=SalesMatchOn(customer_contains="Harbour View"),
+                    post_to=PostToAccounts(ledger="Operating Expenses"),
+                ).model_dump(),
+            ],
+        }
+    )
+    doc = EvalDocument(
+        id="201",
+        doc_number="DOC-27",
+        invoice_no="INV-9001",
+        vendor="Harbour View Hotel",
+        route_target="Sales Management",
+        document_type="invoice",
+    )
+    customer = CustomerMaster(
+        id="cm-harbour",
+        name="Harbour View Hotel",
+        aliases=["Harbour View"],
+    )
+    rows = build_live_evaluation([doc], config, customer_masters=[customer])
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.category_rule is not None
+    assert row.category_rule.kind == "Sales"
+    assert row.customer is not None
+    assert row.customer.customer is not None
+    assert row.customer.customer.name == "Harbour View Hotel"
+    assert row.matched is True
+    assert detect_customer(doc, [customer], config.vendor_detection_config).customer is not None

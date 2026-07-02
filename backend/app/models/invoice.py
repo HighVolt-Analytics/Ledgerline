@@ -25,6 +25,12 @@ class PurchaseDocumentType(str, enum.Enum):
     INVOICE = "invoice"
 
 
+class SalesDocumentType(str, enum.Enum):
+    SO = "so"
+    DN = "dn"
+    INVOICE = "invoice"
+
+
 class InvoiceStatus(str, enum.Enum):
     PENDING = "pending"
     PARSING = "parsing"
@@ -64,6 +70,7 @@ class Invoice(Base):
     document_ref: Mapped[str | None] = mapped_column(String(32), index=True)
     invoice_no: Mapped[str | None] = mapped_column(String(100), index=True)
     po_reference: Mapped[str | None] = mapped_column(String(100))
+    so_reference: Mapped[str | None] = mapped_column(String(100), index=True)
     cost_centre: Mapped[str | None] = mapped_column(String(100))
     invoice_date: Mapped[date | None] = mapped_column(Date)
     due_date: Mapped[date | None] = mapped_column(Date)
@@ -99,6 +106,7 @@ class Invoice(Base):
     vendor_confidence: Mapped[float | None] = mapped_column(Float)
     evaluation_status: Mapped[str | None] = mapped_column(String(32), index=True)
     purchase_document_type: Mapped[str | None] = mapped_column(String(16), index=True)
+    sales_document_type: Mapped[str | None] = mapped_column(String(16), index=True)
     document_type_code: Mapped[str | None] = mapped_column(String(16), index=True)
     document_type_confidence: Mapped[float | None] = mapped_column(Float)
     llm_suggested_dt: Mapped[str | None] = mapped_column(String(16), nullable=True)

@@ -52,6 +52,34 @@ def test_matrix_cells_rejected_parsed_fail() -> None:
     assert by_stage["Mapped"]["state"] == "pending"
 
 
+def test_matrix_cells_preserve_skipped_mapped_for_reference_document() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View Hotel",
+        invoice_no="SO-DEMO-100",
+        status=InvoiceStatus.PROCESSED,
+        route_target="Sales Management",
+        sales_document_type="so",
+        currency="AUD",
+    )
+    from datetime import datetime, timezone
+
+    from app.models.audit import AuditLog
+
+    complete_log = AuditLog(
+        event="sales_document_processed",
+        invoice_id=1,
+        detail={},
+        created_at=datetime.now(timezone.utc),
+    )
+    cells = build_matrix_cells(inv, [complete_log])
+    by_stage = {cell["stage"]: cell for cell in cells}
+    assert by_stage["Mapped"]["state"] == "skipped"
+    assert "reference" in by_stage["Mapped"]["detail"].lower() or "not posted" in by_stage[
+        "Mapped"
+    ]["detail"].lower()
+
+
 def test_derive_matrix_flag_awaiting_classification() -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,

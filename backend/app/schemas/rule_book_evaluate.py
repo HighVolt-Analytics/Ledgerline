@@ -26,6 +26,7 @@ class RuleBookEvalDocument(BaseModel):
     vendor: str
     primary_account: str
     document_type_code: str | None = None
+    route_target: str | None = None
 
 
 class RuleBookEvalEmailRule(BaseModel):
@@ -39,6 +40,13 @@ class RuleBookEvalVendorMatch(BaseModel):
     confidence: float
 
 
+class RuleBookEvalCounterpartyMatch(BaseModel):
+    kind: str
+    master_id: str
+    master_name: str
+    confidence: float
+
+
 class RuleBookEvalCategoryRule(BaseModel):
     label: str
     kind: str
@@ -49,6 +57,7 @@ class RuleBookEvalRow(BaseModel):
     email_rule: RuleBookEvalEmailRule | None = None
     email_rule_disabled: RuleBookEvalEmailRule | None = None
     vendor_match: RuleBookEvalVendorMatch | None = None
+    counterparty_match: RuleBookEvalCounterpartyMatch | None = None
     category_rule: RuleBookEvalCategoryRule | None = None
     category_rule_disabled: RuleBookEvalCategoryRule | None = None
     auto_coded: bool

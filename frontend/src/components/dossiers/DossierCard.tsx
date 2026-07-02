@@ -9,7 +9,6 @@ import {
   firstPipelineFailure,
 } from "@/lib/dossiers";
 import { linkedDocumentCounts } from "@/lib/dossierLinkedDocuments";
-
 import { money } from "@/lib/format";
 
 export function DossierCard({ dossier }: { dossier: DossierSummary }) {
@@ -27,7 +26,7 @@ export function DossierCard({ dossier }: { dossier: DossierSummary }) {
         <div className="min-w-0">
           <div className="dossier-card__vendor">{dossier.vendor}</div>
           <div className="dossier-card__meta">
-            {dossier.id} · {dossier.invoiceRef}
+            {dossier.counterpartyLabel ?? "Counterparty"} · {dossier.id} · {dossier.invoiceRef}
           </div>
         </div>
         <DossierTypeBadge code={dossier.documentTypeCode} title={dossier.documentTypeTitle} />
@@ -42,7 +41,7 @@ export function DossierCard({ dossier }: { dossier: DossierSummary }) {
         <div className="dossier-card__blocker">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>
-            Blocked at {dossierStageLabel(firstFail.stageId)}
+            Blocked at {dossierStageLabel(firstFail.stageId, dossier.routeTarget)}
             {firstFail.exceptionCode ? ` · ${firstFail.exceptionCode}` : ""}
           </span>
         </div>
@@ -58,7 +57,7 @@ export function DossierCard({ dossier }: { dossier: DossierSummary }) {
         <div>
           <div className="dossier-card__amount tnum">{money(dossier.total, dossier.currency)}</div>
           <div className="dossier-card__bundle">
-            Bundle {bundle.present}/{bundle.required} linked
+            Supporting docs {bundle.present}/{bundle.required}
           </div>
         </div>
         <div className="dossier-card__foot-right">

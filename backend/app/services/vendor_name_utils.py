@@ -110,6 +110,26 @@ def extract_supplier_party_from_text(text: str) -> str | None:
     return None
 
 
+def extract_customer_party_from_text(text: str) -> str | None:
+    """Customer on sales invoice layouts (Bill To / Sold To / Customer blocks)."""
+    patterns = (
+        r"(?:Bill\s+To|Sold\s+To|Customer|Client)(?:[^\n]*)?\n\s*([^\n]+)",
+        r"(?:Bill\s+To|Sold\s+To|Customer|Client)[:\s]+([^\n]+)",
+        r"Ship\s+To[:\s]+([^\n]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if not match:
+            continue
+        candidate = _clean_party_line(match.group(1))
+        if _LABEL_FRAGMENT.match(candidate):
+            continue
+        normalized = normalize_vendor_name(candidate)
+        if normalized:
+            return normalized
+    return None
+
+
 def normalize_vendor_name(value: str | None) -> str | None:
     if not value:
         return None

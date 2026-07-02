@@ -262,7 +262,7 @@ export function ValidationChecksEditor({
         <p className="text-[11px] text-muted-foreground">
           Finance checks only (tax, dates, currency, arithmetic, vendor). Compulsory field
           presence uses starred fields in Extraction fields above (VR03). Matching, bundle, and
-          optional extraction run automatically from Processing playbook and Bundle rules.
+          optional extraction run automatically from Processing playbook and Supporting document requirements.
           Duplicate check is always on org-wide.
         </p>
         <Button type="button" variant="outline" size="sm" onClick={loadProfilePreset}>

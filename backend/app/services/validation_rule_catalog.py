@@ -30,8 +30,8 @@ VALIDATION_CHECK_DESCRIPTIONS: dict[str, str] = {
     "VR15": "PO, GRN, and invoice quantities and prices must match.",
     "VR16": "Freight and surcharges must be within tolerance against PO.",
     "VR-PB01": "Warns when optional (unstarred) extraction targets are missing. Compulsory gaps use VR03.",
-    "VR-PB02": "Mandatory bundle document types must exist on the PO.",
-    "VR-PB04": "Conditional bundle advisories for companion documents.",
+    "VR-PB02": "Required supporting documents must exist on the same PO or SO reference.",
+    "VR-PB04": "Recommended supporting documents (advisory only).",
 }
 
 VALIDATION_CHECK_LABELS: dict[str, str] = {
@@ -50,8 +50,8 @@ VALIDATION_CHECK_LABELS: dict[str, str] = {
     "VR15": "Document match",
     "VR16": "Freight / surcharges",
     "VR-PB01": "Optional extraction fields",
-    "VR-PB02": "Mandatory bundle",
-    "VR-PB04": "Conditional bundle advisories",
+    "VR-PB02": "Required supporting documents",
+    "VR-PB04": "Recommended supporting documents",
 }
 
 VALIDATION_CHECK_GROUPS: dict[str, str] = {

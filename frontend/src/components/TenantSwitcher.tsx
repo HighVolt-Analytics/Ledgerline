@@ -13,7 +13,7 @@ import { AddOrganisationDialog } from "@/components/AddOrganisationDialog";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/context/AuthContext";
 import { fetchMyMemberships, type TenantAccountSummary } from "@/lib/authApi";
-import { getAccessToken, loadMembershipsFromSession, PROFILE_UPDATED_EVENT } from "@/lib/authSession";
+import { getAccessToken, loadMembershipsFromSession, persistMemberships, PROFILE_UPDATED_EVENT } from "@/lib/authSession";
 import { cn } from "@/lib/cn";
 
 type TenantSwitcherProps = {
@@ -79,7 +79,7 @@ export function TenantSwitcher({
     try {
       const rows = await fetchMyMemberships(token);
       setMemberships(rows);
-      sessionStorage.setItem("ledgerline_memberships", JSON.stringify(rows));
+      persistMemberships(rows);
     } catch {
       // Silent — switcher must not block the shell.
     }

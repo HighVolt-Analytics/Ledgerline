@@ -13,6 +13,7 @@ HeadingKind = Literal[
     "commercial_invoice",
     "invoice",
     "purchase_order",
+    "sales_order",
     "grn",
     "credit_note",
     "quote",
@@ -53,6 +54,7 @@ _STANDALONE_TITLE = re.compile(
     r"commercial\s+invoice|"
     r"invoice|"
     r"purchase\s+order|"
+    r"sales\s+order|"
     r"goods\s+receipt(?:\s+note)?|"
     r"delivery\s+(?:note|docket)|"
     r"credit\s+note|"
@@ -79,6 +81,7 @@ _TRAILING_TITLE = re.compile(
     r"commercial\s+invoice|"
     r"invoice|"
     r"purchase\s+order|"
+    r"sales\s+order|"
     r"goods\s+receipt(?:\s+note)?|"
     r"credit\s+note"
     r")\s*$",
@@ -90,6 +93,7 @@ _KIND_FROM_LABEL: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"^commercial\s+invoice$", re.I), "commercial_invoice"),
     (re.compile(r"^invoice$", re.I), "invoice"),
     (re.compile(r"^purchase\s+order$", re.I), "purchase_order"),
+    (re.compile(r"^sales\s+order$", re.I), "sales_order"),
     (re.compile(r"^goods\s+receipt", re.I), "grn"),
     (re.compile(r"^delivery\s+(?:note|docket)", re.I), "grn"),
     (re.compile(r"^credit\s+note$", re.I), "credit_note"),
@@ -123,6 +127,10 @@ class DocumentHeadingSignals:
     @property
     def has_heading_po(self) -> bool:
         return "purchase_order" in self.kinds
+
+    @property
+    def has_heading_so(self) -> bool:
+        return "sales_order" in self.kinds
 
     @property
     def has_heading_grn(self) -> bool:

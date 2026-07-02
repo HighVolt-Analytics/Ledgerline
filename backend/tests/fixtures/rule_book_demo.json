@@ -239,6 +239,24 @@
       "matched_count": 3
     }
   ],
+  "sales_rules": [
+    {
+      "id": "sr-1",
+      "name": "Retail customer invoices",
+      "enabled": true,
+      "priority": 100,
+      "match_on": {
+        "customer_contains": "Harbour View Hotel"
+      },
+      "post_to": {
+        "ledger": "Operating Revenue",
+        "sub_ledger": "Room Sales",
+        "tax_account": "GST Collected",
+        "receivable_account": "Accounts Receivable"
+      },
+      "matched_count": 4
+    }
+  ],
   "expense_rules": [
     {
       "id": "er-1",

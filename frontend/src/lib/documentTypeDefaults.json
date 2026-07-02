@@ -125,5 +125,26 @@
     "min_route_confidence": 0.85,
     "validation_profile": "non_actionable",
     "playbook_profile": "compliance_route"
+  },
+  "DT-26": {
+    "required_fields": ["vendor", "invoice_no", "total", "due_date"],
+    "absent_fields": ["po_reference"],
+    "min_route_confidence": 0.65,
+    "validation_profile": "",
+    "playbook_profile": "ar_goods"
+  },
+  "DT-27": {
+    "required_fields": [],
+    "absent_fields": ["invoice_no", "po_reference"],
+    "min_route_confidence": 0.65,
+    "validation_profile": "non_actionable",
+    "playbook_profile": "supporting"
+  },
+  "DT-28": {
+    "required_fields": [],
+    "absent_fields": ["invoice_no"],
+    "min_route_confidence": 0.65,
+    "validation_profile": "non_actionable",
+    "playbook_profile": "supporting"
   }
 }

@@ -71,6 +71,7 @@ class DocumentClassifierContext:
     document_heading: str
     has_heading_invoice: str
     has_heading_po: str
+    has_heading_so: str
     has_heading_grn: str
     has_heading_credit_note: str
     has_heading_quote: str
@@ -211,6 +212,7 @@ def build_document_classifier_context(
         document_heading=(parsed.document_heading or heading_signals.primary_label or "").strip(),
         has_heading_invoice=_bool_text(heading_signals.has_heading_invoice),
         has_heading_po=_bool_text(heading_signals.has_heading_po),
+        has_heading_so=_bool_text(heading_signals.has_heading_so),
         has_heading_grn=_bool_text(heading_signals.has_heading_grn),
         has_heading_credit_note=_bool_text(heading_signals.has_heading_credit_note),
         has_heading_quote=_bool_text(heading_signals.has_heading_quote),
@@ -260,6 +262,7 @@ def _static_document_field_mapping(ctx: DocumentClassifierContext) -> dict[str, 
         "document_heading": ctx.document_heading,
         "has_heading_invoice": ctx.has_heading_invoice,
         "has_heading_po": ctx.has_heading_po,
+        "has_heading_so": ctx.has_heading_so,
         "has_heading_grn": ctx.has_heading_grn,
         "has_heading_credit_note": ctx.has_heading_credit_note,
         "has_heading_quote": ctx.has_heading_quote,

@@ -49,6 +49,10 @@ export function getStoredMemberships(): TenantAccountSummary[] {
   }
 }
 
+export function persistMemberships(memberships: TenantAccountSummary[]) {
+  sessionStorage.setItem(MEMBERSHIPS_KEY, JSON.stringify(memberships));
+}
+
 export function persistAuthSuccess(payload: {
   access_token: string;
   refresh_token: string;
@@ -58,8 +62,8 @@ export function persistAuthSuccess(payload: {
   sessionStorage.setItem(ACCESS_KEY, payload.access_token);
   sessionStorage.setItem(REFRESH_KEY, payload.refresh_token);
   sessionStorage.setItem(USER_KEY, JSON.stringify(payload.user));
-  if (payload.memberships) {
-    sessionStorage.setItem(MEMBERSHIPS_KEY, JSON.stringify(payload.memberships));
+  if (payload.memberships !== undefined) {
+    persistMemberships(payload.memberships);
   }
 }
 

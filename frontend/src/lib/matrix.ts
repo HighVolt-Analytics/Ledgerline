@@ -10,13 +10,17 @@ export const MATRIX_STAGES = [
 ] as const;
 
 export type MatrixStage = (typeof MATRIX_STAGES)[number];
-export type MatrixCellState = "done" | "pending" | "fail";
+export type MatrixCellState = "done" | "pending" | "fail" | "skipped";
 
 export type MatrixCell = {
   state: MatrixCellState;
   ts: string;
   detail: string;
 };
+
+export function matrixStageSettled(state: MatrixCellState): boolean {
+  return state === "done" || state === "skipped";
+}
 
 const STAGE_ACTORS: Record<MatrixStage, string> = {
   Received: "Email capture",

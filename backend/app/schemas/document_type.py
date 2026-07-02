@@ -22,12 +22,14 @@ from app.schemas.validation_rule import ValidationRuleConfig, normalize_validati
 
 DocumentTypeRouteTarget = Literal[
     "Purchase Management",
+    "Sales Management",
     "Expenses Management",
     "Team Expenses",
     "Vault",
 ]
 
 PurchaseBundleRole = Literal["", "po", "grn"]
+SalesBundleRole = Literal["", "so", "dn"]
 
 
 def _empty_classifier_root() -> dict[str, Any]:
@@ -117,6 +119,7 @@ class DocumentTypeDefinition(BaseModel):
     bundle_mandatory: list[str] = Field(default_factory=list, alias="bundleMandatory")
     bundle_conditional: list[str] = Field(default_factory=list, alias="bundleConditional")
     purchase_bundle_role: PurchaseBundleRole = Field(default="", alias="purchaseBundleRole")
+    sales_bundle_role: SalesBundleRole = Field(default="", alias="salesBundleRole")
     sample_analysis: DocumentTypeSampleAnalysis | None = Field(
         default=None,
         alias="sampleAnalysis",
@@ -137,6 +140,14 @@ class DocumentTypeDefinition(BaseModel):
     def _normalize_purchase_bundle_role(cls, value: Any) -> str:
         token = str(value or "").strip().lower()
         if token in {"po", "grn"}:
+            return token
+        return ""
+
+    @field_validator("sales_bundle_role", mode="before")
+    @classmethod
+    def _normalize_sales_bundle_role(cls, value: Any) -> str:
+        token = str(value or "").strip().lower()
+        if token in {"so", "dn"}:
             return token
         return ""
 

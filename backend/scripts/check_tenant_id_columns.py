@@ -41,6 +41,21 @@ EXPECTED_TENANT_TABLES: frozenset[str] = frozenset(
         "journal_entries",
         "goods_receipts",
         "meta_webhook_dedupe",
+        "dossier_manual_links",
+        "stripe_accounts",
+        "stripe_balance_snapshots",
+        "stripe_transactions",
+        "vendor_payment_methods",
+        "invoice_ocr_artifacts",
+        "classification_learning_events",
+        "accounting_integrations",
+        "connected_viber_accounts",
+        "payment_execution_instructions",
+        "customer_masters",
+        "customer_registry",
+        "sales_orders",
+        "delivery_notes",
+        "collections",
     }
 )
 

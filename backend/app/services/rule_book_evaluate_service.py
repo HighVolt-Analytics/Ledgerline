@@ -21,6 +21,7 @@ from app.services.rule_engine import (
     build_live_evaluation,
     match_expense_rule,
     match_purchase_rule,
+    match_sales_rule,
     match_team_expense_rule,
 )
 
@@ -73,7 +74,7 @@ def invoice_to_eval_document(inv: Invoice) -> EvalDocument:
         invoice_no=invoice_no,
         vendor=inv.vendor or "",
         abn=inv.abn,
-        po=effective_po_reference(inv.po_reference),
+        po=effective_po_reference(inv.po_reference) or (inv.so_reference or "").strip() or None,
         primary_account=primary,
         lines=lines,
         document_type=doc_type,
@@ -84,6 +85,7 @@ def invoice_to_eval_document(inv: Invoice) -> EvalDocument:
         address=inv.billing_address,
         bank_bsb=inv.bank_bsb,
         bank_account=inv.bank_account,
+        route_target=(inv.route_target or "").strip() or None,
     )
 
 
@@ -193,6 +195,7 @@ def _apply_stored_email_capture(
                 email_rule=stored,
                 email_rule_disabled=None,
                 vendor=row.vendor,
+                customer=row.customer,
                 category_rule=row.category_rule,
                 category_rule_disabled=row.category_rule_disabled,
                 matched=row.matched,
@@ -206,6 +209,8 @@ def _resolve_ledger(row: LiveEvalRow, config: RuleBookConfigPayload) -> str | No
         return None
     if row.category_rule.kind == "Purchase":
         rule = match_purchase_rule(row.doc, config.purchase_rules)
+    elif row.category_rule.kind == "Sales":
+        rule = match_sales_rule(row.doc, config.sales_rules)
     elif row.category_rule.kind == "Expense":
         rule = match_expense_rule(row.doc, config.expense_rules)
     else:
@@ -247,10 +252,24 @@ def serialize_eval_row(
         }
 
     vendor_match = None
-    if row.vendor.vendor:
+    counterparty_match = None
+    if row.customer and row.customer.customer:
+        counterparty_match = {
+            "kind": "customer",
+            "master_id": row.customer.customer.id,
+            "master_name": row.customer.customer.name,
+            "confidence": row.customer.confidence,
+        }
+    elif row.vendor.vendor:
         vendor_match = {
             "vendor_id": row.vendor.vendor.id,
             "vendor_name": row.vendor.vendor.name,
+            "confidence": row.vendor.confidence,
+        }
+        counterparty_match = {
+            "kind": "vendor",
+            "master_id": row.vendor.vendor.id,
+            "master_name": row.vendor.vendor.name,
             "confidence": row.vendor.confidence,
         }
 
@@ -277,10 +296,12 @@ def serialize_eval_row(
             "vendor": row.doc.vendor,
             "primary_account": ledger,
             "document_type_code": document_type_code,
+            "route_target": row.doc.route_target,
         },
         "email_rule": email_rule,
         "email_rule_disabled": email_rule_disabled,
         "vendor_match": vendor_match,
+        "counterparty_match": counterparty_match,
         "category_rule": category_rule,
         "category_rule_disabled": category_rule_disabled,
         "auto_coded": row.matched and row.category_rule is not None,
@@ -296,6 +317,9 @@ async def evaluate_rule_book(
     limit: int = _DEFAULT_LIMIT,
 ) -> dict:
     config = await _resolve_config(session, tenant_id, config_override)
+    from app.services.customer_master_service import list_customer_masters
+
+    customer_masters = await list_customer_masters(session, tenant_id)
     stmt = (
         select(Invoice)
         .options(selectinload(Invoice.line_items))
@@ -318,7 +342,12 @@ async def evaluate_rule_book(
         source = "sample" if docs else "invoices"
 
     mailbox = get_settings().graph_mailbox.strip() or "accounts@acme-hospitality.com.au"
-    rows = build_live_evaluation(docs, config, default_mailbox=mailbox)
+    rows = build_live_evaluation(
+        docs,
+        config,
+        default_mailbox=mailbox,
+        customer_masters=customer_masters,
+    )
     if invoices:
         rows = _apply_stored_email_capture(rows, invoices, config)
     doc_type_by_doc_id: dict[str, str | None] = {}

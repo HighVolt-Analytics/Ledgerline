@@ -18,6 +18,8 @@ StageState = Literal["done", "pending", "fail", "skipped"]
 _PROCESSING_COMPLETE_EVENTS = (
     "vault_stored",
     "purchase_document_processed",
+    "sales_document_processed",
+    "supporting_document_processed",
     "invoice_processed",
 )
 
@@ -292,6 +294,14 @@ def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineS
     return stages
 
 
+def _gl_posting_applicable(inv: Invoice) -> bool:
+    from app.services.document_type_playbook_profile_service import (
+        gl_posting_applicable_for_invoice,
+    )
+
+    return gl_posting_applicable_for_invoice(inv)
+
+
 def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineStage]:
     """Six-step narrative for audit UI."""
     received_log = _latest_log(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
@@ -332,16 +342,30 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
             validation_text, validation_state = "Stored in document vault", "done"
         elif terminal_log and terminal_log.event == "purchase_document_processed":
             validation_text, validation_state = "Supporting document processed", "done"
+        elif terminal_log and terminal_log.event in {
+            "supporting_document_processed",
+            "sales_document_processed",
+        }:
+            validation_text, validation_state = "Reference document processed", "done"
         elif validation_state != "fail":
             validation_text, validation_state = "Passed", "done"
         validated_at = validated_at or (terminal_log.created_at if terminal_log else inv.created_at)
 
-    account = inv.account_name or ("Pending" if awaiting_reparse else "Suspense Account")
+    gl_applicable = _gl_posting_applicable(inv)
+    if not gl_applicable:
+        account = "Not posted — reference document"
+    else:
+        account = inv.account_name or ("Pending" if awaiting_reparse else "Suspense Account")
     mapped_at = mapped_log.created_at if mapped_log else None
-    if mapped_at is None and (_stage_index(inv.status) >= 3 and not awaiting_reparse or processing_finished):
+    if mapped_at is None and gl_applicable and (
+        _stage_index(inv.status) >= 3 and not awaiting_reparse or processing_finished
+    ):
         mapped_at = validated_at or inv.created_at
     mapped_suspense = (
-        not awaiting_reparse and inv.account_name and "suspense" in inv.account_name.lower()
+        gl_applicable
+        and not awaiting_reparse
+        and inv.account_name
+        and "suspense" in inv.account_name.lower()
     )
 
     approved_at: datetime | None = None
@@ -400,9 +424,13 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         published_at = terminal_log.created_at if terminal_log else inv.created_at
         if terminal_log and terminal_log.event == "vault_stored":
             published_detail = f"{doc_ref} · archived in vault"
+            published_state = "pending"
+        elif not gl_applicable:
+            published_detail = f"{doc_ref} · reference only (no ledger post)"
+            published_state = "skipped"
         else:
             published_detail = f"{doc_ref} · ready to post"
-        published_state = "pending"
+            published_state = "pending"
 
     if inv.status == InvoiceStatus.REJECTED:
         rejected_log = _latest_log(logs, "invoice_rejected")
@@ -477,10 +505,12 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     )
 
     mapped_state: StageState = (
-        "fail"
+        "skipped"
+        if not gl_applicable and processing_finished
+        else "fail"
         if mapped_suspense and inv.status == InvoiceStatus.EXCEPTION and not processing_finished
         else "done"
-        if processing_finished or _stage_index(inv.status) >= 3
+        if processing_finished or (gl_applicable and _stage_index(inv.status) >= 3)
         else "pending"
     )
 
@@ -673,11 +703,10 @@ def build_matrix_cells(inv: Invoice, logs: list[AuditLog]) -> list[dict[str, str
     for stage in MATRIX_STAGES:
         step = by_name.get(stage)
         if step:
-            state: StageState = step.state if step.state != "skipped" else "pending"
             cells.append(
                 _matrix_cell(
                     stage,
-                    state=state,
+                    state=step.state,
                     at=step.at,
                     detail=step.detail,
                 )

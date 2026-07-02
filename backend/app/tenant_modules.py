@@ -23,6 +23,12 @@ TENANT_MODULE_CATALOG: tuple[TenantModuleDef, ...] = (
         group="Workspace",
     ),
     TenantModuleDef(
+        key="sales",
+        label="Sales Management",
+        description="Customer invoices, receivables, and sales GL coding.",
+        group="Workspace",
+    ),
+    TenantModuleDef(
         key="expenses",
         label="Expenses Management",
         description="Business expense claims routed from the rule book.",

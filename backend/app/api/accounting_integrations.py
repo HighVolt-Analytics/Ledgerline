@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, actor_from_context, get_db, require_admin
+from app.api.deps import AuthContext, actor_from_context, bind_db_to_tenant, get_db, require_admin
 from app.config import get_settings
 from app.models.accounting_integration import AccountingProvider
 from app.models.user import User, UserRole
@@ -210,6 +210,7 @@ async def xero_oauth_callback(
         return RedirectResponse(url=url, status_code=302)
 
     try:
+        await bind_db_to_tenant(db, tenant_id)
         await _require_admin_user(db, tenant_id=tenant_id, user_id=user_id)
     except HTTPException:
         url = _append_query(return_base, {query_key: "error", "reason": "not_admin"})
@@ -301,6 +302,7 @@ async def quickbooks_oauth_callback(
         return RedirectResponse(url=url, status_code=302)
 
     try:
+        await bind_db_to_tenant(db, tenant_id)
         await _require_admin_user(db, tenant_id=tenant_id, user_id=user_id)
     except HTTPException:
         url = _append_query(return_base, {query_key: "error", "reason": "not_admin"})

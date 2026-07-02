@@ -16,6 +16,7 @@ WEAK_SIGNAL_IDS: frozenset[RecognitionSignalId] = frozenset(
 SIGNAL_PICK_GROUPS: tuple[tuple[RecognitionSignalId, ...], ...] = (
     ("heading_invoice", "text_invoice", "filename_invoice"),
     ("heading_po", "text_po", "filename_po"),
+    ("heading_so", "text_so", "filename_so"),
     ("heading_grn", "text_grn", "filename_grn"),
     ("heading_contract", "text_contract", "filename_contract"),
     ("text_credit_note", "filename_credit_note"),
@@ -51,6 +52,17 @@ SIGNAL_CONDITIONS: dict[RecognitionSignalId, dict[str, Any]] = {
         "field": "attachment_name",
         "operator": "regex",
         "value": "(?i)purchase[_-]?order|(^|[-_/])po([-_.]|$)",
+    },
+    "heading_so": {"field": "has_heading_so", "operator": "equals", "value": "true"},
+    "text_so": {
+        "field": "document_text",
+        "operator": "regex",
+        "value": "(?i)(\\bsales\\s+order\\b|\\bSO[-\\s#][A-Z0-9][A-Z0-9\\-/_]{2,})",
+    },
+    "filename_so": {
+        "field": "attachment_name",
+        "operator": "regex",
+        "value": "(?i)sales[_\\s-]?order|(^|[-_/])so([-_.]|$)",
     },
     "heading_grn": {"field": "has_heading_grn", "operator": "equals", "value": "true"},
     "text_grn": {
@@ -337,6 +349,27 @@ _SIGNAL_META: dict[RecognitionSignalId, tuple[str, str, str, str, str]] = {
         "filename",
         "strong",
         "PO-99.pdf, purchase_order.pdf",
+    ),
+    "heading_so": (
+        "Page title is sales order",
+        "OCR title region",
+        "heading",
+        "strong",
+        "SALES ORDER",
+    ),
+    "text_so": (
+        "Body contains sales order or SO reference",
+        "Full document text",
+        "body",
+        "strong",
+        "Sales Order No SO-DEMO-100",
+    ),
+    "filename_so": (
+        "Filename contains sales order / SO",
+        "Attachment name",
+        "filename",
+        "strong",
+        "sales_order_SO-100.pdf, SO-DEMO-100.pdf",
     ),
     "heading_grn": (
         "Page title is GRN / delivery note",
@@ -718,7 +751,7 @@ PLAYBOOK_RECOMMENDED_IDENTITY: dict[str, list[RecognitionSignalId]] = {
     "credit_adjustment": ["text_credit_note", "filename_credit_note"],
     "debit_note": ["text_debit_note", "filename_debit_note"],
     "employee_claim": ["text_claim", "filename_claim"],
-    "supporting": ["heading_po", "text_po", "heading_grn", "text_grn"],
+    "supporting": ["heading_po", "text_po", "heading_so", "text_so", "heading_grn", "text_grn"],
     "non_actionable": ["text_quote", "filename_quote"],
     "compliance_route": ["text_tax_notice", "filename_tax_notice"],
     "master_data": ["text_bank_change", "filename_bank_change"],

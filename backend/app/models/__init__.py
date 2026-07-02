@@ -2,7 +2,11 @@ from app.models.accounting_integration import AccountingIntegration
 from app.models.audit import AuditLog
 from app.models.auth_account import AuthAccount
 from app.models.classification_learning import ClassificationLearningEvent, InvoiceOcrArtifact
+from app.models.collection import Collection
 from app.models.connected_mailbox import ConnectedMailbox
+from app.models.customer import CustomerRegistry
+from app.models.customer_master import CustomerMasterRecord
+from app.models.delivery_note import DeliveryNote
 from app.models.connected_viber import ConnectedViberAccount
 from app.models.connected_whatsapp import ConnectedWhatsapp
 from app.models.meta_webhook_dedupe import MetaWebhookDedupe
@@ -26,6 +30,7 @@ from app.models.stripe_payments import (
     StripeWebhookEvent,
     VendorPaymentMethod,
 )
+from app.models.sales_order import SalesOrder
 from app.models.purchase_order import PurchaseOrder
 from app.models.reconciliation import DailyReconciliation
 from app.models.tenant_member_invite import TenantMemberInvite
@@ -43,6 +48,10 @@ __all__ = [
     "AuditLog",
     "AuthAccount",
     "ClassificationLearningEvent",
+    "Collection",
+    "CustomerMasterRecord",
+    "CustomerRegistry",
+    "DeliveryNote",
     "ConnectedMailbox",
     "ConnectedViberAccount",
     "ConnectedWhatsapp",
@@ -62,6 +71,7 @@ __all__ = [
     "PaymentExecutionInstruction",
     "PendingVendor",
     "PurchaseOrder",
+    "SalesOrder",
     "StripeAccount",
     "StripeBalanceSnapshot",
     "StripeTransaction",

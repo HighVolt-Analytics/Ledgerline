@@ -4,9 +4,11 @@ import type {
   ExpenseRule,
   OrgContextConfig,
   PurchaseRule,
+  SalesRule,
   RuleBookConfigState,
   RuleConditionGroup,
   TeamExpenseRule,
+  CustomerMaster,
   VendorMaster,
 } from "@/lib/v4RuleBookTypes";
 import {
@@ -25,7 +27,7 @@ import {
   ensureExtractionSuperset,
   normalizeCompulsoryFields,
 } from "@/lib/documentCompulsoryFields";
-import type { PurchaseBundleRole } from "@/lib/documentBundleConfig";
+import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { normalizeDtCodeList } from "@/lib/documentBundleConfig";
 import {
   mergeConfigurableRules,
@@ -85,6 +87,37 @@ function expenseMatchOnToApi(matchOn: ExpenseRule["matchOn"]): Record<string, un
   return out;
 }
 
+function mapSalesMatchOn(raw: Record<string, unknown>): SalesRule["matchOn"] {
+  return {
+    docNumberContains: raw.doc_number_contains as string | undefined,
+    referenceContains: raw.reference_contains as string | undefined,
+    descriptionContains: raw.description_contains as string | undefined,
+    customerContains: raw.customer_contains as string | undefined,
+  };
+}
+
+function salesMatchOnToApi(matchOn: SalesRule["matchOn"]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (matchOn.docNumberContains != null) out.doc_number_contains = matchOn.docNumberContains;
+  if (matchOn.referenceContains != null) out.reference_contains = matchOn.referenceContains;
+  if (matchOn.descriptionContains != null) {
+    out.description_contains = matchOn.descriptionContains;
+  }
+  if (matchOn.customerContains != null) out.customer_contains = matchOn.customerContains;
+  return out;
+}
+
+function salesPostToToApi(postTo: SalesRule["postTo"]) {
+  return {
+    ledger: postTo.ledger,
+    sub_ledger: postTo.subLedger,
+    ...(postTo.taxAccount != null ? { tax_account: postTo.taxAccount } : {}),
+    ...(postTo.receivableAccount != null
+      ? { receivable_account: postTo.receivableAccount }
+      : {}),
+  };
+}
+
 function mapTeamMatchOn(raw: Record<string, unknown>): TeamExpenseRule["matchOn"] {
   return {
     descriptionContains: raw.description_contains as string | undefined,
@@ -112,12 +145,14 @@ function mapPostTo(raw: {
   sub_ledger: string;
   tax_account?: string;
   payable_account?: string;
+  receivable_account?: string;
 }) {
   return {
     ledger: raw.ledger,
     subLedger: raw.sub_ledger ?? "",
     taxAccount: raw.tax_account,
     payableAccount: raw.payable_account,
+    receivableAccount: raw.receivable_account,
   };
 }
 
@@ -160,6 +195,53 @@ export function mapVendor(raw: Record<string, unknown>): VendorMaster {
     totalSpendYTD: Number(raw.total_spend_ytd ?? 0),
     invoiceCount: Number(raw.invoice_count ?? 0),
     matchConfidence: Number(raw.match_confidence ?? 0),
+  };
+}
+
+export function mapCustomer(raw: Record<string, unknown>): CustomerMaster {
+  const billing = (raw.billing_address ?? {}) as Record<string, string>;
+  return {
+    id: String(raw.id),
+    name: String(raw.name),
+    aliases: (raw.aliases as string[]) ?? [],
+    abn: String(raw.abn ?? ""),
+    billingAddress: {
+      street: billing.street ?? "",
+      suburb: billing.suburb ?? "",
+      postcode: billing.postcode ?? "",
+      country: billing.country ?? "",
+    },
+    defaultLedger: String(raw.default_ledger ?? ""),
+    defaultSubLedger: String(raw.default_sub_ledger ?? ""),
+    paymentTerms: String(raw.payment_terms ?? ""),
+    status: String(raw.status ?? ""),
+    registeredOn: String(raw.registered_on ?? ""),
+    totalRevenueYTD: Number(raw.total_revenue_ytd ?? 0),
+    invoiceCount: Number(raw.invoice_count ?? 0),
+    matchConfidence: Number(raw.match_confidence ?? 0),
+  };
+}
+
+export function customerToApi(customer: CustomerMaster): Record<string, unknown> {
+  return {
+    id: customer.id,
+    name: customer.name,
+    aliases: customer.aliases,
+    abn: customer.abn,
+    billing_address: {
+      street: customer.billingAddress.street,
+      suburb: customer.billingAddress.suburb,
+      postcode: customer.billingAddress.postcode,
+      country: customer.billingAddress.country,
+    },
+    default_ledger: customer.defaultLedger,
+    default_sub_ledger: customer.defaultSubLedger,
+    payment_terms: customer.paymentTerms,
+    status: customer.status,
+    registered_on: customer.registeredOn,
+    total_revenue_ytd: customer.totalRevenueYTD,
+    invoice_count: customer.invoiceCount,
+    match_confidence: customer.matchConfidence,
   };
 }
 
@@ -275,6 +357,13 @@ function mapPurchaseBundleRole(raw: Record<string, unknown>): PurchaseBundleRole
   return (token === "po" || token === "grn" ? token : "") as PurchaseBundleRole;
 }
 
+function mapSalesBundleRole(raw: Record<string, unknown>): SalesBundleRole {
+  const token = String(raw.sales_bundle_role ?? raw.salesBundleRole ?? "")
+    .trim()
+    .toLowerCase();
+  return (token === "so" || token === "dn" ? token : "") as SalesBundleRole;
+}
+
 function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProfile {
   const explicit = String(raw.playbook_profile ?? raw.playbookProfile ?? "").trim().toLowerCase();
   if (explicit) return explicit as PlaybookProfile;
@@ -367,6 +456,7 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     ),
     bundleConditional: (raw.bundle_conditional ?? raw.bundleConditional ?? []) as string[],
     purchaseBundleRole: mapPurchaseBundleRole(raw),
+    salesBundleRole: mapSalesBundleRole(raw),
     sampleAnalysis: mapSampleAnalysis(raw),
     matrixTemplateCode: String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? ""),
     fxPolicy: mapFxPolicy(raw.fx_policy ?? raw.fxPolicy),
@@ -470,6 +560,7 @@ function documentTypeToApi(
     ...(docType.purchaseBundleRole
       ? { purchase_bundle_role: docType.purchaseBundleRole }
       : {}),
+    ...(docType.salesBundleRole ? { sales_bundle_role: docType.salesBundleRole } : {}),
     ...(docType.matrixTemplateCode
       ? { matrix_template_code: docType.matrixTemplateCode }
       : {}),
@@ -583,6 +674,20 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       postTo: mapPostTo(rule.post_to),
       matchedCount: rule.matched_count,
     })),
+    salesRules: (api.sales_rules ?? []).map((rule, index) => ({
+      id: rule.id,
+      name: rule.name,
+      enabled: rule.enabled,
+      priority: rule.priority ?? 100 + index * 10,
+      matchOn: mapSalesMatchOn(rule.match_on),
+      postTo: {
+        ledger: rule.post_to.ledger,
+        subLedger: rule.post_to.sub_ledger,
+        taxAccount: rule.post_to.tax_account,
+        receivableAccount: rule.post_to.receivable_account,
+      },
+      matchedCount: rule.matched_count,
+    })),
     expenseRules: api.expense_rules.map((rule, index) => ({
       id: rule.id,
       name: rule.name,
@@ -684,6 +789,15 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       priority: rule.priority ?? 100,
       match_on: purchaseMatchOnToApi(rule.matchOn),
       post_to: postToToApi(rule.postTo),
+      matched_count: rule.matchedCount,
+    })),
+    sales_rules: state.salesRules.map((rule) => ({
+      id: rule.id,
+      name: rule.name,
+      enabled: rule.enabled,
+      priority: rule.priority ?? 100,
+      match_on: salesMatchOnToApi(rule.matchOn),
+      post_to: salesPostToToApi(rule.postTo),
       matched_count: rule.matchedCount,
     })),
     expense_rules: state.expenseRules.map((rule) => ({

@@ -76,6 +76,7 @@ export type V5DocumentType = {
   bundleMandatory: string[];
   bundleConditional: string[];
   purchaseBundleRole: import("@/lib/documentBundleConfig").PurchaseBundleRole;
+  salesBundleRole: import("@/lib/documentBundleConfig").SalesBundleRole;
   classifierCustomized?: boolean;
   sampleAnalysis?: DocumentTypeSampleAnalysis;
   /** Shipped matrix template this org type was created from (e.g. DT-07). Org code is separate. */
@@ -123,6 +124,7 @@ export function createBlankDocumentType(existing: DocumentTypeDefinition[]): Doc
     klass: "Transactional",
     posting: "No",
     purchaseBundleRole: "",
+    salesBundleRole: "",
   } as DocumentTypeDefinition);
   const preset = playbookPresetForProfile(profile);
   return {
@@ -159,5 +161,6 @@ export function createBlankDocumentType(existing: DocumentTypeDefinition[]): Doc
     bundleMandatory: [],
     bundleConditional: [],
     purchaseBundleRole: "",
+    salesBundleRole: "",
   };
 }

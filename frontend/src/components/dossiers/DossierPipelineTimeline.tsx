@@ -135,6 +135,7 @@ function PipelineStageCard({
   open,
   onToggle,
   cardRef,
+  routeTarget,
 }: {
   order: number;
   stageId: DossierPipelineStageId;
@@ -143,6 +144,7 @@ function PipelineStageCard({
   open: boolean;
   onToggle: () => void;
   cardRef?: (el: HTMLElement | null) => void;
+  routeTarget?: string | null;
 }) {
   const state = step?.state ?? "pending";
   const hasDetail = stageHasDetail(step);
@@ -175,7 +177,7 @@ function PipelineStageCard({
         </span>
         <span className="dossier-pipeline-stage__title-block">
           <span className="dossier-pipeline-stage__title-row">
-            <span className="dossier-pipeline-stage__name">{dossierStageLabel(stageId)}</span>
+            <span className="dossier-pipeline-stage__name">{dossierStageLabel(stageId, routeTarget)}</span>
             <StatusPill className={stageStatusTone(state)}>{stageStatusLabel(state)}</StatusPill>
             {step?.exceptionCode ? (
               <span className="dossier-pipeline-stage__code tnum">{step.exceptionCode}</span>
@@ -271,6 +273,7 @@ function PipelineStageCard({
 
 type DossierPipelineOverviewProps = {
   pipeline: DossierPipelineStep[];
+  routeTarget?: string | null;
   onJumpToFailure?: () => void;
   onExpandAll?: () => void;
   onCollapseAll?: () => void;
@@ -278,6 +281,7 @@ type DossierPipelineOverviewProps = {
 
 export function DossierPipelineOverview({
   pipeline,
+  routeTarget,
   onJumpToFailure,
   onExpandAll,
   onCollapseAll,
@@ -335,7 +339,7 @@ export function DossierPipelineOverview({
               Blocked at stage {String(
                 DOSSIER_PIPELINE_STAGES.find((s) => s.id === firstFail.stageId)?.order ?? ""
               ).padStart(2, "0")}{" "}
-              — {dossierStageLabel(firstFail.stageId)}
+              — {dossierStageLabel(firstFail.stageId, routeTarget)}
             </span>
             {firstFail.exceptionCode ? (
               <span className="dossier-pipeline-stage__code tnum ml-2">{firstFail.exceptionCode}</span>
@@ -350,7 +354,13 @@ export function DossierPipelineOverview({
   );
 }
 
-export function DossierPipelineTimeline({ pipeline }: { pipeline: DossierPipelineStep[] }) {
+export function DossierPipelineTimeline({
+  pipeline,
+  routeTarget,
+}: {
+  pipeline: DossierPipelineStep[];
+  routeTarget?: string | null;
+}) {
   const byStage = useMemo(
     () => new Map(pipeline.map((step) => [step.stageId, step])),
     [pipeline]
@@ -392,6 +402,7 @@ export function DossierPipelineTimeline({ pipeline }: { pipeline: DossierPipelin
     <div className="dossier-pipeline-detail">
       <DossierPipelineOverview
         pipeline={pipeline}
+        routeTarget={routeTarget}
         onJumpToFailure={jumpToFailure}
         onExpandAll={expandAll}
         onCollapseAll={collapseAll}
@@ -410,6 +421,7 @@ export function DossierPipelineTimeline({ pipeline }: { pipeline: DossierPipelin
               blocked={blocked}
               open={openStages.has(stage.id)}
               onToggle={() => toggleStage(stage.id)}
+              routeTarget={routeTarget}
               cardRef={(el) => {
                 stageRefs.current[stage.id] = el;
               }}

@@ -144,6 +144,16 @@ def read_extraction_field_value(
     return None
 
 
+def merge_invoice_extracted_fields(invoice: Invoice, patch: dict[str, str]) -> None:
+    """Merge string fields into invoice.extracted_fields (e.g. classification perspective)."""
+    cleaned = {k: str(v).strip() for k, v in patch.items() if str(v or "").strip()}
+    if not cleaned:
+        return
+    fields = dict(invoice.extracted_fields or {})
+    fields.update(cleaned)
+    invoice.extracted_fields = fields
+
+
 def apply_parsed_extraction_fields(invoice: Invoice, parsed: InvoiceData) -> None:
     from app.services.invoice_data import _resolved_document_heading
 
@@ -154,7 +164,12 @@ def apply_parsed_extraction_fields(invoice: Invoice, parsed: InvoiceData) -> Non
     custom = merge_extracted_field_maps(extracted_fields_from_parsed(parsed))
     if heading:
         custom["document_heading"] = heading
-    invoice.extracted_fields = custom or None
+    existing = dict(invoice.extracted_fields or {})
+    existing.update(custom)
+    invoice.extracted_fields = existing or None
+    from app.services.so_reference import ensure_invoice_so_reference
+
+    ensure_invoice_so_reference(invoice)
 
 
 _LLM_RESERVED_RAW_KEYS = frozenset(

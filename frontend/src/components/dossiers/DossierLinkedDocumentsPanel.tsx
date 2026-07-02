@@ -36,16 +36,13 @@ import { DossierManualLinkDialog } from "@/components/dossiers/DossierManualLink
 import type { DossierLinkedDocument, DossierLinkedDocuments } from "@/lib/dossierLinkedDocuments";
 
 import {
-
   documentSourceLabel,
-
+  isSalesLinkedDocuments,
   linkedDocumentCounts,
-
   linkageKindLabel,
-
   requirementLabel,
-
 } from "@/lib/dossierLinkedDocuments";
+import { requiredSupportingDocsLabel } from "@/lib/documentBundleConfig";
 
 import type { MatchStatus } from "@/lib/v4MockData";
 
@@ -62,13 +59,17 @@ const ROLE_ICONS = {
 
   invoice: Receipt,
 
+  so: ShoppingCart,
+
+  dn: Package,
+
 } as const;
 
 
 
 function roleIcon(doc: DossierLinkedDocument) {
 
-  const role = doc.purchaseBundleRole;
+  const role = doc.salesBundleRole || doc.purchaseBundleRole;
 
   if (role && role in ROLE_ICONS) {
 
@@ -527,6 +528,9 @@ export function DossierLinkedDocumentsPanel({
 }) {
 
   const { present, required } = linkedDocumentCounts(linked);
+  const salesBook = isSalesLinkedDocuments(linked);
+  const refShort = salesBook ? "SO" : "PO";
+  const supportingPair = salesBook ? "SO copy and delivery note (DN)" : "PO copy and goods receipt (GRN)";
 
   const matchBadge = linked.matchSummary
 
@@ -584,7 +588,7 @@ export function DossierLinkedDocumentsPanel({
 
       label="Linked documents"
 
-      description="Playbook bundle members on linkage key. Manual links are display-only and do not affect validation."
+      description="Required supporting documents on the same PO or SO reference. Manual links are display-only and do not satisfy dossier requirements."
 
     >
 
@@ -598,7 +602,7 @@ export function DossierLinkedDocumentsPanel({
 
             <div className="min-w-0">
 
-              <div className="dossier-linked-header__kind">{linkageKindLabel(linked.linkageKind)}</div>
+              <div className="dossier-linked-header__kind">{linkageKindLabel(linked.linkageKind, salesBook)}</div>
 
               {linked.linkageKey ? (
 
@@ -626,7 +630,7 @@ export function DossierLinkedDocumentsPanel({
 
               <StatusPill className={present >= required ? pillTones.ok : pillTones.amber}>
 
-                {present}/{required} mandatory
+                {requiredSupportingDocsLabel(present, required)}
 
               </StatusPill>
 
@@ -641,9 +645,8 @@ export function DossierLinkedDocumentsPanel({
             className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100"
             data-testid="bundle-linkage-hint"
           >
-            Enter or extract a valid PO number on this invoice to link mandatory supporting
-            documents (PO copy and GRN). If this is not a PO purchase, reclassify as Direct
-            expense in the invoice drawer.
+            Enter or extract a valid {refShort} reference on this invoice to link required supporting
+            documents ({supportingPair}). Manual links do not count toward dossier completeness.
           </p>
         ) : null}
 
@@ -652,8 +655,8 @@ export function DossierLinkedDocumentsPanel({
             className="mb-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground"
             data-testid="bundle-upload-hint"
           >
-            Upload missing supporting documents classified as the required bundle types, all
-            using PO <span className="font-mono font-semibold">{linked.linkageKey}</span>.
+            Upload missing supporting documents for the required types, all using {refShort}{" "}
+            <span className="font-mono font-semibold">{linked.linkageKey}</span>.
           </p>
         ) : null}
 

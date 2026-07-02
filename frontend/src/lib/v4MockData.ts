@@ -89,7 +89,34 @@ export type MatchStatus =
   | "Qty Variance"
   | "Price Variance"
   | "Routed for Approval"
-  | "No GRN";
+  | "No GRN"
+  | "No DN";
+
+export type SalesOrder = {
+  id: string;
+  customer: string;
+  date: string;
+  requestor: string;
+  item: string;
+  soQty: number;
+  soUnitPrice: number;
+  dnQty: number | null;
+  dnDate: string | null;
+  dnShipper: string | null;
+  dnCondition: string | null;
+  invoiceNo: string;
+  invoiceQty: number;
+  invoiceUnitPrice: number;
+  gstRate: number;
+  routedForApproval?: boolean;
+  approvers?: ApproverStep[];
+  matchedRuleName?: string | null;
+  matchedGl?: string | null;
+  evaluationStatus?: string | null;
+  matchedRuleIds?: string[];
+  soDocumentId?: number | null;
+  dnDocumentId?: number | null;
+};
 
 export type MatchAmountLine = {
   qty: number;
@@ -122,6 +149,20 @@ export type ThreeWayMatch = {
 };
 
 export type PaymentTab = "queue" | "awaiting" | "scheduled" | "paid" | "failed";
+
+export type CollectionTab = "queue" | "awaiting" | "received" | "failed";
+
+export type CollectionRecord = {
+  id: string;
+  invoiceId: string;
+  customer: string;
+  amount: number;
+  currency: string;
+  dueDate: string;
+  tab: CollectionTab;
+  receivedDate?: string;
+  failureReason?: string;
+};
 
 export type PaymentRecord = {
   id: string;

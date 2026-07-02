@@ -683,5 +683,152 @@
         }
       ]
     }
+  },
+  "DT-26": {
+    "enabled": true,
+    "priority": 65,
+    "confidence": 0.75,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "condition",
+          "field": "has_heading_invoice",
+          "operator": "equals",
+          "value": "true"
+        },
+        {
+          "type": "condition",
+          "field": "has_invoice_no",
+          "operator": "equals",
+          "value": "true"
+        },
+        {
+          "type": "condition",
+          "field": "has_total",
+          "operator": "equals",
+          "value": "true"
+        },
+        {
+          "type": "condition",
+          "field": "has_po_reference",
+          "operator": "equals",
+          "value": "false"
+        }
+      ]
+    }
+  },
+  "DT-27": {
+    "enabled": true,
+    "priority": 22,
+    "confidence": 0.88,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "group",
+          "operator": "OR",
+          "children": [
+            {
+              "type": "condition",
+              "field": "attachment_name",
+              "operator": "regex",
+              "value": "(?i)sales[_\\s-]?order|(^|[-_/])so([-_.]|$)"
+            },
+            {
+              "type": "condition",
+              "field": "document_text",
+              "operator": "regex",
+              "value": "(?i)\\bsales\\s+order\\b"
+            },
+            {
+              "type": "condition",
+              "field": "has_heading_so",
+              "operator": "equals",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "type": "condition",
+          "field": "has_invoice_no",
+          "operator": "equals",
+          "value": "false"
+        },
+        {
+          "type": "condition",
+          "field": "is_commercial_invoice",
+          "operator": "equals",
+          "value": "false"
+        }
+      ]
+    }
+  },
+  "DT-28": {
+    "enabled": true,
+    "priority": 15,
+    "confidence": 0.9,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "group",
+          "operator": "OR",
+          "children": [
+            {
+              "type": "condition",
+              "field": "attachment_name",
+              "operator": "regex",
+              "value": "(?i)(dispatch[_\\s-]?note|delivery[_\\s-]?note)"
+            },
+            {
+              "type": "condition",
+              "field": "document_text",
+              "operator": "regex",
+              "value": "(?i)(dispatch\\s+(?:note|docket)|delivery\\s+note)"
+            },
+            {
+              "type": "condition",
+              "field": "has_heading_grn",
+              "operator": "equals",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "operator": "OR",
+          "children": [
+            {
+              "type": "condition",
+              "field": "attachment_name",
+              "operator": "regex",
+              "value": "(?i)\\bSO[-_]"
+            },
+            {
+              "type": "condition",
+              "field": "document_text",
+              "operator": "regex",
+              "value": "(?i)(\\bSO[-\\s#][A-Z0-9][A-Z0-9\\-/_]{2,}|sales\\s+order\\s+(?:no\\.?|number|ref))"
+            }
+          ]
+        },
+        {
+          "type": "condition",
+          "field": "has_invoice_no",
+          "operator": "equals",
+          "value": "false"
+        },
+        {
+          "type": "condition",
+          "field": "is_commercial_invoice",
+          "operator": "equals",
+          "value": "false"
+        }
+      ]
+    }
   }
 }

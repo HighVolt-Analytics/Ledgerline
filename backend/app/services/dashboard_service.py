@@ -15,6 +15,7 @@ from app.models.tenant import Tenant
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.user import User
+from app.services.document_ref_service import dossier_public_id
 from app.services.graph_client import is_graph_enabled
 from app.models.journal import JournalEntry
 from app.services.currency import BASE_CURRENCY, convert_to_base, sum_amounts_by_currency
@@ -24,8 +25,11 @@ from app.services.invoice_evaluation_service import (
     EVAL_PENDING_VENDOR,
     EVAL_UNMATCHED_EXPENSE_VENDOR,
     ROUTE_EXPENSES,
+    ROUTE_PURCHASE,
+    ROUTE_SALES,
     ROUTE_TEAM,
 )
+from app.services.so_reference import resolve_so_reference_from_invoice
 from app.services.payment_service import payments_queue_count as _payments_table_count
 from app.schemas.dashboard import (
     ActivityItem,
@@ -234,6 +238,24 @@ async def _business_expenses_queue_count(db: AsyncSession, tenant_id: int) -> in
             )
         )
     ).scalar() or 0
+
+
+async def _sales_queue_count(db: AsyncSession, tenant_id: int) -> int:
+    return (
+        await db.execute(
+            select(func.count(Invoice.id)).where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.route_target == ROUTE_SALES,
+                Invoice.status.in_(_TEAM_EXPENSE_ACTIONABLE),
+            )
+        )
+    ).scalar() or 0
+
+
+async def _collections_queue_count(db: AsyncSession, tenant_id: int) -> int:
+    from app.services.collection_service import collections_queue_count
+
+    return await collections_queue_count(db, tenant_id)
 
 
 async def _payments_queue_count(db: AsyncSession, tenant_id: int) -> int:
@@ -504,13 +526,17 @@ async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
     (
         team_expenses_count,
         business_expenses_count,
+        sales_count,
         payments_queue_count,
+        collections_queue_count,
         mailboxes_mapped,
         pending_classification,
     ) = await asyncio.gather(
         _team_expenses_queue_count(db, tenant_id),
         _business_expenses_queue_count(db, tenant_id),
+        _sales_queue_count(db, tenant_id),
         _payments_queue_count(db, tenant_id),
+        _collections_queue_count(db, tenant_id),
         _mailboxes_mapped(db, tenant_id=tenant_id),
         _pending_classification_count(db, tenant_id),
     )
@@ -520,7 +546,9 @@ async def build_nav_badges(db: AsyncSession, *, tenant_id: int) -> NavBadges:
         pending_classification=pending_classification,
         team_expenses_count=team_expenses_count,
         business_expenses_count=business_expenses_count,
+        sales_count=sales_count,
         payments_queue_count=payments_queue_count,
+        collections_queue_count=collections_queue_count,
         integrations_connected=_integrations_count(mailboxes_mapped),
     )
 
@@ -758,6 +786,7 @@ async def fetch_top_vendors(
         func.coalesce(Invoice.vendor, "Unknown"),
         Invoice.total,
         Invoice.currency,
+        Invoice.route_target,
     ).where(
         Invoice.tenant_id == tenant_id,
         Invoice.total.isnot(None),
@@ -769,19 +798,37 @@ async def fetch_top_vendors(
 
     vendor_amounts: dict[str, Decimal] = {}
     vendor_counts: dict[str, int] = {}
-    for vendor, total, currency in (await db.execute(stmt)).all():
+    vendor_sales_counts: dict[str, int] = {}
+    vendor_purchase_counts: dict[str, int] = {}
+    for vendor, total, currency, route_target in (await db.execute(stmt)).all():
         name = str(vendor)
         vendor_amounts[name] = vendor_amounts.get(name, Decimal("0")) + convert_to_base(
             total, currency
         )
         vendor_counts[name] = vendor_counts.get(name, 0) + 1
+        route = (route_target or "").strip()
+        if route == ROUTE_SALES:
+            vendor_sales_counts[name] = vendor_sales_counts.get(name, 0) + 1
+        elif route in {ROUTE_PURCHASE, ROUTE_EXPENSES}:
+            vendor_purchase_counts[name] = vendor_purchase_counts.get(name, 0) + 1
 
     ranked = sorted(vendor_amounts.items(), key=lambda item: item[1], reverse=True)[:limit]
+
+    def _counterparty_label(name: str) -> str:
+        sales = vendor_sales_counts.get(name, 0)
+        purchase = vendor_purchase_counts.get(name, 0)
+        if sales > purchase:
+            return "Customer"
+        if purchase > sales:
+            return "Vendor"
+        return "Counterparty"
+
     return [
         TopVendorRow(
             vendor=name,
             amount=amount,
             invoice_count=vendor_counts[name],
+            counterparty_label=_counterparty_label(name),
         )
         for name, amount in ranked
     ]
@@ -1048,10 +1095,26 @@ async def fetch_volume_sparkline(
     return sparklines.invoice_volume
 
 
-def _inv_label(invoice_id: int, invoice_no: str | None) -> str:
-    if invoice_no:
-        return invoice_no
-    return f"INV-{invoice_id:03d}"
+def _anomaly_document_ref(inv: Invoice) -> str:
+    return dossier_public_id(inv)
+
+
+def _anomaly_document_label(inv: Invoice) -> str:
+    """Stable vault id first; extracted invoice_no only when it differs."""
+    primary = dossier_public_id(inv)
+    invoice_no = (inv.invoice_no or "").strip()
+    if invoice_no and invoice_no.upper() != primary.upper():
+        return f"{primary} · {invoice_no}"
+    return primary
+
+
+def _anomaly_row(*, tag: str, description: str, inv: Invoice) -> AnomalyRow:
+    return AnomalyRow(
+        tag=tag,
+        description=description,
+        invoice_id=inv.id,
+        document_ref=_anomaly_document_ref(inv),
+    )
 
 
 def _parse_validation_results(raw: str | None) -> list[dict]:
@@ -1084,6 +1147,52 @@ def _validation_anomaly_tag(rule: str, message: str) -> str:
     return "Validation"
 
 
+def _counterparty_unknown_label(route_target: str | None) -> str:
+    route = (route_target or "").strip()
+    if route == ROUTE_SALES:
+        return "Unknown customer"
+    if route == ROUTE_TEAM:
+        return "Unknown employee"
+    return "Unknown vendor"
+
+
+def _pending_counterparty_tag(route_target: str | None) -> str:
+    route = (route_target or "").strip()
+    if route == ROUTE_SALES:
+        return "Pending customer"
+    return "Pending vendor"
+
+
+def _linkage_anomaly_for_invoice(inv: Invoice) -> AnomalyRow | None:
+    """PO/SO linkage gaps — sales and invoice-no paths are not PO-backed."""
+    route = (inv.route_target or "").strip()
+    label = _anomaly_document_label(inv)
+    invoice_no = (inv.invoice_no or "").strip()
+
+    if route == ROUTE_TEAM:
+        return None
+    if route == ROUTE_SALES:
+        if resolve_so_reference_from_invoice(inv) or invoice_no:
+            return None
+        return _anomaly_row(
+            tag="Missing SO",
+            description=f"{label} has no sales order reference",
+            inv=inv,
+        )
+    if route == ROUTE_EXPENSES:
+        return None
+    po_ref = (inv.po_reference or "").strip()
+    if po_ref:
+        return None
+    if invoice_no:
+        return None
+    return _anomaly_row(
+        tag="Missing PO",
+        description=f"{label} has no purchase order",
+        inv=inv,
+    )
+
+
 async def _routing_anomaly_rows(
     db: AsyncSession,
     *,
@@ -1107,31 +1216,33 @@ async def _routing_anomaly_rows(
 
     rows: list[AnomalyRow] = []
     for inv in invoices:
-        label = _inv_label(inv.id, inv.invoice_no)
-        vendor = (inv.vendor or "Unknown vendor").strip()
+        label = _anomaly_document_label(inv)
+        vendor = (inv.vendor or _counterparty_unknown_label(inv.route_target)).strip()
+        route = (inv.route_target or "").strip()
         if inv.evaluation_status == EVAL_PENDING_VENDOR:
+            register = "customer masters" if route == ROUTE_SALES else "vendor masters"
             rows.append(
-                AnomalyRow(
-                    tag="Pending vendor",
-                    description=f"{label} · {vendor} — register vendor in Rule Book",
-                    invoice_id=inv.id,
+                _anomaly_row(
+                    tag=_pending_counterparty_tag(inv.route_target),
+                    description=f"{label} · {vendor} — register in {register}",
+                    inv=inv,
                 )
             )
         elif inv.evaluation_status == EVAL_UNMATCHED_EXPENSE_VENDOR:
             rows.append(
-                AnomalyRow(
+                _anomaly_row(
                     tag="Unmatched vendor",
                     description=f"{label} · {vendor} — under hold threshold; register when convenient",
-                    invoice_id=inv.id,
+                    inv=inv,
                 )
             )
         else:
-            route = inv.route_target or "unrouted"
+            route_label = inv.route_target or "unrouted"
             rows.append(
-                AnomalyRow(
+                _anomaly_row(
                     tag="Needs review",
-                    description=f"{label} · {vendor} — routed to {route}, needs review",
-                    invoice_id=inv.id,
+                    description=f"{label} · {vendor} — routed to {route_label}, needs review",
+                    inv=inv,
                 )
             )
     return rows
@@ -1141,7 +1252,7 @@ async def _duplicate_anomaly_description(
     db: AsyncSession,
     inv: Invoice,
 ) -> str:
-    label = _inv_label(inv.id, inv.invoice_no)
+    label = _anomaly_document_label(inv)
     for vr in _parse_validation_results(inv.validation_results):
         if str(vr.get("rule", "")) == "VR02" and not vr.get("passed"):
             message = str(vr.get("message", "")).strip()
@@ -1186,10 +1297,10 @@ async def fetch_anomalies(
     ).scalars().all()
     for inv in dupes:
         rows.append(
-            AnomalyRow(
+            _anomaly_row(
                 tag="Duplicate",
                 description=await _duplicate_anomaly_description(db, inv),
-                invoice_id=inv.id,
+                inv=inv,
             )
         )
 
@@ -1218,24 +1329,19 @@ async def fetch_anomalies(
             break
         if inv.id in seen_ids:
             continue
-        if not inv.po_reference and (inv.route_target or "").strip() != ROUTE_TEAM:
-            rows.append(
-                AnomalyRow(
-                    tag="Missing PO",
-                    description=f"{_inv_label(inv.id, inv.invoice_no)} has no purchase order",
-                    invoice_id=inv.id,
-                )
-            )
+        linkage = _linkage_anomaly_for_invoice(inv)
+        if linkage is not None:
+            rows.append(linkage)
             continue
         failed = _first_failed_validation(inv.validation_results)
         if failed:
             rule, message = failed
             detail = message if message != "Validation failed" else f"{rule} failed"
             rows.append(
-                AnomalyRow(
+                _anomaly_row(
                     tag=_validation_anomaly_tag(rule, message),
-                    description=f"{_inv_label(inv.id, inv.invoice_no)} — {detail}",
-                    invoice_id=inv.id,
+                    description=f"{_anomaly_document_label(inv)} — {detail}",
+                    inv=inv,
                 )
             )
 
@@ -1244,10 +1350,10 @@ async def fetch_anomalies(
     ):
         inv = exceptions[0]
         rows.append(
-            AnomalyRow(
+            _anomaly_row(
                 tag="Exception",
-                description=f"{_inv_label(inv.id, inv.invoice_no)} needs review in Approvals",
-                invoice_id=inv.id,
+                description=f"{_anomaly_document_label(inv)} needs review in Approvals",
+                inv=inv,
             )
         )
 

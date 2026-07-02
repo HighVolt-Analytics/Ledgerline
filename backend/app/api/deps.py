@@ -30,6 +30,7 @@ __all__ = [
     "ApiEnvelope",
     "AuthContext",
     "CorrelationIdMiddleware",
+    "bind_db_to_tenant",
     "cross_tenant_db_lookup",
     "ErrorDetail",
     "ResponseMeta",
@@ -195,6 +196,12 @@ async def require_super_admin(ctx: AuthContext = Depends(require_user)) -> AuthC
     if not is_super_admin_role(ctx.role):
         raise HTTPException(403, "Super admin access required")
     return ctx
+
+
+async def bind_db_to_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Set request + PostgreSQL RLS for unauthenticated tenant-scoped handlers."""
+    set_request_tenant_id(tenant_id)
+    await apply_rls_session_context(db, tenant_id)
 
 
 async def actor_from_context(db: AsyncSession, ctx: AuthContext) -> tuple[str, str]:

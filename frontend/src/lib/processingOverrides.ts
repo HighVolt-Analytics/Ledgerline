@@ -41,8 +41,8 @@ export const PROCESSING_OVERRIDE_STEPS: ProcessingOverrideStepDef[] = [
   },
   {
     id: "playbook",
-    label: "Playbook / bundle gates",
-    hint: "Skip playbook mandatory-field, bundle linkage, and missing-PO holds.",
+    label: "Playbook / supporting document gates",
+    hint: "Skip playbook mandatory-field, PO/SO linkage, and missing supporting-document holds.",
   },
   {
     id: "validation",

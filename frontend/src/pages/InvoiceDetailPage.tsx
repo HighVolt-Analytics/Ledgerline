@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { counterpartyLabel, counterpartyName } from "@/lib/invoice";
 import { documentListLabel, money } from "@/lib/format";
 
 export function InvoiceDetailPage() {
@@ -104,8 +105,8 @@ export function InvoiceDetailPage() {
         <Card className="p-5">
           <h3 className="mb-3 text-sm font-semibold">Header</h3>
           <dl className="grid grid-cols-2 gap-2 text-sm">
-            <dt className="text-muted-foreground">Vendor</dt>
-            <dd>{inv.vendor ?? "—"}</dd>
+            <dt className="text-muted-foreground">{counterpartyLabel(inv)}</dt>
+            <dd>{counterpartyName(inv)}</dd>
             <dt className="text-muted-foreground">ABN</dt>
             <dd className="tnum">{inv.abn ?? "—"}</dd>
             <dt className="text-muted-foreground">Invoice #</dt>

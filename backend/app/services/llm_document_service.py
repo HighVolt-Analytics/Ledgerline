@@ -15,6 +15,7 @@ from app.schemas.llm_document import LlmDocumentResult, LlmLineItem, LlmParty
 from app.schemas.ocr_artifact import OcrArtifact
 from app.services.azure_openai_client import chat_json_async
 from app.services.invoice_data import InvoiceData, ParsedLineItem
+from app.services.tenant_org_context import OrgContext
 from app.services.classifier_catalogue_compiler import compile_catalogue_recognition
 from app.services.document_type_field_keys import CANONICAL_EXTRACTION_FIELD_KEYS
 from app.services.extraction_field_values import (
@@ -360,15 +361,28 @@ def llm_result_to_invoice_data(
     *,
     ocr: OcrArtifact,
     custom_keys: Sequence[str] | None = None,
+    org: OrgContext | None = None,
 ) -> InvoiceData:
+    from app.services.counterparty_service import counterparty_side_for_perspective, resolve_counterparty_name
     from app.utils.abn_validator import storage_abn
-    from app.services.vendor_name_utils import pick_best_vendor_name
 
-    if llm.perspective == "sales":
-        vendor_candidates = (llm.vendor, llm.buyer.name, llm.seller.name)
-    else:
-        vendor_candidates = (llm.vendor, llm.seller.name, llm.buyer.name)
-    vendor = pick_best_vendor_name(*vendor_candidates)
+    org_ctx = org or OrgContext()
+    side = counterparty_side_for_perspective(llm.perspective)
+    if side == "party" and org_ctx.default_perspective == "seller":
+        side = "customer"
+    elif side == "party":
+        side = "vendor"
+
+    vendor = resolve_counterparty_name(
+        side=side,
+        org=org_ctx,
+        buyer_name=llm.buyer.name,
+        buyer_abn=llm.buyer.abn,
+        seller_name=llm.seller.name,
+        seller_abn=llm.seller.abn,
+        generic_name=llm.vendor,
+        document_text=ocr.text or None,
+    )
     abn = storage_abn((llm.abn or llm.seller.abn or llm.buyer.abn or "").strip() or None)
     line_items: list[ParsedLineItem] = []
     for row in llm.line_items:

@@ -40,6 +40,7 @@ from app.services.invoice_evaluation_service import (
     EVAL_NEEDS_REVIEW,
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
+    ROUTE_SALES,
     ROUTE_TEAM,
     ROUTE_VAULT,
     apply_invoice_evaluation,
@@ -72,6 +73,7 @@ from app.services.invoice_pipeline_phases import (
     gate_audit_detail,
     image_quality_audit_detail,
     phase_llm_classify,
+    persist_llm_party_context,
     phase_ocr,
     phase_storage_verify,
 )
@@ -225,10 +227,16 @@ def _resolve_header_mapping(
     *,
     config,
     purchase_order=None,
+    sales_order=None,
 ) -> tuple[AccountMapping, MappingDetail]:
     """Map invoice header using unified classification config."""
     if not invoice.line_items:
-        detail = map_invoice_with_details(invoice, config=config, purchase_order=purchase_order)
+        detail = map_invoice_with_details(
+            invoice,
+            config=config,
+            purchase_order=purchase_order,
+            sales_order=sales_order,
+        )
         return (
             AccountMapping(
                 account_code=detail.account_code,
@@ -237,7 +245,12 @@ def _resolve_header_mapping(
             ),
             detail,
         )
-    best_detail = map_invoice_with_details(invoice, config=config, purchase_order=purchase_order)
+    best_detail = map_invoice_with_details(
+        invoice,
+        config=config,
+        purchase_order=purchase_order,
+        sales_order=sales_order,
+    )
     best = AccountMapping(
         account_code=best_detail.account_code,
         account_name=best_detail.account_name,
@@ -249,6 +262,7 @@ def _resolve_header_mapping(
             config=config,
             line_description=line.description,
             purchase_order=purchase_order,
+            sales_order=sales_order,
         )
         if not is_fallback_mapping(detail):
             return (
@@ -503,6 +517,9 @@ async def ingest_email_attachments(
                 existing.email_attachment_name = att.filename
                 existing.email_message_id = email.message_id
                 await reset_invoice_for_reprocess(session, existing)
+                from app.services.so_reference import ensure_invoice_so_reference
+
+                ensure_invoice_so_reference(existing)
                 await apply_ingest_capture(session, existing, email, att)
                 await log_event(
                     session,
@@ -572,9 +589,11 @@ async def ingest_email_attachments(
 
 
 async def _finish_purchase_supporting_document(session: AsyncSession, invoice: Invoice) -> None:
-    """PO / GRN documents: map, sync register, skip AP journal and payment."""
-    from app.services.purchase_match_service import load_purchase_order_for_invoice
+    """PO / GRN documents: sync register, skip AP journal and GL mapping."""
     from app.services.purchase_document_service import EVAL_AWAITING_PO, sync_purchase_document
+    from app.services.purchase_match_service import load_purchase_order_for_invoice
+    from app.services.non_posting_document_service import finish_non_posting_document
+    from app.services.document_type_playbook_profile_service import clear_invoice_gl_mapping
 
     loaded = (
         await session.execute(
@@ -584,30 +603,12 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
         )
     ).scalar_one()
     linked_po = await load_purchase_order_for_invoice(session, loaded)
-    map_config = await load_config_for_tenant(session, loaded.tenant_id)
-    mapping, mapping_detail = _resolve_header_mapping(
-        loaded,
-        config=map_config,
-        purchase_order=linked_po,
-    )
-    invoice.account_code = mapping.account_code
-    invoice.account_name = mapping.account_name
     await apply_invoice_evaluation(session, loaded)
     await sync_invoice_blob_path(session, loaded, parsed_vendor=loaded.vendor)
     invoice.raw_file_path = loaded.raw_file_path
     invoice.route_target = loaded.route_target
-    await log_event(
-        session,
-        "mapping_applied",
-        invoice_id=invoice.id,
-        detail={
-            "account_code": mapping.account_code,
-            "account_name": mapping.account_name,
-            "rule_type": mapping_detail.rule_type,
-            "match_reason": mapping_detail.match_reason,
-            "purchase_document_type": invoice.purchase_document_type,
-        },
-    )
+    clear_invoice_gl_mapping(invoice)
+    clear_invoice_gl_mapping(loaded)
 
     await sync_purchase_document(session, invoice)
     if invoice.evaluation_status == EVAL_AWAITING_PO:
@@ -616,8 +617,6 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
-    from app.services.invoice_evaluation_service import EVAL_AUTO_CODED
-
     if linked_po:
         await reconcile_dossier_vendor(
             session,
@@ -625,18 +624,52 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
             linked_po,
             document_type=invoice.purchase_document_type,
         )
-    invoice.evaluation_status = EVAL_AUTO_CODED
 
-    _mark_invoice_processed(invoice)
-    await session.flush()
-    await _auto_learn_sender(session, invoice)
-    await log_event(
+    await finish_non_posting_document(
         session,
-        "purchase_document_processed",
-        invoice_id=invoice.id,
+        invoice,
+        audit_event="purchase_document_processed",
         detail={"purchase_document_type": invoice.purchase_document_type},
     )
-    send_notification(invoice, InvoiceStatus.PROCESSED)
+    await _auto_learn_sender(session, invoice)
+
+
+async def _finish_sales_supporting_document(session: AsyncSession, invoice: Invoice) -> None:
+    """SO / DN documents: sync register, skip AR journal and GL mapping."""
+    from app.services.sales_document_service import EVAL_AWAITING_SO, sync_sales_document
+    from app.services.sales_match_service import load_sales_order_for_invoice
+    from app.services.non_posting_document_service import finish_non_posting_document
+    from app.services.document_type_playbook_profile_service import clear_invoice_gl_mapping
+
+    loaded = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.id == invoice.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+    await load_sales_order_for_invoice(session, loaded)
+    await apply_invoice_evaluation(session, loaded)
+    await sync_invoice_blob_path(session, loaded, parsed_vendor=loaded.vendor)
+    invoice.raw_file_path = loaded.raw_file_path
+    invoice.route_target = loaded.route_target
+    clear_invoice_gl_mapping(invoice)
+    clear_invoice_gl_mapping(loaded)
+
+    await sync_sales_document(session, invoice)
+    if invoice.evaluation_status == EVAL_AWAITING_SO:
+        invoice.status = InvoiceStatus.EXCEPTION
+        await session.flush()
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    await finish_non_posting_document(
+        session,
+        invoice,
+        audit_event="sales_document_processed",
+        detail={"sales_document_type": invoice.sales_document_type},
+    )
+    await _auto_learn_sender(session, invoice)
 
 
 async def _apply_parsed_to_invoice(
@@ -647,6 +680,7 @@ async def _apply_parsed_to_invoice(
     parsed: InvoiceData,
     config,
     preserve_existing: bool = False,
+    org=None,
 ) -> str | None:
     """Write extracted AP fields onto invoice rows (post-classification extract phase)."""
     if preserve_existing:
@@ -687,12 +721,17 @@ async def _apply_parsed_to_invoice(
         if not loaded.line_items:
             await _replace_line_items(session, loaded, parsed.line_items)
 
+        from app.services.extraction_field_values import apply_parsed_extraction_fields
+
+        apply_parsed_extraction_fields(invoice, parsed)
+
         loaded.abn = invoice.abn
         loaded.billing_address = invoice.billing_address
         loaded.bank_bsb = invoice.bank_bsb
         loaded.bank_account = invoice.bank_account
         loaded.invoice_no = invoice.invoice_no
         loaded.po_reference = invoice.po_reference
+        loaded.so_reference = invoice.so_reference
         loaded.cost_centre = invoice.cost_centre
         loaded.invoice_date = invoice.invoice_date
         loaded.due_date = invoice.due_date
@@ -703,20 +742,15 @@ async def _apply_parsed_to_invoice(
         loaded.document_text = invoice.document_text
         loaded.document_heading = invoice.document_heading
         loaded.extracted_fields = invoice.extracted_fields
-        return resolved_vendor
+        from app.services.counterparty_service import sync_invoice_counterparty
 
-    resolved_vendor = resolve_canonical_vendor_name(
-        invoice.tenant_id,
-        vendor_names=[parsed.vendor],
-        abns=[parsed.abn],
-        config=config,
-    )
-    if not resolved_vendor and parsed.vendor and is_plausible_vendor_name(parsed.vendor):
-        resolved_vendor = parsed.vendor
+        sync_invoice_counterparty(invoice, config=config, parsed=parsed, org=org)
+        loaded.vendor = invoice.vendor
+        return invoice.vendor
 
     from app.utils.abn_validator import storage_abn
 
-    invoice.vendor = resolved_vendor
+    invoice.vendor = parsed.vendor
     invoice.abn = storage_abn(parsed.abn)
     parsed.abn = invoice.abn
     invoice.billing_address = parsed.billing_address
@@ -744,6 +778,32 @@ async def _apply_parsed_to_invoice(
             invoice.po_reference = extracted
             parsed.po_reference = extracted
 
+    from app.services.so_reference import ensure_invoice_so_reference, sanitize_cross_book_linkage_references
+
+    ensure_invoice_so_reference(invoice)
+    sanitize_cross_book_linkage_references(invoice)
+
+    from app.services.counterparty_service import resolve_counterparty_side, sync_invoice_counterparty
+    from app.services.extraction_field_values import extracted_fields_from_invoice
+
+    sync_invoice_counterparty(invoice, config=config, parsed=parsed, org=org)
+    fields = extracted_fields_from_invoice(invoice)
+    side = resolve_counterparty_side(
+        route_target=invoice.route_target,
+        perspective=fields.get("perspective") or fields.get("llm_perspective"),
+    )
+    if side == "vendor" and invoice.vendor:
+        canonical = resolve_canonical_vendor_name(
+            invoice.tenant_id,
+            vendor_names=[invoice.vendor],
+            abns=[parsed.abn],
+            config=config,
+        )
+        if canonical:
+            invoice.vendor = canonical
+        elif not is_plausible_vendor_name(invoice.vendor):
+            invoice.vendor = None
+
     loaded.vendor = invoice.vendor
     loaded.abn = invoice.abn
     loaded.billing_address = invoice.billing_address
@@ -751,6 +811,7 @@ async def _apply_parsed_to_invoice(
     loaded.bank_account = invoice.bank_account
     loaded.invoice_no = invoice.invoice_no
     loaded.po_reference = invoice.po_reference
+    loaded.so_reference = invoice.so_reference
     loaded.cost_centre = invoice.cost_centre
     loaded.invoice_date = invoice.invoice_date
     loaded.due_date = invoice.due_date
@@ -763,7 +824,7 @@ async def _apply_parsed_to_invoice(
     loaded.extracted_fields = invoice.extracted_fields
 
     await _replace_line_items(session, loaded, parsed.line_items)
-    return resolved_vendor
+    return invoice.vendor
 
 
 async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
@@ -947,6 +1008,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 provider_token=provider_token,
                 file_path=path,
             )
+            if classify_llm is not None:
+                persist_llm_party_context(invoice, classify_llm, org)
+                await session.flush()
 
         vendor_drift_result = await check_vendor_classification_drift(
             session,
@@ -1084,7 +1148,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             llm_result,
             ocr=ocr,
             custom_keys=custom_keys or None,
+            org=org,
         )
+        persist_llm_party_context(invoice, llm_result, org)
     else:
         local = parse_local_text(ocr.text or "")
         parsed = replace(local, document_text=ocr.text or local.document_text)
@@ -1111,6 +1177,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         parsed=parsed,
         config=config,
         preserve_existing=preserve_extracted_fields,
+        org=org,
     )
 
     if preserve_extracted_fields:
@@ -1171,6 +1238,10 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.llm_confidence = loaded.llm_confidence
 
     await apply_invoice_evaluation(session, loaded, config=config)
+    from app.services.counterparty_service import sync_invoice_counterparty
+
+    sync_invoice_counterparty(loaded, config=config, parsed=parsed, org=org)
+    invoice.vendor = loaded.vendor
     invoice.evaluation_status = loaded.evaluation_status
     invoice.route_target = loaded.route_target
     invoice.matched_rule_ids = loaded.matched_rule_ids
@@ -1231,6 +1302,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     from app.services.purchase_document_service import apply_purchase_document_type_after_eval
 
     await apply_purchase_document_type_after_eval(session, loaded)
+    from app.services.sales_document_service import apply_sales_document_type_after_eval
+
+    await apply_sales_document_type_after_eval(session, loaded)
 
     await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
     invoice.raw_file_path = loaded.raw_file_path
@@ -1240,6 +1314,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     parsed = ensure_extraction_baseline(loaded, parsed, ocr=ocr)
     apply_parsed_extraction_fields(loaded, parsed)
     invoice.extracted_fields = loaded.extracted_fields
+    invoice.so_reference = loaded.so_reference
     invoice.document_text = loaded.document_text
     invoice.email_attachment_name = loaded.email_attachment_name
 
@@ -1331,6 +1406,27 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 if loaded.evaluation_status == EVAL_AWAITING_PO:
                     if override_bypasses_purchase_hold(invoice) and not bypass_review_gates:
                         await _log_processing_override_skip(session, invoice, "playbook")
+                    loaded.evaluation_status = EVAL_AUTO_CODED
+                    invoice.evaluation_status = EVAL_AUTO_CODED
+                loaded.status = InvoiceStatus.PARSING
+                invoice.status = InvoiceStatus.PARSING
+            else:
+                invoice.status = InvoiceStatus.EXCEPTION
+                return
+
+    if (loaded.route_target or "").strip() == ROUTE_SALES:
+        from app.services.sales_document_service import EVAL_AWAITING_SO, sync_sales_document
+
+        await sync_sales_document(session, loaded)
+        invoice.sales_document_type = loaded.sales_document_type
+        invoice.so_reference = loaded.so_reference
+        invoice.evaluation_status = loaded.evaluation_status
+        if loaded.status == InvoiceStatus.EXCEPTION:
+            sales_hold_bypass = bypass_review_gates
+            if sales_hold_bypass:
+                from app.services.invoice_evaluation_service import EVAL_AUTO_CODED
+
+                if loaded.evaluation_status == EVAL_AWAITING_SO:
                     loaded.evaluation_status = EVAL_AUTO_CODED
                     invoice.evaluation_status = EVAL_AUTO_CODED
                 loaded.status = InvoiceStatus.PARSING
@@ -1465,6 +1561,31 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         await _finish_purchase_supporting_document(session, invoice)
         return
 
+    sales_doc_type = (loaded.sales_document_type or invoice.sales_document_type or "").strip().lower()
+    if (
+        sales_doc_type in ("so", "dn")
+        and (invoice.route_target or "").strip() == ROUTE_SALES
+        and not bypass_review_gates
+    ):
+        await _finish_sales_supporting_document(session, invoice)
+        return
+
+    from app.services.document_type_playbook_profile_service import allows_posting_pipeline
+    from app.services.non_posting_document_service import finish_non_posting_document
+
+    if dt_definition is not None and not allows_posting_pipeline(dt_definition):
+        await finish_non_posting_document(
+            session,
+            invoice,
+            definition=dt_definition,
+            detail={
+                "document_type_code": loaded.document_type_code,
+                "route_target": invoice.route_target,
+            },
+        )
+        await _auto_learn_sender(session, invoice)
+        return
+
     post_validate = (
         await session.execute(
             select(Invoice)
@@ -1486,13 +1607,16 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
     loaded = (await session.execute(stmt)).scalar_one()
     from app.services.purchase_match_service import load_purchase_order_for_invoice
+    from app.services.sales_match_service import load_sales_order_for_invoice
 
     linked_po = await load_purchase_order_for_invoice(session, loaded)
+    linked_so = await load_sales_order_for_invoice(session, loaded)
     map_config = await load_config_for_tenant(session, loaded.tenant_id)
     mapping, mapping_detail = _resolve_header_mapping(
         loaded,
         config=map_config,
         purchase_order=linked_po,
+        sales_order=linked_so,
     )
     invoice.account_code = mapping.account_code
     invoice.account_name = mapping.account_name
@@ -1578,7 +1702,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     for entry in existing_entries:
         await session.delete(entry)
     await session.flush()
-    for line in generate_entries(invoice, mapping, config=config):
+    for line in generate_entries(invoice, mapping, config=config, sales_order=linked_so):
         session.add(
             JournalEntry(
                 tenant_id=invoice.tenant_id,
@@ -1601,7 +1725,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await save_reconciliation(session, recon, tenant_id=invoice.tenant_id)
     if recon.halted:
         route = (invoice.route_target or "").strip()
-        non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES) or bypass_review_gates
+        non_blocking_recon = route in (ROUTE_TEAM, ROUTE_EXPENSES, ROUTE_SALES) or bypass_review_gates
         if non_blocking_recon:
             await log_event(
                 session,
@@ -1657,6 +1781,16 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             return
     if is_commercial_purchase_invoice(invoice):
         await ensure_payment_for_invoice(session, invoice)
+
+    from app.services.sales_document_service import (
+        is_commercial_sales_invoice,
+        sync_sales_document,
+    )
+    from app.services.collection_service import ensure_receivable_for_invoice
+
+    await sync_sales_document(session, invoice)
+    if is_commercial_sales_invoice(invoice):
+        await ensure_receivable_for_invoice(session, invoice)
     await _auto_learn_sender(session, invoice)
     await log_event(
         session,

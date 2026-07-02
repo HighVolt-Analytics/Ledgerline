@@ -51,6 +51,7 @@ from app.services.auth_session_service import (
     new_jti,
     register_refresh_session,
     revoke_refresh_jti,
+    grace_revoke_refresh_jti,
     store_otp,
     validate_refresh_jti,
     verify_otp,
@@ -420,7 +421,7 @@ async def refresh_session(
     if not await user_has_tenant_access(db, user_id=user_id, tenant_id=tenant_id):
         raise HTTPException(403, "Tenant access revoked")
 
-    await revoke_refresh_jti(jti)
+    await grace_revoke_refresh_jti(jti)
     role = str(payload.get("role", user.role.value))
     is_support = bool(payload.get("is_support_session"))
     access, refresh = await _mint_session_tokens(

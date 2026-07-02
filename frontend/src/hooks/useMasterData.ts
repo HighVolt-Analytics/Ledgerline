@@ -5,12 +5,26 @@ import {
   employeeMasterFromApi,
   employeeMasterToCreateBody,
   employeeMasterToUpdateBody,
+  customerMasterFromApi,
+  customerMasterToCreateBody,
+  customerMasterToUpdateBody,
   mapPendingVendor,
   vendorMasterFromApi,
   vendorMasterToCreateBody,
   vendorMasterToUpdateBody,
 } from "@/lib/masterDataApi";
-import type { EmployeeMaster, VendorMaster } from "@/lib/v4RuleBookTypes";
+import type { EmployeeMaster, VendorMaster, CustomerMaster } from "@/lib/v4RuleBookTypes";
+
+export function useCustomerMasters(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.customerMasters(),
+    queryFn: async () => {
+      const rows = await api.listCustomerMasters();
+      return rows.map((row) => customerMasterFromApi(row as Record<string, unknown>));
+    },
+    enabled,
+  });
+}
 
 export function useVendorMasters(enabled = true) {
   return useQuery({
@@ -105,6 +119,63 @@ export function useDeleteVendorMaster() {
     mutationFn: (id: string) => api.deleteVendorMaster(id),
     onSuccess: (_data, id) => {
       removeVendorFromCache(queryClient, id);
+    },
+  });
+}
+
+function patchCustomerInCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  updated: CustomerMaster
+) {
+  queryClient.setQueryData<CustomerMaster[]>(queryKeys.customerMasters(), (rows) =>
+    rows?.map((row) => (row.id === updated.id ? updated : row)) ?? [updated]
+  );
+}
+
+function appendCustomerInCache(queryClient: ReturnType<typeof useQueryClient>, created: CustomerMaster) {
+  queryClient.setQueryData<CustomerMaster[]>(queryKeys.customerMasters(), (rows) =>
+    rows ? [...rows, created] : [created]
+  );
+}
+
+function removeCustomerFromCache(queryClient: ReturnType<typeof useQueryClient>, id: string) {
+  queryClient.setQueryData<CustomerMaster[]>(queryKeys.customerMasters(), (rows) =>
+    rows?.filter((row) => row.id !== id)
+  );
+}
+
+export function useCreateCustomerMaster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: Partial<CustomerMaster>) => {
+      const raw = await api.createCustomerMaster(customerMasterToCreateBody(body));
+      return customerMasterFromApi(raw as Record<string, unknown>);
+    },
+    onSuccess: (created) => {
+      appendCustomerInCache(queryClient, created);
+    },
+  });
+}
+
+export function useUpdateCustomerMaster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<CustomerMaster> }) => {
+      const raw = await api.updateCustomerMaster(id, customerMasterToUpdateBody(patch));
+      return customerMasterFromApi(raw as Record<string, unknown>);
+    },
+    onSuccess: (updated) => {
+      patchCustomerInCache(queryClient, updated);
+    },
+  });
+}
+
+export function useDeleteCustomerMaster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteCustomerMaster(id),
+    onSuccess: (_data, id) => {
+      removeCustomerFromCache(queryClient, id);
     },
   });
 }

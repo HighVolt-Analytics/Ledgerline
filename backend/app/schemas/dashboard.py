@@ -15,7 +15,9 @@ class NavBadges(BaseModel):
     pending_classification: int = 0
     team_expenses_count: int = 0
     business_expenses_count: int = 0
+    sales_count: int = 0
     payments_queue_count: int = 0
+    collections_queue_count: int = 0
     integrations_connected: int
 
 
@@ -73,6 +75,7 @@ class TopVendorRow(BaseModel):
     vendor: str
     amount: Decimal
     invoice_count: int
+    counterparty_label: str = "Counterparty"
 
 
 class CashForecastBucket(BaseModel):
@@ -93,6 +96,7 @@ class AnomalyRow(BaseModel):
     tag: str
     description: str
     invoice_id: int | None = None
+    document_ref: str | None = None
 
 
 class KpiTrend(BaseModel):

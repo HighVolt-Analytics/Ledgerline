@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.schemas.document_type import DocumentTypeDefinition
 
 ROUTE_PURCHASE = "Purchase Management"
+ROUTE_SALES = "Sales Management"
 ROUTE_EXPENSES = "Expenses Management"
 ROUTE_TEAM = "Team Expenses"
 ROUTE_VAULT = "Vault"
@@ -41,6 +42,9 @@ DEFAULT_DOCUMENT_TYPE_ROUTE_TARGETS: dict[str, str] = {
     "DT-23": ROUTE_VAULT,
     "DT-24": ROUTE_VAULT,
     "DT-25": ROUTE_VAULT,
+    "DT-26": ROUTE_SALES,
+    "DT-27": ROUTE_SALES,
+    "DT-28": ROUTE_SALES,
 }
 
 DOCUMENT_TYPE_ROUTE_CONFIDENCE_MIN = 0.65
@@ -154,7 +158,7 @@ def route_target_for_document_type(
         tenant_id=tenant_id,
     )
     if definition is None or not definition.enabled:
-        return None
+        return DEFAULT_DOCUMENT_TYPE_ROUTE_TARGETS.get(normalized)
     return definition.route_target
 
 

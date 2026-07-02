@@ -41,6 +41,36 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def persist_llm_party_context(
+    invoice: Invoice,
+    llm: LlmDocumentResult,
+    org: OrgContext,
+) -> None:
+    """Store inferred purchase/sales perspective and party names for routing."""
+    from app.services.extraction_field_values import merge_invoice_extracted_fields
+    from app.services.tenant_org_context import infer_perspective
+
+    perspective = infer_perspective(
+        org=org,
+        seller_name=llm.seller.name,
+        seller_abn=llm.seller.abn,
+        buyer_name=llm.buyer.name,
+        buyer_abn=llm.buyer.abn,
+        llm_perspective=llm.perspective,
+    )
+    merge_invoice_extracted_fields(
+        invoice,
+        {
+            "perspective": perspective,
+            "seller_name": llm.seller.name or "",
+            "seller_abn": llm.seller.abn or "",
+            "buyer_name": llm.buyer.name or "",
+            "buyer_abn": llm.buyer.abn or "",
+            "llm_perspective": llm.perspective or "",
+        },
+    )
+
+
 @dataclass
 class GatePhaseResult:
     passed: bool

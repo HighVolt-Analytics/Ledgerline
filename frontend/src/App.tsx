@@ -70,11 +70,22 @@ const PurchaseManagementPage = lazy(() =>
     default: m.PurchaseManagementPage,
   }))
 );
+const SalesManagementPage = lazy(() =>
+  import("@/pages/SalesManagementPage").then((m) => ({
+    default: m.SalesManagementPage,
+  }))
+);
 const DossiersPage = lazy(() =>
   import("@/pages/DossiersPage").then((m) => ({ default: m.DossiersPage }))
 );
 const DossierDetailPage = lazy(() =>
   import("@/pages/DossierDetailPage").then((m) => ({ default: m.DossierDetailPage }))
+);
+const CollectionsPage = lazy(() =>
+  import("@/pages/CollectionsPage").then((m) => ({ default: m.CollectionsPage }))
+);
+const CustomersPage = lazy(() =>
+  import("@/pages/CustomersPage").then((m) => ({ default: m.CustomersPage }))
 );
 const PaymentsPage = lazy(() =>
   import("@/pages/PaymentsPage").then((m) => ({ default: m.PaymentsPage }))
@@ -160,6 +171,26 @@ export default function App() {
               }
             />
             <Route
+              path="sales"
+              element={
+                <ModuleRoute moduleKey="sales">
+                  <LazyPage>
+                    <SalesManagementPage />
+                  </LazyPage>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="customers"
+              element={
+                <ModuleRoute moduleKey="sales">
+                  <LazyPage>
+                    <CustomersPage />
+                  </LazyPage>
+                </ModuleRoute>
+              }
+            />
+            <Route
               path="matrix"
               element={
                 <LazyPage>
@@ -229,6 +260,16 @@ export default function App() {
                 <ModuleRoute moduleKey="payments">
                   <LazyPage>
                     <PaymentsPage />
+                  </LazyPage>
+                </ModuleRoute>
+              }
+            />
+            <Route
+              path="collections"
+              element={
+                <ModuleRoute moduleKey="sales">
+                  <LazyPage>
+                    <CollectionsPage />
                   </LazyPage>
                 </ModuleRoute>
               }

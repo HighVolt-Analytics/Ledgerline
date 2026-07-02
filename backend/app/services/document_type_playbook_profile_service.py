@@ -49,6 +49,45 @@ def allows_posting_pipeline(definition: DocumentTypeDefinition) -> bool:
     return posting in {"yes", "conditional", "down-payment"}
 
 
+def clear_invoice_gl_mapping(invoice) -> None:
+    """Remove GL mapping from documents that never post to the ledger."""
+    invoice.account_code = None
+    invoice.account_name = None
+
+
+def gl_posting_applicable_for_invoice(
+    invoice,
+    *,
+    document_type: DocumentTypeDefinition | None = None,
+    document_types: list[DocumentTypeDefinition] | None = None,
+) -> bool:
+    """True when this document should map/post GL entries (finance control)."""
+    from app.services.invoice_evaluation_service import ROUTE_VAULT
+
+    purchase_role = (getattr(invoice, "purchase_document_type", None) or "").strip().lower()
+    if purchase_role in {"po", "grn"}:
+        return False
+
+    sales_role = (getattr(invoice, "sales_document_type", None) or "").strip().lower()
+    if sales_role in {"so", "dn"}:
+        return False
+
+    if (getattr(invoice, "route_target", None) or "").strip() == ROUTE_VAULT:
+        return False
+
+    if document_type is None and document_types is not None:
+        from app.services.document_type_catalog import get_document_type_definition
+
+        code = (getattr(invoice, "document_type_code", None) or "").strip().upper()
+        if code:
+            document_type = get_document_type_definition(code, document_types=document_types)
+
+    if document_type is not None:
+        return allows_posting_pipeline(document_type)
+
+    return True
+
+
 def playbook_policy_audit_detail(definition: DocumentTypeDefinition) -> dict[str, object]:
     profile = effective_playbook_profile(definition)
     match_policy = effective_match_policy(definition)

@@ -2,7 +2,7 @@
  * Simple-mode recognition signals per shipped DT code (Excel / v5 matrix).
  */
 
-import type { PurchaseBundleRole } from "@/lib/documentBundleConfig";
+import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 
 export type ClassifierLayout = "any_signal" | "all_signals" | "supporting_doc";
 export type RecognitionSignalId = string;
@@ -20,6 +20,7 @@ export type TemplateSignalMeta = {
   signalIds: RecognitionSignalId[];
   defaultSignalIds: RecognitionSignalId[];
   purchaseBundleRole?: PurchaseBundleRole;
+  salesBundleRole?: SalesBundleRole;
   routeConfidence?: RouteConfidencePreset;
   extractionFields?: string[];
 };
@@ -185,6 +186,29 @@ export const TEMPLATE_SIGNAL_META: Record<string, TemplateSignalMetaRaw> = {
     signalIds: ["text_tax_notice", "filename_tax_notice"],
     defaultSignalIds: ["text_tax_notice", "filename_tax_notice"],
     extractionFields: ["vendor", "document_text", "attachment_name"],
+  },
+  "DT-26": {
+    classifierLayout: "all_signals",
+    routeConfidence: "standard",
+    signalIds: ["heading_invoice", "has_invoice_number", "has_total_amount"],
+    defaultSignalIds: ["heading_invoice", "has_invoice_number", "has_total_amount"],
+    extractionFields: ["vendor", "invoice_no", "total", "due_date", "line_items"],
+  },
+  "DT-27": {
+    classifierLayout: "supporting_doc",
+    routeConfidence: "standard",
+    salesBundleRole: "so",
+    signalIds: ["heading_so", "text_so", "filename_so"],
+    defaultSignalIds: ["heading_so", "text_so", "filename_so"],
+    extractionFields: ["vendor", "so_reference", "attachment_name", "document_text"],
+  },
+  "DT-28": {
+    classifierLayout: "supporting_doc",
+    routeConfidence: "standard",
+    salesBundleRole: "dn",
+    signalIds: ["heading_grn", "text_grn", "filename_grn", "text_so", "filename_so"],
+    defaultSignalIds: ["filename_grn", "text_so", "filename_so"],
+    extractionFields: ["vendor", "so_reference", "attachment_name"],
   },
 };
 

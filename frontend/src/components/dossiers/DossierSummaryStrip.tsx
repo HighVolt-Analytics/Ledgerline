@@ -1,6 +1,7 @@
 import { Clock } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
 import type { DossierSummary } from "@/lib/dossiers";
+import { ROUTE_SALES } from "@/lib/invoice";
 import { money } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
@@ -9,6 +10,14 @@ function confidenceFillClass(confidence: number): string {
   if (confidence >= 85) return "dossier-conf-fill--good";
   if (confidence >= 70) return "dossier-conf-fill--warn";
   return "dossier-conf-fill--bad";
+}
+
+function linkageSummary(dossier: DossierSummary): string {
+  const ref = dossier.linkageReference?.trim();
+  if (dossier.routeTarget === ROUTE_SALES || dossier.soReference) {
+    return ref ? `SO ${ref}` : "Non-SO";
+  }
+  return ref ? `PO ${ref}` : "Non-PO";
 }
 
 export function DossierSummaryStrip({ dossier }: { dossier: DossierSummary }) {
@@ -50,9 +59,7 @@ export function DossierSummaryStrip({ dossier }: { dossier: DossierSummary }) {
           <span className={cn("dossier-risk-dot", `dossier-risk-dot--${dossier.fraudRisk}`)} />
           {dossier.fraudRisk}
         </div>
-        <div className="dossier-kpi-sub">
-          {dossier.poReference ? `PO ${dossier.poReference}` : "Non-PO"}
-        </div>
+        <div className="dossier-kpi-sub">{linkageSummary(dossier)}</div>
       </div>
 
       <div className="dossier-kpi-card">

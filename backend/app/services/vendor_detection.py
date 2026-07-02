@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from app.schemas.customer import CustomerMaster
 from app.schemas.rule_book_config import VendorDetectionWeights, VendorMaster
 
 NAME_FUZZY_MIN_RATIO = 0.82
@@ -112,6 +113,26 @@ def bank_signal_matches(
     return True
 
 
+def score_customer_match(
+    *,
+    customer_name: str,
+    abn: str | None,
+    billing_address: str | None,
+    master: CustomerMaster,
+    weights: VendorDetectionWeights,
+) -> float:
+    score = 0.0
+    if customer_name.strip() and name_signal_matches(customer_name, master):
+        score += weights.name
+    doc_abn = normalize_abn_digits(abn)
+    master_abn = normalize_abn_digits(master.abn)
+    if doc_abn and master_abn and master_abn != "PENDING" and doc_abn == master_abn:
+        score += weights.abn
+    if billing_address and address_signal_matches(billing_address, master):
+        score += weights.address
+    return float(score)
+
+
 def score_vendor_match(
     *,
     vendor_name: str,
@@ -134,6 +155,26 @@ def score_vendor_match(
     if billing_address and address_signal_matches(billing_address, master):
         score += weights.address
     return float(score)
+
+
+def find_matching_customer_master(
+    customer_name: str | None,
+    abn: str | None,
+    masters: list[CustomerMaster],
+) -> CustomerMaster | None:
+    """Return a registered customer master matched by ABN or fuzzy name."""
+    name = (customer_name or "").strip()
+    doc_abn = normalize_abn_digits(abn)
+    for master in masters:
+        master_abn = normalize_abn_digits(master.abn)
+        if doc_abn and master_abn and master_abn != "PENDING" and doc_abn == master_abn:
+            return master
+    if not name:
+        return None
+    for master in masters:
+        if name_signal_matches(name, master):
+            return master
+    return None
 
 
 def find_matching_vendor_master(

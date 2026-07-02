@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
+from app.api.deps import AuthContext, actor_from_context, bind_db_to_tenant, get_auth_context, get_db, require_admin
 from app.config import get_settings
 from app.models.connected_mailbox import AUTH_DELEGATED, ConnectedMailbox
 from app.models.invoice import Invoice
@@ -40,6 +40,7 @@ from app.services.mailbox_invite_service import (
     create_mailbox_connection_request,
     get_invite_request,
     load_invite_for_token,
+    parse_invite_token,
     resend_mailbox_connection_request,
 )
 from app.services.mailbox_provider import (
@@ -99,6 +100,18 @@ def _invite_context_from_state(
         int(invite_request_id) if invite_request_id is not None else None,
         tenant_id,
     )
+
+
+def _tenant_id_from_oauth_state(state: str) -> uuid.UUID:
+    for parser in (parse_oauth_state, parse_gmail_oauth_state):
+        try:
+            payload = parser(state)
+            tenant_id = parse_tenant_id(payload.get("org_id"))
+            if tenant_id is not None:
+                return tenant_id
+        except Exception:
+            continue
+    raise RuntimeError("Invalid OAuth session")
 
 
 def _oauth_return_url(
@@ -293,6 +306,11 @@ async def preview_mailbox_invite(
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[MailboxInvitePreviewResponse]:
     try:
+        invite_ids = parse_invite_token(token)
+        tenant_id = invite_ids["org_id"]
+        if not isinstance(tenant_id, uuid.UUID):
+            tenant_id = uuid.UUID(str(tenant_id))
+        await bind_db_to_tenant(db, tenant_id)
         row, org = await load_invite_for_token(db, token)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
@@ -331,6 +349,11 @@ async def authorize_mailbox_invite(
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[MailboxAuthorizeResponse]:
     try:
+        invite_ids = parse_invite_token(token)
+        tenant_id = invite_ids["org_id"]
+        if not isinstance(tenant_id, uuid.UUID):
+            tenant_id = uuid.UUID(str(tenant_id))
+        await bind_db_to_tenant(db, tenant_id)
         row, _org = await load_invite_for_token(db, token)
         resolved = resolve_invite_provider(
             row.requested_email,
@@ -391,6 +414,7 @@ async def mailbox_oauth_callback(
         return RedirectResponse(_append_query(return_url(), params))
 
     try:
+        await bind_db_to_tenant(db, _tenant_id_from_oauth_state(state))
         mailbox, completed_flow = await complete_oauth_callback(
             db, code=code, state=state
         )
@@ -441,6 +465,7 @@ async def gmail_mailbox_oauth_callback(
         return RedirectResponse(_append_query(return_url(), params))
 
     try:
+        await bind_db_to_tenant(db, _tenant_id_from_oauth_state(state))
         mailbox, completed_flow = await complete_gmail_oauth_callback(
             db, code=code, state=state
         )

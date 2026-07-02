@@ -3,7 +3,7 @@
 import uuid
 
 
-from app.tenant_context import get_rls_tenant_id, set_rls_tenant_id
+from app.tenant_context import set_rls_tenant_id
 
 
 class RlsSessionContextError(RuntimeError):
@@ -16,9 +16,6 @@ async def apply_rls_session_context(session, tenant_id: uuid.UUID | None) -> Non
 
     bind = session.get_bind()
     if bind.dialect.name != "postgresql":
-        return
-
-    if tenant_id is not None and get_rls_tenant_id() == tenant_id:
         return
 
     if tenant_id is not None:

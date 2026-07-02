@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
+from app.api.deps import AuthContext, actor_from_context, bind_db_to_tenant, get_auth_context, get_db
 from app.config import get_settings
 from app.schemas.common import ApiEnvelope
 from app.schemas.payment import (
@@ -323,6 +323,7 @@ async def stripe_oauth_callback(
         tenant_id = payload["tenant_id"]
         if not isinstance(tenant_id, uuid.UUID):
             tenant_id = uuid.UUID(str(tenant_id))
+        await bind_db_to_tenant(db, tenant_id)
         await exchange_stripe_oauth_code(db, tenant_id, code)
         account = await get_stripe_account_for_tenant(db, tenant_id)
         await log_event(

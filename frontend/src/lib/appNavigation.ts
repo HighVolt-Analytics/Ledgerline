@@ -12,6 +12,7 @@ import {
   Receipt,
   Settings,
   ShoppingCart,
+  TrendingUp,
   Upload,
   Users,
   Vault,
@@ -22,7 +23,7 @@ export type NavItem = {
   to: string;
   label: string;
   icon: LucideIcon;
-  badge?: "upload" | "approvals" | "team_expenses" | "business_expenses" | "payments";
+  badge?: "upload" | "approvals" | "team_expenses" | "business_expenses" | "sales" | "payments" | "collections";
   moduleKey?: string;
 };
 
@@ -57,6 +58,13 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ShoppingCart,
         moduleKey: "purchase",
       },
+      {
+        to: "/sales",
+        label: "Sales Management",
+        icon: TrendingUp,
+        badge: "sales",
+        moduleKey: "sales",
+      },
     ],
   },
   {
@@ -72,6 +80,13 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Finance",
     items: [
       { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
+      {
+        to: "/collections",
+        label: "Collections",
+        icon: Coins,
+        badge: "collections",
+        moduleKey: "sales",
+      },
       { to: "/ledger-link", label: "Ledger Link", icon: Link2, moduleKey: "ledger_link" },
       { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
       { to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" },

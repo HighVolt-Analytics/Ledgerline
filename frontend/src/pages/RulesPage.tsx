@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Building2,
   CircleUser,
@@ -8,12 +9,14 @@ import {
   Package,
   Receipt,
   Scale,
+  TrendingUp,
   Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Card } from "@/components/ui/card";
+import { CustomersTab } from "@/components/rule-book/CustomersTab";
 import { DocumentTypesTab } from "@/components/rule-book/DocumentTypesTab";
 import { AiClassificationSettingsPanel } from "@/components/rule-book/AiClassificationSettingsPanel";
 import { IngestionTab } from "@/components/rule-book/IngestionTab";
@@ -25,6 +28,7 @@ import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
 import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
 import { PurchaseRulesTab } from "@/components/rule-book/PurchaseRulesTab";
 import { PurchaseMatchSettingsPanel } from "@/components/rule-book/PurchaseMatchSettingsPanel";
+import { SalesRulesTab } from "@/components/rule-book/SalesRulesTab";
 import { TeamExpensesRulesTab } from "@/components/rule-book/TeamExpensesRulesTab";
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
@@ -39,9 +43,11 @@ const RULEBOOK_TABS = [
   { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
   { value: "document-types", label: "Document types", testid: "tab-document-types", icon: Layers },
   { value: "purchase", label: "Purchase GL", testid: "tab-purchase", icon: Package },
+  { value: "sales", label: "Sales GL", testid: "tab-sales", icon: TrendingUp },
   { value: "expenses", label: "Expenses GL", testid: "tab-expenses", icon: Receipt },
   { value: "team", label: "Team GL", testid: "tab-team", icon: Users },
   { value: "vendors", label: "Vendors", testid: "tab-vendors", icon: Building2 },
+  { value: "customers", label: "Customers", testid: "tab-customers", icon: Building2 },
   { value: "employees", label: "Employees", testid: "tab-employees", icon: CircleUser },
   { value: "posting", label: "Posting", testid: "tab-posting", icon: Scale },
 ] as const;
@@ -51,7 +57,15 @@ const SAVE_DEBOUNCE_MS = 800;
 export function RulesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [tab, setTab] = useState<string>("ingestion");
+  const [searchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get("tab");
+  const customersSection = searchParams.get("customersSection");
+  const [tab, setTab] = useState<string>(() => {
+    if (tabFromUrl && RULEBOOK_TABS.some((row) => row.value === tabFromUrl)) {
+      return tabFromUrl;
+    }
+    return "ingestion";
+  });
   const [ruleBook, setRuleBook] = useState<RuleBookConfigState | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "pending" | "saved" | "error">("idle");
   const hydratedRef = useRef(false);
@@ -80,6 +94,12 @@ export function RulesPage() {
     cancelPendingSave();
     setSaveState("idle");
   }, [tenantId]);
+
+  useEffect(() => {
+    if (tabFromUrl && RULEBOOK_TABS.some((row) => row.value === tabFromUrl)) {
+      setTab(tabFromUrl);
+    }
+  }, [tabFromUrl]);
 
   useEffect(() => {
     if (!data || hydratedRef.current) return;
@@ -288,6 +308,12 @@ export function RulesPage() {
           onChange={(purchaseRules) => patch({ purchaseRules })}
         />
       </PageTabPanel>
+      <PageTabPanel value="sales" active={tab} className="mt-0">
+        <SalesRulesTab
+          rules={ruleBook.salesRules}
+          onChange={(salesRules) => patch({ salesRules })}
+        />
+      </PageTabPanel>
       <PageTabPanel value="expenses" active={tab} className="mt-0">
         <ExpensesRulesTab
           rules={ruleBook.expenseRules}
@@ -305,6 +331,9 @@ export function RulesPage() {
           detection={ruleBook.vendorDetectionConfig}
           onDetectionChange={(vendorDetectionConfig) => patch({ vendorDetectionConfig })}
         />
+      </PageTabPanel>
+      <PageTabPanel value="customers" active={tab} className="mt-0">
+        <CustomersTab defaultSection={customersSection} />
       </PageTabPanel>
       <PageTabPanel value="employees" active={tab} className="mt-0">
         <EmployeesTab />

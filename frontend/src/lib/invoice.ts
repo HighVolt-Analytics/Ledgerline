@@ -1,8 +1,114 @@
 import type { Invoice, InvoiceDetails } from "@/api/types";
+import { extractionFieldLabel } from "@/lib/documentExtractionFields";
 import {
   effectiveValidationRules,
   type ValidationRuleConfig,
 } from "@/lib/documentValidationChecks";
+
+export const ROUTE_PURCHASE = "Purchase Management";
+export const ROUTE_SALES = "Sales Management";
+export const ROUTE_EXPENSES = "Expenses Management";
+export const ROUTE_TEAM = "Team Expenses";
+export const ROUTE_VAULT = "Vault";
+export const ROUTE_UNROUTED = "Unrouted";
+
+export type CounterpartyKind = "vendor" | "customer" | "employee" | "party";
+
+/** Finance book role of the trading partner on a document (AP vendor vs AR customer). */
+export function counterpartyKind(
+  inv: Pick<Invoice, "route_target">,
+): CounterpartyKind {
+  const route = (inv.route_target ?? "").trim();
+  if (route === ROUTE_SALES) return "customer";
+  if (route === ROUTE_TEAM) return "employee";
+  if (route === ROUTE_PURCHASE || route === ROUTE_EXPENSES) return "vendor";
+  return "party";
+}
+
+export function counterpartyLabelForRoute(routeTarget: string | null | undefined): string {
+  return counterpartyLabel({ route_target: routeTarget ?? null } as Invoice);
+}
+
+export function counterpartyLabel(inv: Pick<Invoice, "route_target">): string {
+  const kind = counterpartyKind(inv);
+  if (kind === "customer") return "Customer";
+  if (kind === "employee") return "Employee";
+  if (kind === "vendor") return "Vendor";
+  return "Counterparty";
+}
+
+/** Table column when rows may span multiple finance books. */
+export function counterpartyColumnLabel(options?: {
+  routeTarget?: string | null;
+  mixed?: boolean;
+}): string {
+  if (options?.mixed) return "Counterparty";
+  if (options?.routeTarget?.trim()) return counterpartyLabelForRoute(options.routeTarget);
+  return "Counterparty";
+}
+
+export function counterpartyMatchColumnLabel(options?: {
+  routeTarget?: string | null;
+  mixed?: boolean;
+}): string {
+  if (options?.mixed) return "Master match";
+  const route = (options?.routeTarget ?? "").trim();
+  if (route === ROUTE_SALES) return "Customer match";
+  if (route === ROUTE_PURCHASE || route === ROUTE_EXPENSES) return "Vendor match";
+  if (route === ROUTE_TEAM) return "Employee match";
+  return "Master match";
+}
+
+/** Per-row inbox label — null when master match does not apply. */
+export function counterpartyMatchLabel(
+  inv: Pick<
+    Invoice,
+    "route_target" | "purchase_document_type" | "document_type_code" | "evaluation_status"
+  >,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): string | null {
+  if (vendorMatchApplicable(inv, documentTypes)) return "Vendor match";
+  return null;
+}
+
+export function counterpartyName(
+  inv: Pick<Invoice, "vendor" | "route_target" | "extracted_fields">,
+): string {
+  const fields = inv.extracted_fields ?? {};
+  const kind = counterpartyKind(inv);
+  const vendor = inv.vendor?.trim() || "";
+  const buyer = fields.buyer_name?.trim() || "";
+  const seller = fields.seller_name?.trim() || "";
+
+  if (kind === "customer") {
+    if (buyer) return buyer;
+    if (vendor && vendor.toLowerCase() !== seller.toLowerCase()) return vendor;
+    return vendor || buyer || "—";
+  }
+  if (kind === "vendor") {
+    if (seller) return seller;
+    return vendor || seller || "—";
+  }
+  return vendor || buyer || seller || "—";
+}
+
+export function counterpartyUnknownLabel(inv: Pick<Invoice, "route_target">): string {
+  const kind = counterpartyKind(inv);
+  if (kind === "customer") return "Unknown customer";
+  if (kind === "employee") return "Unknown employee";
+  if (kind === "vendor") return "Unknown vendor";
+  return "Unknown counterparty";
+}
+
+export function extractionFieldLabelForInvoice(
+  key: string,
+  inv: Pick<Invoice, "route_target">,
+  tax?: { label: string; rate: number },
+): string {
+  if (key === "gst" && tax) return `${tax.label} ${tax.rate}%`;
+  if (key === "vendor") return counterpartyLabel(inv);
+  return extractionFieldLabel(key);
+}
 
 const VALIDATION_RULE_FIELDS: Record<string, readonly string[]> = {
   VR01: ["subtotal", "gst", "total"],
@@ -144,6 +250,39 @@ function postingPipelineAllowed(posting: string | null | undefined): boolean {
   return token === "yes" || token === "conditional" || token === "down-payment";
 }
 
+/** Whether GL mapping/posting applies (mirrors backend gl_posting_applicable_for_invoice). */
+export function glPostingApplicable(
+  inv: Pick<
+    Invoice,
+    | "gl_posting_applicable"
+    | "route_target"
+    | "purchase_document_type"
+    | "sales_document_type"
+    | "document_type_code"
+  >,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): boolean {
+  if (inv.gl_posting_applicable === false) return false;
+  if (inv.gl_posting_applicable === true) return true;
+
+  const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
+  if (purchaseDoc === "po" || purchaseDoc === "grn") return false;
+
+  const salesDoc = (inv.sales_document_type ?? "").trim().toLowerCase();
+  if (salesDoc === "so" || salesDoc === "dn") return false;
+
+  const route = (inv.route_target ?? "").trim();
+  if (VALIDATION_PASS_EXEMPT_ROUTES.has(route)) return false;
+
+  const code = (inv.document_type_code ?? "").trim().toUpperCase();
+  if (code && documentTypes?.length) {
+    const definition = documentTypes.find((row) => row.code.toUpperCase() === code);
+    if (definition && !postingPipelineAllowed(definition.posting)) return false;
+  }
+
+  return true;
+}
+
 /** Whether inbox VR pass % applies to this document (mirrors backend validation_pass_applicable). */
 export function validationPassApplicable(
   inv: Pick<Invoice, "route_target" | "purchase_document_type" | "document_type_code">,
@@ -220,6 +359,15 @@ export function invoiceValidationConfidence(
   return Math.round((passed / evaluated.length) * 100);
 }
 
+/** Master match confidence for the finance counterparty — null when not scored. */
+export function invoiceCounterpartyConfidence(
+  inv: Invoice,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): number | null {
+  if (counterpartyKind(inv) === "customer") return null;
+  return invoiceVendorConfidence(inv, documentTypes);
+}
+
 /** Vendor match confidence when master registration applies — null when not scored. */
 export function invoiceVendorConfidence(
   inv: Invoice,
@@ -284,10 +432,11 @@ export function evaluationStatusDescription(
 
 export function routeTargetShortLabel(route: string | null | undefined): string {
   if (!route) return "—";
-  if (route === "Purchase Management") return "Purchase";
-  if (route === "Expenses Management") return "Expenses";
-  if (route === "Team Expenses") return "Team";
-  if (route === "Vault") return "Vault";
+  if (route === ROUTE_PURCHASE) return "Purchase";
+  if (route === ROUTE_SALES) return "Sales";
+  if (route === ROUTE_EXPENSES) return "Expenses";
+  if (route === ROUTE_TEAM) return "Team";
+  if (route === ROUTE_VAULT) return "Vault";
   return route;
 }
 

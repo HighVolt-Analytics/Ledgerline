@@ -56,6 +56,7 @@ export type DossierLinkedDocumentApi = {
   present: boolean;
   requirement: string;
   purchase_bundle_role?: string | null;
+  sales_bundle_role?: string | null;
   source?: string | null;
   linked_dossier_id?: string | null;
   invoice_id?: number | null;
@@ -99,6 +100,7 @@ export type DossierLinkedDocumentsApi = {
     deviation: number;
   } | null;
   purchase_order_id?: number | null;
+  sales_order_id?: number | null;
 };
 
 export type DossierApprovalStepApi = {
@@ -126,6 +128,8 @@ export type DossierSummaryApi = {
   document_type_code: string;
   document_type_title: string;
   vendor: string;
+  counterparty_label?: string;
+  route_target?: string | null;
   buyer: string;
   invoice_ref: string;
   capture_channel: string;
@@ -138,6 +142,8 @@ export type DossierSummaryApi = {
   classification_confidence: number;
   fraud_risk: string;
   po_reference?: string | null;
+  so_reference?: string | null;
+  linkage_reference?: string | null;
   sla_label: string;
   sla_breached?: boolean;
   owner: string;
@@ -209,6 +215,7 @@ function mapLinkedDocument(doc: DossierLinkedDocumentApi): DossierLinkedDocument
     present: doc.present,
     requirement: doc.requirement as DossierLinkedDocument["requirement"],
     purchaseBundleRole: (doc.purchase_bundle_role ?? undefined) as DossierLinkedDocument["purchaseBundleRole"],
+    salesBundleRole: (doc.sales_bundle_role ?? undefined) as DossierLinkedDocument["salesBundleRole"],
     source: doc.source as DossierLinkedDocument["source"],
     linkedDossierId: doc.linked_dossier_id ?? null,
     invoiceId: doc.invoice_id ?? null,
@@ -261,6 +268,7 @@ function mapLinkedDocuments(linked: DossierLinkedDocumentsApi): DossierLinkedDoc
         }
       : undefined,
     purchaseOrderId: linked.purchase_order_id ?? null,
+    salesOrderId: linked.sales_order_id ?? null,
   };
 }
 
@@ -288,12 +296,15 @@ function mapApprovalChain(chain: DossierApprovalChainApi): DossierApprovalChain 
 }
 
 export function mapDossierFromApi(row: DossierSummaryApi): DossierSummary {
+  const routeTarget = row.route_target?.trim() || null;
   return {
     id: row.id,
     invoiceId: row.invoice_id,
     documentTypeCode: row.document_type_code,
     documentTypeTitle: row.document_type_title,
     vendor: row.vendor,
+    counterpartyLabel: row.counterparty_label?.trim() || "Counterparty",
+    routeTarget,
     buyer: row.buyer,
     invoiceRef: row.invoice_ref,
     captureChannel: row.capture_channel,
@@ -306,6 +317,8 @@ export function mapDossierFromApi(row: DossierSummaryApi): DossierSummary {
     classificationConfidence: row.classification_confidence,
     fraudRisk: row.fraud_risk as DossierSummary["fraudRisk"],
     poReference: row.po_reference ?? null,
+    soReference: row.so_reference ?? null,
+    linkageReference: row.linkage_reference ?? null,
     slaLabel: row.sla_label,
     slaBreached: row.sla_breached,
     owner: row.owner,

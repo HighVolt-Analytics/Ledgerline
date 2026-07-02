@@ -19,6 +19,13 @@ function catalogueCodes(documentTypes: DocumentTypeDefinition[]): Set<string> {
   );
 }
 
+function bundleRoleForMember(member: DocumentTypeDefinition): string {
+  return (
+    (member.salesBundleRole || "").trim() ||
+    (member.purchaseBundleRole || "").trim()
+  );
+}
+
 /** Rule Book warnings for finance-standard bundle configuration. */
 export function bundleConfigWarnings(
   draft: DocumentTypeDefinition,
@@ -31,14 +38,20 @@ export function bundleConfigWarnings(
   const codes = catalogueCodes(documentTypes);
   const self = draft.code.trim().toUpperCase();
   const mandatory = normalizeDtCodeList(draft.bundleMandatory);
+  const isSales = draft.routeTarget === "Sales Management";
+  const pairLabel = isSales ? "SO/DN" : "PO/GRN";
+  const registerLabel = isSales ? "SO and DN" : "PO and GRN";
 
   if (mode === "member") {
-    const role = (draft.purchaseBundleRole || "").trim().toLowerCase();
+    const role = isSales
+      ? (draft.salesBundleRole || "").trim().toLowerCase()
+      : (draft.purchaseBundleRole || "").trim().toLowerCase();
     if (!role) {
       warnings.push({
         id: "member-role-missing",
-        message:
-          "Set PO or GRN link so payable types can verify this document on the dossier (register, upload, or classified copy).",
+        message: isSales
+          ? "Set SO or DN link so customer invoice types can verify this document on the dossier (register, upload, or classified copy)."
+          : "Set PO or GRN link so payable types can verify this document on the dossier (register, upload, or classified copy).",
       });
     }
     return warnings;
@@ -47,17 +60,17 @@ export function bundleConfigWarnings(
   if (playbookEnforcesBundle(draft) && mandatory.length === 0) {
     warnings.push({
       id: "enforce-bundle-empty",
-      message:
-        "This playbook enforces bundle completeness — add mandatory PO/GRN members or use “Use PO + GRN from catalogue”.",
+        message: isSales
+        ? "This playbook enforces supporting document completeness — add required SO/DN members or use “Use SO + DN from catalogue”."
+        : "This playbook enforces supporting document completeness — add required PO/GRN members or use “Use PO + GRN from catalogue”.",
     });
   }
 
-  const memberPool = bundleMemberCandidates(documentTypes, draft.code);
+  const memberPool = bundleMemberCandidates(documentTypes, draft.code, draft.routeTarget);
   if (mandatory.length > 0 && memberPool.length === 0) {
     warnings.push({
       id: "no-bundle-members-in-catalogue",
-      message:
-        "No supporting types with a PO/GRN bundle link exist yet — create PO and GRN types first.",
+      message: `No supporting types with a ${pairLabel} bundle link exist yet — create ${registerLabel} types first.`,
     });
   }
 
@@ -70,19 +83,20 @@ export function bundleConfigWarnings(
       continue;
     }
     const member = documentTypes.find((dt) => dt.code.trim().toUpperCase() === code);
-    if (member && !(member.purchaseBundleRole || "").trim()) {
+    if (member && !bundleRoleForMember(member)) {
       warnings.push({
         id: `no-role-${code}`,
-        message: `${code} has no PO/GRN bundle link — open that type and set how it is found on a PO.`,
+        message: isSales
+          ? `${code} has no SO/DN bundle link — open that type and set how it is found on a sales order.`
+          : `${code} has no PO/GRN bundle link — open that type and set how it is found on a PO.`,
       });
     }
   }
 
-  const dangling = mandatory.filter((code) => code !== self && !codes.has(code));
-  if (dangling.length) {
+  if (mandatory.includes(self)) {
     warnings.push({
-      id: "dangling-bundle",
-      message: `Saving will drop bundle references to missing types: ${dangling.join(", ")}.`,
+      id: "self-mandatory",
+      message: "A document type cannot require itself in the bundle.",
     });
   }
 

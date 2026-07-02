@@ -9,16 +9,20 @@ from typing import Any, Literal
 PurchaseDocumentType = Literal["po", "grn", "invoice"]
 PURCHASE_DOCUMENT_TYPES = frozenset({"po", "grn", "invoice"})
 
+from app.schemas.customer import CustomerMaster
 from app.schemas.rule_book_config import (
     EmailCaptureRule,
     ExpenseRule,
     PurchaseRule,
     RuleBookConfigPayload,
+    SalesRule,
     TeamExpenseRule,
     VendorDetectionConfig,
     VendorMaster,
 )
 from app.services.capture_channel import channel_rule_matches, infer_capture_channel
+
+_SALES_ROUTE = "Sales Management"
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,7 @@ class EvalDocument:
     document_type: PurchaseDocumentType = "invoice"
     bank_bsb: str | None = None
     bank_account: str | None = None
+    route_target: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,9 +64,15 @@ class VendorMatch:
 
 
 @dataclass(frozen=True)
+class CustomerMatch:
+    customer: CustomerMaster | None
+    confidence: float
+
+
+@dataclass(frozen=True)
 class CategoryRuleHit:
     label: str
-    kind: Literal["Purchase", "Expense", "Team"]
+    kind: Literal["Purchase", "Sales", "Expense", "Team"]
 
 
 @dataclass(frozen=True)
@@ -70,6 +81,7 @@ class LiveEvalRow:
     email_rule: EmailCaptureRule | None
     email_rule_disabled: EmailCaptureRule | None
     vendor: VendorMatch
+    customer: CustomerMatch | None
     category_rule: CategoryRuleHit | None
     category_rule_disabled: CategoryRuleHit | None
     matched: bool
@@ -341,6 +353,56 @@ def match_expense_rule(doc: EvalDocument, rules: list[ExpenseRule]) -> ExpenseRu
     return None
 
 
+def _sales_rule_matches(doc: EvalDocument, rule: SalesRule) -> bool:
+    desc = " ".join(doc.lines).lower()
+    customer = doc.vendor.lower()
+    doc_number = doc.doc_number.lower()
+    match_on = rule.match_on
+    if match_on.customer_contains:
+        if match_on.customer_contains.lower() not in customer:
+            return False
+    if match_on.description_contains:
+        if match_on.description_contains.lower() not in desc:
+            return False
+    if match_on.doc_number_contains:
+        needle = match_on.doc_number_contains.lower()
+        if needle not in doc_number and needle not in (doc.invoice_no or "").lower():
+            return False
+    if match_on.reference_contains:
+        needle = match_on.reference_contains.lower()
+        refs = (
+            (doc.invoice_no or "").lower(),
+            (doc.po or "").lower(),
+            doc.doc_number.lower(),
+        )
+        if not any(needle in ref for ref in refs if ref):
+            return False
+    if not any(
+        (
+            match_on.customer_contains,
+            match_on.description_contains,
+            match_on.doc_number_contains,
+            match_on.reference_contains,
+        )
+    ):
+        return False
+    return True
+
+
+def match_sales_rule(doc: EvalDocument, rules: list[SalesRule]) -> SalesRule | None:
+    for rule in _iter_category_rules(rules, enabled_only=True):
+        if _sales_rule_matches(doc, rule):
+            return rule
+    return None
+
+
+def match_disabled_sales_rule(doc: EvalDocument, rules: list[SalesRule]) -> SalesRule | None:
+    for rule in _iter_category_rules(rules, enabled_only=False):
+        if _sales_rule_matches(doc, rule):
+            return rule
+    return None
+
+
 def match_disabled_expense_rule(
     doc: EvalDocument,
     rules: list[ExpenseRule],
@@ -420,8 +482,11 @@ def resolve_category_rule_hit(
     amount: float | None = None,
     enabled_only: bool = True,
 ) -> CategoryRuleHit | None:
-    """Architecture §2.1: purchase → expense → team; first match wins."""
+    """Architecture §2.1: sales → purchase → expense → team; first match wins."""
     if enabled_only:
+        sales = match_sales_rule(doc, config.sales_rules)
+        if sales:
+            return CategoryRuleHit(label=sales.name, kind="Sales")
         purchase = match_purchase_rule(doc, config.purchase_rules)
         if purchase:
             return CategoryRuleHit(label=purchase.name, kind="Purchase")
@@ -433,6 +498,9 @@ def resolve_category_rule_hit(
             return CategoryRuleHit(label=team.name, kind="Team")
         return None
 
+    sales = match_disabled_sales_rule(doc, config.sales_rules)
+    if sales:
+        return CategoryRuleHit(label=sales.name, kind="Sales")
     purchase = match_disabled_purchase_rule(doc, config.purchase_rules)
     if purchase:
         return CategoryRuleHit(label=purchase.name, kind="Purchase")
@@ -480,13 +548,60 @@ def detect_vendor(
     return best
 
 
+def detect_customer(
+    doc: EvalDocument,
+    masters: list[CustomerMaster],
+    config: VendorDetectionConfig,
+) -> CustomerMatch:
+    from app.services.vendor_detection import score_customer_match
+
+    weights = config.weights
+    threshold = float(config.threshold)
+    best = CustomerMatch(customer=None, confidence=0.0)
+
+    for master in masters:
+        score = score_customer_match(
+            customer_name=doc.vendor,
+            abn=doc.abn,
+            billing_address=doc.address,
+            master=master,
+            weights=weights,
+        )
+        if score > best.confidence:
+            best = CustomerMatch(
+                customer=master if score >= threshold else None,
+                confidence=score,
+            )
+
+    if best.confidence < threshold:
+        from app.services.vendor_detection import find_matching_customer_master
+
+        fallback = find_matching_customer_master(doc.vendor, doc.abn, masters)
+        if fallback is not None:
+            return CustomerMatch(customer=fallback, confidence=max(best.confidence, threshold))
+        return CustomerMatch(customer=None, confidence=best.confidence)
+    return best
+
+
+def _eval_uses_customer_match(
+    doc: EvalDocument,
+    category_rule: CategoryRuleHit | None,
+) -> bool:
+    if (doc.route_target or "").strip() == _SALES_ROUTE:
+        return True
+    return category_rule is not None and category_rule.kind == "Sales"
+
+
 def build_live_evaluation(
     docs: list[EvalDocument],
     config: RuleBookConfigPayload,
     *,
     default_mailbox: str = "accounts@acme-hospitality.com.au",
+    customer_masters: list[CustomerMaster] | None = None,
 ) -> list[LiveEvalRow]:
     rows: list[LiveEvalRow] = []
+    masters = customer_masters or []
+    threshold = float(config.vendor_detection_config.threshold)
     for doc in docs:
         email = doc_to_sample_email(doc, default_mailbox=default_mailbox)
         email_rule = match_email_capture_rule(email, config.email_capture_rules)
@@ -496,18 +611,30 @@ def build_live_evaluation(
                 email,
                 config.email_capture_rules,
             )
-        vendor = detect_vendor(doc, config.vendor_masters, config.vendor_detection_config)
         category_rule = resolve_category_rule_hit(doc, config, enabled_only=True)
         category_disabled = None
         if category_rule is None:
             category_disabled = resolve_category_rule_hit(doc, config, enabled_only=False)
-        matched = vendor.confidence >= config.vendor_detection_config.threshold
+        use_customer = _eval_uses_customer_match(doc, category_rule)
+        customer_match: CustomerMatch | None = None
+        vendor = VendorMatch(vendor=None, confidence=0.0)
+        if use_customer:
+            customer_match = detect_customer(
+                doc,
+                masters,
+                config.vendor_detection_config,
+            )
+            matched = customer_match.customer is not None
+        else:
+            vendor = detect_vendor(doc, config.vendor_masters, config.vendor_detection_config)
+            matched = vendor.vendor is not None and vendor.confidence >= threshold
         rows.append(
             LiveEvalRow(
                 doc=doc,
                 email_rule=email_rule,
                 email_rule_disabled=email_disabled,
                 vendor=vendor,
+                customer=customer_match,
                 category_rule=category_rule,
                 category_rule_disabled=category_disabled,
                 matched=matched,

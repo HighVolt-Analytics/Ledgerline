@@ -12,6 +12,9 @@ from app.api import (
     approval_policy,
     approvals,
     billing,
+    collections,
+    customer_masters,
+    customers,
     ledger_link,
     matrix,
     audit,
@@ -31,6 +34,7 @@ from app.api import (
     reconciliation,
     reports,
     rule_book,
+    sales,
     settings as settings_api,
     stripe_webhooks,
     vault,
@@ -126,6 +130,8 @@ app.include_router(reconciliation.router, prefix="/api", dependencies=_api_deps)
 app.include_router(audit.router, prefix="/api", dependencies=_api_deps)
 app.include_router(vendors.router, prefix="/api", dependencies=_api_deps)
 app.include_router(vendor_masters.router, prefix="/api", dependencies=_api_deps)
+app.include_router(customer_masters.router, prefix="/api", dependencies=_api_deps)
+app.include_router(customers.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(employee_masters.router, prefix="/api", dependencies=_module_deps("team_expenses"))
 app.include_router(pending_vendors.router, prefix="/api", dependencies=_api_deps)
 app.include_router(reports.router, prefix="/api", dependencies=_module_deps("reports"))
@@ -134,6 +140,8 @@ app.include_router(settings_api.router, prefix="/api", dependencies=_api_deps)
 app.include_router(approvals.router, prefix="/api", dependencies=_api_deps)
 app.include_router(approval_policy.router, prefix="/api", dependencies=_api_deps)
 app.include_router(purchases.router, prefix="/api", dependencies=_module_deps("purchase"))
+app.include_router(sales.router, prefix="/api", dependencies=_module_deps("sales"))
+app.include_router(collections.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(payments.router, prefix="/api", dependencies=_module_deps("payments"))
 app.include_router(ledger_link.router, prefix="/api", dependencies=_module_deps("ledger_link"))
 app.include_router(billing.router, prefix="/api", dependencies=_api_deps)

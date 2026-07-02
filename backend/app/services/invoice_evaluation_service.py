@@ -30,6 +30,7 @@ from app.services.rule_engine import (
     match_email_capture_rule,
     match_expense_rule,
     match_purchase_rule,
+    match_sales_rule,
     match_team_expense_rule,
 )
 from app.schemas.master_data import PendingVendorCreate
@@ -49,6 +50,7 @@ from app.services.document_type_catalog import (
 )
 
 ROUTE_PURCHASE = "Purchase Management"
+ROUTE_SALES = "Sales Management"
 ROUTE_EXPENSES = "Expenses Management"
 ROUTE_TEAM = "Team Expenses"
 ROUTE_VAULT = "Vault"
@@ -74,6 +76,44 @@ def _invoice_amount(invoice: Invoice) -> float | None:
     return float(invoice.total)
 
 
+def _invoice_extracted_fields(invoice: Invoice) -> dict[str, str]:
+    raw = invoice.extracted_fields
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v).strip() for k, v in raw.items() if str(v or "").strip()}
+
+
+def _resolved_perspective(invoice: Invoice, config: RuleBookConfigPayload) -> str:
+    from app.services.tenant_org_context import infer_perspective, org_context_from_config
+
+    fields = _invoice_extracted_fields(invoice)
+    stored = fields.get("perspective", "").strip().lower()
+    llm_token = fields.get("llm_perspective", stored or "unknown").strip().lower()
+    llm_perspective = llm_token if llm_token in {"purchase", "sales", "unknown"} else "unknown"
+    org = org_context_from_config(config, None)
+    return infer_perspective(
+        org=org,
+        seller_name=fields.get("seller_name", ""),
+        seller_abn=fields.get("seller_abn", ""),
+        buyer_name=fields.get("buyer_name", ""),
+        buyer_abn=fields.get("buyer_abn", ""),
+        llm_perspective=llm_perspective,
+    )
+
+
+def _should_route_sales_by_perspective(
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+) -> bool:
+    from app.services.tenant_org_context import normalize_org_perspective, org_context_from_config
+
+    org = org_context_from_config(config, None)
+    default = normalize_org_perspective(org.default_perspective)
+    if default not in {"seller", "mixed"}:
+        return False
+    return _resolved_perspective(invoice, config) == "sales"
+
+
 def evaluate_invoice_routing(
     invoice: Invoice,
     config: RuleBookConfigPayload,
@@ -89,6 +129,7 @@ def evaluate_invoice_routing(
     threshold = config.vendor_detection_config.threshold
     confidence = vendor_match.confidence
     purchase = match_purchase_rule(doc, config.purchase_rules)
+    sales = match_sales_rule(doc, config.sales_rules)
     expense = match_expense_rule(doc, config.expense_rules)
     team = match_team_expense_rule(
         doc,
@@ -101,7 +142,9 @@ def evaluate_invoice_routing(
         matched_rule_ids.append(f"email:{email_rule.id}")
     if vendor_match.vendor and confidence >= threshold:
         matched_rule_ids.append(f"vendor:{vendor_match.vendor.id}")
-    if purchase:
+    if sales:
+        matched_rule_ids.append(f"sales:{sales.id}")
+    elif purchase:
         matched_rule_ids.append(f"purchase:{purchase.id}")
     elif expense:
         matched_rule_ids.append(f"expense:{expense.id}")
@@ -126,6 +169,11 @@ def evaluate_invoice_routing(
         matched_rule_ids.append(f"dt:{dt_code}")
     elif email_rule:
         route_target = email_rule.action.route_to
+    elif sales:
+        route_target = ROUTE_SALES
+    elif _should_route_sales_by_perspective(invoice, config):
+        route_target = ROUTE_SALES
+        matched_rule_ids.append("perspective:sales")
     elif purchase:
         route_target = ROUTE_PURCHASE
     elif expense:
@@ -178,7 +226,9 @@ def evaluate_invoice_routing(
         evaluation_status = EVAL_NEEDS_REVIEW
     elif is_fallback:
         evaluation_status = EVAL_NEEDS_REVIEW
-    elif purchase or expense or team or (
+    elif purchase or sales or expense or team or (
+        "perspective:sales" in matched_rule_ids
+    ) or (
         vendor_match.vendor and vendor_match.vendor.default_ledger.strip()
     ) or (known_master and known_master.default_ledger.strip()):
         evaluation_status = EVAL_AUTO_CODED
