@@ -1,12 +1,12 @@
 import { motion } from 'framer-motion';
 import { ArrowRight, Play } from 'lucide-react';
-import { assets } from '../../data/assets';
+import HeroFloatingVisual from './HeroFloatingVisual';
 
 const EASE = [0.16, 1, 0.3, 1];
 
 export default function HeroSection() {
   return (
-    <section id="top" className="relative overflow-hidden px-5 pb-16 pt-28 sm:px-8 sm:pb-20 sm:pt-36">
+    <section id="top" className="relative overflow-x-hidden px-5 pb-12 pt-28 sm:px-8 sm:pb-16 sm:pt-36">
       <div className="hero-mesh pointer-events-none absolute inset-0 -z-10" aria-hidden="true" />
       <div className="grain-grid pointer-events-none absolute inset-0 -z-10" aria-hidden="true" />
 
@@ -68,25 +68,7 @@ export default function HeroSection() {
           </motion.p>
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, x: 24 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.9, ease: EASE, delay: 0.2 }}
-          className="relative mx-auto w-full lg:mx-0"
-        >
-          <div
-            className="pointer-events-none absolute -inset-4 -z-10 rounded-3xl opacity-60 blur-3xl"
-            style={{ background: 'radial-gradient(60% 60% at 50% 50%, hsl(var(--primary) / 0.25), transparent 70%)' }}
-            aria-hidden="true"
-          />
-          <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl bg-black">
-            <img
-              src={assets.heroBg}
-              alt="Invoice capture to ledger posted — automated workflow"
-              className="absolute inset-0 h-full w-full scale-[1.18] object-cover object-center"
-            />
-          </div>
-        </motion.div>
+        <HeroFloatingVisual />
       </div>
     </section>
   );
