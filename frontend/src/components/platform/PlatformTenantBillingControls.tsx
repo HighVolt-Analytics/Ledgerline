@@ -12,7 +12,7 @@ type Props = {
 
 export function PlatformTenantBillingControls({ tenant, onUpdated }: Props) {
   const [creditSettings, setCreditSettings] = useState<PlatformCreditSettings | null>(null);
-  const [override, setOverride] = useState<number | null>(
+  const [override, setOverride] = useState<number | undefined>(
     tenant.credits_per_page_override ?? tenant.credits_per_page
   );
   const [loading, setLoading] = useState(true);
