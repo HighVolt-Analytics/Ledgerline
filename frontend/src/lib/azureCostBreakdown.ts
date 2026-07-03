@@ -133,13 +133,13 @@ export function parseAzureCostBreakdown(
   );
 
   const ratesRaw = raw.rates;
-  const rates =
+  const rates: Record<string, number> | undefined =
     ratesRaw && typeof ratesRaw === "object"
-      ? Object.fromEntries(
+      ? (Object.fromEntries(
           Object.entries(ratesRaw as Record<string, unknown>).filter(
-            ([, v]) => typeof v === "number"
+            (entry): entry is [string, number] => typeof entry[1] === "number"
           )
-        )
+        ) as Record<string, number>)
       : undefined;
 
   return {

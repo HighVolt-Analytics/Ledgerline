@@ -5,7 +5,6 @@ import { PageLoader } from "@/components/PageLoader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { useAuth } from "@/context/AuthContext";
 import { useBilling, useBillingMutations, useBillingUsage } from "@/hooks/useBilling";
@@ -32,7 +31,7 @@ export function BillingPage() {
 
   const [manageOpen, setManageOpen] = useState(false);
   const [topUpOpen, setTopUpOpen] = useState(false);
-  const [topUpAmount, setTopUpAmount] = useState<number | null>(50);
+  const [topUpAmount, setTopUpAmount] = useState<number | undefined>(50);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
