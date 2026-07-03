@@ -12,17 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
-from app.services.billing_io import load_billing_for_tenant, save_billing_for_tenant
 from app.services.publish_service import (
-    PUBLISH_CREDIT_COST,
-    InsufficientCreditsError,
     is_published_to_ledger,
     publish_invoice_to_ledger,
 )
 
 
 @pytest.mark.asyncio
-async def test_publish_records_audit_and_charges_credits(
+async def test_publish_records_audit(
     db_session: AsyncSession,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -67,7 +64,6 @@ async def test_publish_records_audit_and_charges_credits(
     )
     await db_session.commit()
 
-    balance_before = load_billing_for_tenant(TESTING_TENANT_UUID).balance
     published = await publish_invoice_to_ledger(
         db_session,
         inv,
@@ -78,7 +74,6 @@ async def test_publish_records_audit_and_charges_credits(
 
     assert published is True
     assert await is_published_to_ledger(db_session, inv.id)
-    assert load_billing_for_tenant(TESTING_TENANT_UUID).balance == balance_before - PUBLISH_CREDIT_COST
 
     row = (
         await db_session.execute(
@@ -125,12 +120,10 @@ async def test_publish_is_idempotent(db_session: AsyncSession, tmp_path, monkeyp
     )
     await db_session.commit()
 
-    balance_before = load_billing_for_tenant(TESTING_TENANT_UUID).balance
     assert await publish_invoice_to_ledger(db_session, inv) is True
     await db_session.commit()
     assert await publish_invoice_to_ledger(db_session, inv) is False
     await db_session.commit()
-    assert load_billing_for_tenant(TESTING_TENANT_UUID).balance == balance_before - PUBLISH_CREDIT_COST
 
 
 @pytest.mark.asyncio
@@ -181,18 +174,20 @@ async def test_reprocess_invalidates_stale_publish_flag(
 
 
 @pytest.mark.asyncio
-async def test_manual_publish_fails_without_credits(
+async def test_manual_publish_succeeds_without_credits(
     db_session: AsyncSession,
     tmp_path,
     monkeypatch,
 ) -> None:
+    """Credits are charged on upload, not on ledger publish."""
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     from app.config import get_settings
+    from app.models.tenant_billing import TenantBilling
 
     get_settings.cache_clear()
-    state = load_billing_for_tenant(TESTING_TENANT_UUID)
-    state.balance = 0
-    save_billing_for_tenant(TESTING_TENANT_UUID, state)
+    billing = await db_session.get(TenantBilling, TESTING_TENANT_UUID)
+    if billing:
+        billing.credit_balance = 0
 
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -216,5 +211,4 @@ async def test_manual_publish_fails_without_credits(
     )
     await db_session.commit()
 
-    with pytest.raises(InsufficientCreditsError):
-        await publish_invoice_to_ledger(db_session, inv)
+    assert await publish_invoice_to_ledger(db_session, inv) is True

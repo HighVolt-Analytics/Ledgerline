@@ -132,11 +132,19 @@ export interface PlatformTenantSummary {
   pending_invite_count: number;
   invoice_count: number;
   credit_balance: number;
+  credits_consumed: number;
+  azure_cost_usd_total: number;
+  plan: string;
+  country: string;
+  credits_per_page: number;
 }
 
 export interface PlatformTenantDetail extends PlatformTenantSummary {
   settings_json: Record<string, unknown> | null;
   modules: PlatformTenantModule[];
+  credits_per_page_override?: number | null;
+  enterprise_monthly_credits?: number | null;
+  billing_anchor_date?: string | null;
 }
 
 export interface CreatePlatformTenantBody {
@@ -1530,20 +1538,63 @@ export interface StripeTransaction {
   available_on: string | null;
 }
 
-export interface CreditPack {
-  id: string;
-  name: string;
-  credits: number;
-  price_aud: number;
-  popular?: boolean;
+export interface PlanInfo {
+  plan: string;
+  region: string;
+  currency_code: string;
+  monthly_credits: number;
+  max_users: number;
+  social_integration: boolean;
+  email_integration: boolean;
+  studio_monthly_price: number;
+  credits_per_page: number;
+  topup_factor: number;
+}
+
+export interface CreditLedgerEntry {
+  id: number;
+  event_type: string;
+  description: string;
+  pages?: number | null;
+  credits_per_page?: number | null;
+  credits_delta: number;
+  balance_after: number;
+  plan_at_event?: string | null;
+  amount_paid?: number | null;
+  currency_code?: string | null;
+  azure_cost_usd?: number | null;
+  azure_cost_breakdown?: Record<string, unknown> | null;
+  filename?: string | null;
+  invoice_id?: number | null;
+  created_at?: string | null;
 }
 
 export interface BillingState {
   balance: number;
-  current_pack: string;
-  auto_recharge: boolean;
-  threshold: number;
-  packs: CreditPack[];
+  plan: string;
+  credits_per_page: number;
+  credits_consumed: number;
+  plan_info: PlanInfo;
+  billing_anchor_date?: string | null;
+  fy_days_remaining?: number | null;
+  can_upgrade_studio: boolean;
+  can_top_up: boolean;
+  is_enterprise: boolean;
+}
+
+export interface BillingUsageHistory {
+  items: CreditLedgerEntry[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+export interface PlatformCreditSettings {
+  credits_per_page: number;
+  universal_credits_per_page: boolean;
+  topup_factor_in: number;
+  topup_factor_sg: number;
+  topup_factor_au: number;
 }
 
 export interface PipelineAuditStep {

@@ -4,6 +4,9 @@ import { ArrowLeft, Save } from "lucide-react";
 import { api } from "@/api/client";
 import type { PlatformTenantDetail } from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
+import { PlatformTenantAzureUsageSection } from "@/components/platform/PlatformTenantAzureUsageSection";
+import { PlatformTenantBillingControls } from "@/components/platform/PlatformTenantBillingControls";
+import { PlatformTenantUsersSection } from "@/components/platform/PlatformTenantUsersSection";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -160,7 +163,7 @@ export function TenantSettingsPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Link
           to="/platform/clients"
@@ -238,33 +241,62 @@ export function TenantSettingsPage() {
         </Card>
 
         <Card className="p-5 space-y-4">
-          <h2 className="text-sm font-semibold">Usage</h2>
-          <dl className="grid sm:grid-cols-4 gap-4 text-sm">
+          <h2 className="text-sm font-semibold">Usage & billing</h2>
+          <dl className="grid sm:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
             <div>
               <dt className="text-muted-foreground">Users</dt>
               <dd className="text-lg font-semibold tnum">{tenant.user_count}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Pending invites</dt>
-              <dd className="text-lg font-semibold tnum">{tenant.pending_invite_count}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Invoices</dt>
               <dd className="text-lg font-semibold tnum">{tenant.invoice_count}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Credit balance</dt>
+              <dt className="text-muted-foreground">Plan</dt>
+              <dd className="text-lg font-semibold capitalize">{tenant.plan}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Country</dt>
+              <dd className="text-lg font-semibold">{tenant.country}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Credits</dt>
               <dd className="text-lg font-semibold tnum">
                 {tenant.credit_balance.toLocaleString()}
               </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Consumed</dt>
+              <dd className="text-lg font-semibold tnum">
+                {tenant.credits_consumed.toLocaleString()}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Azure cost (USD)</dt>
+              <dd className="text-lg font-semibold tnum">
+                ${tenant.azure_cost_usd_total.toFixed(4)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Credits / page</dt>
+              <dd className="text-lg font-semibold tnum">{tenant.credits_per_page}</dd>
             </div>
           </dl>
           {tenant.created_at && (
             <p className="text-xs text-muted-foreground">
               Created {new Date(tenant.created_at).toLocaleString()}
+              {tenant.billing_anchor_date && (
+                <> · FY anchor {tenant.billing_anchor_date}</>
+              )}
             </p>
           )}
+          <PlatformTenantBillingControls
+            tenant={tenant}
+            onUpdated={(updated) => setTenant(updated)}
+          />
         </Card>
+
+        <PlatformTenantAzureUsageSection tenantId={tenant.id} />
 
         {(tenant.user_count === 0 || tenant.pending_invite_count > 0) && (
           <Card className="p-5 space-y-4">
@@ -378,6 +410,8 @@ export function TenantSettingsPage() {
           </Button>
         </div>
       </form>
+
+      <PlatformTenantUsersSection tenantId={tenant.id} />
 
       <Card className="p-5 border-destructive/40 space-y-4">
         <div>

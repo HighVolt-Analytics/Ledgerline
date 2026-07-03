@@ -28,11 +28,20 @@ from app.models.pending_vendor import PendingVendor
 from app.models.vendor import VendorRegistry
 from app.models.vendor_master import VendorMasterRecord
 from app.services.approval_policy_io import remove_policy_for_tenant
-from app.services.billing_io import load_billing_for_tenant, remove_billing_for_tenant
+from app.services.billing_io import remove_billing_for_tenant
+from app.services.credit_service import (
+    ensure_tenant_billing,
+    get_credits_per_page,
+    refresh_tenant_billing,
+    tenant_azure_cost_total_usd,
+    tenant_credits_consumed,
+)
+from app.tenant_settings import tenant_country
 from app.services.membership_service import ensure_membership
 from app.services.rule_book_config_io import _legacy_file_paths_for_tenant
 from app.services.rule_book_config_repository import ensure_default_config
-from app.services.tenant_members_service import InviteCreated, create_invite
+from app.services.tenant_members_service import InviteCreated, create_invite, list_tenant_members
+from app.tenant_rls import apply_rls_session_context
 from app.tenant_settings import build_tenant_settings
 from app.schemas.platform import (
     CreatePlatformTenantRequest,
@@ -156,14 +165,18 @@ async def _modules_for_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> li
     ]
 
 
-def _to_summary(
+async def _to_summary(
+    session: AsyncSession,
     tenant: Tenant,
     *,
     user_count: int,
     invoice_count: int,
     pending_invite_count: int,
 ) -> PlatformTenantSummary:
-    billing = load_billing_for_tenant(tenant.id)
+    billing = await refresh_tenant_billing(session, tenant.id)
+    consumed = await tenant_credits_consumed(session, tenant.id)
+    azure_total = await tenant_azure_cost_total_usd(session, tenant.id)
+    cpp = await get_credits_per_page(session, billing)
     return PlatformTenantSummary(
         id=tenant.id,
         name=tenant.name,
@@ -174,7 +187,12 @@ def _to_summary(
         user_count=user_count,
         pending_invite_count=pending_invite_count,
         invoice_count=invoice_count,
-        credit_balance=billing.balance,
+        credit_balance=billing.credit_balance,
+        credits_consumed=consumed,
+        azure_cost_usd_total=float(azure_total),
+        plan=billing.plan,
+        country=tenant_country(tenant),
+        credits_per_page=cpp,
     )
 
 
@@ -188,15 +206,19 @@ async def list_client_tenants(session: AsyncSession) -> list[PlatformTenantSumma
     ).scalars().all()
 
     counts = await _batch_tenant_counts(session, [tenant.id for tenant in tenants])
-    return [
-        _to_summary(
-            tenant,
-            user_count=counts.get(tenant.id, (0, 0, 0))[0],
-            invoice_count=counts.get(tenant.id, (0, 0, 0))[1],
-            pending_invite_count=counts.get(tenant.id, (0, 0, 0))[2],
+    summaries: list[PlatformTenantSummary] = []
+    for tenant in tenants:
+        c = counts.get(tenant.id, (0, 0, 0))
+        summaries.append(
+            await _to_summary(
+                session,
+                tenant,
+                user_count=c[0],
+                invoice_count=c[1],
+                pending_invite_count=c[2],
+            )
         )
-        for tenant in tenants
-    ]
+    return summaries
 
 
 async def get_client_tenant(
@@ -209,18 +231,35 @@ async def get_client_tenant(
     await ensure_module_rows(session, tenant_id)
 
     user_count, invoice_count, pending_invite_count = await _tenant_counts(session, tenant.id)
-    summary = _to_summary(
+    summary = await _to_summary(
+        session,
         tenant,
         user_count=user_count,
         invoice_count=invoice_count,
         pending_invite_count=pending_invite_count,
     )
     modules = await _modules_for_tenant(session, tenant.id)
+    billing = await refresh_tenant_billing(session, tenant.id)
     return PlatformTenantDetail(
         **summary.model_dump(),
         settings_json=tenant.settings_json,
         modules=modules,
+        credits_per_page_override=billing.credits_per_page_override,
+        enterprise_monthly_credits=billing.enterprise_monthly_credits,
+        billing_anchor_date=billing.billing_anchor_date.isoformat(),
     )
+
+
+async def list_client_tenant_members(
+    session: AsyncSession, *, tenant_id: uuid.UUID
+):
+    """List users and pending invites for a client tenant (RLS-scoped)."""
+    tenant = await session.get(Tenant, tenant_id)
+    if not tenant or tenant.is_platform:
+        return None
+
+    await apply_rls_session_context(session, tenant_id)
+    return await list_tenant_members(session, tenant_id=tenant_id)
 
 
 async def _seed_modules(session: AsyncSession, tenant_id: uuid.UUID) -> None:
@@ -356,6 +395,7 @@ async def create_client_tenant(
     await session.flush()
     await _seed_modules(session, tenant.id)
     await ensure_default_config(session, tenant.id)
+    await ensure_tenant_billing(session, tenant.id, plan="free")
 
     invite = await invite_tenant_admin(
         session,

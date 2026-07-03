@@ -17,6 +17,9 @@ from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.mailbox_connection_request import MailboxConnectionRequest
 from app.models.mailbox_sync_job import MailboxSyncJob
+from app.models.credit_ledger import CreditLedgerEntry
+from app.models.platform_credit_settings import PlatformCreditSettings
+from app.models.tenant_billing import TenantBilling
 from app.models.tenant import Tenant
 from app.models.tenant_module import TenantModule
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
@@ -76,6 +79,9 @@ __all__ = [
     "StripeBalanceSnapshot",
     "StripeTransaction",
     "StripeWebhookEvent",
+    "CreditLedgerEntry",
+    "PlatformCreditSettings",
+    "TenantBilling",
     "Tenant",
     "TenantMemberInvite",
     "TenantModule",

@@ -10,7 +10,7 @@ import { useAuth } from "@/context/AuthContext";
 export function OnboardingPage() {
   const navigate = useNavigate();
   const { user, refreshUser } = useAuth();
-  const [country, setCountry] = useState("AU");
+  const [country, setCountry] = useState("SG");
   const [industry, setIndustry] = useState<Industry>("Hospitality");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);

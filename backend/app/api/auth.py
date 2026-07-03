@@ -70,9 +70,11 @@ from app.tenant_ids import parse_tenant_id
 from app.tenant_context import set_jwt_tenant_id, set_request_tenant_id
 from app.tenant_rls import apply_rls_session_context
 from app.tenant_settings import tenant_locale, tenant_onboarding_completed, tenant_timezone
+from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
+logger = get_logger(__name__)
 
 _OTP_EMAIL_FAILURE_MESSAGE = (
     "Could not send verification email. Please try again later or contact your administrator."
@@ -217,11 +219,35 @@ async def login(
     from app.config import get_settings
 
     settings = get_settings()
+    email = body.email.lower().strip()
+    logger.info("login_started", email=email)
+
     account = await resolve_login_account(db, body.email)
-    if not account or account.is_blocked:
+    if not account:
+        logger.info("login_failed", email=email, reason="account_not_found")
+        raise HTTPException(401, "Invalid email or password")
+    if account.is_blocked:
+        logger.info(
+            "login_failed",
+            email=email,
+            auth_account_id=account.id,
+            reason="account_blocked",
+        )
         raise HTTPException(401, "Invalid email or password")
     if not verify_password(body.password, account.password_hash):
+        logger.info(
+            "login_failed",
+            email=email,
+            auth_account_id=account.id,
+            reason="invalid_password",
+        )
         raise HTTPException(401, "Invalid email or password")
+
+    logger.info(
+        "login_credentials_ok",
+        email=email,
+        auth_account_id=account.id,
+    )
 
     otp = generate_otp()
     await store_otp(
@@ -233,6 +259,12 @@ async def login(
     await _send_login_otp_or_raise(account=account, otp=otp)
 
     token = create_challenge_token(auth_account_id=account.id, email=account.email)
+    logger.info(
+        "login_otp_challenge_issued",
+        email=email,
+        auth_account_id=account.id,
+        otp_ttl_seconds=settings.otp_expire_minutes * 60,
+    )
     return ApiEnvelope(
         data=LoginChallengeResponse(challenge_token=token),
     )
@@ -247,19 +279,52 @@ async def verify_otp_endpoint(
     payload = _require_token_type(creds, TOKEN_TYPE_CHALLENGE)
     auth_account_id = int(payload["sub"])
     email = str(payload["email"])
+    logger.info(
+        "login_verify_otp_started",
+        email=email,
+        auth_account_id=auth_account_id,
+    )
 
     account = await db.get(AuthAccount, auth_account_id)
     if not account or account.is_blocked:
+        logger.info(
+            "login_verify_otp_failed",
+            email=email,
+            auth_account_id=auth_account_id,
+            reason="invalid_session",
+        )
         raise HTTPException(401, "Invalid session")
 
     if not await verify_otp(auth_account_id=account.id, email=email, otp=body.otp):
+        logger.info(
+            "login_verify_otp_failed",
+            email=email,
+            auth_account_id=auth_account_id,
+            reason="invalid_otp",
+        )
         raise HTTPException(401, "Invalid verification code")
 
     await clear_otp(auth_account_id=account.id, email=email)
-    memberships = filter_switchable_memberships(
-        await list_memberships_for_auth_account(db, auth_account_id=account.id)
+    logger.info(
+        "login_verify_otp_ok",
+        email=email,
+        auth_account_id=auth_account_id,
     )
+
+    all_memberships = await list_memberships_for_auth_account(
+        db,
+        auth_account_id=account.id,
+        log_source="verify_otp",
+    )
+    memberships = filter_switchable_memberships(all_memberships)
     if not memberships:
+        logger.info(
+            "login_verify_otp_failed",
+            email=email,
+            auth_account_id=auth_account_id,
+            reason="no_switchable_tenant_access",
+            total_linked=len(all_memberships),
+        )
         raise HTTPException(403, "No tenant access for this account")
 
     if len(memberships) == 1:
@@ -267,8 +332,27 @@ async def verify_otp_endpoint(
         user = await db.get(User, m.user_id)
         tenant = await db.get(Tenant, m.tenant_id)
         if not user or not tenant or not user.is_active:
+            logger.info(
+                "login_verify_otp_failed",
+                email=email,
+                auth_account_id=auth_account_id,
+                reason="single_tenant_inactive",
+                tenant_id=str(m.tenant_id),
+                user_id=m.user_id,
+            )
             raise HTTPException(403, "Account inactive")
         access, refresh = await _mint_session_tokens(db, user=user, tenant=tenant, role=m.role)
+        logger.info(
+            "login_session_minted",
+            email=email,
+            auth_account_id=auth_account_id,
+            flow="single_tenant",
+            user_id=user.id,
+            tenant_id=str(tenant.id),
+            tenant_slug=tenant.slug,
+            role=m.role,
+            is_platform=m.is_platform,
+        )
         return ApiEnvelope(
             data=VerifyOtpResponse(
                 multi_tenant=False,
@@ -279,6 +363,21 @@ async def verify_otp_endpoint(
         )
 
     select_token = create_tenant_select_token(auth_account_id=account.id, email=email)
+    logger.info(
+        "login_tenant_picker_issued",
+        email=email,
+        auth_account_id=auth_account_id,
+        switchable_count=len(memberships),
+        accounts=[
+            {
+                "tenant_id": str(m.tenant_id),
+                "tenant_slug": m.tenant_slug,
+                "role": m.role,
+                "is_platform": m.is_platform,
+            }
+            for m in memberships
+        ],
+    )
     return ApiEnvelope(
         data=VerifyOtpResponse(
             multi_tenant=True,
@@ -323,28 +422,65 @@ async def select_tenant(
 ) -> ApiEnvelope[TokenResponse]:
     payload = _require_token_type(creds, TOKEN_TYPE_TENANT_SELECT)
     auth_account_id = int(payload["sub"])
-    memberships = filter_switchable_memberships(
-        await list_memberships_for_auth_account(db, auth_account_id=auth_account_id)
+    email = str(payload.get("email", ""))
+    logger.info(
+        "login_select_tenant_started",
+        email=email,
+        auth_account_id=auth_account_id,
+        target_tenant_id=str(body.tenant_id),
     )
+
+    all_memberships = await list_memberships_for_auth_account(
+        db,
+        auth_account_id=auth_account_id,
+        log_source="select_tenant",
+    )
+    memberships = filter_switchable_memberships(all_memberships)
     match = next((m for m in memberships if m.tenant_id == body.tenant_id), None)
     if not match:
+        logger.info(
+            "login_select_tenant_failed",
+            email=email,
+            auth_account_id=auth_account_id,
+            target_tenant_id=str(body.tenant_id),
+            reason="tenant_not_in_switchable_memberships",
+            switchable_count=len(memberships),
+        )
         raise HTTPException(403, "You do not have access to this tenant")
 
     user = await db.get(User, match.user_id)
     tenant = await db.get(Tenant, match.tenant_id)
     if not user or not tenant:
+        logger.info(
+            "login_select_tenant_failed",
+            email=email,
+            auth_account_id=auth_account_id,
+            target_tenant_id=str(body.tenant_id),
+            reason="user_or_tenant_missing",
+        )
         raise HTTPException(404, "Tenant not found")
 
     access, refresh = await _mint_session_tokens(db, user=user, tenant=tenant, role=match.role)
-    memberships = await _membership_summaries_for_account(
+    membership_summaries = await _membership_summaries_for_account(
         db, auth_account_id=auth_account_id
+    )
+    logger.info(
+        "login_session_minted",
+        email=email,
+        auth_account_id=auth_account_id,
+        flow="select_tenant",
+        user_id=user.id,
+        tenant_id=str(tenant.id),
+        tenant_slug=tenant.slug,
+        role=match.role,
+        is_platform=match.is_platform,
     )
     return ApiEnvelope(
         data=TokenResponse(
             access_token=access,
             refresh_token=refresh,
             user=_user_response(user, tenant, role=match.role),
-            memberships=memberships,
+            memberships=membership_summaries,
         )
     )
 

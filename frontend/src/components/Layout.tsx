@@ -24,6 +24,7 @@ import {
   type NavItem,
 } from "@/lib/appNavigation";
 import { queryClient, queryKeys } from "@/lib/queryClient";
+import { useBilling } from "@/hooks/useBilling";
 import { cn } from "@/lib/cn";
 
 const TRUST = ["SOC 2 Type II", "ISO 27001", "Bank-level encryption", "7-year retention"];
@@ -53,6 +54,7 @@ export function Layout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { data: billing } = useBilling(Boolean(user));
   const { theme, toggleTheme } = useTheme();
   const { data: badges } = useNavBadges();
   const { data: collectionRows = [] } = useCollections();
@@ -193,7 +195,9 @@ export function Layout() {
               className="flex items-center gap-1.5 h-9 px-2.5 rounded-md border border-border bg-card text-sm hover-elevate whitespace-nowrap"
             >
               <Coins className="h-4 w-4 text-primary shrink-0" />
-              <span className="tnum font-medium">{(1240).toLocaleString()}</span>
+              <span className="tnum font-medium">
+                {(billing?.balance ?? 0).toLocaleString()}
+              </span>
               <span className="hidden sm:inline text-muted-foreground text-xs">credits</span>
             </button>
             <Button

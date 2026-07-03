@@ -30,6 +30,8 @@ from app.main import app
 get_settings.cache_clear()
 from app.models.audit import AuditLog
 from app.models.tenant import Tenant
+from app.models.platform_credit_settings import PlatformCreditSettings
+from app.models.tenant_billing import TenantBilling
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
 from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.invoice_data import InvoiceData, ParsedLineItem
@@ -73,6 +75,16 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
                 tenant_id=TESTING_TENANT_UUID,
                 config=demo_config,
                 schema_version=int(demo_config.get("schema_version") or 1),
+            )
+        )
+        session.add(PlatformCreditSettings(id=1))
+        session.add(
+            TenantBilling(
+                tenant_id=TESTING_TENANT_UUID,
+                plan="studio",
+                credit_balance=100_000,
+                billing_anchor_date=date.today(),
+                last_monthly_grant_at=date.today(),
             )
         )
         await session.flush()
