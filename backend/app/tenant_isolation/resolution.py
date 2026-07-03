@@ -39,6 +39,7 @@ _SKIP_DEFAULT_PATHS = (
     "/api/auth/reset-password",
     "/health",
     "/connect-mailbox",
+    "/accept-invite",
 )
 
 

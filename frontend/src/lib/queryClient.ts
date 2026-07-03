@@ -62,6 +62,7 @@ const baseKeys = {
   ledgerLink: ["ledger-link"] as const,
   billing: ["billing"] as const,
   appSettings: ["app-settings"] as const,
+  mailboxes: ["mailboxes"] as const,
 };
 
 export const queryKeys = {
@@ -100,4 +101,5 @@ export const queryKeys = {
   ledgerLink: () => tenantQueryKey(baseKeys.ledgerLink),
   billing: () => tenantQueryKey(baseKeys.billing),
   appSettings: () => tenantQueryKey(baseKeys.appSettings),
+  mailboxes: () => tenantQueryKey(baseKeys.mailboxes),
 };

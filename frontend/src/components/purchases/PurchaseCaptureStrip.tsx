@@ -1,12 +1,13 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { queryKeys } from "@/lib/queryClient";
 import { CaptureChannelsStrip } from "@/components/team-expenses/CaptureChannelsStrip";
 import type { ClaimChannel } from "@/lib/v4MockData";
 
 export function PurchaseCaptureStrip({ activeRuleCount = 0 }: { activeRuleCount?: number }) {
   const { data: mailboxes = [] } = useQuery({
-    queryKey: ["mailboxes"],
+    queryKey: queryKeys.mailboxes(),
     queryFn: () => api.listMailboxes(),
   });
 

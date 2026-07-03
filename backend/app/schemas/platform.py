@@ -23,17 +23,25 @@ class PlatformTenantSummary(BaseModel):
     pending_invite_count: int = 0
     invoice_count: int = 0
     credit_balance: int = 0
+    credits_consumed: int = 0
+    azure_cost_usd_total: float = 0.0
+    plan: str = "free"
+    country: str = "SG"
+    credits_per_page: int = 5
 
 
 class PlatformTenantDetail(PlatformTenantSummary):
     settings_json: dict[str, Any] | None = None
     modules: list[PlatformTenantModule] = Field(default_factory=list)
+    credits_per_page_override: int | None = None
+    enterprise_monthly_credits: int | None = None
+    billing_anchor_date: str | None = None
 
 
 class CreatePlatformTenantRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9-]+$")
-    country: str = Field(default="AU", min_length=2, max_length=2)
+    country: str = Field(default="SG", min_length=2, max_length=2)
     industry: str | None = Field(default=None, max_length=100)
     first_admin_email: EmailStr
     first_admin_name: str = Field(min_length=1, max_length=255)

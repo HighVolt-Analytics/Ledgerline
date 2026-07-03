@@ -623,7 +623,7 @@ async def test_wallet_summary_from_payments(
 
 
 @pytest.mark.asyncio
-async def test_billing_purchase_adds_credits(
+async def test_billing_top_up_adds_credits(
     client: AsyncClient,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -632,12 +632,12 @@ async def test_billing_purchase_adds_credits(
 
     res = await client.get("/api/billing")
     assert res.status_code == 200
-    assert res.json()["data"]["balance"] == 500
+    before = res.json()["data"]["balance"]
 
-    buy = await client.post("/api/billing/purchase", json={"pack_id": "starter"})
+    buy = await client.post("/api/billing/top-up", json={"amount": "10"})
     assert buy.status_code == 200
-    assert buy.json()["data"]["balance"] == 1000
-    assert buy.json()["data"]["current_pack"] == "starter"
+    assert buy.json()["data"]["balance"] > before
+    assert buy.json()["data"]["plan"] in {"free", "studio", "enterprise"}
 
 
 @pytest.mark.asyncio

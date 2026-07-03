@@ -159,12 +159,21 @@ app.include_router(vault.router, prefix="/api", dependencies=_module_deps("vault
 _CONNECT_MAILBOX_HTML = (
     Path(__file__).resolve().parent / "static" / "connect_mailbox.html"
 ).read_text(encoding="utf-8")
+_ACCEPT_INVITE_HTML = (
+    Path(__file__).resolve().parent / "static" / "accept_invite.html"
+).read_text(encoding="utf-8")
 
 
 @app.get("/connect-mailbox", response_class=HTMLResponse, include_in_schema=False)
 async def connect_mailbox_page() -> HTMLResponse:
-    """Public invite landing page (works via ngrok on the API port)."""
+    """Public mailbox invite landing page (works via ngrok on the API port)."""
     return HTMLResponse(content=_CONNECT_MAILBOX_HTML)
+
+
+@app.get("/accept-invite", response_class=HTMLResponse, include_in_schema=False)
+async def accept_invite_page() -> HTMLResponse:
+    """Public tenant member invite landing page (works via ngrok on the API port)."""
+    return HTMLResponse(content=_ACCEPT_INVITE_HTML)
 
 
 @app.get("/health")

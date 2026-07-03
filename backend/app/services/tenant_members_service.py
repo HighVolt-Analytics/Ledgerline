@@ -83,6 +83,34 @@ def _require_role_slug(raw: str) -> str:
     return role.value
 
 
+async def count_active_seats(session: AsyncSession, *, tenant_id: uuid.UUID) -> int:
+    """Active members plus pending (unexpired) invites."""
+    now = _utc_now()
+    member_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(UserTenantMapping)
+            .where(
+                UserTenantMapping.tenant_id == tenant_id,
+                UserTenantMapping.is_active.is_(True),
+                UserTenantMapping.status == "active",
+            )
+        )
+    ).scalar_one()
+    pending_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(TenantMemberInvite)
+            .where(
+                TenantMemberInvite.tenant_id == tenant_id,
+                TenantMemberInvite.accepted_at.is_(None),
+                TenantMemberInvite.expires_at > now,
+            )
+        )
+    ).scalar_one()
+    return int(member_count or 0) + int(pending_count or 0)
+
+
 async def _count_active_admins(session: AsyncSession, *, tenant_id: uuid.UUID) -> int:
     count = (
         await session.execute(
@@ -251,6 +279,13 @@ async def create_invite(
     tenant = await session.get(Tenant, tenant_id)
     if not tenant:
         raise HTTPException(404, "Tenant not found")
+
+    from app.services.credit_service import SeatLimitError, assert_seat_available
+
+    try:
+        await assert_seat_available(session, tenant_id)
+    except SeatLimitError as exc:
+        raise HTTPException(403, str(exc)) from exc
 
     existing_user = (
         await session.execute(

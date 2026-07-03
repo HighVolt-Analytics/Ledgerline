@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Accept invitation — LedgerLink</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f4f5; color: #18181b; }
+    .card { background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; padding: 2rem; max-width: 28rem; width: calc(100% - 2rem); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+    h1 { font-size: 1.125rem; margin: 0 0 .5rem; }
+    p { margin: .5rem 0; font-size: .875rem; color: #52525b; line-height: 1.5; }
+    .error { color: #dc2626; }
+    .success { color: #16a34a; }
+    label { display: block; font-size: .75rem; color: #71717a; margin-bottom: .25rem; }
+    input { width: 100%; box-sizing: border-box; padding: .625rem .75rem; font-size: .875rem; border: 1px solid #e4e4e7; border-radius: 8px; margin-bottom: .75rem; }
+    button { margin-top: .25rem; width: 100%; padding: .625rem 1rem; font-size: .875rem; border: 0; border-radius: 8px; background: #18181b; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #09090b; color: #fafafa; }
+      .card { background: #18181b; border-color: #3f3f46; }
+      p { color: #a1a1aa; }
+      input { background: #09090b; border-color: #3f3f46; color: #fafafa; }
+      button { background: #fafafa; color: #18181b; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card" id="app">
+    <p>Loading invitation…</p>
+  </div>
+  <script>
+    const app = document.getElementById("app");
+    const params = new URLSearchParams(location.search);
+    const token = params.get("token") || "";
+    const apiHeaders = { "ngrok-skip-browser-warning": "1", "Content-Type": "application/json" };
+
+    function render(html) {
+      app.innerHTML = html;
+    }
+
+    function formatRole(role) {
+      if (!role) return "";
+      return role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, " ");
+    }
+
+    async function apiGet(path) {
+      const res = await fetch(path, { headers: { "ngrok-skip-browser-warning": "1" } });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = body.detail || body.message || res.statusText;
+        throw new Error(typeof detail === "string" ? detail : "Request failed");
+      }
+      return body.data;
+    }
+
+    async function apiPost(path, payload) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: apiHeaders,
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = body.detail || body.message || res.statusText;
+        throw new Error(typeof detail === "string" ? detail : "Request failed");
+      }
+      return body.data;
+    }
+
+    function renderForm(preview) {
+      render(
+        "<h1>Accept invitation</h1>" +
+        "<p>Join <strong>" + preview.tenant_name + "</strong> as <strong>" +
+        formatRole(preview.role) + "</strong> (" + preview.email + ")</p>" +
+        '<label for="fullName">Full name</label>' +
+        '<input id="fullName" type="text" value="' + (preview.full_name || "").replace(/"/g, "&quot;") + '" />' +
+        '<label for="password">Password</label>' +
+        '<input id="password" type="password" autocomplete="new-password" />' +
+        '<label for="confirm">Confirm password</label>' +
+        '<input id="confirm" type="password" autocomplete="new-password" />' +
+        '<p class="error" id="formError" hidden></p>' +
+        '<button type="button" id="submitBtn">Accept &amp; create account</button>'
+      );
+
+      const submitBtn = document.getElementById("submitBtn");
+      const formError = document.getElementById("formError");
+
+      submitBtn.addEventListener("click", async () => {
+        const password = document.getElementById("password").value;
+        const confirm = document.getElementById("confirm").value;
+        const fullName = document.getElementById("fullName").value.trim();
+
+        formError.hidden = true;
+        if (password.length < 8) {
+          formError.textContent = "Password must be at least 8 characters";
+          formError.hidden = false;
+          return;
+        }
+        if (password !== confirm) {
+          formError.textContent = "Passwords do not match";
+          formError.hidden = false;
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Creating account…";
+        try {
+          await apiPost("/api/auth/invite/accept", {
+            token: token,
+            password: password,
+            full_name: fullName || undefined,
+          });
+          render(
+            "<h1>Account created</h1>" +
+            "<p class='success'>Your account is ready. Sign in to complete organisation setup.</p>" +
+            "<p>You can close this window and sign in with your email and password.</p>"
+          );
+        } catch (err) {
+          formError.textContent = err.message || "Could not accept invitation";
+          formError.hidden = false;
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Accept & create account";
+        }
+      });
+    }
+
+    if (!token) {
+      render("<p class='error'>Missing invitation link.</p>");
+    } else {
+      apiGet("/api/auth/invite/preview?token=" + encodeURIComponent(token))
+        .then((preview) => {
+          if (preview.expired) {
+            render("<p class='error'>This invitation has expired.</p>");
+            return;
+          }
+          if (preview.accepted) {
+            render("<p class='error'>This invitation has already been accepted.</p>");
+            return;
+          }
+          renderForm(preview);
+        })
+        .catch((err) => {
+          render("<p class='error'>" + (err.message || "Invitation not found") + "</p>");
+        });
+    }
+  </script>
+</body>
+</html>

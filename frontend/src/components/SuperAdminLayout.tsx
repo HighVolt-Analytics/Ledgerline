@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Building2, ChevronDown, Moon, Sun } from "lucide-react";
+import { Building2, ChevronDown, Moon, Settings2, Sun } from "lucide-react";
 import { useState } from "react";
 import { LogoBlock } from "@/components/Logo";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
@@ -48,6 +48,21 @@ export function SuperAdminLayout() {
           >
             <Building2 className="h-[18px] w-[18px] shrink-0" />
             Clients
+          </NavLink>
+          <NavLink
+            to="/platform/credit-settings"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors mt-1",
+                isActive
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              )
+            }
+            data-testid="nav-credit-settings"
+          >
+            <Settings2 className="h-[18px] w-[18px] shrink-0" />
+            Credit settings
           </NavLink>
         </nav>
       </aside>

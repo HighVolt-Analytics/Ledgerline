@@ -2,6 +2,7 @@
 
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,9 @@ from app.models.auth_account import AuthAccount
 from app.models.tenant import Tenant
 from app.models.user import SUPER_ADMIN_ROLE, User
 from app.models.user_tenant_mapping import UserTenantMapping
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -39,12 +43,71 @@ def filter_switchable_memberships(
     return [m for m in memberships if membership_is_switchable(m)]
 
 
+def membership_log_summary(m: TenantMembershipAccount) -> dict[str, Any]:
+    return {
+        "user_id": m.user_id,
+        "tenant_id": str(m.tenant_id),
+        "tenant_slug": m.tenant_slug,
+        "role": m.role,
+        "default_tenant": m.default_tenant,
+        "is_platform": m.is_platform,
+        "switchable": membership_is_switchable(m),
+    }
+
+
+def log_membership_enumeration(
+    *,
+    auth_account_id: int,
+    email: str,
+    source: str,
+    all_memberships: list[TenantMembershipAccount],
+    mapping_count: int = 0,
+    email_pivot_added: int = 0,
+) -> list[TenantMembershipAccount]:
+    """Filter to switchable memberships and emit a structured audit log."""
+    switchable = filter_switchable_memberships(all_memberships)
+    hidden = [m for m in all_memberships if not membership_is_switchable(m)]
+
+    logger.info(
+        "login_memberships_enumerated",
+        source=source,
+        email=email,
+        auth_account_id=auth_account_id,
+        mapping_count=mapping_count,
+        email_pivot_added=email_pivot_added,
+        total_linked=len(all_memberships),
+        switchable_count=len(switchable),
+        hidden_count=len(hidden),
+        switchable_accounts=[membership_log_summary(m) for m in switchable],
+        hidden_accounts=[membership_log_summary(m) for m in hidden],
+    )
+    return switchable
+
+
 async def list_memberships_for_auth_account(
-    session: AsyncSession, *, auth_account_id: int
+    session: AsyncSession,
+    *,
+    auth_account_id: int,
+    log_source: str | None = None,
 ) -> list[TenantMembershipAccount]:
     account = await session.get(AuthAccount, auth_account_id)
     if not account:
+        if log_source:
+            logger.info(
+                "login_memberships_skipped",
+                source=log_source,
+                auth_account_id=auth_account_id,
+                reason="auth_account_not_found",
+            )
         return []
+
+    if log_source:
+        logger.info(
+            "login_memberships_lookup_started",
+            source=log_source,
+            auth_account_id=auth_account_id,
+            email=account.email,
+        )
 
     rows = (
         await session.execute(
@@ -63,8 +126,10 @@ async def list_memberships_for_auth_account(
         )
     ).all()
 
-    by_tenant: dict[int, TenantMembershipAccount] = {}
+    by_tenant: dict[uuid.UUID, TenantMembershipAccount] = {}
+    mapping_count = 0
     for user, tenant, mapping in rows:
+        mapping_count += 1
         by_tenant[tenant.id] = TenantMembershipAccount(
             user_id=user.id,
             tenant_id=tenant.id,
@@ -91,9 +156,11 @@ async def list_memberships_for_auth_account(
         )
     ).all()
 
+    email_pivot_added = 0
     for user, tenant in email_rows:
         if tenant.id in by_tenant:
             continue
+        email_pivot_added += 1
         mapping = (
             await session.execute(
                 select(UserTenantMapping).where(
@@ -114,4 +181,14 @@ async def list_memberships_for_auth_account(
             is_platform_shadow=user.is_platform_shadow,
         )
 
-    return sorted(by_tenant.values(), key=lambda item: item.tenant_name)
+    all_memberships = sorted(by_tenant.values(), key=lambda item: item.tenant_name)
+    if log_source:
+        log_membership_enumeration(
+            auth_account_id=auth_account_id,
+            email=account.email,
+            source=log_source,
+            all_memberships=all_memberships,
+            mapping_count=mapping_count,
+            email_pivot_added=email_pivot_added,
+        )
+    return all_memberships

@@ -15,7 +15,8 @@ if config.config_file_name:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# ConfigParser treats % as interpolation; URL-encoded passwords need doubling.
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:

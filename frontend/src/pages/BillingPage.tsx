@@ -1,4 +1,5 @@
-import { Coins } from "lucide-react";
+import { useState } from "react";
+import { Coins, Crown, Mail, MessageCircle, X } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { Badge } from "@/components/ui/badge";
@@ -6,25 +7,38 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { useAuth } from "@/context/AuthContext";
-import { useBilling, useBillingMutations } from "@/hooks/useBilling";
+import { useBilling, useBillingMutations, useBillingUsage } from "@/hooks/useBilling";
+import { countryByCode } from "@/data/orgSetup";
 import { cn } from "@/lib/cn";
+import { studioMonthlyCredits } from "@/lib/billingUtils";
 
-const USAGE = [
-  { action: "OCR Parse a document", credits: 3 },
-  { action: "GST Input Credit validation", credits: 1 },
-  { action: "Post to Ledger", credits: 5 },
-  { action: "Vault storage per GB/month", credits: 2 },
-];
+function planLabel(plan: string) {
+  if (plan === "studio") return "Studio";
+  if (plan === "enterprise") return "Enterprise";
+  return "Free";
+}
+
+function formatEventType(type: string) {
+  return type.replace(/_/g, " ");
+}
 
 export function BillingPage() {
   const { user } = useAuth();
-  const { data: billing, isLoading, error } = useBilling(Boolean(user));
-  const { updateSettings, purchasePack } = useBillingMutations();
+  const { data: billing, isLoading, error, refetch } = useBilling(Boolean(user));
+  const [usagePage, setUsagePage] = useState(1);
+  const { data: usage } = useBillingUsage(usagePage, Boolean(user && billing));
+  const { topUp, upgradeToStudio } = useBillingMutations();
+
+  const [manageOpen, setManageOpen] = useState(false);
+  const [topUpOpen, setTopUpOpen] = useState(false);
+  const [topUpAmount, setTopUpAmount] = useState<number | undefined>(50);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   if (!user) {
     return (
       <div>
-        <PageHeader title="Billing & Credits" subtitle="Pay-as-you-go processing credits for your organisation." />
+        <PageHeader title="Billing & Credits" subtitle="Processing credits for your organisation." />
         <p className="text-sm text-muted-foreground">Sign in to manage billing.</p>
       </div>
     );
@@ -33,16 +47,16 @@ export function BillingPage() {
   if (isLoading && !billing) {
     return (
       <div>
-        <PageHeader title="Billing & Credits" subtitle="Pay-as-you-go processing credits for your organisation." />
+        <PageHeader title="Billing & Credits" subtitle="Processing credits for your organisation." />
         <PageLoader label="Loading billing…" />
       </div>
     );
   }
 
-  if (error || !billing) {
+  if (error || !billing || !billing.plan_info) {
     return (
       <div>
-        <PageHeader title="Billing & Credits" subtitle="Pay-as-you-go processing credits for your organisation." />
+        <PageHeader title="Billing & Credits" subtitle="Processing credits for your organisation." />
         <p className="text-sm text-destructive">
           {error instanceof Error ? error.message : "Failed to load billing"}
         </p>
@@ -50,15 +64,64 @@ export function BillingPage() {
     );
   }
 
-  const currentPackName =
-    billing.packs.find((p) => p.id === billing.current_pack)?.name ?? "Starter";
+  const planInfo = billing.plan_info;
+  const country = countryByCode(planInfo.region);
+  const symbol = country.symbol;
+  const topUpCredits =
+    topUpAmount != null ? Math.floor(topUpAmount * planInfo.topup_factor) : 0;
+  const studioCredits = studioMonthlyCredits(planInfo.region);
+
+  async function handleTopUp() {
+    if (topUpAmount == null || topUpAmount <= 0) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await topUp(topUpAmount);
+      setMessage("Top-up successful — credits added to your balance.");
+      setTopUpOpen(false);
+      await refetch();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Top-up failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUpgrade() {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await upgradeToStudio();
+      setMessage("Upgraded to Studio — full monthly credits applied.");
+      setManageOpen(false);
+      await refetch();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Upgrade failed");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div>
       <PageHeader
         title="Billing & Credits"
-        subtitle="Pay-as-you-go processing credits for your organisation."
+        subtitle="Pay-as-you-go processing credits based on document pages."
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setManageOpen(true)}>
+              Manage plan
+            </Button>
+            {billing.can_top_up && (
+              <Button onClick={() => setTopUpOpen(true)}>Top up</Button>
+            )}
+          </div>
+        }
       />
+
+      {message && (
+        <p className="mb-4 text-sm text-[hsl(var(--chart-1))]">{message}</p>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3 mb-6">
         <Card className="p-5 lg:col-span-1 bg-gradient-to-br from-primary/8 to-transparent border-primary/20">
@@ -69,102 +132,206 @@ export function BillingPage() {
           <p className="text-3xl font-semibold tnum" data-testid="text-credit-balance">
             {billing.balance.toLocaleString()}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">Current pack: {currentPackName}</p>
-          <div className="mt-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="space-y-1">
-                <p className="text-sm">Auto-recharge</p>
-                <p className="text-xs text-muted-foreground">
-                  Top up this organisation automatically when credits run low.
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={billing.auto_recharge}
-                data-testid="toggle-auto-recharge"
-                onClick={() => void updateSettings({ auto_recharge: !billing.auto_recharge })}
-                className={cn(
-                  "relative inline-flex h-5 w-9 shrink-0 rounded-full border border-transparent transition-colors",
-                  billing.auto_recharge ? "bg-primary" : "bg-input"
-                )}
-              >
-                <span
-                  className={cn(
-                    "pointer-events-none block h-4 w-4 rounded-full bg-background shadow-sm transition-transform mt-0.5",
-                    billing.auto_recharge ? "translate-x-4" : "translate-x-0.5"
-                  )}
-                />
-              </button>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-muted-foreground">
-                Recharge at
-                <span className="font-medium mx-1">{billing.threshold.toLocaleString()} credits</span>
-                when balance drops below threshold.
-              </p>
-              <NumericInput
-                value={billing.threshold}
-                onValueChange={(n) => {
-                  if (n != null) void updateSettings({ threshold: n });
-                }}
-                wrapperClassName="w-20 shrink-0"
-                className="h-7 text-xs"
-                data-testid="input-threshold"
-              />
-            </div>
-          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Plan: <span className="font-medium">{planLabel(billing.plan)}</span>
+            {" · "}
+            {billing.credits_consumed.toLocaleString()} consumed
+          </p>
+          {billing.fy_days_remaining != null && (
+            <p className="text-xs text-muted-foreground mt-2">
+              {billing.fy_days_remaining} days left in current credit year
+            </p>
+          )}
         </Card>
 
         <Card className="p-5 lg:col-span-2">
           <h2 className="text-sm font-semibold mb-3">Credit usage</h2>
           <ul className="space-y-2">
-            {USAGE.map((row) => (
-              <li
-                key={row.action}
-                className="flex items-center justify-between text-sm py-1.5 border-b border-border last:border-0"
-              >
-                <span>{row.action}</span>
-                <span className="tnum text-muted-foreground">{row.credits} credits</span>
-              </li>
-            ))}
+            <li className="flex items-center justify-between text-sm py-1.5 border-b border-border">
+              <span>Per page processed</span>
+              <span className="tnum text-muted-foreground">
+                {billing.credits_per_page} credits
+              </span>
+            </li>
+            <li className="flex items-center justify-between text-sm py-1.5 border-b border-border">
+              <span>Monthly allowance ({planLabel(billing.plan)})</span>
+              <span className="tnum text-muted-foreground">
+                {planInfo.monthly_credits.toLocaleString()} credits
+              </span>
+            </li>
+            <li className="flex items-center justify-between text-sm py-1.5 border-b border-border">
+              <span>User seats</span>
+              <span className="tnum text-muted-foreground">
+                up to {planInfo.max_users}
+              </span>
+            </li>
+            <li className="flex items-center justify-between text-sm py-1.5">
+              <span className="flex items-center gap-2">
+                <MessageCircle className="h-3.5 w-3.5" /> Social ·{" "}
+                <Mail className="h-3.5 w-3.5" /> Email
+              </span>
+              <span className="text-muted-foreground text-xs">
+                {planInfo.social_integration && planInfo.email_integration
+                  ? "Included"
+                  : "Upgrade to Studio"}
+              </span>
+            </li>
           </ul>
         </Card>
       </div>
 
-      <h2 className="text-sm font-semibold mb-3">Credit packs</h2>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {billing.packs.map((pack) => (
-          <Card
-            key={pack.id}
-            className={cn(
-              "p-4 flex flex-col",
-              pack.popular && "border-primary/40 ring-1 ring-primary/20"
-            )}
-            data-testid={`pack-${pack.id}`}
-          >
-            {pack.popular && (
-              <Badge variant="outline" className="w-fit mb-2 border-primary/30 text-primary">
-                Popular
-              </Badge>
-            )}
-            <p className="font-semibold">{pack.name}</p>
-            <p className="text-2xl font-semibold tnum mt-1">
-              {pack.credits.toLocaleString()}
-              <span className="text-sm font-normal text-muted-foreground ml-1">credits</span>
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">A${pack.price_aud}</p>
+      <h2 className="text-sm font-semibold mb-3">Usage history</h2>
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/40 text-left">
+                <th className="px-4 py-2 font-medium">When</th>
+                <th className="px-4 py-2 font-medium">Event</th>
+                <th className="px-4 py-2 font-medium">Detail</th>
+                <th className="px-4 py-2 font-medium text-right">Credits</th>
+                <th className="px-4 py-2 font-medium text-right">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(usage?.items ?? []).map((row) => (
+                <tr key={row.id} className="border-b border-border last:border-0">
+                  <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                    {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
+                  </td>
+                  <td className="px-4 py-2.5 capitalize">{formatEventType(row.event_type)}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground max-w-xs truncate">
+                    {row.description}
+                    {row.pages != null && row.pages > 0 && (
+                      <span className="ml-1">({row.pages} pg)</span>
+                    )}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-4 py-2.5 text-right tnum",
+                      row.credits_delta < 0 ? "text-destructive" : "text-[hsl(var(--chart-1))]"
+                    )}
+                  >
+                    {row.credits_delta > 0 ? "+" : ""}
+                    {row.credits_delta.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tnum">{row.balance_after.toLocaleString()}</td>
+                </tr>
+              ))}
+              {(usage?.items ?? []).length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                    No usage recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {usage && usage.pages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border">
             <Button
-              className="mt-4 w-full"
-              variant={pack.popular ? "default" : "outline"}
-              onClick={() => void purchasePack(pack.id)}
-              data-testid={`button-buy-${pack.id}`}
+              variant="outline"
+              size="sm"
+              disabled={usagePage <= 1}
+              onClick={() => setUsagePage((p) => Math.max(1, p - 1))}
             >
-              Buy pack
+              Previous
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Page {usage.page} of {usage.pages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={usagePage >= usage.pages}
+              onClick={() => setUsagePage((p) => p + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        )}
+      </Card>
+
+      {manageOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <Card className="w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Crown className="h-4 w-4 text-primary" />
+                Manage plan
+              </h3>
+              <button type="button" onClick={() => setManageOpen(false)} aria-label="Close">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Current plan: <Badge variant="outline">{planLabel(billing.plan)}</Badge>
+            </div>
+            {billing.plan === "free" && billing.can_upgrade_studio && (
+              <div className="rounded-md border border-border p-3 space-y-2">
+                <p className="font-medium">Studio</p>
+                <p className="text-sm text-muted-foreground">
+                  {symbol}
+                  {planInfo.studio_monthly_price.toLocaleString()}/month ·{" "}
+                  {studioCredits.toLocaleString()} credits · email & social integrations
+                </p>
+                <Button className="w-full" disabled={busy} onClick={() => void handleUpgrade()}>
+                  Upgrade to Studio
+                </Button>
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Payment simulated — Stripe integration coming soon.
+                </p>
+              </div>
+            )}
+            {billing.is_enterprise && (
+              <p className="text-sm">
+                Enterprise plans are managed by our sales team. Contact sales for changes.
+              </p>
+            )}
+            {billing.plan === "studio" && (
+              <p className="text-sm text-muted-foreground">
+                You are on Studio. Need more? Use Top up or contact sales for Enterprise.
+              </p>
+            )}
+            <Button variant="outline" className="w-full" onClick={() => setManageOpen(false)}>
+              Close
             </Button>
           </Card>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {topUpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <Card className="w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold">Top up credits</h3>
+              <button type="button" onClick={() => setTopUpOpen(false)} aria-label="Close">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Enter amount in {country.currency}. Credits are added instantly (demo payment).
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">{symbol}</span>
+              <NumericInput
+                value={topUpAmount}
+                onValueChange={setTopUpAmount}
+                className="flex-1"
+              />
+            </div>
+            <p className="text-sm">
+              You will receive{" "}
+              <span className="font-semibold tnum">{topUpCredits.toLocaleString()}</span> credits
+            </p>
+            <Button className="w-full" disabled={busy || !topUpAmount} onClick={() => void handleTopUp()}>
+              Pay {symbol}
+              {topUpAmount?.toLocaleString() ?? "0"} (simulated)
+            </Button>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
