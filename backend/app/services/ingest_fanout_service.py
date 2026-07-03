@@ -9,6 +9,12 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.services.credit_service import (
+    InsufficientCreditsError,
+    assert_can_upload,
+    charge_upload_credits,
+)
+from app.services.document_page_count import count_document_pages
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.audit_service import log_event
 from app.services.document_duplicate_service import find_invoice_by_file_hash
@@ -65,10 +71,14 @@ async def _create_invoice_from_bytes(
     purchase_document_type: str | None,
     source: IngestSourceMetadata | None = None,
     log_upload_event: bool = True,
+    page_count: int | None = None,
 ) -> int:
     existing = await find_invoice_by_file_hash(session, file_hash, tenant_id=tenant_id)
     if existing is not None:
         raise DuplicateUploadError("Duplicate file already uploaded")
+
+    pages = page_count if page_count is not None else count_document_pages(data, filename)
+    await assert_can_upload(session, tenant_id, pages=pages)
 
     meta = source or IngestSourceMetadata()
     attachment_name = meta.email_attachment_name or filename
@@ -121,6 +131,17 @@ async def _create_invoice_from_bytes(
             invoice_id=inv.id,
             detail={"path": stored, "vendor_slug": vendor_slug, "file_hash": file_hash},
         )
+
+    settings = get_settings()
+    await charge_upload_credits(
+        session,
+        tenant_id,
+        pages=pages,
+        idempotency_key=file_hash,
+        invoice_id=inv.id,
+        filename=filename,
+        document_ai_provider=settings.default_document_ai_provider,
+    )
     await session.flush()
     return inv.id
 
@@ -143,6 +164,23 @@ async def ingest_file_with_fanout(
     PDFs may be split when multiple document headings are detected; other
     capture types always create a single invoice row.
     """
+    meta = source or IngestSourceMetadata()
+    channel = (meta.capture_source or "upload").lower()
+    if channel in {"whatsapp", "viber"}:
+        from app.services.credit_service import PlanFeatureBlockedError, assert_can_ingest_via_channel
+
+        try:
+            await assert_can_ingest_via_channel(session, tenant_id, channel="social")
+        except PlanFeatureBlockedError as exc:
+            raise exc
+    elif channel in {"email", "mailbox", "graph"}:
+        from app.services.credit_service import PlanFeatureBlockedError, assert_can_ingest_via_channel
+
+        try:
+            await assert_can_ingest_via_channel(session, tenant_id, channel="email")
+        except PlanFeatureBlockedError as exc:
+            raise exc
+
     settings = get_settings()
     parent_hash = compute_sha256_bytes(data)
     normalized_type = normalize_purchase_document_type(purchase_document_type)
@@ -221,6 +259,7 @@ async def ingest_file_with_fanout(
             segment_type = normalized_type or purchase_document_type_from_heading(segment.heading_kind)
             segment_name = segment_upload_filename(filename, index, segment_count)
 
+            segment_pages = segment.end_page - segment.start_page + 1
             invoice_id = await _create_invoice_from_bytes(
                 session,
                 tenant_id=tenant_id,
@@ -232,6 +271,7 @@ async def ingest_file_with_fanout(
                 purchase_document_type=segment_type,
                 source=source,
                 log_upload_event=False,
+                page_count=segment_pages,
             )
             invoice_ids.append(invoice_id)
 

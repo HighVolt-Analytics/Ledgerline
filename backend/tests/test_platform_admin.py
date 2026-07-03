@@ -16,6 +16,7 @@ from app.services.auth_service import hash_password
 from app.services.platform_service import (
     create_client_tenant,
     delete_client_tenant,
+    list_client_tenant_members,
     list_client_tenants,
     provision_client_tenant_access,
 )
@@ -201,6 +202,56 @@ async def test_provision_client_tenant_access_is_idempotent(db_session: AsyncSes
         )
     ).scalar_one()
     assert int(user_count) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_client_tenant_members_returns_roles(db_session: AsyncSession) -> None:
+    client_id = uuid.uuid4()
+    db_session.add(Tenant(id=client_id, name="Acme", slug="acme", is_platform=False))
+    user = User(
+        tenant_id=client_id,
+        email="jane@acme.test",
+        password_hash=hash_password("password123"),
+        full_name="Jane Doe",
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    db_session.add(
+        UserTenantMapping(
+            user_id=user.id,
+            tenant_id=client_id,
+            role=TenantRole.ADMIN.value,
+            status="active",
+            is_active=True,
+        )
+    )
+    await db_session.flush()
+
+    result = await list_client_tenant_members(db_session, tenant_id=client_id)
+    assert result is not None
+    members, pending = result
+    assert len(members) == 1
+    assert members[0].email == "jane@acme.test"
+    assert members[0].role == TenantRole.ADMIN.value
+    assert members[0].is_active is True
+    assert pending == []
+
+
+@pytest.mark.asyncio
+async def test_list_client_tenant_members_rejects_platform_tenant(
+    db_session: AsyncSession,
+) -> None:
+    platform_id = uuid.uuid4()
+    db_session.add(
+        Tenant(id=platform_id, name="Platform", slug="platform", is_platform=True)
+    )
+    await db_session.flush()
+
+    result = await list_client_tenant_members(db_session, tenant_id=platform_id)
+    assert result is None
 
 
 @pytest.mark.asyncio

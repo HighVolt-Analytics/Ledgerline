@@ -45,21 +45,16 @@ def test_resolve_blob_candidates_includes_document_type_folder_encoding_variants
     assert any("DT-03 \u00b7 Cargo Clearance Permit" in name for name in names)
 
 
-def test_billing_lazy_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_billing_legacy_json_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path))
     from app.config import get_settings
-    from app.services.billing_io import load_billing_for_tenant
+    from app.services.billing_io import _billing_path, remove_billing_for_tenant
 
     get_settings.cache_clear()
-    legacy = tmp_path / "billing.json"
-    legacy.write_text(
-        '{"orgs": {"'
-        + str(TESTING_TENANT_UUID)
-        + '": {"balance": 99, "current_pack": "team", "auto_recharge": false, "threshold": 10}}}\n',
-        encoding="utf-8",
-    )
-    state = load_billing_for_tenant(TESTING_TENANT_UUID)
-    assert state.balance == 99
-    per_tenant = tmp_path / "tenants" / str(TESTING_TENANT_UUID) / "billing.json"
+    per_tenant = _billing_path(TESTING_TENANT_UUID)
+    per_tenant.parent.mkdir(parents=True, exist_ok=True)
+    per_tenant.write_text('{"balance": 99}\n', encoding="utf-8")
     assert per_tenant.is_file()
+    remove_billing_for_tenant(TESTING_TENANT_UUID)
+    assert not per_tenant.is_file()
     get_settings.cache_clear()

@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.models.tenant import Tenant
 
-DEFAULT_COUNTRY = "AU"
-DEFAULT_TIMEZONE = "Australia/Sydney"
-DEFAULT_LOCALE = "en-AU"
+DEFAULT_COUNTRY = "SG"
+DEFAULT_TIMEZONE = "Asia/Singapore"
+DEFAULT_LOCALE = "en-SG"
 
 # Primary business timezone per supported country (institution default).
 COUNTRY_DEFAULTS: dict[str, dict[str, str]] = {

@@ -96,6 +96,11 @@ const LedgerLinkPage = lazy(() =>
 const ClientsPage = lazy(() =>
   import("@/pages/platform/ClientsPage").then((m) => ({ default: m.ClientsPage }))
 );
+const CreditSettingsPage = lazy(() =>
+  import("@/pages/platform/CreditSettingsPage").then((m) => ({
+    default: m.CreditSettingsPage,
+  }))
+);
 const TenantSettingsPage = lazy(() =>
   import("@/pages/platform/TenantSettingsPage").then((m) => ({
     default: m.TenantSettingsPage,
@@ -365,6 +370,14 @@ export default function App() {
                 element={
                   <LazyPage>
                     <TenantSettingsPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="credit-settings"
+                element={
+                  <LazyPage>
+                    <CreditSettingsPage />
                   </LazyPage>
                 }
               />

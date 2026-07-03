@@ -1,6 +1,8 @@
 import type {
   ApprovalPolicy,
   BillingState,
+  BillingUsageHistory,
+  PlatformCreditSettings,
   AuditLogEntry,
   ActivityItem,
   ApiEnvelope,
@@ -184,21 +186,21 @@ export function setAuthToken(token: string | null) {
 }
 
 export function setAuthUser(user: AuthUser | null) {
-  const prevTenant = authUser?.tenant_id ?? null;
-  const nextTenant = user?.tenant_id ?? null;
+  const prevTenantId = resolveActiveTenantId();
   authUser = user;
-  if (prevTenant !== nextTenant) {
+  const nextTenantId = resolveActiveTenantId();
+  if (prevTenantId !== nextTenantId) {
     clearGetCache();
   }
 }
 
-function resolveTenantScopeId(): string | null {
+function resolveActiveTenantId(): string | null {
   return getActiveTenantId();
 }
 
 function getScopedAuthHeaders(init?: RequestInit): Headers {
   const headers = withAuthHeaders(init);
-  const tid = resolveTenantScopeId();
+  const tid = resolveActiveTenantId();
   if (tid) {
     headers.set("X-Tenant-Id", tid);
   }
@@ -212,8 +214,7 @@ export function clearGetCache() {
 }
 
 function getRequestKey(path: string, method: string) {
-  const tid = resolveTenantScopeId();
-  return `${tid ?? "anon"}:${method}:${path}`;
+  return `${resolveActiveTenantId() ?? "anon"}:${method}:${path}`;
 }
 
 function invalidateGetCache() {
@@ -578,6 +579,8 @@ export const api = {
   listPlatformTenants: () => request<PlatformTenantSummary[]>("/api/platform/tenants"),
   getPlatformTenant: (tenantId: string) =>
     request<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}`),
+  listPlatformTenantMembers: (tenantId: string) =>
+    request<TenantMembersList>(`/api/platform/tenants/${tenantId}/members`),
   createPlatformTenant: (body: import("@/api/types").CreatePlatformTenantBody) =>
     request<PlatformTenantDetail>("/api/platform/tenants", {
       method: "POST",
@@ -1179,18 +1182,53 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<LedgerLinkResponse>(path);
   },
-  getBilling: () => request<BillingState>("/api/billing"),
-  patchBilling: (body: { auto_recharge?: boolean; threshold?: number }) =>
-    request<BillingState>("/api/billing", {
+  getBilling: (options?: FreshRequestOptions) => {
+    const path = "/api/billing";
+    if (options?.fresh) bustGetCache(path);
+    return request<BillingState>(path);
+  },
+  getBillingUsage: (page = 1, pageSize = 50, options?: FreshRequestOptions) => {
+    const path = `/api/billing/usage?page=${page}&page_size=${pageSize}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<BillingUsageHistory>(path);
+  },
+  topUpBilling: (amount: number) =>
+    request<BillingState>("/api/billing/top-up", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount }),
+    }),
+  upgradeBillingPlan: () =>
+    request<BillingState>("/api/billing/upgrade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan: "studio" }),
+    }),
+  getPlatformCreditSettings: () =>
+    request<PlatformCreditSettings>("/api/platform/credit-settings"),
+  updatePlatformCreditSettings: (body: Partial<PlatformCreditSettings>) =>
+    request<PlatformCreditSettings>("/api/platform/credit-settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  purchaseBillingPack: (packId: string) =>
-    request<BillingState>("/api/billing/purchase", {
-      method: "POST",
+  getPlatformTenantUsage: (tenantId: string, page = 1, pageSize = 50) =>
+    request<BillingUsageHistory>(
+      `/api/platform/tenants/${tenantId}/usage?page=${page}&page_size=${pageSize}`
+    ),
+  updatePlatformTenantBilling: (
+    tenantId: string,
+    body: {
+      plan?: string;
+      enterprise_monthly_credits?: number;
+      credits_per_page_override?: number;
+      grant_credits?: number;
+    }
+  ) =>
+    request<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}/billing`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pack_id: packId }),
+      body: JSON.stringify(body),
     }),
   getReportsAnalytics: (month: string) =>
     request<ReportsAnalytics>(`/api/reports/analytics?month=${encodeURIComponent(month)}`),

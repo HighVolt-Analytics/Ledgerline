@@ -1,4 +1,4 @@
-"""Ledger publish — workbook export, billing credits, audit trail."""
+"""Ledger publish — workbook export and audit trail."""
 
 from __future__ import annotations
 
@@ -10,11 +10,9 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.tenant_child_tables import journal_entries_for_invoice
 from app.services.audit_service import log_event
-from app.services.billing_io import load_billing_for_tenant, save_billing_for_tenant
 from app.services.document_ref_service import display_document_ref
 from app.services.workbook_writer import write_workbook_for_invoice
 
-PUBLISH_CREDIT_COST = 5
 PUBLISH_TARGET = "workbook"
 PROCESSED_LEDGER_EVENTS = frozenset(
     {"invoice_processed", "purchase_document_processed"},
@@ -96,18 +94,6 @@ async def is_published_to_ledger(session: AsyncSession, invoice_id: int) -> bool
     return invoice_id in await published_invoice_ids(session, [invoice_id])
 
 
-def _deduct_publish_credits(tenant_id: int, *, skip_if_insufficient: bool) -> bool:
-    """Return True when credits were deducted; False when skipped (auto path only)."""
-    state = load_billing_for_tenant(tenant_id)
-    if state.balance < PUBLISH_CREDIT_COST:
-        if skip_if_insufficient:
-            return False
-        raise InsufficientCreditsError(state.balance, PUBLISH_CREDIT_COST)
-    state.balance -= PUBLISH_CREDIT_COST
-    save_billing_for_tenant(tenant_id, state)
-    return True
-
-
 async def publish_invoice_to_ledger(
     session: AsyncSession,
     invoice: Invoice,
@@ -122,6 +108,7 @@ async def publish_invoice_to_ledger(
 
     Returns True when a new publish was recorded; False when already published.
     """
+    _ = skip_if_insufficient_credits  # credits charged on upload
     if invoice.status != InvoiceStatus.PROCESSED:
         raise ValueError(
             f"Only processed invoices can be posted (current: {invoice.status.value})"
@@ -155,25 +142,6 @@ async def publish_invoice_to_ledger(
             return False
         raise ValueError("Invoice date is required before posting to ledger")
 
-    credits_charged = _deduct_publish_credits(
-        invoice.tenant_id,
-        skip_if_insufficient=auto and skip_if_insufficient_credits,
-    )
-    if not credits_charged and auto:
-        await log_event(
-            session,
-            "publish_skipped",
-            invoice_id=invoice.id,
-            detail={
-                "reason": "insufficient_credits",
-                "required": PUBLISH_CREDIT_COST,
-                "document_ref": display_document_ref(invoice),
-            },
-            actor_name=actor_name or "System",
-            actor_email=actor_email,
-        )
-        return False
-
     workbook_path = await write_workbook_for_invoice(session, invoice)
     if workbook_path is None:
         if auto:
@@ -201,7 +169,6 @@ async def publish_invoice_to_ledger(
             "document_ref": doc_ref,
             "vendor": invoice.vendor,
             "invoice_no": invoice.invoice_no,
-            "credits_charged": PUBLISH_CREDIT_COST if credits_charged else 0,
             "auto": auto,
         },
         actor_name=actor_name or ("System" if auto else None),

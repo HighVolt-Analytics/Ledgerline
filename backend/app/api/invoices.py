@@ -72,6 +72,7 @@ from app.services.document_type_playbook_service import (
 )
 from app.services.field_extraction_confidence import compute_extraction_field_confidence
 from app.services.ingest_fanout_service import DuplicateUploadError, ingest_upload_file
+from app.services.credit_service import InsufficientCreditsError, PlanFeatureBlockedError
 from app.services.purchase_dossier_service import build_purchase_dossier
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 from app.tenant_scoped import get_for_tenant
@@ -536,6 +537,13 @@ async def upload_invoice(
         )
     except DuplicateUploadError:
         raise HTTPException(409, "Duplicate file already uploaded") from None
+    except InsufficientCreditsError as exc:
+        raise HTTPException(
+            402,
+            f"Insufficient credits: need {exc.required}, balance {exc.balance}. Top up to continue.",
+        ) from exc
+    except PlanFeatureBlockedError as exc:
+        raise HTTPException(403, str(exc)) from exc
 
     primary = await _get_invoice_for_tenant(db, result.invoice_ids[0], ctx.tenant_id)
     if not defer_processing:
