@@ -30,6 +30,7 @@ import {
 import { isTokenExpired, tenantIdFromToken, userFromToken } from "@/lib/authToken";
 import { refreshAccessTokenSingleFlight } from "@/lib/authTokenRefresh";
 import { shouldApplyAuthSync, subscribeAuthSync } from "@/lib/authSync";
+import { clearAllTenantCaches, tenantSessionWillChange } from "@/lib/tenantSession";
 import { homePathForRole } from "@/lib/roles";
 import { withRouterBasename } from "@/lib/routerBasename";
 import { queryClient } from "@/lib/queryClient";
@@ -88,16 +89,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       memberships?: TenantAccountSummary[],
       cachePolicy: SessionCachePolicy = "full"
     ) => {
+      const tenantChanged = tenantSessionWillChange(access);
+      if (tenantChanged) {
+        clearAllTenantCaches();
+      }
+
       persistAuthSuccess({
         access_token: access,
         refresh_token: refresh,
         user: profile,
         memberships,
       });
-      const previousTenantId = tenantIdFromToken(getAccessToken());
-      const nextTenantId = tenantIdFromToken(access);
-      const tenantChanged =
-        Boolean(previousTenantId && nextTenantId) && previousTenantId !== nextTenantId;
       const effectiveCachePolicy = tenantChanged ? "full" : cachePolicy;
 
       setAuthToken(access);
@@ -166,6 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         data.memberships
       );
       rememberLastTenant(tenantId);
+      window.location.assign(withRouterBasename(homePathForRole(data.user.role)));
     },
     [applySession, tenantSelectToken]
   );

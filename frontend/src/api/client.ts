@@ -82,8 +82,8 @@ import type {
 } from "./types";
 
 import { resolveApiBase } from "@/lib/apiBase";
-import { decodeJwtPayload } from "@/lib/authToken";
-import { getRefreshToken } from "@/lib/authSession";
+import { tenantIdFromToken } from "@/lib/authToken";
+import { getAccessToken, getRefreshToken } from "@/lib/authSession";
 
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE = resolveApiBase();
@@ -169,6 +169,15 @@ async function tryRefreshSession(): Promise<boolean> {
   }
 }
 
+export function getActiveTenantId(): string | null {
+  if (authToken) {
+    const fromJwt = tenantIdFromToken(authToken);
+    if (fromJwt) return fromJwt;
+  }
+  if (authUser?.tenant_id) return String(authUser.tenant_id);
+  return tenantIdFromToken(getAccessToken());
+}
+
 export function setAuthToken(token: string | null) {
   authToken = token;
   clearGetCache();
@@ -184,13 +193,7 @@ export function setAuthUser(user: AuthUser | null) {
 }
 
 function resolveTenantScopeId(): string | null {
-  if (authToken) {
-    const payload = decodeJwtPayload(authToken);
-    const fromJwt = payload?.tenant_id ?? payload?.org_id;
-    if (fromJwt) return String(fromJwt);
-  }
-  if (authUser?.tenant_id) return String(authUser.tenant_id);
-  return null;
+  return getActiveTenantId();
 }
 
 function getScopedAuthHeaders(init?: RequestInit): Headers {

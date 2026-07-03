@@ -20,6 +20,7 @@ export default defineConfig({
       "src/lib/salesRegisterQueue.test.ts",
       "src/lib/collectionsQueue.test.ts",
       "src/lib/authSync.test.ts",
+      "src/lib/tenantSession.test.ts",
     ],
   },
 });
