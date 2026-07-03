@@ -7,20 +7,22 @@ export default function HeroFloatingVisual() {
   return (
     <motion.div
       className="hero-visual"
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.85, ease: EASE, delay: 0.18 }}
+      initial={{ opacity: 0, y: 28 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 1, ease: EASE, delay: 0.28 }}
     >
-      <div className="hero-visual__glow" aria-hidden="true" />
-      <img
-        src={assets.hero}
-        alt="Ledgerline invoice-to-payment automation dashboard"
-        className="hero-visual__img"
-        loading="eager"
-        decoding="async"
-      />
-      <div className="hero-visual__fade-left" aria-hidden="true" />
-      <div className="hero-visual__fade-bottom" aria-hidden="true" />
+      <div className="hero-visual__stage">
+        <img
+          src={assets.hero}
+          alt="Ledgerline invoice-to-payment automation dashboard"
+          className="hero-visual__img"
+          loading="eager"
+          decoding="async"
+        />
+        <div className="hero-visual__fade-top" aria-hidden="true" />
+        <div className="hero-visual__fade-bottom" aria-hidden="true" />
+        <div className="hero-visual__fade-sides" aria-hidden="true" />
+      </div>
     </motion.div>
   );
 }
