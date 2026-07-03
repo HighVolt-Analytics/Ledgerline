@@ -4,6 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { FileText, Search } from "lucide-react";
 import { api } from "@/api/client";
 import type { Invoice } from "@/api/types";
+import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { filterNavItems, type FlatNavItem } from "@/lib/appNavigation";
 import { documentDisplayRef } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -66,6 +68,7 @@ export function useGlobalSearchHotkey(onToggle: () => void) {
 
 export function GlobalSearchBar({ navItems, className }: GlobalSearchBarProps) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -75,6 +78,15 @@ export function GlobalSearchBar({ navItems, className }: GlobalSearchBarProps) {
   const [invoiceRows, setInvoiceRows] = useState<SearchRow[]>([]);
   const [invoiceLoading, setInvoiceLoading] = useState(false);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
+
+  useResetOnTenantChange(() => {
+    setInvoiceRows([]);
+    setQuery("");
+    setOpen(false);
+    setInvoiceLoading(false);
+    setInvoiceError(null);
+    setActiveIndex(0);
+  });
 
   const shortcutLabel = isMacPlatform() ? "⌘K" : "Ctrl+K";
   const trimmedQuery = query.trim();
@@ -183,7 +195,7 @@ export function GlobalSearchBar({ navItems, className }: GlobalSearchBarProps) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [open, trimmedQuery]);
+  }, [open, trimmedQuery, user?.tenant_id]);
 
   useEffect(() => {
     const list = listRef.current;

@@ -32,6 +32,7 @@ import {
 import { cn } from "@/lib/cn";
 import { queryKeys } from "@/lib/queryClient";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 
 const APPROVAL_POLL_MS = 15_000;
 const API_HINT = " Ensure the API is running on port 8001.";
@@ -74,6 +75,19 @@ export function ApprovalsPage() {
   const processingIdsRef = useRef(processingIds);
   busyRef.current = busyId;
   processingIdsRef.current = processingIds;
+
+  useResetOnTenantChange(() => {
+    loadSeq.current += 1;
+    setInvoices([]);
+    setLoading(true);
+    setError(null);
+    setDrawerInvoice(null);
+    setDrawerOpen(false);
+    setDrawerEditMode(false);
+    setSearchQuery("");
+    setBusyId(null);
+    setProcessingIds(new Set());
+  });
 
   function openDrawer(inv: Invoice, edit = false) {
     setDrawerInvoice(inv);
