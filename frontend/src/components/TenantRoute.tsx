@@ -1,4 +1,5 @@
 import { Navigate, Outlet } from "react-router-dom";
+import { TenantBoundary } from "@/components/TenantBoundary";
 import { useAuth } from "@/context/AuthContext";
 import { homePathForRole, isSuperAdmin } from "@/lib/roles";
 
@@ -17,5 +18,9 @@ export function TenantRoute() {
     return <Navigate to={homePathForRole(user.role)} replace />;
   }
 
-  return <Outlet />;
+  return (
+    <TenantBoundary>
+      <Outlet />
+    </TenantBoundary>
+  );
 }

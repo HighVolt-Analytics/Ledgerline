@@ -14,6 +14,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
 import { useCollections } from "@/hooks/useCollections";
+import { useTenantOwnedData } from "@/hooks/useTenantOwnedData";
 import { collectionsOpenCount } from "@/lib/collectionsQueue";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
 import { canAccessModulePath } from "@/lib/tenantModules";
@@ -56,8 +57,10 @@ export function Layout() {
   const { user, logout } = useAuth();
   const { data: billing } = useBilling(Boolean(user));
   const { theme, toggleTheme } = useTheme();
-  const { data: badges } = useNavBadges();
-  const { data: collectionRows = [] } = useCollections();
+  const { data: badgesRaw } = useNavBadges();
+  const { data: badges } = useTenantOwnedData(badgesRaw);
+  const { data: collectionRowsRaw = [] } = useCollections();
+  const { data: collectionRows = [] } = useTenantOwnedData(collectionRowsRaw);
   const { permissions } = usePermissions();
   const enabledModules = permissions?.enabled_modules;
   const canShowNavItem = (item: NavItem) =>
@@ -280,7 +283,7 @@ export function Layout() {
           className="flex-1 overflow-y-auto min-h-0 px-3 py-4 sm:px-4 md:px-6 md:py-6"
           style={{ overscrollBehavior: "contain" }}
         >
-          <Outlet key={user?.tenant_id ?? "anon"} context={{ refreshCounts }} />
+          <Outlet context={{ refreshCounts }} />
         </main>
 
         <footer className="shrink-0 border-t border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-[11px] text-muted-foreground">

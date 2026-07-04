@@ -14,6 +14,7 @@ import {
 } from "@/components/sales/SalesRegisterPanel";
 import { useSalesMutations } from "@/hooks/useSalesMutations";
 import { useSales } from "@/hooks/useSales";
+import { useTenantOwnedData } from "@/hooks/useTenantOwnedData";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
@@ -28,13 +29,20 @@ function salesRowKey(salesId: number, invoiceId: number | null) {
 }
 
 export function SalesManagementPage() {
-  const { data: routed = [], refetch: refetchRouted } = useRoutedInvoices(ROUTE_TARGET);
+  const { data: routedRaw = [], refetch: refetchRouted } = useRoutedInvoices(ROUTE_TARGET);
   const {
-    data: salesRows = [],
+    data: salesRowsRaw = [],
     isLoading: salesLoading,
     isError,
     refetch: refetchSales,
   } = useSales();
+  const { data: routed = [], blocked: routedBlocked } = useTenantOwnedData(routedRaw, {
+    isLoading: salesLoading,
+  });
+  const { data: salesRows = [], blocked: salesBlocked } = useTenantOwnedData(salesRowsRaw, {
+    isLoading: salesLoading,
+  });
+  const tenantDataBlocked = routedBlocked || salesBlocked;
   const { data: ruleBook } = useRuleBookConfig();
   const mutations = useSalesMutations();
 
@@ -43,14 +51,21 @@ export function SalesManagementPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [registerTab, setRegisterTab] = useState<SalesRegisterTab>("register");
 
-  const rows = useMemo(() => salesRows.map(apiSalesToRow), [salesRows]);
+  const rows = useMemo(
+    () => (tenantDataBlocked ? [] : salesRows).map(apiSalesToRow),
+    [salesRows, tenantDataBlocked]
+  );
   const actionRequired = useMemo(
-    () => salesActionRequiredInvoices(routed, salesRows),
-    [routed, salesRows]
+    () => (tenantDataBlocked ? [] : salesActionRequiredInvoices(routed, salesRows)),
+    [routed, salesRows, tenantDataBlocked]
   );
   const kpis = useMemo(
-    () => salesKpisFromRegister(salesRows, routed),
-    [salesRows, routed]
+    () =>
+      salesKpisFromRegister(
+        tenantDataBlocked ? [] : salesRows,
+        tenantDataBlocked ? [] : routed
+      ),
+    [salesRows, routed, tenantDataBlocked]
   );
   const selected =
     rows.find((r) => salesRowKey(r.salesId, r.invoiceId) === selectedKey) ?? null;
@@ -148,7 +163,7 @@ export function SalesManagementPage() {
         registerRows={rows}
         salesRows={salesRows}
         actionRequired={actionRequired}
-        loading={salesLoading}
+        loading={salesLoading || tenantDataBlocked}
         isError={isError}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}

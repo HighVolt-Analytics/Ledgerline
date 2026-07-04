@@ -17,6 +17,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
@@ -183,6 +184,21 @@ export function VaultPage() {
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
 
   const orgLabel = user?.tenant_name ?? "your organisation";
+
+  useResetOnTenantChange(() => {
+    setVaultData(null);
+    setRows([]);
+    setDocumentSets([]);
+    setSelectedId(null);
+    setSelection(null);
+    setExpanded(new Set());
+    setLoading(true);
+    setError(null);
+    setWarning(null);
+    setDrawerId(null);
+    setDrawerOpen(false);
+    setDeepLinkNotice(null);
+  });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     if (!options?.silent) {

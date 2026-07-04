@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { useDashboardOverview } from "@/hooks/useDashboardOverview";
+import { useTenantOwnedData } from "@/hooks/useTenantOwnedData";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import { axisMoney, currencySymbol, formatDuration, money, toNumber } from "@/lib/format";
 import { toV3SparkSeries } from "@/lib/kpiSpark";
@@ -191,10 +192,13 @@ export function DashboardPage() {
   const period = periodOverride ?? defaultReportPeriod(timeZone);
   const setPeriod = setPeriodOverride;
   const {
-    data: overview,
+    data: overviewRaw,
     error,
     isLoading,
   } = useDashboardOverview(period, 10);
+  const { data: overview, blocked: overviewBlocked } = useTenantOwnedData(overviewRaw, {
+    isLoading,
+  });
 
   const yearOptions = useMemo(() => buildReconYears(null, timeZone), [timeZone]);
   const selectedYear = period ? yearFromPeriod(period) : yearOptions[0] ?? "";
@@ -246,7 +250,7 @@ export function DashboardPage() {
     );
   }
 
-  if (isLoading || !overview) {
+  if (isLoading || overviewBlocked || !overview) {
     return <PageLoader label="Loading dashboard…" />;
   }
 

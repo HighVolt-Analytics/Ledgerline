@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { Invoice, TopVendorRow, Vendor } from "@/api/types";
@@ -9,7 +11,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/context/AuthContext";
 import { usePendingVendors, usePromotePendingVendor } from "@/hooks/useMasterData";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
@@ -159,6 +160,16 @@ export function VendorsPage() {
   const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [editVendor, setEditVendor] = useState<Vendor | null>(null);
+
+  useResetOnTenantChange(() => {
+    setRows([]);
+    setInvoices([]);
+    setLoading(true);
+    setError(null);
+    setSearch("");
+    setFormOpen(false);
+    setEditVendor(null);
+  });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     if (!options?.silent) {

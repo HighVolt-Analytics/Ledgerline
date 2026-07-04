@@ -85,7 +85,7 @@ import type {
 
 import { resolveApiBase } from "@/lib/apiBase";
 import { tenantIdFromToken } from "@/lib/authToken";
-import { getRefreshToken } from "@/lib/authSession";
+import { getAccessToken, getRefreshToken } from "@/lib/authSession";
 
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE = resolveApiBase();
@@ -171,6 +171,15 @@ async function tryRefreshSession(): Promise<boolean> {
   }
 }
 
+export function getActiveTenantId(): string | null {
+  if (authToken) {
+    const fromJwt = tenantIdFromToken(authToken);
+    if (fromJwt) return fromJwt;
+  }
+  if (authUser?.tenant_id) return String(authUser.tenant_id);
+  return tenantIdFromToken(getAccessToken());
+}
+
 export function setAuthToken(token: string | null) {
   authToken = token;
   clearGetCache();
@@ -185,12 +194,8 @@ export function setAuthUser(user: AuthUser | null) {
   }
 }
 
-/** JWT tenant scope is authoritative; profile cache may lag after tenant switch. */
 function resolveActiveTenantId(): string | null {
-  const fromJwt = tenantIdFromToken(authToken);
-  if (fromJwt) return fromJwt;
-  if (authUser?.tenant_id) return String(authUser.tenant_id);
-  return null;
+  return getActiveTenantId();
 }
 
 function getScopedAuthHeaders(init?: RequestInit): Headers {

@@ -32,6 +32,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useStripeAccount, useStripeReadiness } from "@/hooks/useStripe";
 import { useAccountingIntegrations } from "@/hooks/useAccountingIntegrations";
 
@@ -159,6 +160,17 @@ export function IntegrationsPage() {
   const [vbError, setVbError] = useState<string | null>(null);
   const [vbBusy, setVbBusy] = useState(false);
   const [vbAuthToken, setVbAuthToken] = useState("");
+
+  useResetOnTenantChange(() => {
+    setS(null);
+    setMailboxes([]);
+    setRequests([]);
+    setMbError(null);
+    setInviteEmail("");
+    setInviteName("");
+    setInviteMessage("");
+    setLastInviteLink(null);
+  });
 
   async function copyInviteLink(url: string) {
     try {

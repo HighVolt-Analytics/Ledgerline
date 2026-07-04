@@ -7,6 +7,7 @@ import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { CollectionRow } from "@/components/collections/CollectionRow";
 import { useCollectionMutations } from "@/hooks/useCollectionMutations";
 import { useCollections } from "@/hooks/useCollections";
+import { useTenantOwnedData } from "@/hooks/useTenantOwnedData";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { apiCollectionToRecord } from "@/lib/collectionsQueue";
@@ -25,12 +26,19 @@ const TABS: { value: CollectionTab; label: string; testid: string }[] = [
 
 export function CollectionsPage() {
   const { timeZone } = useTenantTime();
-  const { data: collectionRows = [], isLoading, isError, refetch } = useCollections();
+  const { data: collectionRowsRaw = [], isLoading, isError, refetch } = useCollections();
+  const { data: collectionRows = [], blocked: collectionsBlocked } = useTenantOwnedData(
+    collectionRowsRaw,
+    { isLoading }
+  );
   const mutations = useCollectionMutations();
   const [tab, setTab] = useState<CollectionTab>("queue");
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
 
-  const collections = useMemo(() => collectionRows.map(apiCollectionToRecord), [collectionRows]);
+  const collections = useMemo(
+    () => (collectionsBlocked ? [] : collectionRows).map(apiCollectionToRecord),
+    [collectionRows, collectionsBlocked]
+  );
   const kpis = collectionsKpis(collections, timeZone);
   const tabRows = useMemo(() => collections.filter((c) => c.tab === tab), [collections, tab]);
 
@@ -58,7 +66,7 @@ export function CollectionsPage() {
       />
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
-        <KpiCard label="Open receivables" value={isLoading ? "…" : kpis.count} testid="kpi-collections-open" />
+        <KpiCard label="Open receivables" value={isLoading || collectionsBlocked ? "…" : kpis.count} testid="kpi-collections-open" />
         <KpiCard
           label="Outstanding"
           value={isLoading ? "…" : money(kpis.total)}
@@ -79,7 +87,7 @@ export function CollectionsPage() {
       />
 
       <PageTabPanel value={tab} active={tab} className="mt-4 space-y-2">
-        {isLoading ? (
+        {isLoading || collectionsBlocked ? (
           <div className="text-sm text-muted-foreground py-8">Loading collections…</div>
         ) : isError ? (
           <div className="text-sm text-destructive py-8">Could not load collections.</div>
