@@ -2,8 +2,8 @@
 
 from datetime import date
 
-from app.services.tenant_storage_paths import tenant_root
-from app.services.vault_paths import (
+from app.services.tenant.tenant_storage_paths import tenant_root
+from app.services.vault.vault_paths import (
     ROUTE_PURCHASE,
     ROUTE_VAULT,
     ROUTE_UNROUTED,

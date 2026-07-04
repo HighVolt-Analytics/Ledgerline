@@ -14,10 +14,10 @@ from app.schemas.tenant_member import (
     TenantMembersListResponse,
     UpdateMemberRoleRequest,
 )
-from app.services.audit_service import log_event
-from app.services.auth_email_service import send_tenant_invite_email
-from app.services.privilege_service import require_privilege
-from app.services.tenant_members_service import (
+from app.services.audit.audit_service import log_event
+from app.services.auth.auth_email_service import send_tenant_invite_email
+from app.services.auth.privilege_service import require_privilege
+from app.services.tenant.tenant_members_service import (
     create_invite,
     deactivate_member,
     list_tenant_members,

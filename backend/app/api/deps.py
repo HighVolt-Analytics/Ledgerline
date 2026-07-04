@@ -14,9 +14,9 @@ from app.models.user import User, UserRole, SUPER_ADMIN_ROLE
 from app.models.tenant import Tenant
 from app.tenant_roles import TenantRole
 from app.schemas.common import ApiEnvelope, ErrorDetail, ResponseMeta
-from app.services.auth_service import decode_access_token
-from app.services.membership_service import resolve_auth_principals
-from app.services.tenant_context_service import get_or_create_default_tenant, get_tenant_slug
+from app.services.auth.auth_service import decode_access_token
+from app.services.auth.membership_service import resolve_auth_principals
+from app.services.tenant.tenant_context_service import get_or_create_default_tenant, get_tenant_slug
 from app.tenant_context import set_jwt_tenant_id, set_request_tenant_id
 from app.tenant_isolation.resolution import TenantResolutionService
 from app.tenant_rls import apply_platform_lookup_session, apply_rls_session_context

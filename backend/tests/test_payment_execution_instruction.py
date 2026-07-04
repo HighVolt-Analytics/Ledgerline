@@ -13,13 +13,13 @@ from app.models.tenant import Tenant
 from app.models.vendor import VendorRegistry
 from app.models.stripe_payments import VendorPaymentMethod
 from app.schemas.payment import PaymentMarkPaidManualRequest
-from app.services.payment_execution_auth import PaymentExecutionUnauthorizedError
-from app.services.payment_execution_instruction_service import (
+from app.services.payments.payment_execution_auth import PaymentExecutionUnauthorizedError
+from app.services.payments.payment_execution_instruction_service import (
     PaymentExecutionBlockedError,
     create_payment_execution_instruction,
     mark_payment_paid_manual,
 )
-from app.services.payment_execution_rules import LIMIT_BLOCK_MESSAGE
+from app.services.payments.payment_execution_rules import LIMIT_BLOCK_MESSAGE
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

@@ -8,13 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.ingest_fanout_service import (
+from app.services.ingest.ingest_fanout_service import (
     IngestSourceMetadata,
     ingest_file_with_fanout,
     ingest_upload_file,
 )
-from app.services.pdf_page_text_service import PdfPageText
-from app.services.pdf_split_service import extract_pdf_page_range_bytes, segment_upload_filename
+from app.services.extraction.pdf_page_text_service import PdfPageText
+from app.services.extraction.pdf_split_service import extract_pdf_page_range_bytes, segment_upload_filename
 
 
 @pytest.fixture(autouse=True)
@@ -52,12 +52,20 @@ def test_extract_pdf_page_range_bytes(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ingest_upload_single_pdf_unchanged(db_session: AsyncSession) -> None:
+async def test_ingest_upload_single_pdf_unchanged(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.models.tenant import Tenant
 
     org = Tenant(name="Test Org", slug="test-org")
     db_session.add(org)
     await db_session.flush()
+
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/one.pdf",
+    )
 
     data = b"%PDF-1.4 single-doc"
     result = await ingest_upload_file(
@@ -103,8 +111,12 @@ async def test_ingest_upload_fanout_from_segmented_pdf(
     data = source.read_bytes()
 
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.extract_pdf_page_texts",
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
         lambda _path: pages,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/segment.pdf",
     )
 
     result = await ingest_upload_file(
@@ -146,12 +158,20 @@ async def test_upload_api_returns_segment_meta(
         PdfPageText(1, "TAX INVOICE\nInvoice No: INV-200\nTotal $10\n"),
     ]
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.extract_pdf_page_texts",
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
         lambda _path: pages,
     )
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.extract_pdf_page_range_bytes",
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/segment.pdf",
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",
         lambda _path, start, end: f"%PDF-part-{start}-{end}".encode(),
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/segment.pdf",
     )
 
     files = {"file": ("combo.pdf", b"%PDF combo", "application/pdf")}
@@ -174,7 +194,7 @@ async def test_ingest_file_with_fanout_applies_source_metadata(
     await db_session.flush()
 
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.store_invoice_pdf",
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/channel.pdf",
     )
 
@@ -215,7 +235,7 @@ async def test_ingest_sets_so_reference_from_filename(
     await db_session.flush()
 
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.store_invoice_pdf",
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/sales_order_SO-1001.pdf",
     )
 
@@ -241,8 +261,8 @@ async def test_load_segment_heading_kind_from_pdf_segmented_audit(
     db_session: AsyncSession,
 ) -> None:
     from app.models.tenant import Tenant
-    from app.services.audit_service import log_event
-    from app.services.segment_heading_classification import load_segment_heading_kind_from_audit
+    from app.services.audit.audit_service import log_event
+    from app.services.classification.segment_heading_classification import load_segment_heading_kind_from_audit
 
     org = Tenant(name="Audit Org", slug="audit-org")
     db_session.add(org)
@@ -267,3 +287,52 @@ async def test_load_segment_heading_kind_from_pdf_segmented_audit(
 
     kind = await load_segment_heading_kind_from_audit(db_session, inv.id)
     assert kind == "purchase_order"
+
+
+@pytest.mark.asyncio
+async def test_multi_segment_ignores_purchase_document_type_param(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.tenant import Tenant
+
+    org = Tenant(name="Type Org", slug="type-org")
+    db_session.add(org)
+    await db_session.flush()
+
+    pages = [
+        PdfPageText(0, "PURCHASE ORDER\nPO Number: PO-300\n"),
+        PdfPageText(1, "TAX INVOICE\nInvoice No: INV-300\nTotal $10\n"),
+    ]
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
+        lambda _path: pages,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",
+        lambda _path, start, end: f"%PDF-part-{start}-{end}".encode(),
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/segment.pdf",
+    )
+
+    result = await ingest_upload_file(
+        db_session,
+        tenant_id=org.id,
+        tenant_slug=org.slug,
+        tenant_name=org.name,
+        filename="bundle.pdf",
+        data=b"%PDF bundle",
+        purchase_document_type="invoice",
+    )
+    await db_session.flush()
+
+    assert result.segment_count == 2
+    rows = (
+        await db_session.execute(
+            select(Invoice).where(Invoice.id.in_(result.invoice_ids)).order_by(Invoice.id)
+        )
+    ).scalars().all()
+    assert rows[0].purchase_document_type == "po"
+    assert rows[1].purchase_document_type == "invoice"

@@ -1,10 +1,16 @@
 /** Playbook profile catalogue — align with backend playbook_profile_catalog.py */
 
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import {
+  derivePostingFromKlassAndProfile,
+  isTransPosting,
+} from "@/lib/documentTypeKlass";
+import { defaultPlaybookProfileForCode as shippedDefaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
 
 export type PlaybookProfile =
   | "po_goods"
   | "ar_goods"
+  | "ar_goods_2way"
   | "po_services"
   | "direct_expense"
   | "credit_adjustment"
@@ -27,6 +33,7 @@ export type MatchMode =
   | "three_way_po_grn"
   | "three_way_so_dn"
   | "two_way_po_ses"
+  | "two_way_dn_invoice"
   | "reference_invoice"
   | "subledger_reconcile"
   | "shipment"
@@ -52,6 +59,7 @@ export type ApprovalPolicy = {
 export const PLAYBOOK_PROFILE_OPTIONS: Array<{ value: PlaybookProfile; label: string }> = [
   { value: "po_goods", label: "PO goods (3-way)" },
   { value: "ar_goods", label: "AR goods (3-way)" },
+  { value: "ar_goods_2way", label: "AR goods (2-way DN)" },
   { value: "po_services", label: "PO services (2-way)" },
   { value: "direct_expense", label: "Direct expense" },
   { value: "credit_adjustment", label: "Credit / adjustment" },
@@ -75,6 +83,7 @@ export const MATCH_MODE_OPTIONS: Array<{ value: MatchMode; label: string }> = [
   { value: "three_way_po_grn", label: "3-way PO ↔ GRN ↔ Invoice" },
   { value: "three_way_so_dn", label: "3-way SO ↔ DN ↔ Invoice" },
   { value: "two_way_po_ses", label: "2-way PO ↔ service entry" },
+  { value: "two_way_dn_invoice", label: "2-way DN ↔ Invoice" },
   { value: "reference_invoice", label: "Reference original invoice" },
   { value: "subledger_reconcile", label: "Subledger reconciliation" },
   { value: "shipment", label: "Shipment / logistics" },
@@ -94,28 +103,30 @@ export const APPROVAL_MODE_OPTIONS: Array<{ value: ApprovalMode; label: string }
 export function inferPlaybookProfileFromDefinition(
   docType: Pick<
     DocumentTypeDefinition,
-    "klass" | "posting" | "purchaseBundleRole" | "salesBundleRole" | "playbookProfile"
+    "code" | "klass" | "posting" | "purchaseBundleRole" | "salesBundleRole" | "playbookProfile"
   >
 ): PlaybookProfile {
   const purchaseRole = (docType.purchaseBundleRole || "").trim().toLowerCase();
   if (purchaseRole === "po" || purchaseRole === "grn") return "supporting";
   const salesRole = (docType.salesBundleRole || "").trim().toLowerCase();
   if (salesRole === "so" || salesRole === "dn") return "supporting";
-  const klass = (docType.klass || "").trim().toLowerCase();
-  const posting = (docType.posting || "").trim().toLowerCase();
-  if (
-    klass === "non-actionable" ||
-    (posting === "no" &&
-      ["informational", "reconciliation", "supporting", "compliance"].includes(klass))
-  ) {
-    if (klass === "reconciliation") return "reconciliation";
-    if (klass === "supporting") return "supporting";
-    if (klass === "informational") return "informational";
-    if (klass === "compliance") return "compliance_route";
-    return "non_actionable";
+  const explicit = (docType.playbookProfile || "").trim().toLowerCase() as PlaybookProfile;
+  if (explicit) return explicit;
+  const code = (docType.code || "").trim().toUpperCase();
+  if (code) {
+    const defaultProfile = shippedDefaultPlaybookProfileForCode(code);
+    if (defaultProfile !== "standard_transactional") return defaultProfile;
   }
+  const posting = derivePostingFromKlassAndProfile(
+    docType.klass,
+    docType.playbookProfile,
+    docType.posting
+  )
+    .trim()
+    .toLowerCase();
   if (posting === "down-payment") return "pre_transactional";
-  return "standard_transactional";
+  if (isTransPosting(docType)) return "standard_transactional";
+  return "supporting";
 }
 
 const PROFILE_PRESETS: Record<
@@ -131,6 +142,11 @@ const PROFILE_PRESETS: Record<
     matchMode: "three_way_so_dn",
     approvalMode: "touchless_on_clean_match",
     enforceBundle: true,
+  },
+  ar_goods_2way: {
+    matchMode: "two_way_dn_invoice",
+    approvalMode: "supervisor_on_exception",
+    enforceBundle: false,
   },
   po_services: {
     matchMode: "two_way_po_ses",
@@ -219,14 +235,14 @@ export function playbookPresetForProfile(profile: PlaybookProfile) {
 }
 
 export function defaultPlaybookProfileForCode(
-  _code: string,
+  code: string,
   docType?: Pick<
     DocumentTypeDefinition,
     "klass" | "posting" | "purchaseBundleRole" | "salesBundleRole" | "playbookProfile"
   >
 ): PlaybookProfile {
-  if (docType) return inferPlaybookProfileFromDefinition(docType);
-  return "standard_transactional";
+  if (docType) return inferPlaybookProfileFromDefinition({ ...docType, code });
+  return shippedDefaultPlaybookProfileForCode(code);
 }
 
 export function effectivePlaybookProfile(docType: DocumentTypeDefinition): PlaybookProfile {

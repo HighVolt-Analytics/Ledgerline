@@ -16,10 +16,10 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
 from app.schemas.rule_book_config import DocumentClassificationConfig, validate_rule_book_config_payload
 from app.schemas.classification_decision import PolicyScoreResult
-from app.services.document_type_classifier import classify_document_type
-from app.services.document_type_reclassify_service import reclassify_invoice_document_type
-from app.services.invoice_data import InvoiceData, ParsedLineItem
-from app.services.validator import all_passed, run_all_validations
+from app.services.classification.document_type_classifier import classify_document_type
+from app.services.classification.document_type_reclassify_service import reclassify_invoice_document_type
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
+from app.services.rule_book.validator import all_passed, run_all_validations
 
 
 def _invoice(**kwargs) -> Invoice:

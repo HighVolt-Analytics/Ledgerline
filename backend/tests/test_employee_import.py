@@ -10,13 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.employee_master import EmployeeMasterRecord
-from app.services.employee_import_service import (
+from app.services.master_data.employee_import_service import (
     build_import_template,
     import_employee_masters,
     parse_employee_import_file,
 )
 from app.tenant_ids import TESTING_TENANT_UUID
-from app.services.rule_book_mapper import clear_classification_config_cache
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 
 
 def _register_csv(rows: list[list[str]]) -> bytes:

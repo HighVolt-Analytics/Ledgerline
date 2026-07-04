@@ -12,12 +12,12 @@ from app.schemas.classification_decision import PolicyScoreResult
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.classification_compare_service import compare_classification
-from app.services.invoice_data import InvoiceData
-from app.services.invoice_evaluation_service import EVAL_AWAITING_CLASSIFICATION
-from app.services.pipeline import process_invoice
+from app.services.classification.classification_compare_service import compare_classification
+from app.services.invoice.invoice_data import InvoiceData
+from app.services.invoice.invoice_evaluation_service import EVAL_AWAITING_CLASSIFICATION
+from app.services.invoice.pipeline import process_invoice
 from tests.pipeline_test_helpers import patch_confidence_gate_pass
-from app.services.tenant_org_context import OrgContext
+from app.services.tenant.tenant_org_context import OrgContext
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -29,7 +29,6 @@ def _dt03() -> DocumentTypeDefinition:
             "shortTitle": "Tax Inv",
             "klass": "Transactional",
             "posting": "Yes",
-            "fraudRisk": "low",
             "oneLine": "Tax invoice",
             "routeTarget": "Purchase Management",
             "enabled": True,
@@ -222,7 +221,7 @@ def test_compare_skips_extraction_gap_pre_extract() -> None:
 async def test_gemini_provider_classify_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services.document_ai_provider import DocumentAiProvider, classify_only
+    from app.services.extraction.document_ai_provider import DocumentAiProvider, classify_only
 
     ocr = OcrArtifact(
         success=True,
@@ -268,9 +267,8 @@ def _custom_grn_dt() -> DocumentTypeDefinition:
             "code": "DT-99",
             "title": "Custom GRN",
             "shortTitle": "GRN",
-            "klass": "Supporting",
+            "klass": "Non-transactional",
             "posting": "No",
-            "fraudRisk": "low",
             "oneLine": "GRN only",
             "routeTarget": "Vault",
             "enabled": True,
@@ -317,7 +315,7 @@ async def test_custom_type_classifier_mismatch_blocks_auto_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.schemas.rule_book_config import RuleBookConfigPayload
-    from app.services.invoice_evaluation_service import load_config_for_tenant
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
 
     base_config = await load_config_for_tenant(db_session, TESTING_TENANT_UUID)
     custom = _custom_grn_dt()
@@ -395,7 +393,7 @@ async def test_gemini_ocr_read_does_not_classify(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    from app.services.gemini_vision_client import read_for_classification_gemini
+    from app.services.extraction.gemini_vision_client import read_for_classification_gemini
 
     pdf_path = tmp_path / "invoice.pdf"
     pdf_path.write_bytes(b"%PDF-1.4 minimal")
@@ -446,3 +444,37 @@ def test_ai_provider_rule_book_roundtrip() -> None:
     default_cfg = AiClassificationConfig()
     assert default_cfg.document_ai_provider in {"azure_di", "azure_foundry_vision"}
     assert default_cfg.auto_route_min_confidence == pytest.approx(0.85)
+
+
+def test_confidence_gate_uses_higher_org_and_dt_thresholds() -> None:
+    from app.schemas.rule_book_config import AiClassificationConfig
+    from app.schemas.llm_document import LlmDocumentResult, LlmParty
+    from app.services.invoice.invoice_pipeline_phases import evaluate_confidence_gate, gate_audit_detail
+
+    dt = _dt03()
+    dt = dt.model_copy(update={"min_route_confidence": 0.65})
+    ai_cfg = AiClassificationConfig(auto_route_min_confidence=0.85)
+
+    result = evaluate_confidence_gate(
+        LlmDocumentResult(
+            suggested_dt="DT-03",
+            confidence=0.846,
+            reasoning="Borderline",
+            perspective="purchase",
+            seller=LlmParty(name="Acme"),
+        ),
+        document_types=[dt],
+        ai_cfg=ai_cfg,
+        provider_token="azure_di",
+    )
+
+    assert result.passed is False
+    assert result.min_route_confidence == pytest.approx(0.85)
+    assert result.org_auto_route_min_confidence == pytest.approx(0.85)
+    assert result.dt_min_route_confidence == pytest.approx(0.65)
+    assert "LLM_LOW_CONF" in result.review_reasons
+
+    detail = gate_audit_detail(result, provider_token="azure_di")
+    assert detail["org_auto_route_min_confidence"] == pytest.approx(0.85)
+    assert detail["dt_min_route_confidence"] == pytest.approx(0.65)
+    assert detail["compare_passed"] is False

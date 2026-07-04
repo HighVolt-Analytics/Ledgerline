@@ -3,7 +3,7 @@ from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for approvals kanban column bucketing."""
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.approval_board_service import approval_board_column
+from app.services.approval.approval_board_service import approval_board_column
 
 
 def _inv(

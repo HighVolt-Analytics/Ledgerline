@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.llm_document_service import llm_result_to_invoice_data
+from app.services.extraction.llm_document_service import llm_result_to_invoice_data
 
 
 def test_llm_result_accepts_valid_payload() -> None:
@@ -51,7 +51,18 @@ def test_llm_result_coerces_empty_decimal_strings() -> None:
     assert result.line_items[0].amount == Decimal("10")
 
 
-def test_llm_result_coerces_vendor_object() -> None:
+def test_llm_party_syncs_abn_to_tax_id() -> None:
+    party = LlmParty.model_validate({"name": "Acme Pty Ltd", "abn": "51824753556"})
+    assert party.tax_id == "51824753556"
+    assert party.abn == "51824753556"
+
+    party2 = LlmParty.model_validate(
+        {"name": "Spectra", "tax_id": "199904042N", "address": "Singapore"}
+    )
+    assert party2.abn == "199904042N"
+    assert party2.address == "Singapore"
+
+
     result = LlmDocumentResult.model_validate(
         {
             "suggested_dt": "DT-03",

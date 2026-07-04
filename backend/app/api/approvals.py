@@ -10,7 +10,7 @@ from app.api.http_errors import http_bad_request, http_not_found
 from app.schemas.approvals import ApprovalListRequest
 from app.schemas.common import ApiEnvelope
 from app.schemas.invoice import InvoiceResponse
-from app.services.approval_api_service import (
+from app.services.approval.approval_api_service import (
     approve_invoice_action,
     list_approvals_board,
     list_approvals_queue,
@@ -18,7 +18,7 @@ from app.services.approval_api_service import (
     reject_invoice_action,
     request_approval_action,
 )
-from app.services.privilege_service import require_privilege
+from app.services.auth.privilege_service import require_privilege
 from app.workers.tasks import process_invoice_background
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])

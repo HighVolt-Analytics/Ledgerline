@@ -10,9 +10,9 @@ from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.pending_vendor import PendingVendor
-from app.services.invoice_evaluation_service import EVAL_PENDING_VENDOR, apply_invoice_evaluation
-from app.services.master_data_service import list_pending_vendors
-from app.services.vendor_hold_service import apply_vendor_hold_if_needed
+from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_VENDOR, apply_invoice_evaluation
+from app.services.master_data.master_data_service import list_pending_vendors
+from app.services.master_data.vendor_hold_service import apply_vendor_hold_if_needed
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

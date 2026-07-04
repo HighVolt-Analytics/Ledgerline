@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from app.services import graph_client
+from app.services.ingest import graph_client
 
 
 def test_graph_request_accepts_empty_202(monkeypatch: pytest.MonkeyPatch) -> None:

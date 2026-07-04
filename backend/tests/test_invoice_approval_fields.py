@@ -10,15 +10,15 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.approval_pipeline_service import (
+from app.services.approval.approval_pipeline_service import (
     apply_human_approval_processing_defaults,
     human_approval_may_bypass_validation,
     human_approved_payable_bypass,
     payable_fields_complete,
 )
-from app.services.validator import ValidationResult
-from app.services.approval_service import approve_invoice_for_reprocess
-from app.services.audit_service import log_event
+from app.services.rule_book.validator import ValidationResult
+from app.services.approval.approval_service import approve_invoice_for_reprocess
+from app.services.audit.audit_service import log_event
 
 
 @pytest.mark.asyncio
@@ -133,8 +133,8 @@ async def test_approve_requires_vendor_total_due_date(db_session: AsyncSession, 
 
 @pytest.mark.asyncio
 async def test_reprocess_preserves_manual_edits(db_session: AsyncSession) -> None:
-    from app.services.invoice_reset import requeue_invoice_for_pipeline
-    from app.services.invoice_edit_service import update_invoice_fields
+    from app.services.invoice.invoice_reset import requeue_invoice_for_pipeline
+    from app.services.invoice.invoice_edit_service import update_invoice_fields
     from app.schemas.invoice import InvoiceUpdateRequest
 
     inv = Invoice(
@@ -170,7 +170,7 @@ async def test_approve_requires_compulsory_fields_when_configured(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.schemas.document_type import DocumentTypeDefinition
-    from app.services.approval_service import _assert_invoice_ready_for_approval
+    from app.services.approval.approval_service import _assert_invoice_ready_for_approval
 
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -187,7 +187,6 @@ async def test_approve_requires_compulsory_fields_when_configured(
         shortTitle="Direct",
         klass="Transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Expenses Management",
         extractionFields=["vendor", "invoice_no", "total"],

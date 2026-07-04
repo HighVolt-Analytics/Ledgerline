@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { AlertTriangle, Ban, Check, Clock, Minus, RefreshCw } from "lucide-react";
 import type { Invoice, MatrixRow } from "@/api/types";
-import { api, clearGetCache } from "@/api/client";
+import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { KpiCard } from "@/components/KpiCard";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -151,8 +151,7 @@ export function DocumentMatrixPanel({
       setLoading(true);
       setError(null);
     }
-    const fresh = options?.fresh ?? true;
-    if (fresh) clearGetCache();
+    const fresh = options?.fresh ?? !options?.silent;
     try {
       const data = await fetchAllMatrixRows(fresh);
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;

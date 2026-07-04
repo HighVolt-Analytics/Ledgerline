@@ -27,8 +27,8 @@ from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.payment import Payment
 from app.models.purchase_order import PurchaseOrder
-from app.services.audit_service import log_event
-from app.services.file_storage import stored_file_available
+from app.services.audit.audit_service import log_event
+from app.services.shared.file_storage import stored_file_available
 
 
 async def _orphan_invoice_ids() -> list[tuple[int, str | None, str | None]]:

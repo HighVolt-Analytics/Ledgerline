@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-react";
-import { api, clearGetCache } from "@/api/client";
+import { api } from "@/api/client";
 import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
 import { useAuth } from "@/context/AuthContext";
@@ -123,6 +123,29 @@ function mailboxNickname(mb: ConnectedMailbox): string {
   return mailboxDisplayName(mb.email, mb.display_name);
 }
 
+function uploadListRowSignature(inv: Invoice): string {
+  return [
+    inv.id,
+    inv.status,
+    inv.evaluation_status ?? "",
+    inv.current_stage ?? "",
+    inv.current_stage_state ?? "",
+    inv.vendor ?? "",
+    inv.total ?? "",
+    inv.route_target ?? "",
+    inv.validation_pass_rate ?? "",
+    inv.vendor_confidence ?? "",
+    inv.document_type_code ?? "",
+    inv.account_name ?? "",
+    inv.created_at,
+  ].join("|");
+}
+
+function sameUploadListRows(prev: Invoice[], next: Invoice[]): boolean {
+  if (prev.length !== next.length) return false;
+  return prev.every((row, index) => uploadListRowSignature(row) === uploadListRowSignature(next[index]!));
+}
+
 export function UploadPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -134,6 +157,8 @@ export function UploadPage() {
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const loadSeq = useRef(0);
+  const mailboxesRef = useRef<ConnectedMailbox[]>([]);
+  const initialLoadDoneRef = useRef(false);
   const { data: ruleBook } = useRuleBookConfig();
   const [all, setAll] = useState<Invoice[]>([]);
   const [mailboxes, setMailboxes] = useState<ConnectedMailbox[]>([]);
@@ -166,11 +191,14 @@ export function UploadPage() {
 
   useResetOnTenantChange(() => {
     loadSeq.current += 1;
+    initialLoadDoneRef.current = false;
+    mailboxesRef.current = [];
     setAll([]);
     setMailboxes([]);
     setTotalInvoices(0);
     setTotalPages(1);
     setPage(1);
+    setSource("all");
     setError(null);
     setDrawerId(null);
     setDrawerOpen(false);
@@ -187,32 +215,44 @@ export function UploadPage() {
       setLoading(true);
       setError(null);
     }
-    const fresh = options?.fresh ?? true;
-    if (fresh) clearGetCache();
+    const fresh = options?.fresh ?? !options?.silent;
+    const refreshMailboxes = !options?.silent;
     try {
-      const mbs = await api.listMailboxes({ fresh }).catch(() => [] as ConnectedMailbox[]);
-      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return null;
+      // Prefer cached mailboxes for filter id (develop perf); never use them across tenants.
+      const cachedMailboxes = isTenantFetchScopeCurrent(scope) ? mailboxesRef.current : [];
       const selectedMailboxId =
-        source === "all" ? null : (mbs.find((m) => m.email === source)?.id ?? null);
-      const invoiceRes = await api.listInvoicesWithMeta(
-        {
-          page: String(page),
-          page_size: String(PAGE_SIZE),
-          ...(selectedMailboxId != null
-            ? { connected_mailbox_id: String(selectedMailboxId) }
-            : {}),
-          ...(debouncedSearch ? { q: debouncedSearch } : {}),
-        },
-        { fresh }
-      );
+        source === "all"
+          ? null
+          : (cachedMailboxes.find((m) => m.email === source)?.id ?? null);
+      const invoiceParams = {
+        page: String(page),
+        page_size: String(PAGE_SIZE),
+        ...(selectedMailboxId != null
+          ? { connected_mailbox_id: String(selectedMailboxId) }
+          : {}),
+        ...(debouncedSearch ? { q: debouncedSearch } : {}),
+      };
+      const invoiceRes = await api.listInvoicesWithMeta(invoiceParams, { fresh });
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return null;
       const invoiceRows = invoiceRes.data;
       const metaTotal = invoiceRes.meta?.total ?? invoiceRows.length;
       const metaPages = invoiceRes.meta?.pages ?? 1;
-      setAll(invoiceRows);
+      setAll((prev) => (sameUploadListRows(prev, invoiceRows) ? prev : invoiceRows));
       setTotalInvoices(metaTotal);
       setTotalPages(Math.max(1, metaPages));
-      setMailboxes(mbs);
+      setError(null);
+      initialLoadDoneRef.current = true;
+
+      if (refreshMailboxes) {
+        void api
+          .listMailboxes({ fresh })
+          .catch(() => [] as ConnectedMailbox[])
+          .then((mbs) => {
+            if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+            setMailboxes(mbs);
+          });
+      }
+
       return {
         total: metaTotal,
         ids: invoiceRows.map((i) => i.id),
@@ -223,6 +263,7 @@ export function UploadPage() {
         setError(e instanceof Error ? e.message : "Failed to load documents");
         setAll([]);
         setMailboxes([]);
+        mailboxesRef.current = [];
       }
       return null;
     } finally {
@@ -233,6 +274,10 @@ export function UploadPage() {
   }, [page, source, debouncedSearch, tenantScope]);
 
   useEffect(() => {
+    mailboxesRef.current = mailboxes;
+  }, [mailboxes]);
+
+  useEffect(() => {
     setPage(1);
   }, [source, debouncedSearch]);
 
@@ -241,6 +286,7 @@ export function UploadPage() {
   }, [load]);
 
   useVisibilityPolling(() => {
+    if (!initialLoadDoneRef.current) return;
     void load({ silent: true, fresh: true });
   }, INBOX_POLL_MS);
 
@@ -546,10 +592,16 @@ export function UploadPage() {
     </div>
   );
 
-  if (error && workspaceTab === "upload") {
+  if (error && workspaceTab === "upload" && captured.length === 0 && !loading) {
     return workspaceShell(
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {error}. Ensure the API is running on port 8001.
+        {error}. Ensure the API is running on port 8001 and migrations are up to date{" "}
+        <code className="text-xs">(alembic upgrade head)</code>.
+        <div className="mt-3">
+          <Button variant="outline" size="sm" onClick={() => void load({ fresh: true })}>
+            Retry
+          </Button>
+        </div>
       </Card>
     );
   }

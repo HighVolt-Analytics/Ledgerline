@@ -20,8 +20,8 @@ from app.schemas.viber import (
     ViberStatusResponse,
     ViberTestResponse,
 )
-from app.services.public_api_url import probe_public_webhook, webhook_viber_url
-from app.services.viber_connection_service import (
+from app.services.shared.public_api_url import probe_public_webhook, webhook_viber_url
+from app.services.ingest.viber_connection_service import (
     connect_viber_bot,
     disconnect_connection,
     find_connection_by_signature,
@@ -29,10 +29,10 @@ from app.services.viber_connection_service import (
     resolve_auth_token,
     test_connection,
 )
-from app.services.viber_ingest_service import ingest_viber_message
-from app.services.whatsapp_connection_service import try_claim_message_mid
+from app.services.ingest.viber_ingest_service import ingest_viber_message
+from app.services.ingest.whatsapp_connection_service import try_claim_message_mid
 from app.utils.logger import get_logger
-from app.workers.tasks import process_invoice_background
+from app.workers.tasks import queue_invoices_for_processing
 
 logger = get_logger(__name__)
 
@@ -91,7 +91,7 @@ async def viber_connect(
         )
         profile_name: str | None = None
         try:
-            from app.services.viber_client import ViberClient
+            from app.services.ingest.viber_client import ViberClient
 
             info = await ViberClient(body.auth_token.strip()).get_account_info()
             profile_name = str(info.get("name") or "") or None
@@ -202,12 +202,10 @@ async def process_viber_payload(raw_body: bytes, signature: str | None) -> None:
             )
             queued_invoice_ids = list(result.invoice_ids or [])
 
-        for invoice_id in queued_invoice_ids:
-            asyncio.create_task(
-                process_invoice_background(
-                    invoice_id,
-                    tenant_id=connection.tenant_id,
-                )
+        if queued_invoice_ids:
+            await queue_invoices_for_processing(
+                queued_invoice_ids,
+                tenant_id=connection.tenant_id,
             )
 
         logger.info(

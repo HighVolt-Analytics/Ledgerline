@@ -3,7 +3,7 @@
 import hashlib
 import hmac
 
-from app.services.viber_client import ViberClient
+from app.services.ingest.viber_client import ViberClient
 
 
 def test_verify_signature_valid() -> None:
@@ -21,7 +21,7 @@ def test_verify_signature_invalid() -> None:
 
 
 def test_parse_viber_picture_event() -> None:
-    from app.services.viber_client import parse_viber_event
+    from app.services.ingest.viber_client import parse_viber_event
 
     payload = {
         "event": "message",
@@ -42,6 +42,6 @@ def test_parse_viber_picture_event() -> None:
 
 
 def test_parse_viber_non_message_returns_none() -> None:
-    from app.services.viber_client import parse_viber_event
+    from app.services.ingest.viber_client import parse_viber_event
 
     assert parse_viber_event({"event": "delivered"}) is None

@@ -10,7 +10,6 @@ from app.schemas.custom_validation_rule import (
     CustomValidationRule,
     normalize_custom_validation_rules,
 )
-from app.schemas.fx_posting import FxPostingPolicy, normalize_fx_posting_policy
 from app.schemas.playbook_policy import (
     ApprovalPolicy,
     MatchPolicy,
@@ -18,6 +17,32 @@ from app.schemas.playbook_policy import (
     normalize_match_policy,
 )
 from app.schemas.validation_rule import ValidationRuleConfig, normalize_validation_rules
+
+
+class DocumentTypePostTo(BaseModel):
+    """GL posting targets per document type; ledger may be empty until configured."""
+
+    ledger: str = ""
+    sub_ledger: str = Field(default="", alias="subLedger")
+    tax_account: str | None = Field(default=None, alias="taxAccount")
+    payable_account: str | None = Field(default=None, alias="payableAccount")
+    receivable_account: str | None = Field(default=None, alias="receivableAccount")
+
+    model_config = {"populate_by_name": True}
+
+    def as_post_to_accounts(self):
+        from app.schemas.rule_book_config import PostToAccounts
+
+        cleaned = (self.ledger or "").strip()
+        if not cleaned:
+            return None
+        return PostToAccounts(
+            ledger=cleaned,
+            sub_ledger=(self.sub_ledger or "").strip(),
+            tax_account=self.tax_account,
+            payable_account=self.payable_account,
+            receivable_account=self.receivable_account,
+        )
 
 
 DocumentTypeRouteTarget = Literal[
@@ -60,7 +85,7 @@ class DocumentTypeClassifier(BaseModel):
     @classmethod
     def _validate_root(cls, value: Any) -> dict[str, Any]:
         from app.schemas.rule_book_config import RuleConditionGroup
-        from app.services.rule_engine import sanitize_condition_group
+        from app.services.rule_book.rule_engine import sanitize_condition_group
 
         validated = RuleConditionGroup.model_validate(value).model_dump()
         return sanitize_condition_group(validated)
@@ -72,7 +97,6 @@ class DocumentTypeDefinition(BaseModel):
     short_title: str = Field(alias="shortTitle")
     klass: str
     posting: str
-    fraud_risk: str = Field(alias="fraudRisk")
     one_line: str = Field(alias="oneLine")
     llm_hint: str = Field(default="", alias="llmHint")
     route_target: DocumentTypeRouteTarget = Field(
@@ -103,7 +127,6 @@ class DocumentTypeDefinition(BaseModel):
         default=None,
         alias="approvalPolicy",
     )
-    fx_policy: FxPostingPolicy | None = Field(default=None, alias="fxPolicy")
     validation_rules: list[ValidationRuleConfig] = Field(default_factory=list, alias="validationRules")
     custom_validation_rules: list[CustomValidationRule] = Field(
         default_factory=list,
@@ -124,8 +147,29 @@ class DocumentTypeDefinition(BaseModel):
         default=None,
         alias="sampleAnalysis",
     )
+    post_to: DocumentTypePostTo = Field(default_factory=DocumentTypePostTo, alias="postTo")
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("klass", mode="before")
+    @classmethod
+    def _normalize_klass(cls, value: Any) -> str:
+        from app.services.classification.document_type_klass import normalize_document_type_klass
+
+        return normalize_document_type_klass(str(value or ""))
+
+    @model_validator(mode="after")
+    def _derive_posting_from_klass(self) -> DocumentTypeDefinition:
+        from app.services.classification.document_type_klass import derive_posting_from_klass_and_profile
+
+        posting = derive_posting_from_klass_and_profile(
+            self.klass,
+            self.playbook_profile,
+            existing_posting=self.posting,
+        )
+        if posting != self.posting:
+            object.__setattr__(self, "posting", posting)
+        return self
 
     @field_validator("matrix_template_code", mode="before")
     @classmethod
@@ -176,11 +220,6 @@ class DocumentTypeDefinition(BaseModel):
             return None
         return normalize_approval_policy(value)
 
-    @field_validator("fx_policy", mode="before")
-    @classmethod
-    def _normalize_fx_policy_field(cls, value: Any) -> FxPostingPolicy | None:
-        return normalize_fx_posting_policy(value)
-
     @field_validator("validation_rules", mode="before")
     @classmethod
     def _normalize_validation_rules(cls, value: Any) -> list[ValidationRuleConfig]:
@@ -194,7 +233,7 @@ class DocumentTypeDefinition(BaseModel):
     @field_validator("extraction_fields", mode="before")
     @classmethod
     def _normalize_extraction_fields(cls, value: Any) -> list[str]:
-        from app.services.document_type_field_keys import normalize_extraction_field_keys
+        from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
 
         if value is None:
             return []
@@ -205,7 +244,7 @@ class DocumentTypeDefinition(BaseModel):
     @field_validator("required_fields", mode="before")
     @classmethod
     def _normalize_required_fields(cls, value: Any) -> list[str]:
-        from app.services.document_type_field_keys import normalize_extraction_field_keys
+        from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
 
         if value is None:
             return []
@@ -231,7 +270,7 @@ class DocumentTypeDefinition(BaseModel):
     @field_validator("bundle_mandatory", mode="before")
     @classmethod
     def _normalize_bundle_mandatory(cls, value: Any) -> list[str]:
-        from app.services.document_type_playbook_service import is_dt_code
+        from app.services.classification.document_type_playbook_service import is_dt_code
 
         if value is None or not isinstance(value, list):
             return []
@@ -247,7 +286,7 @@ class DocumentTypeDefinition(BaseModel):
     @field_validator("bundle_conditional", mode="before")
     @classmethod
     def _normalize_bundle_conditional(cls, value: Any) -> list[str]:
-        from app.services.document_type_playbook_service import is_dt_code
+        from app.services.classification.document_type_playbook_service import is_dt_code
 
         if value is None or not isinstance(value, list):
             return []

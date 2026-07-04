@@ -6,6 +6,7 @@ import {
   type PlaybookProfile,
 } from "@/lib/documentPlaybookConfig";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import { isTransPosting } from "@/lib/documentTypeKlass";
 
 export const ROUTE_PURCHASE = "Purchase Management";
 export const ROUTE_SALES = "Sales Management";
@@ -119,6 +120,11 @@ export function splitBundleItems(items: string[]): { dtCodes: string[]; advisori
   return { dtCodes, advisories };
 }
 
+/** Recommended bundle members — document type codes only (legacy free-text lines stripped). */
+export function normalizeBundleConditional(items: string[]): string[] {
+  return splitBundleItems(items).dtCodes;
+}
+
 export function mergeBundleItems(dtCodes: string[], advisories: string[]): string[] {
   return [...normalizeDtCodeList(dtCodes), ...advisories.map((line) => line.trim()).filter(Boolean)];
 }
@@ -172,12 +178,9 @@ export function isPurchaseBundleMemberCandidate(
   if (docType.enabled === false) return false;
   const role = (docType.purchaseBundleRole || "").trim().toLowerCase();
   if (role === "po" || role === "grn") return true;
-  const klass = (docType.klass || "").trim().toLowerCase();
-  const posting = (docType.posting || "").trim().toLowerCase();
   return (
-    klass === "supporting" &&
-    docType.routeTarget === "Purchase Management" &&
-    posting === "no"
+    !isTransPosting(docType) &&
+    docType.routeTarget === "Purchase Management"
   );
 }
 
@@ -188,12 +191,9 @@ export function isSalesBundleMemberCandidate(
   if (docType.enabled === false) return false;
   const role = (docType.salesBundleRole || "").trim().toLowerCase();
   if (role === "so" || role === "dn") return true;
-  const klass = (docType.klass || "").trim().toLowerCase();
-  const posting = (docType.posting || "").trim().toLowerCase();
   return (
-    klass === "supporting" &&
-    docType.routeTarget === "Sales Management" &&
-    posting === "no"
+    !isTransPosting(docType) &&
+    docType.routeTarget === "Sales Management"
   );
 }
 
@@ -240,19 +240,15 @@ export function bundleEditorMode(
   const salesRole = (draft.salesBundleRole || "").trim().toLowerCase();
   if (salesRole === "so" || salesRole === "dn") return "member";
 
-  const klass = (draft.klass || "").trim().toLowerCase();
-  const posting = (draft.posting || "").trim().toLowerCase();
   if (
-    klass === "supporting" &&
-    draft.routeTarget === "Purchase Management" &&
-    posting === "no"
+    !isTransPosting(draft) &&
+    draft.routeTarget === "Purchase Management"
   ) {
     return "member";
   }
   if (
-    klass === "supporting" &&
-    draft.routeTarget === "Sales Management" &&
-    posting === "no"
+    !isTransPosting(draft) &&
+    draft.routeTarget === "Sales Management"
   ) {
     return "member";
   }

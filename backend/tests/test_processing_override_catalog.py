@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.processing_override_catalog import (
+from app.services.invoice.processing_override_catalog import (
     normalise_processing_overrides,
     override_bypasses_purchase_hold,
     serialise_processing_overrides,

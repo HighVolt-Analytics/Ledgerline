@@ -3,17 +3,15 @@ import {
   inferPlaybookProfileFromDefinition,
   playbookPresetForProfile,
 } from "./documentPlaybookConfig";
-export type DocumentTypeFraudRisk = "low" | "medium" | "high" | "critical";
+import {
+  DOCUMENT_TYPE_CLASSES,
+  KLASS_NON_TRANSACTIONAL,
+  derivePostingFromKlassAndProfile,
+  type DocumentTypeClass,
+} from "./documentTypeKlass";
 
-export type DocumentTypeClass =
-  | "Transactional"
-  | "Pre-transactional"
-  | "Supporting"
-  | "Reconciliation"
-  | "Master-data"
-  | "Compliance"
-  | "Informational"
-  | "Non-actionable";
+export type { DocumentTypeClass };
+export { DOCUMENT_TYPE_CLASSES };
 
 export type DocumentRuleCondition = {
   type: "condition";
@@ -45,13 +43,30 @@ export type DocumentTypeSampleAnalysis = {
   recognitionSignals: string[];
 };
 
+export type DocumentTypePostTo = {
+  ledger: string;
+  subLedger: string;
+  taxAccount?: string;
+  payableAccount?: string;
+  receivableAccount?: string;
+};
+
+export function emptyDocumentTypePostTo(): DocumentTypePostTo {
+  return {
+    ledger: "",
+    subLedger: "",
+    taxAccount: "",
+    payableAccount: "",
+    receivableAccount: "",
+  };
+}
+
 export type V5DocumentType = {
   code: string;
   title: string;
   shortTitle: string;
   klass: DocumentTypeClass;
   posting: string;
-  fraudRisk: DocumentTypeFraudRisk;
   oneLine: string;
   llmHint?: string;
   routeTarget: string;
@@ -81,21 +96,8 @@ export type V5DocumentType = {
   sampleAnalysis?: DocumentTypeSampleAnalysis;
   /** Shipped matrix template this org type was created from (e.g. DT-07). Org code is separate. */
   matrixTemplateCode?: string;
-  /** FX booking at invoice date; payment variance to fxGainLossAccount. */
-  fxPolicy?: import("./v4RuleBookTypes").FxPostingPolicy;
+  postTo: DocumentTypePostTo;
 };
-
-export const DOCUMENT_TYPE_CLASSES: Array<"all" | DocumentTypeClass> = [
-  "all",
-  "Transactional",
-  "Pre-transactional",
-  "Supporting",
-  "Reconciliation",
-  "Master-data",
-  "Compliance",
-  "Informational",
-  "Non-actionable",
-];
 
 export type DocumentTypeDefinition = V5DocumentType;
 
@@ -121,19 +123,20 @@ export function nextOrgDocumentTypeCode(existing: DocumentTypeDefinition[]): str
 export function createBlankDocumentType(existing: DocumentTypeDefinition[]): DocumentTypeDefinition {
   const code = nextOrgDocumentTypeCode(existing);
   const profile = inferPlaybookProfileFromDefinition({
-    klass: "Transactional",
+    klass: KLASS_NON_TRANSACTIONAL,
     posting: "No",
     purchaseBundleRole: "",
     salesBundleRole: "",
+    playbookProfile: "",
   } as DocumentTypeDefinition);
   const preset = playbookPresetForProfile(profile);
+  const posting = derivePostingFromKlassAndProfile(KLASS_NON_TRANSACTIONAL, profile);
   return {
     code,
     title: "",
     shortTitle: "",
-    klass: "Supporting",
-    posting: "No",
-    fraudRisk: "low",
+    klass: KLASS_NON_TRANSACTIONAL,
+    posting,
     oneLine: "",
     llmHint: "",
     routeTarget: "Vault",
@@ -162,5 +165,6 @@ export function createBlankDocumentType(existing: DocumentTypeDefinition[]): Doc
     bundleConditional: [],
     purchaseBundleRole: "",
     salesBundleRole: "",
+    postTo: emptyDocumentTypePostTo(),
   };
 }

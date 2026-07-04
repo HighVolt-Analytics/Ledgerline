@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.tenant_storage_paths import (
+from app.services.tenant.tenant_storage_paths import (
     is_legacy_blob_path,
     legacy_to_tenant_path,
     resolve_blob_candidates,
@@ -48,7 +48,7 @@ def test_resolve_blob_candidates_includes_document_type_folder_encoding_variants
 def test_billing_legacy_json_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path))
     from app.config import get_settings
-    from app.services.billing_io import _billing_path, remove_billing_for_tenant
+    from app.services.shared.billing_io import _billing_path, remove_billing_for_tenant
 
     get_settings.cache_clear()
     per_tenant = _billing_path(TESTING_TENANT_UUID)

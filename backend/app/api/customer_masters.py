@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
 from app.schemas.common import ApiEnvelope
 from app.schemas.customer import CustomerMasterCreate, CustomerMasterResponse, CustomerMasterUpdate
-from app.services.audit_service import log_event
-from app.services.customer_master_service import (
+from app.services.audit.audit_service import log_event
+from app.services.master_data.customer_master_service import (
     create_customer_master,
     delete_customer_master,
     list_customer_masters,

@@ -8,7 +8,7 @@ from app.api.deps import AuthContext, get_auth_context, get_db
 from app.api.http_errors import http_bad_request, http_not_found
 from app.schemas.audit import AuditLogExportRequest, AuditLogListRequest, AuditLogResponse
 from app.schemas.common import ApiEnvelope, ResponseMeta
-from app.services.audit_log_service import build_audit_export, list_audit_logs
+from app.services.audit.audit_log_service import build_audit_export, list_audit_logs
 
 router = APIRouter(prefix="/audit-log", tags=["audit"])
 

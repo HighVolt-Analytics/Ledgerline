@@ -7,17 +7,18 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.services.rule_book_mapper import clear_classification_config_cache
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.document_duplicate_service import evaluate_file_hash_duplicate
-from app.services.email_ingestion import EmailAttachment, RawEmail
-from app.services.invoice_data import InvoiceData
-from app.services.pipeline import ingest_email_attachments
-from app.services.validator import vr02_unique
+from app.services.dossier.document_duplicate_service import evaluate_file_hash_duplicate
+from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
+from app.services.invoice.invoice_data import InvoiceData
+from app.services.invoice.pipeline import ingest_email_attachments
+from app.services.rule_book.validator import vr02_unique
 
 
 @pytest.fixture
@@ -103,7 +104,7 @@ async def test_email_duplicate_preserves_processed_invoice(
     await db_session.flush()
 
     monkeypatch.setattr(
-        "app.services.pipeline._finish_email_message",
+        "app.services.invoice.pipeline._finish_email_message",
         lambda *args, **kwargs: None,
     )
 
@@ -146,7 +147,7 @@ async def test_email_duplicate_in_progress_logs_without_second_row(
     await db_session.flush()
 
     monkeypatch.setattr(
-        "app.services.pipeline._finish_email_message",
+        "app.services.invoice.pipeline._finish_email_message",
         lambda *args, **kwargs: None,
     )
 
@@ -198,7 +199,7 @@ async def test_pipeline_stages_show_duplicate_skipped(
     from datetime import datetime, timezone
 
     from app.models.audit import AuditLog
-    from app.services.pipeline_stages import build_pipeline_stages
+    from app.services.invoice.pipeline_stages import build_pipeline_stages
 
     shadow = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -228,3 +229,38 @@ async def test_pipeline_stages_show_duplicate_skipped(
     assert steps[1].stage == "Duplicate skipped"
     assert "Duplicate file skipped" in steps[1].detail
     assert "99" in steps[1].detail
+
+
+@pytest.mark.asyncio
+async def test_upload_api_shadow_duplicate_for_processed_file(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.utils.hashing import compute_sha256_bytes
+
+    pdf_bytes = b"%PDF-1.4 upload-shadow-dup"
+    file_hash = compute_sha256_bytes(pdf_bytes)
+
+    processed = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vendor Co",
+        invoice_no="INV-UP-1",
+        status=InvoiceStatus.PROCESSED,
+        file_hash=file_hash,
+        currency="AUD",
+    )
+    db_session.add(processed)
+    await db_session.flush()
+
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/shadow.pdf",
+    )
+
+    files = {"file": ("invoice.pdf", pdf_bytes, "application/pdf")}
+    res = await client.post("/api/invoices/upload?defer_processing=true", files=files)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["data"]["status"] == "duplicate_skipped"
+    assert body["data"]["id"] != processed.id

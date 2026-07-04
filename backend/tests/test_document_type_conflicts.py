@@ -2,12 +2,12 @@
 
 import pytest
 
-from app.services.document_type_conflicts import (
+from app.services.classification.document_type_conflicts import (
     conflict_confidence_penalty,
     detect_signal_conflicts,
 )
 def test_detect_contract_heading_with_invoice_fields() -> None:
-    from app.services.document_type_rule_engine import DocumentClassifierContext
+    from app.services.classification.document_type_rule_engine import DocumentClassifierContext
 
     ctx = DocumentClassifierContext(
         attachment_name="",

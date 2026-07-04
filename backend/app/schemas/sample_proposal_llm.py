@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.services.document_classifier_builder import _SIGNAL_CONDITIONS
-from app.services.document_type_field_keys import is_valid_extraction_field_key
-from app.services.playbook_profile_catalog import PROFILE_PRESETS
+from app.services.classification.document_classifier_builder import _SIGNAL_CONDITIONS
+from app.services.classification.document_type_field_keys import is_valid_extraction_field_key
+from app.services.classification.playbook_profile_catalog import PROFILE_PRESETS
 
 _VALID_SIGNALS = frozenset(_SIGNAL_CONDITIONS) | frozenset(
     {"has_po_reference", "has_invoice_number", "has_total_amount"}

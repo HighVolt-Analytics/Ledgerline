@@ -4,14 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
-from app.services.audit_service import log_event
+from app.services.audit.audit_service import log_event
 from app.schemas.common import ApiEnvelope
 from app.schemas.master_data import (
     VendorMasterCreate,
     VendorMasterResponse,
     VendorMasterUpdate,
 )
-from app.services.master_data_service import (
+from app.services.master_data.master_data_service import (
     create_vendor_master,
     delete_vendor_master,
     list_vendor_masters,

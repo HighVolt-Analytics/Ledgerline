@@ -1,13 +1,13 @@
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
-from app.services.processing_override_catalog import ProcessingOverridesPayload
+from app.services.invoice.processing_override_catalog import ProcessingOverridesPayload
 
 PipelineStageState = Literal["done", "pending", "fail", "skipped"]
 ApprovalBoardColumn = Literal["review", "processing", "approved", "rejected"]
@@ -71,6 +71,7 @@ class InvoiceResponse(BaseModel):
     currency: str
     subtotal: Decimal | None
     gst: Decimal | None
+    gst_rate: Decimal | None = None
     total: Decimal | None
     status: InvoiceStatus
     file_hash: str | None
@@ -144,6 +145,17 @@ class InvoiceUpdateRequest(BaseModel):
     account_name: str | None = None
     line_items: list[LineItemUpdateRequest] | None = None
     processing_overrides: ProcessingOverridesPayload | None = None
+    extracted_fields: dict[str, str] | None = None
+
+    @field_validator("extracted_fields", mode="before")
+    @classmethod
+    def _normalize_extracted_fields_patch(cls, value: Any) -> dict[str, str] | None:
+        if value is None:
+            return None
+        from app.services.extraction.extraction_field_values import normalize_extracted_fields_map
+
+        cleaned = normalize_extracted_fields_map(value)
+        return cleaned or None
 
 
 class ProcessInvoicesBatchRequest(BaseModel):

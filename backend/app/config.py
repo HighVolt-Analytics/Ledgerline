@@ -40,7 +40,6 @@ class Settings(BaseSettings):
         default="./app/rule_book_config.json",
         validation_alias=AliasChoices("RULE_BOOK_CONFIG_PATH", "RULE_BOOK_PATH"),
     )
-    chart_of_accounts_path: str = "./app/chart_of_accounts.json"
     document_types_catalog_path: str = Field(
         default="./data/document_types.json",
         validation_alias="DOCUMENT_TYPES_CATALOG_PATH",

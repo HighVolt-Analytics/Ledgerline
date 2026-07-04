@@ -8,18 +8,23 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
 from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.document_type_field_checks import field_is_present
-from app.services.document_type_rule_engine import build_document_classifier_context
-from app.services.extraction_field_values import (
+from app.services.classification.document_type_field_checks import field_is_present
+from app.services.classification.document_type_rule_engine import build_document_classifier_context
+from app.services.extraction.extraction_field_values import (
     apply_parsed_extraction_fields,
+    custom_extraction_field_descriptors,
     custom_extraction_field_keys,
     custom_extraction_field_keys_for_dt,
     enrich_parsed_from_ocr,
     harvest_custom_fields_from_llm_raw,
     normalize_extracted_fields_map,
 )
-from app.services.invoice_data import InvoiceData
-from app.services.llm_document_service import llm_result_to_invoice_data
+from app.services.invoice.invoice_data import InvoiceData
+from app.services.extraction.llm_document_service import (
+    _normalize_llm_raw,
+    build_llm_user_payload,
+    llm_result_to_invoice_data,
+)
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -28,9 +33,8 @@ def _definition(**kwargs) -> DocumentTypeDefinition:
         code="DT-90",
         title="Contract",
         shortTitle="Contract",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Vault",
         classifier=DocumentTypeClassifier(),
@@ -159,3 +163,45 @@ def test_field_is_present_reads_custom_extracted_field() -> None:
         parsed=parsed,
         ctx=ctx,
     )
+
+
+def test_custom_extraction_field_descriptors_include_label() -> None:
+    descriptors = custom_extraction_field_descriptors(["contract_party", "vendor"])
+    assert descriptors == [{"key": "contract_party", "label": "Contract Party"}]
+
+
+def test_build_llm_user_payload_includes_descriptors() -> None:
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    payload = build_llm_user_payload(
+        ocr=OcrArtifact(success=True, text="Contract Party: Acme", text_length=20),
+        org=OrgContext(),
+        document_types=[_definition()],
+        custom_keys=["contract_party"],
+    )
+    import json
+
+    data = json.loads(payload)
+    assert data["custom_extraction_fields"] == ["contract_party"]
+    assert data["custom_extraction_field_descriptors"] == [
+        {"key": "contract_party", "label": "Contract Party"}
+    ]
+
+
+def test_normalize_llm_raw_harvests_custom_field_with_keys() -> None:
+    normalized = _normalize_llm_raw(
+        {"contract_party": "Buyer Co", "extracted_fields": {}},
+        custom_keys=["contract_party"],
+    )
+    assert normalized["extracted_fields"]["contract_party"] == "Buyer Co"
+
+
+def test_enrich_parsed_from_ocr_harvests_contract_party() -> None:
+    ocr = OcrArtifact(
+        success=True,
+        text="FINANCE CONTRACT\nContract Party: Permagen Planting Land Pty Ltd",
+        text_length=55,
+    )
+    parsed = InvoiceData(document_text=ocr.text)
+    enriched = enrich_parsed_from_ocr(parsed, ocr, dt_definition=_definition())
+    assert enriched.extracted_fields.get("contract_party") == "Permagen Planting Land Pty Ltd"

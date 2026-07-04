@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.dossier_approval_service import (
+from app.services.dossier.dossier_approval_service import (
     _human_detail,
     _human_policy_ref,
     build_dossier_approval_chain,

@@ -1,660 +1,4 @@
 {
-  "DT-24": {
-    "enabled": true,
-    "priority": 10,
-    "confidence": 0.92,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "group",
-          "operator": "AND",
-          "children": [
-            {
-              "type": "condition",
-              "field": "attachment_name",
-              "operator": "regex",
-              "value": "(quote|quotation|estimate|proposal)"
-            },
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "not_contains",
-              "value": "terms and conditions"
-            }
-          ]
-        },
-        {
-          "type": "group",
-          "operator": "AND",
-          "children": [
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "regex",
-              "value": "(?i)\\b(quote|quotation|estimate|proposal)\\b"
-            },
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "not_contains",
-              "value": "terms and conditions"
-            },
-            {
-              "type": "condition",
-              "field": "has_invoice_no",
-              "operator": "equals",
-              "value": "false"
-            }
-          ]
-        }
-      ]
-    }
-  },
-  "DT-25": {
-    "enabled": true,
-    "priority": 11,
-    "confidence": 0.9,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(ato|tax[\\s_-]?office|tax[\\s_-]?notice|compliance[\\s_-]?notice)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)\\b(ato|tax[\\s_-]?office|tax[\\s_-]?notice|compliance[\\s_-]?notice)\\b"
-        }
-      ]
-    }
-  },
-  "DT-23": {
-    "enabled": true,
-    "priority": 12,
-    "confidence": 0.9,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(bank[\\s_-]?detail|change[\\s_-]?of[\\s_-]?bank)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(bank[\\s_-]?detail|change[\\s_-]?of[\\s_-]?bank)"
-        }
-      ]
-    }
-  },
-  "DT-22": {
-    "enabled": true,
-    "priority": 13,
-    "confidence": 0.88,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(dunning|overdue|final[\\s_-]?demand)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(dunning|overdue|final[\\s_-]?demand)"
-        }
-      ]
-    }
-  },
-  "DT-13": {
-    "enabled": true,
-    "priority": 14,
-    "confidence": 0.88,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(statement|acct[\\s_-]?summary|account[\\s_-]?summary)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(vendor statement|account summary)"
-        }
-      ]
-    }
-  },
-  "DT-18": {
-    "enabled": true,
-    "priority": 15,
-    "confidence": 0.9,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(remittance|payment[\\s_-]?advice)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(remittance|payment[\\s_-]?advice)"
-        }
-      ]
-    }
-  },
-  "DT-06": {
-    "enabled": true,
-    "priority": 16,
-    "confidence": 0.9,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(pro[\\s_-]?forma|advance[\\s_-]?request)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(pro[\\s_-]?forma|advance[\\s_-]?request)"
-        }
-      ]
-    }
-  },
-  "DT-04": {
-    "enabled": true,
-    "priority": 17,
-    "confidence": 0.9,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(credit[\\s_-]?note|creditmemo|credit_memo)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(credit[\\s_-]?note|creditmemo|credit_memo)"
-        }
-      ]
-    }
-  },
-  "DT-03": {
-    "enabled": true,
-    "priority": 18,
-    "confidence": 0.93,
-    "root": {
-      "type": "group",
-      "operator": "AND",
-      "children": [
-        {
-          "type": "group",
-          "operator": "OR",
-          "children": [
-            {
-              "type": "condition",
-              "field": "attachment_name",
-              "operator": "regex",
-              "value": "(grn|goods[\\s_-]?receipt|delivery[\\s_-]?note)"
-            },
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "regex",
-              "value": "(?i)(goods[\\s_-]?receipt|delivery[\\s_-]?note|\\bGRN\\b)"
-            },
-            {
-              "type": "condition",
-              "field": "has_heading_grn",
-              "operator": "equals",
-              "value": "true"
-            }
-          ]
-        },
-        {
-          "type": "condition",
-          "field": "has_invoice_no",
-          "operator": "equals",
-          "value": "false"
-        },
-        {
-          "type": "condition",
-          "field": "is_commercial_invoice",
-          "operator": "equals",
-          "value": "false"
-        }
-      ]
-    }
-  },
-  "DT-17": {
-    "enabled": true,
-    "priority": 19,
-    "confidence": 0.88,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(timesheet|time[\\s_-]?sheet|service[\\s_-]?entry|ses[\\s_-])"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(timesheet|time[\\s_-]?sheet|service[\\s_-]?entry)"
-        }
-      ]
-    }
-  },
-  "DT-16": {
-    "enabled": true,
-    "priority": 20,
-    "confidence": 0.85,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "group",
-          "operator": "AND",
-          "children": [
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "contains",
-              "value": "signed for and on behalf"
-            },
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "contains",
-              "value": "governing law"
-            }
-          ]
-        },
-        {
-          "type": "group",
-          "operator": "AND",
-          "children": [
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "contains",
-              "value": "terms and conditions"
-            },
-            {
-              "type": "condition",
-              "field": "has_invoice_no",
-              "operator": "equals",
-              "value": "false"
-            }
-          ]
-        },
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(contract|sow|statement[\\s_-]?of[\\s_-]?work)"
-        }
-      ]
-    }
-  },
-  "DT-02": {
-    "enabled": true,
-    "priority": 25,
-    "confidence": 0.9,
-    "root": {
-      "type": "group",
-      "operator": "AND",
-      "children": [
-        {
-          "type": "group",
-          "operator": "OR",
-          "children": [
-            {
-              "type": "condition",
-              "field": "attachment_name",
-              "operator": "regex",
-              "value": "(^|[-_/])po([-_.]|$)|purchase[_-]?order|PO-"
-            },
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "regex",
-              "value": "(?i)purchase order"
-            },
-            {
-              "type": "condition",
-              "field": "has_heading_po",
-              "operator": "equals",
-              "value": "true"
-            }
-          ]
-        },
-        {
-          "type": "condition",
-          "field": "has_invoice_no",
-          "operator": "equals",
-          "value": "false"
-        },
-        {
-          "type": "condition",
-          "field": "is_commercial_invoice",
-          "operator": "equals",
-          "value": "false"
-        }
-      ]
-    }
-  },
-  "DT-12": {
-    "enabled": true,
-    "priority": 21,
-    "confidence": 0.78,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(expense[\\s_-]?claim|claim[\\s_-]?receipt|team[\\s_-]?meal|reimburse)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(expense[\\s_-]?claim|reimburse|team\\s+lunch|\\bmeal\\b)"
-        }
-      ]
-    }
-  },
-  "DT-05": {
-    "enabled": true,
-    "priority": 16,
-    "confidence": 0.9,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(debit[\\s_-]?note|debitmemo|debit_memo)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(debit[\\s_-]?note|debitmemo|debit_memo)"
-        }
-      ]
-    }
-  },
-  "DT-07": {
-    "enabled": true,
-    "priority": 85,
-    "confidence": 0.82,
-    "root": {
-      "type": "group",
-      "operator": "AND",
-      "children": [
-        {
-          "type": "condition",
-          "field": "has_heading_invoice",
-          "operator": "equals",
-          "value": "true"
-        },
-        {
-          "type": "group",
-          "operator": "OR",
-          "children": [
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "regex",
-              "value": "(?i)(\\brent\\b|\\blease\\b|subscription|retainer|recurring)"
-            },
-            {
-              "type": "condition",
-              "field": "attachment_name",
-              "operator": "regex",
-              "value": "(rent|lease|subscription|retainer|recurring)"
-            }
-          ]
-        },
-        {
-          "type": "condition",
-          "field": "has_total",
-          "operator": "equals",
-          "value": "true"
-        }
-      ]
-    }
-  },
-  "DT-08": {
-    "enabled": true,
-    "priority": 88,
-    "confidence": 0.8,
-    "root": {
-      "type": "group",
-      "operator": "AND",
-      "children": [
-        {
-          "type": "group",
-          "operator": "OR",
-          "children": [
-            {
-              "type": "condition",
-              "field": "document_text",
-              "operator": "regex",
-              "value": "(?i)(utility|electricity|water\\s+bill|gas\\s+bill|telecom|telco)"
-            },
-            {
-              "type": "condition",
-              "field": "attachment_name",
-              "operator": "regex",
-              "value": "(utility|electric|water|gas|telco|telecom)"
-            }
-          ]
-        },
-        {
-          "type": "condition",
-          "field": "has_total",
-          "operator": "equals",
-          "value": "true"
-        }
-      ]
-    }
-  },
-  "DT-09": {
-    "enabled": true,
-    "priority": 86,
-    "confidence": 0.85,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(awb|bill[_-]?of[_-]?lading|freight|customs[_-]?broker|demurrage)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(\\bawb\\b|bill\\s+of\\s+lading|\\bfreight\\b|customs\\s+broker|demurrage)"
-        }
-      ]
-    }
-  },
-  "DT-10": {
-    "enabled": true,
-    "priority": 87,
-    "confidence": 0.84,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(customs[_-]?entry|import[_-]?declaration|bill[_-]?of[_-]?entry)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(customs\\s+entry|import\\s+declaration|bill\\s+of\\s+entry)"
-        }
-      ]
-    }
-  },
-  "DT-11": {
-    "enabled": true,
-    "priority": 84,
-    "confidence": 0.83,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(intercompany|inter[_-]?company|ic[_-]?invoice)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(intercompany|inter-company|\\bIC\\s+invoice\\b|transfer\\s+pricing)"
-        }
-      ]
-    }
-  },
-  "DT-19": {
-    "enabled": true,
-    "priority": 83,
-    "confidence": 0.86,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(rcti|self[_-]?bill|recipient[_-]?created)"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(\\bRCTI\\b|recipient[- ]created|self[- ]bill)"
-        }
-      ]
-    }
-  },
-  "DT-20": {
-    "enabled": true,
-    "priority": 82,
-    "confidence": 0.85,
-    "root": {
-      "type": "group",
-      "operator": "OR",
-      "children": [
-        {
-          "type": "condition",
-          "field": "attachment_name",
-          "operator": "regex",
-          "value": "(consignment|evaluated[_-]?receipt|ers[_-])"
-        },
-        {
-          "type": "condition",
-          "field": "document_text",
-          "operator": "regex",
-          "value": "(?i)(consignment|evaluated\\s+receipt|\\bERS\\b)"
-        }
-      ]
-    }
-  },
-  "DT-21": {
-    "enabled": true,
-    "priority": 70,
-    "confidence": 0.75,
-    "root": {
-      "type": "group",
-      "operator": "AND",
-      "children": [
-        {
-          "type": "condition",
-          "field": "has_heading_invoice",
-          "operator": "equals",
-          "value": "true"
-        },
-        {
-          "type": "condition",
-          "field": "has_invoice_no",
-          "operator": "equals",
-          "value": "true"
-        },
-        {
-          "type": "condition",
-          "field": "has_total",
-          "operator": "equals",
-          "value": "true"
-        },
-        {
-          "type": "condition",
-          "field": "has_po_reference",
-          "operator": "equals",
-          "value": "false"
-        }
-      ]
-    }
-  },
   "DT-01": {
     "enabled": true,
     "priority": 180,
@@ -684,6 +28,614 @@
       ]
     }
   },
+  "DT-02": {
+    "enabled": true,
+    "priority": 25,
+    "confidence": 0.9,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "group",
+          "operator": "OR",
+          "children": [
+            {
+              "type": "condition",
+              "field": "has_heading_po",
+              "operator": "equals",
+              "value": "true"
+            },
+            {
+              "type": "condition",
+              "field": "document_text",
+              "operator": "contains",
+              "value": "purchase order"
+            },
+            {
+              "type": "condition",
+              "field": "attachment_name",
+              "operator": "contains",
+              "value": "po"
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "operator": "AND",
+          "children": [
+            {
+              "type": "condition",
+              "field": "has_invoice_no",
+              "operator": "equals",
+              "value": "false"
+            },
+            {
+              "type": "condition",
+              "field": "has_heading_invoice",
+              "operator": "equals",
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "DT-03": {
+    "enabled": true,
+    "priority": 18,
+    "confidence": 0.93,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "group",
+          "operator": "OR",
+          "children": [
+            {
+              "type": "condition",
+              "field": "has_heading_grn",
+              "operator": "equals",
+              "value": "true"
+            },
+            {
+              "type": "condition",
+              "field": "document_text",
+              "operator": "contains",
+              "value": "goods received"
+            },
+            {
+              "type": "condition",
+              "field": "attachment_name",
+              "operator": "contains",
+              "value": "grn"
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "operator": "AND",
+          "children": [
+            {
+              "type": "condition",
+              "field": "has_invoice_no",
+              "operator": "equals",
+              "value": "false"
+            },
+            {
+              "type": "condition",
+              "field": "has_heading_invoice",
+              "operator": "equals",
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "DT-04": {
+    "enabled": true,
+    "priority": 17,
+    "confidence": 0.9,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_heading",
+          "operator": "contains",
+          "value": "credit note"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "credit"
+        }
+      ]
+    }
+  },
+  "DT-05": {
+    "enabled": true,
+    "priority": 16,
+    "confidence": 0.9,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_heading",
+          "operator": "contains",
+          "value": "debit note"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "debit"
+        }
+      ]
+    }
+  },
+  "DT-06": {
+    "enabled": true,
+    "priority": 16,
+    "confidence": 0.9,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "proforma"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "proforma"
+        }
+      ]
+    }
+  },
+  "DT-07": {
+    "enabled": true,
+    "priority": 85,
+    "confidence": 0.82,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "condition",
+          "field": "has_heading_invoice",
+          "operator": "equals",
+          "value": "true"
+        },
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "subscription"
+        },
+        {
+          "type": "condition",
+          "field": "has_total",
+          "operator": "equals",
+          "value": "true"
+        }
+      ]
+    }
+  },
+  "DT-08": {
+    "enabled": true,
+    "priority": 88,
+    "confidence": 0.8,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "utility"
+        },
+        {
+          "type": "condition",
+          "field": "has_total",
+          "operator": "equals",
+          "value": "true"
+        }
+      ]
+    }
+  },
+  "DT-09": {
+    "enabled": true,
+    "priority": 86,
+    "confidence": 0.85,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "freight"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "freight"
+        }
+      ]
+    }
+  },
+  "DT-10": {
+    "enabled": true,
+    "priority": 87,
+    "confidence": 0.84,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "customs"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "customs"
+        }
+      ]
+    }
+  },
+  "DT-11": {
+    "enabled": true,
+    "priority": 84,
+    "confidence": 0.83,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "intercompany"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "intercompany"
+        }
+      ]
+    }
+  },
+  "DT-12": {
+    "enabled": true,
+    "priority": 21,
+    "confidence": 0.78,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "expense claim"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "claim"
+        }
+      ]
+    }
+  },
+  "DT-13": {
+    "enabled": true,
+    "priority": 14,
+    "confidence": 0.88,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "statement"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "statement"
+        }
+      ]
+    }
+  },
+  "DT-16": {
+    "enabled": true,
+    "priority": 20,
+    "confidence": 0.85,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "has_heading_contract",
+          "operator": "equals",
+          "value": "true"
+        },
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "agreement"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "contract"
+        },
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "terms and conditions"
+        }
+      ]
+    }
+  },
+  "DT-17": {
+    "enabled": true,
+    "priority": 19,
+    "confidence": 0.88,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "timesheet"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "timesheet"
+        }
+      ]
+    }
+  },
+  "DT-18": {
+    "enabled": true,
+    "priority": 15,
+    "confidence": 0.9,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "remittance"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "remittance"
+        }
+      ]
+    }
+  },
+  "DT-19": {
+    "enabled": true,
+    "priority": 83,
+    "confidence": 0.86,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "rcti"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "rcti"
+        }
+      ]
+    }
+  },
+  "DT-20": {
+    "enabled": true,
+    "priority": 82,
+    "confidence": 0.85,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "consignment"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "consignment"
+        }
+      ]
+    }
+  },
+  "DT-21": {
+    "enabled": true,
+    "priority": 70,
+    "confidence": 0.75,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "condition",
+          "field": "has_heading_invoice",
+          "operator": "equals",
+          "value": "true"
+        },
+        {
+          "type": "condition",
+          "field": "has_invoice_no",
+          "operator": "equals",
+          "value": "true"
+        },
+        {
+          "type": "condition",
+          "field": "has_total",
+          "operator": "equals",
+          "value": "true"
+        }
+      ]
+    }
+  },
+  "DT-22": {
+    "enabled": true,
+    "priority": 13,
+    "confidence": 0.88,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "payment reminder"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "dunning"
+        }
+      ]
+    }
+  },
+  "DT-23": {
+    "enabled": true,
+    "priority": 12,
+    "confidence": 0.9,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "bank detail"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "bank"
+        }
+      ]
+    }
+  },
+  "DT-24": {
+    "enabled": true,
+    "priority": 10,
+    "confidence": 0.92,
+    "root": {
+      "type": "group",
+      "operator": "AND",
+      "children": [
+        {
+          "type": "group",
+          "operator": "OR",
+          "children": [
+            {
+              "type": "condition",
+              "field": "document_text",
+              "operator": "contains",
+              "value": "quotation"
+            },
+            {
+              "type": "condition",
+              "field": "attachment_name",
+              "operator": "contains",
+              "value": "quote"
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "operator": "AND",
+          "children": [
+            {
+              "type": "condition",
+              "field": "has_invoice_no",
+              "operator": "equals",
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "DT-25": {
+    "enabled": true,
+    "priority": 11,
+    "confidence": 0.9,
+    "root": {
+      "type": "group",
+      "operator": "OR",
+      "children": [
+        {
+          "type": "condition",
+          "field": "document_text",
+          "operator": "contains",
+          "value": "tax notice"
+        },
+        {
+          "type": "condition",
+          "field": "attachment_name",
+          "operator": "contains",
+          "value": "ato"
+        }
+      ]
+    }
+  },
   "DT-26": {
     "enabled": true,
     "priority": 65,
@@ -709,12 +661,6 @@
           "field": "has_total",
           "operator": "equals",
           "value": "true"
-        },
-        {
-          "type": "condition",
-          "field": "has_po_reference",
-          "operator": "equals",
-          "value": "false"
         }
       ]
     }
@@ -733,35 +679,41 @@
           "children": [
             {
               "type": "condition",
-              "field": "attachment_name",
-              "operator": "regex",
-              "value": "(?i)sales[_\\s-]?order|(^|[-_/])so([-_.]|$)"
+              "field": "has_heading_so",
+              "operator": "equals",
+              "value": "true"
             },
             {
               "type": "condition",
               "field": "document_text",
-              "operator": "regex",
-              "value": "(?i)\\bsales\\s+order\\b"
+              "operator": "contains",
+              "value": "sales order"
             },
             {
               "type": "condition",
-              "field": "has_heading_so",
-              "operator": "equals",
-              "value": "true"
+              "field": "attachment_name",
+              "operator": "contains",
+              "value": "so"
             }
           ]
         },
         {
-          "type": "condition",
-          "field": "has_invoice_no",
-          "operator": "equals",
-          "value": "false"
-        },
-        {
-          "type": "condition",
-          "field": "is_commercial_invoice",
-          "operator": "equals",
-          "value": "false"
+          "type": "group",
+          "operator": "AND",
+          "children": [
+            {
+              "type": "condition",
+              "field": "has_invoice_no",
+              "operator": "equals",
+              "value": "false"
+            },
+            {
+              "type": "condition",
+              "field": "has_heading_invoice",
+              "operator": "equals",
+              "value": "false"
+            }
+          ]
         }
       ]
     }
@@ -781,52 +733,40 @@
             {
               "type": "condition",
               "field": "attachment_name",
-              "operator": "regex",
-              "value": "(?i)(dispatch[_\\s-]?note|delivery[_\\s-]?note)"
+              "operator": "contains",
+              "value": "grn"
             },
             {
               "type": "condition",
               "field": "document_text",
-              "operator": "regex",
-              "value": "(?i)(dispatch\\s+(?:note|docket)|delivery\\s+note)"
+              "operator": "contains",
+              "value": "sales order"
             },
             {
               "type": "condition",
-              "field": "has_heading_grn",
-              "operator": "equals",
-              "value": "true"
+              "field": "attachment_name",
+              "operator": "contains",
+              "value": "so"
             }
           ]
         },
         {
           "type": "group",
-          "operator": "OR",
+          "operator": "AND",
           "children": [
             {
               "type": "condition",
-              "field": "attachment_name",
-              "operator": "regex",
-              "value": "(?i)\\bSO[-_]"
+              "field": "has_invoice_no",
+              "operator": "equals",
+              "value": "false"
             },
             {
               "type": "condition",
-              "field": "document_text",
-              "operator": "regex",
-              "value": "(?i)(\\bSO[-\\s#][A-Z0-9][A-Z0-9\\-/_]{2,}|sales\\s+order\\s+(?:no\\.?|number|ref))"
+              "field": "has_heading_invoice",
+              "operator": "equals",
+              "value": "false"
             }
           ]
-        },
-        {
-          "type": "condition",
-          "field": "has_invoice_no",
-          "operator": "equals",
-          "value": "false"
-        },
-        {
-          "type": "condition",
-          "field": "is_commercial_invoice",
-          "operator": "equals",
-          "value": "false"
         }
       ]
     }

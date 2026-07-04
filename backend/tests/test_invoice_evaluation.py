@@ -12,7 +12,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
 from app.models.vendor_master import VendorMasterRecord
 from app.schemas.rule_book_config import validate_rule_book_config_payload
-from app.services.invoice_evaluation_service import (
+from app.services.invoice.invoice_evaluation_service import (
     EVAL_AUTO_CODED,
     EVAL_PENDING_VENDOR,
     ROUTE_PURCHASE,
@@ -21,7 +21,7 @@ from app.services.invoice_evaluation_service import (
     load_config_for_tenant,
     parse_matched_rule_ids,
 )
-from app.services.rule_book_mapper import clear_classification_config_cache
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 
 
 @pytest.fixture(autouse=True)

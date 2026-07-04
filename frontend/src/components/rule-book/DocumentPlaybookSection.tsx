@@ -48,6 +48,8 @@ export function PlaybookPolicyEditor({
   disabled?: boolean;
 }) {
   const profile = effectivePlaybookProfile(draft);
+  const match = effectiveMatchPolicy(draft);
+  const approval = effectiveApprovalPolicy(draft);
 
   return (
     <div className="space-y-3">
@@ -83,7 +85,7 @@ export function PlaybookPolicyEditor({
         <div className="space-y-1">
           <label className="text-[11px] font-medium text-muted-foreground">Match mode</label>
           <select
-            value={draft.matchPolicy.mode}
+            value={draft.matchPolicy?.mode ?? match.mode}
             disabled={disabled}
             onChange={(e) =>
               onChange({
@@ -104,7 +106,7 @@ export function PlaybookPolicyEditor({
         <div className="space-y-1">
           <label className="text-[11px] font-medium text-muted-foreground">Approval mode</label>
           <select
-            value={draft.approvalPolicy.mode}
+            value={draft.approvalPolicy?.mode ?? approval.mode}
             disabled={disabled}
             onChange={(e) =>
               onChange({

@@ -14,7 +14,7 @@ from app.services.org_context import get_or_create_default_org
 from app.models.journal import EntryType, JournalEntry
 from app.models.line_item import LineItem
 from app.models.reconciliation import DailyReconciliation
-from app.services.vendor_seed import seed_vendors
+from app.services.master_data.vendor_seed import seed_vendors
 
 VENDORS = [
     ("Acme Pty Ltd", "51824753556", "6100", "Software Expenses"),

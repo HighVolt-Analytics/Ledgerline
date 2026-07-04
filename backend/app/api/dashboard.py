@@ -7,7 +7,7 @@ from app.api.deps import get_auth_context, get_db, AuthContext
 from app.schemas.common import ApiEnvelope
 from app.schemas.dashboard import ActivityItem, DashboardOverview, DashboardStats, NavBadges
 from app.schemas.dashboard_api import DashboardActivityRequest, DashboardOverviewRequest
-from app.services.dashboard_service import (
+from app.services.reports.dashboard_service import (
     build_nav_badges,
     build_overview,
     build_stats,

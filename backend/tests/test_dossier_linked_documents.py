@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.dossier_linked_documents_service import build_dossier_linked_documents
+from app.services.dossier.dossier_linked_documents_service import build_dossier_linked_documents
 from tests.conftest import TESTING_TENANT_UUID
 
 
@@ -98,7 +98,7 @@ async def test_invoice_no_bundle_is_advisory_and_automatic(db_session: AsyncSess
 
 @pytest.mark.asyncio
 async def test_playbook_bundle_satisfied_by_invoice_no_without_po(db_session: AsyncSession) -> None:
-    from app.services.document_type_playbook_service import missing_bundle_dt_codes
+    from app.services.classification.document_type_playbook_service import missing_bundle_dt_codes
 
     anchor = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -217,7 +217,6 @@ async def test_sales_so_dossier_links_so_and_dn_members(db_session: AsyncSession
         base = dict(
             klass="Transactional",
             posting="Yes",
-            fraudRisk="low",
             oneLine="test",
         )
         base.update(kwargs)

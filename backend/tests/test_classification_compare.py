@@ -7,10 +7,10 @@ import pytest
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
-from app.services.classification_compare_service import compare_classification
-from app.services.finance_dt_policy_scorer import score_all_enabled_dts
-from app.services.invoice_data import InvoiceData
-from app.services.tenant_org_context import OrgContext
+from app.services.classification.classification_compare_service import compare_classification
+from app.services.classification.finance_dt_policy_scorer import score_all_enabled_dts
+from app.services.invoice.invoice_data import InvoiceData
+from app.services.tenant.tenant_org_context import OrgContext
 from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 
 
@@ -22,7 +22,6 @@ def _dt03() -> DocumentTypeDefinition:
             "shortTitle": "Tax Inv",
             "klass": "Transactional",
             "posting": "Yes",
-            "fraudRisk": "low",
             "oneLine": "Tax invoice",
             "routeTarget": "Purchase Management",
             "enabled": True,
@@ -38,9 +37,8 @@ def _dt16() -> DocumentTypeDefinition:
             "code": "DT-16",
             "title": "Bank Statement",
             "shortTitle": "Bank Stmt",
-            "klass": "Reconciliation",
+            "klass": "Non-transactional",
             "posting": "No",
-            "fraudRisk": "low",
             "oneLine": "Bank statement",
             "routeTarget": "Vault",
             "enabled": True,

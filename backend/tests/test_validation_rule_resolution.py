@@ -11,14 +11,14 @@ import pytest
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.validation_rule import ValidationRuleConfig, normalize_validation_rules
-from app.services.invoice_data import InvoiceData, ParsedLineItem
-from app.services.validation_rule_catalog import resolve_validation_rules
-from app.services.document_type_validation_service import (
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
+from app.services.rule_book.validation_rule_catalog import resolve_validation_rules
+from app.services.classification.document_type_validation_service import (
     display_validation_pass_percent,
     validation_pass_applicable,
 )
-from app.services.validation_runner import ValidationRunContext, run_configured_validations
-from app.services.validator import ValidationResult
+from app.services.rule_book.validation_runner import ValidationRunContext, run_configured_validations
+from app.services.rule_book.validator import ValidationResult
 
 
 def _definition(**kwargs) -> DocumentTypeDefinition:
@@ -26,9 +26,8 @@ def _definition(**kwargs) -> DocumentTypeDefinition:
         code="DT-16",
         title="Contract",
         shortTitle="Contract",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Vault",
         validationProfile="non_actionable",
@@ -169,7 +168,7 @@ def test_normalize_validation_rules_keeps_finance_only() -> None:
 
 
 def test_procurement_rules_build_without_schema_error() -> None:
-    from app.services.validation_runner import _procurement_rules_for_definition
+    from app.services.rule_book.validation_runner import _procurement_rules_for_definition
 
     definition = _definition(
         code="DT-01",

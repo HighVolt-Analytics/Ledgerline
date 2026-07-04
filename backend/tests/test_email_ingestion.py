@@ -1,29 +1,38 @@
 """Tests for Microsoft Graph email ingestion."""
 
 import base64
+from datetime import datetime, timezone
 from unittest.mock import patch
 
-from app.services.attachment_filter import filter_invoice_attachments
-from app.services.email_ingestion import (
+from app.services.ingest.attachment_filter import filter_invoice_attachments
+from app.services.ingest.email_ingestion import (
     EmailAttachment,
     RawEmail,
+    build_recent_inbox_filter,
     poll_inbox,
 )
 
 
 def test_poll_skipped_when_not_configured() -> None:
-    with patch("app.services.email_ingestion.is_graph_enabled", return_value=False):
+    with patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=False):
         assert poll_inbox("user@example.com") == []
+
+
+def test_build_recent_inbox_filter() -> None:
+    filt = build_recent_inbox_filter(datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc))
+    assert "receivedDateTime ge 2026-03-01T12:00:00Z" in filt
+    assert "hasAttachments eq true" in filt
+    assert "isRead" not in filt
 
 
 def test_list_unread_does_not_use_orderby() -> None:
     """Graph returns 400 if $orderby is combined with $filter on messages."""
     with (
-        patch("app.services.email_ingestion.is_graph_enabled", return_value=True),
-        patch("app.services.email_ingestion.graph_request") as mock_graph,
+        patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
+        patch("app.services.ingest.email_ingestion.graph_request") as mock_graph,
     ):
         mock_graph.return_value = {"value": []}
-        from app.services.email_ingestion import _list_unread_messages
+        from app.services.ingest.email_ingestion import _list_unread_messages
 
         _list_unread_messages("user@example.com")
         _params = mock_graph.call_args.kwargs.get("params") or mock_graph.call_args[1].get("params")
@@ -49,13 +58,13 @@ def test_poll_parses_messages() -> None:
     ]
 
     with (
-        patch("app.services.email_ingestion.is_graph_enabled", return_value=True),
+        patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
         patch(
-            "app.services.email_ingestion._list_unread_messages",
+            "app.services.ingest.email_ingestion._list_unread_messages",
             return_value=messages,
         ),
         patch(
-            "app.services.email_ingestion._list_attachments",
+            "app.services.ingest.email_ingestion._list_attachments",
             return_value=attachments,
         ),
     ):
@@ -66,6 +75,89 @@ def test_poll_parses_messages() -> None:
     assert emails[0].sender == "vendor@example.com"
     assert len(emails[0].attachments) == 1
     assert emails[0].attachments[0].filename == "invoice-march.pdf"
+
+
+def test_poll_skips_known_message_ids() -> None:
+    messages = [
+        {
+            "id": "msg-known",
+            "subject": "Invoice March",
+            "from": {"emailAddress": {"address": "vendor@example.com"}},
+            "hasAttachments": True,
+        }
+    ]
+
+    with (
+        patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
+        patch(
+            "app.services.ingest.email_ingestion._list_unread_messages",
+            return_value=messages,
+        ),
+        patch("app.services.ingest.email_ingestion._list_attachments") as mock_attachments,
+    ):
+        mock_attachments.return_value = []
+        emails = poll_inbox(
+            "vendor@example.com",
+            known_message_ids=frozenset({"msg-known"}),
+        )
+
+    assert emails == []
+    mock_attachments.assert_not_called()
+
+
+def test_poll_merges_unread_and_recent_without_duplicates() -> None:
+    unread = [
+        {
+            "id": "msg-1",
+            "subject": "Unread",
+            "from": {"emailAddress": {"address": "vendor@example.com"}},
+            "hasAttachments": True,
+        }
+    ]
+    recent = [
+        {
+            "id": "msg-1",
+            "subject": "Unread",
+            "from": {"emailAddress": {"address": "vendor@example.com"}},
+            "hasAttachments": True,
+        },
+        {
+            "id": "msg-2",
+            "subject": "Recent read",
+            "from": {"emailAddress": {"address": "vendor@example.com"}},
+            "hasAttachments": True,
+        },
+    ]
+    attachments = [
+        {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": "invoice.pdf",
+            "contentType": "application/pdf",
+            "contentBytes": base64.b64encode(b"%PDF-1.4").decode(),
+        }
+    ]
+
+    with (
+        patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
+        patch(
+            "app.services.ingest.email_ingestion._list_unread_messages",
+            return_value=unread,
+        ),
+        patch(
+            "app.services.ingest.email_ingestion._list_recent_messages",
+            return_value=recent,
+        ),
+        patch(
+            "app.services.ingest.email_ingestion._list_attachments",
+            return_value=attachments,
+        ),
+    ):
+        emails = poll_inbox(
+            "vendor@example.com",
+            since=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+
+    assert {email.message_id for email in emails} == {"msg-1", "msg-2"}
 
 
 def test_filter_invoice_pdf() -> None:

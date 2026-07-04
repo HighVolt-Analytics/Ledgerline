@@ -7,13 +7,12 @@ import shippedCatalog from "@/lib/v5DocumentTypes.json";
 import shippedDefaults from "@/lib/documentTypeDefaults.json";
 import classifierPresets from "@/lib/documentTypeClassifierPresets.json";
 import { playbookPresetForProfile, type PlaybookProfile } from "@/lib/documentPlaybookConfig";
+import { createBlankDocumentType, emptyDocumentTypePostTo, nextOrgDocumentTypeCode } from "@/lib/v5DocumentTypes";
 import type {
-  DocumentTypeClass,
-  DocumentTypeDefinition,
   DocumentTypeClassifier,
-  DocumentTypeFraudRisk,
+  DocumentTypeDefinition,
 } from "@/lib/v5DocumentTypes";
-import { createBlankDocumentType, nextOrgDocumentTypeCode } from "@/lib/v5DocumentTypes";
+import type { DocumentTypeClass } from "@/lib/documentTypeKlass";
 import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { routeTargetForDocumentTypeCode } from "@/lib/documentTypeRouteTargets";
 import { defaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
@@ -30,13 +29,15 @@ import {
   parseSignalsFromClassifier,
 } from "@/lib/documentClassifierBuilder";
 import {
+  absentFieldsFromExcludeRules,
   compileMatchRulesToClassifier,
-  matchRulesFormFromClassifier,
 } from "@/lib/documentMatchRules";
+import { normalizeBundleConditional } from "@/lib/documentBundleConfig";
 import {
   defaultCompulsoryForTemplate,
   ensureExtractionSuperset,
 } from "@/lib/documentCompulsoryFields";
+import { matchRulesFormForTemplate } from "@/lib/shippedTemplateMatchRules";
 import { initializeCustomDocumentTypeRecognition } from "@/lib/documentUserRecognition";
 
 export type { RouteConfidencePreset, RecognitionSignalOption };
@@ -53,7 +54,6 @@ type ShippedCatalogRow = {
   shortTitle: string;
   klass: DocumentTypeClass;
   posting: string;
-  fraudRisk: DocumentTypeFraudRisk;
   oneLine: string;
   purchaseBundleRole?: string;
   salesBundleRole?: string;
@@ -138,7 +138,6 @@ export type DocumentTypeTemplate = {
   routeTarget: string;
   klass: DocumentTypeClass;
   posting: string;
-  fraudRisk: DocumentTypeFraudRisk;
   playbookProfile: PlaybookProfile;
   purchaseBundleRole: PurchaseBundleRole;
   salesBundleRole: SalesBundleRole;
@@ -195,7 +194,6 @@ function buildTemplateFromShippedRow(row: ShippedCatalogRow): DocumentTypeTempla
     routeTarget: routeTargetForDocumentTypeCode(code),
     klass: row.klass,
     posting: row.posting,
-    fraudRisk: row.fraudRisk,
     playbookProfile,
     purchaseBundleRole: (signalMeta?.purchaseBundleRole ||
       row.purchaseBundleRole ||
@@ -222,9 +220,8 @@ export const DOCUMENT_TYPE_TEMPLATES: DocumentTypeTemplate[] = [
     description: "Blank type with match / exclude rules and processing sections.",
     shippedCode: "",
     routeTarget: "Vault",
-    klass: "Transactional",
+    klass: "Non-transactional",
     posting: "No",
-    fraudRisk: "low",
     playbookProfile: "standard_transactional",
     purchaseBundleRole: "",
     salesBundleRole: "",
@@ -247,47 +244,38 @@ function shippedRowForCode(code: string) {
   return SHIPPED_ROWS.find((row) => row.code.toUpperCase() === code.toUpperCase());
 }
 
-function legacyClassifierFromTemplate(template: DocumentTypeTemplate): DocumentTypeClassifier {
-  const preset = template.shippedCode
-    ? CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]
-    : undefined;
-
-  if (preset) {
-    return {
-      enabled: preset.enabled,
-      priority: preset.priority,
-      confidence: preset.confidence,
-      root: preset.root,
-    };
-  }
-
-  if (template.defaultSignalIds.length > 0) {
-    return buildClassifierFromSignals(
-      template.defaultSignalIds,
-      template.classifierLayout,
-      {
-        priority: template.classifierPriority,
-        enabled: true,
-        confidence: 0.85,
-      }
-    );
-  }
-
-  return createBlankDocumentType([]).classifier;
-}
-
 /** Shipped templates use the same match/exclude rules editor as custom types. */
 function matchRulesClassifierFromTemplate(
   template: DocumentTypeTemplate
 ): DocumentTypeClassifier {
-  const legacy = legacyClassifierFromTemplate(template);
-  const form = matchRulesFormFromClassifier(legacy.root);
+  const preset = template.shippedCode
+    ? CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]
+    : undefined;
+  const form = matchRulesFormForTemplate(template);
   return {
-    enabled: legacy.enabled,
-    priority: legacy.priority,
-    confidence: legacy.confidence,
+    enabled: true,
+    priority: preset?.priority ?? template.classifierPriority,
+    confidence: preset?.confidence ?? 0.85,
     root: compileMatchRulesToClassifier(form),
   };
+}
+
+/** Simple classifier presets derived from shipped template signals (for JSON seed files). */
+export function shippedClassifierPresets(): Record<string, ClassifierPresetRow> {
+  const out: Record<string, ClassifierPresetRow> = {};
+  for (const template of DOCUMENT_TYPE_TEMPLATES) {
+    if (template.id === "custom" || !template.shippedCode) continue;
+    const code = template.shippedCode.toUpperCase();
+    const preset = CLASSIFIER_PRESETS[code];
+    const form = matchRulesFormForTemplate(template);
+    out[code] = {
+      enabled: true,
+      priority: preset?.priority ?? template.classifierPriority,
+      confidence: preset?.confidence ?? 0.85,
+      root: compileMatchRulesToClassifier(form),
+    };
+  }
+  return out;
 }
 
 /** Org catalogue codes always follow the org sequence — never the shipped matrix code. */
@@ -396,7 +384,9 @@ export function documentTypesFromStarterPack(
 }
 
 export function inferTemplateIdFromDefinition(
-  definition: Pick<DocumentTypeDefinition, "classifier" | "matrixTemplateCode">
+  definition: Pick<DocumentTypeDefinition, "classifier"> & {
+    matrixTemplateCode?: string;
+  }
 ): DocumentTypeTemplateId {
   const stored = definition.matrixTemplateCode?.trim().toUpperCase();
   if (stored) {
@@ -427,6 +417,8 @@ export function documentTypeFromTemplate(
   const shipped = template.shippedCode ? shippedRowForCode(template.shippedCode) : null;
   const preset = playbookPresetForProfile(template.playbookProfile);
   const defaults = template.shippedCode ? defaultsRowForCode(template.shippedCode) : {};
+  const matchForm =
+    templateId === "custom" ? null : matchRulesFormForTemplate(template);
   const classifier =
     templateId === "custom"
       ? base.classifier
@@ -439,7 +431,11 @@ export function documentTypeFromTemplate(
     : template.shippedCode
       ? defaultCompulsoryForTemplate(template.shippedCode)
       : [...template.defaultExtractionFields];
-  const absentFields = defaults.absent_fields?.length ? [...defaults.absent_fields] : [];
+  const absentFields = defaults.absent_fields?.length
+    ? [...defaults.absent_fields]
+    : matchForm
+      ? absentFieldsFromExcludeRules(matchForm.excludeRules)
+      : [];
   const baseExtraction =
     templateId === "custom"
       ? ["document_heading", "document_text"]
@@ -457,7 +453,6 @@ export function documentTypeFromTemplate(
     llmHint: templateId === "custom" ? "" : oneLine,
     klass: template.klass,
     posting: template.posting,
-    fraudRisk: template.fraudRisk,
     routeTarget: template.routeTarget,
     playbookProfile: template.playbookProfile,
     matchPolicy: { mode: preset.matchMode },
@@ -483,7 +478,16 @@ export function documentTypeFromTemplate(
       const resolved = resolveBundleCodesFromMatrix(existing, shippedMandatory);
       return resolved.length === shippedMandatory.length ? resolved : [...shippedMandatory];
     })(),
-    bundleConditional: shipped?.bundleConditional ? [...shipped.bundleConditional] : [],
+    bundleConditional: (() => {
+      const shippedConditional = normalizeBundleConditional(shipped?.bundleConditional ?? []);
+      if (!shippedConditional.length) return [];
+      const resolved = resolveBundleCodesFromMatrix(existing, shippedConditional);
+      return resolved.length === shippedConditional.length ? resolved : [...shippedConditional];
+    })(),
+    postTo: {
+      ...emptyDocumentTypePostTo(),
+      ledger: "",
+    },
   };
 
   if (templateId === "custom") {

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
-from app.services.payment_service import approve_payment
+from app.services.payments.payment_service import approve_payment
 
 
 @pytest.mark.asyncio

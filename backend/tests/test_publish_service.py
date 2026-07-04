@@ -1,5 +1,3 @@
-
-from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for ledger publish service."""
 
 from datetime import date
@@ -9,10 +7,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
+
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
-from app.services.publish_service import (
+from app.services.integration.publish_service import (
     is_published_to_ledger,
     publish_invoice_to_ledger,
 )
@@ -134,7 +134,7 @@ async def test_reprocess_invalidates_stale_publish_flag(
 ) -> None:
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     from app.config import get_settings
-    from app.services.audit_service import log_event
+    from app.services.audit.audit_service import log_event
 
     get_settings.cache_clear()
 

@@ -5,7 +5,7 @@ from decimal import Decimal
 from app.models.goods_receipt import GoodsReceipt
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderStatus
 from app.schemas.purchase import ThreeWayMatchResult
-from app.services.dossier_match_service import (
+from app.services.dossier.dossier_match_service import (
     build_dossier_match_summary,
     match_checks_from_summary,
     match_summary_from_audit_detail,

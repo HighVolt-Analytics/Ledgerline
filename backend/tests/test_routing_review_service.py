@@ -9,16 +9,16 @@ import pytest
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.rule_book_config import validate_rule_book_config_payload
-from app.services.account_mapper import MappingDetail
-from app.services.document_type_classifier import DocumentTypeClassification
-from app.services.routing_review_service import (
+from app.services.rule_book.account_mapper import MappingDetail
+from app.services.classification.document_type_classifier import DocumentTypeClassification
+from app.services.invoice.routing_review_service import (
     classification_unmatched,
     requires_classification_review,
     requires_gl_mapping_review,
     requires_routing_review,
     routing_target_missing,
 )
-from app.services.rule_book_mapper import FALLBACK_RULE_TYPE
+from app.services.rule_book.rule_book_mapper import FALLBACK_RULE_TYPE
 
 
 @pytest.fixture
@@ -58,7 +58,6 @@ def test_requires_gl_mapping_review_for_posting_fallback_only() -> None:
             "shortTitle": "Tax",
             "klass": "Transactional",
             "posting": "Yes",
-            "fraudRisk": "low",
             "oneLine": "x",
             "routeTarget": "Purchase Management",
             "enabled": True,
@@ -69,9 +68,8 @@ def test_requires_gl_mapping_review_for_posting_fallback_only() -> None:
             "code": "DT-16",
             "title": "Bank",
             "shortTitle": "Bank",
-            "klass": "Reconciliation",
+            "klass": "Non-transactional",
             "posting": "No",
-            "fraudRisk": "low",
             "oneLine": "x",
             "routeTarget": "Vault",
             "enabled": True,

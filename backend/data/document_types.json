@@ -5,7 +5,6 @@
     "shortTitle": "PO goods invoice",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
     "oneLine": "Standard 3-way match goods invoice against an approved PO and GRN.",
     "extraction": [
       "Vendor name & tax ID / ABN",
@@ -53,18 +52,14 @@
       "DT-02",
       "DT-03"
     ],
-    "bundleConditional": [
-      "Quality certificate",
-      "Packing list (if PO flags inspection)"
-    ]
+    "bundleConditional": []
   },
   {
     "code": "DT-02",
     "title": "Purchase order (copy)",
     "shortTitle": "PO (supporting)",
-    "klass": "Supporting",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "purchaseBundleRole": "po",
     "oneLine": "Supporting bundle member — PO PDF that anchors the 3-way match dossier.",
     "extraction": [
@@ -93,9 +88,8 @@
     "code": "DT-03",
     "title": "Goods receipt note (GRN) / delivery docket",
     "shortTitle": "GRN (supporting)",
-    "klass": "Supporting",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "purchaseBundleRole": "grn",
     "oneLine": "Supporting bundle member — GRN PDF that completes the 3-way match.",
     "extraction": [
@@ -127,7 +121,6 @@
     "shortTitle": "Credit note",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
     "oneLine": "Negative-amount note that mirrors and reduces an original invoice — never auto-nets against unrelated invoices.",
     "extraction": [
       "Original invoice reference",
@@ -157,13 +150,8 @@
       "Orphan credit (original not found) → AP-supervisor open credit",
       "Credit > remaining payable → refund claim"
     ],
-    "bundleMandatory": [
-      "Original invoice reference"
-    ],
-    "bundleConditional": [
-      "Return delivery note (goods returns)",
-      "Price-difference approval"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-05",
@@ -171,7 +159,6 @@
     "shortTitle": "Debit note",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
     "oneLine": "Buyer-issued (charges vendor) or vendor-issued (additional charge) — never posts touchlessly.",
     "extraction": [
       "Debit note number, date",
@@ -198,20 +185,15 @@
       "Sign-error double-damage prevention",
       "Vendor debit notes never touchless"
     ],
-    "bundleMandatory": [
-      "Claim approval evidence"
-    ],
-    "bundleConditional": [
-      "Cause document (clause / demurrage record)"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-06",
     "title": "Proforma invoice / advance (down-payment) request",
     "shortTitle": "Proforma / advance",
-    "klass": "Pre-transactional",
+    "klass": "Transactional",
     "posting": "Down-payment",
-    "fraudRisk": "high",
     "oneLine": "A proforma is NEVER posted as a payable/expense and NEVER creates an input tax credit (not a tax invoice).",
     "extraction": [
       "PO with down-payment terms / signed contract",
@@ -238,12 +220,8 @@
       "Ageing report on open advances > 60 days → chase final invoice",
       "Final invoice < advance → refund-collection workflow"
     ],
-    "bundleMandatory": [
-      "PO with down-payment terms, or signed contract"
-    ],
-    "bundleConditional": [
-      "Bank guarantee (advances > threshold)"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-07",
@@ -251,7 +229,6 @@
     "shortTitle": "Recurring / contract",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
     "oneLine": "Matched to the contract register; lease invoices post to lease liability under AASB 16, not rent expense.",
     "extraction": [
       "Contract/lease ID",
@@ -287,9 +264,7 @@
     "bundleMandatory": [
       "DT-16"
     ],
-    "bundleConditional": [
-      "CPI / escalation calculation sheet on rate change"
-    ]
+    "bundleConditional": []
   },
   {
     "code": "DT-08",
@@ -297,7 +272,6 @@
     "shortTitle": "Utility invoice",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
     "oneLine": "Matched to site/meter register with consumption analytics; > ±40% deviation flags facilities review.",
     "extraction": [
       "Account number → site → cost centre",
@@ -327,12 +301,8 @@
       "Estimated-read true-up",
       "Penalties stripped to separate GL"
     ],
-    "bundleMandatory": [
-      "Site / meter register entry"
-    ],
-    "bundleConditional": [
-      "True-up reconciliation"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-09",
@@ -340,7 +310,6 @@
     "shortTitle": "Freight / broker",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
     "oneLine": "Matched to shipment; broker disbursements split duty/GST pass-through from taxable service fee.",
     "extraction": [
       "AWB / BL / container number",
@@ -372,13 +341,8 @@
       "Deferred GST scheme",
       "Detention/demurrage ops confirm"
     ],
-    "bundleMandatory": [
-      "Shipment docs (AWB/BL)",
-      "Rate card"
-    ],
-    "bundleConditional": [
-      "POD for delivery-linked charges"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-10",
@@ -386,7 +350,6 @@
     "shortTitle": "Import dossier",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
     "oneLine": "Landed-cost dossier — mandatory and blocking bundle of commercial invoice, customs entry, transport doc, packing list.",
     "extraction": [
       "Commercial invoice",
@@ -418,17 +381,8 @@
       "Under/over-shipment → claims workflow + insurance dossier if damaged",
       "FTA preferential duty origin certificate"
     ],
-    "bundleMandatory": [
-      "Commercial invoice",
-      "Customs entry / import declaration",
-      "Duty receipt",
-      "BL / AWB",
-      "Packing list"
-    ],
-    "bundleConditional": [
-      "Insurance certificate",
-      "Origin certificate (FTA duty claims)"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-11",
@@ -436,7 +390,6 @@
     "shortTitle": "Intercompany",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
     "oneLine": "Symmetry rule — both entities book the same period, amount and FX reference rate; mirror entry validated.",
     "extraction": [
       "IC partner",
@@ -466,13 +419,8 @@
       "Symmetry & mirror-entry validation",
       "Out-of-balance blocks consolidation"
     ],
-    "bundleMandatory": [
-      "IC agreement",
-      "Transfer-pricing basis reference"
-    ],
-    "bundleConditional": [
-      "Cost allocation worksheet"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-12",
@@ -480,7 +428,6 @@
     "shortTitle": "Expense claim",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "high",
     "oneLine": "Per-line policy & receipt checks with fraud analytics; FBT-flagged lines tagged for the FBT register.",
     "extraction": [
       "Employee ID + claim ID",
@@ -510,21 +457,15 @@
       "Duplicate-receipt hash detection",
       "Split-claim threshold gaming"
     ],
-    "bundleMandatory": [
-      "Itemised receipts per line (tax invoices over threshold)"
-    ],
-    "bundleConditional": [
-      "Travel approval",
-      "Mileage log"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-13",
     "title": "Vendor statement of account",
     "shortTitle": "Vendor statement",
-    "klass": "Reconciliation",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "oneLine": "NEVER posted as an invoice — auto-reconciled vs the AP subledger to detect missing invoices and duplicates.",
     "extraction": [
       "Vendor",
@@ -557,9 +498,8 @@
     "code": "DT-16",
     "title": "Contract / rate card / SOW / lease agreement",
     "shortTitle": "Contract / SOW",
-    "klass": "Supporting",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "oneLine": "Supporting bundle member — the contract register entry that validates recurring & services rates.",
     "extraction": [
       "Contract / lease ID",
@@ -587,9 +527,8 @@
     "code": "DT-17",
     "title": "Service entry sheet / timesheet / completion certificate",
     "shortTitle": "SES / timesheet",
-    "klass": "Supporting",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "oneLine": "Supporting bundle member — the service-receipt evidence for DT-02 services matching.",
     "extraction": [
       "SES / timesheet number",
@@ -618,9 +557,8 @@
     "code": "DT-18",
     "title": "Remittance advice (inbound or outbound copy)",
     "shortTitle": "Remittance advice",
-    "klass": "Supporting",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "oneLine": "Supporting document — confirms which invoices a payment settles; not posted itself.",
     "extraction": [
       "Payment reference",
@@ -651,7 +589,6 @@
     "shortTitle": "RCTI / self-billing",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
     "oneLine": "We generate the invoice from receipt/consumption data; a vendor invoice for an RCTI vendor is blocked as duplicate-risk.",
     "extraction": [
       "RCTI agreement reference",
@@ -675,10 +612,7 @@
     "special": [
       "Vendor-sent invoice for RCTI vendor blocked as duplicate-risk"
     ],
-    "bundleMandatory": [
-      "RCTI agreement on file",
-      "Receipt / consumption data"
-    ],
+    "bundleMandatory": [],
     "bundleConditional": []
   },
   {
@@ -687,7 +621,6 @@
     "shortTitle": "Consignment / ERS",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
     "oneLine": "Consignment receipt creates no liability; ERS GRN auto-generates the invoice — vendor invoices are blocked.",
     "extraction": [
       "Agreement reference",
@@ -713,10 +646,7 @@
       "Price master accuracy is the ERS control",
       "Vendor ERS invoices blocked & returned"
     ],
-    "bundleMandatory": [
-      "Consignment / ERS agreement",
-      "Consumption / GRN data"
-    ],
+    "bundleMandatory": [],
     "bundleConditional": []
   },
   {
@@ -725,7 +655,6 @@
     "shortTitle": "One-time vendor",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "critical",
     "oneLine": "Highest fraud-risk class — independent call-back bank verification, sanctions screen and collusion check mandatory.",
     "extraction": [
       "Vendor verification evidence (bank confirmation)",
@@ -755,19 +684,15 @@
       "AUD 10k cap forces full onboarding",
       "Collusion check vs employee accounts"
     ],
-    "bundleMandatory": [
-      "Vendor verification evidence (bank confirmation)",
-      "W-form / ABN check"
-    ],
+    "bundleMandatory": [],
     "bundleConditional": []
   },
   {
     "code": "DT-22",
     "title": "Dunning / payment reminder letter",
     "shortTitle": "Dunning letter",
-    "klass": "Informational",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "oneLine": "Informational only — links to the referenced invoice's status; disconnection notices flagged urgent.",
     "extraction": [
       "Referenced invoice(s)",
@@ -799,9 +724,8 @@
     "code": "DT-23",
     "title": "Bank / vendor detail change request",
     "shortTitle": "Bank-detail change",
-    "klass": "Master-data",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "critical",
     "oneLine": "Critical fraud control — never update bank details from an email/letter alone; independent call-back + 4-eyes required.",
     "extraction": [
       "Vendor",
@@ -827,21 +751,15 @@
       "Returned payment + \"new bank details\" email = classic fraud pattern",
       "Penny-test micro-deposit"
     ],
-    "bundleMandatory": [
-      "Independent call-back verification",
-      "Second-person approval"
-    ],
-    "bundleConditional": [
-      "Penny-test confirmation"
-    ]
+    "bundleMandatory": [],
+    "bundleConditional": []
   },
   {
     "code": "DT-24",
     "title": "Quote / order acknowledgement / sales brochure / spam",
     "shortTitle": "Quote / spam",
-    "klass": "Non-actionable",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "oneLine": "Non-actionable — auto-archived with 30-day recoverability; never hard-deleted, never posted as a payable.",
     "extraction": [
       "Sender",
@@ -870,9 +788,8 @@
     "code": "DT-25",
     "title": "Tax authority documents (assessments, GST notices)",
     "shortTitle": "Tax authority notice",
-    "klass": "Compliance",
+    "klass": "Non-transactional",
     "posting": "Route",
-    "fraudRisk": "low",
     "oneLine": "Compliance class — routed to the Tax team, not the AP posting flow.",
     "extraction": [
       "Issuing authority",
@@ -904,7 +821,6 @@
     "shortTitle": "Customer invoice",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
     "oneLine": "Outbound customer tax invoice — tenant is seller; routes to Sales Management for AR and revenue posting.",
     "extraction": [
       "Customer name & tax ID / ABN",
@@ -946,9 +862,8 @@
     "code": "DT-27",
     "title": "Sales order (copy)",
     "shortTitle": "Sales order",
-    "klass": "Supporting",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "salesBundleRole": "so",
     "oneLine": "Supporting bundle member — sales order PDF that anchors the outbound 3-way match dossier.",
     "extraction": [
@@ -973,9 +888,8 @@
     "code": "DT-28",
     "title": "Delivery note / dispatch docket (outbound)",
     "shortTitle": "Delivery note",
-    "klass": "Supporting",
+    "klass": "Non-transactional",
     "posting": "No",
-    "fraudRisk": "low",
     "salesBundleRole": "dn",
     "oneLine": "Outbound delivery note or dispatch docket linked to a sales order.",
     "extraction": [

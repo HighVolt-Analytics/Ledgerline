@@ -14,11 +14,11 @@ from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_bo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.expense_vendor_policy import (
+from app.services.purchase.expense_vendor_policy import (
     EVAL_UNMATCHED_EXPENSE_VENDOR,
     vendor_detection_evaluation_status,
 )
-from app.services.invoice_evaluation_service import (
+from app.services.invoice.invoice_evaluation_service import (
     EVAL_AUTO_CODED,
     EVAL_PENDING_VENDOR,
     ROUTE_EXPENSES,
@@ -26,7 +26,7 @@ from app.services.invoice_evaluation_service import (
     ROUTE_TEAM,
     evaluate_invoice_routing,
 )
-from app.services.vendor_hold_service import apply_vendor_hold_if_needed, invoice_is_vendor_held
+from app.services.master_data.vendor_hold_service import apply_vendor_hold_if_needed, invoice_is_vendor_held
 
 
 def test_vendor_detection_high_confidence_no_flag() -> None:

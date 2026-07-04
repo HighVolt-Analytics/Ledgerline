@@ -6,7 +6,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.invoice_evaluation_service import EVAL_AWAITING_CLASSIFICATION
+from app.services.invoice.invoice_evaluation_service import EVAL_AWAITING_CLASSIFICATION
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

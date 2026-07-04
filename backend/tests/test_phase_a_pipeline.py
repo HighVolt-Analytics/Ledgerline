@@ -13,12 +13,13 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.email_ingestion import EmailAttachment, RawEmail
-from app.services.legacy_cascade import legacy_rule_type, match_legacy_cascade
-from app.services.invoice_evaluation_service import apply_invoice_evaluation
-from app.services.pipeline import ingest_email_attachments
-from app.services.rule_book_mapper import clear_classification_config_cache
-from app.schemas.rule_book_config import validate_rule_book_config_payload
+from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
+from app.services.classification.legacy_cascade import legacy_rule_type, match_legacy_cascade
+from app.services.invoice.invoice_evaluation_service import apply_invoice_evaluation
+from app.services.invoice.pipeline import ingest_email_attachments
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
+from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
+
 
 
 @pytest.fixture
@@ -103,7 +104,7 @@ def test_legacy_cascade_po_code_match(capture_config) -> None:
 
 
 def test_legacy_cascade_maps_before_suspense(capture_config) -> None:
-    from app.services.rule_book_mapper import resolve_config_mapping
+    from app.services.rule_book.rule_book_mapper import resolve_config_mapping
 
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -132,7 +133,7 @@ async def test_ingest_skips_email_without_capture_rule(
     clean_org_rule_book,
 ) -> None:
     monkeypatch.setattr(
-        "app.services.pipeline._finish_email_message",
+        "app.services.invoice.pipeline._finish_email_message",
         lambda *args, **kwargs: None,
     )
 
@@ -143,8 +144,7 @@ async def test_ingest_skips_email_without_capture_rule(
         tenant_slug="hv-org",
     )
     assert result.ingested_count == 0
-    count = len((await db_session.execute(select(Invoice))).scalars().all())
-    assert count == 0
+    assert result.preskip_exceptions["msg-unknown-1"] == "no_capture_rule_match"
 
 
 @pytest.mark.asyncio
@@ -154,17 +154,64 @@ async def test_ingest_creates_invoice_when_capture_rule_matches(
     clean_org_rule_book,
 ) -> None:
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.store_invoice_pdf",
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/test.pdf",
     )
     monkeypatch.setattr(
-        "app.services.pipeline._finish_email_message",
+        "app.services.invoice.pipeline._finish_email_message",
         lambda *args, **kwargs: None,
     )
 
     result = await ingest_email_attachments(
         db_session,
         [_aws_billing_email()],
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
+    )
+    assert result.ingested_count == 1
+
+
+@pytest.mark.asyncio
+async def test_ingest_allows_email_when_no_capture_rules_configured(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty_config = validate_rule_book_config_payload(
+        {
+            "schema_version": 1,
+            "email_capture_rules": [],
+            "purchase_rules": [],
+            "expense_rules": [],
+            "team_expense_rules": [],
+            "posting_defaults": {
+                "tax_account": "GST Paid",
+                "payable_account": "Accounts Payable",
+                "fallback_account": "Suspense Account",
+            },
+            "document_sets": [],
+            "legacy_cascade": {"enabled": False},
+        }
+    )
+
+    async def _empty_config(_session: AsyncSession, _tenant_id) -> RuleBookConfigPayload:
+        return empty_config
+
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.load_config_for_tenant",
+        _empty_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
+        lambda *args, **kwargs: "uploads/test.pdf",
+    )
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
+
+    result = await ingest_email_attachments(
+        db_session,
+        [_unmatched_email()],
         tenant_id=TESTING_TENANT_UUID,
         tenant_slug="hv-org",
     )

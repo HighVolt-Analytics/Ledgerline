@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.permit_ocr_extractors import extract_permit_fields_from_text
+from app.services.extraction.permit_ocr_extractors import extract_permit_fields_from_text
 
 
 def test_extract_permit_no_from_labelled_line() -> None:

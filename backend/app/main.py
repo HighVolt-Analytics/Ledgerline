@@ -20,6 +20,7 @@ from app.api import (
     audit,
     auth,
     dashboard,
+    notifications,
     dossiers,
     employee_masters,
     invoices,
@@ -48,13 +49,13 @@ from app.config import get_settings
 from app.database import async_session_factory
 from app.middleware.proxy_path import ProxyPathPrefixMiddleware
 from app.middleware.tenant_context_middleware import TenantContextMiddleware
-from app.services.inline_mailbox_poller import (
+from app.services.ingest.inline_mailbox_poller import (
     start_inline_mailbox_poller,
     stop_inline_mailbox_poller,
 )
-from app.services.rule_book_save_buffer import flush_all_rule_book_save_buffers
-from app.services.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
-from app.services.tenant_module_service import require_module
+from app.services.rule_book.rule_book_save_buffer import flush_all_rule_book_save_buffers
+from app.services.tenant.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
+from app.services.tenant.tenant_module_service import require_module
 from app.telemetry import setup_application_insights
 from app.utils.logger import configure_logging, get_logger
 
@@ -125,6 +126,7 @@ def _module_deps(key: str) -> list:
 
 app.include_router(invoices.router, prefix="/api", dependencies=_api_deps)
 app.include_router(dashboard.router, prefix="/api", dependencies=_api_deps)
+app.include_router(notifications.router, prefix="/api", dependencies=_api_deps)
 app.include_router(processing.router, prefix="/api", dependencies=_api_deps)
 app.include_router(reconciliation.router, prefix="/api", dependencies=_api_deps)
 app.include_router(audit.router, prefix="/api", dependencies=_api_deps)

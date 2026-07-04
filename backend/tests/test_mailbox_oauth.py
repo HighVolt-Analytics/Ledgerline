@@ -7,13 +7,13 @@ import pytest
 
 from app.config import get_settings
 from app.models.connected_mailbox import AUTH_DELEGATED, ConnectedMailbox
-from app.services.mailbox_oauth_service import (
+from app.services.ingest.mailbox_oauth_service import (
     complete_oauth_callback,
     create_oauth_state,
     parse_oauth_state,
     resolve_delegated_access_token,
 )
-from app.services.token_vault import decrypt_secret, encrypt_secret
+from app.services.shared.token_vault import decrypt_secret, encrypt_secret
 from app.tenant_ids import TESTING_TENANT_UUID, parse_tenant_id
 from tests.auth_test_helpers import seed_admin_user
 

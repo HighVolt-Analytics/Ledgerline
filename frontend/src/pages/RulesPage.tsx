@@ -7,10 +7,7 @@ import {
   Layers,
   Loader2,
   Package,
-  Receipt,
   Scale,
-  TrendingUp,
-  Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
@@ -21,15 +18,11 @@ import { DocumentTypesTab } from "@/components/rule-book/DocumentTypesTab";
 import { AiClassificationSettingsPanel } from "@/components/rule-book/AiClassificationSettingsPanel";
 import { IngestionTab } from "@/components/rule-book/IngestionTab";
 import { EmployeesTab } from "@/components/rule-book/EmployeesTab";
-import { ExpensesRulesTab } from "@/components/rule-book/ExpensesRulesTab";
 import { LiveEvaluation } from "@/components/rule-book/LiveEvaluation";
 import { RuleChangeHistory } from "@/components/rule-book/RuleChangeHistory";
 import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
 import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
-import { PurchaseRulesTab } from "@/components/rule-book/PurchaseRulesTab";
 import { PurchaseMatchSettingsPanel } from "@/components/rule-book/PurchaseMatchSettingsPanel";
-import { SalesRulesTab } from "@/components/rule-book/SalesRulesTab";
-import { TeamExpensesRulesTab } from "@/components/rule-book/TeamExpensesRulesTab";
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
@@ -42,10 +35,7 @@ import { removeDocumentTypeFromCatalog } from "@/lib/documentTypeLifecycle";
 const RULEBOOK_TABS = [
   { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
   { value: "document-types", label: "Document types", testid: "tab-document-types", icon: Layers },
-  { value: "purchase", label: "Purchase GL", testid: "tab-purchase", icon: Package },
-  { value: "sales", label: "Sales GL", testid: "tab-sales", icon: TrendingUp },
-  { value: "expenses", label: "Expenses GL", testid: "tab-expenses", icon: Receipt },
-  { value: "team", label: "Team GL", testid: "tab-team", icon: Users },
+  { value: "purchase-match", label: "Purchase match", testid: "tab-purchase-match", icon: Package },
   { value: "vendors", label: "Vendors", testid: "tab-vendors", icon: Building2 },
   { value: "customers", label: "Customers", testid: "tab-customers", icon: Building2 },
   { value: "employees", label: "Employees", testid: "tab-employees", icon: CircleUser },
@@ -205,7 +195,7 @@ export function RulesPage() {
     <div>
       <PageHeader
         title="Rule Book"
-        subtitle="Configure ingestion, document types, GL rules, and posting."
+        subtitle="Configure ingestion, document types, Post to GL, and posting defaults."
         actions={saveStatus}
       />
 
@@ -298,32 +288,10 @@ export function RulesPage() {
           onChange={(emailCaptureRules) => patch({ emailCaptureRules })}
         />
       </PageTabPanel>
-      <PageTabPanel value="purchase" active={tab} className="mt-0 space-y-5">
+      <PageTabPanel value="purchase-match" active={tab} className="mt-0">
         <PurchaseMatchSettingsPanel
           value={ruleBook.purchaseMatch}
           onChange={(purchaseMatch) => patch({ purchaseMatch })}
-        />
-        <PurchaseRulesTab
-          rules={ruleBook.purchaseRules}
-          onChange={(purchaseRules) => patch({ purchaseRules })}
-        />
-      </PageTabPanel>
-      <PageTabPanel value="sales" active={tab} className="mt-0">
-        <SalesRulesTab
-          rules={ruleBook.salesRules}
-          onChange={(salesRules) => patch({ salesRules })}
-        />
-      </PageTabPanel>
-      <PageTabPanel value="expenses" active={tab} className="mt-0">
-        <ExpensesRulesTab
-          rules={ruleBook.expenseRules}
-          onChange={(expenseRules) => patch({ expenseRules })}
-        />
-      </PageTabPanel>
-      <PageTabPanel value="team" active={tab} className="mt-0">
-        <TeamExpensesRulesTab
-          rules={ruleBook.teamExpenseRules}
-          onChange={(teamExpenseRules) => patch({ teamExpenseRules })}
         />
       </PageTabPanel>
       <PageTabPanel value="vendors" active={tab} className="mt-0">

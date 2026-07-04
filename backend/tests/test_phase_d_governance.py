@@ -13,9 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.audit import AuditLog
 from app.models.user import User, UserRole
-from app.services.account_mapper import clear_rule_book_cache
-from app.services.auth_service import create_access_token, hash_password
-from app.services.rule_book_audit import (
+from app.services.rule_book.account_mapper import clear_rule_book_cache
+from app.services.auth.auth_service import create_access_token, hash_password
+from app.services.rule_book.rule_book_audit import (
     diff_rule_book_config,
     rule_book_changes_are_auditable,
     truly_modified_rule_ids,
