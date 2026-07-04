@@ -1,8 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
 
 import type { OrgAiBrief } from "@/api/types";
+
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 
 import { queryKeys } from "@/lib/queryClient";
 
@@ -116,7 +118,7 @@ export function hasOrgAiBriefContent(org: OrgContextConfig | undefined): boolean
 
 export function useOrgAiBrief(enabled = true) {
 
-  return useQuery({
+  return useTenantQuery({
 
     queryKey: queryKeys.orgAiBrief(),
 

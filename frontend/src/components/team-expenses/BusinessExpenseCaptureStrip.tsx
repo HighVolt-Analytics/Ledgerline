@@ -1,29 +1,31 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 import { CaptureChannelsStrip } from "@/components/team-expenses/CaptureChannelsStrip";
 import type { ClaimChannel } from "@/lib/v4MockData";
 
 export function BusinessExpenseCaptureStrip({ activeRuleCount = 0 }: { activeRuleCount?: number }) {
-  const { data: mailboxes = [] } = useQuery({
+  const { data: mailboxes = [], blocked } = useTenantQuery({
     queryKey: queryKeys.mailboxes(),
     queryFn: () => api.listMailboxes(),
   });
 
   const channels = useMemo((): ClaimChannel[] => {
-    const rows: ClaimChannel[] = mailboxes.map((mb) => ({
-      id: `mb-${mb.id}`,
-      name: "Email capture",
-      detail: mb.display_name ? `${mb.email} (${mb.display_name})` : mb.email,
-      connected: mb.is_active,
-    }));
+    const rows: ClaimChannel[] = blocked
+      ? []
+      : mailboxes.map((mb) => ({
+          id: `mb-${mb.id}`,
+          name: "Email capture",
+          detail: mb.display_name ? `${mb.email} (${mb.display_name})` : mb.email,
+          connected: mb.is_active,
+        }));
 
     if (rows.length === 0) {
       rows.push({
         id: "em-default",
         name: "Email capture",
-        detail: "Connect a mailbox on Integrations",
+        detail: blocked ? "Loading mailboxes…" : "Connect a mailbox on Integrations",
         connected: false,
       });
     }
@@ -38,7 +40,7 @@ export function BusinessExpenseCaptureStrip({ activeRuleCount = 0 }: { activeRul
     }
 
     return rows;
-  }, [mailboxes, activeRuleCount]);
+  }, [mailboxes, activeRuleCount, blocked]);
 
   return <CaptureChannelsStrip channels={channels} testIdPrefix="biz-channel" />;
 }

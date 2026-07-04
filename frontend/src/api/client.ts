@@ -171,13 +171,24 @@ async function tryRefreshSession(): Promise<boolean> {
   }
 }
 
+/** In-memory access token only — never read sessionStorage here for scope decisions. */
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+/**
+ * Active tenant from in-memory JWT first. Profile is only a fallback when no JWT is loaded.
+ * Never prefer profile over a present JWT (avoids header/cache scope drift mid-switch).
+ */
 export function getActiveTenantId(): string | null {
   if (authToken) {
     const fromJwt = tenantIdFromToken(authToken);
     if (fromJwt) return fromJwt;
   }
+  const fromSession = tenantIdFromToken(getAccessToken());
+  if (fromSession) return fromSession;
   if (authUser?.tenant_id) return String(authUser.tenant_id);
-  return tenantIdFromToken(getAccessToken());
+  return null;
 }
 
 export function setAuthToken(token: string | null) {
@@ -186,9 +197,9 @@ export function setAuthToken(token: string | null) {
 }
 
 export function setAuthUser(user: AuthUser | null) {
-  const prevTenantId = resolveActiveTenantId();
+  const prevTenantId = getActiveTenantId();
   authUser = user;
-  const nextTenantId = resolveActiveTenantId();
+  const nextTenantId = getActiveTenantId();
   if (prevTenantId !== nextTenantId) {
     clearGetCache();
   }
@@ -196,6 +207,19 @@ export function setAuthUser(user: AuthUser | null) {
 
 function resolveActiveTenantId(): string | null {
   return getActiveTenantId();
+}
+
+/** Drop in-flight GET results after tenant/cache generation changes. */
+function assertTenantFetchStillValid(
+  requestTenantId: string | null,
+  cacheGeneration: number
+): void {
+  if (cacheGeneration !== getCacheGeneration) {
+    throw new ApiError("Tenant scope changed", 409);
+  }
+  if (resolveActiveTenantId() !== requestTenantId) {
+    throw new ApiError("Tenant scope changed", 409);
+  }
 }
 
 function getScopedAuthHeaders(init?: RequestInit): Headers {
@@ -390,13 +414,19 @@ async function fetchEnvelope<T>(
 async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
   if (method !== "GET") {
-    invalidateGetCache();               /** Invalidate cache for non-GET requests */
-    return fetchEnvelope<T>(path, init);   /** Fetch data from backend */
+    invalidateGetCache();
+    const requestTenantId = resolveActiveTenantId();
+    const cacheGeneration = getCacheGeneration;
+    const data = await fetchEnvelope<T>(path, init);
+    assertTenantFetchStillValid(requestTenantId, cacheGeneration);
+    return data;
   }
 
+  const requestTenantId = resolveActiveTenantId();
   const key = getRequestKey(path, method);
   const cached = getCache.get(key);
   if (cached && Date.now() - cached.at < GET_CACHE_MS) {
+    assertTenantFetchStillValid(requestTenantId, getCacheGeneration);
     return cached.data as T;
   }
 
@@ -406,9 +436,8 @@ async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   const cacheGeneration = getCacheGeneration;
   const promise = fetchEnvelope<T>(path, init)
     .then((data) => {
-      if (cacheGeneration === getCacheGeneration) {
-        rememberGetCache(key, data);
-      }
+      assertTenantFetchStillValid(requestTenantId, cacheGeneration);
+      rememberGetCache(key, data);
       return data;
     })
     .finally(() => {
@@ -424,11 +453,13 @@ async function requestWithMeta<T>(
   init?: RequestInit
 ): Promise<{ data: T; meta: ApiEnvelope<T>["meta"] }> {
   const method = (init?.method ?? "GET").toUpperCase();
+  const requestTenantId = resolveActiveTenantId();
   const key = getRequestKey(`${path}#meta`, method);
 
   if (method === "GET") {
     const cached = getCache.get(key);
     if (cached && Date.now() - cached.at < GET_CACHE_MS) {
+      assertTenantFetchStillValid(requestTenantId, getCacheGeneration);
       return cached.data as { data: T; meta: ApiEnvelope<T>["meta"] };
     }
     const inflight = inflightGets.get(key);
@@ -439,6 +470,7 @@ async function requestWithMeta<T>(
     invalidateGetCache();
   }
 
+  const cacheGeneration = getCacheGeneration;
   const promise = (async () => {
     const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
     if (!res.ok) {
@@ -450,17 +482,16 @@ async function requestWithMeta<T>(
     }
     const json = (await res.json()) as ApiEnvelope<T>;
     if (json.error) throw new Error(json.error.message);
+    assertTenantFetchStillValid(requestTenantId, cacheGeneration);
     return { data: json.data, meta: json.meta };
   })();
 
   if (method === "GET") {
-    const cacheGeneration = getCacheGeneration;
     inflightGets.set(
       key,
       promise.then((payload) => {
-        if (cacheGeneration === getCacheGeneration) {
-          rememberGetCache(key, payload);
-        }
+        assertTenantFetchStillValid(requestTenantId, cacheGeneration);
+        rememberGetCache(key, payload);
         return payload;
       })
     );

@@ -5,6 +5,11 @@ import { api, clearGetCache } from "@/api/client";
 import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
 import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -159,7 +164,7 @@ export function UploadPage() {
   const [totalPages, setTotalPages] = useState(1);
   const tenantScope = user?.tenant_id ?? null;
 
-  useEffect(() => {
+  useResetOnTenantChange(() => {
     loadSeq.current += 1;
     setAll([]);
     setMailboxes([]);
@@ -169,9 +174,14 @@ export function UploadPage() {
     setError(null);
     setDrawerId(null);
     setDrawerOpen(false);
-  }, [tenantScope]);
+    setLoading(true);
+    setImportMailbox(null);
+    setImportJob(null);
+    setFetchNotice(null);
+  });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     if (!options?.silent) {
       setLoading(true);
@@ -181,7 +191,7 @@ export function UploadPage() {
     if (fresh) clearGetCache();
     try {
       const mbs = await api.listMailboxes({ fresh }).catch(() => [] as ConnectedMailbox[]);
-      if (seq !== loadSeq.current) return null;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return null;
       const selectedMailboxId =
         source === "all" ? null : (mbs.find((m) => m.email === source)?.id ?? null);
       const invoiceRes = await api.listInvoicesWithMeta(
@@ -195,7 +205,7 @@ export function UploadPage() {
         },
         { fresh }
       );
-      if (seq !== loadSeq.current) return null;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return null;
       const invoiceRows = invoiceRes.data;
       const metaTotal = invoiceRes.meta?.total ?? invoiceRows.length;
       const metaPages = invoiceRes.meta?.pages ?? 1;
@@ -208,7 +218,7 @@ export function UploadPage() {
         ids: invoiceRows.map((i) => i.id),
       };
     } catch (e) {
-      if (seq !== loadSeq.current) return null;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return null;
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load documents");
         setAll([]);
@@ -216,7 +226,9 @@ export function UploadPage() {
       }
       return null;
     } finally {
-      if (seq === loadSeq.current && !options?.silent) setLoading(false);
+      if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
+        setLoading(false);
+      }
     }
   }, [page, source, debouncedSearch, tenantScope]);
 

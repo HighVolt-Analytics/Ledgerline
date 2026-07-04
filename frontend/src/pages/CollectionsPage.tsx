@@ -7,7 +7,6 @@ import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { CollectionRow } from "@/components/collections/CollectionRow";
 import { useCollectionMutations } from "@/hooks/useCollectionMutations";
 import { useCollections } from "@/hooks/useCollections";
-import { useTenantOwnedData } from "@/hooks/useTenantOwnedData";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { apiCollectionToRecord } from "@/lib/collectionsQueue";
@@ -26,11 +25,13 @@ const TABS: { value: CollectionTab; label: string; testid: string }[] = [
 
 export function CollectionsPage() {
   const { timeZone } = useTenantTime();
-  const { data: collectionRowsRaw = [], isLoading, isError, refetch } = useCollections();
-  const { data: collectionRows = [], blocked: collectionsBlocked } = useTenantOwnedData(
-    collectionRowsRaw,
-    { isLoading }
-  );
+  const {
+    data: collectionRows = [],
+    isLoading,
+    isError,
+    refetch,
+    blocked: collectionsBlocked,
+  } = useCollections();
   const mutations = useCollectionMutations();
   const [tab, setTab] = useState<CollectionTab>("queue");
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
