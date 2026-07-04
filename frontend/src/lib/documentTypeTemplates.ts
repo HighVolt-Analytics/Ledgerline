@@ -8,6 +8,11 @@ import shippedDefaults from "@/lib/documentTypeDefaults.json";
 import classifierPresets from "@/lib/documentTypeClassifierPresets.json";
 import { playbookPresetForProfile, type PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import { createBlankDocumentType, emptyDocumentTypePostTo, nextOrgDocumentTypeCode } from "@/lib/v5DocumentTypes";
+import type {
+  DocumentTypeClassifier,
+  DocumentTypeDefinition,
+} from "@/lib/v5DocumentTypes";
+import type { DocumentTypeClass } from "@/lib/documentTypeKlass";
 import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { routeTargetForDocumentTypeCode } from "@/lib/documentTypeRouteTargets";
 import { defaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
@@ -379,7 +384,9 @@ export function documentTypesFromStarterPack(
 }
 
 export function inferTemplateIdFromDefinition(
-  definition: Pick<DocumentTypeDefinition, "classifier" | "matrixTemplateCode">
+  definition: Pick<DocumentTypeDefinition, "classifier"> & {
+    matrixTemplateCode?: string;
+  }
 ): DocumentTypeTemplateId {
   const stored = definition.matrixTemplateCode?.trim().toUpperCase();
   if (stored) {

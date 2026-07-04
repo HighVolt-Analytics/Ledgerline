@@ -8,7 +8,6 @@ import {
   documentTypeLabel,
   dossierBookLabel,
   linkageReferenceLabel,
-  mergeBundleItems,
   normalizeBundleConditional,
   normalizeDtCodeList,
   PURCHASE_BUNDLE_ROLE_OPTIONS,

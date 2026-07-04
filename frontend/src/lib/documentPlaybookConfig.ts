@@ -5,7 +5,7 @@ import {
   derivePostingFromKlassAndProfile,
   isTransPosting,
 } from "@/lib/documentTypeKlass";
-import { defaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
+import { defaultPlaybookProfileForCode as shippedDefaultPlaybookProfileForCode } from "@/lib/documentTypePlaybookDefaults";
 
 export type PlaybookProfile =
   | "po_goods"
@@ -114,7 +114,7 @@ export function inferPlaybookProfileFromDefinition(
   if (explicit) return explicit;
   const code = (docType.code || "").trim().toUpperCase();
   if (code) {
-    const defaultProfile = defaultPlaybookProfileForCode(code);
+    const defaultProfile = shippedDefaultPlaybookProfileForCode(code);
     if (defaultProfile !== "standard_transactional") return defaultProfile;
   }
   const posting = derivePostingFromKlassAndProfile(
@@ -235,14 +235,14 @@ export function playbookPresetForProfile(profile: PlaybookProfile) {
 }
 
 export function defaultPlaybookProfileForCode(
-  _code: string,
+  code: string,
   docType?: Pick<
     DocumentTypeDefinition,
     "klass" | "posting" | "purchaseBundleRole" | "salesBundleRole" | "playbookProfile"
   >
 ): PlaybookProfile {
-  if (docType) return inferPlaybookProfileFromDefinition(docType);
-  return "standard_transactional";
+  if (docType) return inferPlaybookProfileFromDefinition({ ...docType, code });
+  return shippedDefaultPlaybookProfileForCode(code);
 }
 
 export function effectivePlaybookProfile(docType: DocumentTypeDefinition): PlaybookProfile {

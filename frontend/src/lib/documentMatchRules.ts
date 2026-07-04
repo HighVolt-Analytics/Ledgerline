@@ -2,12 +2,15 @@
  * User-friendly match/exclude rules compiled to classifier.root (AND/OR tree).
  */
 
+import type { ConditionOperator } from "@/lib/v4RuleBookTypes";
 import type { ChartOfAccountRow } from "@/api/types";
 import { hasValidPostTo } from "@/lib/documentTypePostToValidation";
 import type {
   DocumentRuleCondition,
   DocumentRuleConditionGroup,
+  DocumentTypePostTo,
 } from "@/lib/v5DocumentTypes";
+import { emptyDocumentTypePostTo } from "@/lib/v5DocumentTypes";
 import { parseSignalsFromClassifier } from "@/lib/documentClassifierBuilder";
 import {
   extractionFieldLabel,
@@ -563,7 +566,7 @@ export function documentTypeReadiness(
     oneLine: string;
     code: string;
     posting: string;
-    postTo?: { ledger: string };
+    postTo?: DocumentTypePostTo;
     classifier: { root: DocumentRuleConditionGroup };
   },
   matchRulesForm?: MatchRulesForm,
@@ -586,7 +589,7 @@ export function documentTypeReadiness(
   const hasCode = Boolean(draft.code.trim());
   const accounts = options?.coaAccounts ?? [];
   const hasPostTo = hasValidPostTo(
-    { posting: draft.posting, postTo: draft.postTo ?? { ledger: "", subLedger: "" } },
+    { posting: draft.posting, postTo: draft.postTo ?? emptyDocumentTypePostTo() },
     accounts
   );
 
