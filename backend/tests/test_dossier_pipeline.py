@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.dossier_pipeline_service import STAGE_IDS, build_dossier_pipeline, first_pipeline_failure
+from app.services.dossier.dossier_pipeline_service import STAGE_IDS, build_dossier_pipeline, first_pipeline_failure
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

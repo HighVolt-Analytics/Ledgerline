@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.user import User
-from app.services.auth_service import hash_password
+from app.services.auth.auth_service import hash_password
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.auth_test_helpers import login_via_otp, seed_admin_user
 

@@ -63,7 +63,7 @@ class DocumentTypeSampleProposal(BaseModel):
     one_line: str = ""
     suggested_title: str | None = None
     suggested_short_title: str | None = None
-    klass: str = "Transactional"
+    klass: str = "Non-transactional"
     posting: str = "Yes"
     route_target: str = "Vault"
     playbook_profile: str = "standard_transactional"

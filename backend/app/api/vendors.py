@@ -14,15 +14,15 @@ from app.schemas.vendor import (
     VendorResponse,
     VendorUpdate,
 )
-from app.services.audit_service import log_event
-from app.services.vendor_payout_method_service import (
+from app.services.audit.audit_service import log_event
+from app.services.master_data.vendor_payout_method_service import (
     VendorPayoutMethodError,
     create_payout_method_for_vendor,
     delete_payout_method_for_vendor,
     list_payout_methods_for_vendor,
     update_payout_method_for_vendor,
 )
-from app.services.vendor_registry_service import (
+from app.services.master_data.vendor_registry_service import (
     create_vendor_registry,
     delete_vendor_registry,
     list_vendor_registry,

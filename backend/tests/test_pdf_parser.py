@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from app.config import get_settings
-from app.services.invoice_data import InvoiceData
-from app.services.line_items_parser import parse_line_items_from_text
-from app.services.pdf_parser import (
+from app.services.invoice.invoice_data import InvoiceData
+from app.services.extraction.line_items_parser import parse_line_items_from_text
+from app.services.extraction.pdf_parser import (
     count_present_fields,
     local_parse_confident,
     parse_invoice,
@@ -20,7 +20,7 @@ from app.services.pdf_parser import (
     sample_parse_confident,
     should_use_document_intelligence,
 )
-from app.services.vendor_name_utils import is_plausible_vendor_name, pick_best_vendor_name
+from app.services.master_data.vendor_name_utils import is_plausible_vendor_name, pick_best_vendor_name
 
 
 SAMPLE_TEXT = """
@@ -118,7 +118,7 @@ def test_parse_invoice_for_sample_uses_di_when_enabled(
 
     def fake_di(_path, *, content_type="application/pdf"):
         assert content_type == "application/pdf"
-        from app.services.invoice_data import InvoiceData
+        from app.services.invoice.invoice_data import InvoiceData
 
         return InvoiceData(
             invoice_no="DI-9001",
@@ -324,6 +324,7 @@ def test_parse_azure_invoice_vendor_from_header() -> None:
     fields = parse_text_fields(AZURE_INVOICE_TEXT)
     assert fields["vendor"] == "Microsoft Azure"
     assert fields["abn"] == "31002882614"
+    assert fields["gst_rate"] == Decimal("10.00")
 
 
 def test_rejects_payment_footer_as_vendor_name() -> None:
@@ -343,7 +344,7 @@ def test_pick_best_vendor_prefers_plausible_local_over_di_footer() -> None:
 
 
 def test_dedupe_repeated_vendor_name() -> None:
-    from app.services.vendor_name_utils import dedupe_repeated_vendor_phrase, normalize_vendor_name
+    from app.services.master_data.vendor_name_utils import dedupe_repeated_vendor_phrase, normalize_vendor_name
 
     assert (
         normalize_vendor_name("Acme Corp Pvt Ltd Acme Corp Pvt Ltd")
@@ -418,7 +419,7 @@ Total $13.96 AUD
 
 
 def test_plausible_money_rejects_abn_sized_values() -> None:
-    from app.services.amount_sanity import plausible_money
+    from app.services.shared.amount_sanity import plausible_money
 
     assert plausible_money(Decimal("52500944661")) is None
     assert plausible_money(Decimal("13.96")) == Decimal("13.96")
@@ -447,6 +448,23 @@ def test_parse_acme_invoice_dedupes_bill_to_vendor() -> None:
     assert data.invoice_no == "INV-2025-00389"
     assert data.po_reference == "MPL-PO-4456"
     assert data.vendor == "Acme Corp Pvt Ltd"
+
+
+APOLLO_TEXT = """
+ZenLeads Inc. (dba Apollo.io)
+Invoice Number EL1KAGEN-0012
+Date of issue April 20, 2026
+Date due April 20, 2026
+Subtotal $23.71
+Total $23.71 USD
+"""
+
+
+def test_parse_apollo_invoice_dates() -> None:
+    fields = parse_text_fields(APOLLO_TEXT)
+    assert fields["invoice_no"] == "EL1KAGEN-0012"
+    assert fields["invoice_date"] == date(2026, 4, 20)
+    assert fields["due_date"] == date(2026, 4, 20)
 
 
 def test_parse_acme_invoice_no_on_gstin_line() -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
-from app.services.classifier_catalogue_compiler import (
+from app.services.classification.classifier_catalogue_compiler import (
     compile_catalogue_recognition,
     compile_recognition_rules_text,
 )
@@ -15,9 +15,8 @@ def _custom_dt() -> DocumentTypeDefinition:
             "code": "DT-99",
             "title": "Handwritten GRN",
             "shortTitle": "GRN",
-            "klass": "Supporting",
+            "klass": "Non-transactional",
             "posting": "No",
-            "fraudRisk": "low",
             "oneLine": "Warehouse goods received note",
             "llmHint": "Often handwritten",
             "routeTarget": "Vault",

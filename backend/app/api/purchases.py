@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope
 from app.schemas.purchase import GoodsReceiptCreate, PurchaseOrderResponse
-from app.services.audit_service import log_event
-from app.services.privilege_service import require_privilege
-from app.services.purchase_match_service import (
+from app.services.audit.audit_service import log_event
+from app.services.auth.privilege_service import require_privilege
+from app.services.purchase.purchase_match_service import (
     approve_purchase_variance,
     list_purchase_orders,
     record_goods_receipt,

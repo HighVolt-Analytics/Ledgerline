@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { LogoBlock } from "@/components/Logo";
 import { GlobalSearchBar } from "@/components/GlobalSearchBar";
+import { NotificationBell } from "@/components/NotificationBell";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -177,8 +178,8 @@ export function Layout() {
       </aside>
 
       <div className="flex flex-col overflow-hidden min-w-0">
-        <header className="relative flex items-center gap-2 sm:gap-3 border-b border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 h-12 md:h-14 shrink-0 z-20 overflow-visible">
-          <div className="flex items-center gap-2 min-w-0 shrink-0">
+        <header className="relative flex min-w-0 items-center gap-2 sm:gap-3 border-b border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 h-12 md:h-14 shrink-0 z-20 overflow-visible">
+          <div className="flex min-w-0 items-center gap-2 shrink-0">
             <div className="md:hidden text-primary shrink-0">
               <LogoBlock collapsed />
             </div>
@@ -187,10 +188,10 @@ export function Layout() {
 
           <GlobalSearchBar
             navItems={searchableNavItems}
-            className="w-44 sm:w-56 md:w-64 lg:w-72 max-w-[40vw] shrink-0"
+            className="min-w-0 flex-1 basis-0 sm:flex-none sm:basis-auto sm:w-56 md:w-64 lg:w-72 sm:max-w-[40vw]"
           />
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto z-10">
             <button
               type="button"
               onClick={() => navigate("/billing")}
@@ -203,6 +204,7 @@ export function Layout() {
               </span>
               <span className="hidden sm:inline text-muted-foreground text-xs">credits</span>
             </button>
+            <NotificationBell />
             <Button
               variant="ghost"
               size="icon"

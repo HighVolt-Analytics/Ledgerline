@@ -4,14 +4,14 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from app.schemas.rule_book_config import VendorMaster
-from app.services.extended_validations import (
+from app.services.rule_book.extended_validations import (
     vr09_line_arithmetic,
     vr10_tax_invoice_au,
     vr11_date_sanity,
     vr12_vendor_master,
     vr16_freight_surcharges,
 )
-from app.services.invoice_data import InvoiceData, ParsedLineItem
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
 
 def _vendor_master(**kwargs) -> VendorMaster:
@@ -105,7 +105,7 @@ def test_vr12_requires_vendor_name_when_no_masters() -> None:
 
 
 def test_normalize_legacy_vr12_skip_when_no_masters() -> None:
-    from app.services.validator import normalize_stored_validation_row
+    from app.services.rule_book.validator import normalize_stored_validation_row
 
     row = normalize_stored_validation_row(
         {

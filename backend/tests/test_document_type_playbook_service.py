@@ -10,8 +10,9 @@ import pytest
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.document_type_playbook_service import (
+from app.services.classification.document_type_playbook_service import (
     PlaybookGateResult,
+    confidence_gate_fields,
     effective_extraction_fields,
     effective_optional_extraction_fields,
     effective_playbook_required_fields,
@@ -22,9 +23,9 @@ from app.services.document_type_playbook_service import (
     missing_extraction_fields,
     split_bundle_items,
 )
-from app.services.invoice_data import InvoiceData, ParsedLineItem
-from app.services.routing_review_service import requires_playbook_review, requires_routing_review
-from app.services.document_type_classifier import DocumentTypeClassification
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
+from app.services.invoice.routing_review_service import requires_playbook_review, requires_routing_review
+from app.services.classification.document_type_classifier import DocumentTypeClassification
 
 
 def _definition(**kwargs) -> DocumentTypeDefinition:
@@ -34,7 +35,6 @@ def _definition(**kwargs) -> DocumentTypeDefinition:
         shortTitle="PO goods",
         klass="Transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Purchase Management",
         extraction=[
@@ -84,6 +84,20 @@ def test_effective_required_fields_falls_back_to_extraction() -> None:
     assert effective_required_fields(definition) == ["vendor", "total"]
 
 
+def test_confidence_gate_fields_respects_required_and_absent() -> None:
+    definition = _definition(
+        playbookProfile="supporting",
+        requiredFields=["vendor", "permit_no", "invoice_no"],
+        extractionFields=["vendor", "permit_no", "invoice_no"],
+        absentFields=["invoice_no", "due_date"],
+    )
+    assert confidence_gate_fields(definition) == ["permit_no", "vendor"]
+
+
+def test_confidence_gate_fields_fallback_when_no_definition() -> None:
+    assert confidence_gate_fields(None) == ["vendor", "total"]
+
+
 def test_playbook_required_fields_skip_infrastructure_and_soft_customs() -> None:
     definition = _definition(
         playbookProfile="supporting",
@@ -127,7 +141,7 @@ def test_missing_extraction_fields_uses_permit_regex() -> None:
 
 
 def test_normalize_custom_extraction_field_key() -> None:
-    from app.services.document_type_field_keys import normalize_extraction_field_keys
+    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
 
     keys = normalize_extraction_field_keys(["vendor", "Contract_Party", "INVALID-KEY", "milestone_1"])
     assert keys == ["vendor", "contract_party", "milestone_1"]
@@ -241,7 +255,7 @@ def test_routing_review_includes_playbook_gate() -> None:
 
 
 def test_resolve_playbook_exception_linkage() -> None:
-    from app.services.document_type_playbook_service import resolve_playbook_exception
+    from app.services.classification.document_type_playbook_service import resolve_playbook_exception
 
     code, reason, _ = resolve_playbook_exception(
         {
@@ -255,7 +269,7 @@ def test_resolve_playbook_exception_linkage() -> None:
 
 
 def test_resolve_playbook_exception_linkage_sales() -> None:
-    from app.services.document_type_playbook_service import resolve_playbook_exception
+    from app.services.classification.document_type_playbook_service import resolve_playbook_exception
 
     code, reason, remediation = resolve_playbook_exception(
         {
@@ -271,7 +285,7 @@ def test_resolve_playbook_exception_linkage_sales() -> None:
 
 
 def test_resolve_playbook_exception_bundle_labels() -> None:
-    from app.services.document_type_playbook_service import resolve_playbook_exception
+    from app.services.classification.document_type_playbook_service import resolve_playbook_exception
 
     code, reason, _ = resolve_playbook_exception(
         {
@@ -285,7 +299,7 @@ def test_resolve_playbook_exception_bundle_labels() -> None:
 
 
 def test_playbook_validation_vr_pb01_optional_only() -> None:
-    from app.services.document_type_playbook_service import playbook_validation_results
+    from app.services.classification.document_type_playbook_service import playbook_validation_results
 
     playbook = PlaybookGateResult(
         missing_bundle_mandatory=(),
@@ -302,7 +316,7 @@ def test_playbook_validation_vr_pb01_optional_only() -> None:
 
 
 def test_suggest_reclassify_direct_expense_when_linkage_missing() -> None:
-    from app.services.document_type_playbook_service import suggest_reclassify_direct_expense_code
+    from app.services.classification.document_type_playbook_service import suggest_reclassify_direct_expense_code
 
     definition = _definition(playbookProfile="po_goods")
     catalogue = [

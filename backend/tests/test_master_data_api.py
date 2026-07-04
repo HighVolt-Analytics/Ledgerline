@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
-from app.services.rule_book_mapper import clear_classification_config_cache
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 
 
 @pytest.mark.asyncio

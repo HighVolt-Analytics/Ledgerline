@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
 from tests.approval_test_helpers import patch_approval_file_checks
-from app.services.vault_paths import build_rejected_blob_name
+from app.services.vault.vault_paths import build_rejected_blob_name
 from app.tenant_ids import TESTING_TENANT_UUID
 
 _TID = TESTING_TENANT_UUID
@@ -33,7 +33,7 @@ def test_build_rejected_blob_name() -> None:
         invoice_date=date(2026, 5, 12),
         original_filename="scan.pdf",
     )
-    from app.services.tenant_storage_paths import tenant_root
+    from app.services.tenant.tenant_storage_paths import tenant_root
 
     assert path == (
         f"{tenant_root(_TID)}/rejected/Unrouted/Atlassian Pty Ltd/2026/May/INV-007_2026-05-12_id7.pdf"

@@ -77,10 +77,8 @@ class Invoice(Base):
     currency: Mapped[str] = mapped_column(String(3), default="AUD")
     subtotal: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     gst: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    gst_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
-    booking_fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
-    functional_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
-    functional_total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     status: Mapped[InvoiceStatus] = mapped_column(
         Enum(
             InvoiceStatus,
@@ -91,6 +89,8 @@ class Invoice(Base):
         index=True,
     )
     file_hash: Mapped[str | None] = mapped_column(String(64))
+    content_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
+    business_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     raw_file_path: Mapped[str | None] = mapped_column(Text)
     email_sender: Mapped[str | None] = mapped_column(String(255))
     email_subject: Mapped[str | None] = mapped_column(String(500))

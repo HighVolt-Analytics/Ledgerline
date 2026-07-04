@@ -15,8 +15,8 @@ from app.models.journal import EntryType, JournalEntry
 from app.models.line_item import LineItem
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
-from app.services.auth_service import create_access_token, hash_password
-from app.services.membership_service import ensure_membership
+from app.services.auth.auth_service import create_access_token, hash_password
+from app.services.auth.membership_service import ensure_membership
 
 
 @pytest.mark.asyncio

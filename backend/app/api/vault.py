@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, get_auth_context, get_db, require_admin
 from app.schemas.common import ApiEnvelope
 from app.schemas.vault import VaultMigrateResponse, VaultTreeResponse
-from app.services.vault_service import get_vault_tree_for_tenant, migrate_vault_for_tenant
+from app.services.vault.vault_service import get_vault_tree_for_tenant, migrate_vault_for_tenant
 
 router = APIRouter(prefix="/vault", tags=["vault"])
 

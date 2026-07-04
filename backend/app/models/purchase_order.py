@@ -37,7 +37,6 @@ class PurchaseOrder(Base):
     po_qty: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("1"))
     po_unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("0"))
     po_uom: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    po_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     invoice_id: Mapped[int | None] = mapped_column(
         ForeignKey("invoices.id", ondelete="SET NULL"),
         index=True,

@@ -16,7 +16,7 @@ from app.models.accounting_integration import (
 )
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
-from app.services.accounting_integration_service import (
+from app.services.integration.accounting_integration_service import (
     build_connect_url,
     complete_oauth_callback,
     create_oauth_state,
@@ -26,9 +26,9 @@ from app.services.accounting_integration_service import (
     quickbooks_configured,
     xero_configured,
 )
-from app.services.auth_service import hash_password
-from app.services.membership_service import ensure_membership
-from app.services.token_vault import decrypt_secret, encrypt_secret
+from app.services.auth.auth_service import hash_password
+from app.services.auth.membership_service import ensure_membership
+from app.services.shared.token_vault import decrypt_secret, encrypt_secret
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

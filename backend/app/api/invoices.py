@@ -1,11 +1,12 @@
 from datetime import date
 from pathlib import Path
+import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
 from app.config import get_settings
@@ -26,19 +27,19 @@ from app.schemas.invoice import (
     ValidationResultItem,
 )
 from app.schemas.classification_api import ClassificationResolveRequest, ClassificationReviewItem
-from app.services.classification_learning_service import record_learning_from_resolution
-from app.services.classification_audit_service import load_classification_audit_detail
-from app.services.llm_document_service import apply_document_type_to_invoice
-from app.services.invoice_reset import (
+from app.services.classification.classification_learning_service import record_learning_from_resolution
+from app.services.classification.classification_audit_service import load_classification_audit_detail
+from app.services.extraction.llm_document_service import apply_document_type_to_invoice
+from app.services.invoice.invoice_reset import (
     requeue_invoice_for_pipeline,
     reset_invoice_for_reprocess,
     should_preserve_extracted_on_requeue,
 )
-from app.services.invoice_edit_service import (
+from app.services.invoice.invoice_edit_service import (
     refresh_invoice_evaluation_after_edit,
     update_invoice_fields,
 )
-from app.services.invoice_evaluation_service import (
+from app.services.invoice.invoice_evaluation_service import (
     apply_invoice_evaluation,
     load_config_for_tenant,
 )
@@ -46,9 +47,9 @@ from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
 from app.schemas.purchase import PurchaseDossierResponse
 from app.schemas.sales import SalesDossierResponse
-from app.services.sales_dossier_service import build_sales_dossier
-from app.services.audit_service import audit_logs_for_invoices, log_event
-from app.services.file_storage import (
+from app.services.sales.sales_dossier_service import build_sales_dossier
+from app.services.audit.audit_service import audit_logs_for_invoices, log_event
+from app.services.shared.file_storage import (
     ensure_invoice_stored_file,
     has_stored_path,
     read_invoice_file,
@@ -56,33 +57,33 @@ from app.services.file_storage import (
     store_invoice_pdf,
     stored_file_available,
 )
-from app.services.approval_service import restore_rejected_invoice_file_if_needed
+from app.services.approval.approval_service import restore_rejected_invoice_file_if_needed
 from app.schemas.pipeline import PipelineStepsResponse
-from app.services.pipeline_stages import (
+from app.services.invoice.pipeline_stages import (
     build_pipeline_stages,
     derive_current_stage,
     pipeline_steps_for_api,
 )
-from app.services.remap_service import remap_invoices_for_tenant
-from app.services.vendor_resolver import UNKNOWN_SLUG
+from app.services.invoice.remap_service import remap_invoices_for_tenant
+from app.services.master_data.vendor_resolver import UNKNOWN_SLUG
 from app.utils.hashing import compute_sha256_bytes
-from app.services.document_type_playbook_service import (
+from app.services.classification.document_type_playbook_service import (
     effective_document_type_code,
     extraction_fields_for_invoice_code,
 )
-from app.services.field_extraction_confidence import compute_extraction_field_confidence
-from app.services.ingest_fanout_service import DuplicateUploadError, ingest_upload_file
+from app.services.extraction.field_extraction_confidence import compute_extraction_field_confidence
+from app.services.ingest.ingest_fanout_service import DuplicateUploadError, ingest_upload_file
 from app.services.credit_service import InsufficientCreditsError, PlanFeatureBlockedError
-from app.services.purchase_dossier_service import build_purchase_dossier
+from app.services.purchase.purchase_dossier_service import build_purchase_dossier
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 from app.tenant_scoped import get_for_tenant
 from app.workers.tasks import process_invoice_background, process_invoices_batch_background
-from app.services.invoice_access_service import (
+from app.services.invoice.invoice_access_service import (
     MAX_UPLOAD_BYTES as _MAX_UPLOAD_BYTES,
     get_invoice_for_tenant,
     read_upload_file,
 )
-from app.services.invoice_response_service import (
+from app.services.invoice.invoice_response_service import (
     classification_review_confidence as _classification_review_confidence,
     document_type_extraction_fields as _document_type_extraction_fields,
     invoice_to_response as _to_response,
@@ -133,6 +134,7 @@ async def list_invoices(
 ) -> ApiEnvelope[list[InvoiceResponse]]:
     stmt = (
         select(Invoice)
+        .options(defer(Invoice.document_text))
         .where(Invoice.tenant_id == ctx.tenant_id)
         .order_by(Invoice.created_at.desc(), Invoice.id.desc())
     )
@@ -181,7 +183,9 @@ async def list_invoices(
     ).scalars().all()
 
     return ApiEnvelope(
-        data=await _responses_for_invoices(db, list(rows), tenant_id=ctx.tenant_id),
+        data=await _responses_for_invoices(
+            db, list(rows), tenant_id=ctx.tenant_id, for_list=True
+        ),
         meta=ResponseMeta(page=page, total=total, pages=pages),
     )
 
@@ -419,6 +423,16 @@ async def get_journal_entries(
     return ApiEnvelope(data=[JournalEntryResponse.model_validate(r) for r in rows])
 
 
+_PROCESS_BATCH_STATUSES = {
+    InvoiceStatus.PENDING,
+    InvoiceStatus.PARSING,
+    InvoiceStatus.VALIDATING,
+    InvoiceStatus.MAPPING,
+    InvoiceStatus.JOURNALING,
+    InvoiceStatus.RECONCILING,
+}
+
+
 @router.post("/process-batch", response_model=ApiEnvelope[dict])
 async def process_invoices_batch(
     background_tasks: BackgroundTasks,
@@ -430,31 +444,31 @@ async def process_invoices_batch(
     unique_ids = list(dict.fromkeys(body.invoice_ids))
     rows = (
         await db.execute(
-            select(Invoice.id).where(
+            select(Invoice.id, Invoice.status).where(
                 Invoice.id.in_(unique_ids),
                 Invoice.tenant_id == ctx.tenant_id,
             )
         )
-    ).scalars().all()
-    found = set(rows)
+    ).all()
+    found = {row[0]: row[1] for row in rows}
     if len(found) != len(unique_ids):
         raise HTTPException(404, "One or more invoices not found")
-    ordered = [invoice_id for invoice_id in unique_ids if invoice_id in found]
-    settings = get_settings()
-    if settings.sync_processing:
+    ordered = [
+        invoice_id
+        for invoice_id in unique_ids
+        if invoice_id in found and found[invoice_id] in _PROCESS_BATCH_STATUSES
+    ]
+    if ordered:
         background_tasks.add_task(
             process_invoices_batch_background, ordered, tenant_id=ctx.tenant_id
         )
-    else:
-        try:
-            from app.workers.tasks import process_inbox_task
-
-            process_inbox_task.delay(tenant_id=ctx.tenant_id)
-        except Exception:
-            background_tasks.add_task(
-                process_invoices_batch_background, ordered, tenant_id=ctx.tenant_id
-            )
-    return ApiEnvelope(data={"queued": len(ordered), "status": "running"})
+    return ApiEnvelope(
+        data={
+            "queued": len(ordered),
+            "status": "running" if ordered else "idle",
+            "skipped": len(unique_ids) - len(ordered),
+        }
+    )
 
 
 async def _queue_upload_processing(
@@ -462,40 +476,18 @@ async def _queue_upload_processing(
     invoice_ids: list[int],
     *,
     defer_processing: bool,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
 ) -> None:
     if defer_processing or not invoice_ids:
         return
-    settings = get_settings()
     if len(invoice_ids) == 1:
-        if settings.sync_processing:
-            background_tasks.add_task(
-                process_invoice_background, invoice_ids[0], tenant_id=tenant_id
-            )
-        else:
-            try:
-                from app.workers.tasks import process_inbox_task
-
-                process_inbox_task.delay(tenant_id=tenant_id)
-            except Exception:
-                background_tasks.add_task(
-                    process_invoice_background, invoice_ids[0], tenant_id=tenant_id
-                )
-        return
-
-    if settings.sync_processing:
         background_tasks.add_task(
-            process_invoices_batch_background, invoice_ids, tenant_id=tenant_id
+            process_invoice_background, invoice_ids[0], tenant_id=tenant_id
         )
         return
-    try:
-        from app.workers.tasks import process_inbox_task
-
-        process_inbox_task.delay(tenant_id=tenant_id)
-    except Exception:
-        background_tasks.add_task(
-            process_invoices_batch_background, invoice_ids, tenant_id=tenant_id
-        )
+    background_tasks.add_task(
+        process_invoices_batch_background, invoice_ids, tenant_id=tenant_id
+    )
 
 
 @router.post("/upload", response_model=ApiEnvelope[InvoiceResponse])
@@ -545,6 +537,11 @@ async def upload_invoice(
     except PlanFeatureBlockedError as exc:
         raise HTTPException(403, str(exc)) from exc
 
+    if not result.invoice_ids:
+        if result.duplicate_handled:
+            raise HTTPException(409, "Duplicate file already uploaded")
+        raise HTTPException(400, "Could not ingest file")
+
     primary = await _get_invoice_for_tenant(db, result.invoice_ids[0], ctx.tenant_id)
     if not defer_processing:
         # Commit before background task so the new row is visible to the pipeline worker.
@@ -593,7 +590,7 @@ async def attach_invoice_file(
         raise HTTPException(400, "Empty file")
 
     file_hash = compute_sha256_bytes(data)
-    from app.services.document_duplicate_service import find_invoice_by_file_hash
+    from app.services.dossier.document_duplicate_service import find_invoice_by_file_hash
 
     other = await find_invoice_by_file_hash(db, file_hash, tenant_id=ctx.tenant_id)
     if other and other.id != invoice_id:
@@ -606,8 +603,8 @@ async def attach_invoice_file(
     tenant_slug = org.slug if org else "default"
     tenant_name = org.name if org else None
     vendor_slug = inv.storage_vendor_slug or UNKNOWN_SLUG
-    from app.services.invoice_evaluation_service import load_config_for_tenant
-    from app.services.vault_invoice_paths import (
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+    from app.services.vault.vault_invoice_paths import (
         vault_document_type_folder_for_invoice,
         vault_document_type_titles_for_invoice,
     )
@@ -892,8 +889,8 @@ async def publish_invoice(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceResponse]:
     """Export processed invoice journals to the workbook and record ledger posting."""
-    from app.services.privilege_service import require_privilege
-    from app.services.publish_service import (
+    from app.services.auth.privilege_service import require_privilege
+    from app.services.integration.publish_service import (
         InsufficientCreditsError,
         publish_invoice_to_ledger,
     )

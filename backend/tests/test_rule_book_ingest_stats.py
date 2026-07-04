@@ -6,16 +6,16 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
-from app.services.audit_service import log_event
-from app.services.ingest_capture_service import apply_ingest_capture
-from app.services.rule_book_ingest_stats import (
+from app.services.audit.audit_service import log_event
+from app.services.ingest.ingest_capture_service import apply_ingest_capture
+from app.services.rule_book.rule_book_ingest_stats import (
     attach_email_capture_ingest_stats,
     load_email_capture_ingest_stats,
     month_start_utc,
     strip_email_capture_volatile_stats,
 )
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.email_ingestion import EmailAttachment, RawEmail
+from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.rule_book_fixtures import load_capture_config
 

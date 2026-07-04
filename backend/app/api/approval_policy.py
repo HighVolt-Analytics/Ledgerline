@@ -6,13 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.schemas.approval_policy import ApprovalPolicyPayload, ApprovalPolicyUnlock
 from app.schemas.common import ApiEnvelope
-from app.services.approval_policy_io import (
+from app.services.approval.approval_policy_io import (
     load_policy_for_tenant,
     save_policy_for_tenant,
     unlock_policy,
 )
-from app.services.audit_service import log_event
-from app.services.privilege_service import require_privilege
+from app.services.audit.audit_service import log_event
+from app.services.auth.privilege_service import require_privilege
 
 router = APIRouter(prefix="/approval-policy", tags=["approval-policy"])
 

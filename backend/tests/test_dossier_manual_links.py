@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dossier_manual_link import DossierManualLink
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.document_ref_service import assign_document_ref
-from app.services.dossier_linked_documents_service import build_dossier_linked_documents
-from app.services.dossier_manual_link_service import apply_manual_links, create_manual_link
+from app.services.dossier.document_ref_service import assign_document_ref
+from app.services.dossier.dossier_linked_documents_service import build_dossier_linked_documents
+from app.services.dossier.dossier_manual_link_service import apply_manual_links, create_manual_link
 from app.schemas.dossier import DossierLinkedDocumentResponse, DossierLinkedDocumentsResponse
 from tests.conftest import TESTING_TENANT_UUID
 

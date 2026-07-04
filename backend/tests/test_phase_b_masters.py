@@ -20,25 +20,25 @@ from app.models.pending_vendor import PendingVendor
 from app.models.purchase_order import PurchaseOrder
 from app.schemas.master_data import PendingVendorPromote, VendorMasterCreate
 from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
-from app.services.approval_service import approve_invoice_for_reprocess
-from app.services.capture_channel import channel_rule_matches, infer_capture_channel
-from app.services.invoice_data import InvoiceData, ParsedLineItem
-from app.services.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_PENDING_VENDOR, ROUTE_TEAM
-from app.services.master_data_service import promote_pending_vendor
+from app.services.approval.approval_service import approve_invoice_for_reprocess
+from app.services.ingest.capture_channel import channel_rule_matches, infer_capture_channel
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
+from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_PENDING_VENDOR, ROUTE_TEAM
+from app.services.master_data.master_data_service import promote_pending_vendor
 from app.models.audit import AuditLog
-from app.services.team_expense_approval import (
+from app.services.purchase.team_expense_approval import (
     apply_team_expense_approval_gate,
     has_manager_approval,
     requires_manual_approval,
 )
-from app.services.team_expense_validator import (
+from app.services.purchase.team_expense_validator import (
     _find_employee_by_sender,
     run_team_expense_validations,
     vr_te04_bank,
     vr_te05_status,
 )
-from app.services.validator import ValidationResult
-from app.services.vendor_hold_service import apply_vendor_hold_if_needed, invoice_is_vendor_held
+from app.services.rule_book.validator import ValidationResult
+from app.services.master_data.vendor_hold_service import apply_vendor_hold_if_needed, invoice_is_vendor_held
 from app.schemas.master_data import EmployeeMasterResponse
 from app.schemas.rule_book_config import BankDetails, EmployeeBudget
 
@@ -97,7 +97,7 @@ def test_vr_te05_pending_verification_blocks() -> None:
 
 def test_team_vr_te03_waives_receipt_below_auto_approve(capture_config: RuleBookConfigPayload) -> None:
     from app.schemas.rule_book_config import TeamExpensePolicy
-    from app.services.team_expense_validator import vr_te03_receipt
+    from app.services.purchase.team_expense_validator import vr_te03_receipt
 
     team_rule = capture_config.team_expense_rules[0].model_copy(
         update={"policy": TeamExpensePolicy(auto_approve_below=30, require_receipt=True)}
@@ -201,7 +201,7 @@ async def test_promote_pending_vendor_releases_held_invoice(
     monkeypatch.setenv("UPLOAD_DIR", str(upload))
     monkeypatch.setenv("RULE_BOOK_CONFIG_PATH", str(template))
     get_settings.cache_clear()
-    from app.services.rule_book_mapper import clear_classification_config_cache
+    from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 
     clear_classification_config_cache()
     inv = Invoice(
@@ -352,8 +352,8 @@ async def test_vendor_hold_released_when_po_vendor_matches(db_session: AsyncSess
 
 @pytest.mark.asyncio
 async def test_vendor_hold_when_po_vendor_not_in_master(db_session: AsyncSession) -> None:
-    from app.services.master_data_service import list_pending_vendors
-    from app.services.vendor_hold_service import apply_vendor_hold_if_needed, purchase_invoice_trusts_po_register
+    from app.services.master_data.master_data_service import list_pending_vendors
+    from app.services.master_data.vendor_hold_service import apply_vendor_hold_if_needed, purchase_invoice_trusts_po_register
 
     po = PurchaseOrder(
         tenant_id=TESTING_TENANT_UUID,

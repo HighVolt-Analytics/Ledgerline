@@ -35,7 +35,7 @@ class CustomValidationRule(BaseModel):
     @field_validator("field")
     @classmethod
     def _normalize_field(cls, value: str) -> str:
-        from app.services.document_type_field_keys import is_valid_extraction_field_key
+        from app.services.classification.document_type_field_keys import is_valid_extraction_field_key
 
         key = value.strip().lower().replace(" ", "_")
         if not key or not is_valid_extraction_field_key(key):

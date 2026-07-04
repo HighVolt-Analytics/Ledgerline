@@ -8,8 +8,8 @@ from decimal import Decimal
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
 from app.schemas.rule_book_config import RuleCondition, RuleConditionGroup
-from app.services.finance_dt_policy_scorer import score_all_enabled_dts
-from app.services.invoice_data import InvoiceData
+from app.services.classification.finance_dt_policy_scorer import score_all_enabled_dts
+from app.services.invoice.invoice_data import InvoiceData
 
 
 def test_policy_scorer_uses_classifier_tree_when_configured() -> None:
@@ -25,9 +25,8 @@ def test_policy_scorer_uses_classifier_tree_when_configured() -> None:
         code="DT-27",
         title="Finance contract",
         shortTitle="Contract",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Vault",
         enabled=True,
@@ -55,7 +54,6 @@ def test_policy_scorer_uses_classifier_tree_when_configured() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Purchase Management",
         enabled=True,
@@ -84,9 +82,8 @@ def test_policy_scorer_accepts_heading_kind_parameter() -> None:
         code="DT-14",
         title="Purchase order",
         shortTitle="PO",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Purchase Management",
         enabled=True,

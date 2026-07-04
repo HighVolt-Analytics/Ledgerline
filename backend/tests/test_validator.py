@@ -12,10 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 
-from app.services.invoice_data import InvoiceData, ParsedLineItem
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
 from app.config import get_settings
-from app.services.validator import (
+from app.services.rule_book.validator import (
 
     run_all_validations,
 
@@ -240,12 +240,63 @@ def test_vr08_fail(sample_invoice_data: InvoiceData) -> None:
 
 
 
+def test_vr08_pass_at_fifteen_percent(sample_invoice_data: InvoiceData) -> None:
+    sample_invoice_data.gst_rate = Decimal("15")
+    sample_invoice_data.subtotal = Decimal("1000.00")
+    sample_invoice_data.gst = Decimal("150.00")
+    sample_invoice_data.total = Decimal("1150.00")
+
+    assert vr08_gst(sample_invoice_data).passed
+
+
+
+
+def test_vr08_skips_when_rate_unknown(sample_invoice_data: InvoiceData) -> None:
+    sample_invoice_data.gst_rate = None
+    sample_invoice_data.subtotal = Decimal("0")
+    sample_invoice_data.gst = Decimal("0")
+
+    result = vr08_gst(sample_invoice_data)
+
+    assert result.skipped
+    assert "GST rate could not be determined" in result.message
+
+
+
+
 
 def test_vr01_fail(sample_invoice_data: InvoiceData) -> None:
 
     sample_invoice_data.total = Decimal("9999")
 
     assert not vr01_total(sample_invoice_data).passed
+
+
+
+
+def test_vr08_skips_when_totals_missing(sample_invoice_data: InvoiceData) -> None:
+    sample_invoice_data.subtotal = None
+    sample_invoice_data.gst = None
+
+    result = vr08_gst(sample_invoice_data)
+
+    assert result.skipped
+    assert result.passed
+    assert result.rule == "VR08"
+
+
+
+
+def test_vr01_skips_when_totals_missing(sample_invoice_data: InvoiceData) -> None:
+    sample_invoice_data.subtotal = None
+    sample_invoice_data.gst = None
+    sample_invoice_data.total = None
+
+    result = vr01_total(sample_invoice_data)
+
+    assert result.skipped
+    assert result.passed
+    assert result.rule == "VR01"
 
 
 
@@ -447,7 +498,8 @@ async def test_all_pass(db_session: AsyncSession, sample_invoice_data: InvoiceDa
     results = await run_all_validations(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)
 
     blocking = [r for r in results if not r.skipped and r.severity == "block"]
-    assert all(r.passed for r in blocking)
+    failed = [r for r in blocking if not r.passed]
+    assert not failed, [(r.rule, r.message) for r in failed]
     assert {r.rule for r in blocking} >= {
         "VR02",
         "VR03",

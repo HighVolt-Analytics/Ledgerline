@@ -1,4 +1,5 @@
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+import { isTransPosting } from "@/lib/documentTypeKlass";
 
 type PurchaseKind = "po" | "grn" | "invoice";
 
@@ -28,8 +29,7 @@ export function resolveDocumentTypeForPurchaseKind(
       (dt) =>
         dt.enabled &&
         dt.routeTarget === "Purchase Management" &&
-        dt.klass === "Transactional" &&
-        (dt.posting ?? "").toLowerCase() !== "no"
+        isTransPosting(dt)
     );
     if (!transactional.length) return null;
     return [...transactional].sort((a, b) => a.classifier.priority - b.classifier.priority)[0];

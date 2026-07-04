@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from datetime import datetime, timedelta
 
-from app.services.classification_audit_service import merge_classification_audit_detail
+from app.services.classification.classification_audit_service import merge_classification_audit_detail
 
 
 def _log(event: str, detail: dict, *, offset: int = 0) -> SimpleNamespace:

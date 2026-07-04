@@ -1,6 +1,16 @@
 {
   "DT-01": {
     "required_fields": ["vendor", "invoice_no", "total", "po_reference"],
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "po_reference",
+      "invoice_date",
+      "due_date",
+      "total",
+      "gst",
+      "line_items"
+    ],
     "absent_fields": [],
     "min_route_confidence": 0.65,
     "validation_profile": "",
@@ -49,12 +59,40 @@
     "validation_profile": "",
     "playbook_profile": "pre_transactional"
   },
+  "DT-07": {
+    "required_fields": ["vendor", "invoice_no", "total"],
+    "absent_fields": [],
+    "min_route_confidence": 0.65,
+    "validation_profile": "",
+    "playbook_profile": "standard_transactional"
+  },
   "DT-08": {
     "required_fields": ["vendor", "total", "due_date"],
     "absent_fields": ["po_reference"],
     "min_route_confidence": 0.65,
     "validation_profile": "direct_expense",
     "playbook_profile": "direct_expense"
+  },
+  "DT-09": {
+    "required_fields": ["vendor", "invoice_no", "total"],
+    "absent_fields": [],
+    "min_route_confidence": 0.65,
+    "validation_profile": "",
+    "playbook_profile": "freight_logistics"
+  },
+  "DT-10": {
+    "required_fields": ["vendor", "invoice_no", "total", "po_reference"],
+    "absent_fields": [],
+    "min_route_confidence": 0.65,
+    "validation_profile": "",
+    "playbook_profile": "import_dossier"
+  },
+  "DT-11": {
+    "required_fields": ["vendor", "invoice_no", "total"],
+    "absent_fields": [],
+    "min_route_confidence": 0.65,
+    "validation_profile": "",
+    "playbook_profile": "intercompany"
   },
   "DT-12": {
     "required_fields": ["vendor", "total"],
@@ -69,6 +107,20 @@
     "min_route_confidence": 0.65,
     "validation_profile": "non_actionable",
     "playbook_profile": "reconciliation"
+  },
+  "DT-14": {
+    "required_fields": ["attachment_name"],
+    "absent_fields": ["invoice_no", "due_date", "po_reference", "total"],
+    "min_route_confidence": 0.55,
+    "validation_profile": "non_actionable",
+    "playbook_profile": "supporting"
+  },
+  "DT-15": {
+    "required_fields": ["attachment_name"],
+    "absent_fields": ["invoice_no"],
+    "min_route_confidence": 0.65,
+    "validation_profile": "non_actionable",
+    "playbook_profile": "supporting"
   },
   "DT-16": {
     "required_fields": [],
@@ -90,6 +142,20 @@
     "min_route_confidence": 0.65,
     "validation_profile": "non_actionable",
     "playbook_profile": "supporting"
+  },
+  "DT-19": {
+    "required_fields": ["vendor", "invoice_no", "total"],
+    "absent_fields": [],
+    "min_route_confidence": 0.65,
+    "validation_profile": "",
+    "playbook_profile": "standard_transactional"
+  },
+  "DT-20": {
+    "required_fields": ["vendor", "invoice_no", "total", "po_reference"],
+    "absent_fields": [],
+    "min_route_confidence": 0.65,
+    "validation_profile": "",
+    "playbook_profile": "standard_transactional"
   },
   "DT-21": {
     "required_fields": ["vendor", "invoice_no", "total"],

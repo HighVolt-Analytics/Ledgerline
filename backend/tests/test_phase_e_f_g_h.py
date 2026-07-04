@@ -16,13 +16,13 @@ from app.models.line_item import LineItem
 from app.models.payment import Payment, PaymentStatus
 from app.models.purchase_order import PurchaseOrder
 from app.models.user import User, UserRole
-from app.services.auth_service import create_access_token, hash_password
-from app.services.membership_service import ensure_membership
+from app.services.auth.auth_service import create_access_token, hash_password
+from app.services.auth.membership_service import ensure_membership
 from app.tenant_ids import TESTING_TENANT_UUID
-from app.services.invoice_evaluation_service import ROUTE_EXPENSES, ROUTE_PURCHASE
-from app.services.payment_service import ensure_payment_for_invoice
+from app.services.invoice.invoice_evaluation_service import ROUTE_EXPENSES, ROUTE_PURCHASE
+from app.services.payments.payment_service import ensure_payment_for_invoice
 from app.schemas.purchase import GoodsReceiptCreate
-from app.services.purchase_match_service import (
+from app.services.purchase.purchase_match_service import (
     record_goods_receipt,
     sync_purchase_order_from_invoice,
 )

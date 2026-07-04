@@ -10,8 +10,8 @@ from app.schemas.rule_book_config import (
     SalesRule,
     validate_rule_book_config_payload,
 )
-from app.services.rule_book_evaluate_service import _legacy_sample_eval_documents
-from app.services.rule_engine import (
+from app.services.rule_book.rule_book_evaluate_service import _legacy_sample_eval_documents
+from app.services.rule_book.rule_engine import (
     EvalDocument,
     SampleEmail,
     build_live_evaluation,
@@ -101,7 +101,7 @@ def test_microsoft_azure_invoice_test6_capture_rule() -> None:
         RuleCondition,
         RuleConditionGroup,
     )
-    from app.services.rule_engine import match_email_capture_rule
+    from app.services.rule_book.rule_engine import match_email_capture_rule
 
     rule = EmailCaptureRule(
         id="ec-azure",
@@ -161,7 +161,7 @@ def test_starts_with_pdf_never_matches_real_filenames() -> None:
         RuleCondition,
         RuleConditionGroup,
     )
-    from app.services.rule_engine import match_email_capture_rule
+    from app.services.rule_book.rule_engine import match_email_capture_rule
 
     broken = EmailCaptureRule(
         id="ec-broken",

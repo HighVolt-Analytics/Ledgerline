@@ -36,8 +36,8 @@ from app.schemas.tenant_member import (
     TenantMemberResponse,
     TenantMembersListResponse,
 )
-from app.services.auth_email_service import send_tenant_invite_email
-from app.services.platform_service import (
+from app.services.auth.auth_email_service import send_tenant_invite_email
+from app.services.tenant.platform_service import (
     create_client_tenant,
     delete_client_tenant,
     get_client_tenant,

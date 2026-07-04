@@ -10,6 +10,8 @@ import { Select } from "@/components/ui/select";
 import { useToast } from "@/context/ToastContext";
 import {
   CHART_OF_ACCOUNT_TYPES,
+  coaTypeMisclassificationWarnings,
+  inferChartOfAccountTypeFromName,
   newChartOfAccountRow,
   normalizeChartOfAccountType,
   useChartOfAccounts,
@@ -80,6 +82,13 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
     if (error) {
       toast({ title: error, variant: "destructive" });
       return;
+    }
+    const typeWarnings = coaTypeMisclassificationWarnings(rows);
+    if (typeWarnings.length) {
+      toast({
+        title: "Chart of accounts type hints",
+        description: typeWarnings.slice(0, 2).join(" "),
+      });
     }
     try {
       await saveMutation.mutateAsync(
@@ -155,6 +164,11 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
                     <Input
                       value={row.name}
                       onChange={(e) => updateRow(index, { name: e.target.value })}
+                      onBlur={(e) => {
+                        const name = e.target.value.trim();
+                        if (!name) return;
+                        updateRow(index, { type: inferChartOfAccountTypeFromName(name) });
+                      }}
                       className="h-8 text-xs"
                       data-testid={`coa-name-${index}`}
                     />

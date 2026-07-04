@@ -16,6 +16,8 @@ export const DEFAULT_PLAYBOOK_PROFILE_BY_CODE: Record<string, PlaybookProfile> =
   "DT-11": "intercompany",
   "DT-12": "employee_claim",
   "DT-13": "reconciliation",
+  "DT-14": "supporting",
+  "DT-15": "supporting",
   "DT-16": "supporting",
   "DT-17": "supporting",
   "DT-18": "supporting",

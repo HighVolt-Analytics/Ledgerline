@@ -11,8 +11,8 @@ from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.models.purchase_order import PurchaseOrder
-from app.services.invoice_evaluation_service import ROUTE_PURCHASE
-from app.services.purchase_document_service import (
+from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
+from app.services.purchase.purchase_document_service import (
     EVAL_AWAITING_PO,
     infer_purchase_document_type,
     sync_purchase_document,

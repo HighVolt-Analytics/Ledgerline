@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
-from app.services.reconciliation_service import reconcile_daily
+from app.services.reconciliation.reconciliation_service import reconcile_daily
 
 
 @pytest.mark.asyncio

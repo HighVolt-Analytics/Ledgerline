@@ -53,3 +53,29 @@ export function normalizeChartOfAccountType(value: string | undefined): ChartOfA
     ? (cleaned as ChartOfAccountTypeOption)
     : "Expense";
 }
+
+export function inferChartOfAccountTypeFromName(name: string): ChartOfAccountTypeOption {
+  const lower = name.trim().toLowerCase();
+  if (!lower) return "Expense";
+  if (/\b(receivable|debtor|debtors|trade)\b/.test(lower)) return "Asset";
+  if (/\b(payable|suspense|gst collected|tax collected|output tax)\b/.test(lower)) return "Liability";
+  if (/\b(gst paid|bank)\b/.test(lower)) return "Asset";
+  if (/\b(sales|revenue|income|turnover)\b/.test(lower)) return "Revenue";
+  if (/\b(equity|retained)\b/.test(lower)) return "Equity";
+  return "Expense";
+}
+
+export function coaTypeMisclassificationWarnings(accounts: ChartOfAccountRow[]): string[] {
+  const warnings: string[] = [];
+  for (const row of accounts) {
+    const name = row.name.trim();
+    if (!name) continue;
+    if (/\b(sales|revenue|income|turnover)\b/i.test(name) && row.type !== "Revenue") {
+      warnings.push(`"${name}" looks like revenue but is typed ${row.type}.`);
+    }
+    if (/\b(receivable|debtor|debtors)\b/i.test(name) && row.type !== "Asset") {
+      warnings.push(`"${name}" looks like a receivable but is typed ${row.type}.`);
+    }
+  }
+  return warnings;
+}

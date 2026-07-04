@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db, require_admin
-from app.services.audit_service import log_event
+from app.services.audit.audit_service import log_event
 from app.schemas.common import ApiEnvelope
 from app.schemas.master_data import (
     EmployeeImportResultResponse,
@@ -17,12 +17,12 @@ from app.schemas.master_data import (
     EmployeeMasterResponse,
     EmployeeMasterUpdate,
 )
-from app.services.employee_import_service import (
+from app.services.master_data.employee_import_service import (
     build_import_template,
     import_employee_masters,
     parse_employee_import_file,
 )
-from app.services.master_data_service import (
+from app.services.master_data.master_data_service import (
     create_employee_master,
     delete_employee_master,
     list_employee_masters,

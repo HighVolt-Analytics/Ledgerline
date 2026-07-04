@@ -28,7 +28,7 @@ from app.services.credit_catalog import (
     tenant_pricing_region,
     topup_factor_key,
 )
-from app.services.document_ai_provider import DocumentAiProvider
+from app.services.extraction.document_ai_provider import DocumentAiProvider
 from app.tenant_settings import tenant_country
 
 
@@ -502,7 +502,7 @@ async def tenant_credits_consumed(session: AsyncSession, tenant_id: uuid.UUID) -
 
 
 async def assert_seat_available(session: AsyncSession, tenant_id: uuid.UUID) -> None:
-    from app.services.tenant_members_service import count_active_seats
+    from app.services.tenant.tenant_members_service import count_active_seats
 
     tenant = await session.get(Tenant, tenant_id)
     billing = await refresh_tenant_billing(session, tenant_id)

@@ -2,7 +2,7 @@
 
 from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
 from app.schemas.rule_book_config import DocumentClassificationConfig, RuleBookConfigPayload
-from app.services.document_type_lifecycle import (
+from app.services.classification.document_type_lifecycle import (
     remove_document_type_from_payload,
     scrub_document_type_references,
 )
@@ -15,7 +15,6 @@ def _type(code: str, **kwargs) -> DocumentTypeDefinition:
         shortTitle=code,
         klass="Transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Purchase Management",
         classifier=DocumentTypeClassifier(enabled=False, priority=100, confidence=0.85),

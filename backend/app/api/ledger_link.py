@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope
 from app.schemas.ledger_link import LedgerLinkResponse
-from app.services.ledger_link_service import build_ledger_link
+from app.services.integration.ledger_link_service import build_ledger_link
 
 router = APIRouter(prefix="/ledger-link", tags=["ledger-link"])
 

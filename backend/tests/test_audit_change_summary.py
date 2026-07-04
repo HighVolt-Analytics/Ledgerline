@@ -1,6 +1,6 @@
 """Audit change summary for CSV export."""
 
-from app.services.audit_change_summary import summarize_audit_change
+from app.services.audit.audit_change_summary import summarize_audit_change
 
 
 def test_rule_book_updated_modified_rule() -> None:

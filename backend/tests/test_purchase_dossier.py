@@ -8,9 +8,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
-from app.services.invoice_evaluation_service import ROUTE_PURCHASE
-from app.services.purchase_dossier_service import build_purchase_dossier
-from app.services.purchase_document_service import sync_purchase_document
+from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
+from app.services.purchase.purchase_dossier_service import build_purchase_dossier
+from app.services.purchase.purchase_document_service import sync_purchase_document
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.document_ref_service import (
+from app.services.dossier.document_ref_service import (
     _tenant_advisory_lock_key,
     assign_document_ref,
     display_document_ref,

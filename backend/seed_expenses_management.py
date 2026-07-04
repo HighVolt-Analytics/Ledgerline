@@ -17,7 +17,7 @@ from app.database import async_session_factory
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
-from app.services.file_storage import store_invoice_pdf
+from app.services.shared.file_storage import store_invoice_pdf
 from app.services.org_context import get_or_create_default_org
 
 ROUTE_EXPENSES = "Expenses Management"

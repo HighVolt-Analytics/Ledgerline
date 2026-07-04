@@ -11,14 +11,15 @@ from app.schemas.rule_book_config import (
     SalesRule,
     validate_rule_book_config_payload,
 )
-from app.services.invoice_evaluation_service import (
+from app.services.invoice.invoice_evaluation_service import (
     ROUTE_PURCHASE,
     ROUTE_SALES,
     evaluate_invoice_routing,
 )
-from app.services.rule_book_mapper import resolve_config_mapping
+from app.services.rule_book.rule_book_mapper import DOCUMENT_TYPE_RULE_TYPE, resolve_config_mapping
 from app.models.sales_order import SalesOrder
-from app.services.rule_engine import EvalDocument, match_sales_rule
+from app.services.rule_book.rule_engine import EvalDocument, match_sales_rule
+from tests.rule_book_test_helpers import demo_rule_book_config, mapping_doc_type_config
 
 
 def _rule(**kwargs) -> SalesRule:
@@ -93,16 +94,12 @@ def test_evaluate_invoice_routing_sales_rule_sets_route_target() -> None:
     assert any(mid.startswith("sales:") for mid in result.matched_rule_ids)
 
 
-def test_resolve_config_mapping_uses_sales_rule_ledger() -> None:
-    config = validate_rule_book_config_payload(
-        {
-            "schema_version": 1,
-            "sales_rules": [
-                _rule(
-                    match_on=SalesMatchOn(doc_number_contains="DOC-S"),
-                ).model_dump(),
-            ],
-        }
+def test_resolve_config_mapping_uses_document_type_post_to() -> None:
+    config = mapping_doc_type_config(
+        demo_rule_book_config(),
+        code="DT-SALES",
+        ledger="Operating Expenses",
+        route_target=ROUTE_SALES,
     )
     invoice = Invoice(
         id=2,
@@ -110,11 +107,12 @@ def test_resolve_config_mapping_uses_sales_rule_ledger() -> None:
         vendor="Beta Corp",
         document_ref="DOC-S-44",
         route_target=ROUTE_SALES,
+        document_type_code="DT-SALES",
         total=Decimal("120.00"),
         status=InvoiceStatus.PROCESSED,
     )
     hit = resolve_config_mapping(invoice, config)
-    assert hit.rule_type == "Sales rule"
+    assert hit.rule_type == DOCUMENT_TYPE_RULE_TYPE
     assert hit.mapping.account_name == "Operating Expenses"
 
 
@@ -180,8 +178,13 @@ def test_buyer_org_purchase_perspective_does_not_route_to_sales() -> None:
     assert "perspective:sales" not in result.matched_rule_ids
 
 
-def test_resolve_config_mapping_inherits_sales_order_ledger() -> None:
-    config = validate_rule_book_config_payload({"schema_version": 1})
+def test_resolve_config_mapping_uses_document_type_not_sales_order() -> None:
+    config = mapping_doc_type_config(
+        demo_rule_book_config(),
+        code="DT-AR",
+        ledger="Operating Expenses",
+        route_target=ROUTE_SALES,
+    )
     so = SalesOrder(
         tenant_id=TESTING_TENANT_UUID,
         so_number="SO-DEMO-100",
@@ -194,10 +197,10 @@ def test_resolve_config_mapping_inherits_sales_order_ledger() -> None:
         vendor="Harbour View Hotel",
         so_reference="SO-DEMO-100",
         route_target=ROUTE_SALES,
+        document_type_code="DT-AR",
         total=Decimal("1100.00"),
         status=InvoiceStatus.PROCESSED,
     )
     hit = resolve_config_mapping(invoice, config, sales_order=so)
-    assert hit.rule_type == "Sales rule"
-    assert "SO-DEMO-100" in hit.match_reason
-    assert hit.mapping.account_name == "Operating Revenue"
+    assert hit.rule_type == DOCUMENT_TYPE_RULE_TYPE
+    assert hit.mapping.account_name == "Operating Expenses"

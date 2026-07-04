@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.audit import AuditLog
-from app.services.account_mapper import clear_rule_book_cache
-from app.services.rule_book_save_buffer import (
+from app.services.rule_book.account_mapper import clear_rule_book_cache
+from app.services.rule_book.rule_book_save_buffer import (
     clear_rule_book_save_buffers,
     flush_rule_book_save_buffer,
 )
@@ -60,8 +60,8 @@ async def test_debounced_puts_commit_once_without_request_session(
 ) -> None:
     """Background timer path still coalesces bursts when no request session is passed."""
     from app.schemas.rule_book_config import validate_rule_book_config_payload
-    from app.services.rule_book_config_io import load_rule_book_config_dict
-    from app.services.rule_book_save_buffer import schedule_rule_book_save
+    from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict
+    from app.services.rule_book.rule_book_save_buffer import schedule_rule_book_save
 
     monkeypatch.setenv("RULE_BOOK_SAVE_DEBOUNCE_MS", "50")
     get_settings.cache_clear()
@@ -120,7 +120,7 @@ async def test_debounced_puts_commit_once_without_request_session(
     ).scalars().all()
     assert len(after_flush) == 1
 
-    from app.services.rule_book_save_buffer import _buffers
+    from app.services.rule_book.rule_book_save_buffer import _buffers
 
     pending = _buffers.get(TESTING_TENANT_UUID)
     if pending is not None and pending.timer_handle is not None:

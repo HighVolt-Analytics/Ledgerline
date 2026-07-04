@@ -9,11 +9,11 @@ from starlette.requests import ClientDisconnect
 from app.api.deps import get_db
 from app.config import get_settings
 from app.tenant_rls import apply_platform_lookup_session, clear_platform_lookup_session
-from app.services.stripe_global_payouts_service import (
+from app.services.payments.stripe_global_payouts_service import (
     process_global_payouts_webhook_event,
     verify_global_payouts_webhook,
 )
-from app.services.stripe_service import (
+from app.services.payments.stripe_service import (
     StripeServiceError,
     process_stripe_webhook_event,
     record_webhook_event_once,

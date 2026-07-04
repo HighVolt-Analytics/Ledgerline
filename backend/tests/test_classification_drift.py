@@ -11,17 +11,17 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.schemas.ocr_artifact import OcrArtifact
 from app.schemas.rule_book_config import AiClassificationConfig
-from app.services.classification_drift_service import (
+from app.services.classification.classification_drift_service import (
     evaluate_vendor_classification_drift,
     vendor_classification_baseline,
 )
-from app.services.classification_learning_service import (
+from app.services.classification.classification_learning_service import (
     few_shot_examples_for_tenant,
     record_learning_event,
     resolve_vendor_learning_key,
 )
-from app.services.invoice_evaluation_service import EVAL_NEEDS_REVIEW
-from app.services.pipeline import process_invoice
+from app.services.invoice.invoice_evaluation_service import EVAL_NEEDS_REVIEW
+from app.services.invoice.pipeline import process_invoice
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -192,7 +192,7 @@ async def test_pipeline_vendor_drift_flags_needs_review(
     async def _noop_sync(*_args, **_kwargs) -> None:
         return None
 
-    from app.services.tenant_org_context import ai_classification_from_config as _real_ai_cfg
+    from app.services.tenant.tenant_org_context import ai_classification_from_config as _real_ai_cfg
 
     def _ai_cfg_with_drift_threshold(config):
         cfg = _real_ai_cfg(config)

@@ -22,20 +22,20 @@ from app.config import get_settings
 from app.database import async_session_factory
 from app.models.invoice import Invoice
 from app.models.tenant import Tenant
-from app.services.approval_policy_io import (
+from app.services.approval.approval_policy_io import (
     _legacy_policy_path,
     _load_legacy_store as _load_legacy_policy_store,
     _policy_path,
     _save_tenant_policy,
 )
-from app.services.billing_io import (
+from app.services.shared.billing_io import (
     _billing_path,
     _legacy_billing_path,
     _load_legacy_store as _load_legacy_billing_store,
     _save_tenant_state,
 )
-from app.services.file_storage import relocate_stored_pdf
-from app.services.tenant_storage_paths import (
+from app.services.shared.file_storage import relocate_stored_pdf
+from app.services.tenant.tenant_storage_paths import (
     blob_name_from_stored,
     is_legacy_blob_path,
     legacy_to_tenant_path,

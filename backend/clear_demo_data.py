@@ -31,14 +31,14 @@ from app.models.reconciliation import DailyReconciliation
 from app.models.vendor import VendorRegistry
 from app.models.vendor_master import VendorMasterRecord
 from app.schemas.rule_book_config import RuleBookConfigPayload
-from app.services.blob_storage import BLOB_URI_PREFIX, delete_blob, is_blob_enabled
+from app.services.shared.blob_storage import BLOB_URI_PREFIX, delete_blob, is_blob_enabled
 from app.services.org_context import get_or_create_default_org
-from app.services.rule_book_config_io import (
+from app.services.rule_book.rule_book_config_io import (
     global_rule_book_config_path,
     org_rule_book_config_path,
     save_rule_book_config,
 )
-from app.services.rule_book_mapper import clear_classification_config_cache
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 
 _DEMO_HASH_PATTERNS = (
     "seed_%",
@@ -59,7 +59,7 @@ def _delete_all_container_blobs(*, prefix: str = "invoice/") -> int:
     """Delete every blob under prefix in the configured container."""
     if not is_blob_enabled():
         return 0
-    from app.services.blob_storage import _service_client
+    from app.services.shared.blob_storage import _service_client
 
     settings = get_settings()
     client = _service_client()

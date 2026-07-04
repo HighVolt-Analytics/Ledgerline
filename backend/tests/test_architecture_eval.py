@@ -12,10 +12,10 @@ from app.schemas.rule_book_config import (
     TeamExpensePolicy,
     TeamExpenseRule,
 )
-from app.services.invoice_evaluation_service import ROUTE_EXPENSES, evaluate_invoice_routing
-from app.services.po_reference import is_plausible_po_reference
-from app.services.rule_book_mapper import resolve_config_mapping
-from app.services.rule_engine import EvalDocument, match_expense_rule, match_purchase_rule
+from app.services.invoice.invoice_evaluation_service import ROUTE_EXPENSES, evaluate_invoice_routing
+from app.services.purchase.po_reference import is_plausible_po_reference
+from app.services.rule_book.rule_book_mapper import resolve_config_mapping
+from app.services.rule_book.rule_engine import EvalDocument, match_expense_rule, match_purchase_rule
 from app.models.invoice import Invoice, InvoiceStatus
 
 
@@ -65,45 +65,25 @@ def test_category_rules_use_priority_first_match_wins() -> None:
     assert hit.id == "high"
 
 
-def test_gl_cascade_expense_before_team() -> None:
+def test_gl_maps_from_document_type() -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Local Cafe",
         invoice_no="MEAL-001",
         route_target="Expenses Management",
+        document_type_code="DT-CAFE",
         status=InvoiceStatus.MAPPING,
     )
-    from tests.rule_book_test_helpers import demo_rule_book_config
+    from tests.rule_book_test_helpers import demo_rule_book_config, mapping_doc_type_config
 
-    config = demo_rule_book_config()
-    expense_rules = [
-        *config.expense_rules,
-        ExpenseRule(
-            id="er-test-cafe",
-            name="Cafe meals",
-            enabled=True,
-            priority=50,
-            match_on=ExpenseMatchOn(vendor_contains="Cafe"),
-            post_to=PostToAccounts(ledger="Travel Expense"),
-        ),
-    ]
-    team_rules = [
-        *config.team_expense_rules,
-        TeamExpenseRule(
-            id="tr-test-cafe",
-            name="Team cafe",
-            enabled=True,
-            priority=50,
-            match_on=TeamExpenseMatchOn(merchant_contains="Cafe"),
-            post_to=PostToAccounts(ledger="Staff Meals"),
-            policy=TeamExpensePolicy(),
-        ),
-    ]
-    config = config.model_copy(
-        update={"expense_rules": expense_rules, "team_expense_rules": team_rules}
+    config = mapping_doc_type_config(
+        demo_rule_book_config(),
+        code="DT-CAFE",
+        ledger="Travel Expense",
+        route_target="Expenses Management",
     )
     hit = resolve_config_mapping(inv, config)
-    assert hit.rule_type == "Expense rule"
+    assert hit.rule_type == "Document type"
     assert hit.mapping.account_name == "Travel Expense"
 
 

@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.invoice_response_service import (
+from app.services.invoice.invoice_response_service import (
     InvoiceTenantScopeError,
     assert_invoice_tenant_scope,
 )

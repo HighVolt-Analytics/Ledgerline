@@ -4,10 +4,10 @@ from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
-from app.services.document_heading_utils import extract_document_heading_signals
-from app.services.document_type_classifier import classify_document_type
-from app.services.invoice_data import InvoiceData
-from app.services.rule_engine import eval_condition_group_generic, sanitize_condition_group
+from app.services.extraction.document_heading_utils import extract_document_heading_signals
+from app.services.classification.document_type_classifier import classify_document_type
+from app.services.invoice.invoice_data import InvoiceData
+from app.services.rule_book.rule_engine import eval_condition_group_generic, sanitize_condition_group
 
 
 def _invoice(**kwargs) -> Invoice:
@@ -21,9 +21,8 @@ def _org_dt03() -> DocumentTypeDefinition:
         code="DT-03",
         title="Goods receipt note",
         shortTitle="GRN",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="GRN",
         routeTarget="Purchase Management",
         purchaseBundleRole="grn",
@@ -78,9 +77,8 @@ def _org_dt04() -> DocumentTypeDefinition:
         code="DT-04",
         title="Recurring / contract",
         shortTitle="Contract",
-        klass="Master-data",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="Contract register",
         routeTarget="Vault",
         classifier=DocumentTypeClassifier.model_validate(
@@ -153,7 +151,7 @@ def test_contract_heading_detected_for_spot_purchase_title() -> None:
 
 
 def test_grn_classifier_does_not_match_contract_without_grn_signals() -> None:
-    from app.services.document_type_rule_engine import (
+    from app.services.classification.document_type_rule_engine import (
         build_document_classifier_context,
         _document_field,
     )

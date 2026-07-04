@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from app.services.vendor_payout_method_service import VendorPayoutMethodError
+from app.services.master_data.vendor_payout_method_service import VendorPayoutMethodError
 
 
 def http_not_found(exc: LookupError) -> HTTPException:

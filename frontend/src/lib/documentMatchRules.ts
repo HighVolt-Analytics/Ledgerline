@@ -2,7 +2,8 @@
  * User-friendly match/exclude rules compiled to classifier.root (AND/OR tree).
  */
 
-import type { ConditionOperator } from "@/lib/v4RuleBookTypes";
+import type { ChartOfAccountRow } from "@/api/types";
+import { hasValidPostTo } from "@/lib/documentTypePostToValidation";
 import type {
   DocumentRuleCondition,
   DocumentRuleConditionGroup,
@@ -195,6 +196,36 @@ export const BOOLEAN_FIELDS = new Set([
   "is_commercial_invoice",
 ]);
 
+/** Heading presence flags — exclude from absentFields derivation (not extraction scalars). */
+const HEADING_PRESENCE_FIELDS = new Set([
+  "has_heading_invoice",
+  "has_heading_grn",
+  "has_heading_po",
+  "has_heading_so",
+  "has_heading_credit_note",
+  "has_heading_quote",
+  "has_heading_contract",
+  "is_commercial_invoice",
+]);
+
+/**
+ * Map Recognition exclude rules (Has … is true) to post-OCR absent field keys.
+ * Used when simple match/exclude rules are saved — advanced classifier trees keep seeded defaults.
+ */
+export function absentFieldsFromExcludeRules(rules: MatchRuleRow[]): string[] {
+  const keys = new Set<string>();
+  for (const row of rules) {
+    const field = row.field.trim();
+    if (!field || HEADING_PRESENCE_FIELDS.has(field)) continue;
+    if (!isMatchRuleBooleanField(field)) continue;
+    if (row.operator !== "equals" || row.value !== "true") continue;
+    if (field.startsWith("has_")) {
+      keys.add(field.slice(4));
+    }
+  }
+  return [...keys].sort();
+}
+
 /** Presence checks: preset booleans or has_<custom_field>. */
 export function isMatchRuleBooleanField(field: string): boolean {
   const key = field.trim();
@@ -325,6 +356,7 @@ export function documentTypeWithMatchRulesForm(
     ...draft,
     enabled: true,
     classifierCustomized: false,
+    absentFields: absentFieldsFromExcludeRules(form.excludeRules),
     classifier: {
       ...draft.classifier,
       enabled: true,
@@ -525,12 +557,18 @@ export function isGenericDocumentTypeTitle(title: string): boolean {
   return t === "custom type" || t === "new document type" || t === "new type" || t === "";
 }
 
-export function documentTypeReadiness(draft: {
-  title: string;
-  oneLine: string;
-  code: string;
-  classifier: { root: DocumentRuleConditionGroup };
-}, matchRulesForm?: MatchRulesForm): { ready: boolean; items: { label: string; done: boolean }[] } {
+export function documentTypeReadiness(
+  draft: {
+    title: string;
+    oneLine: string;
+    code: string;
+    posting: string;
+    postTo?: { ledger: string };
+    classifier: { root: DocumentRuleConditionGroup };
+  },
+  matchRulesForm?: MatchRulesForm,
+  options?: { coaAccounts?: ChartOfAccountRow[] }
+): { ready: boolean; items: { label: string; done: boolean }[] } {
   const { form } = matchRulesForm
     ? { form: matchRulesForm }
     : parseClassifierToMatchRules(draft.classifier.root);
@@ -546,6 +584,11 @@ export function documentTypeReadiness(draft: {
   const hasDescription = draft.oneLine.trim().length >= 20;
   const hasName = !isGenericDocumentTypeTitle(draft.title);
   const hasCode = Boolean(draft.code.trim());
+  const accounts = options?.coaAccounts ?? [];
+  const hasPostTo = hasValidPostTo(
+    { posting: draft.posting, postTo: draft.postTo ?? { ledger: "", subLedger: "" } },
+    accounts
+  );
 
   const items = [
     { label: "Specific document name", done: hasName },
@@ -556,6 +599,7 @@ export function documentTypeReadiness(draft: {
       done: hasRules || hasSignals || hasDescription,
     },
     { label: "Unique code", done: hasCode },
+    { label: "Post to ledger (from chart of accounts)", done: hasPostTo },
   ];
   return { ready: items.every((i) => i.done), items };
 }
