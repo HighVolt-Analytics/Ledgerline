@@ -11,13 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
-from app.services.privilege_service import require_privilege
+from app.services.auth.privilege_service import require_privilege
 from app.models.audit import AuditLog
 from app.schemas.common import ApiEnvelope
 from app.schemas.rule_book_changelog import RuleBookChangelogEntry
 from app.schemas.rule_book_config import (
     RuleBookConfigPayload,
+    RuleBookPostToValidationError,
     RuleBookRulesPayload,
+    validate_rule_book_config_for_save,
     validate_rule_book_config_payload,
 )
 from app.schemas.document_type import DocumentTypeDefinition
@@ -31,30 +33,33 @@ from app.schemas.classification_api import (
     DocumentTypeRecognitionTestRequest,
     DocumentTypeRecognitionTestResponse,
 )
-from app.services.document_type_sample_types import ParsedDocumentSample
-from app.services.document_type_sample_analyzer import (
+from app.services.classification.document_type_sample_types import ParsedDocumentSample
+from app.services.classification.document_type_sample_analyzer import (
     apply_sample_proposal_to_draft,
     compute_apply_ready,
     effective_proposal_signal_ids,
     parse_document_samples,
 )
-from app.services.sample_proposal_engine import build_sample_proposal
-from app.services.document_type_recognition_service import evaluate_document_type_recognition
-from app.services.document_type_classify_preview import (
+from app.services.classification.sample_proposal_engine import build_sample_proposal
+from app.services.classification.document_type_recognition_service import evaluate_document_type_recognition
+from app.services.classification.document_type_classify_preview import (
     classify_parsed_samples_for_proposal_preview,
     merge_draft_document_type,
 )
-from app.services.master_data_service import attach_masters_to_config_dict
-from app.services.invoice_evaluation_service import load_config_for_tenant
-from app.services.recognition_signal_registry import catalog_payload
-from app.services.remap_service import remap_tenant_invoices_background
-from app.services.rule_book_config_io import load_rule_book_config_dict
-from app.services.rule_book_evaluate_service import evaluate_rule_book
-from app.services.rule_book_ingest_stats import (
+from app.services.master_data.master_data_service import attach_masters_to_config_dict
+from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+from app.services.classification.recognition_signal_registry import catalog_payload
+from app.services.invoice.remap_service import remap_tenant_invoices_background
+from app.services.rule_book.rule_book_config_io import (
+    load_rule_book_config_dict,
+    merge_persisted_rule_book_slices,
+)
+from app.services.rule_book.rule_book_evaluate_service import evaluate_rule_book
+from app.services.rule_book.rule_book_ingest_stats import (
     attach_email_capture_ingest_stats,
     strip_email_capture_volatile_stats,
 )
-from app.services.rule_book_save_buffer import (
+from app.services.rule_book.rule_book_save_buffer import (
     flush_rule_book_save_buffer,
     get_buffered_rule_book_raw,
     schedule_rule_book_save,
@@ -134,9 +139,12 @@ async def put_rule_book_config(
         raw["vendor_masters"] = []
         raw["employee_masters"] = []
         strip_email_capture_volatile_stats(raw)
-        from app.services.document_type_lifecycle import scrub_document_type_references
+        raw = await merge_persisted_rule_book_slices(db, ctx.tenant_id, raw)
+        from app.services.classification.document_type_lifecycle import scrub_document_type_references
 
-        payload = scrub_document_type_references(validate_rule_book_config_payload(raw))
+        payload = scrub_document_type_references(validate_rule_book_config_for_save(raw))
+    except RuleBookPostToValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
 
@@ -177,7 +185,7 @@ async def delete_document_type(
     """Remove a document type from the tenant catalogue and persist immediately."""
     require_privilege(ctx, "Edit Policy")
 
-    from app.services.document_type_lifecycle import remove_document_type_from_payload
+    from app.services.classification.document_type_lifecycle import remove_document_type_from_payload
 
     # Commit any buffered PUT first so delete runs on the latest tenant catalogue.
     await flush_rule_book_save_buffer(
@@ -189,6 +197,8 @@ async def delete_document_type(
     before_raw = await load_rule_book_config_dict(db, ctx.tenant_id)
     try:
         before_payload = validate_rule_book_config_payload(before_raw)
+    except RuleBookPostToValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
 
@@ -199,7 +209,7 @@ async def delete_document_type(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    from app.services.classification_learning_service import (
+    from app.services.classification.classification_learning_service import (
         normalize_learning_dt_code,
         purge_learning_events_for_document_type,
     )
@@ -215,7 +225,7 @@ async def delete_document_type(
     actor_name, actor_email = await actor_from_context(db, ctx)
     client_ip = request.client.host if request.client else None
 
-    from app.services.rule_book_save_buffer import PendingRuleBookSave, commit_rule_book_save
+    from app.services.rule_book.rule_book_save_buffer import PendingRuleBookSave, commit_rule_book_save
 
     pending = PendingRuleBookSave(
         tenant_id=ctx.tenant_id,
@@ -270,6 +280,7 @@ async def _draft_config_with_masters(
     draft: RuleBookRulesPayload,
 ) -> RuleBookConfigPayload:
     raw = draft.model_dump()
+    raw = await merge_persisted_rule_book_slices(db, tenant_id, raw)
     raw = await attach_masters_to_config_dict(db, tenant_id, raw)
     return validate_rule_book_config_payload(raw)
 
@@ -385,7 +396,7 @@ async def analyze_document_type_samples_endpoint(
                 profile_signals_by_filename=profile_signals_by_filename,
             )
         else:
-            from app.services.document_type_classify_preview import (
+            from app.services.classification.document_type_classify_preview import (
                 classify_parsed_samples_against_catalog,
             )
 
@@ -502,6 +513,8 @@ async def evaluate_rule_book_config(
             limit=body.limit,
         )
         return ApiEnvelope(data=RuleBookEvaluateResponse.model_validate(result))
+    except RuleBookPostToValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
     except (ValidationError, ValueError) as exc:
         raise _validation_http_error(exc) from exc
 
@@ -512,7 +525,7 @@ async def list_ai_providers(
 ) -> ApiEnvelope[dict[str, object]]:
     """Availability of document AI providers for Rule Book settings."""
     from app.config import get_settings
-    from app.services.document_intelligence import is_di_enabled
+    from app.services.extraction.document_intelligence import is_di_enabled
 
     settings = get_settings()
     azure_available = bool(is_di_enabled() and settings.runtime_llm_available)

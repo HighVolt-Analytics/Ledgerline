@@ -13,9 +13,9 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.audit_service import log_event
-from app.services.document_type_playbook_service import PlaybookGateResult
-from app.services.pipeline import process_invoice
+from app.services.audit.audit_service import log_event
+from app.services.classification.document_type_playbook_service import PlaybookGateResult
+from app.services.invoice.pipeline import process_invoice
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

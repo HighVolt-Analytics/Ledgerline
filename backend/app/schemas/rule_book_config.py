@@ -238,9 +238,6 @@ class PostingDefaults(BaseModel):
     tax_account: str = "GST Paid"
     payable_account: str = "Accounts Payable"
     fallback_account: str = "Suspense Account"
-    functional_currency: str = "AUD"
-    fx_gain_loss_account: str = "FX Gain/Loss"
-    bank_account: str = "Bank"
 
 
 class DocumentSetRule(BaseModel):
@@ -590,14 +587,50 @@ def _merge_document_type_fields(data: dict[str, Any]) -> dict[str, Any]:
                 updates[legacy_key] = []
         if updates:
             row = {**row, **updates}
+        if not isinstance(row.get("post_to"), dict) and not isinstance(row.get("postTo"), dict):
+            row = {
+                **row,
+                "post_to": {
+                    "ledger": "",
+                    "sub_ledger": "",
+                },
+            }
         merged.append(row)
+    data["document_types"] = merged
+    return data
+
+
+def _backfill_document_type_klass(data: dict[str, Any]) -> dict[str, Any]:
+    """Collapse legacy klass values to Trans-posting / Non-trans, non-posting."""
+    from app.services.classification.document_type_klass import (
+        derive_posting_from_klass_and_profile,
+        normalize_document_type_klass,
+    )
+
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        klass = normalize_document_type_klass(str(row.get("klass") or ""))
+        profile = str(row.get("playbook_profile") or row.get("playbookProfile") or "")
+        posting = derive_posting_from_klass_and_profile(
+            klass,
+            profile,
+            existing_posting=str(row.get("posting") or ""),
+        )
+        merged.append({**row, "klass": klass, "posting": posting})
     data["document_types"] = merged
     return data
 
 
 def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
     """Persist structural playbook inference once when saving — not at runtime."""
-    from app.services.playbook_profile_catalog import (
+    from app.services.classification.playbook_profile_catalog import (
         default_playbook_profile_for_code,
         infer_playbook_profile_from_definition,
     )
@@ -618,7 +651,9 @@ def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
         code = str(row.get("code") or "").strip().upper()
         try:
             definition = DocumentTypeDefinition.model_validate(row)
-            inferred = infer_playbook_profile_from_definition(definition)
+            inferred = default_playbook_profile_for_code(code) if code else "standard_transactional"
+            if inferred == "standard_transactional":
+                inferred = infer_playbook_profile_from_definition(definition)
         except Exception:
             inferred = default_playbook_profile_for_code(code) if code else "standard_transactional"
         merged.append({**row, "playbook_profile": inferred})
@@ -629,8 +664,8 @@ def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
 def _backfill_validation_rules(data: dict[str, Any]) -> dict[str, Any]:
     """Ensure each document type has the full finance validation rule catalogue."""
     from app.schemas.validation_rule import normalize_validation_rules
-    from app.services.document_type_validation_service import effective_validation_profile
-    from app.services.validation_rule_catalog import merge_configurable_validation_rules
+    from app.services.classification.document_type_validation_service import effective_validation_profile
+    from app.services.rule_book.validation_rule_catalog import merge_configurable_validation_rules
 
     types = data.get("document_types")
     if not isinstance(types, list):
@@ -694,7 +729,7 @@ def _normalize_ai_classification_provider(data: dict[str, Any]) -> dict[str, Any
     raw = data.get("ai_classification") or data.get("aiClassification")
     if not isinstance(raw, dict):
         return data
-    from app.services.document_ai_provider import DocumentAiProvider, provider_available
+    from app.services.extraction.document_ai_provider import DocumentAiProvider, provider_available
 
     token = str(
         raw.get("document_ai_provider") or raw.get("documentAiProvider") or ""
@@ -719,6 +754,55 @@ def _normalize_ai_classification_provider(data: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+def _backfill_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
+    """Suggest Post to ledger names from playbook profile + tenant COA."""
+    from app.schemas.rule_book_config import ChartOfAccountEntry
+    from app.services.classification.document_type_gl_defaults import default_post_to_ledger
+
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+    coa_raw = data.get("chart_of_accounts") or []
+    entries: list[ChartOfAccountEntry] = []
+    for row in coa_raw if isinstance(coa_raw, list) else []:
+        if isinstance(row, dict) and row.get("name"):
+            entries.append(
+                ChartOfAccountEntry(
+                    code=str(row.get("code") or ""),
+                    name=str(row.get("name") or ""),
+                    type=row.get("type") or "Expense",
+                )
+            )
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        post = row.get("post_to") if isinstance(row.get("post_to"), dict) else None
+        if post is None and isinstance(row.get("postTo"), dict):
+            post = row.get("postTo")
+        ledger = str((post or {}).get("ledger") or "").strip()
+        if not ledger and entries:
+            profile = str(row.get("playbook_profile") or row.get("playbookProfile") or "")
+            route_target = str(row.get("route_target") or row.get("routeTarget") or "")
+            resolved = default_post_to_ledger(profile, entries, route_target=route_target)
+            if resolved:
+                row = {
+                    **row,
+                    "post_to": {
+                        **(post or {}),
+                        "ledger": resolved,
+                        "sub_ledger": str(
+                            (post or {}).get("sub_ledger") or (post or {}).get("subLedger") or ""
+                        ),
+                    },
+                }
+        merged.append(row)
+    data["document_types"] = merged
+    return data
+
+
 def _infer_chart_of_account_type(name: str) -> ChartOfAccountType:
     lower = name.strip().lower()
     if "payable" in lower or "suspense" in lower:
@@ -732,32 +816,56 @@ def _infer_chart_of_account_type(name: str) -> ChartOfAccountType:
     return "Expense"
 
 
-def default_chart_of_accounts_entries() -> list[dict[str, str]]:
-    """Seed tenant COA from the global chart_of_accounts.json file."""
-    from app.services.chart_of_accounts_defaults import global_default_chart_entries
-
-    return global_default_chart_entries()
-
-
-def _backfill_chart_of_accounts(data: dict[str, Any]) -> dict[str, Any]:
-    raw = data.get("chart_of_accounts")
-    if isinstance(raw, list) and raw:
-        return data
-    migrated = dict(data)
-    migrated["chart_of_accounts"] = default_chart_of_accounts_entries()
-    return migrated
-
-
 def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPayload:
     if isinstance(data, dict):
         data = _migrate_root_legacy_fields(dict(data))
         data = _backfill_category_rule_priorities(data)
         data = _backfill_document_types(data)
-        data = _backfill_chart_of_accounts(data)
+        data = _backfill_document_type_klass(data)
         data = _merge_document_type_classifiers(data)
         data = _merge_document_type_fields(data)
         data = _backfill_playbook_profiles(data)
+        data = _backfill_document_type_post_to(data)
         data = _backfill_validation_rules(data)
         data = _migrate_ai_classification(data)
         data = _normalize_ai_classification_provider(data)
     return RuleBookConfigPayload.model_validate(data)
+
+
+def validate_rule_book_config_for_save(data: dict[str, Any]) -> RuleBookConfigPayload:
+    """Validate and normalize config before persisting (includes Post to checks)."""
+    payload = validate_rule_book_config_payload(data)
+    _validate_transactional_document_type_post_to(payload)
+    return payload
+
+
+class RuleBookPostToValidationError(ValueError):
+    """Enabled transactional document types must have a valid Post to ledger."""
+
+
+def _validate_transactional_document_type_post_to(payload: RuleBookConfigPayload) -> None:
+    from app.services.classification.document_type_post_to_service import (
+        document_type_requires_post_to,
+        has_valid_document_type_post_to,
+    )
+
+    messages: list[str] = []
+    for definition in payload.document_types:
+        if not definition.enabled:
+            continue
+        if not document_type_requires_post_to(definition):
+            continue
+        if has_valid_document_type_post_to(definition, payload.chart_of_accounts):
+            continue
+        code = definition.code.strip().upper()
+        ledger = (definition.post_to.ledger or "").strip()
+        if not ledger:
+            messages.append(
+                f"{code}: Post to ledger is required for transactional document types."
+            )
+        else:
+            messages.append(
+                f"{code}: Post to ledger {ledger!r} is not in your chart of accounts."
+            )
+    if messages:
+        raise RuleBookPostToValidationError(" ".join(messages))

@@ -12,6 +12,7 @@ import {
 } from "@/lib/documentMatchRules";
 import type { ConditionOperator } from "@/lib/v4RuleBookTypes";
 import type { DocumentRuleCondition, DocumentRuleConditionGroup } from "@/lib/v5DocumentTypes";
+import { formatExtractionFieldKeyInput } from "@/lib/documentExtractionFields";
 
 const OPERATORS: { key: ConditionOperator; label: string }[] = [
   { key: "equals", label: "equals" },
@@ -90,11 +91,14 @@ function ConditionRow({
             onChange={(e) =>
               onChange({
                 ...cond,
-                field: e.target.value.trim().toLowerCase().replace(/\s+/g, "_"),
+                field: formatExtractionFieldKeyInput(e.target.value),
                 operator: isMatchRuleBooleanField(e.target.value) ? "equals" : cond.operator,
               })
             }
             placeholder="custom_field_name"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
             className="h-8 w-[170px] shrink-0 rounded-md border border-input bg-background px-2 text-xs font-mono"
           />
           {!readOnly ? (

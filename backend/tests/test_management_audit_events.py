@@ -13,15 +13,15 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
 from app.models.purchase_order import PurchaseOrder
 from app.schemas.purchase import ThreeWayMatchResult
-from app.services.audit_detail_helpers import (
+from app.services.audit.audit_detail_helpers import (
     compute_three_way_audit_status,
     validation_audit_detail,
     vr_te_results_for_audit,
 )
-from app.services.invoice_evaluation_service import ROUTE_TEAM, apply_invoice_evaluation
-from app.services.purchase_match_service import persist_three_way_match_audit
-from app.services.team_expense_approval import apply_team_expense_approval_gate
-from app.services.validator import ValidationResult
+from app.services.invoice.invoice_evaluation_service import ROUTE_TEAM, apply_invoice_evaluation
+from app.services.purchase.purchase_match_service import persist_three_way_match_audit
+from app.services.purchase.team_expense_approval import apply_team_expense_approval_gate
+from app.services.rule_book.validator import ValidationResult
 
 
 def test_vr_te_results_include_receipt_present() -> None:

@@ -5,15 +5,15 @@ from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 from decimal import Decimal
 
 from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
-from app.services.document_type_catalog import ROUTE_PURCHASE, ROUTE_VAULT
-from app.services.document_type_validation_service import PROFILE_NON_ACTIONABLE
-from app.services.expense_vendor_policy import vendor_detection_evaluation_status
-from app.services.invoice_evaluation_service import (
+from app.services.classification.document_type_catalog import ROUTE_PURCHASE, ROUTE_VAULT
+from app.services.classification.document_type_validation_service import PROFILE_NON_ACTIONABLE
+from app.services.purchase.expense_vendor_policy import vendor_detection_evaluation_status
+from app.services.invoice.invoice_evaluation_service import (
     EVAL_NEEDS_REVIEW,
     EVAL_PENDING_VENDOR,
     evaluate_invoice_routing,
 )
-from app.services.vendor_registration_policy import (
+from app.services.master_data.vendor_registration_policy import (
     persisted_vendor_confidence,
     vendor_master_check_enabled,
     vendor_registration_required,
@@ -31,9 +31,8 @@ def _contract_type() -> DocumentTypeDefinition:
         code="DT-CON",
         title="Contract",
         shortTitle="Contract",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="Supporting contract",
         routeTarget=ROUTE_VAULT,
         validation_profile="non_actionable",
@@ -66,7 +65,6 @@ def test_vendor_registration_required_for_purchase_when_vr12_on() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        fraudRisk="medium",
         oneLine="Tax invoice",
         routeTarget=ROUTE_PURCHASE,
         validation_rules=[
@@ -91,9 +89,8 @@ def test_vendor_registration_required_when_non_actionable_profile_but_vr12_expli
         code="DT-03",
         title="Goods receipt",
         shortTitle="GRN",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="Goods receipt note",
         routeTarget=ROUTE_PURCHASE,
         validation_profile="non_actionable",
@@ -122,7 +119,6 @@ def test_vendor_registration_not_required_when_vr12_disabled() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        fraudRisk="medium",
         oneLine="Tax invoice",
         routeTarget=ROUTE_PURCHASE,
         validation_rules=[

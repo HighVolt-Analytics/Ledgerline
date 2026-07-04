@@ -13,13 +13,13 @@ from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.models.purchase_order import PurchaseOrder
 from app.schemas.rule_book_config import VendorMaster
-from app.services.bundle_vendor_service import (
+from app.services.master_data.bundle_vendor_service import (
     reconcile_dossier_vendor,
     resolve_canonical_vendor_name,
     vendors_align_to_same_master,
 )
-from app.services.invoice_evaluation_service import ROUTE_PURCHASE
-from app.services.purchase_document_service import sync_purchase_document
+from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
+from app.services.purchase.purchase_document_service import sync_purchase_document
 from tests.rule_book_test_helpers import demo_rule_book_config, patch_sync_load_classification_config
 
 

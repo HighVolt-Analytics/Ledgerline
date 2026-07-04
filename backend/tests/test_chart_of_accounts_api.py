@@ -4,8 +4,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.account_mapper import resolve_category_for_config
-from app.services.rule_book_config_io import load_rule_book_config_dict
+from app.services.rule_book.account_mapper import resolve_category_for_config
+from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict
 from app.schemas.rule_book_config import validate_rule_book_config_payload
 from app.tenant_ids import TESTING_TENANT_UUID
 
@@ -50,3 +50,11 @@ def test_resolve_category_uses_tenant_chart_of_accounts() -> None:
 
     missing = resolve_category_for_config("Unknown Ledger", config)
     assert missing.account_code == "9999"
+
+
+def test_resolve_category_without_tenant_coa_uses_suspense() -> None:
+    config = validate_rule_book_config_payload({})
+    assert config.chart_of_accounts == []
+    mapping = resolve_category_for_config("Cloud Hosting Expense", config)
+    assert mapping.account_code == "9999"
+    assert mapping.account_name == "Cloud Hosting Expense"

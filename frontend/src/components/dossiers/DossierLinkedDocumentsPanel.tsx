@@ -757,30 +757,6 @@ export function DossierLinkedDocumentsPanel({
           </div>
         ) : null}
 
-
-
-        {linked.conditionalAdvisories.length > 0 ? (
-
-          <div className="dossier-linked-advisories">
-
-            <p className="dossier-linked-advisories__label">Conditional advisories</p>
-
-            <ul className="dossier-linked-advisories__list">
-
-              {linked.conditionalAdvisories.map((line) => (
-
-                <li key={line}>{line}</li>
-
-              ))}
-
-            </ul>
-
-          </div>
-
-        ) : null}
-
-
-
         {linked.purchaseOrderId != null ? (
 
           <Link to="/purchases" className="dossier-linked-purchases-link">

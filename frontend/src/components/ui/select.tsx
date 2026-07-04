@@ -15,6 +15,7 @@ import {
   DROPDOWN_MENU_Z_INDEX,
   type DropdownMenuPosition,
 } from "@/lib/dropdownPortal";
+import { notifySelectClosed, notifySelectOpened } from "@/components/ui/selectCoordinator";
 
 export type SelectOption = { value: string; label: string };
 
@@ -69,14 +70,22 @@ export function Select({
 
   const closeMenu = useCallback(() => {
     setOpen(false);
-  }, []);
+    notifySelectClosed(listId);
+  }, [listId]);
 
   const openMenu = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger || disabled) return;
+    notifySelectOpened(listId, closeMenu);
     setMenuStyle(computeDropdownMenuPosition(trigger));
     setOpen(true);
-  }, [disabled]);
+  }, [disabled, listId, closeMenu]);
+
+  useEffect(() => {
+    return () => {
+      notifySelectClosed(listId);
+    };
+  }, [listId]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -171,11 +180,11 @@ export function Select({
               }}
               onPointerDown={(event) => event.stopPropagation()}
             >
-              {options.map((option) => {
+              {options.map((option, index) => {
                 const isSelected = option.value === value;
                 return (
                   <button
-                    key={option.value}
+                    key={`${listId}-${index}-${option.label}`}
                     type="button"
                     role="option"
                     aria-selected={isSelected}

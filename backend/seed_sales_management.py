@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.database import async_session_factory
 from app.models.customer_master import CustomerMasterRecord
 from app.models.sales_order import SalesOrder
-from app.services.tenant_context_service import get_or_create_default_tenant
+from app.services.tenant.tenant_context_service import get_or_create_default_tenant
 
 
 async def main() -> None:

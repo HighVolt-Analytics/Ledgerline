@@ -6,11 +6,11 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.vendor import VendorRegistry
-from app.services.account_mapper import clear_rule_book_cache
-from app.services.rule_book_mapper import clear_classification_config_cache
-from app.services import blob_storage
+from app.services.rule_book.account_mapper import clear_rule_book_cache
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
+from app.services.shared import blob_storage
 from tests.rule_book_test_helpers import demo_rule_book_config
-from app.services.vendor_resolver import (
+from app.services.master_data.vendor_resolver import (
     UNKNOWN_SLUG,
     is_plausible_vendor_name,
     is_valid_storage_slug,
@@ -141,7 +141,7 @@ def test_build_blob_name() -> None:
         invoice_date=date(2026, 5, 4),
         route_target="Expenses Management",
     )
-    from app.services.tenant_storage_paths import tenant_root
+    from app.services.tenant.tenant_storage_paths import tenant_root
 
     prefix = f"{tenant_root(_TID)}/"
     assert (

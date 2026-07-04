@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope
 from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse
-from app.services.audit_service import log_event
-from app.services.privilege_service import require_privilege
-from app.services.sales_match_service import (
+from app.services.audit.audit_service import log_event
+from app.services.auth.privilege_service import require_privilege
+from app.services.sales.sales_match_service import (
     approve_sales_variance,
     list_sales_orders,
     record_delivery_note,

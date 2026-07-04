@@ -10,6 +10,7 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "cost_centre", label: "Cost centre" },
   { key: "subtotal", label: "Subtotal" },
   { key: "gst", label: "Tax (GST/VAT)" },
+  { key: "gst_rate", label: "Tax rate (%)" },
   { key: "total", label: "Total" },
   { key: "line_items", label: "Line items" },
   { key: "bank_details", label: "Bank details" },
@@ -17,6 +18,12 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "document_heading", label: "Document heading" },
   { key: "document_text", label: "Document text (OCR body)" },
   { key: "billing_address", label: "Billing address" },
+  { key: "seller_name", label: "Seller name" },
+  { key: "seller_tax_id", label: "Seller tax ID" },
+  { key: "seller_address", label: "Seller address" },
+  { key: "buyer_name", label: "Buyer name" },
+  { key: "buyer_tax_id", label: "Buyer tax ID" },
+  { key: "buyer_address", label: "Buyer address" },
   { key: "email_subject", label: "Email subject" },
   { key: "account_code", label: "Account code" },
   { key: "account_name", label: "Account name" },
@@ -32,10 +39,39 @@ const LABEL_BY_KEY = Object.fromEntries(
 
 const CUSTOM_FIELD_KEY = /^[a-z][a-z0-9_]{0,63}$/;
 
+const SNAKE_CASE_GUIDANCE =
+  "Use lowercase letters, numbers, and underscores (e.g. contract_party).";
+
+/** Normalize user input while typing — lowercase snake_case, strip invalid chars. */
+export function formatExtractionFieldKeyInput(raw: string): string {
+  let key = raw
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "")
+    .replace(/_+/g, "_");
+  key = key.replace(/^_+/, "").replace(/^[0-9]+/, "");
+  return key.slice(0, 64);
+}
+
 export function sanitizeExtractionFieldKey(raw: string): string | null {
-  const key = raw.trim().toLowerCase().replace(/\s+/g, "_");
+  const key = formatExtractionFieldKeyInput(raw.trim());
   if (!key || !CUSTOM_FIELD_KEY.test(key)) return null;
   return key;
+}
+
+export function extractionFieldKeyError(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "Enter a field name (e.g. contract_party).";
+  }
+  const formatted = formatExtractionFieldKeyInput(trimmed);
+  if (!formatted) {
+    return "Must start with a letter.";
+  }
+  if (!CUSTOM_FIELD_KEY.test(formatted)) {
+    return SNAKE_CASE_GUIDANCE;
+  }
+  return null;
 }
 
 export function isValidExtractionFieldKey(key: string): boolean {

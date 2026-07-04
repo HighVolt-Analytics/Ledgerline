@@ -51,14 +51,6 @@ export function DossierSummaryStrip({ dossier }: { dossier: DossierSummary }) {
             {dossier.classificationConfidence}%
           </span>
         </div>
-      </div>
-
-      <div className="dossier-kpi-card">
-        <div className="dossier-kpi-label">Fraud risk</div>
-        <div className="dossier-risk-row">
-          <span className={cn("dossier-risk-dot", `dossier-risk-dot--${dossier.fraudRisk}`)} />
-          {dossier.fraudRisk}
-        </div>
         <div className="dossier-kpi-sub">{linkageSummary(dossier)}</div>
       </div>
 

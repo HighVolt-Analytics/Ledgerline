@@ -1,7 +1,7 @@
 """Public Meta / WhatsApp URL builders for local and AKS staging."""
 
 from app.config import get_settings
-from app.services.public_api_url import (
+from app.services.shared.public_api_url import (
     resolve_public_api_base_url,
     webhook_meta_url,
     whatsapp_oauth_callback_url,

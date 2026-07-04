@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.invoice_pipeline_phases import GatePhaseResult
+from app.services.invoice.invoice_pipeline_phases import GatePhaseResult
 
 
 def patch_confidence_gate_pass(
@@ -27,7 +27,7 @@ def patch_confidence_gate_pass(
             min_route_confidence=0.85,
         )
 
-    monkeypatch.setattr("app.services.pipeline.evaluate_confidence_gate", _passing_gate)
+    monkeypatch.setattr("app.services.invoice.pipeline.evaluate_confidence_gate", _passing_gate)
     monkeypatch.setattr(
         "app.services.pipeline.apply_user_defined_classifier_gate",
         lambda gate_result, **_kwargs: gate_result,

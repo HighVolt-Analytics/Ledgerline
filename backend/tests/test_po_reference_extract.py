@@ -1,6 +1,6 @@
 """PO reference extraction from OCR text."""
 
-from app.services.po_reference import extract_po_reference_from_text
+from app.services.purchase.po_reference import extract_po_reference_from_text
 
 
 def test_extract_po_from_no_line() -> None:

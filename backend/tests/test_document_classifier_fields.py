@@ -6,8 +6,8 @@ from datetime import date
 from decimal import Decimal
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.document_type_rule_engine import _document_field, build_document_classifier_context
-from app.services.invoice_data import InvoiceData
+from app.services.classification.document_type_rule_engine import _document_field, build_document_classifier_context
+from app.services.invoice.invoice_data import InvoiceData
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

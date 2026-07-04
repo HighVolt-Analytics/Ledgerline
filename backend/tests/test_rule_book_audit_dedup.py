@@ -5,8 +5,8 @@ from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.audit_service import log_event
-from app.services.rule_book_audit import (
+from app.services.audit.audit_service import log_event
+from app.services.rule_book.rule_book_audit import (
     is_duplicate_rule_book_update,
     log_rule_book_updated,
     normalize_rule_book_for_diff,

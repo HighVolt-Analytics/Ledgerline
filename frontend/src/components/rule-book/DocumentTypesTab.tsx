@@ -13,8 +13,8 @@ import {
   DOCUMENT_TYPE_CLASSES,
   type DocumentTypeClass,
   type DocumentTypeDefinition,
-  type DocumentTypeFraudRisk,
 } from "@/lib/v5DocumentTypes";
+import { derivePostingFromKlassAndProfile } from "@/lib/documentTypeKlass";
 import { DocumentTypeTemplateDialog } from "@/components/rule-book/DocumentTypeTemplateDialog";
 import {
   ValidationDetailSection,
@@ -32,7 +32,9 @@ import {
 } from "@/components/rule-book/BundleRulesEditor";
 import {
   EXTRACTION_FIELD_OPTIONS,
+  extractionFieldKeyError,
   extractionFieldLabel,
+  formatExtractionFieldKeyInput,
   isPresetExtractionFieldKey,
   normalizeExtractionFieldKeys,
   sanitizeExtractionFieldKey,
@@ -49,35 +51,23 @@ import {
   type StarterPackApplyResult,
 } from "@/lib/documentTypeTemplates";
 import { bundleConfigWarnings } from "@/lib/documentTypeBundleValidation";
+import { normalizeBundleConditional } from "@/lib/documentBundleConfig";
 import { DocumentConditionBuilder } from "@/components/rule-book/DocumentConditionBuilder";
 import { DocumentMatchRulesEditor } from "@/components/rule-book/DocumentMatchRulesEditor";
-import {
-  FxPostingPolicyEditor,
-  FxPostingPolicySummary,
-} from "@/components/rule-book/FxPostingPolicyEditor";
 import { documentTypeReadiness } from "@/lib/documentMatchRules";
+import {
+  DocumentTypePostToDetail,
+  DocumentTypePostToEditor,
+} from "@/components/rule-book/DocumentTypePostToSection";
+import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
+import { postToMissingOnCard } from "@/lib/documentTypePostToValidation";
 import type { MatchRulesForm } from "@/lib/documentMatchRules";
 
 const CLASS_BADGE_CLASSES: Record<DocumentTypeClass, string> = {
   Transactional: "text-primary bg-primary/10 border-primary/20",
-  "Pre-transactional": "text-sky-700 dark:text-sky-400 bg-sky-500/10 border-sky-500/20",
-  Supporting: "text-slate-600 dark:text-slate-300 bg-slate-500/10 border-slate-500/20",
-  Reconciliation: "text-violet-700 dark:text-violet-400 bg-violet-500/10 border-violet-500/20",
-  Informational: "text-muted-foreground bg-muted border-border",
-  "Master-data": "text-amber-700 dark:text-amber-400 bg-amber-500/10 border-amber-500/20",
-  "Non-actionable": "text-muted-foreground bg-muted border-border",
-  Compliance: "text-rose-700 dark:text-rose-400 bg-rose-500/10 border-rose-500/20",
+  "Non-transactional": "text-slate-600 dark:text-slate-300 bg-slate-500/10 border-slate-500/20",
 };
 
-const FRAUD_RISK_DOT: Record<DocumentTypeFraudRisk, string> = {
-  low: "bg-emerald-500",
-  medium: "bg-amber-500",
-  high: "bg-orange-500",
-  critical: "bg-destructive",
-};
-
-const POSTING_OPTIONS = ["Yes", "No", "Conditional"] as const;
-const FRAUD_RISK_OPTIONS: DocumentTypeFraudRisk[] = ["low", "medium", "high", "critical"];
 const KLASS_OPTIONS = DOCUMENT_TYPE_CLASSES.filter((k): k is DocumentTypeClass => k !== "all");
 
 const TONE_CLASSES = {
@@ -207,6 +197,23 @@ function cardPostingTone(posting: string): Tone {
   return "warn";
 }
 
+function derivedPostingForDraft(draft: DocumentTypeDefinition): string {
+  return derivePostingFromKlassAndProfile(draft.klass, draft.playbookProfile, draft.posting);
+}
+
+function applyDraftChange(
+  draft: DocumentTypeDefinition,
+  patch: Partial<DocumentTypeDefinition>
+): DocumentTypeDefinition {
+  const next = { ...draft, ...patch };
+  const posting = derivePostingFromKlassAndProfile(
+    next.klass,
+    next.playbookProfile,
+    next.posting
+  );
+  return { ...next, posting };
+}
+
 function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor?: string }) {
   return (
     <label htmlFor={htmlFor} className="text-xs font-medium text-muted-foreground">
@@ -266,9 +273,14 @@ function ExtractionFieldsPicker({
   }
 
   function addCustomField() {
+    const validationError = extractionFieldKeyError(customInput);
+    if (validationError) {
+      setCustomError(validationError);
+      return;
+    }
     const key = sanitizeExtractionFieldKey(customInput);
     if (!key) {
-      setCustomError("Use lowercase letters, numbers, and underscores (e.g. contract_party).");
+      setCustomError(extractionFieldKeyError(customInput) ?? "Invalid field name.");
       return;
     }
     if (selected.has(key)) {
@@ -376,7 +388,7 @@ function ExtractionFieldsPicker({
             id={`${id}-custom`}
             value={customInput}
             onChange={(e) => {
-              setCustomInput(e.target.value);
+              setCustomInput(formatExtractionFieldKeyInput(e.target.value));
               setCustomError(null);
             }}
             onKeyDown={(e) => {
@@ -386,6 +398,9 @@ function ExtractionFieldsPicker({
               }
             }}
             placeholder="e.g. contract_party"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
             className="h-9 max-w-xs font-mono text-sm"
           />
           <Button type="button" variant="outline" size="sm" onClick={addCustomField}>
@@ -393,6 +408,11 @@ function ExtractionFieldsPicker({
           </Button>
         </div>
         {customError ? <p className="text-[11px] text-destructive">{customError}</p> : null}
+        {customInput && !customError ? (
+          <p className="text-[11px] text-muted-foreground">
+            Will save as: <span className="font-mono">{customInput}</span>
+          </p>
+        ) : null}
         <p className="text-[11px] text-muted-foreground">
           Custom keys use snake_case and appear in the drawer when data is captured.
         </p>
@@ -416,6 +436,7 @@ function DocumentTypeDetailDialog({
   documentTypes,
   canEdit,
   validationViewOpen,
+  coaAccounts,
   onClose,
   onEdit,
   onDelete,
@@ -425,6 +446,7 @@ function DocumentTypeDetailDialog({
   documentTypes: DocumentTypeDefinition[];
   canEdit: boolean;
   validationViewOpen: boolean;
+  coaAccounts: import("@/api/types").ChartOfAccountRow[];
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -503,27 +525,17 @@ function DocumentTypeDetailDialog({
             </div>
           </div>
 
-          <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <DetailFact label="Workspace">
-              {docType.routeTarget}
-            </DetailFact>
+          <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <DetailFact label="Class">{docType.klass}</DetailFact>
             <DetailFact label="Posting">{docType.posting}</DetailFact>
-            <DetailFact label="Fraud risk">
-              <span className="inline-flex items-center gap-1.5 capitalize">
-                <span
-                  className={cn("h-2 w-2 rounded-full", FRAUD_RISK_DOT[docType.fraudRisk])}
-                  aria-hidden
-                />
-                {docType.fraudRisk}
-              </span>
-            </DetailFact>
+            <DetailFact label="Workspace">{docType.routeTarget}</DetailFact>
           </dl>
         </div>
 
         <div className="detail-dialog-body">
           <DetailCard
             title="Supporting document requirements"
-            hint="PO dossier members — context depends on payable vs supporting type"
+            hint="Dossier members on the same PO or SO"
           >
             <BundleRulesDetailSection docType={docType} documentTypes={documentTypes} />
           </DetailCard>
@@ -532,11 +544,12 @@ function DocumentTypeDetailDialog({
             <DetailCard title="Processing playbook" hint="Match and approval preset">
               <PlaybookDetailSection docType={docType} />
             </DetailCard>
-            {(docType.routeTarget === "Purchase Management" || docType.posting !== "No") && (
-              <DetailCard title="Currency & FX" hint="Booking and payment FX policy">
-                <FxPostingPolicySummary policy={docType.fxPolicy} />
-              </DetailCard>
-            )}
+            <DetailCard title="Post to" hint="GL account from chart of accounts">
+              <DocumentTypePostToDetail docType={docType} accounts={coaAccounts} />
+            </DetailCard>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
             <DetailCard
               title="Validation"
               hint="Standard, custom, and duplicate checks"
@@ -570,6 +583,15 @@ function DocumentTypeDetailDialog({
                   emptyLabel="No optional fields"
                 />
               </div>
+              {docType.absentFields.length > 0 ? (
+                <div>
+                  <p className="text-[11px] font-medium text-foreground">Must not appear</p>
+                  <DetailChipList
+                    items={docType.absentFields.map((key) => extractionFieldLabel(key))}
+                    emptyLabel="None"
+                  />
+                </div>
+              ) : null}
             </div>
           </DetailCard>
         </div>
@@ -605,6 +627,7 @@ function DocumentTypeEditDialog({
   const isUserDefinedType = templateId === "custom" || !draft.matrixTemplateCode?.trim();
   const [showAdvancedIdentity, setShowAdvancedIdentity] = useState(!isNew);
   const [matchRulesForm, setMatchRulesForm] = useState<MatchRulesForm | null>(null);
+  const { data: coaAccounts = [] } = useChartOfAccounts();
 
   const readiness = useMemo(
     () =>
@@ -613,11 +636,14 @@ function DocumentTypeEditDialog({
           title: draft.title,
           oneLine: draft.oneLine,
           code: draft.code,
+          posting: derivedPostingForDraft(draft),
+          postTo: draft.postTo,
           classifier: draft.classifier,
         },
-        matchRulesForm ?? undefined
+        matchRulesForm ?? undefined,
+        { coaAccounts }
       ),
-    [draft.title, draft.oneLine, draft.code, draft.classifier, matchRulesForm]
+    [draft.title, draft.oneLine, draft.code, draft.classifier, draft.postTo, draft.klass, draft.playbookProfile, draft.posting, matchRulesForm, coaAccounts]
   );
 
   const bundleWarnings = useMemo(
@@ -763,7 +789,7 @@ function DocumentTypeEditDialog({
                     className="h-8 text-xs"
                     onClick={() => setShowAdvancedIdentity(true)}
                   >
-                    Show code, class, posting, fraud risk
+                    Show code, class, posting
                   </Button>
                 </div>
               ) : null}
@@ -775,7 +801,7 @@ function DocumentTypeEditDialog({
                       id="dt-klass"
                       value={draft.klass}
                       onChange={(e) =>
-                        onChange({ ...draft, klass: e.target.value as DocumentTypeClass })
+                        onChange(applyDraftChange(draft, { klass: e.target.value as DocumentTypeClass }))
                       }
                       className={selectClass}
                     >
@@ -790,32 +816,14 @@ function DocumentTypeEditDialog({
                     <FieldLabel htmlFor="dt-posting">Posting</FieldLabel>
                     <select
                       id="dt-posting"
-                      value={draft.posting}
-                      onChange={(e) => onChange({ ...draft, posting: e.target.value })}
-                      className={selectClass}
+                      value={derivedPostingForDraft(draft)}
+                      disabled
+                      aria-readonly="true"
+                      className={cn(selectClass, "cursor-default opacity-80")}
                     >
-                      {POSTING_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <FieldLabel htmlFor="dt-fraud">Fraud risk</FieldLabel>
-                    <select
-                      id="dt-fraud"
-                      value={draft.fraudRisk}
-                      onChange={(e) =>
-                        onChange({ ...draft, fraudRisk: e.target.value as DocumentTypeFraudRisk })
-                      }
-                      className={cn(selectClass, "capitalize")}
-                    >
-                      {FRAUD_RISK_OPTIONS.map((risk) => (
-                        <option key={risk} value={risk}>
-                          {risk}
-                        </option>
-                      ))}
+                      <option value={derivedPostingForDraft(draft)}>
+                        {derivedPostingForDraft(draft)}
+                      </option>
                     </select>
                   </div>
                   <div className="space-y-1.5">
@@ -833,18 +841,6 @@ function DocumentTypeEditDialog({
                       ))}
                     </select>
                   </div>
-                  {!isUserDefinedType ? (
-                    <div className="flex items-center gap-2 sm:col-span-2">
-                      <Switch
-                        id="dt-enabled"
-                        checked={draft.enabled}
-                        onCheckedChange={(enabled) => onChange({ ...draft, enabled })}
-                      />
-                      <FieldLabel htmlFor="dt-enabled">
-                        Enabled for classification and routing
-                      </FieldLabel>
-                    </div>
-                  ) : null}
                 </>
               )}
             </div>
@@ -938,58 +934,26 @@ function DocumentTypeEditDialog({
             )}
           </DetailCard>
 
-          <DetailCard title="Evidence & routing" hint="Fields and confidence used after classification">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5 sm:col-span-2">
-                <FieldLabel htmlFor="dt-absent-fields">Must be absent</FieldLabel>
-                <Input
-                  id="dt-absent-fields"
-                  value={draft.absentFields.join(", ")}
-                  onChange={(e) =>
-                    onChange({
-                      ...draft,
-                      absentFields: e.target.value
-                        .split(",")
-                        .map((part) => part.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                  placeholder="invoice_no"
-                  className="h-9 text-sm font-mono"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="dt-validation-profile">Validation profile</FieldLabel>
-                <select
-                  id="dt-validation-profile"
-                  value={draft.validationProfile}
-                  onChange={(e) => onChange({ ...draft, validationProfile: e.target.value })}
-                  className={selectClass}
-                >
-                  <option value="">Standard (default for code)</option>
-                  <option value="standard">Standard — full AU invoice checks</option>
-                  <option value="direct_expense">Direct expense — foreign / non-PO SaaS</option>
-                  <option value="non_actionable">Non-actionable — vault reference docs</option>
-                </select>
-              </div>
-            </div>
-          </DetailCard>
-
           <DetailCard title="Processing playbook" hint="Match and approval preset">
-            <PlaybookPolicyEditor draft={draft} onChange={onChange} />
+            <PlaybookPolicyEditor
+              draft={draft}
+              onChange={(next) => {
+                const posting = derivePostingFromKlassAndProfile(
+                  next.klass,
+                  next.playbookProfile,
+                  next.posting
+                );
+                onChange({ ...next, posting });
+              }}
+            />
           </DetailCard>
 
-          {(draft.routeTarget === "Purchase Management" || draft.posting !== "No") && (
-            <DetailCard
-              title="Currency & FX"
-              hint="Booking rate at invoice date; FX variance at payment"
-            >
-              <FxPostingPolicyEditor
-                value={draft.fxPolicy}
-                onChange={(fxPolicy) => onChange({ ...draft, fxPolicy })}
-              />
-            </DetailCard>
-          )}
+          <DetailCard title="Post to" hint="GL account from Settings → Chart of accounts">
+            <DocumentTypePostToEditor
+              draft={draft}
+              onChange={(postTo) => onChange({ ...draft, postTo })}
+            />
+          </DetailCard>
 
           <DetailCard title="Extraction fields" hint="Star compulsory fields; drives VR03 and Approve">
             <ExtractionFieldsPicker
@@ -1016,7 +980,7 @@ function DocumentTypeEditDialog({
 
           <DetailCard
             title="Supporting document requirements"
-            hint="PO dossier — payable types require members; supporting types declare PO/GRN link"
+            hint="Dossier members on the same PO or SO"
           >
             <BundleRulesEditor
               draft={draft}
@@ -1079,6 +1043,7 @@ export function DocumentTypesTab({
   const [editing, setEditing] = useState<DocumentTypeDefinition | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const { data: coaAccounts = [] } = useChartOfAccounts();
 
   const filtered = useMemo(
     () =>
@@ -1157,7 +1122,12 @@ export function DocumentTypesTab({
       editing.validationProfile,
       editing.validationRules
     );
-    const next = { ...editing, code: normalized, validationRules };
+    const next = {
+      ...editing,
+      code: normalized,
+      validationRules,
+      bundleConditional: normalizeBundleConditional(editing.bundleConditional),
+    };
     if (isNew) {
       const duplicate = documentTypes.some(
         (dt) => dt.code.trim().toUpperCase() === normalized
@@ -1189,8 +1159,7 @@ export function DocumentTypesTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Configure document types for AI classification and routing. GL accounts are set under
-          Purchase, Expenses, and Team tabs.
+          Configure document types for recognition, validation, Post to GL accounts, and supporting-document rules.
         </p>
         {canEdit ? (
           <Button
@@ -1255,10 +1224,6 @@ export function DocumentTypesTab({
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-foreground">{docType.code}</span>
-                <span
-                  className={cn("h-2 w-2 rounded-full", FRAUD_RISK_DOT[docType.fraudRisk])}
-                  title={`Fraud risk: ${docType.fraudRisk}`}
-                />
               </div>
               <div className="mt-1 text-sm font-medium text-foreground">{docType.shortTitle}</div>
               <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
@@ -1269,6 +1234,9 @@ export function DocumentTypesTab({
                 <ToneBadge tone={cardPostingTone(docType.posting)}>
                   Post: {docType.posting}
                 </ToneBadge>
+                {postToMissingOnCard(docType, coaAccounts) ? (
+                  <ToneBadge tone="warn">GL missing</ToneBadge>
+                ) : null}
                 {!docType.enabled ? <ToneBadge tone="fail">Off</ToneBadge> : null}
               </div>
             </button>
@@ -1282,6 +1250,7 @@ export function DocumentTypesTab({
           documentTypes={documentTypes}
           canEdit={canEdit}
           validationViewOpen={validationViewCode === selected.code}
+          coaAccounts={coaAccounts}
           onClose={() => setSelectedCode(null)}
           onViewValidation={() => setValidationViewCode(selected.code)}
           onEdit={() => {

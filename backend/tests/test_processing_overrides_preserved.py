@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.invoice_reset import requeue_invoice_for_pipeline
+from app.services.invoice.invoice_reset import requeue_invoice_for_pipeline
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

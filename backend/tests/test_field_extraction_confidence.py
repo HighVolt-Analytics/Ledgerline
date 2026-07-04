@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from app.models.invoice import Invoice
 from app.models.line_item import LineItem
-from app.services.field_extraction_confidence import compute_extraction_field_confidence
+from app.services.extraction.field_extraction_confidence import compute_extraction_field_confidence
 
 
 def _invoice(**kwargs) -> Invoice:

@@ -145,7 +145,6 @@ class DossierSummaryResponse(BaseModel):
     total: float
     classification_label: str
     classification_confidence: int
-    fraud_risk: str
     po_reference: str | None = None
     so_reference: str | None = None
     linkage_reference: str | None = None

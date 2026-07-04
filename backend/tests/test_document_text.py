@@ -1,4 +1,4 @@
-from app.services.document_text import cap_document_text, sanitize_postgres_text
+from app.services.extraction.document_text import cap_document_text, sanitize_postgres_text
 
 
 def test_sanitize_postgres_text_strips_nul_bytes() -> None:

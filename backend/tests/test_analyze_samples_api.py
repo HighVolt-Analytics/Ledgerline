@@ -9,7 +9,7 @@ from httpx import AsyncClient
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.invoice_data import InvoiceData
+from app.services.invoice.invoice_data import InvoiceData
 
 
 @pytest.mark.asyncio
@@ -53,7 +53,6 @@ async def test_analyze_samples_with_pdf(
             "shortTitle": "PO goods",
             "klass": "Transactional",
             "posting": "Yes",
-            "fraudRisk": "low",
             "oneLine": "Test",
             "routeTarget": "Vault",
             "enabled": True,

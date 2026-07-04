@@ -114,11 +114,23 @@ export function filterUploadFiles(files: Iterable<File>): { accepted: File[]; sk
   return { accepted, skipped };
 }
 
+function isDuplicateSkippedUpload(invoice: { status: string }): boolean {
+  return invoice.status === "duplicate_skipped";
+}
+
 async function uploadOneFile(file: File): Promise<BulkUploadItemResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const upload = await api.uploadInvoice(file, undefined, { deferProcessing: true });
+      if (isDuplicateSkippedUpload(upload.invoice)) {
+        return {
+          ok: false,
+          fileName: file.name,
+          reason: "duplicate",
+          message: "Duplicate file already uploaded",
+        };
+      }
       return {
         ok: true,
         fileName: file.name,

@@ -13,25 +13,25 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.models.employee_master import EmployeeMasterRecord
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.email_ingestion import EmailAttachment, RawEmail
-from app.services.ingest_capture_service import (
+from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
+from app.services.ingest.ingest_capture_service import (
     apply_ingest_capture,
     evaluate_ingest_capture,
     raw_email_to_sample_email,
 )
-from app.services.invoice_data import InvoiceData, ParsedLineItem
-from app.services.invoice_evaluation_service import (
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
+from app.services.invoice.invoice_evaluation_service import (
     ROUTE_EXPENSES,
     ROUTE_TEAM,
     apply_invoice_evaluation,
     parse_matched_rule_ids,
 )
-from app.services.pipeline import ingest_email_attachments
-from app.services.rule_book_mapper import clear_classification_config_cache
+from app.services.invoice.pipeline import ingest_email_attachments
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 from app.schemas.rule_book_config import RuleBookConfigPayload, validate_rule_book_config_payload
-from app.services.team_expense_validator import run_team_expense_validations
+from app.services.purchase.team_expense_validator import run_team_expense_validations
 from app.tenant_ids import TESTING_TENANT_UUID
-from app.services.validator import run_all_validations
+from app.services.rule_book.validator import run_all_validations
 
 
 @pytest.fixture
@@ -119,11 +119,11 @@ async def test_ingest_email_attachments_does_not_set_early_route(
     clean_org_rule_book,
 ) -> None:
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.store_invoice_pdf",
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/test.pdf",
     )
     monkeypatch.setattr(
-        "app.services.pipeline._finish_email_message",
+        "app.services.invoice.pipeline._finish_email_message",
         lambda *args, **kwargs: None,
     )
 
@@ -310,7 +310,7 @@ async def test_ingest_email_attachments_splits_mixed_bundle(
     _enable_pdf_split,
 ) -> None:
     from app.models.audit import AuditLog
-    from app.services.pdf_page_text_service import PdfPageText
+    from app.services.extraction.pdf_page_text_service import PdfPageText
 
     pages = [
         PdfPageText(0, "PURCHASE ORDER\nPO Number: PO-9001\nVendor: Acme"),
@@ -318,19 +318,19 @@ async def test_ingest_email_attachments_splits_mixed_bundle(
         PdfPageText(2, "TAX INVOICE\nInvoice No: INV-9001\nTotal $110.00"),
     ]
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.extract_pdf_page_texts",
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
         lambda _path: pages,
     )
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.extract_pdf_page_range_bytes",
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",
         lambda _path, start, end: f"%PDF-part-{start}-{end}".encode(),
     )
     monkeypatch.setattr(
-        "app.services.ingest_fanout_service.store_invoice_pdf",
+        "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/segment.pdf",
     )
     monkeypatch.setattr(
-        "app.services.pipeline._finish_email_message",
+        "app.services.invoice.pipeline._finish_email_message",
         lambda *args, **kwargs: None,
     )
 

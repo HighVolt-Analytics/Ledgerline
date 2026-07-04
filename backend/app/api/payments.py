@@ -29,26 +29,26 @@ from app.schemas.payment import (
     StripeTransactionResponse,
     WalletSummaryResponse,
 )
-from app.services.audit_service import log_event
-from app.services.payment_service import (
+from app.services.audit.audit_service import log_event
+from app.services.payments.payment_service import (
     approve_payment,
     list_payments,
     update_payment_status,
     wallet_summary,
 )
-from app.services.payment_execution_readiness_service import validate_payment_execution_readiness
-from app.services.payment_execution_instruction_service import (
+from app.services.payments.payment_execution_readiness_service import validate_payment_execution_readiness
+from app.services.payments.payment_execution_instruction_service import (
     PaymentExecutionBlockedError,
     create_payment_execution_instruction,
     export_payment_execution_instruction,
     mark_payment_paid_manual,
 )
-from app.services.payment_execution_auth import (
+from app.services.payments.payment_execution_auth import (
     PaymentExecutionUnauthorizedError,
     require_payment_execution_role,
 )
-from app.services.stripe_global_payouts_service import stripe_global_payouts_readiness_payload
-from app.services.stripe_service import (
+from app.services.payments.stripe_global_payouts_service import stripe_global_payouts_readiness_payload
+from app.services.payments.stripe_service import (
     StripeServiceError,
     create_account_onboarding_link,
     create_connected_account_for_tenant,

@@ -785,6 +785,18 @@
     "payable_account": "Accounts Payable",
     "fallback_account": "Suspense Account"
   },
+  "chart_of_accounts": [
+    { "code": "6130", "name": "Marketing Expense", "type": "Expense" },
+    { "code": "6140", "name": "R&D Expense", "type": "Expense" },
+    { "code": "6110", "name": "Cloud Hosting Expense", "type": "Expense" },
+    { "code": "6120", "name": "Software Subscription Expense", "type": "Expense" },
+    { "code": "6300", "name": "Professional Services Expense", "type": "Expense" },
+    { "code": "6400", "name": "Travel Expense", "type": "Expense" },
+    { "code": "6100", "name": "Operating Expenses", "type": "Expense" },
+    { "code": "1400", "name": "GST Paid", "type": "Asset" },
+    { "code": "2000", "name": "Accounts Payable", "type": "Liability" },
+    { "code": "9999", "name": "Suspense Account", "type": "Liability" }
+  ],
   "legacy_cascade": {
     "enabled": true,
     "priority_order": ["po_code", "doc_code", "vendor", "keyword"],

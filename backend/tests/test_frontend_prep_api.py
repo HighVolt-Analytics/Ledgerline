@@ -13,8 +13,8 @@ from app.config import get_settings
 from app.models.connected_mailbox import ConnectedMailbox
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.vendor import VendorRegistry
-from app.services.account_mapper import clear_rule_book_cache
-from app.services.rule_book_mapper import clear_classification_config_cache
+from app.services.rule_book.account_mapper import clear_rule_book_cache
+from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 from tests.approval_test_helpers import patch_approval_file_checks
 from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 

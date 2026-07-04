@@ -19,7 +19,7 @@ from sqlalchemy import select
 from app.database import async_session_factory
 from app.models.invoice import Invoice
 from app.models.tenant import Tenant
-from app.services.tenant_storage_paths import blob_name_from_stored, tenant_root
+from app.services.tenant.tenant_storage_paths import blob_name_from_stored, tenant_root
 
 
 async def main() -> int:

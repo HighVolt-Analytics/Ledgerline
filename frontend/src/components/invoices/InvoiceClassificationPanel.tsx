@@ -1,28 +1,25 @@
 import type { InvoiceClassificationAudit } from "@/api/types";
+import {
+  autoRouteThresholdSummary,
+  classificationReviewReasons,
+  classificationStatusMessage,
+  formatClassificationConfidence,
+  reviewReasonLabel,
+} from "@/lib/classificationAuditDisplay";
 
 type InvoiceClassificationPanelProps = {
   audit: InvoiceClassificationAudit | null;
   loading?: boolean;
+  requiresConfirm?: boolean;
   onConfirmDt?: (code: string) => void;
   onChangeDt?: (code: string) => void;
   catalogueCodes?: string[];
 };
 
-function pct(value: number | undefined | null): string {
-  if (value == null || Number.isNaN(value)) return "—";
-  return `${Math.round(value * 100)}%`;
-}
-
-function reasonChips(audit: InvoiceClassificationAudit): string[] {
-  const raw = audit.review_reasons;
-  if (Array.isArray(raw) && raw.length) return raw.map(String);
-  if (audit.needs_review) return ["NEEDS_REVIEW"];
-  return [];
-}
-
 export function InvoiceClassificationPanel({
   audit,
   loading,
+  requiresConfirm = false,
   onConfirmDt,
   onChangeDt,
   catalogueCodes = [],
@@ -41,28 +38,39 @@ export function InvoiceClassificationPanel({
   const llmDt = audit.llm_suggested_dt ?? "";
   const policyDt = audit.policy_winner_dt ?? "";
   const confirmed = audit.confirmed_dt ?? audit.document_type_code ?? "";
-  const chips = reasonChips(audit);
-  const showActions = Boolean(onConfirmDt || onChangeDt);
+  const chips = classificationReviewReasons(audit);
+  const statusMessage = classificationStatusMessage(audit);
+  const thresholdSummary = autoRouteThresholdSummary(audit);
+  const showActions =
+    requiresConfirm && Boolean(onConfirmDt || onChangeDt) && catalogueCodes.length > 0;
 
   return (
     <div className="rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs space-y-3">
       <div className="font-medium text-foreground">AI classification</div>
 
+      {thresholdSummary ? (
+        <p className="text-muted-foreground">{thresholdSummary}</p>
+      ) : null}
+
       <div className="grid gap-2 sm:grid-cols-3">
         <div className="rounded border border-border/60 bg-background/50 p-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">LLM suggested</div>
           <div className="mt-1 font-medium text-foreground">{llmDt || "—"}</div>
-          <div className="text-muted-foreground tnum">{pct(audit.llm_confidence)}</div>
+          <div className="text-muted-foreground tnum">{formatClassificationConfidence(audit.llm_confidence)}</div>
         </div>
         <div className="rounded border border-border/60 bg-background/50 p-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Policy winner</div>
           <div className="mt-1 font-medium text-foreground">{policyDt || "—"}</div>
-          <div className="text-muted-foreground tnum">{pct(audit.policy_winner_confidence)}</div>
+          <div className="text-muted-foreground tnum">
+            {formatClassificationConfidence(audit.policy_winner_confidence)}
+          </div>
         </div>
         <div className="rounded border border-border/60 bg-background/50 p-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Confirmed</div>
           <div className="mt-1 font-medium text-foreground">{confirmed || "—"}</div>
-          <div className="text-muted-foreground tnum">{pct(audit.confirmed_confidence ?? audit.document_type_confidence)}</div>
+          <div className="text-muted-foreground tnum">
+            {formatClassificationConfidence(audit.confirmed_confidence ?? audit.document_type_confidence)}
+          </div>
         </div>
       </div>
 
@@ -73,21 +81,29 @@ export function InvoiceClassificationPanel({
       ) : null}
 
       {chips.length ? (
-        <div className="flex flex-wrap gap-1">
-          {chips.map((chip) => (
-            <span
-              key={chip}
-              className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-800 dark:text-amber-300"
-            >
-              {chip}
-            </span>
-          ))}
+        <div className="space-y-1.5">
+          <p className="text-amber-800 dark:text-amber-300">
+            {requiresConfirm
+              ? "Confirm or change document type to continue processing."
+              : "Classification review notes:"}
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {chips.map((chip) => (
+              <span
+                key={chip}
+                title={chip}
+                className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-800 dark:text-amber-300"
+              >
+                {reviewReasonLabel(chip)}
+              </span>
+            ))}
+          </div>
         </div>
-      ) : audit.compare_passed ? (
-        <p className="text-emerald-700 dark:text-emerald-400">Auto-classified — LLM and policy agree.</p>
+      ) : statusMessage ? (
+        <p className="text-emerald-700 dark:text-emerald-400">{statusMessage}</p>
       ) : null}
 
-      {showActions && catalogueCodes.length ? (
+      {showActions ? (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {onConfirmDt && llmDt ? (
             <button

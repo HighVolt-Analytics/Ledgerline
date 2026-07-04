@@ -1,7 +1,4 @@
-"""Phase 7 — rule book completion (team GL, mailbox filter, MTD spend)."""
-
-import json
-from pathlib import Path
+"""Phase 7 — rule book completion (document-type GL, mailbox filter, MTD spend)."""
 
 import pytest
 from sqlalchemy import select
@@ -9,50 +6,51 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee_master import EmployeeMasterRecord
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.email_ingestion import EmailAttachment, RawEmail
-from app.services.ingest_capture_service import evaluate_ingest_capture
-from app.services.rule_book_mapper import resolve_config_mapping
+from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
+from app.services.ingest.ingest_capture_service import evaluate_ingest_capture
+from app.services.rule_book.rule_book_mapper import DOCUMENT_TYPE_RULE_TYPE, resolve_config_mapping
 from app.schemas.rule_book_config import (
     EmailCaptureAction,
     EmailCaptureRule,
     RuleBookConfigPayload,
     RuleCondition,
     RuleConditionGroup,
-    validate_rule_book_config_payload,
 )
-from app.services.rule_engine import SampleEmail, match_email_capture_rule
-from app.services.team_expense_service import record_team_expense_processed
-from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
+from app.services.rule_book.rule_engine import SampleEmail, match_email_capture_rule
+from app.services.purchase.team_expense_service import record_team_expense_processed
+from app.tenant_ids import TESTING_TENANT_UUID
 
 
-def test_expense_rule_wins_over_team_for_shared_vendor(capture_config: RuleBookConfigPayload) -> None:
-    """Expenses route evaluates expense book only (team book is route-gated)."""
+def test_expense_document_type_maps_operating_expenses(capture_config: RuleBookConfigPayload) -> None:
+    """Direct expense document type (DT-08) maps via Post to, not expense GL rules."""
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Uber Australia",
         invoice_no="UBER-001",
         total=45.0,
         route_target="Expenses Management",
+        document_type_code="DT-08",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
     hit = resolve_config_mapping(inv, capture_config)
-    assert hit.rule_type == "Expense rule"
-    assert hit.mapping.account_name == "Travel Expense"
+    assert hit.rule_type == DOCUMENT_TYPE_RULE_TYPE
+    assert hit.mapping.account_name == "Operating Expenses"
 
 
-def test_team_expense_rule_maps_ledger(capture_config: RuleBookConfigPayload) -> None:
+def test_team_document_type_maps_travel_expense(capture_config: RuleBookConfigPayload) -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Ola Cabs",
         invoice_no="OLA-001",
         total=45.0,
         route_target="Team Expenses",
+        document_type_code="DT-12",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
     hit = resolve_config_mapping(inv, capture_config)
-    assert hit.rule_type == "Team expense rule"
+    assert hit.rule_type == DOCUMENT_TYPE_RULE_TYPE
     assert hit.mapping.account_name == "Travel Expense"
 
 

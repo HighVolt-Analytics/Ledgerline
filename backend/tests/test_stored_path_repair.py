@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.tenant_ids import TESTING_TENANT_UUID
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.blob_storage import _blob_name_matches_invoice, find_blob_uri_for_invoice
-from app.services.file_storage import repair_invoice_stored_path, stored_file_available
+from app.services.shared.blob_storage import _blob_name_matches_invoice, find_blob_uri_for_invoice
+from app.services.shared.file_storage import repair_invoice_stored_path, stored_file_available
 
 
 def test_blob_name_matches_invoice_marker() -> None:

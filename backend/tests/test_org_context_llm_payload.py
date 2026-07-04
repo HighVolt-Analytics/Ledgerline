@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.llm_document_service import (
+from app.services.extraction.llm_document_service import (
     build_classify_system_prompt,
     build_extract_system_prompt,
     build_llm_user_payload,
 )
-from app.services.tenant_org_context import OrgContext, infer_perspective
+from app.services.tenant.tenant_org_context import OrgContext, infer_perspective
 
 
 def _org() -> OrgContext:

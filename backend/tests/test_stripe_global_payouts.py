@@ -4,13 +4,13 @@ import pytest
 
 from app.config import get_settings
 from app.schemas.payment import StripeGlobalPayoutsReadinessResponse
-from app.services.payment_rail_service import (
+from app.services.payments.payment_rail_service import (
     PAYMENT_RAIL_MANUAL,
     PAYMENT_RAIL_STRIPE_GLOBAL_PAYOUTS,
     get_selected_payment_rail,
     validate_payment_rail_readiness,
 )
-from app.services.stripe_global_payouts_service import (
+from app.services.payments.stripe_global_payouts_service import (
     get_stripe_global_payouts_readiness,
     stripe_global_payouts_readiness_payload,
 )

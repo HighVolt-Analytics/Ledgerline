@@ -16,10 +16,16 @@ import {
   INGEST_ACTION_ROUTE_PLACEHOLDER,
   ROUTE_TARGETS,
 } from "@/lib/v4RuleBookTypes";
-import { emptyDocumentClassifier, type DocumentTypeDefinition, type DocumentTypeSampleAnalysis } from "@/lib/v5DocumentTypes";
+import { emptyDocumentClassifier, emptyDocumentTypePostTo, type DocumentTypeDefinition, type DocumentTypePostTo, type DocumentTypeSampleAnalysis } from "@/lib/v5DocumentTypes";
+import {
+  derivePostingFromKlassAndProfile,
+  normalizeDocumentTypeIdentity,
+  normalizeDocumentTypeKlass,
+} from "@/lib/documentTypeKlass";
 import type { ApprovalMode, MatchMode, PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import {
   inferPlaybookProfileFromDefinition,
+  MATCH_MODE_OPTIONS,
   playbookPresetForProfile,
 } from "@/lib/documentPlaybookConfig";
 import { normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
@@ -163,6 +169,38 @@ function postToToApi(postTo: PurchaseRule["postTo"]) {
     ...(postTo.taxAccount != null ? { tax_account: postTo.taxAccount } : {}),
     ...(postTo.payableAccount != null ? { payable_account: postTo.payableAccount } : {}),
   };
+}
+
+function mapDocumentTypePostTo(raw: Record<string, unknown> | undefined): DocumentTypePostTo {
+  if (!raw) return emptyDocumentTypePostTo();
+  return {
+    ledger: String(raw.ledger ?? ""),
+    subLedger: String(raw.sub_ledger ?? raw.subLedger ?? ""),
+    taxAccount: raw.tax_account != null ? String(raw.tax_account) : raw.taxAccount != null ? String(raw.taxAccount) : "",
+    payableAccount:
+      raw.payable_account != null
+        ? String(raw.payable_account)
+        : raw.payableAccount != null
+          ? String(raw.payableAccount)
+          : "",
+    receivableAccount:
+      raw.receivable_account != null
+        ? String(raw.receivable_account)
+        : raw.receivableAccount != null
+          ? String(raw.receivableAccount)
+          : "",
+  };
+}
+
+function documentTypePostToToApi(postTo: DocumentTypePostTo): Record<string, string> {
+  const out: Record<string, string> = {
+    ledger: postTo.ledger,
+    sub_ledger: postTo.subLedger,
+  };
+  if (postTo.taxAccount?.trim()) out.tax_account = postTo.taxAccount.trim();
+  if (postTo.payableAccount?.trim()) out.payable_account = postTo.payableAccount.trim();
+  if (postTo.receivableAccount?.trim()) out.receivable_account = postTo.receivableAccount.trim();
+  return out;
 }
 
 export function mapVendor(raw: Record<string, unknown>): VendorMaster {
@@ -364,6 +402,14 @@ function mapSalesBundleRole(raw: Record<string, unknown>): SalesBundleRole {
   return (token === "so" || token === "dn" ? token : "") as SalesBundleRole;
 }
 
+function normalizeMatchMode(mode: string | undefined, fallback: MatchMode): MatchMode {
+  const token = (mode || "").trim().toLowerCase();
+  if (MATCH_MODE_OPTIONS.some((row) => row.value === token)) {
+    return token as MatchMode;
+  }
+  return fallback;
+}
+
 function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProfile {
   const explicit = String(raw.playbook_profile ?? raw.playbookProfile ?? "").trim().toLowerCase();
   if (explicit) return explicit as PlaybookProfile;
@@ -411,13 +457,18 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
   const preset = playbookPresetForProfile(playbookProfile);
   const rawMatchMode = (raw.match_policy as { mode?: string } | undefined)?.mode;
   const rawApprovalMode = (raw.approval_policy as { mode?: string } | undefined)?.mode;
+  const klass = normalizeDocumentTypeKlass(String(raw.klass ?? ""));
+  const posting = derivePostingFromKlassAndProfile(
+    klass,
+    String(raw.playbook_profile ?? raw.playbookProfile ?? playbookProfile),
+    String(raw.posting ?? "No")
+  );
   return {
     code: String(raw.code),
     title: String(raw.title),
     shortTitle: String(raw.short_title ?? raw.shortTitle ?? ""),
-    klass: raw.klass as DocumentTypeDefinition["klass"],
-    posting: String(raw.posting ?? "No"),
-    fraudRisk: (raw.fraud_risk ?? raw.fraudRisk ?? "low") as DocumentTypeDefinition["fraudRisk"],
+    klass,
+    posting,
     oneLine: String(raw.one_line ?? raw.oneLine ?? ""),
     llmHint: String(raw.llm_hint ?? raw.llmHint ?? ""),
     routeTarget: String(raw.route_target ?? raw.routeTarget ?? ROUTE_TARGETS[3]),
@@ -430,7 +481,7 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     validationProfile: String(raw.validation_profile ?? raw.validationProfile ?? ""),
     playbookProfile: String(raw.playbook_profile ?? raw.playbookProfile ?? "") || playbookProfile,
     matchPolicy: {
-      mode: (rawMatchMode ? String(rawMatchMode) : preset.matchMode) as MatchMode,
+      mode: normalizeMatchMode(rawMatchMode ? String(rawMatchMode) : undefined, preset.matchMode),
     },
     approvalPolicy: {
       mode: (rawApprovalMode ? String(rawApprovalMode) : preset.approvalMode) as ApprovalMode,
@@ -460,41 +511,9 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     salesBundleRole: mapSalesBundleRole(raw),
     sampleAnalysis: mapSampleAnalysis(raw),
     matrixTemplateCode: String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? ""),
-    fxPolicy: mapFxPolicy(raw.fx_policy ?? raw.fxPolicy),
-  };
-}
-
-function mapFxPolicy(raw: unknown): DocumentTypeDefinition["fxPolicy"] {
-  if (!raw || typeof raw !== "object") return undefined;
-  const row = raw as Record<string, unknown>;
-  return {
-    functionalCurrency: String(row.functional_currency ?? row.functionalCurrency ?? "AUD"),
-    fxGainLossAccount: String(row.fx_gain_loss_account ?? row.fxGainLossAccount ?? "FX Gain/Loss"),
-    bankAccount: String(row.bank_account ?? row.bankAccount ?? "Bank"),
-    bookingRateSource: (row.booking_rate_source ?? row.bookingRateSource ?? "invoice_date") as
-      | "invoice_date"
-      | "payment_date"
-      | "po_date"
-      | "manual"
-      | "static_table",
-    paymentRateSource: (row.payment_rate_source ?? row.paymentRateSource ?? "payment_date") as
-      | "invoice_date"
-      | "payment_date"
-      | "po_date"
-      | "manual"
-      | "static_table",
-    requirePoInvoiceCurrencyMatch:
-      typeof row.require_po_invoice_currency_match === "boolean"
-        ? row.require_po_invoice_currency_match
-        : typeof row.requirePoInvoiceCurrencyMatch === "boolean"
-          ? row.requirePoInvoiceCurrencyMatch
-          : true,
-    grnCurrencyOperationalOnly:
-      typeof row.grn_currency_operational_only === "boolean"
-        ? row.grn_currency_operational_only
-        : typeof row.grnCurrencyOperationalOnly === "boolean"
-          ? row.grnCurrencyOperationalOnly
-          : true,
+    postTo: mapDocumentTypePostTo(
+      (raw.post_to ?? raw.postTo) as Record<string, unknown> | undefined
+    ),
   };
 }
 
@@ -506,13 +525,13 @@ function documentTypeToApi(
     docType.extractionFields
   );
   const requiredFields = normalizeCompulsoryFields(docType.requiredFields, extractionFields);
+  const identity = normalizeDocumentTypeIdentity(docType);
   return {
     code: docType.code,
     title: docType.title,
     short_title: docType.shortTitle,
-    klass: docType.klass,
-    posting: docType.posting,
-    fraud_risk: docType.fraudRisk,
+    klass: identity.klass,
+    posting: identity.posting,
     one_line: docType.oneLine,
     llm_hint: docType.llmHint ?? "",
     route_target: docType.routeTarget,
@@ -578,20 +597,7 @@ function documentTypeToApi(
           },
         }
       : {}),
-    ...(docType.fxPolicy
-      ? {
-          fx_policy: {
-            functional_currency: docType.fxPolicy.functionalCurrency ?? "AUD",
-            fx_gain_loss_account: docType.fxPolicy.fxGainLossAccount ?? "FX Gain/Loss",
-            bank_account: docType.fxPolicy.bankAccount ?? "Bank",
-            booking_rate_source: docType.fxPolicy.bookingRateSource ?? "invoice_date",
-            payment_rate_source: docType.fxPolicy.paymentRateSource ?? "payment_date",
-            require_po_invoice_currency_match:
-              docType.fxPolicy.requirePoInvoiceCurrencyMatch ?? true,
-            grn_currency_operational_only: docType.fxPolicy.grnCurrencyOperationalOnly ?? true,
-          },
-        }
-      : {}),
+    post_to: documentTypePostToToApi(docType.postTo),
   };
 }
 
@@ -728,9 +734,6 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       taxAccount: api.posting_defaults?.tax_account ?? "GST Paid",
       payableAccount: api.posting_defaults?.payable_account ?? "Accounts Payable",
       fallbackAccount: api.posting_defaults?.fallback_account ?? "Suspense Account",
-      functionalCurrency: api.posting_defaults?.functional_currency ?? "AUD",
-      fxGainLossAccount: api.posting_defaults?.fx_gain_loss_account ?? "FX Gain/Loss",
-      bankAccount: api.posting_defaults?.bank_account ?? "Bank",
     },
     documentSets: (api.document_sets ?? []).map((set) => ({
       id: set.id,
@@ -838,9 +841,6 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       tax_account: state.postingDefaults.taxAccount,
       payable_account: state.postingDefaults.payableAccount,
       fallback_account: state.postingDefaults.fallbackAccount,
-      functional_currency: state.postingDefaults.functionalCurrency ?? "AUD",
-      fx_gain_loss_account: state.postingDefaults.fxGainLossAccount ?? "FX Gain/Loss",
-      bank_account: state.postingDefaults.bankAccount ?? "Bank",
     },
     document_sets: state.documentSets.map((set) => ({
       id: set.id,

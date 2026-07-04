@@ -16,9 +16,9 @@ from sqlalchemy import or_, select
 
 from app.database import async_session_factory
 from app.models.invoice import Invoice
-from app.services.invoice_evaluation_service import ROUTE_SALES
-from app.services.sales_document_service import sync_sales_document
-from app.services.so_reference import ensure_invoice_so_reference, resolve_so_reference_from_invoice
+from app.services.invoice.invoice_evaluation_service import ROUTE_SALES
+from app.services.sales.sales_document_service import sync_sales_document
+from app.services.sales.so_reference import ensure_invoice_so_reference, resolve_so_reference_from_invoice
 
 
 async def backfill(*, tenant_id: uuid.UUID | None, dry_run: bool, resync: bool) -> None:

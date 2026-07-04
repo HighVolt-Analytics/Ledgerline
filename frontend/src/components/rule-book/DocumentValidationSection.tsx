@@ -11,7 +11,6 @@ import {
   CUSTOM_VALIDATION_OPERATORS,
   UNIVERSAL_VALIDATION_CODE,
   customRuleSummary,
-  defaultValidationRulesForProfile,
   effectiveValidationRules,
   mergeConfigurableRules,
   newCustomValidationRule,
@@ -247,28 +246,17 @@ export function ValidationChecksEditor({
   const compulsory = requiredFields;
 
   function updateRule(code: string, patch: Partial<ValidationRuleConfig>) {
-    onChange(
-      rules.map((row) => (row.code === code ? { ...row, ...patch } : row))
-    );
-  }
-
-  function loadProfilePreset() {
-    onChange(defaultValidationRulesForProfile(validationProfile, documentTypeCode));
+    onChange(rules.map((row) => (row.code === code ? { ...row, ...patch } : row)));
   }
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[11px] text-muted-foreground">
-          Finance checks only (tax, dates, currency, arithmetic, vendor). Compulsory field
-          presence uses starred fields in Extraction fields above (VR03). Matching, bundle, and
-          optional extraction run automatically from Processing playbook and Supporting document requirements.
-          Duplicate check is always on org-wide.
-        </p>
-        <Button type="button" variant="outline" size="sm" onClick={loadProfilePreset}>
-          Load profile preset
-        </Button>
-      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Toggle finance checks per document type (tax, dates, currency, arithmetic, vendor).
+        Compulsory field presence uses starred fields in Extraction fields above (VR03). Matching,
+        bundle, and optional extraction run automatically from Processing playbook and Supporting
+        document requirements. Duplicate check is always on org-wide.
+      </p>
 
       <div className="space-y-2 rounded-md border border-input bg-background p-3">
         {CONFIGURABLE_VALIDATION_CHECKS.map((meta) => {

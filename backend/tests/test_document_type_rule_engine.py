@@ -12,9 +12,9 @@ import pytest
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
 from app.schemas.rule_book_config import RuleCondition, RuleConditionGroup, validate_rule_book_config_payload
-from app.services.document_type_classifier import classify_document_type
-from app.services.document_type_rule_engine import match_configured_document_type
-from app.services.invoice_data import InvoiceData, ParsedLineItem
+from app.services.classification.document_type_classifier import classify_document_type
+from app.services.classification.document_type_rule_engine import match_configured_document_type
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
 
 def _invoice(**kwargs) -> Invoice:
@@ -48,7 +48,6 @@ def _dt_with_classifier(
         shortTitle=code,
         klass="Transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Expenses Management",
         enabled=True,
@@ -92,7 +91,6 @@ def test_classify_document_type_without_classifier_returns_unclassified() -> Non
             shortTitle="Tax",
             klass="Transactional",
             posting="Yes",
-            fraudRisk="low",
             oneLine="test",
             routeTarget="Purchase Management",
             enabled=True,

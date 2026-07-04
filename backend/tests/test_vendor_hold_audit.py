@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.vendor_master import VendorMasterRecord
-from app.services.vendor_hold_service import apply_vendor_hold_if_needed
+from app.services.master_data.vendor_hold_service import apply_vendor_hold_if_needed
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

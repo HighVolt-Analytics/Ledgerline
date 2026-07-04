@@ -15,7 +15,7 @@ from app.models.audit import AuditLog
 from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.purchase_order import PurchaseOrder
-from app.services.audit_export_service import (
+from app.services.audit.audit_export_service import (
     PurchaseVaultLinks,
     audit_rows_to_csv,
     dedupe_high_churn_audit_rows,
@@ -28,9 +28,9 @@ from app.services.audit_export_service import (
     purchase_vault_links_for_po,
     vault_view_path,
 )
-from app.services.public_app_url import resolve_public_app_base_url
-from app.services.audit_change_summary import summarize_audit_change
-from app.services.audit_detail_helpers import truncate_audit_error
+from app.services.shared.public_app_url import resolve_public_app_base_url
+from app.services.audit.audit_change_summary import summarize_audit_change
+from app.services.audit.audit_detail_helpers import truncate_audit_error
 
 
 def assert_csv_hyperlink(cell: str, *, url: str, label: str | None = None) -> None:
@@ -481,7 +481,7 @@ async def test_audit_export_csv(client: AsyncClient, db_session: AsyncSession) -
 
 @pytest.mark.asyncio
 async def test_audit_export_linked_docs_column(db_session: AsyncSession) -> None:
-    from app.services.dossier_linked_documents_service import build_dossier_linked_documents
+    from app.services.dossier.dossier_linked_documents_service import build_dossier_linked_documents
     from tests.conftest import TESTING_TENANT_UUID
 
     anchor = Invoice(

@@ -1,7 +1,7 @@
 """Tests for Meta WhatsApp webhook verification."""
 
 from app.config import get_settings
-from app.services.whatsapp_graph_client import verify_webhook_signature
+from app.services.ingest.whatsapp_graph_client import verify_webhook_signature
 
 
 def test_verify_webhook_signature_valid(monkeypatch) -> None:

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bundleEditorMode,
   bundleMemberCandidates,
+  normalizeBundleConditional,
   suggestedMandatoryBundleMembers,
 } from "@/lib/documentBundleConfig";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
@@ -13,7 +14,6 @@ function dt(partial: Partial<DocumentTypeDefinition>): DocumentTypeDefinition {
     shortTitle: "Test",
     klass: "Transactional",
     posting: "Yes",
-    fraudRisk: "low",
     oneLine: "test",
     routeTarget: "Purchase Management",
     enabled: true,
@@ -31,7 +31,7 @@ describe("bundleEditorMode", () => {
       bundleEditorMode(
         dt({
           code: "DT-02",
-          klass: "Supporting",
+          klass: "Non-transactional",
           posting: "No",
           purchaseBundleRole: "po",
         })
@@ -60,8 +60,8 @@ describe("bundleMemberCandidates", () => {
   it("lists only supporting types with PO/GRN role", () => {
     const catalogue = [
       dt({ code: "DT-01", playbookProfile: "po_goods" }),
-      dt({ code: "DT-02", klass: "Supporting", posting: "No", purchaseBundleRole: "po" }),
-      dt({ code: "DT-03", klass: "Supporting", posting: "No", purchaseBundleRole: "grn" }),
+      dt({ code: "DT-02", klass: "Non-transactional", posting: "No", purchaseBundleRole: "po" }),
+      dt({ code: "DT-03", klass: "Non-transactional", posting: "No", purchaseBundleRole: "grn" }),
       dt({ code: "DT-08", playbookProfile: "direct_expense", routeTarget: "Approvals" }),
     ];
     const members = bundleMemberCandidates(catalogue, "DT-01");
@@ -73,9 +73,25 @@ describe("suggestedMandatoryBundleMembers", () => {
   it("suggests PO and GRN codes from catalogue", () => {
     const catalogue = [
       dt({ code: "DT-01" }),
-      dt({ code: "DT-05", klass: "Supporting", posting: "No", purchaseBundleRole: "po" }),
-      dt({ code: "DT-06", klass: "Supporting", posting: "No", purchaseBundleRole: "grn" }),
+      dt({ code: "DT-05", klass: "Non-transactional", posting: "No", purchaseBundleRole: "po" }),
+      dt({ code: "DT-06", klass: "Non-transactional", posting: "No", purchaseBundleRole: "grn" }),
     ];
     expect(suggestedMandatoryBundleMembers(catalogue, "DT-01")).toEqual(["DT-05", "DT-06"]);
+  });
+});
+
+describe("normalizeBundleConditional", () => {
+  it("keeps document type codes only", () => {
+    expect(normalizeBundleConditional(["DT-02", "DT-03"])).toEqual(["DT-02", "DT-03"]);
+  });
+
+  it("strips legacy free-text advisories", () => {
+    expect(
+      normalizeBundleConditional([
+        "DT-02",
+        "Quality certificate",
+        "Packing list (if PO flags inspection)",
+      ])
+    ).toEqual(["DT-02"]);
   });
 });

@@ -74,7 +74,7 @@ export const CONFIGURABLE_VALIDATION_CHECKS = [
 
   { code: "VR07", label: "Currency AUD", group: "Currency" },
 
-  { code: "VR08", label: "GST 10%", group: "Tax" },
+  { code: "VR08", label: "GST rate check", group: "Tax" },
 
   { code: "VR01", label: "Total = subtotal + tax", group: "Arithmetic" },
 
@@ -122,7 +122,7 @@ export const VALIDATION_CHECK_DESCRIPTIONS: Record<string, string> = {
 
   VR07: "Currency must be AUD unless configured otherwise.",
 
-  VR08: "GST must be 10% of subtotal within tolerance.",
+  VR08: "GST must match extracted tax rate × subtotal within tolerance.",
 
   VR01: "Total must equal subtotal plus tax.",
 

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.pipeline_stages import derive_current_stage
+from app.services.invoice.pipeline_stages import derive_current_stage, derive_list_stage
 from tests.conftest import TESTING_TENANT_UUID
 
 
@@ -173,3 +173,27 @@ async def test_current_stage_purchase_supporting_processed(db_session: AsyncSess
     label, state = derive_current_stage(inv, logs)
     assert label == "Processed"
     assert state == "done"
+
+
+def test_list_stage_from_status_without_audit_logs() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PARSING,
+        currency="AUD",
+        file_hash="list-stage-parsing",
+    )
+    label, state = derive_list_stage(inv)
+    assert label == "Parsed"
+    assert state == "pending"
+
+    inv.status = InvoiceStatus.EXCEPTION
+    inv.evaluation_status = "awaiting_classification"
+    label, state = derive_list_stage(inv)
+    assert label == "Parsed"
+    assert state == "pending"
+
+    inv.evaluation_status = "needs_review"
+    label, state = derive_list_stage(inv)
+    assert label == "Validated"
+    assert state == "fail"

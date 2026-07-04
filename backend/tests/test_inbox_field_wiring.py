@@ -9,22 +9,22 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.expense_vendor_policy import (
+from app.services.purchase.expense_vendor_policy import (
     EVAL_UNMATCHED_EXPENSE_VENDOR,
     expense_vendor_hold_above,
     vendor_detection_evaluation_status,
 )
-from app.services.invoice_evaluation_service import (
+from app.services.invoice.invoice_evaluation_service import (
     EVAL_AUTO_CODED,
     apply_evaluation_to_invoice,
     evaluate_invoice_routing,
     load_config_for_tenant,
 )
-from app.services.rule_book_evaluate_service import invoice_to_eval_document
-from app.services.rule_engine import detect_vendor
-from app.services.vendor_detection import find_matching_vendor_master
-from app.services.document_type_validation_service import validation_pass_applicable
-from app.services.vendor_registration_policy import (
+from app.services.rule_book.rule_book_evaluate_service import invoice_to_eval_document
+from app.services.rule_book.rule_engine import detect_vendor
+from app.services.master_data.vendor_detection import find_matching_vendor_master
+from app.services.classification.document_type_validation_service import validation_pass_applicable
+from app.services.master_data.vendor_registration_policy import (
     persisted_vendor_confidence,
     resolve_document_type_definition,
     vendor_registration_required,

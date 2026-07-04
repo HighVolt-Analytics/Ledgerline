@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant import Tenant
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
-from app.services.rule_book_config_repository import (
+from app.services.rule_book.rule_book_config_repository import (
     ensure_default_config,
     fetch_config_dict,
     upsert_config,

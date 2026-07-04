@@ -10,14 +10,14 @@ from sqlalchemy import select
 
 from app.database import async_session_factory
 from app.models.invoice import Invoice
-from app.services.expense_vendor_policy import (
+from app.services.purchase.expense_vendor_policy import (
     expense_vendor_hold_above,
     vendor_detection_evaluation_status,
 )
-from app.services.invoice_evaluation_service import load_config_for_org
-from app.services.rule_book_evaluate_service import invoice_to_eval_document
-from app.services.rule_engine import detect_vendor
-from app.services.vendor_detection import find_matching_vendor_master
+from app.services.invoice.invoice_evaluation_service import load_config_for_org
+from app.services.rule_book.rule_book_evaluate_service import invoice_to_eval_document
+from app.services.rule_book.rule_engine import detect_vendor
+from app.services.master_data.vendor_detection import find_matching_vendor_master
 
 
 def vr_pass(raw: str | None) -> int | None:

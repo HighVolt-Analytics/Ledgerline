@@ -134,8 +134,6 @@ export type DossierOutcome =
   | "parked"
   | "in_progress";
 
-export type DossierFraudRisk = "low" | "medium" | "high";
-
 export type DossierPipelineCheckState = "pass" | "fail" | "waived" | "skipped" | "pending";
 
 export type DossierPipelineCheck = {
@@ -188,7 +186,6 @@ export type DossierSummary = {
   total: number;
   classificationLabel: string;
   classificationConfidence: number;
-  fraudRisk: DossierFraudRisk;
   poReference: string | null;
   soReference?: string | null;
   linkageReference?: string | null;

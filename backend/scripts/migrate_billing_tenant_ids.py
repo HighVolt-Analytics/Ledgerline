@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.billing_io import _billing_path, _legacy_billing_path, _save_tenant_state
+from app.services.shared.billing_io import _billing_path, _legacy_billing_path, _save_tenant_state
 from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 
 _LEGACY_MAP = {

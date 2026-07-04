@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
-from app.services.matrix_service import derive_matrix_flag, derive_matrix_payment_status
+from app.services.reports.matrix_service import derive_matrix_flag, derive_matrix_payment_status
 
 
 def test_derive_matrix_flag_exception() -> None:

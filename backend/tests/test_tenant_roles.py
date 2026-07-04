@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from app.api.deps import AuthContext
-from app.services.privilege_service import (
+from app.services.auth.privilege_service import (
     matrix_role_for_context,
     permissions_for_role,
     user_has_privilege,

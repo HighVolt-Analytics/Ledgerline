@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.rule_book_config_io import load_rule_book_config_dict
+from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

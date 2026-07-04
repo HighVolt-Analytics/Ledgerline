@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Clock,
@@ -6,7 +6,6 @@ import {
   Pencil,
   Plus,
   Send,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -17,13 +16,25 @@ import {
   InvoicePreviewModeToggle,
   type PreviewPaneMode,
 } from "@/components/InvoiceFilePreview";
+import {
+  DocumentSummaryPreview,
+  formatMoney,
+  taxMeta,
+} from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
-import { formatQty, documentDisplayRef, vendorInvoiceNo } from "@/lib/format";
+import { documentDisplayRef, vendorInvoiceNo } from "@/lib/format";
+import {
+  enrichLineItemsForPreview,
+  lineItemColumnsForPreview,
+  lineItemGridTemplateColumns,
+  resolvePreviewLineItems,
+  type LineItemColumnVisibility,
+  type PreviewLineItem,
+} from "@/lib/invoicePreview";
 import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
@@ -36,12 +47,12 @@ import {
 } from "@/lib/invoiceActions";
 import {
   counterpartyName,
-  counterpartyUnknownLabel,
   extractionFieldLabelForInvoice,
+  glPostingApplicable,
   invoiceCanPublishToLedger,
   invoiceFieldConfidence,
-  glPostingApplicable,
 } from "@/lib/invoice";
+import { LineGlAccountCell } from "@/components/invoices/LineGlAccountCell";
 import { threeWayMatchTabLabel } from "@/lib/documentBundleConfig";
 import { InvoiceProcessingOverridesSection } from "@/components/invoices/InvoiceProcessingOverridesSection";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
@@ -65,6 +76,7 @@ import {
   documentTypeLabelForCode,
   effectiveDocumentTypeCode,
 } from "@/lib/documentTypeResolve";
+import { requiresClassificationConfirm } from "@/lib/classificationAuditDisplay";
 
 const TABS = ["fields", "lines", "po", "tax", "audit", "overrides", "pipeline"] as const;
 type Tab = (typeof TABS)[number];
@@ -83,125 +95,8 @@ function tabLabel(tab: Tab, routeTarget?: string | null): string {
   return TAB_LABELS[tab];
 }
 
-const EXPENSE_GL_ACCOUNTS = [
-  "Raw Materials",
-  "Freight & Logistics",
-  "Office Supplies",
-  "Professional Services",
-  "Contractor Costs",
-  "Utilities",
-  "Suspense Account",
-];
-
-function suggestLineAccount(
-  inv: InvoiceDetails,
-  line: LineItem,
-  postingApplies: boolean,
-): string {
-  if (!postingApplies) return "Not posted — reference document";
-  const desc = (line.description ?? "").toLowerCase();
-  if (
-    desc.includes("steel") ||
-    desc.includes("coil") ||
-    desc.includes("sheet") ||
-    desc.includes("material")
-  ) {
-    return "Raw Materials";
-  }
-  if (desc.includes("freight") || desc.includes("logistics") || desc.includes("shipping")) {
-    return "Freight & Logistics";
-  }
-  if (desc.includes("consult") || desc.includes("freelance") || desc.includes("development")) {
-    return "Professional Services";
-  }
-  return inv.account_name ?? "Suspense Account";
-}
-
-function lineAccountReason(account: string, vendor: string | null): string {
-  if (account === "Not posted — reference document") {
-    return "Supporting / compliance document — no ledger entry";
-  }
-  if (account === "Suspense Account") return "Awaiting rule book mapping";
-  const who = vendor ?? "vendor";
-  if (account === "Raw Materials") return `${account} match: ${who} vendor rule`;
-  return `${account} match: ${who} keyword rule`;
-}
-
-function LineGlAccountCell({
-  inv,
-  line,
-  postingApplies,
-}: {
-  inv: InvoiceDetails;
-  line: LineItem;
-  postingApplies: boolean;
-}) {
-  if (!postingApplies) {
-    return (
-      <span className="text-xs text-muted-foreground">Not posted — reference document</span>
-    );
-  }
-
-  const defaultAccount = suggestLineAccount(inv, line, postingApplies);
-  const [account, setAccount] = useState(defaultAccount);
-
-  useEffect(() => {
-    setAccount(suggestLineAccount(inv, line, postingApplies));
-  }, [inv, line, postingApplies]);
-
-  const options = Array.from(
-    new Set(
-      [
-        defaultAccount,
-        inv.account_name,
-        ...EXPENSE_GL_ACCOUNTS,
-        "Suspense Account",
-      ].filter((v): v is string => Boolean(v))
-    )
-  );
-
-  const reason = lineAccountReason(account, inv.vendor);
-
-  return (
-    <>
-      <Select
-        value={account}
-        onValueChange={setAccount}
-        className="invoice-drawer-gl-select w-full"
-        options={options.map((opt) => ({ value: opt, label: opt }))}
-        data-testid="invoice-gl-select"
-      />
-      <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
-        <Sparkles className="h-3 w-3 text-primary shrink-0" />
-        <span className="truncate">
-          AI: {account} · {reason}
-        </span>
-      </div>
-    </>
-  );
-}
-
-function formatMoney(
-  value: string | null | undefined,
-  currency: string
-): string {
-  if (value == null || value === "") return "—";
-  const n = parseFloat(value);
-  if (Number.isNaN(n)) return value;
-  try {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: currency || "AUD",
-    }).format(n);
-  } catch {
-    return value;
-  }
-}
-
-function taxMeta(currency: string): { label: string; rate: number } {
-  if (currency === "INR") return { label: "GST", rate: 18 };
-  if (currency === "GBP") return { label: "VAT", rate: 20 };
-  return { label: "GST", rate: 10 };
+function canEdit(status: string): boolean {
+  return ["exception", "duplicate_skipped", "rejected"].includes(status);
 }
 
 function extractionFieldDisplayLabel(
@@ -212,10 +107,19 @@ function extractionFieldDisplayLabel(
   return extractionFieldLabelForInvoice(key, inv, tax);
 }
 
-function isEditableExtractionField(key: string): boolean {
+function isEditableExtractionField(key: string, extractionFieldKeys: string[]): boolean {
   if (["line_items", "bank_details", "attachment_name", "document_text"].includes(key)) return false;
-  if (!isPresetExtractionFieldKey(key)) return false;
-  return true;
+  if (isPresetExtractionFieldKey(key)) return true;
+  return extractionFieldKeys.includes(key);
+}
+
+function customExtractionKeysForDraft(
+  inv: InvoiceDetails,
+  extractionFieldKeys: string[]
+): string[] {
+  const fromConfig = extractionFieldKeys.filter((key) => !isPresetExtractionFieldKey(key));
+  if (fromConfig.length) return fromConfig;
+  return Object.keys(inv.extracted_fields ?? {}).filter((key) => !isPresetExtractionFieldKey(key));
 }
 
 function invoiceScalarValue(inv: InvoiceDetails, key: string): string | null {
@@ -247,7 +151,8 @@ function readExtractionFieldValue(
   inv: InvoiceDetails,
   draft: InvoiceEditDraft | null,
   editing: boolean,
-  fmt: (value: string | null | undefined) => string
+  fmt: (value: string | null | undefined) => string,
+  extractionFieldKeys: string[]
 ): string {
   if (key === "line_items") {
     const count = editing && draft ? draft.line_items.length : inv.line_items.length;
@@ -270,14 +175,18 @@ function readExtractionFieldValue(
     const direct = invoiceScalarValue(inv, key) ?? headingFromDocumentText(inv.document_text);
     return direct || "—";
   }
-  if (editing && draft && isEditableExtractionField(key)) {
-    const draftValue = draft[key as keyof InvoiceEditDraft];
-    if (typeof draftValue === "string") {
-      return draftValue;
+  if (editing && draft && isEditableExtractionField(key, extractionFieldKeys)) {
+    if (isPresetExtractionFieldKey(key)) {
+      const draftValue = draft[key as keyof InvoiceEditDraft];
+      if (typeof draftValue === "string") {
+        return draftValue;
+      }
+    } else if (key in draft.extractedFields) {
+      return draft.extractedFields[key];
     }
   }
   if (key === "subtotal" || key === "gst" || key === "total") {
-    if (editing && draft && isEditableExtractionField(key)) {
+    if (editing && draft && isEditableExtractionField(key, extractionFieldKeys)) {
       return draft[key];
     }
     const raw = inv[key];
@@ -317,6 +226,12 @@ function updateDraftExtractionField(
     case "total":
       return { ...draft, total: value };
     default:
+      if (!isPresetExtractionFieldKey(key)) {
+        return {
+          ...draft,
+          extractedFields: { ...draft.extractedFields, [key]: value },
+        };
+      }
       return draft;
   }
 }
@@ -363,9 +278,14 @@ type InvoiceEditDraft = {
   total: string;
   line_items: LineItemDraft[];
   skip_steps: ProcessingOverrideStepId[];
+  extractedFields: Record<string, string>;
 };
 
-function draftFromInvoice(inv: InvoiceDetails): InvoiceEditDraft {
+function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = []): InvoiceEditDraft {
+  const extractedFields: Record<string, string> = {};
+  for (const key of customExtractionKeysForDraft(inv, extractionFieldKeys)) {
+    extractedFields[key] = strField(inv.extracted_fields?.[key]);
+  }
   return {
     vendor: strField(inv.vendor),
     abn: strField(inv.abn),
@@ -386,11 +306,209 @@ function draftFromInvoice(inv: InvoiceDetails): InvoiceEditDraft {
       amount: strField(line.amount),
     })),
     skip_steps: skipStepsFromInvoice(inv.processing_overrides),
+    extractedFields,
   };
 }
 
 function emptyLineItem(): LineItemDraft {
   return { description: "", qty: "", unit_price: "", amount: "" };
+}
+
+function mapDraftLineItems(inv: InvoiceDetails, draft: InvoiceEditDraft): LineItem[] {
+  return draft.line_items.map((line, index) => ({
+    id: line.id ?? -(index + 1),
+    invoice_id: inv.id,
+    description: line.description || null,
+    qty: line.qty || null,
+    unit_price: line.unit_price || null,
+    amount: line.amount || null,
+    tax_amount: null,
+  }));
+}
+
+function lineItemColumnsFromRows(items: LineItem[]): LineItemColumnVisibility {
+  return lineItemColumnsForPreview(enrichLineItemsForPreview(items));
+}
+
+function LineItemsDrawerGrid({
+  columns,
+  withActions = false,
+  editable = false,
+  showGlAccount = false,
+  inv,
+  postingApplies = true,
+  previewItems,
+  draftItems,
+  onDraftChange,
+  emptyMessage,
+}: {
+  columns: LineItemColumnVisibility;
+  withActions?: boolean;
+  editable?: boolean;
+  showGlAccount?: boolean;
+  inv?: InvoiceDetails;
+  postingApplies?: boolean;
+  previewItems?: PreviewLineItem[];
+  draftItems?: LineItemDraft[];
+  onDraftChange?: (items: LineItemDraft[]) => void;
+  emptyMessage: string;
+}) {
+  const rowStyle = {
+    gridTemplateColumns: lineItemGridTemplateColumns(columns, withActions, showGlAccount),
+  };
+  const { showQty, showUnitPrice, showAmount } = columns;
+  const itemCount = editable ? (draftItems?.length ?? 0) : (previewItems?.length ?? 0);
+
+  return (
+    <div className="overflow-x-auto rounded-md border border-border">
+      <div className="invoice-drawer-lines-edit text-sm">
+        <div
+          className="invoice-drawer-lines-edit-row invoice-drawer-lines-edit-row--head text-xs text-muted-foreground bg-muted/50"
+          style={rowStyle}
+        >
+          <span className="px-3 py-2 font-medium">Description</span>
+          {showQty && <span className="px-2 py-2 font-medium text-right">Qty</span>}
+          {showUnitPrice && <span className="px-2 py-2 font-medium text-right">Unit</span>}
+          {showAmount && <span className="px-2 py-2 font-medium text-right">Total</span>}
+          {showGlAccount && <span className="px-3 py-2 font-medium">GL account</span>}
+          {withActions && <span className="sr-only">Remove row</span>}
+        </div>
+        {itemCount === 0 ? (
+          <div className="px-3 py-6 text-center text-sm text-muted-foreground border-t border-border">
+            {emptyMessage}
+          </div>
+        ) : editable && draftItems && onDraftChange ? (
+          draftItems.map((line, index) => (
+            <div
+              key={line.id ?? `new-${index}`}
+              className="invoice-drawer-lines-edit-row border-t border-border"
+              style={rowStyle}
+            >
+              <div className="px-2 py-2">
+                <Input
+                  value={line.description}
+                  onChange={(e) => {
+                    const next = [...draftItems];
+                    next[index] = { ...line, description: e.target.value };
+                    onDraftChange(next);
+                  }}
+                  className="h-8 w-full min-w-0 text-sm block"
+                />
+              </div>
+              {showQty && (
+                <div className="px-2 py-2">
+                  <Input
+                    value={line.qty}
+                    onChange={(e) => {
+                      const next = [...draftItems];
+                      next[index] = { ...line, qty: e.target.value };
+                      onDraftChange(next);
+                    }}
+                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                    inputMode="decimal"
+                  />
+                </div>
+              )}
+              {showUnitPrice && (
+                <div className="px-2 py-2">
+                  <Input
+                    value={line.unit_price}
+                    onChange={(e) => {
+                      const next = [...draftItems];
+                      next[index] = { ...line, unit_price: e.target.value };
+                      onDraftChange(next);
+                    }}
+                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                    inputMode="decimal"
+                  />
+                </div>
+              )}
+              {showAmount && (
+                <div className="px-2 py-2">
+                  <Input
+                    value={line.amount}
+                    onChange={(e) => {
+                      const next = [...draftItems];
+                      next[index] = { ...line, amount: e.target.value };
+                      onDraftChange(next);
+                    }}
+                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                    inputMode="decimal"
+                  />
+                </div>
+              )}
+              {withActions && (
+                <div className="px-1 py-2 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                    aria-label="Remove line item"
+                    onClick={() => onDraftChange(draftItems.filter((_, i) => i !== index))}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))
+        ) : (
+          previewItems?.map((line) => (
+            <div
+              key={line.id}
+              className="invoice-drawer-lines-edit-row border-t border-border"
+              style={rowStyle}
+            >
+              <div className="px-2 py-2">
+                <Input
+                  value={line.description ?? ""}
+                  readOnly
+                  tabIndex={-1}
+                  className="h-8 w-full min-w-0 text-sm block"
+                />
+              </div>
+              {showQty && (
+                <div className="px-2 py-2">
+                  <Input
+                    value={line.displayQty ?? ""}
+                    readOnly
+                    tabIndex={-1}
+                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                  />
+                </div>
+              )}
+              {showUnitPrice && (
+                <div className="px-2 py-2">
+                  <Input
+                    value={line.displayUnitPrice ?? ""}
+                    readOnly
+                    tabIndex={-1}
+                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                  />
+                </div>
+              )}
+              {showAmount && (
+                <div className="px-2 py-2">
+                  <Input
+                    value={line.displayAmount ?? ""}
+                    readOnly
+                    tabIndex={-1}
+                    className="h-8 w-full min-w-0 text-sm text-right tnum block"
+                  />
+                </div>
+              )}
+              {showGlAccount && inv && (
+                <div className="px-3 py-2 align-top">
+                  <LineGlAccountCell inv={inv} line={line} postingApplies={postingApplies} />
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
 }
 
 function optionalText(value: string): string | null {
@@ -424,6 +542,14 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
     : processingOverridesPayload(draft.skip_steps);
   if (overridesPatch !== undefined) {
     payload.processing_overrides = overridesPatch;
+  }
+  const extracted_fields: Record<string, string> = {};
+  for (const [key, value] of Object.entries(draft.extractedFields)) {
+    const trimmed = value.trim();
+    if (trimmed) extracted_fields[key] = trimmed;
+  }
+  if (Object.keys(extracted_fields).length) {
+    payload.extracted_fields = extracted_fields;
   }
   return payload;
 }
@@ -465,123 +591,10 @@ function FieldRow({
   );
 }
 
-function canEdit(status: string): boolean {
-  return ["exception", "duplicate_skipped", "rejected"].includes(status);
-}
-
 function pipelineDotClass(state: "done" | "pending" | "fail" | "skipped"): string {
   if (state === "done") return "bg-[hsl(var(--chart-1))]";
   if (state === "fail") return "bg-destructive";
   return "bg-muted-foreground/40";
-}
-
-function InvoiceHtmlPreview({
-  inv,
-  fmt,
-  taxLabel,
-  taxRate,
-  sourceKind,
-}: {
-  inv: InvoiceDetails;
-  fmt: (v: string | null | undefined) => string;
-  taxLabel: string;
-  taxRate: number;
-  sourceKind: string;
-}) {
-  const docRef = documentDisplayRef(inv);
-
-  return (
-    <div className="invoice-preview-card relative bg-card border border-border rounded-md shadow-sm">
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div className="min-w-0 space-y-1">
-          <div className="font-semibold text-base leading-snug">
-            {inv.vendor?.trim() || counterpartyUnknownLabel(inv)}
-          </div>
-          {inv.abn && (
-            <div className="text-xs text-muted-foreground tnum">{inv.abn}</div>
-          )}
-          {inv.email_sender && (
-            <div className="text-xs text-muted-foreground break-all leading-relaxed">
-              {inv.email_sender}
-            </div>
-          )}
-        </div>
-        <div className="text-right shrink-0 space-y-0.5">
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Invoice
-          </div>
-          <div className="font-medium tnum">{inv.invoice_no ?? "—"}</div>
-          <div className="text-[10px] text-muted-foreground tnum">{docRef}</div>
-        </div>
-      </div>
-
-      <div className="invoice-preview-meta text-xs">
-        <div>
-          <span className="text-muted-foreground">Issued:</span>{" "}
-          <span className="tnum">{inv.invoice_date ?? "—"}</span>
-        </div>
-        <div className="text-right">
-          <span className="text-muted-foreground">Due:</span>{" "}
-          <span className="tnum">{inv.due_date ?? "—"}</span>
-        </div>
-        {inv.po_reference && (
-          <div className="col-span-2">
-            <span className="text-muted-foreground">PO:</span>{" "}
-            <span className="tnum">{inv.po_reference}</span>
-          </div>
-        )}
-      </div>
-
-      <table className="invoice-preview-table text-xs">
-        <thead>
-          <tr className="border-b border-border text-muted-foreground">
-            <th className="text-left py-2 font-medium">Description</th>
-            <th className="text-right py-2 font-medium">Qty</th>
-            <th className="text-right py-2 font-medium">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {inv.line_items.length === 0 ? (
-            <tr>
-              <td colSpan={3} className="py-3 text-muted-foreground">
-                No line items
-              </td>
-            </tr>
-          ) : (
-            inv.line_items.map((line) => (
-              <tr key={line.id} className="border-b border-border/60">
-                <td className="py-2.5 align-top">{line.description ?? "—"}</td>
-                <td className="py-2.5 align-top tnum">{formatQty(line.qty)}</td>
-                <td className="py-2.5 align-top tnum">{fmt(line.amount)}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-
-      <div className="invoice-preview-totals space-y-1.5 text-xs">
-        <div className="flex justify-between gap-4">
-          <span className="text-muted-foreground">Subtotal</span>
-          <span className="tnum">{fmt(inv.subtotal)}</span>
-        </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-muted-foreground">
-            {taxLabel} {taxRate}%
-          </span>
-          <span className="tnum">{fmt(inv.gst)}</span>
-        </div>
-        <div className="flex justify-between gap-4 font-semibold border-t border-border pt-2 mt-1">
-          <span>Total</span>
-          <span className="tnum">{fmt(inv.total)}</span>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-1.5 mt-8 text-[10px] text-muted-foreground">
-        <FileText className="h-3 w-3 shrink-0" />
-        <span>original.pdf · 1 page · captured via {sourceKind}</span>
-      </div>
-    </div>
-  );
 }
 
 type InvoiceDetailDrawerProps = {
@@ -618,6 +631,7 @@ export function InvoiceDetailDrawer({
   const [actionBusy, setActionBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<InvoiceEditDraft | null>(null);
+  const startInEditAppliedRef = useRef<number | null>(null);
   const [attachBusy, setAttachBusy] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewPaneMode>("summary");
   const [viewId, setViewId] = useState<number | null>(null);
@@ -633,11 +647,6 @@ export function InvoiceDetailDrawer({
         .filter((dt) => dt.enabled)
         .map((dt) => dt.code),
     [ruleBook?.documentTypes]
-  );
-
-  const postingApplies = useMemo(
-    () => (inv ? glPostingApplicable(inv, ruleBook?.documentTypes) : true),
-    [inv, ruleBook?.documentTypes]
   );
 
   const resolveClassification = async (confirmedDt: string) => {
@@ -754,23 +763,33 @@ export function InvoiceDetailDrawer({
     if (!open) {
       setEditing(false);
       setDraft(null);
+      startInEditAppliedRef.current = null;
     }
   }, [open]);
+
+  useEffect(() => {
+    setEditing(false);
+    setDraft(null);
+    startInEditAppliedRef.current = null;
+  }, [activeInvoiceId]);
 
   useEffect(() => {
     onEditingChange?.(editing);
   }, [editing, onEditingChange]);
 
   useEffect(() => {
-    if (!inv) return;
-    if (startInEditMode && canEdit(inv.status)) {
+    if (!open || !inv) return;
+    if (
+      startInEditMode &&
+      canEdit(inv.status) &&
+      startInEditAppliedRef.current !== inv.id
+    ) {
+      startInEditAppliedRef.current = inv.id;
       setEditing(true);
       setDraft(draftFromInvoice(inv));
       setTab("fields");
-    } else if (!editing) {
-      setDraft(null);
     }
-  }, [inv, startInEditMode, editing]);
+  }, [inv?.id, startInEditMode, open]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -785,6 +804,11 @@ export function InvoiceDetailDrawer({
     if (!inv || !ruleBook) return "";
     return effectiveDocumentTypeCode(inv, ruleBook.documentTypes);
   }, [inv, ruleBook]);
+
+  const classificationConfirmRequired = useMemo(
+    () => requiresClassificationConfirm(inv),
+    [inv]
+  );
 
   const extractionFieldKeys = useMemo(() => {
     if (!inv) return [];
@@ -818,6 +842,48 @@ export function InvoiceDetailDrawer({
     }
     return null;
   }, [inv?.purchase_document_type, resolvedDocumentTypeCode, ruleBook]);
+
+  const resolvedDocType = useMemo(() => {
+    const code = resolvedDocumentTypeCode;
+    if (!code || !ruleBook) return null;
+    return (
+      ruleBook.documentTypes.find((dt) => dt.code.toUpperCase() === code.toUpperCase()) ?? null
+    );
+  }, [resolvedDocumentTypeCode, ruleBook]);
+
+  const absentFields = resolvedDocType?.absentFields ?? [];
+
+  const postingApplies = useMemo(
+    () => (inv ? glPostingApplicable(inv, ruleBook?.documentTypes) : true),
+    [inv, ruleBook?.documentTypes]
+  );
+
+  const previewLineItems = useMemo((): LineItem[] | undefined => {
+    if (!inv || !editing || !draft) return undefined;
+    return mapDraftLineItems(inv, draft);
+  }, [inv, editing, draft]);
+
+  const drawerLineItems = useMemo(() => {
+    if (!inv) {
+      return {
+        previewItems: [] as PreviewLineItem[],
+        columns: { showQty: false, showUnitPrice: false, showAmount: false },
+      };
+    }
+    if (editing && draft) {
+      const draftRows = mapDraftLineItems(inv, draft);
+      return {
+        previewItems: enrichLineItemsForPreview(draftRows),
+        columns: lineItemColumnsFromRows(draftRows),
+      };
+    }
+    const resolved = resolvePreviewLineItems(inv, {
+      absentFields,
+      extractionFieldKeys,
+      sourceKind: inv.email_sender ? "email" : "upload",
+    });
+    return { previewItems: resolved.items, columns: resolved.columns };
+  }, [inv, editing, draft, absentFields, extractionFieldKeys]);
 
   if (!mounted) return null;
 
@@ -861,7 +927,7 @@ export function InvoiceDetailDrawer({
       const updated = await api.getInvoice(inv.id);
       setInv(updated);
       if (editing && draft) {
-        setDraft(draftFromInvoice(updated));
+        setDraft(draftFromInvoice(updated, extractionFieldKeys));
       }
       onUpdated?.();
     } catch (e) {
@@ -874,31 +940,25 @@ export function InvoiceDetailDrawer({
   function startEditing() {
     if (!inv || !canEdit(inv.status)) return;
     setEditing(true);
-    setDraft(draftFromInvoice(inv));
+    setDraft(draftFromInvoice(inv, extractionFieldKeys));
     if (tab !== "overrides") {
       setTab("fields");
     }
   }
 
-  function ensureOverridesEditMode() {
-    if (!inv || !canEdit(inv.status)) return;
-    setEditing(true);
-    setDraft((current) => current ?? draftFromInvoice(inv));
-  }
-
   function ensureLineItemsEditMode() {
     if (!inv || !canEdit(inv.status)) return;
     setEditing(true);
-    setDraft((current) => current ?? draftFromInvoice(inv));
+    setDraft((current) => current ?? draftFromInvoice(inv, extractionFieldKeys));
   }
 
   function selectTab(next: Tab) {
-    if (next === "lines") {
-      ensureLineItemsEditMode();
-    } else if (next === "overrides") {
-      ensureOverridesEditMode();
-    }
     setTab(next);
+  }
+
+  function openLineItemsForEdit() {
+    ensureLineItemsEditMode();
+    setTab("lines");
   }
 
   function cancelEditing() {
@@ -1122,11 +1182,14 @@ export function InvoiceDetailDrawer({
                   <InvoiceDocumentViewer invoiceId={inv.id} className="flex-1 min-h-0" />
                 ) : (
                   <div className="flex-1 min-h-0 overflow-y-auto">
-                    <InvoiceHtmlPreview
+                    <DocumentSummaryPreview
                       inv={inv}
+                      lineItems={previewLineItems}
+                      documentTypeLabel={documentTypeBadgeLabel}
+                      absentFields={resolvedDocType?.absentFields ?? []}
+                      extractionFieldKeys={extractionFieldKeys}
                       fmt={fmt}
-                      taxLabel={tax.label}
-                      taxRate={tax.rate}
+                      tax={tax}
                       sourceKind={sourceKind}
                     />
                   </div>
@@ -1186,16 +1249,27 @@ export function InvoiceDetailDrawer({
                       audit={classificationAudit}
                       loading={classificationLoading}
                       catalogueCodes={catalogueCodes}
-                      onConfirmDt={(code) => void resolveClassification(code)}
-                      onChangeDt={(code) => void resolveClassification(code)}
+                      requiresConfirm={classificationConfirmRequired}
+                      onConfirmDt={
+                        classificationConfirmRequired
+                          ? (code) => void resolveClassification(code)
+                          : undefined
+                      }
+                      onChangeDt={
+                        classificationConfirmRequired
+                          ? (code) => void resolveClassification(code)
+                          : undefined
+                      }
                     />
                     {extractionFieldKeys.length === 0 ? (
                       <p className="text-sm text-muted-foreground">
-                        {!resolvedDocumentTypeCode
+                        {classificationConfirmRequired
                           ? "Document type needs review. Confirm or change DT above, then reprocess."
-                          : !documentTypeInCatalogue
-                            ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or confirm a valid DT.`
-                            : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type in Rule Book.`}
+                          : !resolvedDocumentTypeCode
+                            ? "No document type is applied yet."
+                            : !documentTypeInCatalogue
+                              ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or confirm a valid DT.`
+                              : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type in Rule Book.`}
                       </p>
                     ) : (
                       extractionFieldKeys.map((key) => (
@@ -1207,15 +1281,16 @@ export function InvoiceDetailDrawer({
                               inv,
                               draft,
                               Boolean(draft && editing),
-                              fmt
+                              fmt,
+                              extractionFieldKeys
                             )}
                             confidence={invoiceFieldConfidence(inv, key)}
                             bold={key === "total"}
                             editable={Boolean(
-                              draft && editing && isEditableExtractionField(key)
+                              draft && editing && isEditableExtractionField(key, extractionFieldKeys)
                             )}
                             onChange={
-                              draft && editing && isEditableExtractionField(key)
+                              draft && editing && isEditableExtractionField(key, extractionFieldKeys)
                                 ? (value) =>
                                     setDraft(updateDraftExtractionField(draft, key, value))
                                 : undefined
@@ -1224,7 +1299,7 @@ export function InvoiceDetailDrawer({
                           {key === "line_items" && canEdit(inv.status) ? (
                             <button
                               type="button"
-                              onClick={() => selectTab("lines")}
+                              onClick={openLineItemsForEdit}
                               className="mt-1 text-xs text-primary hover:underline"
                             >
                               {editing ? "Edit line items →" : "Open line items to edit →"}
@@ -1249,102 +1324,14 @@ export function InvoiceDetailDrawer({
                     <p className="text-xs text-muted-foreground">
                       Edit rows below, then use <span className="font-medium text-foreground">Save changes</span> at the bottom of the drawer.
                     </p>
-                    <div className="overflow-x-auto rounded-md border border-border">
-                      <table className="invoice-drawer-lines-table w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-xs text-muted-foreground bg-muted/50">
-                            <th className="px-3 py-2 font-medium">Description</th>
-                            <th className="px-2 py-2 font-medium text-right">Qty</th>
-                            <th className="px-2 py-2 font-medium text-right whitespace-nowrap">
-                              Unit
-                            </th>
-                            <th className="px-2 py-2 font-medium text-right whitespace-nowrap">
-                              Total
-                            </th>
-                            <th className="px-2 py-2 w-10" aria-label="Remove row" />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {draft.line_items.length === 0 ? (
-                            <tr>
-                              <td
-                                colSpan={5}
-                                className="px-3 py-6 text-center text-sm text-muted-foreground"
-                              >
-                                No line items — add one below
-                              </td>
-                            </tr>
-                          ) : (
-                            draft.line_items.map((line, index) => (
-                              <tr key={line.id ?? `new-${index}`} className="border-t border-border align-top">
-                                <td className="px-2 py-2">
-                                  <Input
-                                    value={line.description}
-                                    onChange={(e) => {
-                                      const next = [...draft.line_items];
-                                      next[index] = { ...line, description: e.target.value };
-                                      setDraft({ ...draft, line_items: next });
-                                    }}
-                                    className="h-8 text-sm"
-                                  />
-                                </td>
-                                <td className="px-2 py-2">
-                                  <Input
-                                    value={line.qty}
-                                    onChange={(e) => {
-                                      const next = [...draft.line_items];
-                                      next[index] = { ...line, qty: e.target.value };
-                                      setDraft({ ...draft, line_items: next });
-                                    }}
-                                    className="h-8 text-sm text-right tnum"
-                                    inputMode="decimal"
-                                  />
-                                </td>
-                                <td className="px-2 py-2">
-                                  <Input
-                                    value={line.unit_price}
-                                    onChange={(e) => {
-                                      const next = [...draft.line_items];
-                                      next[index] = { ...line, unit_price: e.target.value };
-                                      setDraft({ ...draft, line_items: next });
-                                    }}
-                                    className="h-8 text-sm text-right tnum"
-                                    inputMode="decimal"
-                                  />
-                                </td>
-                                <td className="px-2 py-2">
-                                  <Input
-                                    value={line.amount}
-                                    onChange={(e) => {
-                                      const next = [...draft.line_items];
-                                      next[index] = { ...line, amount: e.target.value };
-                                      setDraft({ ...draft, line_items: next });
-                                    }}
-                                    className="h-8 text-sm text-right tnum"
-                                    inputMode="decimal"
-                                  />
-                                </td>
-                                <td className="px-2 py-2 text-center">
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                                    aria-label="Remove line item"
-                                    onClick={() => {
-                                      const next = draft.line_items.filter((_, i) => i !== index);
-                                      setDraft({ ...draft, line_items: next });
-                                    }}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                    <LineItemsDrawerGrid
+                      columns={drawerLineItems.columns}
+                      withActions
+                      editable
+                      draftItems={draft.line_items}
+                      onDraftChange={(line_items) => setDraft({ ...draft, line_items })}
+                      emptyMessage="No line items — add one below"
+                    />
                     <Button
                       variant="outline"
                       size="sm"
@@ -1361,73 +1348,16 @@ export function InvoiceDetailDrawer({
                   </div>
                 )}
 
-                {tab === "lines" && !(draft && editing) && inv && canEdit(inv.status) && (
-                  <div className="mt-4 rounded-md border border-dashed border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-                    This document is in the review queue.{" "}
-                    <button
-                      type="button"
-                      className="text-primary hover:underline font-medium"
-                      onClick={() => selectTab("lines")}
-                    >
-                      Click here to edit line items
-                    </button>
-                    .
-                  </div>
-                )}
-
-                {tab === "lines" && !(draft && editing) && (!inv || !canEdit(inv.status)) && (
-                  <div className="mt-4 overflow-x-auto rounded-md border border-border">
-                    <table className="invoice-drawer-lines-table w-full text-sm">
-                      <thead>
-                        <tr className="text-left text-xs text-muted-foreground bg-muted/50">
-                          <th className="px-3 py-2 font-medium">Description</th>
-                          <th className="px-2 py-2 font-medium text-right">Qty</th>
-                          <th className="px-2 py-2 font-medium text-right whitespace-nowrap">
-                            Unit
-                          </th>
-                          <th className="px-2 py-2 font-medium text-right whitespace-nowrap">
-                            Total
-                          </th>
-                          <th className="px-3 py-2 font-medium">GL account</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {inv.line_items.length === 0 ? (
-                          <tr>
-                            <td
-                              colSpan={5}
-                              className="px-3 py-6 text-center text-sm text-muted-foreground"
-                            >
-                              No line items
-                            </td>
-                          </tr>
-                        ) : (
-                          inv.line_items.map((line) => (
-                            <tr key={line.id} className="border-t border-border align-top">
-                              <td className="px-3 py-2">
-                                {line.description ?? "—"}
-                              </td>
-                              <td className="px-2 py-2 text-right tnum whitespace-nowrap">
-                                {formatQty(line.qty)}
-                              </td>
-                              <td className="px-2 py-2 text-right tnum whitespace-nowrap">
-                                {fmt(line.unit_price)}
-                              </td>
-                              <td className="px-2 py-2 text-right tnum whitespace-nowrap">
-                                {fmt(line.amount)}
-                              </td>
-                              <td className="px-3 py-2">
-                                <LineGlAccountCell
-                                  inv={inv}
-                                  line={line}
-                                  postingApplies={postingApplies}
-                                />
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                {tab === "lines" && !(draft && editing) && inv && (
+                  <div className="mt-4">
+                    <LineItemsDrawerGrid
+                      columns={drawerLineItems.columns}
+                      previewItems={drawerLineItems.previewItems}
+                      inv={inv}
+                      postingApplies={postingApplies}
+                      showGlAccount
+                      emptyMessage="No line items"
+                    />
                   </div>
                 )}
 

@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.matrix_service import derive_matrix_flag, derive_matrix_payment_status
-from app.services.pipeline_stages import build_matrix_cells
+from app.services.reports.matrix_service import derive_matrix_flag, derive_matrix_payment_status
+from app.services.invoice.pipeline_stages import build_matrix_cells
 
 
 def test_matrix_cells_duplicate_skipped_received_done_parsed_fail() -> None:

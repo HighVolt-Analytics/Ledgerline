@@ -3,7 +3,7 @@
 import pytest
 
 from app.models.invoice import InvoiceStatus
-from app.services.graph_mail_folders import (
+from app.services.ingest.graph_mail_folders import (
     classify_message_outcome,
     clear_folder_cache,
     finalize_graph_messages,

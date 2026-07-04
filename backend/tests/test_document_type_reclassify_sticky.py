@@ -11,9 +11,9 @@ from sqlalchemy.orm import selectinload
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.classification_decision import PolicyScoreResult
-from app.services.audit_service import log_event
-from app.services.document_type_reclassify_service import reclassify_invoice_document_type
-from app.services.remap_service import remap_invoices_for_tenant
+from app.services.audit.audit_service import log_event
+from app.services.classification.document_type_reclassify_service import reclassify_invoice_document_type
+from app.services.invoice.remap_service import remap_invoices_for_tenant
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

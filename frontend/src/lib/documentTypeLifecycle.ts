@@ -2,7 +2,7 @@
 
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
-import { normalizeDtCodeList } from "@/lib/documentBundleConfig";
+import { normalizeDtCodeList, normalizeBundleConditional } from "@/lib/documentBundleConfig";
 
 export function normalizeDocumentTypeCode(code: string | null | undefined): string {
   return (code ?? "").trim().toUpperCase();
@@ -22,13 +22,9 @@ export function scrubDocumentTypeReferences(
   const codes = catalogueCodes(state.documentTypes);
   const documentTypes = state.documentTypes.map((dt) => {
     const mandatory = normalizeDtCodeList(dt.bundleMandatory).filter((code) => codes.has(code));
-    const conditional = dt.bundleConditional.filter((item) => {
-      const token = item.trim();
-      if (!token) return false;
-      const normalized = normalizeDocumentTypeCode(token);
-      if (/^DT-\d{2}$/i.test(normalized) && !codes.has(normalized)) return false;
-      return true;
-    });
+    const conditional = normalizeBundleConditional(dt.bundleConditional).filter((code) =>
+      codes.has(code)
+    );
     if (
       mandatory.length === dt.bundleMandatory.length &&
       conditional.length === dt.bundleConditional.length

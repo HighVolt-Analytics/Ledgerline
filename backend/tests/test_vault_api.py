@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
-from app.services.invoice_evaluation_service import ROUTE_PURCHASE
+from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
 
 
 @pytest.mark.asyncio

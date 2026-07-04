@@ -9,13 +9,13 @@ from app.api.deps import AuthContext, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope
 from app.schemas.dossier import DossierManualLinkCreateRequest, DossierSummaryResponse
 from app.schemas.dossier_api import DossierListRequest
-from app.services.dossier_api_service import (
+from app.services.dossier.dossier_api_service import (
     build_dossier_detail_summary,
     get_dossier_by_id,
     list_dossier_summaries,
 )
-from app.services.dossier_manual_link_service import create_manual_link, delete_manual_link
-from app.services.dossier_service import resolve_invoice_for_dossier
+from app.services.dossier.dossier_manual_link_service import create_manual_link, delete_manual_link
+from app.services.dossier.dossier_service import resolve_invoice_for_dossier
 
 router = APIRouter(prefix="/dossiers", tags=["dossiers"])
 

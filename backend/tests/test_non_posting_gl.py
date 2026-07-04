@@ -5,12 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.document_type_playbook_profile_service import (
+from app.services.classification.document_type_playbook_profile_service import (
     allows_posting_pipeline,
     clear_invoice_gl_mapping,
     gl_posting_applicable_for_invoice,
 )
-from app.services.non_posting_document_service import finish_non_posting_document
+from app.services.invoice.non_posting_document_service import finish_non_posting_document
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -20,9 +20,8 @@ def _contract_definition() -> DocumentTypeDefinition:
             "code": "DT-16",
             "title": "Contract / SOW",
             "shortTitle": "Contract / SOW",
-            "klass": "Supporting",
+            "klass": "Non-transactional",
             "posting": "No",
-            "fraudRisk": "low",
             "oneLine": "Supporting bundle member",
             "playbook_profile": "supporting",
             "enabled": True,

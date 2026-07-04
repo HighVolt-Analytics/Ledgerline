@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.schemas.collection import CollectionMarkReceivedRequest, CollectionResponse
 from app.schemas.common import ApiEnvelope
-from app.services.audit_service import log_event
-from app.services.collection_service import list_collections, mark_collection_received
+from app.services.audit.audit_service import log_event
+from app.services.integration.collection_service import list_collections, mark_collection_received
 
 router = APIRouter(prefix="/collections", tags=["collections"])
 

@@ -641,9 +641,6 @@ export const DEFAULT_POSTING_DEFAULTS = {
   taxAccount: "GST Paid",
   payableAccount: "Accounts Payable",
   fallbackAccount: "Suspense Account",
-  functionalCurrency: "AUD",
-  fxGainLossAccount: "FX Gain/Loss",
-  bankAccount: "Bank",
 } as const;
 
 export const DEFAULT_DOCUMENT_SETS = [

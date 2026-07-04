@@ -317,6 +317,7 @@ export interface Invoice {
   currency: string;
   subtotal: string | null;
   gst: string | null;
+  gst_rate: string | null;
   total: string | null;
   status: InvoiceStatus;
   file_hash: string | null;
@@ -420,6 +421,7 @@ export interface InvoiceUpdatePayload {
   account_name?: string | null;
   line_items?: LineItemUpdatePayload[];
   processing_overrides?: ProcessingOverrides | null;
+  extracted_fields?: Record<string, string> | null;
 }
 
 export interface NavBadges {
@@ -779,6 +781,27 @@ export interface ActivityItem {
   vendor: string | null;
   status: InvoiceStatus | null;
   summary?: string | null;
+}
+
+export type NotificationSeverity = "action" | "error" | "info";
+
+export interface NotificationItem {
+  id: string;
+  source: "audit" | "system";
+  audit_log_id: number | null;
+  event: string;
+  title: string;
+  summary: string | null;
+  severity: NotificationSeverity;
+  href: string | null;
+  created_at: string;
+  is_unread: boolean;
+}
+
+export interface NotificationsResponse {
+  items: NotificationItem[];
+  unread_count: number;
+  last_read_at: string | null;
 }
 
 export interface TopVendorRow {
@@ -1162,9 +1185,6 @@ export interface RuleBookConfig {
     tax_account: string;
     payable_account: string;
     fallback_account: string;
-    functional_currency?: string;
-    fx_gain_loss_account?: string;
-    bank_account?: string;
   };
   document_sets: Array<{
     id: string;
@@ -1208,7 +1228,6 @@ export interface RuleBookConfig {
     short_title: string;
     klass: string;
     posting: string;
-    fraud_risk: string;
     one_line: string;
     route_target: string;
     enabled: boolean;
@@ -1250,6 +1269,13 @@ export interface RuleBookConfig {
     bundle_conditional: string[];
     purchase_bundle_role?: string;
     llm_hint?: string;
+    post_to?: {
+      ledger: string;
+      sub_ledger: string;
+      tax_account?: string;
+      payable_account?: string;
+      receivable_account?: string;
+    };
   }>;
 }
 
@@ -1684,5 +1710,7 @@ export interface InvoiceClassificationAudit {
   review_reasons?: string[];
   compare_passed?: boolean;
   auto_route_min_confidence?: number;
+  org_auto_route_min_confidence?: number;
+  dt_min_route_confidence?: number;
   perspective?: string;
 }

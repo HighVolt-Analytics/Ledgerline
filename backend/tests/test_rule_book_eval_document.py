@@ -3,7 +3,7 @@ from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Document id formatting for live rule-book evaluation."""
 
 from app.models.invoice import Invoice
-from app.services.rule_book_evaluate_service import invoice_to_eval_document
+from app.services.rule_book.rule_book_evaluate_service import invoice_to_eval_document
 
 
 def test_invoice_to_eval_document_uses_canonical_doc_number() -> None:

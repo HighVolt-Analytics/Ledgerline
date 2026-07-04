@@ -30,11 +30,11 @@ from app.schemas.mailbox import (
     MailboxInvitePreviewResponse,
     MailboxResponse,
 )
-from app.services.mailbox_backfill_service import (
+from app.services.ingest.mailbox_backfill_service import (
     create_mailbox_backfill_job,
     get_mailbox_backfill_job,
 )
-from app.services.mailbox_invite_service import (
+from app.services.ingest.mailbox_invite_service import (
     build_connect_url_for_request,
     build_invite_oauth_url,
     create_mailbox_connection_request,
@@ -43,17 +43,17 @@ from app.services.mailbox_invite_service import (
     parse_invite_token,
     resend_mailbox_connection_request,
 )
-from app.services.mailbox_provider import (
+from app.services.ingest.mailbox_provider import (
     PROVIDER_UNKNOWN,
     available_providers_for_email,
     resolve_invite_provider,
 )
-from app.services.gmail_oauth_service import (
+from app.services.ingest.gmail_oauth_service import (
     complete_oauth_callback as complete_gmail_oauth_callback,
     gmail_oauth_configured,
     parse_oauth_state as parse_gmail_oauth_state,
 )
-from app.services.mailbox_oauth_service import (
+from app.services.ingest.mailbox_oauth_service import (
     build_admin_consent_url,
     complete_oauth_callback,
     disconnect_oauth_mailbox,
@@ -61,7 +61,7 @@ from app.services.mailbox_oauth_service import (
     oauth_configured,
     parse_oauth_state,
 )
-from app.services.public_app_url import build_public_app_path
+from app.services.shared.public_app_url import build_public_app_path
 from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
 

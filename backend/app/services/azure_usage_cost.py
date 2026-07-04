@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.models.platform_credit_settings import PlatformCreditSettings
-from app.services.document_ai_provider import DocumentAiProvider
+from app.services.extraction.document_ai_provider import DocumentAiProvider
 
 # Vision: ~150 DPI PNG page averages ~1,500 input tokens per page (image + prompt overhead).
 _FOUNDRY_INPUT_TOKENS_PER_PAGE = 1500

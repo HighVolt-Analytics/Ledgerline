@@ -30,9 +30,9 @@ from app.schemas.tenant_member import (
     PermissionsResponse,
 )
 from app.schemas.common import ApiEnvelope
-from app.services.auth_account_service import resolve_login_account
-from app.services.auth_email_service import send_login_otp_email
-from app.services.auth_service import (
+from app.services.auth.auth_account_service import resolve_login_account
+from app.services.auth.auth_email_service import send_login_otp_email
+from app.services.auth.auth_service import (
     TOKEN_TYPE_CHALLENGE,
     TOKEN_TYPE_REFRESH,
     TOKEN_TYPE_TENANT_SELECT,
@@ -44,7 +44,7 @@ from app.services.auth_service import (
     hash_password,
     verify_password,
 )
-from app.services.auth_session_service import (
+from app.services.auth.auth_session_service import (
     clear_otp,
     generate_otp,
     is_user_revoked,
@@ -56,16 +56,16 @@ from app.services.auth_session_service import (
     validate_refresh_jti,
     verify_otp,
 )
-from app.services.membership_enumeration import (
+from app.services.auth.membership_enumeration import (
     filter_switchable_memberships,
     list_memberships_for_auth_account,
     membership_is_switchable,
 )
-from app.services.membership_service import ensure_membership, user_has_tenant_access
-from app.services.privilege_service import matrix_role_for_context, permissions_for_context
-from app.services.tenant_module_service import enabled_modules_map
-from app.services.tenant_context_service import get_tenant_slug
-from app.services.tenant_members_service import accept_invite, preview_invite
+from app.services.auth.membership_service import ensure_membership, user_has_tenant_access
+from app.services.auth.privilege_service import matrix_role_for_context, permissions_for_context
+from app.services.tenant.tenant_module_service import enabled_modules_map
+from app.services.tenant.tenant_context_service import get_tenant_slug
+from app.services.tenant.tenant_members_service import accept_invite, preview_invite
 from app.tenant_ids import parse_tenant_id
 from app.tenant_context import set_jwt_tenant_id, set_request_tenant_id
 from app.tenant_rls import apply_rls_session_context
@@ -681,7 +681,7 @@ async def invite_accept(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[InviteAcceptResponse]:
-    from app.services.audit_service import log_event
+    from app.services.audit.audit_service import log_event
 
     user, tenant, role = await accept_invite(
         db,

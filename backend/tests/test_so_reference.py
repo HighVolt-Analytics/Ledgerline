@@ -1,9 +1,9 @@
 """SO reference extraction and resolution."""
 
 from app.models.invoice import Invoice
-from app.services.extraction_field_values import apply_parsed_extraction_fields
-from app.services.invoice_data import InvoiceData
-from app.services.so_reference import (
+from app.services.extraction.extraction_field_values import apply_parsed_extraction_fields
+from app.services.invoice.invoice_data import InvoiceData
+from app.services.sales.so_reference import (
     ensure_invoice_so_reference,
     extract_so_reference_from_filename,
     resolve_so_reference_from_invoice,

@@ -3,9 +3,9 @@ from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 """Tests for vault document-type folder resolution."""
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.invoice_evaluation_service import ROUTE_VAULT
-from app.services.vault_invoice_paths import vault_document_type_folder_for_invoice
-from app.services.vault_paths import ROUTE_PURCHASE, vault_document_type_segment
+from app.services.invoice.invoice_evaluation_service import ROUTE_VAULT
+from app.services.vault.vault_invoice_paths import vault_document_type_folder_for_invoice
+from app.services.vault.vault_paths import ROUTE_PURCHASE, vault_document_type_segment
 
 
 def test_vault_document_type_segment_only_for_vault_route() -> None:

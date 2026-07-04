@@ -11,8 +11,8 @@ from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.models.line_item import LineItem
 from app.models.purchase_order import PurchaseOrder
-from app.services.invoice_evaluation_service import ROUTE_PURCHASE
-from app.services.purchase_document_service import sync_purchase_document
+from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
+from app.services.purchase.purchase_document_service import sync_purchase_document
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

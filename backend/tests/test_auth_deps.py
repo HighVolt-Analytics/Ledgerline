@@ -10,8 +10,8 @@ from starlette.requests import Request
 from app.api.deps import _context_from_token
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
-from app.services.auth_service import create_access_token, hash_password
-from app.services.membership_service import ensure_membership
+from app.services.auth.auth_service import create_access_token, hash_password
+from app.services.auth.membership_service import ensure_membership
 
 
 def _fake_request() -> Request:
