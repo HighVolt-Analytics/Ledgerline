@@ -14,7 +14,6 @@ import {
 } from "@/components/sales/SalesRegisterPanel";
 import { useSalesMutations } from "@/hooks/useSalesMutations";
 import { useSales } from "@/hooks/useSales";
-import { useTenantOwnedData } from "@/hooks/useTenantOwnedData";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
@@ -29,19 +28,18 @@ function salesRowKey(salesId: number, invoiceId: number | null) {
 }
 
 export function SalesManagementPage() {
-  const { data: routedRaw = [], refetch: refetchRouted } = useRoutedInvoices(ROUTE_TARGET);
   const {
-    data: salesRowsRaw = [],
+    data: routed = [],
+    refetch: refetchRouted,
+    blocked: routedBlocked,
+  } = useRoutedInvoices(ROUTE_TARGET);
+  const {
+    data: salesRows = [],
     isLoading: salesLoading,
     isError,
     refetch: refetchSales,
+    blocked: salesBlocked,
   } = useSales();
-  const { data: routed = [], blocked: routedBlocked } = useTenantOwnedData(routedRaw, {
-    isLoading: salesLoading,
-  });
-  const { data: salesRows = [], blocked: salesBlocked } = useTenantOwnedData(salesRowsRaw, {
-    isLoading: salesLoading,
-  });
   const tenantDataBlocked = routedBlocked || salesBlocked;
   const { data: ruleBook } = useRuleBookConfig();
   const mutations = useSalesMutations();

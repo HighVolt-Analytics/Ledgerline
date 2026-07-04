@@ -1,5 +1,5 @@
 import { FolderKanban, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { DossierCard } from "@/components/dossiers/DossierCard";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -8,8 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { fetchDossiersPage } from "@/lib/dossierApi";
 import type { DossierSummary } from "@/lib/dossiers";
+import {
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 
 const PAGE_SIZE = 12;
 
@@ -26,13 +31,27 @@ export function DossiersPage() {
   const [typeOptions, setTypeOptions] = useState<Array<{ value: string; label: string }>>([
     { value: "all", label: "All document types" },
   ]);
+  const loadSeq = useRef(0);
+
+  useResetOnTenantChange(() => {
+    loadSeq.current += 1;
+    setRows([]);
+    setTotal(0);
+    setTotalPages(1);
+    setPage(1);
+    setError(null);
+    setLoading(true);
+    setQuery("");
+    setTypeFilter("all");
+  });
 
   useEffect(() => {
     let cancelled = false;
+    const scope = captureTenantFetchScope();
     api
       .getRuleBookConfig()
       .then((config) => {
-        if (cancelled) return;
+        if (cancelled || !isTenantFetchScopeCurrent(scope)) return;
         const types = (config.document_types ?? [])
           .map((row) => ({
             value: row.code,
@@ -51,6 +70,8 @@ export function DossiersPage() {
 
   const load = useCallback(
     async (options?: { silent?: boolean; fresh?: boolean }) => {
+      const scope = captureTenantFetchScope();
+      const seq = ++loadSeq.current;
       if (!options?.silent) {
         setLoading(true);
         setError(null);
@@ -63,13 +84,17 @@ export function DossiersPage() {
           q: search,
           fresh: options?.fresh,
         });
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setRows(res.rows);
         setTotal(res.total);
         setTotalPages(Math.max(1, res.pages));
       } catch (err) {
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setError(err instanceof Error ? err.message : "Failed to load dossiers");
       } finally {
-        if (!options?.silent) setLoading(false);
+        if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
+          setLoading(false);
+        }
       }
     },
     [page, search, typeFilter]

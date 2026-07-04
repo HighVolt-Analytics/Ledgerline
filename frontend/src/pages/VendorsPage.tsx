@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { Invoice, TopVendorRow, Vendor } from "@/api/types";
@@ -172,6 +176,7 @@ export function VendorsPage() {
   });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const scope = captureTenantFetchScope();
     if (!options?.silent) {
       setLoading(true);
       setError(null);
@@ -182,16 +187,18 @@ export function VendorsPage() {
         api.listVendors({ fresh }),
         fetchAllInvoices(fresh),
       ]);
+      if (!isTenantFetchScopeCurrent(scope)) return;
       setRows(vendors);
       setInvoices(invoiceRows);
     } catch (e) {
+      if (!isTenantFetchScopeCurrent(scope)) return;
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load vendors");
         setRows([]);
         setInvoices([]);
       }
     } finally {
-      if (!options?.silent) setLoading(false);
+      if (isTenantFetchScopeCurrent(scope) && !options?.silent) setLoading(false);
     }
   }, []);
 

@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import type { StripeAccount, StripeConnectResponse } from "@/api/types";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 
 async function fetchStripeAccount(): Promise<StripeAccount | null> {
@@ -21,12 +22,12 @@ async function invalidateStripeQueries(
   await queryClient.invalidateQueries({ queryKey: queryKeys.stripeBalance() });
   await queryClient.invalidateQueries({ queryKey: queryKeys.stripeReadiness() });
   await queryClient.invalidateQueries({
-    predicate: (query) => query.queryKey[0] === "stripeTransactions",
+    predicate: (query) => query.queryKey.includes("stripeTransactions"),
   });
 }
 
 export function useStripeAccount(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.stripeAccount(),
     queryFn: fetchStripeAccount,
     enabled,
@@ -34,7 +35,7 @@ export function useStripeAccount(enabled = true) {
 }
 
 export function useStripeReadiness(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.stripeReadiness(),
     queryFn: () => api.getStripeReadiness(),
     enabled,
@@ -87,7 +88,7 @@ export function useRefreshStripeAccount() {
 }
 
 export function useStripeGlobalPayoutsReadiness(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.stripeGlobalPayoutsReadiness(),
     queryFn: () => api.getStripeGlobalPayoutsReadiness(),
     enabled,
@@ -95,7 +96,7 @@ export function useStripeGlobalPayoutsReadiness(enabled = true) {
 }
 
 export function useStripeBalance(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.stripeBalance(),
     queryFn: async () => {
       try {
@@ -112,7 +113,7 @@ export function useStripeBalance(enabled = true) {
 }
 
 export function useStripeTransactions(limit = 20, enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.stripeTransactions(limit),
     queryFn: async () => {
       try {

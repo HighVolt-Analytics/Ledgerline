@@ -1,9 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 
 export function usePayments(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.payments(),
     queryFn: () => api.listPayments(),
     enabled,
@@ -11,7 +12,7 @@ export function usePayments(enabled = true) {
 }
 
 export function useAppSettings(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.appSettings(),
     queryFn: () => api.getSettings(),
     enabled,

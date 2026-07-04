@@ -8,7 +8,15 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ApiError, api, clearGetCache, setAuthToken, setAuthUser, setUnauthorizedHandler } from "@/api/client";
+import {
+  ApiError,
+  api,
+  clearGetCache,
+  getAuthToken,
+  setAuthToken,
+  setAuthUser,
+  setUnauthorizedHandler,
+} from "@/api/client";
 import type { AuthUser } from "@/api/types";
 import {
   apiLogin,
@@ -30,7 +38,11 @@ import {
 import { isTokenExpired, tenantIdFromToken, userFromToken } from "@/lib/authToken";
 import { refreshAccessTokenSingleFlight } from "@/lib/authTokenRefresh";
 import { shouldApplyAuthSync, subscribeAuthSync } from "@/lib/authSync";
-import { clearAllTenantCaches, tenantSessionWillChange } from "@/lib/tenantSession";
+import {
+  clearAllTenantCaches,
+  endTenantTransition,
+  tenantSessionWillChange,
+} from "@/lib/tenantSession";
 import { homePathForRole } from "@/lib/roles";
 import { withRouterBasename } from "@/lib/routerBasename";
 import { queryClient } from "@/lib/queryClient";
@@ -89,7 +101,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       memberships?: TenantAccountSummary[],
       cachePolicy: SessionCachePolicy = "full"
     ) => {
-      const tenantChanged = tenantSessionWillChange(access);
+      // Read previous tenant from in-memory JWT BEFORE any sessionStorage write.
+      const previousAccess = getAuthToken();
+      const tenantChanged = tenantSessionWillChange(access, previousAccess);
       if (tenantChanged) {
         clearAllTenantCaches();
       }
@@ -100,21 +114,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user: profile,
         memberships,
       });
-      const effectiveCachePolicy = tenantChanged ? "full" : cachePolicy;
 
       setAuthToken(access);
       setAuthUser(profile);
       if (mountedRef.current) {
         setUser(profile);
       }
+
+      const effectiveCachePolicy = tenantChanged ? "full" : cachePolicy;
       invalidateSessionCaches(effectiveCachePolicy);
+
+      // Same-tenant refresh: release any transition lock. Tenant switches hard-reload
+      // before paint; if they do not, TenantBoundary keeps the loader up.
+      if (!tenantChanged) {
+        endTenantTransition();
+      }
     },
     []
   );
 
   const logout = useCallback(() => {
     const refresh = getRefreshToken();
-    invalidateSessionCaches("full");
+    clearAllTenantCaches();
     clearAuthSession();
     setAuthToken(null);
     setAuthUser(null);
@@ -124,6 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setTenantSelectToken(null);
       setTenantPicker([]);
     }
+    endTenantTransition();
     void api.logout(refresh ?? undefined).catch(() => undefined);
   }, []);
 
@@ -154,7 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession, challengeToken]
   );
 
-  // Initial login tenant pick: SPA navigation via LoginPage <Navigate /> (no hard reload).
+  // Initial login tenant pick: hard reload so no prior tenant UI can remain mounted.
   const selectTenant = useCallback(
     async (tenantId: string) => {
       if (!tenantSelectToken) throw new Error("Tenant selection expired");
@@ -168,7 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         data.memberships
       );
       rememberLastTenant(tenantId);
-      window.location.assign(withRouterBasename(homePathForRole(data.user.role)));
+      window.location.replace(withRouterBasename(homePathForRole(data.user.role)));
     },
     [applySession, tenantSelectToken]
   );
@@ -190,7 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         data.memberships
       );
       rememberLastTenant(tenantId);
-      window.location.assign(withRouterBasename(homePathForRole(data.user.role)));
+      window.location.replace(withRouterBasename(homePathForRole(data.user.role)));
     },
     [applySession]
   );

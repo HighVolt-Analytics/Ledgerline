@@ -18,6 +18,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
@@ -201,6 +205,7 @@ export function VaultPage() {
   });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const scope = captureTenantFetchScope();
     if (!options?.silent) {
       setLoading(true);
       setError(null);
@@ -213,6 +218,8 @@ export function VaultPage() {
       fetchAllInvoices(fresh),
       api.getRuleBookConfig(),
     ]);
+
+    if (!isTenantFetchScopeCurrent(scope)) return;
 
     if (vaultResult.status === "fulfilled") {
       setVaultData(vaultResult.value);

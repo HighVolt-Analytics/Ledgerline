@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Invoice } from "@/api/types";
 import { useAuth } from "@/context/AuthContext";
@@ -11,22 +11,33 @@ import { documentListLabel, money } from "@/lib/format";
 import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
 import { fetchAllInvoices } from "@/lib/invoices";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
+import {
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 
 export function AllInvoicesPage() {
   const { user } = useAuth();
   const [rows, setRows] = useState<Invoice[]>([]);
   const [status, setStatus] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const loadSeq = useRef(0);
 
   useResetOnTenantChange(() => {
+    loadSeq.current += 1;
     setRows([]);
     setSearchQuery("");
   });
 
   useEffect(() => {
+    const scope = captureTenantFetchScope();
+    const seq = ++loadSeq.current;
     const params: Record<string, string> = {};
     if (status) params.status = status;
-    void fetchAllInvoices(false, params).then(setRows);
+    void fetchAllInvoices(false, params).then((data) => {
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+      setRows(data);
+    });
   }, [status, user?.tenant_id]);
 
   const filtered = useMemo(
@@ -86,12 +97,15 @@ export function AllInvoicesPage() {
                   <td className="px-3 py-2.5 font-medium tnum">{documentListLabel(r)}</td>
                   <td className="px-3 py-2.5">{counterpartyName(r)}</td>
                   <td className="px-3 py-2.5 tnum text-muted-foreground">{r.invoice_date ?? "—"}</td>
-                  <td className="px-3 py-2.5 tnum text-right font-medium">{money(r.total)}</td>
+                  <td className="px-3 py-2.5 text-right tnum">{money(r.total)}</td>
                   <td className="px-3 py-2.5">
                     <StageBadge {...invoiceStageBadgeProps(r)} />
                   </td>
                   <td className="px-3 py-2.5 text-right">
-                    <Link to={`/invoices/${r.id}`} className="text-xs text-primary">
+                    <Link
+                      to={`/invoices/${r.id}`}
+                      className="text-primary text-xs font-medium hover:underline"
+                    >
                       Open
                     </Link>
                   </td>

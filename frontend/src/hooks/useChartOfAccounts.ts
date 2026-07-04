@@ -1,11 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
 import type { ChartOfAccountRow } from "@/api/types";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useChartOfAccounts(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.chartOfAccounts(),
     queryFn: async () => {
       const res = await api.getChartOfAccounts();

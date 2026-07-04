@@ -1,11 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys, tenantQueryKey } from "@/lib/queryClient";
 import { ruleBookConfigFromApi, ruleBookConfigToApi } from "@/lib/ruleBookConfigApi";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 
 export function useRuleBookConfig(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.ruleBookConfig(),
     queryFn: async () => ruleBookConfigFromApi(await api.getRuleBookConfig()),
     enabled,
