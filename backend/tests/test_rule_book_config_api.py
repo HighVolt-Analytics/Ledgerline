@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.services.account_mapper import clear_rule_book_cache
+from app.services.rule_book.account_mapper import clear_rule_book_cache
 
 
 @pytest.mark.asyncio
@@ -130,7 +130,7 @@ async def test_delete_document_type_persists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """DELETE removes a catalogue row immediately even when a PUT is still buffered."""
-    from app.services.rule_book_save_buffer import clear_rule_book_save_buffers, flush_rule_book_save_buffer
+    from app.services.rule_book.rule_book_save_buffer import clear_rule_book_save_buffers, flush_rule_book_save_buffer
 
     template = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "rule_book_demo.json"
     catalog = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "document_types_test_catalog.json"

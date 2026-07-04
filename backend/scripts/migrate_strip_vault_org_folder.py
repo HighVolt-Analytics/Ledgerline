@@ -23,9 +23,9 @@ from sqlalchemy import select
 from app.database import async_session_factory
 from app.models.invoice import Invoice
 from app.models.tenant import Tenant
-from app.services.file_storage import relocate_stored_pdf
-from app.services.tenant_storage_paths import blob_name_from_stored
-from app.services.vault_paths import strip_org_segment_from_blob_path
+from app.services.shared.file_storage import relocate_stored_pdf
+from app.services.tenant.tenant_storage_paths import blob_name_from_stored
+from app.services.vault.vault_paths import strip_org_segment_from_blob_path
 
 
 async def _migrate_tenant(tenant_id: uuid.UUID, *, dry_run: bool) -> tuple[int, int]:

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.database import async_session_factory
 from app.models.auth_account import AuthAccount
 from app.models.user import User
-from app.services.auth_service import hash_password
+from app.services.auth.auth_service import hash_password
 
 
 async def reset_password(email: str, password: str) -> None:

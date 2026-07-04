@@ -30,6 +30,7 @@ import {
   yearFromPeriod,
 } from "@/lib/reconciliation";
 import { defaultReportPeriod } from "@/lib/reportsData";
+import { activityLabel } from "@/lib/notifications";
 import { cn } from "@/lib/cn";
 
 const CHART_MARGIN = { top: 4, right: 4, left: -18, bottom: 0 };
@@ -82,97 +83,6 @@ function mailboxNickname(email: string, displayName: string | null): string {
   if (label && !label.includes("@")) return label;
   const local = email.split("@")[0] ?? "Mailbox";
   return local.charAt(0).toUpperCase() + local.slice(1);
-}
-
-function activityLabel(
-  event: string,
-  vendor: string | null,
-  documentRef: string | null,
-  summary?: string | null
-): string {
-  const id = documentRef?.trim() || "System";
-  const who = vendor ?? "Unknown vendor";
-  let label = `${id} · ${who}`;
-
-  if (summary?.trim()) {
-    return `${label} — ${summary.trim()}`;
-  }
-  if (event === "duplicate_skipped") {
-    return `${label} duplicate skipped`;
-  }
-  if (event === "duplicate_in_progress") {
-    return `${label} duplicate blocked (still processing)`;
-  }
-  if (event === "duplicate_reingest_rejected") {
-    return `${label} resubmitted after rejection`;
-  }
-  if (event.includes("validation_failed") || event.includes("parsing_failed")) {
-    return `${label} validation failed`;
-  }
-  if (event.includes("processed")) {
-    return `${label} posted to ledger`;
-  }
-  if (event.includes("approved")) {
-    return `${label} approved for reprocessing`;
-  }
-  if (event.includes("upload")) {
-    return `${label} captured via upload`;
-  }
-  if (event.includes("email") || event.includes("ingest") || event.includes("poll")) {
-    return `${label} captured via email`;
-  }
-  if (event === "stripe_account_connected_onboarding") {
-    return "Stripe account connected (onboarding)";
-  }
-  if (event === "stripe_account_connected_oauth") {
-    return "Stripe account connected (OAuth)";
-  }
-  if (event === "stripe_account_disconnected") {
-    return "Stripe account disconnected";
-  }
-  if (event === "stripe_status_refreshed") {
-    return "Stripe account status refreshed";
-  }
-  if (event === "vendor_payout_method_created") {
-    return "Vendor payout method added";
-  }
-  if (event === "vendor_payout_method_updated") {
-    return "Vendor payout method updated";
-  }
-  if (event === "vendor_payout_method_deleted") {
-    return "Vendor payout method removed";
-  }
-  if (event === "payment_execution_readiness_validated") {
-    return "Payment execution readiness validated (dry-run)";
-  }
-  if (event === "payment_approved") {
-    return "Payment approved for disbursement readiness";
-  }
-  if (event === "payment_execution_instruction_created") {
-    return "Manual payment instruction created";
-  }
-  if (event === "payment_marked_paid_manual") {
-    return "Payment marked paid manually (no funds moved)";
-  }
-  if (event === "payment_execution_blocked_by_safety_gate") {
-    return "Payment execution blocked by safety gate";
-  }
-  if (event === "payment_execution_blocked_by_tenant_disable") {
-    return "Payment execution blocked for tenant";
-  }
-  if (event === "payment_execution_blocked_by_limit") {
-    return "Payment execution blocked — over launch limit";
-  }
-  if (event === "accounting_integration_connected") {
-    return "Accounting integration connected";
-  }
-  if (event === "accounting_integration_disconnected") {
-    return "Accounting integration disconnected";
-  }
-  if (event === "accounting_integration_error") {
-    return "Accounting integration error";
-  }
-  return `${label} — ${event.replace(/_/g, " ")}`;
 }
 
 function trendToDelta(trend: KpiTrend | undefined) {

@@ -16,7 +16,7 @@ from app.models.auth_account import AuthAccount
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.models.user_tenant_mapping import UserTenantMapping
-from app.services.membership_service import ensure_membership
+from app.services.auth.membership_service import ensure_membership
 
 _SUPER_ADMIN_EMAIL = "vishnu@highvolt.tech"
 _PLATFORM_SLUG = "platform"

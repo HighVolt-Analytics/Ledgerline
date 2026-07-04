@@ -6,14 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.document_type_field_checks import field_is_present
-from app.services.document_type_playbook_service import (
+from app.services.classification.document_type_field_checks import field_is_present
+from app.services.classification.document_type_playbook_service import (
     _bundle_dt_satisfied,
     missing_bundle_dt_codes,
     split_bundle_items,
 )
-from app.services.document_type_rule_engine import build_document_classifier_context
-from app.services.invoice_data import InvoiceData, ParsedLineItem
+from app.services.classification.document_type_rule_engine import build_document_classifier_context
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -22,9 +22,8 @@ def _po_type(**kwargs) -> DocumentTypeDefinition:
         code="DT-02",
         title="PO copy",
         shortTitle="PO",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="Purchase order",
         routeTarget="Purchase Management",
         purchaseBundleRole="po",
@@ -38,9 +37,8 @@ def _grn_type(**kwargs) -> DocumentTypeDefinition:
         code="DT-03",
         title="GRN",
         shortTitle="GRN",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="Goods receipt",
         routeTarget="Purchase Management",
         purchaseBundleRole="grn",
@@ -56,7 +54,6 @@ def test_split_bundle_items_only_user_codes() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Purchase Management",
         bundleMandatory=["DT-02", "DT-03"],
@@ -153,9 +150,8 @@ async def test_bundle_mandatory_infers_po_role_from_title(db_session: AsyncSessi
         code="DT-04",
         title="PO (supporting)",
         shortTitle="PO (supporting)",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="Purchase order copy",
         routeTarget="Purchase Management",
     )

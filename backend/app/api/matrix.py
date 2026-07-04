@@ -9,7 +9,7 @@ from app.api.deps import AuthContext, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope, ResponseMeta
 from app.schemas.matrix_api import MatrixListRequest
 from app.schemas.pipeline import MatrixRowResponse
-from app.services.matrix_service import fetch_document_matrix
+from app.services.reports.matrix_service import fetch_document_matrix
 
 router = APIRouter(prefix="/matrix", tags=["matrix"])
 

@@ -19,10 +19,10 @@ from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
 from app.models.purchase_order import PurchaseOrder
-from app.services.file_storage import store_invoice_pdf
-from app.services.invoice_evaluation_service import ROUTE_PURCHASE
+from app.services.shared.file_storage import store_invoice_pdf
+from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
 from app.services.org_context import get_or_create_default_org
-from app.services.purchase_match_service import (
+from app.services.purchase.purchase_match_service import (
     compute_three_way_match,
     record_goods_receipt,
     sync_purchase_order_from_invoice,

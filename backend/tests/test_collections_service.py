@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.collection_service import ensure_receivable_for_invoice
-from app.services.invoice_evaluation_service import ROUTE_SALES
+from app.services.integration.collection_service import ensure_receivable_for_invoice
+from app.services.invoice.invoice_evaluation_service import ROUTE_SALES
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

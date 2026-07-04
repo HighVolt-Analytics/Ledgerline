@@ -1,6 +1,6 @@
 """Mailbox provider detection tests."""
 
-from app.services.mailbox_provider import (
+from app.services.ingest.mailbox_provider import (
     PROVIDER_GOOGLE,
     PROVIDER_MICROSOFT,
     PROVIDER_UNKNOWN,

@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth_account import AuthAccount
 from app.models.user import User, UserRole
-from app.services.auth_service import create_access_token, hash_password
-from app.services.membership_service import ensure_membership
+from app.services.auth.auth_service import create_access_token, hash_password
+from app.services.auth.membership_service import ensure_membership
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

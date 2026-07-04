@@ -11,6 +11,7 @@ MatchMode = Literal[
     "three_way_po_grn",
     "three_way_so_dn",
     "two_way_po_ses",
+    "two_way_dn_invoice",
     "reference_invoice",
     "subledger_reconcile",
     "shipment",
@@ -30,6 +31,7 @@ ApprovalMode = Literal[
 PlaybookProfile = Literal[
     "po_goods",
     "ar_goods",
+    "ar_goods_2way",
     "po_services",
     "direct_expense",
     "credit_adjustment",
@@ -54,6 +56,7 @@ KNOWN_MATCH_MODES = frozenset(
         "three_way_po_grn",
         "three_way_so_dn",
         "two_way_po_ses",
+        "two_way_dn_invoice",
         "reference_invoice",
         "subledger_reconcile",
         "shipment",
@@ -77,6 +80,7 @@ KNOWN_PLAYBOOK_PROFILES = frozenset(
     {
         "po_goods",
         "ar_goods",
+        "ar_goods_2way",
         "po_services",
         "direct_expense",
         "credit_adjustment",

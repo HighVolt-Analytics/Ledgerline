@@ -13,8 +13,8 @@ from sqlalchemy.orm import selectinload
 
 from app.database import async_session_factory
 from app.models.invoice import Invoice
-from app.services.invoice_reset import reset_invoice_for_reprocess
-from app.services.pipeline import process_invoice
+from app.services.invoice.invoice_reset import reset_invoice_for_reprocess
+from app.services.invoice.pipeline import process_invoice
 
 
 async def reprocess_one(session, invoice_id: int) -> None:

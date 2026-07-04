@@ -3,7 +3,7 @@
 import pytest
 
 from app.config import Settings, get_settings
-from app.services.public_app_url import build_public_app_path, resolve_public_app_base_url
+from app.services.shared.public_app_url import build_public_app_path, resolve_public_app_base_url
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +94,7 @@ def test_build_public_app_path_appends_root_path_when_missing(monkeypatch: pytes
 
 
 def test_vault_view_path_uses_azure_webapp_on_staging(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.services.audit_export_service import vault_view_path
+    from app.services.audit.audit_export_service import vault_view_path
 
     monkeypatch.setenv("PUBLIC_APP_URL", "http://localhost:5173")
     monkeypatch.setenv("AZURE_WEBAPP_URL", "https://staging.highvolt.tech/ledgerlink")

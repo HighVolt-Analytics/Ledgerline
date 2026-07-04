@@ -14,9 +14,9 @@ from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
 from app.models.line_item import LineItem
-from app.services.account_mapper import clear_rule_book_cache, map_with_details
-from app.services.rule_book_mapper import clear_classification_config_cache
-from app.services.workbook_writer import (
+from app.services.rule_book.account_mapper import clear_rule_book_cache, map_with_details
+from app.services.rule_book.rule_book_mapper import DOCUMENT_TYPE_RULE_TYPE, clear_classification_config_cache
+from app.services.reports.workbook_writer import (
     SHEET_DAILY_RECON,
     SHEET_EXPENSE_SUMMARY,
     SHEET_INVOICES,
@@ -28,7 +28,7 @@ from app.services.workbook_writer import (
     workbook_filename,
     write_workbook,
 )
-from tests.rule_book_test_helpers import demo_rule_book_config
+from tests.rule_book_test_helpers import demo_rule_book_config, mapping_doc_type_config
 
 
 @pytest.fixture(autouse=True)
@@ -44,23 +44,30 @@ def _clear_settings() -> None:
 
 @pytest.mark.asyncio
 async def test_map_with_details_po_match() -> None:
+    config = mapping_doc_type_config(
+        demo_rule_book_config(),
+        code="DT-MKT",
+        ledger="Marketing Expense",
+        route_target="Purchase Management",
+    )
     inv = Invoice(tenant_id=TESTING_TENANT_UUID,
         vendor="Google Australia Pty Ltd",
         invoice_no="GOOG-AU-99102",
         po_reference="PO-MKT-2026-014",
         route_target="Purchase Management",
+        document_type_code="DT-MKT",
         status=InvoiceStatus.MAPPING,
         currency="AUD",
     )
-    detail = await map_with_details(inv, line_description="Campaign spend", config=demo_rule_book_config())
-    assert detail.rule_type == "Purchase rule"
+    detail = await map_with_details(inv, line_description="Campaign spend", config=config)
+    assert detail.rule_type == DOCUMENT_TYPE_RULE_TYPE
     assert detail.expense_category == "Marketing Expense"
 
 
 @pytest.mark.asyncio
 async def test_write_workbook_sheets(db_session: AsyncSession, tmp_path: Path) -> None:
     get_settings.cache_clear()
-    import app.services.workbook_writer as ww
+    import app.services.reports.workbook_writer as ww
 
     original = Path(get_settings().upload_dir)
 

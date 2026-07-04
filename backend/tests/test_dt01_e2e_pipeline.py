@@ -20,9 +20,9 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.purchase_order import PurchaseOrder
 from app.schemas.ocr_artifact import OcrArtifact
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
-from app.services.pipeline import process_invoice
-from app.services.reconciliation_service import ReconciliationResult
-from app.services.validator import ValidationResult
+from app.services.invoice.pipeline import process_invoice
+from app.services.reconciliation.reconciliation_service import ReconciliationResult
+from app.services.rule_book.validator import ValidationResult
 from tests.pipeline_test_helpers import patch_confidence_gate_pass
 
 ASSETS = Path(__file__).resolve().parents[2] / "test-assets"

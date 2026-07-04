@@ -8,8 +8,8 @@ import pytest
 from app.config import get_settings
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.auth_test_helpers import seed_admin_user
-from app.services.email_ingestion import build_historical_inbox_filter
-from app.services.mailbox_backfill_service import validate_backfill_dates
+from app.services.ingest.email_ingestion import build_historical_inbox_filter
+from app.services.ingest.mailbox_backfill_service import validate_backfill_dates
 
 
 def test_build_historical_inbox_filter() -> None:

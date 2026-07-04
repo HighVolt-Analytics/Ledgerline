@@ -15,13 +15,13 @@ from app.schemas.reports_api import (
     ReportsDocumentsRequest,
     ReportsWorkbookRequest,
 )
-from app.services.reports_service import build_analytics, list_documents
-from app.services.reports_workbook_service import (
+from app.services.reports.reports_service import build_analytics, list_documents
+from app.services.reports.reports_workbook_service import (
     resolve_workbook_date_filter,
     upload_workbook_blob,
     workbook_path,
 )
-from app.services.workbook_writer import write_workbook
+from app.services.reports.workbook_writer import write_workbook
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 

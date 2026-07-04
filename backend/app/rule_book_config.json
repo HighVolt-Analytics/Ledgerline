@@ -1,6 +1,63 @@
 {
   "schema_version": 1,
-  "email_capture_rules": [],
+  "email_capture_rules": [
+    {
+      "id": "ec-default",
+      "name": "All mailbox attachments",
+      "enabled": true,
+      "priority": 9999,
+      "mailbox": "*",
+      "root": {
+        "type": "group",
+        "operator": "OR",
+        "children": [
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "ends_with",
+            "value": ".pdf"
+          },
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "ends_with",
+            "value": ".PDF"
+          },
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "ends_with",
+            "value": ".jpg"
+          },
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "ends_with",
+            "value": ".jpeg"
+          },
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "ends_with",
+            "value": ".png"
+          },
+          {
+            "type": "condition",
+            "field": "attachment_name",
+            "operator": "ends_with",
+            "value": ".docx"
+          }
+        ]
+      },
+      "action": {
+        "save_attachment": true,
+        "route_to": "Purchase Management",
+        "tags": []
+      },
+      "matched_count": 0,
+      "last_matched": ""
+    }
+  ],
   "purchase_rules": [],
   "expense_rules": [],
   "team_expense_rules": [],

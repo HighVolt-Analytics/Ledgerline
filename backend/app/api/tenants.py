@@ -16,14 +16,14 @@ from app.schemas.institution_settings import (
 from app.schemas.onboarding import OnboardingStatusResponse, UpdateOnboardingRequest
 from app.schemas.org_ai_brief import OrgAiBriefResponse, UpdateOrgAiBriefRequest
 from app.schemas.tenant import CreateTenantRequest, TenantResponse
-from app.services.membership_service import ensure_membership, list_user_tenants
-from app.services.org_ai_brief_service import (
+from app.services.auth.membership_service import ensure_membership, list_user_tenants
+from app.services.tenant.org_ai_brief_service import (
     load_org_ai_brief,
     save_org_ai_brief,
     sync_org_legal_name_on_tenant_rename,
 )
 from app.schemas.chart_of_accounts import ChartOfAccountsResponse, UpdateChartOfAccountsRequest
-from app.services.chart_of_accounts_service import load_chart_of_accounts, save_chart_of_accounts
+from app.services.master_data.chart_of_accounts_service import load_chart_of_accounts, save_chart_of_accounts
 from app.tenant_settings import (
     default_institution_settings,
     institution_settings_view,

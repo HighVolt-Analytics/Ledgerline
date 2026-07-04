@@ -11,7 +11,7 @@ from app.schemas.master_data import (
     PendingVendorResponse,
     VendorMasterResponse,
 )
-from app.services.master_data_service import (
+from app.services.master_data.master_data_service import (
     create_pending_vendor,
     dismiss_pending_vendor,
     list_pending_vendors,

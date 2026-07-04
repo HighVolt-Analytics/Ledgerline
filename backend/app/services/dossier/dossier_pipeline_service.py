@@ -1,0 +1,1411 @@
+"""Build dossier pipeline from invoice state + audit trail.
+
+Stage order mirrors ``process_invoice`` in ``pipeline.py`` and the frontend
+``DOSSIER_PIPELINE_STAGES`` catalogue.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal
+
+from app.models.audit import AuditLog
+from app.models.invoice import Invoice, InvoiceStatus
+from app.schemas.dossier import (
+    DossierPipelineCheckResponse,
+    DossierPipelineEvidenceResponse,
+    DossierPipelineStepResponse,
+)
+from app.services.audit.audit_change_summary import summarize_audit_change
+from app.services.classification.document_type_catalog import ROUTE_SALES
+from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_VENDOR
+from app.services.invoice.pipeline_stages import (
+    _actor_name,
+    _is_after,
+    _latest_log,
+    _source_label,
+    _validation_results,
+)
+from app.services.integration.publish_service import is_published_from_audit_logs
+
+DossierStageState = Literal["pass", "fail", "waived", "pending"]
+
+_VAULT_ROUTE = "vault"
+
+
+def _is_vault_route(inv: Invoice) -> bool:
+    return (inv.route_target or "").strip().lower() == _VAULT_ROUTE
+
+
+STAGE_IDS: tuple[str, ...] = (
+    "ingest",
+    "duplicate",
+    "storage",
+    "ocr",
+    "quality",
+    "llm_classify",
+    "confidence_gate",
+    "extract",
+    "document_type",
+    "bundle",
+    "vendor_hold",
+    "validate",
+    "match",
+    "approve",
+    "map_gl",
+    "journal",
+    "reconcile",
+    "post",
+    "pay",
+    "archive",
+)
+
+_STAGE_LABELS = {
+    "ingest": "Ingest",
+    "duplicate": "Duplicate file check",
+    "storage": "Storage",
+    "ocr": "OCR",
+    "quality": "Image quality",
+    "llm_classify": "LLM classify",
+    "confidence_gate": "Confidence gate",
+    "extract": "Field extract",
+    "document_type": "Document type",
+    "bundle": "Supporting documents",
+    "vendor_hold": "Vendor hold",
+    "validate": "Validate",
+    "match": "Match",
+    "approve": "Approve",
+    "map_gl": "Map GL",
+    "journal": "Journal",
+    "reconcile": "Reconcile",
+    "post": "Post",
+    "pay": "Pay",
+    "archive": "Archive",
+}
+
+# Audit events → furthest stage index reached (sync with frontend DOSSIER_PIPELINE_BACKEND_MAP).
+_EVENT_STAGE: dict[str, int] = {}
+_EVENT_STAGE.update(
+    {
+        "email_ingested": 0,
+        "invoice_uploaded": 0,
+        "invoice_file_attached": 0,
+        "duplicate_skipped": 1,
+        "duplicate_in_progress": 1,
+        "duplicate_reingest_rejected": 1,
+        "storage_verified": 2,
+        "ocr_completed": 3,
+        "parsing_failed": 3,
+        "image_quality_gate_passed": 4,
+        "image_quality_gate_failed": 4,
+        "llm_classified": 5,
+        "classification_gate_passed": 6,
+        "classification_gate_failed": 6,
+        "field_confidence_evaluated": 7,
+        "parse_completed": 7,
+        "invoice_parsed": 7,
+        "document_classified": 8,
+        "classification_resolved": 8,
+        "playbook_evaluated": 9,
+        "vendor_registration_hold": 10,
+        "vendor_registration_cleared": 10,
+        "vendor_registration_waived": 10,
+        "vendor_registration_released": 10,
+        "validation_passed": 11,
+        "validation_failed": 11,
+        "validation_bypassed_after_human_approval": 11,
+        "routing_review_required": 11,
+        "three_way_match_evaluated": 12,
+        "purchase_variance_approved": 12,
+        "invoice_approved": 13,
+        "approval_required": 13,
+        "approval_requested": 13,
+        "team_expense_approval_required": 13,
+        "mapping_applied": 14,
+        "mapping_review_required": 14,
+        "reconciliation_halted": 16,
+        "reconciliation_skipped": 16,
+        "invoice_processed": 17,
+        "invoice_published_to_ledger": 17,
+        "purchase_document_processed": 17,
+        "vault_stored": 19,
+    }
+)
+
+_STATUS_FLOOR: dict[InvoiceStatus, int] = {
+    InvoiceStatus.PENDING: 0,
+    InvoiceStatus.PARSING: 7,
+    InvoiceStatus.VALIDATING: 11,
+    InvoiceStatus.MAPPING: 14,
+    InvoiceStatus.JOURNALING: 15,
+    InvoiceStatus.RECONCILING: 16,
+    InvoiceStatus.PROCESSED: 17,
+    InvoiceStatus.DUPLICATE_SKIPPED: 1,
+    InvoiceStatus.REJECTED: 0,
+}
+
+_REMEDIATION: dict[str, str] = {
+    "DUPLICATE_FILE": "Use the existing dossier or request a controlled re-ingest if the prior file was wrong.",
+    "PARSE_FAILED": "Re-upload a readable PDF or fix the stored file path, then reprocess.",
+    "IMAGE_QUALITY": "Resend a flat, well-lit scan or PDF — avoid angled phone photos.",
+    "CLASSIFICATION_GATE": "Confirm document type in the exception queue or adjust rule-book classifiers.",
+    "BUNDLE_INCOMPLETE": "Upload the missing mandatory bundle documents on the same linkage key.",
+    "LINKAGE_KEY_MISSING": "Extract or enter a valid PO number, then link PO and GRN supporting documents on that PO.",
+    "LINKAGE_KEY_MISSING_SALES": "Extract or enter a valid SO number, then link SO and delivery note supporting documents on that SO.",
+    "EXTRACTION_INCOMPLETE": "Capture or correct required invoice fields before posting.",
+    "VENDOR_HOLD": "Approve the vendor in Vendor Masters or clear the registration hold.",
+    "VENDOR_HOLD_SALES": "Approve the customer in Customer Masters or clear the registration hold.",
+    "VALIDATION_FAILED": "Correct the document or override failed validation rules in the exception queue.",
+    "ROUTING_REVIEW": "Confirm document type classification or adjust rule-book routing.",
+    "DOCUMENT_UNCLASSIFIED": "Classify the document type in Rule Book or reclassify from the exception queue.",
+    "MATCH_FAILED": "Link PO/GRN, approve variance, or update purchase register lines.",
+    "MATCH_FAILED_SALES": "Link SO/DN, approve variance, or update sales register lines.",
+    "APPROVAL_REQUIRED": "Route to the approver named in the playbook policy.",
+    "MAP_SUSPENSE": "Map to a real GL account in the rule book or approve suspense mapping.",
+    "RECON_HALTED": "Clear the daily reconciliation halt before posting.",
+    "PAY_FAILED": "Review payment details and re-release from the payments queue.",
+}
+
+
+def _fmt_at(at: datetime | None) -> str | None:
+    if at is None:
+        return None
+    return at.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _detail_from_log(log: AuditLog | None, *, fallback: str = "—") -> str:
+    if log is None:
+        return fallback
+    detail = log.detail if isinstance(log.detail, dict) else {}
+    summary = summarize_audit_change(log.event, detail)
+    return summary or fallback
+
+
+def _watermark(logs: list[AuditLog], inv: Invoice) -> int:
+    wm = _STATUS_FLOOR.get(inv.status, -1)
+    for entry in logs:
+        idx = _EVENT_STAGE.get(entry.event)
+        if idx is not None:
+            wm = max(wm, idx)
+    if inv.status == InvoiceStatus.EXCEPTION:
+        # Exception can stop anywhere — trust audit trail, not status floor.
+        wm = max(( _EVENT_STAGE.get(e.event, -1) for e in logs), default=-1)
+    return wm
+
+
+def _validation_checks(
+    inv: Invoice,
+    document_types: list | None = None,
+) -> list[DossierPipelineCheckResponse]:
+    from app.services.rule_book.validation_rule_catalog import effective_validation_rules, enabled_rule_codes
+    from app.services.master_data.vendor_registration_policy import resolve_document_type_definition
+
+    allowed: set[str] | None = None
+    if document_types:
+        definition = resolve_document_type_definition(
+            inv.document_type_code,
+            document_types=document_types,
+        )
+        if definition is not None:
+            allowed = enabled_rule_codes(effective_validation_rules(definition)) | {"VR02"}
+
+    checks: list[DossierPipelineCheckResponse] = []
+    for row in _validation_results(inv):
+        rule = str(row.get("rule", "")).strip() or "rule"
+        if (
+            allowed is not None
+            and rule not in allowed
+            and not rule.startswith("VR-PB")
+            and not rule.startswith("VR-TE")
+        ):
+            continue
+        passed = bool(row.get("passed"))
+        skipped = bool(row.get("skipped"))
+        state: str = "skipped" if skipped else "pass" if passed else "fail"
+        message = str(row.get("message", rule)).strip() or rule
+        checks.append(
+            DossierPipelineCheckResponse(
+                id=rule.lower(),
+                label=message,
+                state=state,
+                rule_ref=rule,
+                detail=None if passed or skipped else message,
+            )
+        )
+    return checks
+
+
+def _playbook_detail_dict(detail_dict: dict[str, object]) -> dict[str, object]:
+    nested = detail_dict.get("playbook")
+    if isinstance(nested, dict):
+        merged = {**nested, **{k: v for k, v in detail_dict.items() if k != "playbook"}}
+        return merged
+    return detail_dict
+
+
+def _bundle_checks(detail: dict[str, object]) -> list[DossierPipelineCheckResponse]:
+    checks: list[DossierPipelineCheckResponse] = []
+    merged = _playbook_detail_dict(detail)
+    book = str(merged.get("linkage_book") or "purchase").strip().lower()
+    ref_label = "SO" if book == "sales" else "PO"
+    labels = merged.get("missing_bundle_mandatory_labels")
+    label_map = labels if isinstance(labels, dict) else {}
+    missing = merged.get("missing_bundle_mandatory") or []
+    if isinstance(missing, list):
+        for code in missing:
+            token = str(code).strip().upper()
+            if not token:
+                continue
+            title = str(label_map.get(token) or label_map.get(str(code)) or token)
+            checks.append(
+                DossierPipelineCheckResponse(
+                    id=f"bundle-{token.lower()}",
+                    label=f"Required: {title}",
+                    state="fail",
+                    rule_ref="VR-PB02",
+                    detail=f"{title} ({token}) not on file for this {ref_label}",
+                )
+            )
+    missing_fields = merged.get("missing_extraction_fields") or []
+    if isinstance(missing_fields, list):
+        for field in missing_fields:
+            token = str(field).strip()
+            if not token:
+                continue
+            checks.append(
+                DossierPipelineCheckResponse(
+                    id=f"extract-{token}",
+                    label=f"Required field: {token}",
+                    state="fail",
+                    rule_ref="VR03",
+                    detail=f"{token} not captured",
+                )
+            )
+    missing_optional = merged.get("missing_optional_extraction_fields") or []
+    if isinstance(missing_optional, list):
+        for field in missing_optional:
+            token = str(field).strip()
+            if not token:
+                continue
+            checks.append(
+                DossierPipelineCheckResponse(
+                    id=f"extract-opt-{token}",
+                    label=f"Optional field: {token}",
+                    state="warn",
+                    rule_ref="VR-PB01",
+                    detail=f"{token} not captured",
+                )
+            )
+    if merged.get("linkage_key_missing"):
+        checks.insert(
+            0,
+            DossierPipelineCheckResponse(
+                id=f"linkage-{ref_label.lower()}",
+                label=f"{ref_label} reference",
+                state="fail",
+                rule_ref="VR-PB02",
+                detail=f"Valid {ref_label} reference required to link supporting documents",
+            ),
+        )
+    if not checks and not merged.get("blocks_posting"):
+        checks.append(
+            DossierPipelineCheckResponse(
+                id="bundle-ok",
+                label="Supporting documents satisfied",
+                state="pass",
+                rule_ref="VR-PB01",
+            )
+        )
+    return checks
+
+
+def _mapping_checks(detail: dict[str, object], account: str) -> list[DossierPipelineCheckResponse]:
+    rule_type = str(detail.get("rule_type") or "").strip()
+    match_reason = str(detail.get("match_reason") or "").strip()
+    checks = [
+        DossierPipelineCheckResponse(
+            id="gl-rule",
+            label="Purchase rule matched" if rule_type else "GL mapping applied",
+            state="pass",
+            rule_ref=rule_type or "mapping_applied",
+            detail=match_reason or None,
+        ),
+        DossierPipelineCheckResponse(
+            id="gl-acct",
+            label="GL account resolved",
+            state="pass" if account and "suspense" not in account.lower() else "fail",
+            rule_ref="mapping_applied",
+            expected="Not suspense",
+            actual=account or "—",
+        ),
+    ]
+    return checks
+
+
+def _routing_review_detail(log: AuditLog | None) -> dict[str, object]:
+    if log is None or not isinstance(log.detail, dict):
+        return {}
+    return log.detail
+
+
+def _routing_review_gate(log: AuditLog | None) -> str:
+    return str(_routing_review_detail(log).get("gate") or "").strip().lower()
+
+
+def classification_review_pending(logs: list[AuditLog]) -> bool:
+    """True when classify stage is blocked pending human DT confirmation."""
+    return _classification_routing_review(logs) is not None
+
+
+def _classification_routing_review(logs: list[AuditLog]) -> AuditLog | None:
+    routing = _latest_log(logs, "routing_review_required")
+    if routing is None:
+        return None
+    resolved = _latest_log(logs, "classification_resolved")
+    if resolved and resolved.created_at >= routing.created_at:
+        return None
+    validate_pass = _latest_log(logs, "validation_passed")
+    if validate_pass and validate_pass.created_at > routing.created_at:
+        return None
+    gate = _routing_review_gate(routing)
+    detail = _routing_review_detail(routing)
+    if gate == "classification":
+        return routing
+    if gate == "playbook":
+        return None
+    if detail.get("no_classifier_match"):
+        return routing
+    if gate == "" and validate_pass is None:
+        return routing
+    return None
+
+
+def _playbook_routing_review(logs: list[AuditLog]) -> AuditLog | None:
+    routing = _latest_log(logs, "routing_review_required")
+    if routing is None:
+        return None
+    if _routing_review_gate(routing) != "playbook":
+        return None
+    validate_pass = _latest_log(logs, "validation_passed")
+    if validate_pass and validate_pass.created_at > routing.created_at:
+        return None
+    return routing
+
+
+def _is_sales_route(inv: Invoice) -> bool:
+    return (inv.route_target or "").strip() == ROUTE_SALES
+
+
+def _remediation_for(
+    code: str | None,
+    inv: Invoice,
+    fallback: str | None = None,
+) -> str | None:
+    if not code:
+        return fallback
+    if _is_sales_route(inv):
+        sales_key = f"{code}_SALES"
+        if sales_key in _REMEDIATION:
+            return _REMEDIATION[sales_key]
+    return _REMEDIATION.get(code, fallback)
+
+
+def _confidence_label(value: float | int | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    pct = int(round(num * 100)) if num <= 1 else int(round(num))
+    return f"{pct}%"
+
+
+def _step(
+    stage_id: str,
+    *,
+    state: DossierStageState,
+    detail: str,
+    at: datetime | None = None,
+    actor: str | None = None,
+    exception_code: str | None = None,
+    failure_reason: str | None = None,
+    remediation: str | None = None,
+    checks: list[DossierPipelineCheckResponse] | None = None,
+    evidence: list[DossierPipelineEvidenceResponse] | None = None,
+) -> DossierPipelineStepResponse:
+    return DossierPipelineStepResponse(
+        stage_id=stage_id,
+        state=state,
+        detail=detail,
+        at=_fmt_at(at),
+        actor=actor,
+        exception_code=exception_code,
+        failure_reason=failure_reason,
+        remediation=remediation,
+        checks=checks or [],
+        evidence=evidence or [],
+    )
+
+
+def _resolve_ingest(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    log = _latest_log(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
+    if log:
+        return _step(
+            "ingest",
+            state="pass",
+            detail=_detail_from_log(log, fallback=f"{_source_label(inv)} captured"),
+            at=log.created_at,
+            actor=_actor_name(log.detail if isinstance(log.detail, dict) else None),
+        )
+    if inv.created_at or wm >= 0:
+        return _step(
+            "ingest",
+            state="pass",
+            detail=f"{_source_label(inv)} · captured",
+            at=inv.created_at,
+        )
+    return _step("ingest", state="pending", detail="—")
+
+
+def _resolve_duplicate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    dup_log = _latest_log(
+        logs, "duplicate_skipped", "duplicate_in_progress", "duplicate_reingest_rejected"
+    )
+    if inv.status == InvoiceStatus.DUPLICATE_SKIPPED or (
+        dup_log and dup_log.event == "duplicate_skipped"
+    ):
+        reason = _detail_from_log(dup_log, fallback="Duplicate file skipped")
+        return _step(
+            "duplicate",
+            state="fail",
+            detail=reason,
+            at=dup_log.created_at if dup_log else inv.created_at,
+            exception_code="DUPLICATE_FILE",
+            failure_reason=reason,
+            remediation=_REMEDIATION["DUPLICATE_FILE"],
+        )
+    if dup_log and dup_log.event == "duplicate_in_progress":
+        return _step(
+            "duplicate",
+            state="pending",
+            detail=_detail_from_log(dup_log),
+            at=dup_log.created_at,
+        )
+    if wm >= 3:
+        ingest_log = _latest_log(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
+        return _step(
+            "duplicate",
+            state="pass",
+            detail="File hash unique",
+            at=ingest_log.created_at if ingest_log else inv.created_at,
+        )
+    return _step("duplicate", state="pending", detail="—")
+
+
+def _fail_reason(log: AuditLog | None) -> str:
+    if log is None or not isinstance(log.detail, dict):
+        return ""
+    return str(log.detail.get("reason") or "").strip().lower()
+
+
+def _legacy_capture_complete(logs: list[AuditLog], wm: int) -> bool:
+    return wm >= 7 or _latest_log(logs, "parse_completed", "invoice_parsed") is not None
+
+
+def _provider_detail(log: AuditLog | None) -> str:
+    if log and isinstance(log.detail, dict):
+        provider = log.detail.get("document_ai_provider") or log.detail.get("source")
+        if provider:
+            return str(provider)
+    return "Document AI"
+
+
+def _resolve_storage(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    storage_log = _latest_log(logs, "storage_verified")
+    parse_completed = _latest_log(logs, "parse_completed", "invoice_parsed")
+    parse_failed = _latest_log(logs, "parsing_failed")
+    if parse_failed and _fail_reason(parse_failed) in {"stored_file_missing", "no_stored_path"}:
+        stale_failure = parse_completed and (
+            parse_completed.created_at >= parse_failed.created_at
+            or bool(inv.vendor or inv.invoice_no or (inv.document_type_code or "").strip())
+        )
+        if not stale_failure and (
+            storage_log is None or parse_failed.created_at >= storage_log.created_at
+        ):
+            reason = _detail_from_log(parse_failed, fallback="Stored file missing")
+            return _step(
+                "storage",
+                state="fail",
+                detail=reason,
+                at=parse_failed.created_at,
+                exception_code="PARSE_FAILED",
+                failure_reason=reason,
+                remediation=_REMEDIATION["PARSE_FAILED"],
+            )
+    if storage_log:
+        return _step(
+            "storage",
+            state="pass",
+            detail=_detail_from_log(storage_log, fallback="storage_verified"),
+            at=storage_log.created_at,
+        )
+    if _legacy_capture_complete(logs, wm):
+        return _step("storage", state="pass", detail="storage_verified · legacy run")
+    return _step("storage", state="pending", detail="—")
+
+
+def _resolve_ocr(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    ocr_log = _latest_log(logs, "ocr_completed")
+    parse_completed = _latest_log(logs, "parse_completed", "invoice_parsed")
+    parse_failed = _latest_log(logs, "parsing_failed")
+
+    if parse_failed:
+        reason_key = _fail_reason(parse_failed)
+        stale_failure = parse_completed and (
+            parse_completed.created_at >= parse_failed.created_at
+            or bool(inv.vendor or inv.invoice_no or (inv.document_type_code or "").strip())
+        )
+        if not stale_failure and reason_key in {"ocr_failed", "stored_file_missing", "no_stored_path"}:
+            reason = _detail_from_log(parse_failed, fallback="OCR failed")
+            return _step(
+                "ocr",
+                state="fail",
+                detail=reason,
+                at=parse_failed.created_at,
+                exception_code="PARSE_FAILED",
+                failure_reason=reason,
+                remediation=_REMEDIATION["PARSE_FAILED"],
+            )
+
+    if ocr_log:
+        detail_dict = ocr_log.detail if isinstance(ocr_log.detail, dict) else {}
+        conf = detail_dict.get("confidence", "high")
+        text_len = detail_dict.get("text_length")
+        detail = _detail_from_log(ocr_log, fallback="ocr_completed")
+        if text_len is not None:
+            detail = f"{detail} · {text_len} chars"
+        elif conf:
+            detail = f"{detail} · {conf} confidence"
+        return _step(
+            "ocr",
+            state="pass",
+            detail=detail,
+            at=ocr_log.created_at,
+            actor=_actor_name(detail_dict),
+        )
+    if parse_completed or _legacy_capture_complete(logs, wm):
+        return _step("ocr", state="pass", detail="ocr_completed · legacy run")
+    return _step("ocr", state="pending", detail="—")
+
+
+def _resolve_quality(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    quality_pass = _latest_log(logs, "image_quality_gate_passed")
+    quality_fail = _latest_log(logs, "image_quality_gate_failed")
+    quality_log = quality_pass or quality_fail
+    if quality_log:
+        passed = quality_log.event == "image_quality_gate_passed"
+        detail_dict = quality_log.detail if isinstance(quality_log.detail, dict) else {}
+        text_len = detail_dict.get("text_length")
+        detail = _detail_from_log(
+            quality_log,
+            fallback="Image quality OK" if passed else "Poor image or sparse OCR",
+        )
+        if passed and text_len is not None:
+            detail = f"OCR readable · {text_len} chars"
+        if not passed:
+            return _step(
+                "quality",
+                state="fail",
+                detail=detail,
+                at=quality_log.created_at,
+                exception_code="IMAGE_QUALITY",
+                failure_reason=detail,
+                remediation=_REMEDIATION["IMAGE_QUALITY"],
+            )
+        return _step("quality", state="pass", detail=detail, at=quality_log.created_at)
+    if _legacy_capture_complete(logs, wm):
+        return _step("quality", state="pass", detail="image_quality_gate_passed · legacy run")
+    return _step("quality", state="pending", detail="—")
+
+
+def _resolve_llm_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    classify_log = _latest_log(logs, "llm_classified")
+    if classify_log:
+        detail_dict = classify_log.detail if isinstance(classify_log.detail, dict) else {}
+        dt = detail_dict.get("llm_suggested_dt") or inv.llm_suggested_dt or "—"
+        conf = _confidence_label(detail_dict.get("llm_confidence") or inv.llm_confidence)
+        detail = _detail_from_log(classify_log, fallback=f"llm_classified · {dt}")
+        if conf:
+            detail = f"{detail} · {conf}"
+        return _step("llm_classify", state="pass", detail=detail, at=classify_log.created_at)
+    if inv.llm_suggested_dt and wm >= 5:
+        conf = _confidence_label(inv.llm_confidence)
+        detail = f"llm_classified · {inv.llm_suggested_dt}"
+        if conf:
+            detail = f"{detail} · {conf}"
+        return _step("llm_classify", state="pass", detail=detail)
+    if _legacy_capture_complete(logs, wm) and (inv.document_type_code or inv.llm_suggested_dt):
+        return _step("llm_classify", state="pass", detail="llm_classified · legacy run")
+    return _step("llm_classify", state="pending", detail="—")
+
+
+def _resolve_confidence_gate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    gate_pass = _latest_log(logs, "classification_gate_passed")
+    gate_fail = _latest_log(logs, "classification_gate_failed")
+    classification_review = _classification_routing_review(logs)
+    resolved = _latest_log(logs, "classification_resolved")
+
+    if classification_review:
+        detail = _detail_from_log(classification_review, fallback="Awaiting human classification")
+        detail_dict = _routing_review_detail(classification_review)
+        reason = str(detail_dict.get("reason") or detail).strip() or "Awaiting human classification"
+        return _step(
+            "confidence_gate",
+            state="fail",
+            detail=reason,
+            at=classification_review.created_at,
+            exception_code="DOCUMENT_UNCLASSIFIED",
+            failure_reason=reason,
+            remediation=_REMEDIATION["DOCUMENT_UNCLASSIFIED"],
+        )
+
+    if resolved and (gate_fail is None or _is_after(resolved, gate_fail)):
+        detail_dict = resolved.detail if isinstance(resolved.detail, dict) else {}
+        dt = str(detail_dict.get("confirmed_dt") or inv.document_type_code or "—").strip() or "—"
+        return _step(
+            "confidence_gate",
+            state="pass",
+            detail=f"Human confirmed · {dt}",
+            at=resolved.created_at,
+        )
+
+    gate_log: AuditLog | None
+    if gate_pass and gate_fail:
+        gate_log = gate_pass if _is_after(gate_pass, gate_fail) else gate_fail
+    else:
+        gate_log = gate_pass or gate_fail
+
+    if gate_log:
+        passed = gate_log.event == "classification_gate_passed"
+        detail_dict = gate_log.detail if isinstance(gate_log.detail, dict) else {}
+        conf = _confidence_label(detail_dict.get("llm_confidence") or detail_dict.get("confirmed_confidence"))
+        detail = _detail_from_log(
+            gate_log,
+            fallback="classification_gate_passed" if passed else "classification_gate_failed",
+        )
+        if passed and conf:
+            detail = f"Auto-route · {conf}"
+        if not passed:
+            reasons = detail_dict.get("review_reasons") or []
+            failure = ", ".join(str(r) for r in reasons) if reasons else detail
+            return _step(
+                "confidence_gate",
+                state="fail",
+                detail=detail,
+                at=gate_log.created_at,
+                exception_code="CLASSIFICATION_GATE",
+                failure_reason=failure,
+                remediation=_REMEDIATION["CLASSIFICATION_GATE"],
+            )
+        return _step("confidence_gate", state="pass", detail=detail, at=gate_log.created_at)
+
+    if _legacy_capture_complete(logs, wm):
+        return _step("confidence_gate", state="pass", detail="classification_gate_passed · legacy run")
+    return _step("confidence_gate", state="pending", detail="—")
+
+
+def _resolve_document_type(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    classify_log = _latest_log(logs, "document_classified")
+    code = (inv.document_type_code or "").strip()
+    if classify_log:
+        detail = _detail_from_log(
+            classify_log,
+            fallback=f"document_classified · {code}" if code else "document_classified",
+        )
+        return _step("document_type", state="pass", detail=detail, at=classify_log.created_at)
+    if code and wm >= 8:
+        conf = _confidence_label(inv.document_type_confidence)
+        detail = f"document_classified · {code}"
+        if conf:
+            detail = f"{detail} · conf {conf}"
+        return _step("document_type", state="pass", detail=detail)
+    return _step("document_type", state="pending", detail="—")
+
+
+def _resolve_extract(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    parse_completed = _latest_log(logs, "parse_completed", "invoice_parsed")
+    parse_failed = _latest_log(logs, "parsing_failed")
+    parse_log = parse_completed
+    if parse_failed and parse_completed:
+        if parse_completed.created_at >= parse_failed.created_at:
+            parse_log = parse_completed
+        elif (inv.vendor or inv.invoice_no or (inv.document_type_code or "").strip()):
+            parse_log = parse_completed
+        else:
+            parse_log = parse_failed
+    elif parse_failed and not parse_completed:
+        parse_log = parse_failed
+
+    if parse_log and parse_log.event == "parsing_failed":
+        reason_key = _fail_reason(parse_log)
+        if reason_key not in {"ocr_failed", "stored_file_missing", "no_stored_path"}:
+            reason = _detail_from_log(parse_log, fallback="Could not extract fields")
+            return _step(
+                "extract",
+                state="fail",
+                detail=reason,
+                at=parse_log.created_at,
+                exception_code="PARSE_FAILED",
+                failure_reason=reason,
+                remediation=_REMEDIATION["PARSE_FAILED"],
+            )
+
+    if parse_log and parse_log.event != "parsing_failed":
+        detail_dict = parse_log.detail if isinstance(parse_log.detail, dict) else {}
+        conf = _confidence_label(detail_dict.get("confidence"))
+        detail = _detail_from_log(parse_log, fallback="parse_completed")
+        if conf:
+            detail = f"{detail} · {conf} confidence"
+        return _step(
+            "extract",
+            state="pass",
+            detail=detail,
+            at=parse_log.created_at,
+            actor=_actor_name(detail_dict),
+        )
+    if wm >= 8 and (inv.vendor or inv.invoice_no):
+        return _step(
+            "extract",
+            state="pass",
+            detail="Fields extracted",
+            at=inv.created_at,
+        )
+    return _step("extract", state="pending", detail="—")
+
+
+def _resolve_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    """Legacy alias — kept for imports; maps to document_type."""
+    return _resolve_document_type(inv, logs, wm)
+
+
+def _resolve_bundle(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    from app.services.classification.document_type_playbook_service import resolve_playbook_exception
+
+    playbook_review = _playbook_routing_review(logs)
+    if playbook_review:
+        detail_dict = _routing_review_detail(playbook_review)
+        merged = _playbook_detail_dict(detail_dict)
+        reason = _detail_from_log(playbook_review, fallback="Playbook blocks posting")
+        exc_code, failure, remediation = resolve_playbook_exception(merged)
+        return _step(
+            "bundle",
+            state="fail",
+            detail=reason,
+            at=playbook_review.created_at,
+            exception_code=exc_code,
+            failure_reason=failure,
+            remediation=_remediation_for(exc_code, inv, remediation),
+            checks=_bundle_checks(merged),
+        )
+
+    bundle_log = _latest_log(logs, "playbook_evaluated")
+    if bundle_log:
+        detail_dict = bundle_log.detail if isinstance(bundle_log.detail, dict) else {}
+        merged = _playbook_detail_dict(detail_dict)
+        blocks = bool(merged.get("blocks_posting"))
+        state: DossierStageState = "fail" if blocks else "pass"
+        detail = _detail_from_log(bundle_log, fallback="playbook_evaluated")
+        checks = _bundle_checks(merged)
+        failure = None
+        remediation = None
+        exception_code = None
+        if state == "fail":
+            exception_code, failure, remediation = resolve_playbook_exception(merged)
+            remediation = _remediation_for(exception_code, inv, remediation)
+        return _step(
+            "bundle",
+            state=state,
+            detail=detail,
+            at=bundle_log.created_at,
+            exception_code=exception_code,
+            failure_reason=failure,
+            remediation=remediation,
+            checks=checks,
+        )
+    if wm >= 9:
+        return _step("bundle", state="pass", detail="playbook_evaluated")
+    return _step("bundle", state="pending", detail="—")
+
+
+def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    hold_log = _latest_log(logs, "vendor_registration_hold")
+    cleared_log = _latest_log(logs, "vendor_registration_cleared", "vendor_registration_released")
+    waived_log = _latest_log(logs, "vendor_registration_waived")
+    validate_pass = _latest_log(logs, "validation_passed")
+
+    if inv.evaluation_status == EVAL_PENDING_VENDOR:
+        reason = "Vendor not registered — pending vendor registration"
+        hold_at = hold_log.created_at if hold_log else None
+        return _step(
+            "vendor_hold",
+            state="fail",
+            detail=reason,
+            at=hold_at,
+            exception_code="VENDOR_HOLD",
+            failure_reason=reason,
+            remediation=_remediation_for("VENDOR_HOLD", inv),
+        )
+
+    if hold_log and (
+        inv.status == InvoiceStatus.EXCEPTION
+        or inv.evaluation_status == EVAL_PENDING_VENDOR
+        or validate_pass is None
+        or hold_log.created_at > validate_pass.created_at
+    ):
+        reason = _detail_from_log(hold_log, fallback="vendor_registration_hold")
+        return _step(
+            "vendor_hold",
+            state="fail",
+            detail=reason,
+            at=hold_log.created_at,
+            exception_code="VENDOR_HOLD",
+            failure_reason=reason,
+            remediation=_remediation_for("VENDOR_HOLD", inv),
+        )
+
+    if waived_log:
+        reason = _detail_from_log(waived_log, fallback="vendor_registration_waived")
+        return _step(
+            "vendor_hold",
+            state="waived",
+            detail=reason,
+            at=waived_log.created_at,
+        )
+
+    if cleared_log:
+        reason = _detail_from_log(cleared_log, fallback="vendor_registration_cleared")
+        return _step(
+            "vendor_hold",
+            state="pass",
+            detail=reason,
+            at=cleared_log.created_at,
+        )
+
+    if wm >= 11 and cleared_log is None and waived_log is None and hold_log is None:
+        if inv.evaluation_status == EVAL_PENDING_VENDOR:
+            return _step("vendor_hold", state="pending", detail="—")
+        return _step(
+            "vendor_hold",
+            state="pass",
+            detail="Vendor approved — no hold (legacy run, no vendor audit)",
+            at=None,
+        )
+    return _step("vendor_hold", state="pending", detail="—")
+
+
+def _resolve_validate(
+    inv: Invoice,
+    logs: list[AuditLog],
+    wm: int,
+    document_types: list | None = None,
+) -> DossierPipelineStepResponse:
+    checks = _validation_checks(inv, document_types)
+    validate_pass = _latest_log(logs, "validation_passed")
+    validate_fail = _latest_log(logs, "validation_failed")
+    routing_review = _latest_log(logs, "routing_review_required")
+    failed_checks = [c for c in checks if c.state == "fail"]
+
+    if routing_review and _classification_routing_review(logs) is None and _playbook_routing_review(logs) is None and (
+        inv.status == InvoiceStatus.EXCEPTION
+        or validate_pass is None
+        or routing_review.created_at >= (validate_pass.created_at if validate_pass else routing_review.created_at)
+    ):
+        reason = _detail_from_log(routing_review, fallback="routing_review_required")
+        return _step(
+            "validate",
+            state="fail",
+            detail=reason,
+            at=routing_review.created_at,
+            exception_code="ROUTING_REVIEW",
+            failure_reason=reason,
+            remediation=_REMEDIATION["ROUTING_REVIEW"],
+            checks=checks,
+        )
+
+    validation_passed_latest = validate_pass is not None and (
+        validate_fail is None or validate_pass.created_at >= validate_fail.created_at
+    )
+    bypass_log = _latest_log(logs, "validation_bypassed_after_human_approval")
+
+    if failed_checks:
+        reason = failed_checks[0].label
+        if bypass_log is not None and validation_passed_latest:
+            detail = _detail_from_log(validate_pass, fallback="validation_passed")
+            detail = (
+                f"{detail} — human approval waived {len(failed_checks)} failed rule(s); "
+                f"first: {reason}"
+            )
+            return _step(
+                "validate",
+                state="waived",
+                detail=detail,
+                at=validate_pass.created_at if validate_pass else bypass_log.created_at,
+                exception_code="VALIDATION_FAILED",
+                failure_reason=reason,
+                remediation=_REMEDIATION["VALIDATION_FAILED"],
+                checks=checks,
+            )
+        return _step(
+            "validate",
+            state="fail",
+            detail=reason,
+            at=validate_fail.created_at if validate_fail else None,
+            exception_code="VALIDATION_FAILED",
+            failure_reason=reason,
+            remediation=_REMEDIATION["VALIDATION_FAILED"],
+            checks=checks,
+        )
+
+    if validation_passed_latest:
+        detail = _detail_from_log(validate_pass, fallback="validation_passed")
+        if bypass_log is not None:
+            detail = f"{detail} — human approval bypassed non-vendor validation rules"
+        return _step(
+            "validate",
+            state="pass",
+            detail=detail,
+            at=validate_pass.created_at,
+            checks=checks,
+        )
+
+    if validate_fail and (validate_pass is None or validate_fail.created_at >= validate_pass.created_at):
+        reason = _detail_from_log(validate_fail)
+        return _step(
+            "validate",
+            state="fail",
+            detail=reason,
+            at=validate_fail.created_at,
+            exception_code="VALIDATION_FAILED",
+            failure_reason=reason,
+            remediation=_REMEDIATION["VALIDATION_FAILED"],
+            checks=checks,
+        )
+
+    if validate_pass or checks or wm >= 11:
+        return _step(
+            "validate",
+            state="pass",
+            detail=_detail_from_log(validate_pass, fallback="validation_passed"),
+            at=validate_pass.created_at if validate_pass else None,
+            checks=checks,
+        )
+    return _step("validate", state="pending", detail="—", checks=checks)
+
+
+def _resolve_match(
+    inv: Invoice,
+    logs: list[AuditLog],
+    wm: int,
+    document_types: list | None = None,
+) -> DossierPipelineStepResponse:
+    checks = _validation_checks(inv, document_types)
+    vr15_fail = any(c.state == "fail" and c.rule_ref == "VR15" for c in checks)
+    match_log = _latest_log(logs, "three_way_match_evaluated")
+    variance_log = _latest_log(logs, "purchase_variance_approved")
+
+    if match_log:
+        detail = _detail_from_log(match_log, fallback="three_way_match_evaluated")
+        detail_dict = match_log.detail if isinstance(match_log.detail, dict) else {}
+        status = str(detail_dict.get("status") or detail_dict.get("match_status") or "").lower()
+        state: DossierStageState = "fail" if vr15_fail or any(
+            token in status for token in ("variance", "no grn", "routed")
+        ) else "pass"
+        failure = None
+        remediation = None
+        if state == "fail":
+            failure = detail
+            remediation = _remediation_for("MATCH_FAILED", inv)
+        return _step(
+            "match",
+            state=state,
+            detail=detail,
+            at=match_log.created_at,
+            exception_code="MATCH_FAILED" if state == "fail" else None,
+            failure_reason=failure,
+            remediation=remediation,
+        )
+
+    if variance_log:
+        return _step(
+            "match",
+            state="pass",
+            detail=_detail_from_log(variance_log, fallback="purchase_variance_approved"),
+            at=variance_log.created_at,
+        )
+
+    if vr15_fail:
+        return _step(
+            "match",
+            state="fail",
+            detail="VR15 three-way match failed",
+            at=match_log.created_at if match_log else None,
+            exception_code="MATCH_FAILED",
+            failure_reason="VR15 three-way match failed",
+            remediation=_remediation_for("MATCH_FAILED", inv),
+        )
+
+    from app.services.sales.so_reference import resolve_so_reference_from_invoice
+
+    po_ref = (inv.po_reference or "").strip()
+    if wm >= 13:
+        if _is_sales_route(inv):
+            if not resolve_so_reference_from_invoice(inv):
+                return _step("match", state="waived", detail="No SO reference — match not required")
+        elif not po_ref:
+            return _step("match", state="waived", detail="No PO reference — match not required")
+    return _step("match", state="pending", detail="—")
+
+
+def _resolve_approve(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    approved_log = _latest_log(logs, "invoice_approved")
+    approval_required = _latest_log(logs, "approval_required", "approval_requested", "team_expense_approval_required")
+
+    if approved_log:
+        actor = _actor_name(approved_log.detail if isinstance(approved_log.detail, dict) else None)
+        detail = _detail_from_log(approved_log, fallback="Approved")
+        if actor and actor not in detail:
+            detail = f"Approved by {actor}"
+        return _step(
+            "approve",
+            state="pass",
+            detail=detail,
+            at=approved_log.created_at,
+            actor=actor,
+        )
+
+    if approval_required and inv.status == InvoiceStatus.EXCEPTION:
+        detail_dict = approval_required.detail if isinstance(approval_required.detail, dict) else {}
+        reason = str(detail_dict.get("reason", "")).strip() or _detail_from_log(approval_required)
+        return _step(
+            "approve",
+            state="pending",
+            detail=reason or "Waiting for approver",
+            at=approval_required.created_at,
+            remediation=_REMEDIATION["APPROVAL_REQUIRED"],
+        )
+
+    if wm >= 13 or inv.status == InvoiceStatus.PROCESSED:
+        return _step("approve", state="pass", detail="Touchless — within policy")
+    return _step("approve", state="pending", detail="—")
+
+
+def _resolve_map_gl(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("map_gl", state="waived", detail="Not required — vault route")
+
+    map_log = _latest_log(logs, "mapping_applied")
+    map_review = _latest_log(logs, "mapping_review_required")
+    account = (inv.account_name or "").strip()
+    suspense = "suspense" in account.lower() if account else False
+
+    if map_review and suspense and inv.status == InvoiceStatus.EXCEPTION:
+        reason = _detail_from_log(map_review, fallback="mapping_review_required")
+        detail_dict = map_review.detail if isinstance(map_review.detail, dict) else {}
+        return _step(
+            "map_gl",
+            state="fail",
+            detail=reason,
+            at=map_review.created_at,
+            exception_code="MAP_SUSPENSE",
+            failure_reason=reason,
+            remediation=_REMEDIATION["MAP_SUSPENSE"],
+            checks=_mapping_checks(detail_dict, account),
+        )
+
+    if map_log or account:
+        detail_dict = map_log.detail if map_log and isinstance(map_log.detail, dict) else {}
+        detail = (
+            _detail_from_log(map_log, fallback=f"mapping_applied · {account or 'GL mapped'}")
+            if map_log
+            else f"mapping_applied · {account or 'GL mapped'}"
+        )
+        evidence = []
+        if inv.account_code:
+            evidence.append(DossierPipelineEvidenceResponse(label="Account", ref=str(inv.account_code)))
+        if inv.route_target:
+            evidence.append(DossierPipelineEvidenceResponse(label="Route", ref=str(inv.route_target)))
+        return _step(
+            "map_gl",
+            state="pass",
+            detail=detail,
+            at=map_log.created_at if map_log else None,
+            checks=_mapping_checks(detail_dict, account) if detail_dict or account else [],
+            evidence=evidence,
+        )
+
+    if wm >= 14:
+        return _step("map_gl", state="pending", detail="Awaiting mapping")
+    return _step("map_gl", state="pending", detail="—")
+
+
+def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("journal", state="waived", detail="Not required — vault route")
+
+    processed = _latest_log(logs, "invoice_processed", "purchase_document_processed")
+    if inv.status in (InvoiceStatus.JOURNALING, InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 15:
+        at = processed.created_at if processed else None
+        return _step(
+            "journal",
+            state="pass",
+            detail="generate_entries — balanced journal",
+            at=at,
+        )
+    return _step("journal", state="pending", detail="—")
+
+
+def _resolve_reconcile(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("reconcile", state="waived", detail="Not required — vault route")
+
+    recon_halt = _latest_log(logs, "reconciliation_halted")
+    recon_skip = _latest_log(logs, "reconciliation_skipped")
+    if recon_halt and inv.status == InvoiceStatus.EXCEPTION:
+        reason = _detail_from_log(recon_halt, fallback="reconciliation_halted")
+        return _step(
+            "reconcile",
+            state="fail",
+            detail=reason,
+            at=recon_halt.created_at,
+            exception_code="RECON_HALTED",
+            failure_reason=reason,
+            remediation=_REMEDIATION["RECON_HALTED"],
+        )
+    if recon_skip or inv.status in (InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 16:
+        return _step(
+            "reconcile",
+            state="pass",
+            detail=_detail_from_log(recon_skip, fallback="reconcile_daily cleared"),
+            at=recon_skip.created_at if recon_skip else None,
+        )
+    return _step("reconcile", state="pending", detail="—")
+
+
+def _resolve_post(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("post", state="waived", detail="Not required — vault route")
+
+    doc_type = (inv.purchase_document_type or "").strip().lower()
+    if doc_type in ("po", "grn"):
+        purchase_log = _latest_log(logs, "purchase_document_processed")
+        if purchase_log or inv.status == InvoiceStatus.PROCESSED:
+            return _step(
+                "post",
+                state="pass",
+                detail=_detail_from_log(purchase_log, fallback="Supporting document processed"),
+                at=purchase_log.created_at if purchase_log else None,
+            )
+        return _step("post", state="pending", detail="—")
+
+    if is_published_from_audit_logs(logs):
+        published_log = _latest_log(logs, "invoice_published_to_ledger")
+        return _step(
+            "post",
+            state="pass",
+            detail=_detail_from_log(published_log, fallback="invoice_published_to_ledger"),
+            at=published_log.created_at if published_log else None,
+            evidence=[DossierPipelineEvidenceResponse(label="Posted", ref="yes")],
+        )
+
+    processed_log = _latest_log(logs, "invoice_processed")
+    if processed_log or inv.status == InvoiceStatus.PROCESSED or wm >= 17:
+        return _step(
+            "post",
+            state="pending",
+            detail="Ready to post to ledger",
+            at=processed_log.created_at if processed_log else None,
+        )
+    return _step("post", state="pending", detail="—")
+
+
+def _resolve_archive(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    vault_log = _latest_log(logs, "vault_stored")
+    if vault_log:
+        return _step(
+            "archive",
+            state="pass",
+            detail=_detail_from_log(vault_log, fallback="vault_stored"),
+            at=vault_log.created_at,
+        )
+    if (inv.route_target or "").strip().lower() == "vault" and inv.status == InvoiceStatus.PROCESSED:
+        return _step("archive", state="pass", detail="vault_stored")
+    return _step("archive", state="pending", detail="—")
+
+
+def _resolve_pay(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    if _is_vault_route(inv):
+        return _step("pay", state="waived", detail="Not required — vault route")
+    return _step("pay", state="pending", detail="—")
+
+
+_RESOLVERS = (
+    _resolve_ingest,
+    _resolve_duplicate,
+    _resolve_storage,
+    _resolve_ocr,
+    _resolve_quality,
+    _resolve_llm_classify,
+    _resolve_confidence_gate,
+    _resolve_extract,
+    _resolve_document_type,
+    _resolve_bundle,
+    _resolve_vendor_hold,
+    _resolve_validate,
+    _resolve_match,
+    _resolve_approve,
+    _resolve_map_gl,
+    _resolve_journal,
+    _resolve_reconcile,
+    _resolve_post,
+    _resolve_pay,
+    _resolve_archive,
+)
+
+
+def _build_raw_steps(
+    inv: Invoice,
+    logs: list[AuditLog],
+    *,
+    document_types: list | None = None,
+) -> list[DossierPipelineStepResponse]:
+    wm = _watermark(logs, inv)
+    steps: list[DossierPipelineStepResponse] = []
+    for resolver in _RESOLVERS:
+        if resolver in (_resolve_validate, _resolve_match):
+            steps.append(resolver(inv, logs, wm, document_types))
+        else:
+            steps.append(resolver(inv, logs, wm))
+    return steps
+
+
+def _apply_durations(steps: list[DossierPipelineStepResponse]) -> None:
+    prev_at: datetime | None = None
+    for i, step in enumerate(steps):
+        current = _parse_at(step.at)
+        if current and prev_at:
+            delta_ms = max(0, int((current - prev_at).total_seconds() * 1000))
+            steps[i] = step.model_copy(update={"duration_ms": delta_ms})
+        if current:
+            prev_at = current
+
+
+def _apply_pay_stage(
+    steps: list[DossierPipelineStepResponse],
+    *,
+    payment_status: str | None,
+    payment_detail: str | None,
+) -> None:
+    for i, step in enumerate(steps):
+        if step.stage_id != "pay":
+            continue
+        if payment_status == "paid":
+            steps[i] = step.model_copy(
+                update={"state": "pass", "detail": payment_detail or "Paid", "at": step.at}
+            )
+        elif payment_status == "failed":
+            steps[i] = step.model_copy(
+                update={
+                    "state": "fail",
+                    "detail": payment_detail or "Payment failed",
+                    "exception_code": "PAY_FAILED",
+                    "failure_reason": payment_detail or "Payment failed",
+                    "remediation": _REMEDIATION["PAY_FAILED"],
+                }
+            )
+        elif payment_status in ("awaiting", "queue", "scheduled"):
+            steps[i] = step.model_copy(
+                update={"state": "pending", "detail": payment_detail or "Awaiting payment approval"}
+            )
+        break
+
+
+def _apply_blocked_downstream(steps: list[DossierPipelineStepResponse]) -> list[DossierPipelineStepResponse]:
+    fail_idx: int | None = None
+    for i, step in enumerate(steps):
+        if step.state == "fail":
+            fail_idx = i
+            break
+    if fail_idx is None:
+        return steps
+    fail_label = _STAGE_LABELS.get(steps[fail_idx].stage_id, steps[fail_idx].stage_id)
+    out: list[DossierPipelineStepResponse] = []
+    for i, step in enumerate(steps):
+        if i <= fail_idx:
+            out.append(step)
+            continue
+        if step.state in ("fail", "waived"):
+            out.append(step)
+            continue
+        if step.state == "pending" and step.blocked_reason:
+            out.append(step)
+            continue
+        blocked_detail = step.detail if step.detail and step.detail != "—" else None
+        out.append(
+            step.model_copy(
+                update={
+                    "state": "pending",
+                    "detail": blocked_detail or "—",
+                    "blocked_reason": (
+                        f'Blocked — upstream stage "{fail_label}" must pass before this stage can run.'
+                    ),
+                    "exception_code": None,
+                    "failure_reason": None,
+                    "remediation": None,
+                }
+            )
+        )
+    return out
+
+
+def build_dossier_pipeline(
+    inv: Invoice,
+    logs: list[AuditLog],
+    *,
+    payment_status: str | None = None,
+    payment_detail: str | None = None,
+    compact: bool = False,
+    document_types: list | None = None,
+) -> list[DossierPipelineStepResponse]:
+    steps = _build_raw_steps(inv, logs, document_types=document_types)
+    _apply_pay_stage(steps, payment_status=payment_status, payment_detail=payment_detail)
+    steps = _apply_blocked_downstream(steps)
+    _apply_durations(steps)
+
+    if len(steps) != len(STAGE_IDS):
+        raise RuntimeError(f"expected {len(STAGE_IDS)} pipeline stages, got {len(steps)}")
+
+    if compact:
+        return [
+            step.model_copy(
+                update={"checks": [], "evidence": [], "failure_reason": None, "remediation": None}
+            )
+            for step in steps
+        ]
+    return steps
+
+
+def first_pipeline_failure(steps: list[DossierPipelineStepResponse]) -> DossierPipelineStepResponse | None:
+    for step in steps:
+        if step.state == "fail":
+            return step
+    return None

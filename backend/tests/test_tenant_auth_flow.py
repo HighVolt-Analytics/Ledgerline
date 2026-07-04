@@ -10,8 +10,8 @@ from app.config import get_settings
 from app.models.auth_account import AuthAccount
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
-from app.services.auth_service import hash_password
-from app.services.membership_service import ensure_membership
+from app.services.auth.auth_service import hash_password
+from app.services.auth.membership_service import ensure_membership
 from app.tenant_ids import TESTING_TENANT_UUID
 
 

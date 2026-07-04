@@ -5,10 +5,10 @@ from __future__ import annotations
 from app.models.invoice import Invoice
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.counterparty_service import resolve_counterparty_name, sync_invoice_counterparty
-from app.services.llm_document_service import llm_result_to_invoice_data
-from app.services.tenant_org_context import OrgContext
-from app.services.vendor_name_utils import extract_customer_party_from_text
+from app.services.sales.counterparty_service import resolve_counterparty_name, sync_invoice_counterparty
+from app.services.extraction.llm_document_service import llm_result_to_invoice_data
+from app.services.tenant.tenant_org_context import OrgContext
+from app.services.master_data.vendor_name_utils import extract_customer_party_from_text
 
 
 ORG = OrgContext(

@@ -9,7 +9,7 @@ import pytest
 from app.config import get_settings
 from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.document_ai_provider import DocumentAiProvider, classify_only, provider_available
+from app.services.extraction.document_ai_provider import DocumentAiProvider, classify_only, provider_available
 
 
 def test_document_ai_provider_from_config_accepts_foundry_aliases() -> None:

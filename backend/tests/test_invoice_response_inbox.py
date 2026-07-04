@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.invoice import EvaluationStatus
-from app.services.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_NEEDS_REVIEW
-from app.services.invoice_response_service import invoice_to_response
+from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED, EVAL_NEEDS_REVIEW
+from app.services.invoice.invoice_response_service import invoice_to_response
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -23,9 +23,8 @@ def _vault_permit_type() -> DocumentTypeDefinition:
         code="DT-02",
         title="Clearance permit",
         shortTitle="Clearance permit",
-        klass="Supporting",
+        klass="Non-transactional",
         posting="No",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Vault",
         validationProfile="non_actionable",
@@ -61,7 +60,6 @@ def test_inbox_response_exposes_payable_metrics() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Purchase Management",
         validationProfile="standard",

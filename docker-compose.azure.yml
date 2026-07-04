@@ -21,7 +21,6 @@ services:
     environment:
       UPLOAD_DIR: /app/uploads
       RULE_BOOK_CONFIG_PATH: /app/app/rule_book_config.json
-      CHART_OF_ACCOUNTS_PATH: /app/app/chart_of_accounts.json
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
     volumes:
@@ -37,7 +36,6 @@ services:
       CELERY_WORKER: "1"
       UPLOAD_DIR: /app/uploads
       RULE_BOOK_CONFIG_PATH: /app/app/rule_book_config.json
-      CHART_OF_ACCOUNTS_PATH: /app/app/chart_of_accounts.json
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
     volumes:

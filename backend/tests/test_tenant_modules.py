@@ -11,10 +11,10 @@ from app.models.tenant import Tenant
 from app.models.tenant_module import TenantModule
 from app.models.user import User, UserRole
 from app.schemas.platform import PlatformTenantModule, UpdatePlatformTenantRequest
-from app.services.auth_service import create_access_token, hash_password
-from app.services.membership_service import ensure_membership
-from app.services.platform_service import update_client_tenant
-from app.services.tenant_module_service import enabled_modules_map, validate_module_keys
+from app.services.auth.auth_service import create_access_token, hash_password
+from app.services.auth.membership_service import ensure_membership
+from app.services.tenant.platform_service import update_client_tenant
+from app.services.tenant.tenant_module_service import enabled_modules_map, validate_module_keys
 from app.tenant_ids import TESTING_TENANT_UUID
 from app.tenant_modules import TOGGLEABLE_MODULE_KEYS
 

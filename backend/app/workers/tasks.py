@@ -7,11 +7,11 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.database import db_session_with_rls, dispose_engine, platform_lookup_session
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.audit_service import log_event
-from app.services.document_ref_service import audit_document_detail, invoice_log_fields
-from app.services.graph_mail_folders import finalize_graph_messages, folder_moves_enabled
-from app.services.mailbox_poll import poll_all_and_ingest, poll_mailbox_and_ingest
-from app.services.pipeline import EmailIngestResult, process_invoice
+from app.services.audit.audit_service import log_event
+from app.services.dossier.document_ref_service import audit_document_detail, invoice_log_fields
+from app.services.ingest.graph_mail_folders import finalize_graph_messages, folder_moves_enabled
+from app.services.ingest.mailbox_poll import poll_all_and_ingest, poll_mailbox_and_ingest
+from app.services.invoice.pipeline import EmailIngestResult, process_invoice
 from app.tenant_scoped import get_for_tenant
 from app.utils.logger import configure_logging, get_logger
 from app.workers.celery_app import celery_app
@@ -141,6 +141,27 @@ async def process_invoices_batch_background(
     finally:
         _inline_active = False
         _last_run = datetime.now(timezone.utc).isoformat()
+
+
+async def queue_invoices_for_processing(
+    invoice_ids: list[int],
+    *,
+    tenant_id: uuid.UUID,
+) -> None:
+    """Queue pipeline runs for ingested invoices (webhooks / async ingest)."""
+    unique_ids = list(dict.fromkeys(invoice_ids))
+    if not unique_ids:
+        return
+    if len(unique_ids) == 1:
+        asyncio.create_task(
+            process_invoice_background(unique_ids[0], tenant_id=tenant_id),
+            name=f"invoice-pipeline-{unique_ids[0]}",
+        )
+        return
+    asyncio.create_task(
+        process_invoices_batch_background(unique_ids, tenant_id=tenant_id),
+        name=f"invoice-pipeline-batch-{unique_ids[0]}",
+    )
 
 
 _invoice_locks: dict[int, asyncio.Lock] = {}
@@ -324,7 +345,7 @@ def poll_all_tenants_task(self) -> dict[str, int]:
 
     async def run_with_cleanup() -> dict[str, int]:
         from app.database import async_session_factory
-        from app.services.tenant_context_service import list_active_tenant_ids
+        from app.services.tenant.tenant_context_service import list_active_tenant_ids
 
         totals = {"ingested": 0, "processed": 0}
         try:
@@ -386,7 +407,7 @@ async def run_mailbox_backfill_background(
 
     _inline_active = True
     try:
-        from app.services.mailbox_backfill_service import run_mailbox_backfill_job
+        from app.services.ingest.mailbox_backfill_service import run_mailbox_backfill_job
 
         logger.info("mailbox_backfill_started", job_id=job_id, tenant_id=str(tenant_id))
         await run_mailbox_backfill_job(job_id, tenant_id=tenant_id)
@@ -425,7 +446,7 @@ def mailbox_backfill_task(
 
     async def run_with_cleanup() -> dict[str, object]:
         try:
-            from app.services.mailbox_backfill_service import run_mailbox_backfill_job
+            from app.services.ingest.mailbox_backfill_service import run_mailbox_backfill_job
 
             job = await run_mailbox_backfill_job(job_id, tenant_id=tenant_id)
             return {

@@ -3,7 +3,7 @@
 import uuid
 
 from app.models.user import SUPER_ADMIN_ROLE
-from app.services.membership_enumeration import (
+from app.services.auth.membership_enumeration import (
     TenantMembershipAccount,
     filter_switchable_memberships,
     membership_is_switchable,

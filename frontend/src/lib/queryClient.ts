@@ -29,6 +29,7 @@ export function tenantQueryKey<const T extends readonly unknown[]>(
 
 const baseKeys = {
   navBadges: ["dashboard", "badges"] as const,
+  notifications: ["notifications"] as const,
   dashboardOverview: (month: string, activityLimit: number) =>
     ["dashboard", "overview", month, activityLimit] as const,
   reportsAnalytics: (month: string) => ["reports", "analytics", month] as const,
@@ -67,6 +68,7 @@ const baseKeys = {
 
 export const queryKeys = {
   navBadges: () => tenantQueryKey(baseKeys.navBadges),
+  notifications: () => tenantQueryKey(baseKeys.notifications),
   dashboardOverview: (month: string, activityLimit: number) =>
     tenantQueryKey(baseKeys.dashboardOverview(month, activityLimit)),
   reportsAnalytics: (month: string) => tenantQueryKey(baseKeys.reportsAnalytics(month)),

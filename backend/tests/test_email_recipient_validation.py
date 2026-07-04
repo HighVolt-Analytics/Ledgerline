@@ -3,7 +3,7 @@
 import pytest
 from fastapi import HTTPException
 
-from app.services.email_recipient_validation import (
+from app.services.ingest.email_recipient_validation import (
     is_blocked_test_email,
     validate_deliverable_email_or_raise,
 )

@@ -31,7 +31,6 @@ class GoodsReceipt(Base):
     )
     grn_qty: Mapped[Decimal] = mapped_column(Numeric(12, 4))
     grn_uom: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    grn_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     grn_date: Mapped[date | None] = mapped_column(Date)
     receiver: Mapped[str | None] = mapped_column(String(255))
     condition_note: Mapped[str | None] = mapped_column(String(255))

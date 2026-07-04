@@ -24,27 +24,40 @@ def _parse_optional_decimal(value: Any) -> Decimal | None:
 
 def _coerce_party_dict(value: Any) -> dict[str, str]:
     if isinstance(value, dict):
+        tax_id = str(value.get("tax_id") or value.get("abn") or "").strip()
         return {
             "name": str(value.get("name") or value.get("vendor") or "").strip(),
-            "abn": str(value.get("abn") or "").strip(),
+            "tax_id": tax_id,
+            "address": str(value.get("address") or "").strip(),
+            "abn": tax_id,
         }
     if isinstance(value, str):
-        return {"name": value.strip(), "abn": ""}
-    return {"name": "", "abn": ""}
+        return {"name": value.strip(), "tax_id": "", "address": "", "abn": ""}
+    return {"name": "", "tax_id": "", "address": "", "abn": ""}
 
 
 class LlmParty(BaseModel):
     name: str = ""
+    tax_id: str = ""
+    address: str = ""
     abn: str = ""
 
     @model_validator(mode="before")
     @classmethod
     def _coerce_party_input(cls, value: Any) -> Any:
         if value is None:
-            return {"name": "", "abn": ""}
+            return {"name": "", "tax_id": "", "address": "", "abn": ""}
         if isinstance(value, (dict, str)):
             return _coerce_party_dict(value)
         return value
+
+    @model_validator(mode="after")
+    def _sync_tax_id_abn(self) -> LlmParty:
+        if self.tax_id and not self.abn:
+            object.__setattr__(self, "abn", self.tax_id)
+        elif self.abn and not self.tax_id:
+            object.__setattr__(self, "tax_id", self.abn)
+        return self
 
 
 class LlmLineItem(BaseModel):
@@ -77,6 +90,7 @@ class LlmDocumentResult(BaseModel):
     po_reference: str = ""
     subtotal: Decimal | None = None
     gst: Decimal | None = None
+    gst_rate: Decimal | None = None
     total: Decimal | None = None
     currency: str = "AUD"
     abn: str = ""
@@ -131,7 +145,7 @@ class LlmDocumentResult(BaseModel):
             return token
         return "unknown"
 
-    @field_validator("subtotal", "gst", "total", mode="before")
+    @field_validator("subtotal", "gst", "gst_rate", "total", mode="before")
     @classmethod
     def _coerce_money_fields(cls, value: Any) -> Decimal | None:
         return _parse_optional_decimal(value)
@@ -149,7 +163,7 @@ class LlmDocumentResult(BaseModel):
     @classmethod
     def _coerce_parties(cls, value: Any) -> Any:
         if value is None:
-            return {"name": "", "abn": ""}
+            return {"name": "", "tax_id": "", "address": "", "abn": ""}
         if isinstance(value, (dict, str)):
             return _coerce_party_dict(value)
         return value

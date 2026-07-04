@@ -32,7 +32,7 @@ export const TEMPLATE_SIGNAL_META: Record<string, TemplateSignalMetaRaw> = {
     classifierLayout: "all_signals",
     signalIds: ["heading_invoice", "has_po_reference", "has_invoice_number", "has_total_amount"],
     defaultSignalIds: ["has_po_reference", "has_invoice_number", "has_total_amount"],
-    extractionFields: ["vendor", "invoice_no", "po_reference", "total", "gst", "line_items"],
+    extractionFields: ["vendor", "invoice_no", "po_reference", "invoice_date", "due_date", "total", "gst", "line_items"],
   },
   "DT-02": {
     classifierLayout: "supporting_doc",

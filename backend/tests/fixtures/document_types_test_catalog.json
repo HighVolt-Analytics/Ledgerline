@@ -5,7 +5,6 @@
     "shortTitle": "PO goods invoice",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
     "oneLine": "Standard 3-way match goods invoice against an approved PO and GRN.",
     "routeTarget": "Purchase Management",
     "enabled": true,
@@ -73,7 +72,11 @@
       "Quality certificate",
       "Packing list (if PO flags inspection)"
     ],
-    "purchaseBundleRole": ""
+    "purchaseBundleRole": "",
+    "postTo": {
+      "ledger": "Cloud Hosting Expense",
+      "subLedger": "AWS Production"
+    }
   },
   {
     "code": "DT-02",
@@ -81,8 +84,7 @@
     "shortTitle": "PO (supporting)",
     "klass": "Supporting",
     "posting": "No",
-    "fraudRisk": "low",
-    "oneLine": "Supporting bundle member \u2014 PO PDF that anchors the 3-way match dossier.",
+    "oneLine": "Supporting bundle member — PO PDF that anchors the 3-way match dossier.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -165,8 +167,7 @@
     "shortTitle": "GRN (supporting)",
     "klass": "Supporting",
     "posting": "No",
-    "fraudRisk": "low",
-    "oneLine": "Supporting bundle member \u2014 GRN PDF that completes the 3-way match.",
+    "oneLine": "Supporting bundle member — GRN PDF that completes the 3-way match.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -249,8 +250,7 @@
     "shortTitle": "Credit note",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
-    "oneLine": "Negative-amount note that mirrors and reduces an original invoice \u2014 never auto-nets against unrelated invoices.",
+    "oneLine": "Negative-amount note that mirrors and reduces an original invoice — never auto-nets against unrelated invoices.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -314,8 +314,7 @@
     "shortTitle": "Debit note",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
-    "oneLine": "Buyer-issued (charges vendor) or vendor-issued (additional charge) \u2014 never posts touchlessly.",
+    "oneLine": "Buyer-issued (charges vendor) or vendor-issued (additional charge) — never posts touchlessly.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -365,7 +364,6 @@
     "shortTitle": "Proforma / advance",
     "klass": "Pre-transactional",
     "posting": "Down-payment",
-    "fraudRisk": "high",
     "oneLine": "A proforma is NEVER posted as a payable/expense and NEVER creates an input tax credit (not a tax invoice).",
     "routeTarget": "Vault",
     "enabled": true,
@@ -429,7 +427,6 @@
     "shortTitle": "Recurring / contract",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
     "oneLine": "Matched to the contract register; lease invoices post to lease liability under AASB 16, not rent expense.",
     "routeTarget": "Purchase Management",
     "enabled": true,
@@ -474,8 +471,7 @@
     "shortTitle": "Utility invoice",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
-    "oneLine": "Matched to site/meter register with consumption analytics; > \u00b140% deviation flags facilities review.",
+    "oneLine": "Matched to site/meter register with consumption analytics; > ±40% deviation flags facilities review.",
     "routeTarget": "Expenses Management",
     "enabled": true,
     "classifier": {
@@ -517,7 +513,6 @@
     "shortTitle": "Freight / broker",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
     "oneLine": "Matched to shipment; broker disbursements split duty/GST pass-through from taxable service fee.",
     "routeTarget": "Purchase Management",
     "enabled": true,
@@ -560,8 +555,7 @@
     "shortTitle": "Import dossier",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
-    "oneLine": "Landed-cost dossier \u2014 mandatory and blocking bundle of commercial invoice, customs entry, transport doc, packing list.",
+    "oneLine": "Landed-cost dossier — mandatory and blocking bundle of commercial invoice, customs entry, transport doc, packing list.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -604,8 +598,7 @@
     "shortTitle": "Intercompany",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "low",
-    "oneLine": "Symmetry rule \u2014 both entities book the same period, amount and FX reference rate; mirror entry validated.",
+    "oneLine": "Symmetry rule — both entities book the same period, amount and FX reference rate; mirror entry validated.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -647,7 +640,6 @@
     "shortTitle": "Expense claim",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "high",
     "oneLine": "Per-line policy & receipt checks with fraud analytics; FBT-flagged lines tagged for the FBT register.",
     "routeTarget": "Team Expenses",
     "enabled": true,
@@ -710,8 +702,7 @@
     "shortTitle": "Vendor statement",
     "klass": "Reconciliation",
     "posting": "No",
-    "fraudRisk": "low",
-    "oneLine": "NEVER posted as an invoice \u2014 auto-reconciled vs the AP subledger to detect missing invoices and duplicates.",
+    "oneLine": "NEVER posted as an invoice — auto-reconciled vs the AP subledger to detect missing invoices and duplicates.",
     "routeTarget": "Vault",
     "enabled": true,
     "classifier": {
@@ -764,8 +755,7 @@
     "shortTitle": "Contract / SOW",
     "klass": "Supporting",
     "posting": "No",
-    "fraudRisk": "low",
-    "oneLine": "Supporting bundle member \u2014 the contract register entry that validates recurring & services rates.",
+    "oneLine": "Supporting bundle member — the contract register entry that validates recurring & services rates.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -848,8 +838,7 @@
     "shortTitle": "SES / timesheet",
     "klass": "Supporting",
     "posting": "No",
-    "fraudRisk": "low",
-    "oneLine": "Supporting bundle member \u2014 the service-receipt evidence for DT-02 services matching.",
+    "oneLine": "Supporting bundle member — the service-receipt evidence for DT-02 services matching.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -902,8 +891,7 @@
     "shortTitle": "Remittance advice",
     "klass": "Supporting",
     "posting": "No",
-    "fraudRisk": "low",
-    "oneLine": "Supporting document \u2014 confirms which invoices a payment settles; not posted itself.",
+    "oneLine": "Supporting document — confirms which invoices a payment settles; not posted itself.",
     "routeTarget": "Vault",
     "enabled": true,
     "classifier": {
@@ -956,7 +944,6 @@
     "shortTitle": "RCTI / self-billing",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
     "oneLine": "We generate the invoice from receipt/consumption data; a vendor invoice for an RCTI vendor is blocked as duplicate-risk.",
     "routeTarget": "Purchase Management",
     "enabled": true,
@@ -997,8 +984,7 @@
     "shortTitle": "Consignment / ERS",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "medium",
-    "oneLine": "Consignment receipt creates no liability; ERS GRN auto-generates the invoice \u2014 vendor invoices are blocked.",
+    "oneLine": "Consignment receipt creates no liability; ERS GRN auto-generates the invoice — vendor invoices are blocked.",
     "routeTarget": "Purchase Management",
     "enabled": true,
     "classifier": {
@@ -1038,8 +1024,7 @@
     "shortTitle": "One-time vendor",
     "klass": "Transactional",
     "posting": "Yes",
-    "fraudRisk": "critical",
-    "oneLine": "Highest fraud-risk class \u2014 independent call-back bank verification, sanctions screen and collusion check mandatory.",
+    "oneLine": "Highest fraud-risk class — independent call-back bank verification, sanctions screen and collusion check mandatory.",
     "routeTarget": "Expenses Management",
     "enabled": true,
     "classifier": {
@@ -1087,8 +1072,7 @@
     "shortTitle": "Dunning letter",
     "klass": "Informational",
     "posting": "No",
-    "fraudRisk": "low",
-    "oneLine": "Informational only \u2014 links to the referenced invoice's status; disconnection notices flagged urgent.",
+    "oneLine": "Informational only — links to the referenced invoice's status; disconnection notices flagged urgent.",
     "routeTarget": "Vault",
     "enabled": true,
     "classifier": {
@@ -1141,8 +1125,7 @@
     "shortTitle": "Bank-detail change",
     "klass": "Master-data",
     "posting": "No",
-    "fraudRisk": "critical",
-    "oneLine": "Critical fraud control \u2014 never update bank details from an email/letter alone; independent call-back + 4-eyes required.",
+    "oneLine": "Critical fraud control — never update bank details from an email/letter alone; independent call-back + 4-eyes required.",
     "routeTarget": "Vault",
     "enabled": true,
     "classifier": {
@@ -1197,8 +1180,7 @@
     "shortTitle": "Quote / spam",
     "klass": "Non-actionable",
     "posting": "No",
-    "fraudRisk": "low",
-    "oneLine": "Non-actionable \u2014 auto-archived with 30-day recoverability; never hard-deleted, never posted as a payable.",
+    "oneLine": "Non-actionable — auto-archived with 30-day recoverability; never hard-deleted, never posted as a payable.",
     "routeTarget": "Vault",
     "enabled": true,
     "classifier": {
@@ -1281,8 +1263,7 @@
     "shortTitle": "Tax authority notice",
     "klass": "Compliance",
     "posting": "Route",
-    "fraudRisk": "low",
-    "oneLine": "Compliance class \u2014 routed to the Tax team, not the AP posting flow.",
+    "oneLine": "Compliance class — routed to the Tax team, not the AP posting flow.",
     "routeTarget": "Vault",
     "enabled": true,
     "classifier": {

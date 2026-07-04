@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from app.config import get_settings
-from app.services.email_recipient_validation import mask_email_for_log
-from app.services.auth_email_service import send_login_otp_email
+from app.services.ingest.email_recipient_validation import mask_email_for_log
+from app.services.auth.auth_email_service import send_login_otp_email
 
 
 @pytest.fixture(autouse=True)
@@ -44,13 +44,13 @@ async def test_production_uses_graph_when_configured(
 
     def _fake_graph_mail(**kwargs):
         calls.append(kwargs)
-        from app.services.graph_mail_sender import GraphMailResult
+        from app.services.ingest.graph_mail_sender import GraphMailResult
 
         return GraphMailResult(sent=True)
 
     def _fake_smtp(**kwargs):
         smtp_calls.append(kwargs)
-        from app.services.auth_email_service import InviteEmailResult
+        from app.services.auth.auth_email_service import InviteEmailResult
 
         return InviteEmailResult(sent=True)
 
@@ -82,13 +82,13 @@ async def test_production_graph_failure_does_not_attempt_localhost_smtp(
     smtp_calls: list[dict[str, str]] = []
 
     def _fake_graph_mail(**_kwargs):
-        from app.services.graph_mail_sender import GraphMailResult
+        from app.services.ingest.graph_mail_sender import GraphMailResult
 
         return GraphMailResult(sent=False, error="Graph sendMail failed (403).")
 
     def _fake_smtp(**kwargs):
         smtp_calls.append(kwargs)
-        from app.services.auth_email_service import InviteEmailResult
+        from app.services.auth.auth_email_service import InviteEmailResult
 
         return InviteEmailResult(sent=True)
 
@@ -121,7 +121,7 @@ async def test_production_without_graph_returns_clear_failure(
 
     def _fake_smtp(**kwargs):
         smtp_calls.append(kwargs)
-        from app.services.auth_email_service import InviteEmailResult
+        from app.services.auth.auth_email_service import InviteEmailResult
 
         return InviteEmailResult(sent=True)
 

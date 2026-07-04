@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.classification_learning import ClassificationLearningEvent
 from app.models.tenant import Tenant
-from app.services.classification_learning_service import (
+from app.services.classification.classification_learning_service import (
     few_shot_examples_for_tenant,
     purge_learning_events_for_document_type,
     record_learning_event,

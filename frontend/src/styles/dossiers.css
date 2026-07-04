@@ -432,36 +432,6 @@
   background: hsl(var(--destructive));
 }
 
-.dossier-risk-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.375rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  text-transform: capitalize;
-}
-
-.dossier-risk-dot {
-  display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: 9999px;
-  flex-shrink: 0;
-}
-
-.dossier-risk-dot--low {
-  background: hsl(var(--chart-1));
-}
-
-.dossier-risk-dot--medium {
-  background: hsl(43 74% 49%);
-}
-
-.dossier-risk-dot--high {
-  background: hsl(var(--destructive));
-}
-
 .dossier-sla-row {
   display: flex;
   align-items: center;

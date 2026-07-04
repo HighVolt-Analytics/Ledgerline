@@ -15,9 +15,9 @@ from app.schemas.rule_book_config import (
     VendorDetectionWeights,
     VendorMaster,
 )
-from app.services.invoice_evaluation_service import EVAL_PENDING_VENDOR, evaluate_invoice_routing
-from app.services.rule_engine import EvalDocument, detect_vendor
-from app.services.vendor_detection import (
+from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_VENDOR, evaluate_invoice_routing
+from app.services.rule_book.rule_engine import EvalDocument, detect_vendor
+from app.services.master_data.vendor_detection import (
     bank_signal_matches,
     find_matching_vendor_master,
     levenshtein_ratio,

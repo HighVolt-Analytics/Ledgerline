@@ -13,14 +13,14 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.purchase_order import PurchaseOrder
 from app.models.line_item import LineItem
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.document_type_match_service import (
+from app.services.classification.document_type_match_service import (
     compute_two_way_po_match,
     execute_document_match,
     is_clean_match_message,
     resolve_match_mode,
     _extract_reference_invoice_numbers,
 )
-from app.services.invoice_data import InvoiceData, ParsedLineItem
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
 
 def _invoice(**kwargs) -> Invoice:
@@ -60,7 +60,6 @@ def test_resolve_match_mode_from_definition() -> None:
         shortTitle="Services",
         klass="Transactional",
         posting="Yes",
-        fraudRisk="low",
         oneLine="test",
         routeTarget="Purchase Management",
         matchPolicy={"mode": "two_way_po_ses"},
@@ -118,11 +117,11 @@ async def test_reference_invoice_match_found(monkeypatch: pytest.MonkeyPatch) ->
         return original
 
     monkeypatch.setattr(
-        "app.services.document_type_match_service._find_reference_invoice",
+        "app.services.classification.document_type_match_service._find_reference_invoice",
         fake_find,
     )
     monkeypatch.setattr(
-        "app.services.document_type_match_service.load_purchase_order_for_invoice",
+        "app.services.classification.document_type_match_service.load_purchase_order_for_invoice",
         AsyncMock(return_value=None),
     )
 
@@ -145,7 +144,7 @@ async def test_shipment_match_with_awb(monkeypatch: pytest.MonkeyPatch) -> None:
         total=Decimal("200"),
     )
     monkeypatch.setattr(
-        "app.services.document_type_match_service.load_purchase_order_for_invoice",
+        "app.services.classification.document_type_match_service.load_purchase_order_for_invoice",
         AsyncMock(return_value=None),
     )
 
@@ -165,7 +164,7 @@ async def test_three_way_still_requires_grn(monkeypatch: pytest.MonkeyPatch) -> 
     po = _po()
     inv = _invoice()
     monkeypatch.setattr(
-        "app.services.document_type_match_service.load_purchase_order_for_invoice",
+        "app.services.classification.document_type_match_service.load_purchase_order_for_invoice",
         AsyncMock(return_value=po),
     )
 
@@ -189,7 +188,7 @@ async def test_three_way_clean_with_grn(monkeypatch: pytest.MonkeyPatch) -> None
         line_items=[LineItem(description="Item", qty=Decimal("1"), amount=Decimal("50"))],
     )
     monkeypatch.setattr(
-        "app.services.document_type_match_service.load_purchase_order_for_invoice",
+        "app.services.classification.document_type_match_service.load_purchase_order_for_invoice",
         AsyncMock(return_value=po),
     )
 
@@ -202,3 +201,98 @@ async def test_three_way_clean_with_grn(monkeypatch: pytest.MonkeyPatch) -> None
     )
     assert outcome.passed is True
     assert outcome.status == "3-Way Match"
+
+
+@pytest.mark.asyncio
+async def test_ar_three_way_match_via_sales_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.classification.document_type_match_service import DocumentMatchOutcome
+
+    invoice = _invoice(po_reference=None, so_reference="SO-100", invoice_no="INV-AR-1")
+    expected = DocumentMatchOutcome(
+        passed=True,
+        status="3-Way Match",
+        message="3-Way Match",
+        match_mode="three_way_so_dn",
+        detail={},
+    )
+
+    async def fake_ar_match(mode, *, session, invoice):
+        assert mode == "three_way_so_dn"
+        return expected
+
+    monkeypatch.setattr(
+        "app.services.sales.sales_match_service.execute_ar_document_match",
+        fake_ar_match,
+    )
+
+    outcome = await execute_document_match(
+        "three_way_so_dn",
+        session=AsyncMock(),
+        tenant_id=TESTING_TENANT_UUID,
+        invoice=invoice,
+        data=InvoiceData(total=Decimal("110")),
+    )
+    assert outcome.passed is True
+    assert outcome.match_mode == "three_way_so_dn"
+
+
+@pytest.mark.asyncio
+async def test_ar_two_way_dn_match_via_sales_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.classification.document_type_match_service import DocumentMatchOutcome
+
+    invoice = _invoice(po_reference=None, so_reference=None, invoice_no="INV-AR-2")
+    expected = DocumentMatchOutcome(
+        passed=True,
+        status="2-Way Match",
+        message="2-Way Match",
+        match_mode="two_way_dn_invoice",
+        detail={},
+    )
+
+    async def fake_ar_match(mode, *, session, invoice):
+        return expected
+
+    monkeypatch.setattr(
+        "app.services.sales.sales_match_service.execute_ar_document_match",
+        fake_ar_match,
+    )
+
+    outcome = await execute_document_match(
+        "two_way_dn_invoice",
+        session=AsyncMock(),
+        tenant_id=TESTING_TENANT_UUID,
+        invoice=invoice,
+        data=InvoiceData(total=Decimal("110")),
+    )
+    assert outcome.passed is True
+    assert outcome.status == "2-Way Match"
+
+
+@pytest.mark.asyncio
+async def test_ar_no_evidence_skips_not_po_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.sales.sales_match_service import ARMatchContext
+
+    invoice = _invoice(po_reference=None, so_reference=None, invoice_no=None)
+
+    async def fake_resolve(session, inv, **kwargs):
+        return ARMatchContext(effective_mode="none", so=None, dn=None, dn_invoice=None)
+
+    monkeypatch.setattr(
+        "app.services.sales.sales_match_service.resolve_ar_match_context",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.classification.document_type_match_service.load_purchase_order_for_invoice",
+        AsyncMock(return_value=None),
+    )
+
+    outcome = await execute_document_match(
+        "three_way_so_dn",
+        session=AsyncMock(),
+        tenant_id=TESTING_TENANT_UUID,
+        invoice=invoice,
+        data=InvoiceData(total=Decimal("110")),
+    )
+    assert outcome.passed is True
+    assert outcome.status == "Skipped"
+    assert outcome.match_mode == "none"

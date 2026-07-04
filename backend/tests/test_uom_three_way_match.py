@@ -7,8 +7,8 @@ from app.models.invoice import Invoice
 from app.models.line_item import LineItem
 from app.models.purchase_order import PurchaseOrder
 from app.schemas.uom_conversion import PurchaseMatchConfig, UomConversionRule
-from app.services.purchase_match_service import compute_three_way_match
-from app.services.uom_conversion_service import (
+from app.services.purchase.purchase_match_service import compute_three_way_match
+from app.services.master_data.uom_conversion_service import (
     convert_qty_to_base,
     infer_uom_from_description,
     normalize_uom_token,

@@ -12,9 +12,9 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.custom_validation_rule import CustomValidationRule
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.validation_rule import ValidationRuleConfig
-from app.services.custom_validation_service import evaluate_custom_validation_rule
-from app.services.invoice_data import InvoiceData, ParsedLineItem
-from app.services.validator import run_all_validations
+from app.services.rule_book.custom_validation_service import evaluate_custom_validation_rule
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
+from app.services.rule_book.validator import run_all_validations
 
 
 def _invoice(**kwargs) -> Invoice:
@@ -84,7 +84,6 @@ async def test_universal_duplicate_always_runs(db_session: AsyncSession) -> None
                     "shortTitle": "Direct",
                     "klass": "Transactional",
                     "posting": "Yes",
-                    "fraudRisk": "low",
                     "oneLine": "Test",
                     "validationProfile": "direct_expense",
                     "validationRules": [

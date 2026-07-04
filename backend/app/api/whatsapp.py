@@ -23,8 +23,8 @@ from app.schemas.whatsapp import (
     WhatsappStatusResponse,
     WhatsappTestResponse,
 )
-from app.services.public_api_url import webhook_meta_url, whatsapp_oauth_callback_url
-from app.services.whatsapp_connection_service import (
+from app.services.shared.public_api_url import webhook_meta_url, whatsapp_oauth_callback_url
+from app.services.ingest.whatsapp_connection_service import (
     complete_oauth_and_store_connections,
     create_oauth_state,
     disconnect_connection,
@@ -36,14 +36,14 @@ from app.services.whatsapp_connection_service import (
     test_connection,
     try_claim_message_mid,
 )
-from app.services.whatsapp_graph_client import (
+from app.services.ingest.whatsapp_graph_client import (
     parse_whatsapp_messages,
     verify_webhook_signature,
 )
-from app.services.whatsapp_ingest_service import ingest_whatsapp_message
+from app.services.ingest.whatsapp_ingest_service import ingest_whatsapp_message
 from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
-from app.workers.tasks import process_invoice_background
+from app.workers.tasks import queue_invoices_for_processing
 
 logger = get_logger(__name__)
 
@@ -99,7 +99,7 @@ async def whatsapp_authorize_url(
 ) -> ApiEnvelope[WhatsappAuthorizeResponse]:
     if not oauth_configured():
         raise HTTPException(503, _OAUTH_ERRORS["not_configured"])
-    from app.services.whatsapp_graph_client import build_oauth_authorize_url
+    from app.services.ingest.whatsapp_graph_client import build_oauth_authorize_url
 
     state = create_oauth_state(tenant_id=ctx.tenant_id, user_id=ctx.user_id or 0)
     return ApiEnvelope(
@@ -251,7 +251,7 @@ async def process_whatsapp_payload(payload: dict) -> None:
                     logger.info("whatsapp_dedupe_skip", message_id=msg.message_id)
                     continue
 
-                from app.services.whatsapp_connection_service import resolve_access_token
+                from app.services.ingest.whatsapp_connection_service import resolve_access_token
 
                 try:
                     token = resolve_access_token(connection)
@@ -271,12 +271,10 @@ async def process_whatsapp_payload(payload: dict) -> None:
                 )
                 queued_invoice_ids = list(result.invoice_ids or [])
 
-            for invoice_id in queued_invoice_ids:
-                asyncio.create_task(
-                    process_invoice_background(
-                        invoice_id,
-                        tenant_id=connection.tenant_id,
-                    )
+            if queued_invoice_ids:
+                await queue_invoices_for_processing(
+                    queued_invoice_ids,
+                    tenant_id=connection.tenant_id,
                 )
 
             logger.info(

@@ -12,8 +12,8 @@ from app.models.tenant_member_invite import TenantMemberInvite
 from app.models.user import User, UserRole
 from app.models.user_tenant_mapping import UserTenantMapping
 from app.schemas.platform import CreatePlatformTenantRequest, DeletePlatformTenantRequest
-from app.services.auth_service import hash_password
-from app.services.platform_service import (
+from app.services.auth.auth_service import hash_password
+from app.services.tenant.platform_service import (
     create_client_tenant,
     delete_client_tenant,
     list_client_tenant_members,

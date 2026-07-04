@@ -7,7 +7,7 @@ from app.api.deps import AuthContext, get_auth_context, get_db
 from app.api.http_errors import http_not_found
 from app.schemas.common import ApiEnvelope
 from app.schemas.customer import CustomerCreate, CustomerResponse, CustomerUpdate
-from app.services.customer_registry_service import (
+from app.services.master_data.customer_registry_service import (
     create_customer_registry,
     delete_customer_registry,
     list_customer_registry,

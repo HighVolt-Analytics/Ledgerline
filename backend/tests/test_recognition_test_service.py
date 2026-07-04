@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.document_type_recognition_service import evaluate_document_type_recognition
+from app.services.classification.document_type_recognition_service import evaluate_document_type_recognition
 
 
 def _grn_dt() -> DocumentTypeDefinition:
@@ -12,9 +12,8 @@ def _grn_dt() -> DocumentTypeDefinition:
             "code": "DT-99",
             "title": "GRN",
             "shortTitle": "GRN",
-            "klass": "Supporting",
+            "klass": "Non-transactional",
             "posting": "No",
-            "fraudRisk": "low",
             "oneLine": "Goods received",
             "routeTarget": "Vault",
             "enabled": True,
@@ -57,7 +56,6 @@ def test_recognition_test_single_and_condition() -> None:
             "shortTitle": "Invoice",
             "klass": "Transactional",
             "posting": "No",
-            "fraudRisk": "low",
             "oneLine": "Tax invoice",
             "routeTarget": "Vault",
             "enabled": True,

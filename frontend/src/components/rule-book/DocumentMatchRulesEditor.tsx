@@ -34,6 +34,7 @@ import {
 } from "@/lib/documentUserRecognition";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import type { RecognitionSignalId } from "@/lib/documentClassifierBuilder";
+import { formatExtractionFieldKeyInput } from "@/lib/documentExtractionFields";
 
 type DocumentMatchRulesEditorProps = {
   draft: DocumentTypeDefinition;
@@ -83,11 +84,14 @@ function RuleRowEditor({
             onChange={(e) =>
               onChange({
                 ...row,
-                field: e.target.value.trim().toLowerCase().replace(/\s+/g, "_"),
+                field: formatExtractionFieldKeyInput(e.target.value),
                 operator: isMatchRuleBooleanField(e.target.value) ? "equals" : row.operator,
               })
             }
             placeholder="custom_field_name"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
             className="h-8 min-w-[180px] rounded-md border border-input bg-background px-2 text-xs font-mono"
           />
           <Button
@@ -401,11 +405,11 @@ function MatchRulesPanel({
       />
 
       <RuleSection
-        title="Do not match if (optional)"
+        title="Do not match if"
         hint={
           form.excludeMode === "any"
-            ? "Exclude when any rule matches."
-            : "Exclude only when all rules match."
+            ? "Exclude when any rule matches. “Has …” field checks also suppress those fields after OCR."
+            : "Exclude only when all rules match. “Has …” field checks also suppress those fields after OCR."
         }
         mode={form.excludeMode}
         onModeChange={(excludeMode) => applyForm({ ...form, excludeMode })}
@@ -523,7 +527,7 @@ export function DocumentMatchRulesEditor({
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
         <p className="text-xs text-muted-foreground">
           {rulesOnly || activeMode === "rules"
-            ? "Rules verify OCR after classification."
+            ? "Exclude rules using Has … field checks define fields that must not appear after extraction."
             : activeMode === "signals"
               ? "Signals compile to grouped OR conditions for AI hints and pipeline checks."
               : "AI description is optional. Switch to Match / exclude rules for strict checks."}

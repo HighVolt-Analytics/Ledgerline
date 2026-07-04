@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.pipeline import process_invoice
+from app.services.invoice.pipeline import process_invoice
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.pipeline_test_helpers import patch_confidence_gate_pass
 

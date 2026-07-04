@@ -20,7 +20,7 @@ from app.schemas.accounting_integration import (
     AccountingIntegrationsStatusResponse,
 )
 from app.schemas.common import ApiEnvelope
-from app.services.accounting_integration_service import (
+from app.services.integration.accounting_integration_service import (
     build_connect_url,
     complete_oauth_callback,
     disconnect_integration,
@@ -32,7 +32,7 @@ from app.services.accounting_integration_service import (
     record_integration_error,
     xero_configured,
 )
-from app.services.audit_service import log_event
+from app.services.audit.audit_service import log_event
 from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
 

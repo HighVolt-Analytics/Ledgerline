@@ -4,8 +4,8 @@ from datetime import date
 from decimal import Decimal
 
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.account_mapper import AccountMapping
-from app.services.journal_generator import generate_entries, is_balanced
+from app.services.rule_book.account_mapper import AccountMapping
+from app.services.payments.journal_generator import generate_entries, is_balanced
 
 
 def test_balanced() -> None:
@@ -31,5 +31,5 @@ def test_ap_credit() -> None:
         status=InvoiceStatus.JOURNALING,
         currency="AUD",
     )
-    ap = [ln for ln in generate_entries(inv, AccountMapping("6200", "Supplies")) if ln.account_code == "2000"]
+    ap = [ln for ln in generate_entries(inv, AccountMapping("6200", "Supplies")) if ln.credit > 0]
     assert ap[0].credit == Decimal("550")

@@ -18,12 +18,12 @@ from app.schemas.rule_book_config import (
     PurchaseRule,
     validate_rule_book_config_payload,
 )
-from app.services.invoice_evaluation_service import ROUTE_PURCHASE
-from app.services.purchase_coding_service import code_po_from_invoice, inherit_po_coding_to_invoice
-from app.services.purchase_match_service import sync_purchase_order_from_invoice
-from app.services.rule_book_config_io import load_rule_book_config_dict
-from app.services.rule_book_mapper import resolve_config_mapping
-from app.services.rule_engine import EvalDocument, match_purchase_rule
+from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
+from app.services.purchase.purchase_coding_service import code_po_from_invoice, inherit_po_coding_to_invoice
+from app.services.purchase.purchase_match_service import sync_purchase_order_from_invoice
+from app.services.rule_book.rule_book_config_io import load_rule_book_config_dict
+from app.services.rule_book.rule_book_mapper import resolve_config_mapping
+from app.services.rule_book.rule_engine import EvalDocument, match_purchase_rule
 
 
 def _rule(**kwargs) -> PurchaseRule:
@@ -161,6 +161,7 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
         po_reference="PO-CLOUD-2026-999",
         invoice_no="PO-CLOUD-2026-999",
         route_target=ROUTE_PURCHASE,
+        document_type_code="DT-01",
         purchase_document_type=PurchaseDocumentType.PO.value,
         subtotal=Decimal("100.00"),
         total=Decimal("110.00"),
@@ -190,7 +191,7 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
     assert po is not None
     assert po.ledger == "Cloud Hosting Expense"
     assert po.sub_ledger == "AWS Production"
-    assert po.purchase_rule_id == "pr-1"
+    assert po.purchase_rule_id == "DT-01"
 
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -198,6 +199,7 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
         po_reference="PO-CLOUD-2026-999",
         invoice_no="AWS-TEST-1",
         route_target=ROUTE_PURCHASE,
+        document_type_code="DT-01",
         purchase_document_type=PurchaseDocumentType.INVOICE.value,
         subtotal=Decimal("100.00"),
         total=Decimal("110.00"),
@@ -226,7 +228,8 @@ async def test_sync_purchase_order_codes_po_and_inherits_to_invoice(
     assert loaded.account_name == "Cloud Hosting Expense"
 
     hit = resolve_config_mapping(loaded, config, purchase_order=po)
-    assert "inherited from PO" in hit.match_reason
+    assert hit.rule_type == "Document type"
+    assert hit.mapping.account_name == "Cloud Hosting Expense"
 
 
 @pytest.mark.asyncio
@@ -242,13 +245,14 @@ async def test_code_po_from_invoice_persists_ledger(db_session: AsyncSession) ->
         po_reference="PO-CLOUD-2026-100",
         invoice_no="AWS-2",
         route_target=ROUTE_PURCHASE,
+        document_type_code="DT-01",
         status=InvoiceStatus.MAPPING,
     )
     db_session.add(inv)
     await db_session.flush()
 
-    rule = code_po_from_invoice(po, inv, config)
-    assert rule is not None
+    coded = code_po_from_invoice(po, inv, config)
+    assert coded is True
     assert po.ledger == "Cloud Hosting Expense"
     assert inherit_po_coding_to_invoice(po, inv) is True
     assert inv.account_name == "Cloud Hosting Expense"

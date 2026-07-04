@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 import pytest
 
 from app.config import get_settings
-from app.services.graph_mail_sender import graph_mail_send_configured, send_graph_mail
-from app.services.mailbox_invite_service import send_invite_email
+from app.services.ingest.graph_mail_sender import graph_mail_send_configured, send_graph_mail
+from app.services.ingest.mailbox_invite_service import send_invite_email
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +31,7 @@ def test_send_invite_email_uses_graph_when_configured(
 
     def _fake_send_graph_mail(**kwargs):
         calls.append(kwargs)
-        from app.services.graph_mail_sender import GraphMailResult
+        from app.services.ingest.graph_mail_sender import GraphMailResult
 
         return GraphMailResult(sent=True)
 

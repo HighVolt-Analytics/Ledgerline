@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.vendor import VendorRegistry
-from app.services.invoice_data import InvoiceData
-from app.services.validator import vr05_abn
+from app.services.invoice.invoice_data import InvoiceData
+from app.services.rule_book.validator import vr05_abn
 
 
 @pytest.mark.asyncio

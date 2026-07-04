@@ -8,7 +8,7 @@ from app.api.deps import AuthContext, get_auth_context, get_db
 from app.api.http_errors import http_bad_request, http_not_found
 from app.schemas.common import ApiEnvelope
 from app.schemas.processing_api import TriggerProcessingRequest
-from app.services.processing_api_service import (
+from app.services.invoice.processing_api_service import (
     queue_processing,
     validate_mailbox_for_processing,
 )

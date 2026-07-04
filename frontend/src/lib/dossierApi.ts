@@ -140,7 +140,6 @@ export type DossierSummaryApi = {
   total: number;
   classification_label: string;
   classification_confidence: number;
-  fraud_risk: string;
   po_reference?: string | null;
   so_reference?: string | null;
   linkage_reference?: string | null;
@@ -315,7 +314,6 @@ export function mapDossierFromApi(row: DossierSummaryApi): DossierSummary {
     total: row.total,
     classificationLabel: row.classification_label,
     classificationConfidence: row.classification_confidence,
-    fraudRisk: row.fraud_risk as DossierSummary["fraudRisk"],
     poReference: row.po_reference ?? null,
     soReference: row.so_reference ?? null,
     linkageReference: row.linkage_reference ?? null,

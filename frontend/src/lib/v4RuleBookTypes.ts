@@ -248,19 +248,6 @@ export type PostingDefaults = {
   taxAccount: string;
   payableAccount: string;
   fallbackAccount: string;
-  functionalCurrency?: string;
-  fxGainLossAccount?: string;
-  bankAccount?: string;
-};
-
-export type FxPostingPolicy = {
-  functionalCurrency?: string;
-  fxGainLossAccount?: string;
-  bankAccount?: string;
-  bookingRateSource?: "invoice_date" | "payment_date" | "po_date" | "manual" | "static_table";
-  paymentRateSource?: "invoice_date" | "payment_date" | "po_date" | "manual" | "static_table";
-  requirePoInvoiceCurrencyMatch?: boolean;
-  grnCurrencyOperationalOnly?: boolean;
 };
 
 export type { DocumentTypeDefinition } from "./v5DocumentTypes";
@@ -347,12 +334,6 @@ export const TAX_ACCOUNTS = [
 export const PAYABLE_ACCOUNTS = ["Accounts Payable"] as const;
 
 export const RECEIVABLE_ACCOUNTS = ["Accounts Receivable"] as const;
-
-export const FX_GAIN_LOSS_ACCOUNTS = ["FX Gain/Loss", "Foreign Exchange Gain/Loss"] as const;
-
-export const BANK_ACCOUNTS = ["Bank", "Operating Bank Account", "USD Bank Account"] as const;
-
-export const CURRENCY_CODES = ["AUD", "USD", "EUR", "GBP", "NZD", "INR"] as const;
 
 export const LEDGER_ACCOUNTS = [
   "Cloud Hosting Expense",

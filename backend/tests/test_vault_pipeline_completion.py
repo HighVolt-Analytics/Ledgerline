@@ -12,8 +12,8 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.invoice_evaluation_service import EVAL_AUTO_CODED, ROUTE_VAULT
-from app.services.pipeline import process_invoice
+from app.services.invoice.invoice_evaluation_service import EVAL_AUTO_CODED, ROUTE_VAULT
+from app.services.invoice.pipeline import process_invoice
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.pipeline_test_helpers import patch_confidence_gate_pass
 

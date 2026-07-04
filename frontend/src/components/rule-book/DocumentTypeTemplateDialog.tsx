@@ -24,13 +24,7 @@ type DocumentTypeTemplateDialogProps = {
 const KLASS_FILTERS: Array<{ value: "all" | DocumentTypeClass; label: string }> = [
   { value: "all", label: "All" },
   { value: "Transactional", label: "Transactional" },
-  { value: "Supporting", label: "Supporting" },
-  { value: "Pre-transactional", label: "Pre-transactional" },
-  { value: "Reconciliation", label: "Reconciliation" },
-  { value: "Informational", label: "Informational" },
-  { value: "Master-data", label: "Master data" },
-  { value: "Non-actionable", label: "Non-actionable" },
-  { value: "Compliance", label: "Compliance" },
+  { value: "Non-transactional", label: "Non-transactional" },
 ];
 
 function TemplateCard({

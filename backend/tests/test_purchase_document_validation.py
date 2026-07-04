@@ -11,9 +11,9 @@ from app.models.goods_receipt import GoodsReceipt
 from app.models.invoice import Invoice
 from app.models.line_item import LineItem
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderStatus
-from app.services.invoice_data import InvoiceData, ParsedLineItem
-from app.services.purchase_match_service import compute_three_way_match
-from app.services.validation_runner import ValidationRunContext, run_configured_validations
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
+from app.services.purchase.purchase_match_service import compute_three_way_match
+from app.services.rule_book.validation_runner import ValidationRunContext, run_configured_validations
 
 
 @pytest.mark.asyncio

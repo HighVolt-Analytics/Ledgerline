@@ -1,6 +1,6 @@
 """List Graph folders and recent messages (diagnostic)."""
-from app.services.email_ingestion import _mailbox_path
-from app.services.graph_client import graph_request, is_graph_enabled
+from app.services.ingest.email_ingestion import _mailbox_path
+from app.services.ingest.graph_client import graph_request, is_graph_enabled
 
 
 def main() -> None:

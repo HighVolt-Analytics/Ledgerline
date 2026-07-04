@@ -7,8 +7,8 @@ from app.schemas.document_layout import (
     LayoutTable,
     LayoutTableCell,
 )
-from app.services.document_layout_service import parse_layout_result
-from app.services.layout_field_extractor import (
+from app.services.extraction.document_layout_service import parse_layout_result
+from app.services.extraction.layout_field_extractor import (
     extract_document_heading_from_layout,
     extract_key_value_fields,
     infer_doc_family_hint,
@@ -105,7 +105,9 @@ def test_infer_doc_family_hint_po() -> None:
 
 
 def test_extract_line_items_from_table() -> None:
-    from app.services.layout_field_extractor import extract_line_items_from_tables
+    from decimal import Decimal
+
+    from app.services.extraction.layout_field_extractor import extract_line_items_from_tables
 
     layout = DocumentLayoutResult(
         tables=(
@@ -127,3 +129,37 @@ def test_extract_line_items_from_table() -> None:
     items = extract_line_items_from_tables(layout)
     assert len(items) == 1
     assert items[0].description == "Paper"
+    assert items[0].qty == Decimal("2")
+    assert items[0].amount == Decimal("20.00")
+
+
+def test_extract_line_items_from_table_with_unit_price() -> None:
+    from decimal import Decimal
+
+    from app.services.extraction.layout_field_extractor import extract_line_items_from_tables
+
+    layout = DocumentLayoutResult(
+        tables=(
+            LayoutTable(
+                page_index=0,
+                row_count=2,
+                column_count=4,
+                cells=(
+                    LayoutTableCell("Description", 0, 0),
+                    LayoutTableCell("Qty", 0, 1),
+                    LayoutTableCell("Unit Price", 0, 2),
+                    LayoutTableCell("Amount", 0, 3),
+                    LayoutTableCell("Catering package", 1, 0),
+                    LayoutTableCell("10", 1, 1),
+                    LayoutTableCell("50.00", 1, 2),
+                    LayoutTableCell("500.00", 1, 3),
+                ),
+            ),
+        )
+    )
+    items = extract_line_items_from_tables(layout)
+    assert len(items) == 1
+    assert items[0].description == "Catering package"
+    assert items[0].qty == Decimal("10")
+    assert items[0].unit_price == Decimal("50.00")
+    assert items[0].amount == Decimal("500.00")

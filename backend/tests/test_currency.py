@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.services.currency import convert_to_base, sum_amounts_by_currency
+from app.services.shared.currency import convert_to_base, sum_amounts_by_currency
 
 
 def test_convert_to_base_usd() -> None:

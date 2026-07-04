@@ -3,8 +3,8 @@
 import pytest
 
 from app.config import get_settings
-from app.services.mailbox_invite_service import create_invite_token, parse_invite_token
-from app.services.mailbox_oauth_service import create_oauth_state
+from app.services.ingest.mailbox_invite_service import create_invite_token, parse_invite_token
+from app.services.ingest.mailbox_oauth_service import create_oauth_state
 from app.tenant_ids import TESTING_TENANT_UUID, parse_tenant_id
 
 
@@ -26,7 +26,7 @@ def _settings(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def mock_invite_email(monkeypatch: pytest.MonkeyPatch) -> None:
     def _ok(**_kwargs):
-        from app.services.mailbox_invite_service import InviteEmailResult
+        from app.services.ingest.mailbox_invite_service import InviteEmailResult
 
         return InviteEmailResult(sent=True)
 
@@ -181,7 +181,7 @@ async def test_create_invite_succeeds_when_email_fails(
     token = await _register_admin(client, db_session)
 
     def _fail_email(**_kwargs):
-        from app.services.mailbox_invite_service import InviteEmailResult
+        from app.services.ingest.mailbox_invite_service import InviteEmailResult
 
         return InviteEmailResult(sent=False, error="Graph denied")
 

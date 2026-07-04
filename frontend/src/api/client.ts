@@ -18,6 +18,7 @@ import type {
   MailProvider,
   DailyReconciliation,
   NavBadges,
+  NotificationsResponse,
   PaymentApi,
   PaymentExecutionInstructionApi,
   PaymentExecutionInstructionExportApi,
@@ -752,6 +753,10 @@ export const api = {
   },
 
   getNavBadges: () => request<NavBadges>("/api/dashboard/badges"),
+  getNotifications: (limit = 30) =>
+    request<NotificationsResponse>(`/api/notifications?limit=${limit}`),
+  markNotificationsRead: () =>
+    request<{ unread_count: number }>("/api/notifications/mark-read", { method: "POST" }),
   getStats: () => request<DashboardStats>("/api/dashboard/stats"),
   getDashboardOverview: (activityLimit = 10, month?: string) => {
     const params = new URLSearchParams({

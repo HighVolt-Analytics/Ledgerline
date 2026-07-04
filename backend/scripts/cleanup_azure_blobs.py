@@ -14,8 +14,8 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.database import async_session_factory
 from app.models.invoice import Invoice
-from app.services import blob_storage
-from app.services.tenant_storage_paths import blob_name_from_stored, is_legacy_blob_path
+from app.services.shared import blob_storage
+from app.services.tenant.tenant_storage_paths import blob_name_from_stored, is_legacy_blob_path
 
 # Only the `invoices` container is configured in the backend.
 UNUSED_CONTAINERS = ("exports", "incoming-pdfs", "processed")

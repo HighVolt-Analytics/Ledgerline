@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.config import get_settings
-from app.services.mailbox_oauth_service import build_admin_consent_url
+from app.services.ingest.mailbox_oauth_service import build_admin_consent_url
 
 
 @pytest.fixture(autouse=True)
