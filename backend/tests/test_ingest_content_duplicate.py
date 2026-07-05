@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.extraction.pdf_content_fingerprint import compute_pdf_content_fingerprint
-from app.services.extraction.pdf_page_text_service import PdfPageText
+from app.services.extraction.pdf_page_text_service import PdfPageText, PdfPageTextExtraction
 from app.services.ingest.ingest_fanout_service import ingest_upload_file
 from app.tenant_ids import TESTING_TENANT_UUID
 
@@ -51,15 +51,11 @@ async def test_standalone_upload_matches_prior_bundle_segment_fingerprint(
 
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
-        lambda _path: [PdfPageText(0, invoice_text)],
+        lambda _path: PdfPageTextExtraction(pages=[PdfPageText(0, invoice_text)]),
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/standalone.pdf",
-    )
-    monkeypatch.setattr(
-        "app.services.ingest.ingest_fanout_service.compute_pdf_bytes_content_fingerprint",
-        lambda _data: fingerprint,
     )
 
     result = await ingest_upload_file(
@@ -114,10 +110,12 @@ async def test_bundle_reupload_detected_via_source_file_hash(
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
-        lambda _path: [
-            PdfPageText(0, "COMMERCIAL INVOICE\nInvoice No: 250970286"),
-            PdfPageText(1, "PACKING LIST\nInvoice No: 250970286"),
-        ],
+        lambda _path: PdfPageTextExtraction(
+            pages=[
+                PdfPageText(0, "COMMERCIAL INVOICE\nInvoice No: 250970286"),
+                PdfPageText(1, "PACKING LIST\nInvoice No: 250970286"),
+            ]
+        ),
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",
@@ -178,7 +176,7 @@ async def test_bundle_segment_matches_prior_standalone_fingerprint(
     ]
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
-        lambda _path: pages,
+        lambda _path: PdfPageTextExtraction(pages=pages),
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",

@@ -30,6 +30,7 @@ export default defineConfig({
       "src/lib/authSync.test.ts",
       "src/lib/authToken.test.ts",
       "src/lib/tenantSession.test.ts",
+      "src/lib/uploadColumnState.test.ts",
       "src/api/client.test.ts",
     ],
   },

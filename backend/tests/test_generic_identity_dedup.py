@@ -26,7 +26,7 @@ from app.services.extraction.pdf_content_fingerprint import (
     compute_pdf_bytes_content_fingerprint as bytes_fp,
     compute_pdf_content_fingerprint,
 )
-from app.services.extraction.pdf_page_text_service import PdfPageText
+from app.services.extraction.pdf_page_text_service import PdfPageText, PdfPageTextExtraction
 from app.services.extraction.pdf_segment_service import segment_pdf_pages
 from app.services.ingest.ingest_fanout_service import ingest_upload_file
 from app.services.invoice.invoice_data import InvoiceData
@@ -57,7 +57,7 @@ def test_segment_bytes_fingerprint_matches_standalone_slice(
 
     monkeypatch.setattr(
         "app.services.extraction.pdf_content_fingerprint.extract_pdf_page_texts",
-        lambda _path: pages,
+        lambda _path: PdfPageTextExtraction(pages=pages),
     )
     standalone = bytes_fp(b"%PDF-synthetic-bytes")
     sliced = compute_pdf_content_fingerprint(pages, 0, 0)
@@ -115,7 +115,7 @@ def test_catalogue_two_document_types_split_two_page_pdf() -> None:
         _page(0, "Alpha logistics sheet\nRef: ALP-001\nVendor: SynthCo"),
         _page(1, "Beta customs sheet\nRef: BET-002\nVendor: SynthCo"),
     ]
-    segments = segment_pdf_pages(pages, document_types=catalogue)
+    segments = segment_pdf_pages(pages, document_types=catalogue).segments
     assert len(segments) == 2
     assert segments[0].page_kind_token == "dt:DT-A"
     assert segments[1].page_kind_token == "dt:DT-B"
@@ -157,10 +157,34 @@ def test_secondary_pass_splits_catalogue_only_page_kind() -> None:
         _page(0, "PURCHASE ORDER\nPO Number: PO-SYN-44\nVendor: SynthCo"),
         _page(1, "WAREHOUSE RELEASE NOTE\nRelease Ref: REL-44\nVendor: SynthCo"),
     ]
-    segments = segment_pdf_pages(pages, document_types=catalogue)
+    segments = segment_pdf_pages(pages, document_types=catalogue).segments
     assert len(segments) == 2
     assert segments[0].heading_kind == "purchase_order"
     assert segments[1].page_kind_token == "dt:DT-REL"
+
+
+def test_catalogue_dt_token_maps_to_heading_kind() -> None:
+    catalogue = [
+        DocumentTypeDefinition.model_validate(
+            {
+                "code": "DT-PL",
+                "title": "Packing List",
+                "shortTitle": "Packing List",
+                "klass": "Transactional",
+                "posting": "No",
+                "oneLine": "Packing list for shipment",
+                "routeTarget": "Vault",
+                "enabled": True,
+            }
+        ),
+    ]
+    pages = [
+        _page(0, "COMMERCIAL INVOICE\nInvoice No: EXP-1"),
+        _page(1, "Packing List\nShipment Ref: SHP-1"),
+    ]
+    segments = segment_pdf_pages(pages, document_types=catalogue).segments
+    assert len(segments) == 2
+    assert segments[1].heading_kind == "packing_list"
 
 
 @pytest.mark.asyncio
@@ -205,12 +229,12 @@ async def test_business_fingerprint_ingest_shadow_duplicate(
         lambda _s, _t: _async_cfg(catalogue),
     )
     monkeypatch.setattr(
-        "app.services.ingest.ingest_fanout_service.extract_identity_fields_from_pdf_bytes",
-        lambda _data, **kwargs: extract_identity_fields(po_text, custom_field_keys=keys),
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
+        lambda _path: PdfPageTextExtraction(pages=[_page(0, po_text)]),
     )
     monkeypatch.setattr(
-        "app.services.ingest.ingest_fanout_service.compute_business_fingerprint_from_bytes",
-        lambda _data, **kwargs: business_fp,
+        "app.services.ingest.ingest_fanout_service.compute_business_fingerprint_from_pages",
+        lambda _pages, **kwargs: business_fp,
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",

@@ -16,34 +16,15 @@ import {
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { EmptyState } from "@/components/EmptyState";
-import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
-import {
-  EvaluationStatusBadge,
-  RouteTargetBadge,
-} from "@/components/inbox/EvaluationStatusBadge";
-import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
-import { InboxSourceBadge } from "@/components/inbox/InboxSourceBadge";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabs } from "@/components/PageTabs";
-import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { DocumentMatrixPanel } from "@/components/upload/DocumentMatrixPanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
-import { documentDisplayRef, money } from "@/lib/format";
-import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
-import {
-  counterpartyColumnLabel,
-  counterpartyMatchColumnLabel,
-  counterpartyMatchLabel,
-  counterpartyName,
-  invoiceCounterpartyConfidence,
-  invoiceSourceKind,
-  invoiceValidationConfidence,
-  mailboxDisplayName,
-} from "@/lib/invoice";
+import { mailboxDisplayName, counterpartyColumnLabel, counterpartyMatchColumnLabel } from "@/lib/invoice";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
@@ -51,8 +32,13 @@ import { cn } from "@/lib/cn";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useNavBadges } from "@/hooks/useNavBadges";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
+import {
+  UploadInvoiceMobileRow,
+  UploadInvoiceTableRow,
+} from "@/components/upload/UploadInvoiceListRow";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryClient";
+import { shouldClearProcessingId } from "@/lib/approvalsBoard";
 import {
   BULK_UPLOAD_MAX_FILES,
   filterUploadFiles,
@@ -62,10 +48,12 @@ import {
   uploadFilesInBatch,
   watchInvoiceIdsForVendorHold,
 } from "@/lib/bulkUpload";
+import { uploadListHasActiveProcessing } from "@/lib/uploadColumnState";
 
 const UPLOAD_LOAD_HINT =
   `${API_PORT_HINT.trim()} and migrations are up to date `;
 const INBOX_POLL_MS = 15_000;
+const INBOX_POLL_FAST_MS = 4_000;
 const PROCESSING_WAIT_MS = 120_000;
 const PAGE_SIZE = 10;
 const NOTICE_AUTO_DISMISS_MS = 5000; // upload / mailbox notices (not in-progress fetch/import)
@@ -192,6 +180,7 @@ export function UploadPage() {
   const [importJob, setImportJob] = useState<MailboxBackfillJob | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
   const tenantScope = user?.tenant_id ?? null;
 
   useResetOnTenantChange(() => {
@@ -211,6 +200,7 @@ export function UploadPage() {
     setImportMailbox(null);
     setImportJob(null);
     setFetchNotice(null);
+    setProcessingIds(new Set());
   });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
@@ -299,11 +289,6 @@ export function UploadPage() {
     void load();
   }, [load]);
 
-  useVisibilityPolling(() => {
-    if (!initialLoadDoneRef.current) return;
-    void load({ silent: true, fresh: true });
-  }, INBOX_POLL_MS);
-
   useEffect(() => {
     if (page > totalPages) {
       setPage(totalPages);
@@ -322,6 +307,36 @@ export function UploadPage() {
   }, [all]);
 
   const filtered = useMemo(() => captured, [captured]);
+
+  const inboxPollMs = useMemo(
+    () =>
+      uploadListHasActiveProcessing(filtered, processingIds)
+        ? INBOX_POLL_FAST_MS
+        : INBOX_POLL_MS,
+    [filtered, processingIds]
+  );
+
+  useVisibilityPolling(() => {
+    if (!initialLoadDoneRef.current) return;
+    void load({ silent: true, fresh: true });
+  }, inboxPollMs);
+
+  useEffect(() => {
+    setProcessingIds((prev) => {
+      if (prev.size === 0) return prev;
+      const byId = new Map(all.map((row) => [row.id, row]));
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of prev) {
+        const row = byId.get(id);
+        if (row && shouldClearProcessingId(row.status, true)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [all]);
 
   const docsPerMailbox = useMemo(() => {
     const counts = new Map<number, number>();
@@ -506,6 +521,11 @@ export function UploadPage() {
         .filter((row): row is Extract<BulkUploadItemResult, { ok: true }> => row.ok)
         .flatMap((row) => row.invoiceIds);
       if (uploadedIds.length > 0) {
+        setProcessingIds((prev) => {
+          const next = new Set(prev);
+          for (const id of uploadedIds) next.add(id);
+          return next;
+        });
         void (async () => {
           const holdNotice = await watchInvoiceIdsForVendorHold(uploadedIds, {
             onPoll: async () => {
@@ -870,56 +890,14 @@ export function UploadPage() {
               </p>
             )}
             {filtered.map((inv) => (
-              <button
+              <UploadInvoiceMobileRow
                 key={inv.id}
-                type="button"
-                data-testid={`row-invoice-${inv.id}`}
-                className="w-full text-left px-3 py-3 hover-elevate active:bg-muted/40 transition-colors"
-                onClick={() => openDrawer(inv.id)}
-              >
-                <div className="flex items-start justify-between gap-3 min-w-0">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium tnum">{documentDisplayRef(inv)}</div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {inv.invoice_no ? `${inv.invoice_no} · ` : ""}
-                      {invoiceDocumentTypeDisplayLabel(inv, ruleBook?.documentTypes)}
-                    </div>
-                    <div className="text-sm truncate mt-0.5">{counterpartyName(inv)}</div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="tnum font-medium text-sm">
-                      {money(inv.total, inv.currency)}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground tnum mt-0.5">
-                      {relativeTime(inv.created_at)}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                  <InboxSourceBadge kind={invoiceSourceKind(inv)} />
-                  <RouteTargetBadge route={inv.route_target} />
-                  <InboxGlAccountBadge
-                    account={inv.account_name}
-                    glPostingApplicable={inv.gl_posting_applicable ?? true}
-                  />
-                  <StageBadge {...invoiceStageBadgeProps(inv)} />
-                  <EvaluationStatusBadge status={inv.evaluation_status} />
-                </div>
-                <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[11px] text-muted-foreground">
-                  <span className="inline-flex items-center gap-1">
-                    VR pass
-                    <InboxConfidenceBadge value={invoiceValidationConfidence(inv, ruleBook?.documentTypes)} />
-                  </span>
-                  {counterpartyMatchLabel(inv, ruleBook?.documentTypes) ? (
-                    <span className="inline-flex items-center gap-1">
-                      {counterpartyMatchLabel(inv, ruleBook?.documentTypes)}
-                      <InboxConfidenceBadge
-                        value={invoiceCounterpartyConfidence(inv, ruleBook?.documentTypes)}
-                      />
-                    </span>
-                  ) : null}
-                </div>
-              </button>
+                inv={inv}
+                documentTypes={ruleBook?.documentTypes}
+                processingIds={processingIds}
+                onOpen={() => openDrawer(inv.id)}
+                receivedLabel={relativeTime(inv.created_at)}
+              />
             ))}
           </div>
 
@@ -956,53 +934,14 @@ export function UploadPage() {
                   </tr>
                 )}
                 {filtered.map((inv) => (
-                  <tr
+                  <UploadInvoiceTableRow
                     key={inv.id}
-                    data-testid={`row-invoice-${inv.id}`}
-                    className="row-band border-b border-border/60 cursor-pointer hover-elevate last:border-0"
-                    onClick={() => openDrawer(inv.id)}
-                  >
-                    <td className="px-4 py-2.5">
-                      <div className="font-medium tnum">{documentDisplayRef(inv)}</div>
-                      <div className="text-xs text-muted-foreground tnum">
-                        {inv.invoice_no ? `${inv.invoice_no} · ` : ""}
-                        {invoiceDocumentTypeDisplayLabel(inv, ruleBook?.documentTypes)}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2.5 max-w-[160px] truncate">{counterpartyName(inv)}</td>
-                    <td className="px-3 py-2.5">
-                      <InboxSourceBadge kind={invoiceSourceKind(inv)} />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <RouteTargetBadge route={inv.route_target} />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <InboxGlAccountBadge
-                    account={inv.account_name}
-                    glPostingApplicable={inv.gl_posting_applicable ?? true}
+                    inv={inv}
+                    documentTypes={ruleBook?.documentTypes}
+                    processingIds={processingIds}
+                    onOpen={() => openDrawer(inv.id)}
+                    receivedLabel={relativeTime(inv.created_at)}
                   />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <StageBadge {...invoiceStageBadgeProps(inv)} />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <EvaluationStatusBadge status={inv.evaluation_status} />
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <InboxConfidenceBadge value={invoiceValidationConfidence(inv, ruleBook?.documentTypes)} />
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <InboxConfidenceBadge
-                        value={invoiceCounterpartyConfidence(inv, ruleBook?.documentTypes)}
-                      />
-                    </td>
-                    <td className="px-3 py-2.5 text-right tnum font-medium whitespace-nowrap">
-                      {money(inv.total, inv.currency)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-xs text-muted-foreground tnum whitespace-nowrap">
-                      {relativeTime(inv.created_at)}
-                    </td>
-                  </tr>
                 ))}
               </tbody>
             </table>
