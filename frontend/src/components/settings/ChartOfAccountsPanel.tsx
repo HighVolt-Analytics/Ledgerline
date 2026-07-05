@@ -16,10 +16,11 @@ import {
   normalizeChartOfAccountType,
   useChartOfAccounts,
   useSaveChartOfAccounts,
-  type ChartOfAccountRowLocal,
 } from "@/hooks/useChartOfAccounts";
 import { cn } from "@/lib/cn";
 import { newClientRowKey } from "@/lib/clientRowKey";
+
+type ChartOfAccountRowLocal = ChartOfAccountRow & { _rowKey: string };
 
 type ChartOfAccountsPanelProps = {
   canEdit?: boolean;
@@ -71,7 +72,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
   };
 
   const addRow = () => {
-    setRows((prev) => [...prev, newChartOfAccountRow()]);
+    setRows((prev) => [...prev, { ...newChartOfAccountRow(), _rowKey: newClientRowKey("coa") }]);
     setDirty(true);
   };
 
