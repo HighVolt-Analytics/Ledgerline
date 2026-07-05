@@ -1,13 +1,16 @@
 """Institution timezone helpers."""
 
+import pytest
 from datetime import date
 from unittest.mock import patch
 
 from app.models.tenant import Tenant
 from app.tenant_settings import (
+    country_currency,
     default_institution_settings,
     institution_settings_view,
     merge_institution_settings,
+    tenant_currency,
     tenant_today,
     tenant_timezone,
 )
@@ -62,3 +65,35 @@ def test_tenant_today_uses_institution_zone():
 
     with patch("app.tenant_settings.datetime", FakeDatetime):
         assert tenant_today(tenant) == date(2026, 6, 23)
+
+
+@pytest.mark.parametrize(
+    ("country", "currency"),
+    [
+        ("AU", "AUD"),
+        ("US", "USD"),
+        ("GB", "GBP"),
+        ("IN", "INR"),
+        ("SG", "SGD"),
+        ("NZ", "NZD"),
+        ("AE", "AED"),
+        ("DE", "EUR"),
+    ],
+)
+def test_country_currency_mapping(country: str, currency: str) -> None:
+    assert country_currency(country) == currency
+
+
+def test_country_currency_unknown_defaults_to_sg() -> None:
+    assert country_currency("XX") == "SGD"
+
+
+def test_tenant_currency_from_country() -> None:
+    tenant = Tenant(name="SG Co", slug="sg-co", settings_json={"country": "SG"})
+    assert tenant_currency(tenant) == "SGD"
+
+
+def test_institution_settings_view_includes_currency() -> None:
+    tenant = Tenant(name="IN Co", slug="in-co", settings_json={"country": "IN"})
+    view = institution_settings_view(tenant)
+    assert view["currency"] == "INR"

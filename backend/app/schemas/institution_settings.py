@@ -8,6 +8,7 @@ class InstitutionSettingsResponse(BaseModel):
     country: str
     timezone: str
     locale: str
+    currency: str
 
 
 class UpdateInstitutionSettingsRequest(BaseModel):

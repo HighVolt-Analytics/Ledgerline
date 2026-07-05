@@ -18,14 +18,21 @@ import {
   allRecognitionSignalIds,
   getRecognitionSignalCatalog,
 } from "@/lib/recognitionSignalCatalog";
+import { newClientRowKey } from "@/lib/clientRowKey";
 
 export type MatchRuleMode = "any" | "all";
 
 export type MatchRuleRow = {
+  /** UI-only stable React key — not persisted to classifier. */
+  rowKey?: string;
   field: string;
   operator: ConditionOperator;
   value: string;
 };
+
+export function withRowKey(row: Omit<MatchRuleRow, "rowKey"> & { rowKey?: string }): MatchRuleRow {
+  return { ...row, rowKey: row.rowKey ?? newClientRowKey("match-rule") };
+}
 
 export type MatchRulesForm = {
   matchMode: MatchRuleMode;
@@ -394,11 +401,11 @@ function isAllConditionChildren(group: DocumentRuleConditionGroup): boolean {
 }
 
 function leafToRow(c: DocumentRuleCondition): MatchRuleRow {
-  return {
+  return withRowKey({
     field: c.field,
     operator: c.operator,
     value: c.value,
-  };
+  });
 }
 
 function simpleConditionChildren(

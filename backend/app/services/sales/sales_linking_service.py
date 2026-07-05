@@ -119,20 +119,11 @@ async def attach_dn_invoice_to_so(
     ).scalar_one_or_none()
     dn_invoice = loaded or dn_invoice
     qty, _, _ = _invoice_qty_and_price(dn_invoice)
-    first_line = dn_invoice.line_items[0] if dn_invoice.line_items else None
-    from app.services.master_data.uom_conversion_service import infer_uom_from_description
-
-    dn_uom = getattr(so, "so_uom", None)
-    if first_line:
-        dn_uom = getattr(first_line, "uom", None) or infer_uom_from_description(
-            first_line.description
-        ) or dn_uom
 
     dn = DeliveryNote(
         tenant_id=so.tenant_id,
         sales_order_id=so.id,
         dn_qty=qty,
-        dn_uom=dn_uom,
         dn_currency=getattr(dn_invoice, "currency", None) or "AUD",
         dn_date=dn_invoice.invoice_date,
         shipper=None,

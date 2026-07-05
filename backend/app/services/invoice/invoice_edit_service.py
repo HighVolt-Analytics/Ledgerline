@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
 from app.schemas.invoice import InvoiceUpdateRequest
@@ -166,16 +164,14 @@ async def invoice_has_manual_field_edits(
     *,
     tenant_id: uuid.UUID,
 ) -> bool:
-    """True when a clerk saved field corrections on this invoice."""
-    row = (
-        await session.execute(
-            select(AuditLog.id)
-            .where(
-                AuditLog.invoice_id == invoice_id,
-                AuditLog.tenant_id == tenant_id,
-                AuditLog.event == "invoice_fields_updated",
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    return row is not None
+    """True when a clerk saved field corrections on this invoice in the current cycle."""
+    from app.services.invoice.processing_cycle_service import (
+        has_audit_event_after_cycle_reset,
+    )
+
+    return await has_audit_event_after_cycle_reset(
+        session,
+        invoice_id,
+        event="invoice_fields_updated",
+        tenant_id=tenant_id,
+    )

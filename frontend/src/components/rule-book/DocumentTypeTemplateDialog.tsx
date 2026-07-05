@@ -1,14 +1,11 @@
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { FileText, Layers, Search, X } from "lucide-react";
+import { FileText, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
 import {
-  DOCUMENT_TYPE_STARTER_PACKS,
   DOCUMENT_TYPE_TEMPLATES,
-  type DocumentTypeStarterPack,
-  type DocumentTypeStarterPackId,
   type DocumentTypeTemplate,
   type DocumentTypeTemplateId,
 } from "@/lib/documentTypeTemplates";
@@ -18,7 +15,6 @@ type DocumentTypeTemplateDialogProps = {
   open: boolean;
   onClose: () => void;
   onSelect: (templateId: DocumentTypeTemplateId) => void;
-  onSelectStarterPack?: (packId: DocumentTypeStarterPackId) => void;
 };
 
 const KLASS_FILTERS: Array<{ value: "all" | DocumentTypeClass; label: string }> = [
@@ -66,42 +62,10 @@ function TemplateCard({
   );
 }
 
-function StarterPackCard({
-  pack,
-  onSelect,
-}: {
-  pack: DocumentTypeStarterPack;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "flex flex-col rounded-xl border border-primary/30 bg-primary/5 p-4 text-left transition",
-        "hover:-translate-y-px hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      )}
-      data-testid={`starter-pack-${pack.id}`}
-    >
-      <div className="flex items-start gap-2">
-        <Layers className="h-4 w-4 shrink-0 text-primary mt-0.5" />
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-foreground">{pack.label}</div>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{pack.description}</p>
-          <p className="mt-2 text-[10px] text-muted-foreground">
-            Adds {pack.matrixTemplates.length} org types · finance-standard wiring
-          </p>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-export function DocumentTypeTemplateDialog({
+function DocumentTypeTemplateDialog({
   open,
   onClose,
   onSelect,
-  onSelectStarterPack,
 }: DocumentTypeTemplateDialogProps) {
   const [query, setQuery] = useState("");
   const [klassFilter, setKlassFilter] = useState<"all" | DocumentTypeClass>("all");
@@ -186,21 +150,6 @@ export function DocumentTypeTemplateDialog({
           </div>
         </div>
 
-        {onSelectStarterPack ? (
-          <div className="space-y-2 border-b border-border px-5 py-3">
-            <p className="text-xs font-medium text-foreground">Starter packs (recommended)</p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {DOCUMENT_TYPE_STARTER_PACKS.map((pack) => (
-                <StarterPackCard
-                  key={pack.id}
-                  pack={pack}
-                  onSelect={() => onSelectStarterPack(pack.id)}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
-
         <div className="grid gap-3 p-5 sm:grid-cols-2 max-h-[min(65vh,560px)] overflow-y-auto">
           {templates.length === 0 ? (
             <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
@@ -230,3 +179,5 @@ export function DocumentTypeTemplateDialog({
     document.body
   );
 }
+
+export { DocumentTypeTemplateDialog };

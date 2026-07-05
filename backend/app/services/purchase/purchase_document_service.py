@@ -32,7 +32,6 @@ from app.services.purchase.purchase_linking_service import (
     po_ref_for_invoice,
 )
 from app.services.rule_book.rule_book_mapper import load_classification_config
-from app.services.master_data.uom_conversion_service import infer_uom_from_description
 
 EVAL_AWAITING_PO = "awaiting_po"
 
@@ -184,11 +183,6 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
     invoice = await _load_invoice_with_lines(db, invoice)
     qty, unit, _ = _invoice_qty_and_price(invoice)
     first_line = invoice.line_items[0] if invoice.line_items else None
-    line_uom = None
-    if first_line:
-        line_uom = getattr(first_line, "uom", None) or infer_uom_from_description(
-            first_line.description
-        )
 
     po = await _get_or_load_po(db, invoice, po_number)
     if po is None:
@@ -200,7 +194,6 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
             item=first_line.description if first_line else None,
             po_qty=qty,
             po_unit_price=unit,
-            po_uom=line_uom,
             po_document_id=invoice.id,
         )
         db.add(po)

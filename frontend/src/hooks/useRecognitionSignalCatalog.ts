@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 import {
   recognitionSignalCatalogFromApi,
@@ -9,7 +9,7 @@ import {
 } from "@/lib/recognitionSignalCatalog";
 
 export function useRecognitionSignalCatalog(enabled = true) {
-  const query = useQuery({
+  const query = useTenantQuery({
     queryKey: queryKeys.recognitionSignals(),
     queryFn: async (): Promise<RecognitionSignalCatalog> => {
       const raw = await api.getRecognitionSignalCatalog();

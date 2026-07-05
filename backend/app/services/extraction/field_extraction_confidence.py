@@ -10,7 +10,13 @@ from typing import Any
 from app.models.invoice import Invoice
 from app.services.invoice.invoice_data import InvoiceData, invoice_data_from_invoice
 from app.services.extraction.pdf_parser import _invoice_no_sane
+from app.services.extraction.field_grounding_service import (
+    validate_bank_account,
+    validate_bank_bsb,
+    value_grounded_in_ocr,
+)
 from app.services.master_data.vendor_name_utils import is_plausible_vendor_name
+from app.utils.tax_id_validator import is_acceptable_tax_id
 
 _VALIDATION_RULE_FIELDS: dict[str, tuple[str, ...]] = {
     "VR01": ("subtotal", "gst", "total"),
@@ -112,7 +118,14 @@ def _score_vendor(data: InvoiceData) -> float:
 
 
 def _score_abn(data: InvoiceData) -> float:
-    digits = "".join(c for c in (data.abn or "") if c.isdigit())
+    raw = (data.abn or "").strip()
+    if not raw:
+        return _empty_score("abn")
+    if not value_grounded_in_ocr(raw, data.document_text):
+        return 28.0
+    if not is_acceptable_tax_id(raw):
+        return 34.0
+    digits = "".join(c for c in raw if c.isdigit())
     if len(digits) >= 11:
         return 93.0
     if digits:
@@ -167,8 +180,12 @@ def _score_line_items(data: InvoiceData) -> float:
 
 
 def _score_bank_details(data: InvoiceData) -> float:
+    bsb = validate_bank_bsb(data.bank_bsb, data.document_text)
+    account = validate_bank_account(data.bank_account, data.document_text)
+    if bsb or account:
+        return 88.0 if bsb and account else 72.0
     if (data.bank_bsb or "").strip() or (data.bank_account or "").strip():
-        return 88.0
+        return 26.0
     return _empty_score("bank_details")
 
 

@@ -15,7 +15,7 @@ import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef, money } from "@/lib/format";
 import { fetchApprovalsBoard } from "@/lib/invoices";
-import { approveAndProcess, canReprocessInvoice, invoiceFieldsFromDetails, reprocessAndWatch, validateInvoiceFieldsForApproval, watchProcessingUntilIdle } from "@/lib/invoiceActions";
+import { approveAndProcess, invoiceCanAttemptReprocess, invoiceFieldsFromDetails, reprocessAndWatch, validateInvoiceFieldsForApproval, watchProcessingUntilIdle } from "@/lib/invoiceActions";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import {
@@ -23,6 +23,7 @@ import {
   APPROVABLE_STATUSES,
   type ApprovalBoardColumnKey,
   canShowApproveOnBoard,
+  canShowReprocessOnBoard,
   columnForInvoice,
   mergeBoardRowWithLocal,
   PERMANENTLY_DELETABLE,
@@ -220,11 +221,15 @@ export function ApprovalsPage() {
 
   const reprocessInvoice = async (id: number) => {
     const inv = invoices.find((i) => i.id === id);
-    if (!inv || !canReprocessInvoice(inv.status)) {
-      setToast("This invoice cannot be reprocessed.");
+    if (!inv || inv.status !== "rejected") {
+      setToast(
+        inv?.status === "duplicate_skipped"
+          ? "Duplicate submissions have no stored file — delete permanently or reprocess the original document."
+          : "This invoice cannot be reprocessed."
+      );
       return;
     }
-    if (!inv.has_stored_file) {
+    if (!invoiceCanAttemptReprocess(inv)) {
       setToast("Upload a PDF before reprocessing this invoice.");
       return;
     }
@@ -487,23 +492,23 @@ export function ApprovalsPage() {
                       className="flex items-center gap-1 mt-2 flex-wrap"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {col.key === "pending" && canReprocessInvoice(inv.status) && (
+                      {canShowReprocessOnBoard(inv, col.key) && (
                         <Button
                           variant="outline"
                           size="sm"
                           className="h-6 px-1.5 text-[11px]"
-                          disabled={busyId === inv.id || !inv.has_stored_file}
-                          title={
-                            inv.has_stored_file
-                              ? undefined
-                              : "Attach a PDF before reprocessing"
-                          }
+                          disabled={busyId === inv.id}
                           onClick={() => void reprocessInvoice(inv.id)}
                           data-testid={`reprocess-${inv.id}`}
                         >
                           <RefreshCw className="h-3 w-3 mr-0.5" />
                           {busyId === inv.id ? "…" : "Reprocess"}
                         </Button>
+                      )}
+                      {col.key === "rejected" && inv.status === "duplicate_skipped" && (
+                        <span className="text-[10px] text-muted-foreground leading-tight">
+                          Duplicate — no file stored
+                        </span>
                       )}
                       {col.key === "pending" && APPROVABLE_STATUSES.has(inv.status) && (
                         <Button
@@ -571,24 +576,6 @@ export function ApprovalsPage() {
                           Post
                         </Button>
                       )}
-                      {col.key === "rejected" && canReprocessInvoice(inv.status) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-1.5 text-[11px]"
-                          disabled={busyId === inv.id || !inv.has_stored_file}
-                          title={
-                            inv.has_stored_file
-                              ? undefined
-                              : "Attach a PDF before reprocessing"
-                          }
-                          onClick={() => void reprocessInvoice(inv.id)}
-                          data-testid={`reprocess-${inv.id}`}
-                        >
-                          <RefreshCw className="h-3 w-3 mr-0.5" />
-                          {busyId === inv.id ? "…" : "Reprocess"}
-                        </Button>
-                      )}
                       {col.key === "rejected" && PERMANENTLY_DELETABLE.has(inv.status) && (
                         <Button
                           variant="outline"
@@ -627,6 +614,16 @@ export function ApprovalsPage() {
         startInEditMode={drawerEditMode}
         onEditingChange={setDrawerEditing}
         onUpdated={() => load({ fresh: true })}
+        onPipelineStart={(invoice) => {
+          setProcessingIds((prev) => new Set(prev).add(invoice.id));
+        }}
+        onPipelineEnd={(invoiceId) => {
+          setProcessingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(invoiceId);
+            return next;
+          });
+        }}
       />
     </div>
   );

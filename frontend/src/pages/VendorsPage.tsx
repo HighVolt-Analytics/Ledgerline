@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { Invoice, TopVendorRow, Vendor } from "@/api/types";
@@ -149,6 +150,8 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 
 export function VendorsPage() {
   const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const { data: pendingQueue = [] } = usePendingVendors(Boolean(user));
   const promoteMutation = usePromotePendingVendor();
   const currency = "AUD";
@@ -160,33 +163,43 @@ export function VendorsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editVendor, setEditVendor] = useState<Vendor | null>(null);
 
+  useResetOnTenantChange(() => {
+    setRows([]);
+    setInvoices([]);
+    setSearch("");
+    setError(null);
+  });
+
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     if (!options?.silent) {
       setLoading(true);
       setError(null);
     }
+    const seq = ++loadSeq.current;
     try {
       const fresh = options?.fresh ?? !options?.silent;
       const [vendors, invoiceRows] = await Promise.all([
         api.listVendors({ fresh }),
         fetchAllInvoices(fresh),
       ]);
+      if (seq !== loadSeq.current) return;
       setRows(vendors);
       setInvoices(invoiceRows);
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load vendors");
         setRows([]);
         setInvoices([]);
       }
     } finally {
-      if (!options?.silent) setLoading(false);
+      if (seq === loadSeq.current && !options?.silent) setLoading(false);
     }
-  }, []);
+  }, [tenantScope]);
 
   useEffect(() => {
     void load();
-  }, [load, user?.tenant_id]);
+  }, [load, tenantScope]);
 
   useVisibilityPolling(() => {
     void load({ silent: true, fresh: true });

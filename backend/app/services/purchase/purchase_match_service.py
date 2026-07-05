@@ -21,14 +21,6 @@ from app.schemas.purchase import (
 )
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.schemas.uom_conversion import PurchaseMatchConfig
-from app.services.master_data.uom_conversion_service import (
-    convert_qty_to_base,
-    infer_uom_from_description,
-    invoice_base_qty,
-    normalize_uom_token,
-    qty_over_billing,
-    unit_price_per_base,
-)
 from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE, parse_matched_rule_ids
 from app.services.purchase.purchase_coding_service import (
     code_po_from_invoice,
@@ -48,6 +40,19 @@ def _round2(value: Decimal | float) -> float:
     return round(float(value), 2)
 
 
+def _qty_over_billing(
+    invoice_qty: Decimal,
+    grn_qty: Decimal,
+    *,
+    tolerance_pct: float = 0.0,
+) -> bool:
+    """True when invoice exceeds GRN qty beyond configured tolerance."""
+    if grn_qty <= 0:
+        return invoice_qty > 0
+    allowed = grn_qty * (Decimal("1") + Decimal(str(tolerance_pct)) / Decimal("100"))
+    return invoice_qty > allowed
+
+
 def _amount_line(
     *,
     qty: Decimal | float,
@@ -63,152 +68,52 @@ def _amount_line(
     )
 
 
-def _conversion_note(
-    *,
-    label: str,
-    doc_qty: Decimal,
-    doc_uom: str | None,
-    base_qty: Decimal,
-    base_uom: str,
-) -> str | None:
-    src = normalize_uom_token(doc_uom)
-    dst = normalize_uom_token(base_uom) or "EA"
-    if not src or src == dst:
-        return None
-    if float(doc_qty) == float(base_qty):
-        return None
-    return f"{label} {float(doc_qty):g} {src} → {float(base_qty):g} {dst}"
-
-
 def build_three_way_match_display(
     po: PurchaseOrder,
     inv: Invoice | None,
     match: ThreeWayMatchResult,
-    *,
-    match_config: PurchaseMatchConfig | None = None,
 ) -> ThreeWayMatchDisplay:
-    cfg = match_config or PurchaseMatchConfig()
-    base_uom = normalize_uom_token(cfg.base_uom) or "EA"
     grn = _latest_grn(po)
-    vendor = po.vendor or (inv.vendor if inv is not None else None)
 
-    po_uom = getattr(po, "po_uom", None) or infer_uom_from_description(po.item)
     po_qty = Decimal(str(po.po_qty or 0))
     po_unit = Decimal(str(po.po_unit_price or 0))
-    po_base_qty = convert_qty_to_base(po_qty, po_uom, vendor=vendor, config=cfg)
-    po_unit_base = unit_price_per_base(po_qty, po_unit, po_uom, vendor=vendor, config=cfg)
-
-    po_on_document = _amount_line(
+    po_line = _amount_line(
         qty=po_qty,
-        uom=po_uom,
+        uom=getattr(po, "po_uom", None),
         unit_price=po_unit,
-        line_value=po_qty * po_unit if po_qty and po_unit else match.po_value,
-    )
-    po_for_match = _amount_line(
-        qty=po_base_qty,
-        uom=base_uom,
-        unit_price=po_unit_base,
         line_value=match.po_value,
     )
 
-    notes: list[str] = []
-    po_note = _conversion_note(
-        label="PO",
-        doc_qty=po_qty,
-        doc_uom=po_uom,
-        base_qty=po_base_qty,
-        base_uom=base_uom,
-    )
-    if po_note:
-        notes.append(po_note)
-
-    invoice_on_document: MatchAmountLine | None = None
-    invoice_for_match: MatchAmountLine | None = None
-    inv_unit_base = Decimal("0")
+    invoice_line: MatchAmountLine | None = None
     if inv is not None:
         inv_qty, inv_unit, _ = _invoice_qty_and_price(inv)
         inv_uom = None
         if inv.line_items:
-            first = inv.line_items[0]
-            inv_uom = getattr(first, "uom", None) or infer_uom_from_description(first.description)
-        inv_base_qty = invoice_base_qty(inv, config=cfg)
-        inv_unit_base = unit_price_per_base(
-            inv_qty, inv_unit, inv_uom, vendor=vendor, config=cfg
-        )
-        inv_doc_value = inv_qty * inv_unit if inv_qty and inv_unit else Decimal(str(match.invoice_value))
-        invoice_on_document = _amount_line(
+            inv_uom = getattr(inv.line_items[0], "uom", None)
+        invoice_line = _amount_line(
             qty=inv_qty,
             uom=inv_uom,
             unit_price=inv_unit,
-            line_value=inv_doc_value,
-        )
-        invoice_for_match = _amount_line(
-            qty=inv_base_qty,
-            uom=base_uom,
-            unit_price=inv_unit_base,
             line_value=match.invoice_value,
         )
-        inv_note = _conversion_note(
-            label="Invoice",
-            doc_qty=inv_qty,
-            doc_uom=inv_uom,
-            base_qty=inv_base_qty,
-            base_uom=base_uom,
-        )
-        if inv_note:
-            notes.append(inv_note)
 
-    grn_on_document: MatchAmountLine | None = None
-    grn_for_match: MatchAmountLine | None = None
+    grn_line: MatchAmountLine | None = None
     if grn is not None:
-        grn_uom = getattr(grn, "grn_uom", None) or po_uom
         grn_qty = Decimal(str(grn.grn_qty or 0))
-        grn_base_qty = convert_qty_to_base(grn_qty, grn_uom, vendor=vendor, config=cfg)
-        compare_unit = inv_unit_base if inv is not None and inv_unit_base > 0 else po_unit_base
-        grn_on_document = _amount_line(
+        grn_line = _amount_line(
             qty=grn_qty,
-            uom=grn_uom,
+            uom=getattr(grn, "grn_uom", None),
             unit_price=None,
             line_value=None,
         )
-        grn_for_match = _amount_line(
-            qty=grn_base_qty,
-            uom=base_uom,
-            unit_price=compare_unit,
-            line_value=_round2(grn_base_qty * compare_unit),
-        )
-        grn_note = _conversion_note(
-            label="GRN",
-            doc_qty=grn_qty,
-            doc_uom=grn_uom,
-            base_qty=grn_base_qty,
-            base_uom=base_uom,
-        )
-        if grn_note:
-            notes.append(grn_note)
-
-    explanation: str | None = None
-    if notes:
-        explanation = (
-            f"Variance uses all legs normalized to {base_uom}. "
-            + " ".join(notes)
-            + "."
-        )
-    elif inv is not None and grn is not None:
-        explanation = (
-            f"Document units differ, but all three legs reconcile to "
-            f"{base_uom} at {match.po_value:,.2f} before GST."
-        )
 
     return ThreeWayMatchDisplay(
-        base_uom=base_uom,
-        po_on_document=po_on_document,
-        po_for_match=po_for_match,
-        grn_on_document=grn_on_document,
-        grn_for_match=grn_for_match,
-        invoice_on_document=invoice_on_document,
-        invoice_for_match=invoice_for_match,
-        match_explanation=explanation,
+        po_on_document=po_line,
+        po_for_match=po_line,
+        grn_on_document=grn_line,
+        grn_for_match=grn_line,
+        invoice_on_document=invoice_line,
+        invoice_for_match=invoice_line,
     )
 
 
@@ -216,10 +121,8 @@ def _attach_match_display(
     po: PurchaseOrder,
     inv: Invoice | None,
     match: ThreeWayMatchResult,
-    *,
-    match_config: PurchaseMatchConfig | None = None,
 ) -> ThreeWayMatchResult:
-    display = build_three_way_match_display(po, inv, match, match_config=match_config)
+    display = build_three_way_match_display(po, inv, match)
     return match.model_copy(update={"display": display})
 
 
@@ -257,15 +160,10 @@ def compute_three_way_match(
     cfg = match_config or PurchaseMatchConfig()
     tolerance = cfg.qty_tolerance_pct if qty_tolerance_pct is None else qty_tolerance_pct
     grn = _latest_grn(po)
-    vendor = po.vendor or (inv.vendor if inv is not None else None)
-    po_uom = getattr(po, "po_uom", None) or infer_uom_from_description(po.item)
-    po_base_qty = convert_qty_to_base(
-        po.po_qty, po_uom, vendor=vendor, sku=None, config=cfg
-    )
-    po_unit_base = unit_price_per_base(
-        po.po_qty, po.po_unit_price, po_uom, vendor=vendor, config=cfg
-    )
-    po_value = _round2(po_base_qty * po_unit_base)
+
+    po_qty = Decimal(str(po.po_qty or 0))
+    po_unit = Decimal(str(po.po_unit_price or 0))
+    po_value = _round2(po_qty * po_unit)
 
     if inv is None:
         return ThreeWayMatchResult(
@@ -279,16 +177,8 @@ def compute_three_way_match(
             invoice_total=0.0,
         )
 
-    inv_base_qty = invoice_base_qty(inv, config=cfg)
     inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
-    inv_uom = None
-    if inv.line_items:
-        first = inv.line_items[0]
-        inv_uom = getattr(first, "uom", None) or infer_uom_from_description(first.description)
-    inv_unit_base = unit_price_per_base(
-        inv_qty, inv_unit, inv_uom, vendor=vendor, config=cfg
-    )
-    invoice_value = _round2(inv_base_qty * inv_unit_base)
+    invoice_value = _round2(inv_qty * inv_unit)
     invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
     invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
 
@@ -304,19 +194,16 @@ def compute_three_way_match(
             invoice_total=invoice_total,
         )
 
-    grn_uom = getattr(grn, "grn_uom", None) or po_uom
-    grn_base_qty = convert_qty_to_base(
-        grn.grn_qty, grn_uom, vendor=vendor, config=cfg
-    )
-    qty_variance = _round2((float(inv_base_qty) - float(grn_base_qty)) * float(inv_unit_base))
-    price_variance = _round2((float(inv_unit_base) - float(po_unit_base)) * float(inv_base_qty))
+    grn_qty = Decimal(str(grn.grn_qty or 0))
+    qty_variance = _round2((float(inv_qty) - float(grn_qty)) * float(inv_unit))
+    price_variance = _round2((float(inv_unit) - float(po_unit)) * float(inv_qty))
     total_deviation = _round2(qty_variance + price_variance)
 
     if po.variance_approved:
         status = "3-Way Match"
     elif price_variance != 0:
         status = "Price Variance"
-    elif qty_over_billing(inv_base_qty, grn_base_qty, tolerance_pct=tolerance):
+    elif _qty_over_billing(inv_qty, grn_qty, tolerance_pct=tolerance):
         status = "Qty Variance"
     else:
         status = "3-Way Match"
@@ -419,7 +306,7 @@ def purchase_order_to_response(
         match_config=match_cfg,
         rule_book_config=config,
     )
-    match = _attach_match_display(po, inv, match, match_config=match_cfg)
+    match = _attach_match_display(po, inv, match)
     inv_qty, inv_unit, gst_rate = (Decimal("0"), Decimal("0"), 0.0)
     matched_rule_ids: list[str] = []
     route_target: str | None = None

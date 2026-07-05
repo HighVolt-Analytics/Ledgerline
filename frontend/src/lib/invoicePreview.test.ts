@@ -547,6 +547,13 @@ describe("isSummaryLineDescription", () => {
     expect(isSummaryLineDescription("TOTAL NO. OF PALLET :")).toBe(true);
     expect(isSummaryLineDescription("Sandisk 4TB SSD")).toBe(false);
   });
+
+  it("detects delivery note metadata labels", () => {
+    expect(isSummaryLineDescription("Customer:")).toBe(true);
+    expect(isSummaryLineDescription("Shipped Qty:")).toBe(true);
+    expect(isSummaryLineDescription("Ship Date:")).toBe(true);
+    expect(isSummaryLineDescription("Widget assembly kit")).toBe(false);
+  });
 });
 
 describe("buildDocumentContentProfile summary line filtering", () => {

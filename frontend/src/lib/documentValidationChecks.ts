@@ -72,7 +72,7 @@ export const CONFIGURABLE_VALIDATION_CHECKS = [
 
   { code: "VR06", label: "Invoice & due dates", group: "Dates" },
 
-  { code: "VR07", label: "Currency AUD", group: "Currency" },
+  { code: "VR07", label: "Local currency", group: "Currency" },
 
   { code: "VR08", label: "GST rate check", group: "Tax" },
 
@@ -120,7 +120,7 @@ export const VALIDATION_CHECK_DESCRIPTIONS: Record<string, string> = {
 
   VR06: "Invoice date and due date must be valid.",
 
-  VR07: "Currency must be AUD unless configured otherwise.",
+  VR07: "Currency must match organisation country.",
 
   VR08: "GST must match extracted tax rate × subtotal within tolerance.",
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Invoice } from "@/api/types";
 import {
   canShowApproveOnBoard,
+  canShowReprocessOnBoard,
   columnForInvoice,
   isPreClassificationReview,
   mergeBoardRowWithLocal,
@@ -58,7 +59,7 @@ describe("columnForInvoice", () => {
       "journaling",
       "reconciling",
     ]) {
-      expect(columnForInvoice(inv(1, status, { document_type_code: "DT-03" })).toBe(
+      expect(columnForInvoice(inv(1, status, { document_type_code: "DT-03" }))).toBe(
         "awaiting"
       );
     }
@@ -119,7 +120,7 @@ describe("isPreClassificationReview and approve visibility", () => {
     ).toBe(false);
   });
 
-  it("hides approve on Review, shows on Processing", () => {
+  it("hides approve on Review and Rejected, shows on Processing only", () => {
     const reviewInv = inv(1, "exception", {
       evaluation_status: "awaiting_classification",
     });
@@ -127,8 +128,25 @@ describe("isPreClassificationReview and approve visibility", () => {
       evaluation_status: "needs_review",
       document_type_code: "DT-03",
     });
+    const rejectedInv = inv(3, "rejected");
     expect(canShowApproveOnBoard(reviewInv, "pending")).toBe(false);
     expect(canShowApproveOnBoard(procInv, "awaiting")).toBe(true);
+    expect(canShowApproveOnBoard(rejectedInv, "rejected")).toBe(false);
+  });
+
+  it("shows reprocess only for rejected status with stored file on Rejected column", () => {
+    const rejectedInv = inv(3, "rejected", {
+      has_stored_file: true,
+      raw_file_path: "azureblob://invoices/test.pdf",
+    });
+    const rejectedNoFile = inv(4, "rejected");
+    const duplicateInv = inv(5, "duplicate_skipped");
+    const processedInv = inv(6, "processed");
+    expect(canShowReprocessOnBoard(rejectedInv, "rejected")).toBe(true);
+    expect(canShowReprocessOnBoard(rejectedNoFile, "rejected")).toBe(false);
+    expect(canShowReprocessOnBoard(duplicateInv, "rejected")).toBe(false);
+    expect(canShowReprocessOnBoard(processedInv, "approved")).toBe(false);
+    expect(canShowReprocessOnBoard(rejectedInv, "awaiting")).toBe(false);
   });
 });
 

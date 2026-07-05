@@ -42,6 +42,10 @@ export function getRecognitionSignalCatalog(): RecognitionSignalCatalog | null {
   return activeCatalog;
 }
 
+export function clearRecognitionSignalCatalog(): void {
+  activeCatalog = null;
+}
+
 export function recognitionSignalCatalogFromApi(raw: {
   weak_signal_ids: string[];
   pick_groups: string[][];

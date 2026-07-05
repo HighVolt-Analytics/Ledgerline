@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.audit.audit_service import log_event
@@ -24,17 +22,15 @@ from app.services.rule_book.validator import ValidationResult
 
 
 async def has_document_approval(session: AsyncSession, invoice_id: int) -> bool:
-    row = (
-        await session.execute(
-            select(AuditLog.id)
-            .where(
-                AuditLog.invoice_id == invoice_id,
-                AuditLog.event == "invoice_approved",
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    return row is not None
+    from app.services.invoice.processing_cycle_service import (
+        has_audit_event_after_cycle_reset,
+    )
+
+    return await has_audit_event_after_cycle_reset(
+        session,
+        invoice_id,
+        event="invoice_approved",
+    )
 
 
 def _validation_result_map(results: list[ValidationResult]) -> dict[str, ValidationResult]:

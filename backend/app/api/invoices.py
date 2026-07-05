@@ -289,6 +289,7 @@ async def get_invoice(
         inv,
         tenant_id=ctx.tenant_id,
         verify_stored_file=True,
+        repair_stored_path=True,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
     )

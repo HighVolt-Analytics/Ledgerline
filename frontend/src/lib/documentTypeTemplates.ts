@@ -83,48 +83,6 @@ export const SHIPPED_DOCUMENT_TYPE_CODES = SHIPPED_ROWS.map((row) => row.code.to
 export type ShippedDocumentTypeCode = (typeof SHIPPED_DOCUMENT_TYPE_CODES)[number];
 export type DocumentTypeTemplateId = ShippedDocumentTypeCode | "custom";
 
-/** Finance-standard catalogue packs (mixed AP + AR). */
-export type DocumentTypeStarterPackId = "procurement_3way" | "direct_opex" | "sales_3way";
-
-export type DocumentTypeStarterPack = {
-  id: DocumentTypeStarterPackId;
-  label: string;
-  description: string;
-  matrixTemplates: readonly ShippedDocumentTypeCode[];
-  /** When set, apply as tenant unclassified fallback after pack add. */
-  unclassifiedMatrixTemplate?: ShippedDocumentTypeCode;
-};
-
-export const DOCUMENT_TYPE_STARTER_PACKS: DocumentTypeStarterPack[] = [
-  {
-    id: "procurement_3way",
-    label: "Procurement 3-way match",
-    description:
-      "PO goods invoice plus PO copy and GRN supporting types, cross-linked on PO number.",
-    matrixTemplates: ["DT-01", "DT-02", "DT-03"],
-  },
-  {
-    id: "direct_opex",
-    label: "Direct opex (mixed AP)",
-    description:
-      "Direct expense for non-PO spend and non-actionable quote/spam filter.",
-    matrixTemplates: ["DT-08", "DT-24"],
-    unclassifiedMatrixTemplate: "DT-08",
-  },
-  {
-    id: "sales_3way",
-    label: "Sales 3-way match",
-    description:
-      "Customer tax invoice plus sales order and outbound delivery note, cross-linked on SO number.",
-    matrixTemplates: ["DT-26", "DT-27", "DT-28"],
-  },
-];
-
-export type StarterPackApplyResult = {
-  types: DocumentTypeDefinition[];
-  unclassifiedDocumentTypeCode?: string;
-};
-
 export type DocumentTypeTemplate = {
   id: DocumentTypeTemplateId;
   label: string;
@@ -183,7 +141,7 @@ function buildTemplateFromShippedRow(row: ShippedCatalogRow): DocumentTypeTempla
 
   return {
     id: code as DocumentTypeTemplateId,
-    label: row.shortTitle || row.title,
+    label: row.title || row.shortTitle,
     description: row.oneLine,
     shippedCode: code,
     routeTarget: routeTargetForDocumentTypeCode(code),
@@ -295,87 +253,6 @@ export function resolveBundleCodesFromMatrix(
     }
   }
   return resolved;
-}
-
-function wireSalesBundleMandatory(
-  types: DocumentTypeDefinition[]
-): DocumentTypeDefinition[] {
-  const invoiceIdx = types.findIndex(
-    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-26"
-  );
-  if (invoiceIdx < 0) return types;
-  const soCode = types.find(
-    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-27"
-  )?.code;
-  const dnCode = types.find(
-    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-28"
-  )?.code;
-  const mandatory = [soCode, dnCode]
-    .map((code) => (code ?? "").trim().toUpperCase())
-    .filter(Boolean);
-  if (!mandatory.length) return types;
-  return types.map((dt, idx) =>
-    idx === invoiceIdx ? { ...dt, bundleMandatory: mandatory } : dt
-  );
-}
-
-function wireProcurementBundleMandatory(
-  types: DocumentTypeDefinition[]
-): DocumentTypeDefinition[] {
-  const invoiceIdx = types.findIndex(
-    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-01"
-  );
-  if (invoiceIdx < 0) return types;
-  const poCode = types.find(
-    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-02"
-  )?.code;
-  const grnCode = types.find(
-    (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === "DT-03"
-  )?.code;
-  const mandatory = [poCode, grnCode]
-    .map((code) => (code ?? "").trim().toUpperCase())
-    .filter(Boolean);
-  if (!mandatory.length) return types;
-  return types.map((dt, idx) =>
-    idx === invoiceIdx ? { ...dt, bundleMandatory: mandatory } : dt
-  );
-}
-
-/** Add a finance-standard starter pack with org codes and cross-linked bundle rules. */
-export function documentTypesFromStarterPack(
-  packId: DocumentTypeStarterPackId,
-  existing: DocumentTypeDefinition[]
-): StarterPackApplyResult {
-  const pack = DOCUMENT_TYPE_STARTER_PACKS.find((row) => row.id === packId);
-  if (!pack) return { types: [] };
-
-  let working = [...existing];
-  const created: DocumentTypeDefinition[] = [];
-  for (const matrixId of pack.matrixTemplates) {
-    const def = documentTypeFromTemplate(matrixId, working);
-    working = [...working, def];
-    created.push(def);
-  }
-
-  let types =
-    packId === "procurement_3way"
-      ? wireProcurementBundleMandatory(created)
-      : packId === "sales_3way"
-        ? wireSalesBundleMandatory(created)
-        : created.map((dt) => ({
-            ...dt,
-            bundleMandatory: [],
-            bundleConditional: [],
-          }));
-
-  const unclassifiedToken = pack.unclassifiedMatrixTemplate?.toUpperCase();
-  const unclassifiedDocumentTypeCode = unclassifiedToken
-    ? types.find(
-        (dt) => (dt.matrixTemplateCode ?? "").toUpperCase() === unclassifiedToken
-      )?.code
-    : undefined;
-
-  return { types, unclassifiedDocumentTypeCode };
 }
 
 export function inferTemplateIdFromDefinition(

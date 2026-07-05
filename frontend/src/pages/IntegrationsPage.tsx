@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Activity,
@@ -32,6 +32,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { useStripeAccount, useStripeReadiness } from "@/hooks/useStripe";
 import { useAccountingIntegrations } from "@/hooks/useAccountingIntegrations";
 
@@ -125,6 +126,8 @@ function requestStatusLabel(status: string) {
 
 export function IntegrationsPage() {
   const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [s, setS] = useState<AppSettings | null>(null);
@@ -160,6 +163,108 @@ export function IntegrationsPage() {
   const [vbBusy, setVbBusy] = useState(false);
   const [vbAuthToken, setVbAuthToken] = useState("");
 
+  useResetOnTenantChange(() => {
+    setS(null);
+    setMailboxes([]);
+    setRequests([]);
+    setMbError(null);
+    setInviteEmail("");
+    setInviteName("");
+    setInviteMessage("");
+    setLastInviteLink(null);
+    setWaConnections([]);
+    setWaWebhookUrl("");
+    setWaOAuthUrl("");
+    setWaError(null);
+    setVbConnections([]);
+    setVbWebhookUrl("");
+    setVbWebhookReachable(null);
+    setVbWebhookHint(null);
+    setVbError(null);
+    setAdminConsentUrl(null);
+    setAdminConsentNote(null);
+  });
+
+  const loadMailboxes = useCallback((fresh = false) => {
+    const seq = loadSeq.current;
+    api.listMailboxes({ fresh }).then((rows) => {
+      if (seq !== loadSeq.current) return;
+      setMailboxes(rows);
+    }).catch(() => {
+      if (seq !== loadSeq.current) return;
+      setMailboxes([]);
+    });
+  }, [tenantScope]);
+
+  const loadRequests = useCallback((fresh = false) => {
+    const seq = loadSeq.current;
+    api
+      .listMailboxConnectionRequests({ fresh })
+      .then((rows) => {
+        if (seq !== loadSeq.current) return;
+        setRequests(rows);
+      })
+      .catch(() => {
+        if (seq !== loadSeq.current) return;
+        setRequests([]);
+      });
+  }, [tenantScope]);
+
+  const loadWhatsapp = useCallback((fresh = false) => {
+    const seq = loadSeq.current;
+    api
+      .getWhatsappStatus({ fresh })
+      .then((status) => {
+        if (seq !== loadSeq.current) return;
+        setWaConnections(status.connections);
+        setWaWebhookUrl(status.webhook_callback_url);
+        setWaOAuthUrl(status.oauth_callback_url);
+        setWaError(null);
+      })
+      .catch(() => {
+        if (seq !== loadSeq.current) return;
+        setWaConnections([]);
+        setWaWebhookUrl("");
+      });
+  }, [tenantScope]);
+
+  const loadViber = useCallback((fresh = false) => {
+    const seq = loadSeq.current;
+    api
+      .getViberStatus({ fresh })
+      .then((status) => {
+        if (seq !== loadSeq.current) return;
+        setVbConnections(status.connections);
+        setVbWebhookUrl(status.webhook_callback_url);
+        setVbWebhookReachable(status.webhook_reachable);
+        setVbWebhookHint(status.webhook_reachability_hint ?? null);
+        setVbError(null);
+      })
+      .catch(() => {
+        if (seq !== loadSeq.current) return;
+        setVbConnections([]);
+        setVbWebhookUrl("");
+        setVbWebhookReachable(null);
+        setVbWebhookHint(null);
+      });
+  }, [tenantScope]);
+
+  useLayoutEffect(() => {
+    loadSeq.current += 1;
+  }, [tenantScope]);
+
+  useEffect(() => {
+    const seq = loadSeq.current;
+    api.getSettings().then((settings) => {
+      if (seq !== loadSeq.current) return;
+      setS(settings);
+    });
+    loadMailboxes();
+    loadRequests();
+    loadWhatsapp();
+    loadViber();
+  }, [loadMailboxes, loadRequests, loadWhatsapp, loadViber, tenantScope]);
+
   async function copyInviteLink(url: string) {
     try {
       await navigator.clipboard.writeText(url);
@@ -168,58 +273,6 @@ export function IntegrationsPage() {
       toast({ title: "Could not copy link", variant: "destructive" });
     }
   }
-
-  const loadMailboxes = useCallback((fresh = false) => {
-    api.listMailboxes({ fresh }).then(setMailboxes).catch(() => setMailboxes([]));
-  }, []);
-
-  const loadRequests = useCallback((fresh = false) => {
-    api
-      .listMailboxConnectionRequests({ fresh })
-      .then(setRequests)
-      .catch(() => setRequests([]));
-  }, []);
-
-  const loadWhatsapp = useCallback((fresh = false) => {
-    api
-      .getWhatsappStatus({ fresh })
-      .then((status) => {
-        setWaConnections(status.connections);
-        setWaWebhookUrl(status.webhook_callback_url);
-        setWaOAuthUrl(status.oauth_callback_url);
-        setWaError(null);
-      })
-      .catch(() => {
-        setWaConnections([]);
-        setWaWebhookUrl("");
-      });
-  }, []);
-
-  const loadViber = useCallback((fresh = false) => {
-    api
-      .getViberStatus({ fresh })
-      .then((status) => {
-        setVbConnections(status.connections);
-        setVbWebhookUrl(status.webhook_callback_url);
-        setVbWebhookReachable(status.webhook_reachable);
-        setVbWebhookHint(status.webhook_reachability_hint ?? null);
-        setVbError(null);
-      })
-      .catch(() => {
-        setVbConnections([]);
-        setVbWebhookUrl("");
-        setVbWebhookReachable(null);
-        setVbWebhookHint(null);
-      });
-  }, []);
-
-  useEffect(() => {
-    api.getSettings().then(setS);
-    loadMailboxes();
-    loadRequests();
-    loadWhatsapp();
-    loadViber();
-  }, [loadMailboxes, loadRequests, loadWhatsapp, loadViber]);
 
   useEffect(() => {
     if (user?.role !== "admin") return;

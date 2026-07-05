@@ -1,25 +1,43 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Invoice } from "@/api/types";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { Card } from "@/components/ui/card";
+import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { documentListLabel, money } from "@/lib/format";
 import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
 import { fetchAllInvoices } from "@/lib/invoices";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 
 export function AllInvoicesPage() {
+  const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const [rows, setRows] = useState<Invoice[]>([]);
   const [status, setStatus] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
+  useResetOnTenantChange(() => {
+    setRows([]);
+    setSearchQuery("");
+  });
+
+  useLayoutEffect(() => {
+    setRows([]);
+  }, [status, tenantScope]);
+
   useEffect(() => {
     const params: Record<string, string> = {};
     if (status) params.status = status;
-    void fetchAllInvoices(false, params).then(setRows);
-  }, [status]);
+    const seq = ++loadSeq.current;
+    void fetchAllInvoices(false, params).then((data) => {
+      if (seq !== loadSeq.current) return;
+      setRows(data);
+    });
+  }, [status, tenantScope]);
 
   const filtered = useMemo(
     () => rows.filter((row) => invoiceMatchesListSearch(row, searchQuery)),

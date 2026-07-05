@@ -96,6 +96,9 @@ class LlmDocumentResult(BaseModel):
     abn: str = ""
     vendor: str = ""
     document_heading: str = ""
+    bank_bsb: str = ""
+    bank_account: str = ""
+    bank_name: str = ""
     line_items: list[LlmLineItem] = Field(default_factory=list)
     field_confidence: dict[str, float] = Field(default_factory=dict)
     raw: dict[str, Any] = Field(default_factory=dict)
@@ -116,6 +119,9 @@ class LlmDocumentResult(BaseModel):
             "currency",
             "abn",
             "document_heading",
+            "bank_bsb",
+            "bank_account",
+            "bank_name",
         ):
             if out.get(key) is None:
                 out[key] = ""

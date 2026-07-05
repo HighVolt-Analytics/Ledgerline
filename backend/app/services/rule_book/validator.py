@@ -212,21 +212,23 @@ def vr06_dates(
 
 
 
-def vr07_currency(data: InvoiceData) -> ValidationResult:
-    currency = (data.currency or "AUD").upper()
-    if currency == "AUD":
-        return ValidationResult("VR07", True, "Currency is AUD")
+def vr07_currency(data: InvoiceData, *, expected_currency: str) -> ValidationResult:
+    expected = expected_currency.strip().upper()
+    currency = (data.currency or expected).upper()
+    if currency == expected:
+        return ValidationResult("VR07", True, f"Currency is {expected}")
     if data.gst is None and data.abn is None:
         return ValidationResult("VR07", True, f"Foreign currency accepted: {currency}")
-    return ValidationResult("VR07", False, f"Expected AUD, got {data.currency}")
+    return ValidationResult("VR07", False, f"Expected {expected}, got {data.currency}")
 
 
 
 
 
-def vr08_gst(data: InvoiceData) -> ValidationResult:
+def vr08_gst(data: InvoiceData, *, expected_currency: str) -> ValidationResult:
+    expected = expected_currency.strip().upper()
     if data.gst is None:
-        if data.subtotal is not None and (data.currency or "AUD").upper() != "AUD":
+        if data.subtotal is not None and (data.currency or expected).upper() != expected:
             return ValidationResult("VR08", True, "GST not applicable for foreign invoice")
         return ValidationResult("VR08", True, "Skipped — subtotal and GST required", skipped=True)
     if data.subtotal is None:

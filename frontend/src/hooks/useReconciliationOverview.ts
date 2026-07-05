@@ -1,9 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { api } from "@/api/client";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useReconciliationOverview(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.reconciliationOverview(),
     queryFn: () => api.getReconciliationOverview(),
     enabled,

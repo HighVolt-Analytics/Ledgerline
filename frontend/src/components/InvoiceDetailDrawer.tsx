@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Clock,
@@ -32,16 +32,18 @@ import {
   lineItemColumnsForPreview,
   lineItemGridTemplateColumns,
   resolvePreviewLineItems,
+  countPreviewLineItems,
   type LineItemColumnVisibility,
   type PreviewLineItem,
 } from "@/lib/invoicePreview";
 import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
-  canApproveClaim,
+  canApproveFromDrawer,
   canReprocessInvoice,
   canRejectClaim,
   canRequestInfo,
+  invoiceCanAttemptReprocess,
   reprocessAndWatch,
   validateInvoiceFieldsForApproval,
 } from "@/lib/invoiceActions";
@@ -58,6 +60,7 @@ import { InvoiceProcessingOverridesSection } from "@/components/invoices/Invoice
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
 import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDossierSection";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { useAuth } from "@/context/AuthContext";
 import {
   extractionFieldsForDocumentType,
   isPresetExtractionFieldKey,
@@ -152,10 +155,18 @@ function readExtractionFieldValue(
   draft: InvoiceEditDraft | null,
   editing: boolean,
   fmt: (value: string | null | undefined) => string,
-  extractionFieldKeys: string[]
+  extractionFieldKeys: string[],
+  absentFields: string[] = [],
+  sourceKind: "email" | "upload" = "upload"
 ): string {
   if (key === "line_items") {
-    const count = editing && draft ? draft.line_items.length : inv.line_items.length;
+    const previewOpts = {
+      absentFields,
+      extractionFieldKeys,
+      sourceKind,
+      lineItems: editing && draft ? mapDraftLineItems(inv, draft) : undefined,
+    };
+    const count = countPreviewLineItems(inv, previewOpts);
     return count ? `${count} line item${count === 1 ? "" : "s"}` : "—";
   }
   if (key === "bank_details") {
@@ -569,19 +580,13 @@ function FieldRow({
   editable?: boolean;
   onChange?: (value: string) => void;
 }) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-
   return (
     <div className="grid grid-cols-[120px_1fr] gap-3 items-center">
       <label className="text-xs text-muted-foreground">{label}</label>
       <div className="flex items-center gap-2 min-w-0">
         <Input
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            onChange?.(e.target.value);
-          }}
+          value={value}
+          onChange={(e) => onChange?.(e.target.value)}
           className={cn("h-8 text-sm tnum", bold && "font-semibold")}
           readOnly={!editable}
         />
@@ -603,6 +608,7 @@ type InvoiceDetailDrawerProps = {
   onClose: () => void;
   onUpdated?: () => void;
   onPipelineStart?: (invoice: InvoiceDetails) => void;
+  onPipelineEnd?: (invoiceId: number) => void;
   onEditingChange?: (editing: boolean) => void;
   startInEditMode?: boolean;
   initialTab?: Tab;
@@ -614,10 +620,14 @@ export function InvoiceDetailDrawer({
   onClose,
   onUpdated,
   onPipelineStart,
+  onPipelineEnd,
   onEditingChange,
   startInEditMode = false,
   initialTab = "fields",
 }: InvoiceDetailDrawerProps) {
+  const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const [tab, setTab] = useState<Tab>(initialTab);
   const { data: ruleBook } = useRuleBookConfig(open);
   const [inv, setInv] = useState<InvoiceDetails | null>(null);
@@ -695,6 +705,15 @@ export function InvoiceDetailDrawer({
     setViewId(null);
   }, [invoiceId, open]);
 
+  useLayoutEffect(() => {
+    loadSeq.current += 1;
+    setInv(null);
+    setPipelineSteps([]);
+    setClassificationAudit(null);
+    setDossier(null);
+    setSalesDossier(null);
+  }, [activeInvoiceId, tenantScope]);
+
   useEffect(() => {
     if (!mounted || activeInvoiceId == null) {
       if (!mounted) {
@@ -706,13 +725,22 @@ export function InvoiceDetailDrawer({
       }
       return;
     }
+    const seq = ++loadSeq.current;
     setLoading(true);
     api
       .getInvoice(activeInvoiceId, { fresh: true })
-      .then(setInv)
-      .catch(() => setInv(null))
-      .finally(() => setLoading(false));
-  }, [mounted, activeInvoiceId]);
+      .then((data) => {
+        if (seq !== loadSeq.current) return;
+        setInv(data);
+      })
+      .catch(() => {
+        if (seq !== loadSeq.current) return;
+        setInv(null);
+      })
+      .finally(() => {
+        if (seq === loadSeq.current) setLoading(false);
+      });
+  }, [mounted, activeInvoiceId, tenantScope]);
 
   useEffect(() => {
     if (!inv) {
@@ -872,9 +900,15 @@ export function InvoiceDetailDrawer({
     }
     if (editing && draft) {
       const draftRows = mapDraftLineItems(inv, draft);
+      const resolved = resolvePreviewLineItems(inv, {
+        absentFields,
+        extractionFieldKeys,
+        sourceKind: inv.email_sender ? "email" : "upload",
+        lineItems: draftRows,
+      });
       return {
-        previewItems: enrichLineItemsForPreview(draftRows),
-        columns: lineItemColumnsFromRows(draftRows),
+        previewItems: resolved.items,
+        columns: resolved.columns,
       };
     }
     const resolved = resolvePreviewLineItems(inv, {
@@ -1021,8 +1055,15 @@ export function InvoiceDetailDrawer({
   }
 
   async function handleReprocess() {
-    if (!inv || !canReprocessInvoice(inv.status)) return;
-    if (!inv.has_stored_file) {
+    if (!inv || inv.status !== "rejected") {
+      if (inv?.status === "duplicate_skipped") {
+        alert(
+          "This row is a duplicate submission with no stored file. Delete it permanently or open the original invoice to reprocess."
+        );
+      }
+      return;
+    }
+    if (!invoiceCanAttemptReprocess(inv)) {
       alert("Upload a PDF before reprocessing this invoice.");
       return;
     }
@@ -1042,6 +1083,7 @@ export function InvoiceDetailDrawer({
     } catch (e) {
       alert(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Reprocess failed");
     } finally {
+      onPipelineEnd?.(inv.id);
       setActionBusy(false);
     }
   }
@@ -1050,11 +1092,13 @@ export function InvoiceDetailDrawer({
     if (!inv) return;
     const fresh = await api.getInvoice(inv.id, { fresh: true });
     setInv(fresh);
-    if (!canApproveClaim(fresh.status)) {
+    if (!canApproveFromDrawer(fresh.status)) {
       alert(
         fresh.status === "processed"
           ? "This invoice is already processed. Use Reprocess to run the pipeline again."
-          : "This invoice is not in the approval queue."
+          : fresh.status === "rejected" || fresh.status === "duplicate_skipped"
+            ? "Rejected documents must be reprocessed from the Rejected column."
+            : "This invoice is not in the approval queue."
       );
       return;
     }
@@ -1095,6 +1139,7 @@ export function InvoiceDetailDrawer({
     } catch (e) {
       alert(e instanceof Error ? e.message : "Approve failed");
     } finally {
+      onPipelineEnd?.(inv.id);
       setActionBusy(false);
     }
   }
@@ -1282,7 +1327,9 @@ export function InvoiceDetailDrawer({
                               draft,
                               Boolean(draft && editing),
                               fmt,
-                              extractionFieldKeys
+                              extractionFieldKeys,
+                              absentFields,
+                              sourceKind
                             )}
                             confidence={invoiceFieldConfidence(inv, key)}
                             bold={key === "total"}
@@ -1491,12 +1538,12 @@ export function InvoiceDetailDrawer({
                     Reject
                   </Button>
                   <div className="flex gap-2">
-                    {canReprocessInvoice(inv.status) && (
+                    {inv.status === "rejected" && invoiceCanAttemptReprocess(inv) && (
                         <Button
                           variant="outline"
                           size="sm"
                           data-testid="button-reprocess"
-                          disabled={actionBusy || !inv.has_stored_file}
+                          disabled={actionBusy || !invoiceCanAttemptReprocess(inv)}
                           onClick={() => void handleReprocess()}
                         >
                           Reprocess
@@ -1524,7 +1571,7 @@ export function InvoiceDetailDrawer({
                       <Clock className="h-4 w-4 mr-1" />
                       Request approval
                     </Button>
-                    {canApproveClaim(inv.status) && (
+                    {canApproveFromDrawer(inv.status) && (
                       <Button
                         size="sm"
                         data-testid="button-approve-process"

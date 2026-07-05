@@ -93,6 +93,7 @@ export interface InstitutionSettings {
   country: string;
   timezone: string;
   locale: string;
+  currency: string;
 }
 
 export interface OrgAiBrief {
@@ -469,7 +470,7 @@ export interface MatchAmountLineApi {
 }
 
 export interface ThreeWayMatchDisplayApi {
-  base_uom: string;
+  base_uom?: string | null;
   po_on_document: MatchAmountLineApi;
   po_for_match: MatchAmountLineApi;
   grn_on_document?: MatchAmountLineApi | null;
@@ -1153,16 +1154,7 @@ export interface RuleBookConfig {
     isolated?: boolean;
   }>;
   purchase_match?: {
-    base_uom?: string;
     qty_tolerance_pct?: number;
-    uom_conversions?: Array<{
-      id: string;
-      vendor_key?: string;
-      sku?: string;
-      from_uom: string;
-      to_uom: string;
-      factor: number;
-    }>;
   };
   document_classification?: {
     unclassified_document_type_code: string;

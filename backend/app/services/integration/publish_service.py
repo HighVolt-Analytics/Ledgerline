@@ -11,6 +11,10 @@ from app.models.journal import JournalEntry
 from app.tenant_child_tables import journal_entries_for_invoice
 from app.services.audit.audit_service import log_event
 from app.services.dossier.document_ref_service import display_document_ref
+from app.services.invoice.processing_cycle_service import (
+    CYCLE_RESET_EVENTS,
+    latest_cycle_reset_log_id_from_logs,
+)
 from app.services.reports.workbook_writer import write_workbook_for_invoice
 
 PUBLISH_TARGET = "workbook"
@@ -31,7 +35,8 @@ def is_published_from_audit_logs(logs: list[AuditLog]) -> bool:
         (log.id for log in logs if log.event in PROCESSED_LEDGER_EVENTS),
         default=0,
     )
-    return latest_publish > latest_processed
+    reset_id = latest_cycle_reset_log_id_from_logs(logs)
+    return latest_publish > max(latest_processed, reset_id)
 
 
 class InsufficientCreditsError(Exception):
@@ -57,6 +62,7 @@ async def published_invoice_ids(
             [
                 "invoice_published_to_ledger",
                 *PROCESSED_LEDGER_EVENTS,
+                *CYCLE_RESET_EVENTS,
             ]
         ),
     ]
@@ -85,7 +91,12 @@ async def published_invoice_ids(
             events.get("invoice_processed", 0),
             events.get("purchase_document_processed", 0),
         )
-        if publish_id > processed_id:
+        reset_id = max(
+            events.get("invoice_rejected", 0),
+            events.get("invoice_requeued", 0),
+            events.get("duplicate_reingest_rejected", 0),
+        )
+        if publish_id > max(processed_id, reset_id):
             published.add(invoice_id)
     return published
 

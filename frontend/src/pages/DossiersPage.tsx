@@ -1,5 +1,5 @@
 import { FolderKanban, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { DossierCard } from "@/components/dossiers/DossierCard";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import { useAuth } from "@/context/AuthContext";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { fetchDossiersPage } from "@/lib/dossierApi";
 import type { DossierSummary } from "@/lib/dossiers";
@@ -14,6 +15,9 @@ import type { DossierSummary } from "@/lib/dossiers";
 const PAGE_SIZE = 12;
 
 export function DossiersPage() {
+  const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const [query, setQuery] = useState("");
   const search = useDebouncedValue(query.trim());
   const [typeFilter, setTypeFilter] = useState("all");
@@ -47,7 +51,14 @@ export function DossiersPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tenantScope]);
+
+  useLayoutEffect(() => {
+    setRows([]);
+    setTotal(0);
+    setTotalPages(1);
+    setError(null);
+  }, [page, search, typeFilter, tenantScope]);
 
   const load = useCallback(
     async (options?: { silent?: boolean; fresh?: boolean }) => {
@@ -55,6 +66,7 @@ export function DossiersPage() {
         setLoading(true);
         setError(null);
       }
+      const seq = ++loadSeq.current;
       try {
         const res = await fetchDossiersPage({
           page,
@@ -63,16 +75,18 @@ export function DossiersPage() {
           q: search,
           fresh: options?.fresh,
         });
+        if (seq !== loadSeq.current) return;
         setRows(res.rows);
         setTotal(res.total);
         setTotalPages(Math.max(1, res.pages));
       } catch (err) {
+        if (seq !== loadSeq.current) return;
         setError(err instanceof Error ? err.message : "Failed to load dossiers");
       } finally {
-        if (!options?.silent) setLoading(false);
+        if (seq === loadSeq.current && !options?.silent) setLoading(false);
       }
     },
-    [page, search, typeFilter]
+    [page, search, typeFilter, tenantScope]
   );
 
   useEffect(() => {

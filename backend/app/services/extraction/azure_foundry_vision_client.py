@@ -274,8 +274,12 @@ async def extract_fields_azure_foundry(
 Return JSON only with keys:
 suggested_dt, confidence, reasoning, perspective,
 seller, buyer, invoice_no, invoice_date, due_date, po_reference,
-subtotal, gst, gst_rate, total, currency, abn, vendor, document_heading, line_items, field_confidence, extracted_fields.
+subtotal, gst, gst_rate, total, currency, abn, vendor, document_heading,
+bank_bsb, bank_account, bank_name, line_items, field_confidence, extracted_fields.
 Use confirmed_dt as suggested_dt. Extract faithfully from the images.
+- line_items must be product/service rows only — never header metadata (Customer, Ship Date, Invoice No, BSB, etc.).
+- If a row is a field label ending with ":" it is NOT a line item.
+- bank_bsb, bank_account, bank_name: extract only when explicitly labeled. Leave empty if absent.
 {PARTY_LLM_RULES}{custom_hint}"""
 
     user_text = json.dumps(

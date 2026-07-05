@@ -1,10 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { VendorPayoutMethodCreate, VendorPayoutMethodUpdate } from "@/api/types";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useVendorPayoutMethods(vendorId: number | null, enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.vendorPayoutMethods(vendorId ?? 0),
     queryFn: () => api.listVendorPayoutMethods(vendorId as number),
     enabled: enabled && vendorId != null,

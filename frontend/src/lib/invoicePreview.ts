@@ -378,6 +378,13 @@ export function isSummaryLineDescription(description: string | null | undefined)
   if (!text) return false;
   if (/^(?:total|subtotal|grand total|gst|tax)\b/.test(text)) return true;
   if (/\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet)\b/.test(text)) return true;
+  if (/^(?:customer|ship(?:ped)?(?:\s*(?:to|date|qty|ped))?|delivery\s*date|invoice\s*(?:no|number|#)|po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*reference|bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number)?|payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|phone|tel(?:ephone)?|mobile|email|fax|address|attn|attention)\s*:?\s*$/.test(text)) {
+    return true;
+  }
+  if (/^(?:description|item|product|qty|quantity|unit\s*price|amount|rate|uom|sku)\s*:?\s*$/.test(text)) {
+    return true;
+  }
+  if (text.endsWith(":") && text.length <= 40) return true;
   return false;
 }
 
@@ -627,6 +634,18 @@ export function lineItemGridTemplateColumns(
   if (showGlAccount) parts.push("minmax(11rem, 13rem)");
   if (withActions) parts.push("2.75rem");
   return parts.join(" ");
+}
+
+export function countPreviewLineItems(
+  inv: InvoiceDetails,
+  options: {
+    absentFields?: string[];
+    extractionFieldKeys?: string[];
+    sourceKind?: string;
+    lineItems?: LineItem[];
+  } = {}
+): number {
+  return resolvePreviewLineItems(inv, options).items.length;
 }
 
 export function resolvePreviewLineItems(

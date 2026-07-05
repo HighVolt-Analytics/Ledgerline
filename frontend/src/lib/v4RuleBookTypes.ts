@@ -296,19 +296,6 @@ export type RuleBookConfigState = {
   employeeMasters: EmployeeMaster[];
   postingDefaults: PostingDefaults;
   documentSets: DocumentSetRule[];
-  /** PO three-way match — UOM conversions and qty tolerance (API round-trip). */
-  purchaseMatch?: {
-    baseUom: string;
-    qtyTolerancePct: number;
-    uomConversions: Array<{
-      id: string;
-      vendorKey?: string;
-      sku?: string;
-      fromUom: string;
-      toUom: string;
-      factor: number;
-    }>;
-  };
 };
 
 /** @deprecated Use RuleBookConfigState */

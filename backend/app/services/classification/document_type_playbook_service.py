@@ -93,7 +93,7 @@ def _dt_display_labels(
             continue
         defn = get_document_type_definition(token, document_types=document_types)
         if defn is not None:
-            labels[token] = (defn.short_title or defn.title or token).strip() or token
+            labels[token] = (defn.title or defn.short_title or token).strip() or token
         else:
             labels[token] = token
     return labels

@@ -46,9 +46,7 @@ import {
 } from "@/lib/documentCompulsoryFields";
 import {
   documentTypeFromTemplate,
-  documentTypesFromStarterPack,
   inferTemplateIdFromDefinition,
-  type StarterPackApplyResult,
 } from "@/lib/documentTypeTemplates";
 import { bundleConfigWarnings } from "@/lib/documentTypeBundleValidation";
 import { normalizeBundleConditional } from "@/lib/documentBundleConfig";
@@ -84,7 +82,6 @@ type Tone = keyof typeof TONE_CLASSES;
 type DocumentTypesTabProps = {
   documentTypes: DocumentTypeDefinition[];
   onChange: (documentTypes: DocumentTypeDefinition[]) => void;
-  onStarterPackApplied?: (result: StarterPackApplyResult) => void;
   onDeleteType?: (code: string) => void | Promise<void>;
   canEdit?: boolean;
 };
@@ -1032,7 +1029,6 @@ function DocumentTypeEditDialog({
 export function DocumentTypesTab({
   documentTypes,
   onChange,
-  onStarterPackApplied,
   onDeleteType,
   canEdit = false,
 }: DocumentTypesTabProps) {
@@ -1102,16 +1098,6 @@ export function DocumentTypesTab({
         (dt) => dt.code.trim().toUpperCase() !== code.trim().toUpperCase()
       )
     );
-  };
-
-  const applyStarterPack = (packId: Parameters<typeof documentTypesFromStarterPack>[0]) => {
-    const result = documentTypesFromStarterPack(packId, documentTypes);
-    if (!result.types.length) return;
-    if (onStarterPackApplied) {
-      onStarterPackApplied(result);
-      return;
-    }
-    onChange([...documentTypes, ...result.types]);
   };
 
   const saveEdit = () => {
@@ -1225,7 +1211,9 @@ export function DocumentTypesTab({
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-foreground">{docType.code}</span>
               </div>
-              <div className="mt-1 text-sm font-medium text-foreground">{docType.shortTitle}</div>
+              <div className="mt-1 text-sm font-medium text-foreground">
+                {docType.title || docType.shortTitle}
+              </div>
               <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
                 {docType.oneLine}
               </p>
@@ -1291,10 +1279,6 @@ export function DocumentTypesTab({
           setIsNew(true);
           setEditing(documentTypeFromTemplate(templateId, documentTypes));
           setSelectedCode(null);
-        }}
-        onSelectStarterPack={(packId) => {
-          setTemplateDialogOpen(false);
-          applyStarterPack(packId);
         }}
       />
     </div>

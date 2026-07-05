@@ -216,9 +216,17 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
         )
         return vr06_dates(data, absent_fields=absent)
     if code == "VR07":
-        return vr07_currency(data)
+        from app.models.tenant import Tenant
+        from app.tenant_settings import tenant_currency
+
+        tenant = await ctx.session.get(Tenant, ctx.tenant_id)
+        return vr07_currency(data, expected_currency=tenant_currency(tenant))
     if code == "VR08":
-        return vr08_gst(data)
+        from app.models.tenant import Tenant
+        from app.tenant_settings import tenant_currency
+
+        tenant = await ctx.session.get(Tenant, ctx.tenant_id)
+        return vr08_gst(data, expected_currency=tenant_currency(tenant))
     if code == "VR01":
         return vr01_total(data)
     if code == "VR02":

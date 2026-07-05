@@ -16,8 +16,10 @@ import {
   normalizeChartOfAccountType,
   useChartOfAccounts,
   useSaveChartOfAccounts,
+  type ChartOfAccountRowLocal,
 } from "@/hooks/useChartOfAccounts";
 import { cn } from "@/lib/cn";
+import { newClientRowKey } from "@/lib/clientRowKey";
 
 type ChartOfAccountsPanelProps = {
   canEdit?: boolean;
@@ -47,7 +49,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
   const { toast } = useToast();
   const { data, isLoading, isError } = useChartOfAccounts();
   const saveMutation = useSaveChartOfAccounts();
-  const [rows, setRows] = useState<ChartOfAccountRow[]>([]);
+  const [rows, setRows] = useState<ChartOfAccountRowLocal[]>([]);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -56,13 +58,14 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
         data.map((row) => ({
           ...row,
           type: normalizeChartOfAccountType(row.type),
+          _rowKey: newClientRowKey("coa"),
         }))
       );
       setDirty(false);
     }
   }, [data]);
 
-  const updateRow = (index: number, patch: Partial<ChartOfAccountRow>) => {
+  const updateRow = (index: number, patch: Partial<ChartOfAccountRowLocal>) => {
     setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
     setDirty(true);
   };
@@ -144,7 +147,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
           <tbody>
             {rows.map((row, index) => (
               <tr
-                key={`${row.code}-${index}`}
+                key={row._rowKey}
                 className="row-band border-b border-border/60 last:border-0"
               >
                 <td className="px-4 py-2">

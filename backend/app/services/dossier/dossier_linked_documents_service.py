@@ -53,7 +53,7 @@ def _dossier_id_for_invoice(inv: Invoice) -> str:
 def _dt_label(code: str, document_types: list[DocumentTypeDefinition]) -> str:
     for row in document_types:
         if row.code.upper() == code.upper():
-            return row.short_title or row.title or code
+            return row.title or row.short_title or code
     return code
 
 
@@ -85,7 +85,7 @@ def _dt_for_sales_role(
     token = (role or "").strip().lower()
     for row in document_types:
         if (row.sales_bundle_role or "").strip().lower() == token:
-            label = (row.short_title or row.title or row.code).strip() or row.code
+            label = (row.title or row.short_title or row.code).strip() or row.code
             return row.code.upper(), label
     return _SALES_ROLE_FALLBACK_DT.get(token, (token.upper(), token))
 
