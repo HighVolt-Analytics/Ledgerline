@@ -102,9 +102,24 @@ def infer_page_kind_token(
     return None
 
 
-def heading_kind_from_token(token: str | None) -> str | None:
+def heading_kind_from_token(
+    token: str | None,
+    *,
+    document_types: list[DocumentTypeDefinition] | tuple[DocumentTypeDefinition, ...] | None = None,
+) -> str | None:
     if not token:
         return None
     if token.startswith("kind:"):
         return token[5:] or None
+    if token.startswith("dt:") and document_types:
+        code = token[3:].strip().upper()
+        for defn in document_types:
+            if not defn.enabled:
+                continue
+            if defn.code.strip().upper() != code:
+                continue
+            for label in (defn.title, defn.short_title, defn.one_line):
+                kind = infer_page_document_kind(label or "")
+                if kind:
+                    return kind
     return None

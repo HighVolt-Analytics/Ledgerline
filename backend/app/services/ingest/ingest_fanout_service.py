@@ -25,19 +25,24 @@ from app.services.dossier.document_duplicate_service import (
 from app.services.dossier.document_ref_service import allocate_next_document_ref
 from app.services.shared.file_storage import store_invoice_pdf
 from app.services.extraction.pdf_content_fingerprint import (
-    compute_pdf_bytes_content_fingerprint,
     compute_pdf_content_fingerprint,
+    compute_pdf_content_fingerprint_from_pages,
 )
 from app.services.extraction.document_identity_service import (
     compute_business_fingerprint,
-    compute_business_fingerprint_from_bytes,
+    compute_business_fingerprint_from_pages,
     extract_identity_fields,
-    extract_identity_fields_from_pdf_bytes,
+    extract_identity_fields_from_pages,
     identity_field_keys_from_catalogue,
 )
 from app.services.classification.catalogue_page_signals import build_catalogue_page_matchers
 from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
-from app.services.extraction.pdf_page_text_service import PdfPageText, extract_pdf_page_texts
+from app.services.extraction.pdf_page_text_service import (
+    PdfPageText,
+    PdfPageTextExtraction,
+    extract_pdf_page_texts,
+    extract_pdf_page_texts_via_full_di,
+)
 from app.services.extraction.pdf_segment_service import (
     purchase_document_type_from_heading,
     segment_pdf_pages,
@@ -84,6 +89,8 @@ async def _log_pdf_split_skipped(
     parent_file_hash: str,
     filename: str,
     page_count: int | None = None,
+    thin_page_count: int | None = None,
+    segment_count_detected: int | None = None,
 ) -> None:
     detail: dict[str, object] = {
         "reason": reason,
@@ -92,6 +99,10 @@ async def _log_pdf_split_skipped(
     }
     if page_count is not None:
         detail["page_count"] = page_count
+    if thin_page_count is not None:
+        detail["thin_page_count"] = thin_page_count
+    if segment_count_detected is not None:
+        detail["segment_count_detected"] = segment_count_detected
     await log_event(session, "pdf_split_skipped", detail=detail)
 
 
@@ -399,6 +410,7 @@ async def ingest_file_with_fanout(
     purchase_document_type: str | None = None,
     source: IngestSourceMetadata | None = None,
     log_upload_event: bool = False,
+    prefetched_extraction: PdfPageTextExtraction | None = None,
 ) -> IngestUploadResult:
     """
     Create one or more pending invoices from an attachment.
@@ -439,17 +451,29 @@ async def ingest_file_with_fanout(
         document_types = list(config.document_types)
         custom_field_keys = identity_field_keys_from_catalogue(document_types)
         catalogue_matchers = build_catalogue_page_matchers(document_types)
-        content_fingerprint = compute_pdf_bytes_content_fingerprint(data)
-        business_fingerprint = compute_business_fingerprint_from_bytes(
-            data,
-            custom_field_keys=custom_field_keys,
-        )
-        identity_fields = extract_identity_fields_from_pdf_bytes(
-            data,
-            custom_field_keys=custom_field_keys,
-        )
 
     if not lower_name.endswith(".pdf") or not settings.pdf_multi_document_split:
+        if lower_name.endswith(".pdf"):
+            tmp_fp_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+                    handle.write(data)
+                    tmp_fp_path = Path(handle.name)
+                extraction = extract_pdf_page_texts(tmp_fp_path)
+                pages_for_fp = extraction.pages
+                content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages_for_fp)
+                identity_fields = extract_identity_fields_from_pages(
+                    pages_for_fp,
+                    custom_field_keys=custom_field_keys,
+                )
+                business_fingerprint = compute_business_fingerprint_from_pages(
+                    pages_for_fp,
+                    custom_field_keys=custom_field_keys,
+                )
+            finally:
+                if tmp_fp_path is not None:
+                    tmp_fp_path.unlink(missing_ok=True)
+
         result = await _single_file_ingest(
             session,
             tenant_id=tenant_id,
@@ -474,7 +498,9 @@ async def ingest_file_with_fanout(
             handle.write(data)
             tmp_path = Path(handle.name)
 
-        pages = extract_pdf_page_texts(tmp_path)
+        extraction = prefetched_extraction or extract_pdf_page_texts(tmp_path)
+        pages = extraction.pages
+        incomplete_ocr = extraction.incomplete_ocr_indices
         if not pages:
             await _log_pdf_split_skipped(
                 session,
@@ -497,6 +523,26 @@ async def ingest_file_with_fanout(
                 source=source,
                 log_upload_event=log_upload_event,
                 parent_file_hash=parent_hash,
+            )
+
+        content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages)
+        identity_fields = extract_identity_fields_from_pages(
+            pages,
+            custom_field_keys=custom_field_keys,
+        )
+        business_fingerprint = compute_business_fingerprint_from_pages(
+            pages,
+            custom_field_keys=custom_field_keys,
+        )
+
+        if incomplete_ocr:
+            await _log_pdf_split_skipped(
+                session,
+                reason="ocr_incomplete",
+                parent_file_hash=parent_hash,
+                filename=filename,
+                page_count=len(pages),
+                thin_page_count=len(incomplete_ocr),
             )
 
         if len(pages) > settings.pdf_segment_max_pages:
@@ -524,13 +570,37 @@ async def ingest_file_with_fanout(
                 parent_file_hash=parent_hash,
             )
 
-        segments = segment_pdf_pages(
+        segment_result = segment_pdf_pages(
             pages,
             max_segments=settings.pdf_segment_max_segments,
             document_types=document_types,
             custom_field_keys=custom_field_keys,
             catalogue_matchers=catalogue_matchers,
         )
+        segments = segment_result.segments
+
+        if len(segments) <= 1 and len(pages) > 1 and not segment_result.cap_exceeded:
+            fallback = extract_pdf_page_texts_via_full_di(tmp_path)
+            if fallback is not None and fallback.pages:
+                pages = fallback.pages
+                incomplete_ocr = fallback.incomplete_ocr_indices
+                content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages)
+                identity_fields = extract_identity_fields_from_pages(
+                    pages,
+                    custom_field_keys=custom_field_keys,
+                )
+                business_fingerprint = compute_business_fingerprint_from_pages(
+                    pages,
+                    custom_field_keys=custom_field_keys,
+                )
+                segment_result = segment_pdf_pages(
+                    pages,
+                    max_segments=settings.pdf_segment_max_segments,
+                    document_types=document_types,
+                    custom_field_keys=custom_field_keys,
+                    catalogue_matchers=catalogue_matchers,
+                )
+                segments = segment_result.segments
 
         bundle_dup_id, bundle_dup_handled = await _try_resolve_bundle_duplicate(
             session,
@@ -552,12 +622,14 @@ async def ingest_file_with_fanout(
             )
 
         if len(segments) <= 1:
+            skip_reason = "segment_cap_exceeded" if segment_result.cap_exceeded else "no_headings"
             await _log_pdf_split_skipped(
                 session,
-                reason="no_headings",
+                reason=skip_reason,
                 parent_file_hash=parent_hash,
                 filename=filename,
                 page_count=len(pages),
+                segment_count_detected=segment_result.detected_boundary_count or None,
             )
             return await _single_file_ingest(
                 session,

@@ -30,6 +30,13 @@ class PdfDocumentSegment:
     identity_signature: str | None = None
 
 
+@dataclass(frozen=True)
+class PdfSegmentResult:
+    segments: list[PdfDocumentSegment]
+    cap_exceeded: bool = False
+    detected_boundary_count: int = 0
+
+
 def _page_kind_token(
     page: PdfPageText,
     *,
@@ -76,14 +83,23 @@ def _page_continues_permit_segment(
     return bool(page_permit and page_permit == segment_permit_no)
 
 
+def _resolve_heading_kind(
+    kind_token: str | None,
+    *,
+    document_types: list[DocumentTypeDefinition] | None,
+) -> HeadingKind | None:
+    return heading_kind_from_token(kind_token, document_types=document_types)  # type: ignore[return-value]
+
+
 def _single_segment(
     pages: list[PdfPageText],
     *,
     matchers: list[CataloguePageMatcher] | None,
     custom_field_keys: list[str] | None,
+    document_types: list[DocumentTypeDefinition] | None = None,
 ) -> PdfDocumentSegment:
     kind_token = _page_kind_token(pages[0], matchers=matchers) if pages else None
-    kind = heading_kind_from_token(kind_token)
+    kind = _resolve_heading_kind(kind_token, document_types=document_types)
     last = max(len(pages) - 1, 0)
     identity = (
         page_identity_signature(
@@ -97,7 +113,7 @@ def _single_segment(
     return PdfDocumentSegment(
         start_page=0,
         end_page=last,
-        heading_kind=kind,  # type: ignore[arg-type]
+        heading_kind=kind,
         boundary_confidence=1.0,
         page_kind_token=kind_token,
         identity_signature=identity,
@@ -136,17 +152,65 @@ def _segment_boundaries(
         has_new_kind = bool(page_kinds) and bool(new_kinds)
         starts_new = _page_starts_new_document(page, matchers=matchers)
 
-        if not starts_new and not has_new_kind and not aggressive:
-            continue
-        if aggressive and not starts_new and not has_new_kind:
-            continue
-
         kind = _page_kind_token(page, matchers=matchers)
         key = page_identity_signature(
             page.text,
             page_kind_token=kind,
             custom_field_keys=custom_field_keys,
         )
+
+        if (
+            not aggressive
+            and not starts_new
+            and not has_new_kind
+            and not (page.text or "").strip()
+            and prev_kind
+        ):
+            for j in range(index + 1, len(pages)):
+                ahead = pages[j]
+                if is_continuation_page(ahead.text or ""):
+                    continue
+                ahead_kind = _page_kind_token(ahead, matchers=matchers)
+                if not ahead_kind:
+                    continue
+                if ahead_kind != prev_kind:
+                    ahead_key = page_identity_signature(
+                        ahead.text,
+                        page_kind_token=ahead_kind,
+                        custom_field_keys=custom_field_keys,
+                    )
+                    starts.append((j, 0.75))
+                    prev_kind = ahead_kind
+                    prev_key = ahead_key
+                    segment_kinds = _page_all_kind_tokens(ahead, matchers=matchers)
+                    segment_permit_no = (
+                        _segment_permit_no(pages, j)
+                        if heading_kind_from_token(ahead_kind) == "customs_permit"
+                        else None
+                    )
+                break
+            continue
+
+        if aggressive and not starts_new and not has_new_kind:
+            if key and prev_key and key != prev_key:
+                starts.append((index, 0.78))
+                prev_kind = kind
+                prev_key = key
+                segment_kinds = page_kinds
+                segment_permit_no = (
+                    _segment_permit_no(pages, index)
+                    if heading_kind_from_token(kind) == "customs_permit"
+                    else None
+                )
+            elif not (page.text or "").strip():
+                continue
+            else:
+                continue
+            continue
+
+        if not starts_new and not has_new_kind:
+            continue
+
         confidence = 0.0
         split = False
 
@@ -162,9 +226,6 @@ def _segment_boundaries(
         elif kind and not prev_kind:
             split = True
             confidence = 0.8
-        elif aggressive and kind and prev_kind == kind and key and prev_key and key != prev_key:
-            split = True
-            confidence = 0.78
 
         if split:
             starts.append((index, confidence))
@@ -191,20 +252,37 @@ def _segments_from_starts(
     *,
     matchers: list[CataloguePageMatcher] | None,
     custom_field_keys: list[str] | None,
+    document_types: list[DocumentTypeDefinition] | None,
     max_segments: int,
-) -> list[PdfDocumentSegment]:
+) -> tuple[list[PdfDocumentSegment], bool]:
     if len(starts) == 1:
-        return [_single_segment(pages, matchers=matchers, custom_field_keys=custom_field_keys)]
+        return (
+            [_single_segment(
+                pages,
+                matchers=matchers,
+                custom_field_keys=custom_field_keys,
+                document_types=document_types,
+            )],
+            False,
+        )
 
     if len(starts) > max_segments:
         logger.warning("pdf_segment_cap_exceeded", detected=len(starts), cap=max_segments)
-        return [_single_segment(pages, matchers=matchers, custom_field_keys=custom_field_keys)]
+        return (
+            [_single_segment(
+                pages,
+                matchers=matchers,
+                custom_field_keys=custom_field_keys,
+                document_types=document_types,
+            )],
+            True,
+        )
 
     segments: list[PdfDocumentSegment] = []
     for idx, (start, confidence) in enumerate(starts):
         end = starts[idx + 1][0] - 1 if idx + 1 < len(starts) else len(pages) - 1
         kind_token = _page_kind_token(pages[start], matchers=matchers)
-        kind = heading_kind_from_token(kind_token)
+        kind = _resolve_heading_kind(kind_token, document_types=document_types)
         identity = page_identity_signature(
             pages[start].text,
             page_kind_token=kind_token,
@@ -214,13 +292,13 @@ def _segments_from_starts(
             PdfDocumentSegment(
                 start_page=start,
                 end_page=end,
-                heading_kind=kind,  # type: ignore[arg-type]
+                heading_kind=kind,
                 boundary_confidence=confidence if idx > 0 else 1.0,
                 page_kind_token=kind_token,
                 identity_signature=identity,
             )
         )
-    return segments
+    return segments, False
 
 
 def segment_pdf_pages(
@@ -230,7 +308,7 @@ def segment_pdf_pages(
     document_types: list[DocumentTypeDefinition] | None = None,
     custom_field_keys: list[str] | None = None,
     catalogue_matchers: list[CataloguePageMatcher] | None = None,
-) -> list[PdfDocumentSegment]:
+) -> PdfSegmentResult:
     """
     Group consecutive pages into documents using catalogue + identity signatures.
 
@@ -238,12 +316,19 @@ def segment_pdf_pages(
     for a multi-page PDF.
     """
     if not pages:
-        return [PdfDocumentSegment(0, 0, None, 1.0)]
+        return PdfSegmentResult(segments=[PdfDocumentSegment(0, 0, None, 1.0)])
     if len(pages) == 1:
         matchers = catalogue_matchers or (
             build_catalogue_page_matchers(document_types) if document_types else []
         )
-        return [_single_segment(pages, matchers=matchers, custom_field_keys=custom_field_keys)]
+        return PdfSegmentResult(
+            segments=[_single_segment(
+                pages,
+                matchers=matchers,
+                custom_field_keys=custom_field_keys,
+                document_types=document_types,
+            )]
+        )
 
     matchers = catalogue_matchers or (
         build_catalogue_page_matchers(document_types) if document_types else []
@@ -255,13 +340,21 @@ def segment_pdf_pages(
         custom_field_keys=custom_field_keys,
         aggressive=False,
     )
-    segments = _segments_from_starts(
+    segments, cap_exceeded = _segments_from_starts(
         pages,
         starts,
         matchers=matchers,
         custom_field_keys=custom_field_keys,
+        document_types=document_types,
         max_segments=max_segments,
     )
+
+    if cap_exceeded:
+        return PdfSegmentResult(
+            segments=segments,
+            cap_exceeded=True,
+            detected_boundary_count=len(starts),
+        )
 
     if len(segments) <= 1 and len(pages) > 1:
         aggressive_starts = _segment_boundaries(
@@ -271,15 +364,26 @@ def segment_pdf_pages(
             aggressive=True,
         )
         if len(aggressive_starts) > 1:
-            segments = _segments_from_starts(
+            segments, cap_exceeded = _segments_from_starts(
                 pages,
                 aggressive_starts,
                 matchers=matchers,
                 custom_field_keys=custom_field_keys,
+                document_types=document_types,
                 max_segments=max_segments,
             )
+            if cap_exceeded:
+                return PdfSegmentResult(
+                    segments=segments,
+                    cap_exceeded=True,
+                    detected_boundary_count=len(aggressive_starts),
+                )
+            starts = aggressive_starts
 
-    return segments
+    return PdfSegmentResult(
+        segments=segments,
+        detected_boundary_count=len(starts),
+    )
 
 
 def purchase_document_type_from_heading(kind: HeadingKind | None) -> str | None:

@@ -20,7 +20,6 @@ from app.services.dossier.document_duplicate_service import (
     find_invoice_by_file_hash,
     resolve_ingest_duplicate,
 )
-from app.services.extraction.pdf_content_fingerprint import compute_pdf_bytes_content_fingerprint
 from app.services.dossier.document_ref_service import assign_document_ref, audit_document_detail
 from app.services.ingest.ingest_capture_service import apply_ingest_capture, evaluate_ingest_capture
 from app.services.approval.approval_pipeline_service import (
@@ -463,23 +462,41 @@ async def ingest_email_attachments(
             content_fingerprint: str | None = None
             business_fingerprint: str | None = None
             identity_fields: dict[str, str] | None = None
+            prefetched_extraction = None
             if att.filename and att.filename.lower().endswith(".pdf"):
+                import tempfile
+                from pathlib import Path
+
                 from app.services.extraction.document_identity_service import (
-                    compute_business_fingerprint_from_bytes,
-                    extract_identity_fields_from_pdf_bytes,
+                    compute_business_fingerprint_from_pages,
+                    extract_identity_fields_from_pages,
                     identity_field_keys_from_catalogue,
                 )
+                from app.services.extraction.pdf_content_fingerprint import (
+                    compute_pdf_content_fingerprint_from_pages,
+                )
+                from app.services.extraction.pdf_page_text_service import extract_pdf_page_texts
 
-                content_fingerprint = compute_pdf_bytes_content_fingerprint(att.data)
                 custom_keys = identity_field_keys_from_catalogue(capture_config.document_types)
-                business_fingerprint = compute_business_fingerprint_from_bytes(
-                    att.data,
-                    custom_field_keys=custom_keys,
-                )
-                identity_fields = extract_identity_fields_from_pdf_bytes(
-                    att.data,
-                    custom_field_keys=custom_keys,
-                )
+                tmp_path: Path | None = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+                        handle.write(att.data)
+                        tmp_path = Path(handle.name)
+                    prefetched_extraction = extract_pdf_page_texts(tmp_path)
+                    pages_for_fp = prefetched_extraction.pages
+                    content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages_for_fp)
+                    identity_fields = extract_identity_fields_from_pages(
+                        pages_for_fp,
+                        custom_field_keys=custom_keys,
+                    )
+                    business_fingerprint = compute_business_fingerprint_from_pages(
+                        pages_for_fp,
+                        custom_field_keys=custom_keys,
+                    )
+                finally:
+                    if tmp_path is not None:
+                        tmp_path.unlink(missing_ok=True)
             existing = await find_existing_ingest_duplicate(
                 session,
                 tenant_id=tenant_id,
@@ -539,6 +556,7 @@ async def ingest_email_attachments(
                     connected_mailbox_id=connected_mailbox_id,
                     capture_source="email",
                 ),
+                prefetched_extraction=prefetched_extraction,
             )
 
             for segment_index, invoice_id in enumerate(fanout.invoice_ids):
