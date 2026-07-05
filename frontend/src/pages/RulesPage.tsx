@@ -60,7 +60,13 @@ export function RulesPage() {
   const pendingSaveRef = useRef<RuleBookConfigState | null>(null);
 
   const tenantId = user?.tenant_id ?? null;
-  const { data, isLoading, isError } = useRuleBookConfig(Boolean(user));
+  const {
+    data,
+    isLoading,
+    isError,
+    blocked,
+    refetch,
+  } = useRuleBookConfig(Boolean(user));
   useRecognitionSignalCatalog(Boolean(user));
   const { data: vendorMasters = [] } = useVendorMasters(Boolean(user));
   const { data: employeeMasters = [] } = useEmployeeMasters(Boolean(user));
@@ -100,6 +106,12 @@ export function RulesPage() {
       setRuleBook(null);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (blocked && !isLoading) {
+      void refetch();
+    }
+  }, [blocked, isLoading, refetch]);
 
   const flushSave = (next: RuleBookConfigState) => {
     pendingSaveRef.current = next;
@@ -151,7 +163,7 @@ export function RulesPage() {
     );
   }
 
-  if (isLoading || !ruleBook) {
+  if (isLoading || blocked || !ruleBook) {
     if (isError) {
       return (
         <div>
@@ -162,7 +174,7 @@ export function RulesPage() {
         </div>
       );
     }
-    return <PageLoader />;
+    return <PageLoader label="Loading rule book…" />;
   }
 
   const saveLabel =

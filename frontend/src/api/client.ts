@@ -210,17 +210,15 @@ function resolveActiveTenantId(): string | null {
   return getActiveTenantId();
 }
 
-/** Drop in-flight GET results after tenant/cache generation changes. */
-function assertTenantFetchStillValid(
-  requestTenantId: string | null,
-  cacheGeneration: number
-): void {
-  if (cacheGeneration !== getCacheGeneration) {
-    throw new ApiError("Tenant scope changed", 409);
-  }
+/** Drop in-flight GET results only when the active tenant id changed. */
+function assertSameTenantActive(requestTenantId: string | null): void {
   if (resolveActiveTenantId() !== requestTenantId) {
     throw new ApiError("Tenant scope changed", 409);
   }
+}
+
+function canRememberGetCache(cacheGeneration: number): boolean {
+  return cacheGeneration === getCacheGeneration;
 }
 
 function getScopedAuthHeaders(init?: RequestInit): Headers {
@@ -417,9 +415,8 @@ async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   if (method !== "GET") {
     invalidateGetCache();
     const requestTenantId = resolveActiveTenantId();
-    const cacheGeneration = getCacheGeneration;
     const data = await fetchEnvelope<T>(path, init);
-    assertTenantFetchStillValid(requestTenantId, cacheGeneration);
+    assertSameTenantActive(requestTenantId);
     return data;
   }
 
@@ -427,7 +424,7 @@ async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   const key = getRequestKey(path, method);
   const cached = getCache.get(key);
   if (cached && Date.now() - cached.at < GET_CACHE_MS) {
-    assertTenantFetchStillValid(requestTenantId, getCacheGeneration);
+    assertSameTenantActive(requestTenantId);
     return cached.data as T;
   }
 
@@ -437,8 +434,10 @@ async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   const cacheGeneration = getCacheGeneration;
   const promise = fetchEnvelope<T>(path, init)
     .then((data) => {
-      assertTenantFetchStillValid(requestTenantId, cacheGeneration);
-      rememberGetCache(key, data);
+      assertSameTenantActive(requestTenantId);
+      if (canRememberGetCache(cacheGeneration)) {
+        rememberGetCache(key, data);
+      }
       return data;
     })
     .finally(() => {
@@ -460,7 +459,7 @@ async function requestWithMeta<T>(
   if (method === "GET") {
     const cached = getCache.get(key);
     if (cached && Date.now() - cached.at < GET_CACHE_MS) {
-      assertTenantFetchStillValid(requestTenantId, getCacheGeneration);
+      assertSameTenantActive(requestTenantId);
       return cached.data as { data: T; meta: ApiEnvelope<T>["meta"] };
     }
     const inflight = inflightGets.get(key);
@@ -483,7 +482,7 @@ async function requestWithMeta<T>(
     }
     const json = (await res.json()) as ApiEnvelope<T>;
     if (json.error) throw new Error(json.error.message);
-    assertTenantFetchStillValid(requestTenantId, cacheGeneration);
+    assertSameTenantActive(requestTenantId);
     return { data: json.data, meta: json.meta };
   })();
 
@@ -491,8 +490,10 @@ async function requestWithMeta<T>(
     inflightGets.set(
       key,
       promise.then((payload) => {
-        assertTenantFetchStillValid(requestTenantId, cacheGeneration);
-        rememberGetCache(key, payload);
+        assertSameTenantActive(requestTenantId);
+        if (canRememberGetCache(cacheGeneration)) {
+          rememberGetCache(key, payload);
+        }
         return payload;
       })
     );

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getAuthToken, setAuthToken, setAuthUser } from "@/api/client";
+import { getAuthToken, setAuthToken, setAuthUser, clearGetCache } from "@/api/client";
 import {
   beginTenantTransition,
   canRenderTenantOwnedUi,
@@ -9,11 +9,17 @@ import {
   endTenantTransition,
   getTenantDataGeneration,
   guardedTenantData,
+  isTenantFetchAbortError,
   isTenantFetchScopeCurrent,
   isTenantScopeConsistent,
   isTenantTransitionActive,
+  TenantFetchAbortError,
+  TENANT_SCOPE_CHANGED_MESSAGE,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
   tenantSessionWillChange,
 } from "@/lib/tenantSession";
+import { ApiError } from "@/api/client";
 
 const tenantA = "11111111-1111-1111-1111-111111111111";
 const tenantB = "22222222-2222-2222-2222-222222222222";
@@ -266,5 +272,73 @@ describe("isTenantScopeConsistent", () => {
   it("is false when jwt and profile disagree", () => {
     setAuthToken(jwtWithTenant(tenantA));
     expect(isTenantScopeConsistent(tenantB)).toBe(false);
+  });
+});
+
+describe("isTenantFetchAbortError", () => {
+  it("matches TenantFetchAbortError", () => {
+    expect(isTenantFetchAbortError(new TenantFetchAbortError())).toBe(true);
+  });
+
+  it("matches ApiError 409 tenant scope changed", () => {
+    expect(isTenantFetchAbortError(new ApiError(TENANT_SCOPE_CHANGED_MESSAGE, 409))).toBe(true);
+  });
+
+  it("does not match other ApiError statuses", () => {
+    expect(isTenantFetchAbortError(new ApiError(TENANT_SCOPE_CHANGED_MESSAGE, 500))).toBe(false);
+  });
+
+  it("matches generic Error with tenant scope message", () => {
+    expect(isTenantFetchAbortError(new Error(TENANT_SCOPE_CHANGED_MESSAGE))).toBe(true);
+  });
+});
+
+describe("formatTenantLoadError", () => {
+  it("does not append api hint for tenant scope changed", () => {
+    expect(formatTenantLoadError(TENANT_SCOPE_CHANGED_MESSAGE, " port hint")).toBe(
+      TENANT_SCOPE_CHANGED_MESSAGE
+    );
+  });
+
+  it("appends api hint for other errors", () => {
+    expect(formatTenantLoadError("Network error", " port hint")).toBe("Network error port hint");
+  });
+});
+
+describe("handleTenantScopedLoadFailure", () => {
+  it("invokes retry for scope abort errors", () => {
+    const retry = vi.fn();
+    expect(handleTenantScopedLoadFailure(new TenantFetchAbortError(), { retry })).toBe(true);
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("returns false for unrelated errors", () => {
+    const retry = vi.fn();
+    expect(handleTenantScopedLoadFailure(new Error("network"), { retry })).toBe(false);
+    expect(retry).not.toHaveBeenCalled();
+  });
+});
+
+describe("same-tenant cache bump vs tenant switch", () => {
+  it("scope stays current after same-tenant GET cache clear only", () => {
+    setAuthToken(jwtWithTenant(tenantA));
+    const scope = captureTenantFetchScope();
+    clearGetCache();
+    expect(isTenantFetchScopeCurrent(scope)).toBe(true);
+  });
+
+  it("scope is stale after full tenant cache clear", () => {
+    setAuthToken(jwtWithTenant(tenantA));
+    const scope = captureTenantFetchScope();
+    clearAllTenantCaches();
+    expect(isTenantFetchScopeCurrent(scope)).toBe(false);
+  });
+
+  it("scope is stale after tenant id change", () => {
+    setAuthToken(jwtWithTenant(tenantA));
+    const scope = captureTenantFetchScope();
+    clearAllTenantCaches();
+    setAuthToken(jwtWithTenant(tenantB));
+    expect(isTenantFetchScopeCurrent(scope)).toBe(false);
   });
 });

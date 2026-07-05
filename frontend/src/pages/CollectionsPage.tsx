@@ -90,7 +90,7 @@ export function CollectionsPage() {
       <PageTabPanel value={tab} active={tab} className="mt-4 space-y-2">
         {isLoading || collectionsBlocked ? (
           <div className="text-sm text-muted-foreground py-8">Loading collections…</div>
-        ) : isError ? (
+        ) : isError && !collectionsBlocked ? (
           <div className="text-sm text-destructive py-8">Could not load collections.</div>
         ) : tabRows.length === 0 ? (
           <EmptyState

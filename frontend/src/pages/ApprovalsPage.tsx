@@ -36,11 +36,13 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
   captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
+  API_PORT_HINT,
 } from "@/lib/tenantSession";
 
 const APPROVAL_POLL_MS = 15_000;
-const API_HINT = " Ensure the API is running on port 8001.";
 
 const COLUMN_EMPTY_HINT: Record<ApprovalBoardColumnKey, string> = {
   pending: "Documents waiting for classification or rescan",
@@ -123,12 +125,21 @@ export function ApprovalsPage() {
       if (!options?.silent) setError(null);
     } catch (reason) {
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+      if (
+        handleTenantScopedLoadFailure(reason, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        })
+      ) {
+        return;
+      }
       if (!options?.silent) {
         setInvoices([]);
         setError(
           reason instanceof Error
-            ? reason.message + API_HINT
-            : "Failed to load approvals" + API_HINT
+            ? formatTenantLoadError(reason.message, API_PORT_HINT)
+            : "Failed to load approvals" + API_PORT_HINT
         );
       }
     } finally {

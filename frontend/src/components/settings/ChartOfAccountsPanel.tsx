@@ -48,7 +48,7 @@ function validateAccounts(accounts: ChartOfAccountRow[]): string | null {
 
 export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccountsPanelProps) {
   const { toast } = useToast();
-  const { data, isLoading, isError } = useChartOfAccounts();
+  const { data, isLoading, isError, blocked } = useChartOfAccounts();
   const saveMutation = useSaveChartOfAccounts();
   const [rows, setRows] = useState<ChartOfAccountRowLocal[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -111,7 +111,7 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
     }
   };
 
-  if (isLoading) {
+  if (isLoading || blocked) {
     return (
       <Card className="flex max-w-3xl items-center gap-2 p-6 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />

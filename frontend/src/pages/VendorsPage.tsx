@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
+  API_PORT_HINT,
   captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
@@ -192,6 +195,15 @@ export function VendorsPage() {
       setInvoices(invoiceRows);
     } catch (e) {
       if (!isTenantFetchScopeCurrent(scope)) return;
+      if (
+        handleTenantScopedLoadFailure(e, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        })
+      ) {
+        return;
+      }
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load vendors");
         setRows([]);
@@ -270,7 +282,7 @@ export function VendorsPage() {
     return (
       <>
         <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-          {error}. Ensure the API is running on port 8001.
+          {formatTenantLoadError(error, API_PORT_HINT)}
         </Card>
         <VendorFormDialog
           open={formOpen}

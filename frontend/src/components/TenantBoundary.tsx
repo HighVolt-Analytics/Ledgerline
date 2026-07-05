@@ -22,24 +22,18 @@ export function TenantBoundary({ children }: { children: ReactNode }) {
     getTenantDataGeneration,
     getTenantDataGeneration
   );
-  const transitioning = useSyncExternalStore(
-    subscribeTenantScope,
-    isTenantTransitionActive,
-    isTenantTransitionActive
-  );
 
   const profileTenantId = user?.tenant_id ?? null;
   const jwtTenantId = getActiveTenantId();
   const scopeOk = isTenantScopeConsistent(profileTenantId);
   const canRender = canRenderTenantOwnedUi(profileTenantId);
 
-  // Once JWT and profile agree, release the transition lock so a delayed hard
-  // reload cannot leave the app stuck on the loader. Caches are already cleared.
+  // Release transition lock when scope is consistent (covers stuck mid-switch state).
   useEffect(() => {
-    if (!loading && scopeOk && transitioning && jwtTenantId === profileTenantId) {
+    if (!loading && scopeOk && isTenantTransitionActive()) {
       endTenantTransition();
     }
-  }, [loading, scopeOk, transitioning, profileTenantId, jwtTenantId, generation]);
+  }, [loading, scopeOk, profileTenantId, jwtTenantId, generation]);
 
   if (loading || (user && !canRender)) {
     return <PageLoader label="Loading organisation…" />;

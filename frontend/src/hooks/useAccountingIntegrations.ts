@@ -4,6 +4,7 @@ import type { AccountingIntegrationsStatus } from "@/api/types";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
   captureTenantFetchScope,
+  handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 
@@ -32,6 +33,15 @@ export function useAccountingIntegrations(enabled = true) {
       setError(null);
     } catch (err) {
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+      if (
+        handleTenantScopedLoadFailure(err, {
+          retry: () => {
+            void reload(true);
+          },
+        })
+      ) {
+        return;
+      }
       setStatus(null);
       setError(err instanceof Error ? err.message : "Failed to load accounting integrations");
     } finally {
