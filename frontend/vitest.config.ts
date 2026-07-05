@@ -10,6 +10,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: [
+      "src/lib/approvalsBoard.test.ts",
       "src/lib/documentTypeTemplates.test.ts",
       "src/lib/regenerateClassifierPresets.test.ts",
       "src/lib/documentCompulsoryFields.test.ts",
@@ -27,6 +28,7 @@ export default defineConfig({
       "src/lib/salesRegisterQueue.test.ts",
       "src/lib/collectionsQueue.test.ts",
       "src/lib/authSync.test.ts",
+      "src/lib/authToken.test.ts",
       "src/lib/tenantSession.test.ts",
     ],
   },

@@ -24,6 +24,18 @@ COUNTRY_DEFAULTS: dict[str, dict[str, str]] = {
     "DE": {"timezone": "Europe/Berlin", "locale": "de-DE"},
 }
 
+# ISO currency per supported country — aligned with frontend settingsData.ts.
+COUNTRY_CURRENCY: dict[str, str] = {
+    "AU": "AUD",
+    "US": "USD",
+    "GB": "GBP",
+    "IN": "INR",
+    "SG": "SGD",
+    "NZ": "NZD",
+    "AE": "AED",
+    "DE": "EUR",
+}
+
 
 def default_institution_settings() -> dict[str, str]:
     return {
@@ -54,6 +66,15 @@ def tenant_country(tenant: Tenant | None) -> str:
     return DEFAULT_COUNTRY
 
 
+def country_currency(country_code: str) -> str:
+    code = (country_code or "").strip().upper()
+    return COUNTRY_CURRENCY.get(code, COUNTRY_CURRENCY[DEFAULT_COUNTRY])
+
+
+def tenant_currency(tenant: Tenant | None) -> str:
+    return country_currency(tenant_country(tenant))
+
+
 def tenant_timezone(tenant: Tenant | None) -> str:
     settings = _settings(tenant)
     tz = settings.get("timezone")
@@ -82,6 +103,7 @@ def institution_settings_view(tenant: Tenant | None) -> dict[str, str]:
         "country": tenant_country(tenant),
         "timezone": tenant_timezone(tenant),
         "locale": tenant_locale(tenant),
+        "currency": tenant_currency(tenant),
     }
 
 

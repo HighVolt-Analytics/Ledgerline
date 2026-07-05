@@ -71,6 +71,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
                 id=TESTING_TENANT_UUID,
                 name="High Volt Analytics",
                 slug="hv-org",
+                settings_json={"country": "AU"},
             )
         )
         session.add(

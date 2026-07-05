@@ -1,5 +1,9 @@
 import type { Invoice } from "@/api/types";
-import { PIPELINE_STATUSES as PIPELINE_STATUS_LIST } from "@/lib/invoiceActions";
+import {
+  canReprocessInvoice,
+  invoiceCanAttemptReprocess,
+  PIPELINE_STATUSES as PIPELINE_STATUS_LIST,
+} from "@/lib/invoiceActions";
 
 export type ApprovalBoardColumnApi = "review" | "processing" | "approved" | "rejected";
 
@@ -43,9 +47,18 @@ export function isPreClassificationReview(inv: Invoice): boolean {
 }
 
 export function canShowApproveOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
-  if (column === "approved" || column === "rejected") return false;
-  if (column === "pending") return false;
+  if (column === "approved" || column === "pending" || column === "rejected") return false;
   return APPROVABLE_STATUSES.has(inv.status);
+}
+
+/** Full pipeline re-run — rejected rows with a stored file only (not duplicate shadows). */
+export function canShowReprocessOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
+  return (
+    column === "rejected" &&
+    inv.status === "rejected" &&
+    canReprocessInvoice(inv.status) &&
+    invoiceCanAttemptReprocess(inv)
+  );
 }
 
 export function reviewQueueCount(invoices: Invoice[]): number {

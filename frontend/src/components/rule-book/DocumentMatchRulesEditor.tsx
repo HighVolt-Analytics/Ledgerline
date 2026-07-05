@@ -22,6 +22,7 @@ import {
   type MatchRuleMode,
   type MatchRuleRow,
   type MatchRulesForm,
+  withRowKey,
 } from "@/lib/documentMatchRules";
 import {
   applyRecognitionSignals,
@@ -46,11 +47,11 @@ type DocumentMatchRulesEditorProps = {
 };
 
 function defaultTextRule(): MatchRuleRow {
-  return { field: "document_heading", operator: "contains", value: "" };
+  return withRowKey({ field: "document_heading", operator: "contains", value: "" });
 }
 
 function defaultExcludeRule(): MatchRuleRow {
-  return { field: "document_heading", operator: "contains", value: "" };
+  return withRowKey({ field: "document_heading", operator: "contains", value: "" });
 }
 
 function RuleRowEditor({
@@ -213,7 +214,7 @@ function RuleSection({
       <div className="space-y-2">
         {rules.map((row, index) => (
           <RuleRowEditor
-            key={`${row.field}-${index}`}
+            key={row.rowKey ?? index}
             row={row}
             fieldGroups={fieldGroups}
             onChange={(next) => {

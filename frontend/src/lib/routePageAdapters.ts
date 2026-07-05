@@ -457,7 +457,7 @@ function mapMatchAmountLine(line: MatchAmountLineApi): MatchAmountLine {
 
 function mapMatchDisplay(d: ThreeWayMatchDisplayApi): ThreeWayMatchDisplay {
   return {
-    baseUom: d.base_uom,
+    baseUom: d.base_uom ?? undefined,
     poOnDocument: mapMatchAmountLine(d.po_on_document),
     poForMatch: mapMatchAmountLine(d.po_for_match),
     grnOnDocument: d.grn_on_document ? mapMatchAmountLine(d.grn_on_document) : null,

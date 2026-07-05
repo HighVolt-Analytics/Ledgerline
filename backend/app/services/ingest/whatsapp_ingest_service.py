@@ -19,6 +19,7 @@ from app.services.dossier.document_duplicate_service import (
     log_duplicate_in_progress,
 )
 from app.services.ingest.ingest_fanout_service import IngestSourceMetadata, ingest_file_with_fanout
+from app.services.approval.approval_service import restore_rejected_invoice_file_if_needed
 from app.services.invoice.invoice_reset import reset_invoice_for_reprocess
 from app.services.purchase.team_expense_validator import resolve_employee_for_sender
 from app.services.master_data.vendor_resolver import resolve_vendor_slug
@@ -239,6 +240,7 @@ async def ingest_whatsapp_message(
         existing.email_subject = caption or None
         existing.email_attachment_name = filename
         existing.email_message_id = msg.message_id
+        await restore_rejected_invoice_file_if_needed(session, existing)
         await reset_invoice_for_reprocess(session, existing)
         await log_event(
             session,

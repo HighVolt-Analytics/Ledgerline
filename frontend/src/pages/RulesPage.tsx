@@ -6,7 +6,6 @@ import {
   Inbox,
   Layers,
   Loader2,
-  Package,
   Scale,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
@@ -22,7 +21,6 @@ import { LiveEvaluation } from "@/components/rule-book/LiveEvaluation";
 import { RuleChangeHistory } from "@/components/rule-book/RuleChangeHistory";
 import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
 import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
-import { PurchaseMatchSettingsPanel } from "@/components/rule-book/PurchaseMatchSettingsPanel";
 import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
@@ -35,7 +33,6 @@ import { removeDocumentTypeFromCatalog } from "@/lib/documentTypeLifecycle";
 const RULEBOOK_TABS = [
   { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
   { value: "document-types", label: "Document types", testid: "tab-document-types", icon: Layers },
-  { value: "purchase-match", label: "Purchase match", testid: "tab-purchase-match", icon: Package },
   { value: "vendors", label: "Vendors", testid: "tab-vendors", icon: Building2 },
   { value: "customers", label: "Customers", testid: "tab-customers", icon: Building2 },
   { value: "employees", label: "Employees", testid: "tab-employees", icon: CircleUser },
@@ -244,19 +241,6 @@ export function RulesPage() {
         <DocumentTypesTab
           documentTypes={ruleBook.documentTypes}
           onChange={(documentTypes) => patch({ documentTypes })}
-          onStarterPackApplied={(result) => {
-            patch({
-              documentTypes: [...ruleBook.documentTypes, ...result.types],
-              ...(result.unclassifiedDocumentTypeCode
-                ? {
-                    documentClassification: {
-                      ...ruleBook.documentClassification,
-                      unclassifiedDocumentTypeCode: result.unclassifiedDocumentTypeCode,
-                    },
-                  }
-                : {}),
-            });
-          }}
           onDeleteType={(code) => {
             if (!canEdit) return;
             cancelPendingSave();
@@ -286,12 +270,6 @@ export function RulesPage() {
         <IngestionTab
           rules={ruleBook.emailCaptureRules}
           onChange={(emailCaptureRules) => patch({ emailCaptureRules })}
-        />
-      </PageTabPanel>
-      <PageTabPanel value="purchase-match" active={tab} className="mt-0">
-        <PurchaseMatchSettingsPanel
-          value={ruleBook.purchaseMatch}
-          onChange={(purchaseMatch) => patch({ purchaseMatch })}
         />
       </PageTabPanel>
       <PageTabPanel value="vendors" active={tab} className="mt-0">

@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   DossierApprovalPanel,
   DossierLinkedDocumentsPanel,
@@ -13,6 +13,7 @@ import {
 } from "@/components/dossiers/DossierSummaryStrip";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageEyebrowHeader } from "@/components/PageEyebrowHeader";
+import { useAuth } from "@/context/AuthContext";
 import { fetchDossierById, addDossierManualLink, removeDossierManualLink } from "@/lib/dossierApi";
 import { firstPipelineFailure, isLegacyMockDossierId, type DossierSummary } from "@/lib/dossiers";
 import { ROUTE_SALES } from "@/lib/invoice";
@@ -86,6 +87,9 @@ function captureLabel(channel: string): string {
 
 export function DossierDetailPage() {
   const { dossierId } = useParams<{ dossierId: string }>();
+  const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const [dossier, setDossier] = useState<DossierSummary | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [drawerId, setDrawerId] = useState<number | null>(null);
@@ -111,6 +115,13 @@ export function DossierDetailPage() {
     setDossier(row);
   };
 
+  useLayoutEffect(() => {
+    setDossier(undefined);
+    setError(null);
+    setDrawerId(null);
+    setDrawerOpen(false);
+  }, [dossierId, tenantScope]);
+
   useEffect(() => {
     if (!dossierId) {
       setDossier(null);
@@ -121,23 +132,20 @@ export function DossierDetailPage() {
       setError(null);
       return;
     }
-    let cancelled = false;
+    const seq = ++loadSeq.current;
     setDossier(undefined);
     setError(null);
-    fetchDossierById(dossierId)
+    void fetchDossierById(dossierId)
       .then((row) => {
-        if (!cancelled) setDossier(row);
+        if (seq !== loadSeq.current) return;
+        setDossier(row);
       })
       .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load dossier");
-          setDossier(null);
-        }
+        if (seq !== loadSeq.current) return;
+        setError(err instanceof Error ? err.message : "Failed to load dossier");
+        setDossier(null);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [dossierId]);
+  }, [dossierId, tenantScope]);
 
   if (dossier === undefined) {
     return (

@@ -171,7 +171,7 @@ def test_vr06_pass(sample_invoice_data: InvoiceData) -> None:
 
 def test_vr07_pass(sample_invoice_data: InvoiceData) -> None:
 
-    assert vr07_currency(sample_invoice_data).passed
+    assert vr07_currency(sample_invoice_data, expected_currency="AUD").passed
 
 
 
@@ -179,7 +179,7 @@ def test_vr07_pass(sample_invoice_data: InvoiceData) -> None:
 
 def test_vr08_pass(sample_invoice_data: InvoiceData) -> None:
 
-    assert vr08_gst(sample_invoice_data).passed
+    assert vr08_gst(sample_invoice_data, expected_currency="AUD").passed
 
 
 
@@ -189,14 +189,40 @@ def test_vr08_tolerance_boundary(sample_invoice_data: InvoiceData) -> None:
 
     sample_invoice_data.gst = Decimal("100.02")
 
-    assert vr08_gst(sample_invoice_data).passed
+    assert vr08_gst(sample_invoice_data, expected_currency="AUD").passed
 
     sample_invoice_data.gst = Decimal("100.03")
 
-    assert not vr08_gst(sample_invoice_data).passed
+    assert not vr08_gst(sample_invoice_data, expected_currency="AUD").passed
 
 
 
+
+
+def test_vr07_pass_sgd(sample_invoice_data: InvoiceData) -> None:
+    sample_invoice_data.currency = "SGD"
+    assert vr07_currency(sample_invoice_data, expected_currency="SGD").passed
+
+
+def test_vr07_fail_usd_for_sgd_org(sample_invoice_data: InvoiceData) -> None:
+    sample_invoice_data.currency = "USD"
+    assert not vr07_currency(sample_invoice_data, expected_currency="SGD").passed
+
+
+def test_vr08_skips_gst_for_foreign_currency(sample_invoice_data: InvoiceData) -> None:
+    sample_invoice_data.currency = "USD"
+    sample_invoice_data.gst = None
+    sample_invoice_data.subtotal = Decimal("1000.00")
+
+    result = vr08_gst(sample_invoice_data, expected_currency="AUD")
+
+    assert result.passed
+    assert "foreign invoice" in result.message.lower()
+
+
+def test_vr08_validates_gst_for_org_currency(sample_invoice_data: InvoiceData) -> None:
+    sample_invoice_data.currency = "USD"
+    assert vr08_gst(sample_invoice_data, expected_currency="USD").passed
 
 
 def test_vr01_pass(sample_invoice_data: InvoiceData) -> None:
@@ -225,7 +251,7 @@ def test_vr07_fail(sample_invoice_data: InvoiceData) -> None:
 
     sample_invoice_data.currency = "USD"
 
-    assert not vr07_currency(sample_invoice_data).passed
+    assert not vr07_currency(sample_invoice_data, expected_currency="AUD").passed
 
 
 
@@ -235,7 +261,7 @@ def test_vr08_fail(sample_invoice_data: InvoiceData) -> None:
 
     sample_invoice_data.gst = Decimal("1")
 
-    assert not vr08_gst(sample_invoice_data).passed
+    assert not vr08_gst(sample_invoice_data, expected_currency="AUD").passed
 
 
 
@@ -246,7 +272,7 @@ def test_vr08_pass_at_fifteen_percent(sample_invoice_data: InvoiceData) -> None:
     sample_invoice_data.gst = Decimal("150.00")
     sample_invoice_data.total = Decimal("1150.00")
 
-    assert vr08_gst(sample_invoice_data).passed
+    assert vr08_gst(sample_invoice_data, expected_currency="AUD").passed
 
 
 
@@ -256,7 +282,7 @@ def test_vr08_skips_when_rate_unknown(sample_invoice_data: InvoiceData) -> None:
     sample_invoice_data.subtotal = Decimal("0")
     sample_invoice_data.gst = Decimal("0")
 
-    result = vr08_gst(sample_invoice_data)
+    result = vr08_gst(sample_invoice_data, expected_currency="AUD")
 
     assert result.skipped
     assert "GST rate could not be determined" in result.message
@@ -278,7 +304,7 @@ def test_vr08_skips_when_totals_missing(sample_invoice_data: InvoiceData) -> Non
     sample_invoice_data.subtotal = None
     sample_invoice_data.gst = None
 
-    result = vr08_gst(sample_invoice_data)
+    result = vr08_gst(sample_invoice_data, expected_currency="AUD")
 
     assert result.skipped
     assert result.passed

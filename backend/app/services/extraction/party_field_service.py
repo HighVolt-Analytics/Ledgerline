@@ -56,9 +56,8 @@ def tax_id_grounded_in_ocr(tax_id: str | None, ocr_text: str | None) -> bool:
     if norm_tid and len(norm_tid) >= 4 and norm_tid in norm_ocr:
         return True
     digits = "".join(c for c in tid if c.isdigit())
-    if len(digits) >= 6:
-        ocr_digits = "".join(c for c in ocr_text if c.isdigit())
-        if digits in ocr_digits:
+    if len(digits) >= 8:
+        if re.search(rf"(?<!\d){re.escape(digits)}(?!\d)", ocr_text):
             return True
     return False
 

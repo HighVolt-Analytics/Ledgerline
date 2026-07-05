@@ -677,11 +677,6 @@ export function createDefaultRuleBookConfig(): RuleBookConfigState {
     employeeMasters: EMPLOYEE_MASTERS,
     postingDefaults: { ...DEFAULT_POSTING_DEFAULTS },
     documentSets: DEFAULT_DOCUMENT_SETS.map((set) => ({ ...set })),
-    purchaseMatch: {
-      baseUom: "EA",
-      qtyTolerancePct: 0,
-      uomConversions: [],
-    },
   };
 }
 

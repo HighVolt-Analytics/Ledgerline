@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, Scale } from "lucide-react";
 import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
@@ -41,12 +41,19 @@ export function ReconciliationPage() {
   });
   const [period, setPeriod] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const tenantScope = user?.tenant_id ?? null;
 
   const currency = overview?.base_currency ?? "AUD";
   const fmt = (v: number) => money(v, currency);
 
+  useLayoutEffect(() => {
+    setPostingDefaults({ ...DEFAULT_POSTING_DEFAULTS });
+    setPeriod("");
+    setExpanded({});
+  }, [tenantScope]);
+
   useEffect(() => {
-    if (!user) {
+    if (!tenantScope) {
       setPeriod("");
       return;
     }
@@ -54,7 +61,7 @@ export function ReconciliationPage() {
       .getRuleBookConfig()
       .then((config) => setPostingDefaults(ruleBookConfigFromApi(config).postingDefaults))
       .catch(() => setPostingDefaults({ ...DEFAULT_POSTING_DEFAULTS }));
-  }, [user]);
+  }, [tenantScope]);
 
   const fullRecon = useMemo(
     () => (overview ? mapReconciliationOverview(overview) : null),

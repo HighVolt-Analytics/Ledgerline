@@ -87,7 +87,7 @@ VR_CHECK_NAMES: dict[str, str] = {
     "VR03": "Required fields and line items",
     "VR05": "ABN / tax ID",
     "VR06": "Invoice and due dates",
-    "VR07": "Currency AUD",
+    "VR07": "Local currency",
     "VR08": "GST rate check",
     "VR09": "Line arithmetic",
     "VR10": "Tax invoice (AU)",

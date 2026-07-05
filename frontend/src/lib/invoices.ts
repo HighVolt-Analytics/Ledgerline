@@ -57,6 +57,10 @@ export async function fetchAllApprovals(fresh = false): Promise<Invoice[]> {
 
 let boardFetchInflight: Promise<Invoice[]> | null = null;
 
+export function clearInvoiceFetchDedupe(): void {
+  boardFetchInflight = null;
+}
+
 /** Single-request payload for the approvals kanban board. */
 export async function fetchApprovalsBoard(fresh = false): Promise<Invoice[]> {
   if (fresh) {

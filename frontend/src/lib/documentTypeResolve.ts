@@ -60,10 +60,10 @@ export function documentTypeLabelForCode(
   if (!normalized) return null;
   const row = documentTypes.find((dt) => dt.code.toUpperCase() === normalized);
   if (!row) return normalized;
-  return row.shortTitle?.trim() || row.title?.trim() || normalized;
+  return row.title?.trim() || row.shortTitle?.trim() || normalized;
 }
 
-/** List/table label — prefers classified DT short title, same as the detail drawer. */
+/** List/table label — prefers classified DT document name (title), same as the detail drawer. */
 export function invoiceDocumentTypeDisplayLabel(
   inv: {
     document_type_code?: string | null;

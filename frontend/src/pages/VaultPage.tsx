@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ChevronDown,
@@ -163,6 +163,8 @@ type DrawerTab = "fields" | "audit";
 
 export function VaultPage() {
   const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const { data: ruleBook } = useRuleBookConfig();
   const [searchParams, setSearchParams] = useSearchParams();
   const [vaultData, setVaultData] = useState<Awaited<ReturnType<typeof api.getVaultTree>> | null>(
@@ -206,6 +208,7 @@ export function VaultPage() {
       setError(null);
       setWarning(null);
     }
+    const seq = ++loadSeq.current;
     const fresh = options?.fresh ?? !options?.silent;
 
     const [vaultResult, invoicesResult, configResult] = await Promise.allSettled([
@@ -213,6 +216,8 @@ export function VaultPage() {
       fetchAllInvoices(fresh),
       api.getRuleBookConfig(),
     ]);
+
+    if (seq !== loadSeq.current) return;
 
     if (vaultResult.status === "fulfilled") {
       setVaultData(vaultResult.value);
@@ -248,17 +253,17 @@ export function VaultPage() {
     }
 
     if (!options?.silent) setLoading(false);
-  }, []);
+  }, [tenantScope]);
 
   useEffect(() => {
     void load();
-  }, [load, user?.tenant_id]);
+  }, [load, tenantScope]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSelectedId(null);
     setSelection(null);
     setExpanded(new Set());
-  }, [user?.tenant_id]);
+  }, [tenantScope]);
 
   useVisibilityPolling(() => {
     void load({ silent: true, fresh: true });

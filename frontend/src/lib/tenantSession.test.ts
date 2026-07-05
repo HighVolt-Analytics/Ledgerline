@@ -2,10 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setAuthToken } from "@/api/client";
 import {
+  clearAllTenantCaches,
   guardedTenantData,
   isTenantScopeConsistent,
   tenantSessionWillChange,
 } from "@/lib/tenantSession";
+import {
+  getRecognitionSignalCatalog,
+  setRecognitionSignalCatalog,
+  type RecognitionSignalCatalog,
+} from "@/lib/recognitionSignalCatalog";
 
 const tenantA = "11111111-1111-1111-1111-111111111111";
 const tenantB = "22222222-2222-2222-2222-222222222222";
@@ -109,5 +115,47 @@ describe("isTenantScopeConsistent", () => {
   it("is true when profile and jwt tenant match", () => {
     setAuthToken(jwtWithTenant(tenantB));
     expect(isTenantScopeConsistent(tenantB)).toBe(true);
+  });
+});
+
+const emptyCatalog: RecognitionSignalCatalog = {
+  weakSignalIds: [],
+  pickGroups: [],
+  supportingGuards: [],
+  signals: [{ id: "sig-a", label: "A", hint: "", channel: "email", strength: "strong", example: "", condition: { field: "x", operator: "contains", value: "y" } }],
+  playbookRecommendedIdentity: {},
+};
+
+describe("clearAllTenantCaches", () => {
+  it("clears module-level recognition signal catalog", () => {
+    setRecognitionSignalCatalog(emptyCatalog);
+    expect(getRecognitionSignalCatalog()).not.toBeNull();
+    clearAllTenantCaches();
+    expect(getRecognitionSignalCatalog()).toBeNull();
+  });
+});
+
+describe("invoice id collision guard", () => {
+  it("hides invoice #42 from tenant A when active tenant is B", () => {
+    const tenantAInvoice42 = { id: 42, vendor: "Org A Corp" };
+    setAuthToken(jwtWithTenant(tenantB));
+    expect(
+      guardedTenantData(tenantAInvoice42, {
+        profileTenantId: tenantB,
+        dataTenantId: tenantA,
+      })
+    ).toBeUndefined();
+  });
+
+  it("masks stale invoice while refetch is in flight", () => {
+    const staleInvoice = { id: 42, vendor: "Stale vendor" };
+    setAuthToken(jwtWithTenant(tenantB));
+    expect(
+      guardedTenantData(staleInvoice, {
+        profileTenantId: tenantB,
+        isLoading: true,
+        dataTenantId: tenantB,
+      })
+    ).toBeUndefined();
   });
 });

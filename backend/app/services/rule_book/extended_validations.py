@@ -153,6 +153,7 @@ async def vr14_po_status(
     *,
     invoice: Invoice | None,
     tenant_id: int,
+    expected_currency: str,
 ) -> ValidationResult:
     po_ref = (data.po_reference or "").strip()
     if not po_ref:
@@ -168,12 +169,13 @@ async def vr14_po_status(
     if po.status == PurchaseOrderStatus.CLOSED:
         return ValidationResult("VR14", False, f"PO {po_ref} is closed")
 
-    currency = (data.currency or invoice.currency or "AUD").upper()
-    if currency != "AUD":
+    expected = expected_currency.strip().upper()
+    currency = (data.currency or invoice.currency or expected).upper()
+    if currency != expected:
         return ValidationResult(
             "VR14",
             False,
-            f"Invoice currency {currency} must match PO currency (AUD)",
+            f"Invoice currency {currency} must match PO currency ({expected})",
         )
 
     return ValidationResult("VR14", True, f"PO {po_ref} is open and currency matches")
@@ -227,7 +229,8 @@ async def vr15_three_way_match(
     )
 
 
-def vr16_freight_surcharges(data: InvoiceData) -> ValidationResult:
+def vr16_freight_surcharges(data: InvoiceData, *, expected_currency: str) -> ValidationResult:
+    currency = expected_currency.strip().upper()
     freight_total = Decimal("0")
     for line in data.line_items:
         desc = (line.description or "").strip()
@@ -243,20 +246,20 @@ def vr16_freight_surcharges(data: InvoiceData) -> ValidationResult:
         return ValidationResult(
             "VR16",
             False,
-            f"Freight/surcharges AUD {freight_total} without PO reference",
+            f"Freight/surcharges {currency} {freight_total} without PO reference",
         )
 
     if freight_total > FREIGHT_TOLERANCE_AUD:
         return ValidationResult(
             "VR16",
             False,
-            f"Freight/surcharges AUD {freight_total} exceed tolerance AUD {FREIGHT_TOLERANCE_AUD}",
+            f"Freight/surcharges {currency} {freight_total} exceed tolerance {currency} {FREIGHT_TOLERANCE_AUD}",
         )
 
     return ValidationResult(
         "VR16",
         True,
-        f"Freight/surcharges AUD {freight_total} within tolerance",
+        f"Freight/surcharges {currency} {freight_total} within tolerance",
     )
 
 
@@ -288,7 +291,17 @@ async def run_extended_validations(
     if code == "VR12":
         return vr12_vendor_master(data, vendor_masters=rule_config.vendor_masters)
     if code == "VR14":
-        return await vr14_po_status(data, session, invoice=invoice, tenant_id=tenant_id)
+        from app.models.tenant import Tenant
+        from app.tenant_settings import tenant_currency
+
+        tenant = await session.get(Tenant, tenant_id)
+        return await vr14_po_status(
+            data,
+            session,
+            invoice=invoice,
+            tenant_id=tenant_id,
+            expected_currency=tenant_currency(tenant),
+        )
     if code == "VR15":
         return await vr15_document_match(
             data,
@@ -299,5 +312,9 @@ async def run_extended_validations(
             document_types=document_types,
         )
     if code == "VR16":
-        return vr16_freight_surcharges(data)
+        from app.models.tenant import Tenant
+        from app.tenant_settings import tenant_currency
+
+        tenant = await session.get(Tenant, tenant_id)
+        return vr16_freight_surcharges(data, expected_currency=tenant_currency(tenant))
     return None

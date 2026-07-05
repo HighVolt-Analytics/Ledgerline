@@ -22,14 +22,6 @@ from app.services.audit.audit_service import log_event
 from app.services.invoice.invoice_evaluation_service import ROUTE_SALES, parse_matched_rule_ids
 from app.services.rule_book.rule_book_mapper import load_classification_config, resolve_config_mapping
 from app.services.sales.sales_coding_service import code_so_from_invoice, inherit_so_coding_to_invoice
-from app.services.master_data.uom_conversion_service import (
-    convert_qty_to_base,
-    infer_uom_from_description,
-    invoice_base_qty,
-    normalize_uom_token,
-    qty_over_billing,
-    unit_price_per_base,
-)
 
 ROUTE_SALES_MANAGEMENT = ROUTE_SALES
 
@@ -53,21 +45,16 @@ def _amount_line(
     )
 
 
-def _conversion_note(
+def _qty_over_billing(
+    invoice_qty: Decimal,
+    received_qty: Decimal,
     *,
-    label: str,
-    doc_qty: Decimal,
-    doc_uom: str | None,
-    base_qty: Decimal,
-    base_uom: str,
-) -> str | None:
-    src = normalize_uom_token(doc_uom)
-    dst = normalize_uom_token(base_uom) or "EA"
-    if not src or src == dst:
-        return None
-    if float(doc_qty) == float(base_qty):
-        return None
-    return f"{label} {float(doc_qty):g} {src} → {float(base_qty):g} {dst}"
+    tolerance_pct: float = 0.0,
+) -> bool:
+    if received_qty <= 0:
+        return invoice_qty > 0
+    allowed = received_qty * (Decimal("1") + Decimal(str(tolerance_pct)) / Decimal("100"))
+    return invoice_qty > allowed
 
 
 def _latest_dn(so: SalesOrder) -> DeliveryNote | None:
@@ -97,126 +84,46 @@ def build_three_way_match_display(
     so: SalesOrder,
     inv: Invoice | None,
     match: ThreeWayMatchResult,
-    *,
-    match_config: PurchaseMatchConfig | None = None,
 ) -> ThreeWayMatchDisplay:
-    cfg = match_config or PurchaseMatchConfig()
-    base_uom = normalize_uom_token(cfg.base_uom) or "EA"
     dn = _latest_dn(so)
-    customer = so.customer or (inv.vendor if inv is not None else None)
 
-    so_uom = getattr(so, "so_uom", None) or infer_uom_from_description(so.item)
     so_qty = Decimal(str(so.so_qty or 0))
     so_unit = Decimal(str(so.so_unit_price or 0))
-    so_base_qty = convert_qty_to_base(so_qty, so_uom, vendor=customer, config=cfg)
-    so_unit_base = unit_price_per_base(so_qty, so_unit, so_uom, vendor=customer, config=cfg)
-
-    so_on_document = _amount_line(
+    so_line = _amount_line(
         qty=so_qty,
-        uom=so_uom,
+        uom=getattr(so, "so_uom", None),
         unit_price=so_unit,
-        line_value=so_qty * so_unit if so_qty and so_unit else match.po_value,
-    )
-    so_for_match = _amount_line(
-        qty=so_base_qty,
-        uom=base_uom,
-        unit_price=so_unit_base,
         line_value=match.po_value,
     )
 
-    notes: list[str] = []
-    so_note = _conversion_note(
-        label="SO",
-        doc_qty=so_qty,
-        doc_uom=so_uom,
-        base_qty=so_base_qty,
-        base_uom=base_uom,
-    )
-    if so_note:
-        notes.append(so_note)
-
-    invoice_on_document: MatchAmountLine | None = None
-    invoice_for_match: MatchAmountLine | None = None
-    inv_unit_base = Decimal("0")
+    invoice_line: MatchAmountLine | None = None
     if inv is not None:
         inv_qty, inv_unit, _ = _invoice_qty_and_price(inv)
-        inv_uom = None
-        if inv.line_items:
-            first = inv.line_items[0]
-            inv_uom = getattr(first, "uom", None) or infer_uom_from_description(first.description)
-        inv_base_qty = invoice_base_qty(inv, config=cfg)
-        inv_unit_base = unit_price_per_base(
-            inv_qty, inv_unit, inv_uom, vendor=customer, config=cfg
-        )
-        inv_doc_value = inv_qty * inv_unit if inv_qty and inv_unit else Decimal(str(match.invoice_value))
-        invoice_on_document = _amount_line(
+        inv_uom = getattr(inv.line_items[0], "uom", None) if inv.line_items else None
+        invoice_line = _amount_line(
             qty=inv_qty,
             uom=inv_uom,
             unit_price=inv_unit,
-            line_value=inv_doc_value,
-        )
-        invoice_for_match = _amount_line(
-            qty=inv_base_qty,
-            uom=base_uom,
-            unit_price=inv_unit_base,
             line_value=match.invoice_value,
         )
-        inv_note = _conversion_note(
-            label="Invoice",
-            doc_qty=inv_qty,
-            doc_uom=inv_uom,
-            base_qty=inv_base_qty,
-            base_uom=base_uom,
-        )
-        if inv_note:
-            notes.append(inv_note)
 
-    dn_on_document: MatchAmountLine | None = None
-    dn_for_match: MatchAmountLine | None = None
+    dn_line: MatchAmountLine | None = None
     if dn is not None:
-        dn_uom = getattr(dn, "dn_uom", None) or so_uom
         dn_qty = Decimal(str(dn.dn_qty or 0))
-        dn_base_qty = convert_qty_to_base(dn_qty, dn_uom, vendor=customer, config=cfg)
-        compare_unit = inv_unit_base if inv is not None and inv_unit_base > 0 else so_unit_base
-        dn_on_document = _amount_line(qty=dn_qty, uom=dn_uom, unit_price=None, line_value=None)
-        dn_for_match = _amount_line(
-            qty=dn_base_qty,
-            uom=base_uom,
-            unit_price=compare_unit,
-            line_value=_round2(dn_base_qty * compare_unit),
-        )
-        dn_note = _conversion_note(
-            label="DN",
-            doc_qty=dn_qty,
-            doc_uom=dn_uom,
-            base_qty=dn_base_qty,
-            base_uom=base_uom,
-        )
-        if dn_note:
-            notes.append(dn_note)
-
-    explanation: str | None = None
-    if notes:
-        explanation = (
-            f"Variance uses all legs normalized to {base_uom}. "
-            + " ".join(notes)
-            + "."
-        )
-    elif inv is not None and dn is not None:
-        explanation = (
-            f"Document units differ, but all three legs reconcile to "
-            f"{base_uom} at {match.po_value:,.2f} before GST."
+        dn_line = _amount_line(
+            qty=dn_qty,
+            uom=getattr(dn, "dn_uom", None),
+            unit_price=None,
+            line_value=None,
         )
 
     return ThreeWayMatchDisplay(
-        base_uom=base_uom,
-        po_on_document=so_on_document,
-        po_for_match=so_for_match,
-        grn_on_document=dn_on_document,
-        grn_for_match=dn_for_match,
-        invoice_on_document=invoice_on_document,
-        invoice_for_match=invoice_for_match,
-        match_explanation=explanation,
+        po_on_document=so_line,
+        po_for_match=so_line,
+        grn_on_document=dn_line,
+        grn_for_match=dn_line,
+        invoice_on_document=invoice_line,
+        invoice_for_match=invoice_line,
     )
 
 
@@ -224,10 +131,8 @@ def _attach_match_display(
     so: SalesOrder,
     inv: Invoice | None,
     match: ThreeWayMatchResult,
-    *,
-    match_config: PurchaseMatchConfig | None = None,
 ) -> ThreeWayMatchResult:
-    display = build_three_way_match_display(so, inv, match, match_config=match_config)
+    display = build_three_way_match_display(so, inv, match)
     return match.model_copy(update={"display": display})
 
 
@@ -242,11 +147,10 @@ def compute_three_way_match(
     cfg = match_config or PurchaseMatchConfig()
     tolerance = cfg.qty_tolerance_pct if qty_tolerance_pct is None else qty_tolerance_pct
     dn = _latest_dn(so)
-    customer = so.customer or (inv.vendor if inv is not None else None)
-    so_uom = getattr(so, "so_uom", None) or infer_uom_from_description(so.item)
-    so_base_qty = convert_qty_to_base(so.so_qty, so_uom, vendor=customer, config=cfg)
-    so_unit_base = unit_price_per_base(so.so_qty, so.so_unit_price, so_uom, vendor=customer, config=cfg)
-    so_value = _round2(so_base_qty * so_unit_base)
+
+    so_qty = Decimal(str(so.so_qty or 0))
+    so_unit = Decimal(str(so.so_unit_price or 0))
+    so_value = _round2(so_qty * so_unit)
 
     if inv is None:
         return ThreeWayMatchResult(
@@ -260,14 +164,8 @@ def compute_three_way_match(
             invoice_total=0.0,
         )
 
-    inv_base_qty = invoice_base_qty(inv, config=cfg)
     inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
-    inv_uom = None
-    if inv.line_items:
-        first = inv.line_items[0]
-        inv_uom = getattr(first, "uom", None) or infer_uom_from_description(first.description)
-    inv_unit_base = unit_price_per_base(inv_qty, inv_unit, inv_uom, vendor=customer, config=cfg)
-    invoice_value = _round2(inv_base_qty * inv_unit_base)
+    invoice_value = _round2(inv_qty * inv_unit)
     invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
     invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
 
@@ -283,17 +181,16 @@ def compute_three_way_match(
             invoice_total=invoice_total,
         )
 
-    dn_uom = getattr(dn, "dn_uom", None) or so_uom
-    dn_base_qty = convert_qty_to_base(dn.dn_qty, dn_uom, vendor=customer, config=cfg)
-    qty_variance = _round2((float(inv_base_qty) - float(dn_base_qty)) * float(inv_unit_base))
-    price_variance = _round2((float(inv_unit_base) - float(so_unit_base)) * float(inv_base_qty))
+    dn_qty = Decimal(str(dn.dn_qty or 0))
+    qty_variance = _round2((float(inv_qty) - float(dn_qty)) * float(inv_unit))
+    price_variance = _round2((float(inv_unit) - float(so_unit)) * float(inv_qty))
     total_deviation = _round2(qty_variance + price_variance)
 
     if so.variance_approved:
         status = "3-Way Match"
     elif price_variance != 0:
         status = "Price Variance"
-    elif qty_over_billing(inv_base_qty, dn_base_qty, tolerance_pct=tolerance):
+    elif _qty_over_billing(inv_qty, dn_qty, tolerance_pct=tolerance):
         status = "Qty Variance"
     else:
         status = "3-Way Match"
@@ -457,7 +354,7 @@ def sales_order_to_response(
         match_config=match_cfg,
         rule_book_config=config,
     )
-    match = _attach_match_display(so, inv, match, match_config=match_cfg)
+    match = _attach_match_display(so, inv, match)
     inv_qty, inv_unit, gst_rate = (Decimal("0"), Decimal("0"), 0.0)
     matched_rule_ids: list[str] = []
     route_target: str | None = None
@@ -719,23 +616,15 @@ def compute_two_way_dn_match(
     """Qty-only DN ↔ invoice match when no sales order baseline exists."""
     cfg = match_config or PurchaseMatchConfig()
     tolerance = cfg.qty_tolerance_pct if qty_tolerance_pct is None else qty_tolerance_pct
-    customer = (inv.vendor or "").strip() or None
-    inv_base_qty = invoice_base_qty(inv, config=cfg)
     inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
-    inv_uom = None
-    if inv.line_items:
-        first = inv.line_items[0]
-        inv_uom = getattr(first, "uom", None) or infer_uom_from_description(first.description)
-    inv_unit_base = unit_price_per_base(inv_qty, inv_unit, inv_uom, vendor=customer, config=cfg)
-    invoice_value = _round2(inv_base_qty * inv_unit_base)
+    invoice_value = _round2(inv_qty * inv_unit)
     invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
     invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
 
-    dn_base_qty = convert_qty_to_base(dn_qty, dn_uom, vendor=customer, config=cfg)
-    dn_value = _round2(float(dn_base_qty) * float(inv_unit_base))
-    qty_variance = _round2((float(inv_base_qty) - float(dn_base_qty)) * float(inv_unit_base))
+    dn_value = _round2(float(dn_qty) * float(inv_unit))
+    qty_variance = _round2((float(inv_qty) - float(dn_qty)) * float(inv_unit))
 
-    if qty_over_billing(inv_base_qty, dn_base_qty, tolerance_pct=tolerance):
+    if _qty_over_billing(inv_qty, dn_qty, tolerance_pct=tolerance):
         status = "Qty Variance"
     else:
         status = "2-Way Match"
@@ -765,10 +654,7 @@ async def _load_dn_invoice_qty(
     ).scalar_one_or_none()
     row = loaded or dn_invoice
     qty, _, _ = _invoice_qty_and_price(row)
-    dn_uom = None
-    if row.line_items:
-        first = row.line_items[0]
-        dn_uom = getattr(first, "uom", None) or infer_uom_from_description(first.description)
+    dn_uom = getattr(row.line_items[0], "uom", None) if row.line_items else None
     return qty, dn_uom
 
 

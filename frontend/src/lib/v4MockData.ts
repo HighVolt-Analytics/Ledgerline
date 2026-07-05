@@ -126,7 +126,7 @@ export type MatchAmountLine = {
 };
 
 export type ThreeWayMatchDisplay = {
-  baseUom: string;
+  baseUom?: string;
   poOnDocument: MatchAmountLine;
   poForMatch: MatchAmountLine;
   grnOnDocument?: MatchAmountLine | null;

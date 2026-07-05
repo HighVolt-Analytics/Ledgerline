@@ -20,9 +20,9 @@ class MatchAmountLine(BaseModel):
 
 
 class ThreeWayMatchDisplay(BaseModel):
-    """Human-readable document amounts vs normalized match basis."""
+    """Human-readable document amounts for each leg of the match."""
 
-    base_uom: str = "EA"
+    base_uom: str | None = None
     po_on_document: MatchAmountLine
     po_for_match: MatchAmountLine
     grn_on_document: MatchAmountLine | None = None

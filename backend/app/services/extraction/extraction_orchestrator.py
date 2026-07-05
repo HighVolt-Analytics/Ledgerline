@@ -29,6 +29,11 @@ from app.services.extraction.line_items_parser import (
     merge_line_item_lists,
     serialize_line_items,
 )
+from app.services.extraction.line_items_sanitizer import sanitize_line_items
+from app.services.extraction.field_grounding_service import (
+    ground_invoice_scalars,
+    merge_bank_fields,
+)
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 from app.services.master_data.vendor_name_utils import normalize_vendor_name
 from app.services.shared.flexible_date import parse_flexible_date
@@ -282,6 +287,8 @@ def merge_extraction_sources(
 
     if text:
         local = parse_local_text(text)
+        llm_bsb = merged.bank_bsb
+        llm_account = merged.bank_account
         fill: dict[str, object] = {}
         for field_name in _SCALAR_FILL_FIELDS:
             current = getattr(merged, field_name, None)
@@ -296,8 +303,27 @@ def merge_extraction_sources(
             merged_items = merge_line_item_lists(merged_items, payload_items)
         if text.strip() and merged_items:
             merged_items = enrich_line_items_from_text(merged_items, text)
-        if merged_items and merged_items != merged.line_items:
+        merged_items = sanitize_line_items(
+            merged_items,
+            ocr_text=text,
+            extracted_fields=merged.extracted_fields,
+            vendor=merged.vendor,
+            invoice_no=merged.invoice_no,
+            po_reference=merged.po_reference,
+        )
+        if merged_items != merged.line_items:
             fill["line_items"] = merged_items
+        bank_bsb, bank_account = merge_bank_fields(
+            llm_bsb=llm_bsb,
+            llm_account=llm_account,
+            regex_bsb=local.bank_bsb,
+            regex_account=local.bank_account,
+            ocr_text=text,
+        )
+        if bank_bsb != merged.bank_bsb:
+            fill["bank_bsb"] = bank_bsb
+        if bank_account != merged.bank_account:
+            fill["bank_account"] = bank_account
         if fill:
             merged = replace(merged, **fill)
         merged = _persist_auxiliary_fields(merged, local.raw_fields)
@@ -321,6 +347,7 @@ def merge_extraction_sources(
             merged = replace(merged, extracted_fields=custom)
 
     merged = post_process_parsed_data(merged, text, dt_definition=dt_definition)
+    merged = ground_invoice_scalars(merged, text)
     merged = _apply_absent_fields(merged, dt_definition)
 
     from app.services.extraction.party_field_service import sanitize_address

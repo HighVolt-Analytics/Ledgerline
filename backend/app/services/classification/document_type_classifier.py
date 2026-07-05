@@ -313,7 +313,7 @@ def classification_audit_detail(
     detail: dict[str, object] = {
         "document_type_code": result.code,
         "document_type_confidence": result.confidence,
-        "document_type_title": definition.short_title if definition else None,
+        "document_type_title": definition.title if definition else None,
         "document_type_klass": definition.klass if definition else None,
         "reason": result.reason,
         "needs_review": result.needs_review,

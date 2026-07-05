@@ -42,6 +42,8 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_PHONE_LINE = re.compile(r"\b(?:phone|tel(?:ephone)?|mobile|fax|\+1|support@)\b", re.I)
+
 _REQUIRED_FOR_CONFIDENCE = (
     "vendor",
     "abn",
@@ -349,21 +351,30 @@ def parse_text_fields(text: str) -> dict[str, Any]:
         fields.setdefault("buyer_name", buyer_name)
 
     for pattern in (
-        r"BSB[:\s]*(\d{3}[-\s]?\d{3})",
-        r"\b(\d{3}-\d{3})\b",
+        r"(?:BSB|Bank\s*State\s*Branch)[:\s]*(\d{3}[-\s]?\d{3})",
     ):
-        m = re.search(pattern, text, re.I)
-        if m:
-            fields["bank_bsb"] = m.group(1).strip()
+        for line in text.splitlines():
+            if _PHONE_LINE.search(line):
+                continue
+            m = re.search(pattern, line, re.I)
+            if m:
+                fields["bank_bsb"] = m.group(1).strip()
+                break
+        if fields.get("bank_bsb"):
             break
 
-    for pattern in (
-        r"(?:Account|Acc\.?)\s*(?:No\.?|Number)?[:\s]*(\d[\d\s]{5,12})",
-        r"BSB[:\s]*\d{3}[-\s]?\d{3}[^\d]{0,20}(\d[\d\s]{5,12})",
-    ):
-        m = re.search(pattern, text, re.I)
-        if m:
-            fields["bank_account"] = re.sub(r"\s+", "", m.group(1))
+    for line in text.splitlines():
+        if _PHONE_LINE.search(line):
+            continue
+        for pattern in (
+            r"(?:Account|Acc\.?|A/C|IBAN)\s*(?:No\.?|Number)?[:\s]*(\d[\d\s]{5,12})",
+            r"BSB[:\s]*\d{3}[-\s]?\d{3}[^\d]{0,20}(\d[\d\s]{5,12})",
+        ):
+            m = re.search(pattern, line, re.I)
+            if m:
+                fields["bank_account"] = re.sub(r"\s+", "", m.group(1))
+                break
+        if fields.get("bank_account"):
             break
 
     fields["line_items"] = parse_line_items_from_text(text)

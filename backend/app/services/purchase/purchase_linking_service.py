@@ -119,20 +119,11 @@ async def attach_grn_invoice_to_po(
     ).scalar_one_or_none()
     grn_invoice = loaded or grn_invoice
     qty, _, _ = _invoice_qty_and_price(grn_invoice)
-    first_line = grn_invoice.line_items[0] if grn_invoice.line_items else None
-    from app.services.master_data.uom_conversion_service import infer_uom_from_description
-
-    grn_uom = getattr(po, "po_uom", None)
-    if first_line:
-        grn_uom = getattr(first_line, "uom", None) or infer_uom_from_description(
-            first_line.description
-        ) or grn_uom
 
     grn = GoodsReceipt(
         tenant_id=po.tenant_id,
         purchase_order_id=po.id,
         grn_qty=qty,
-        grn_uom=grn_uom,
         grn_date=grn_invoice.invoice_date,
         receiver=None,
         condition_note="Linked via invoice_no bridge",

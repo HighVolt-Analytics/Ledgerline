@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Upload } from "lucide-react";
 import { api } from "@/api/client";
@@ -8,19 +8,31 @@ import { PageHeader } from "@/components/PageHeader";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { useAuth } from "@/context/AuthContext";
 import { counterpartyLabel, counterpartyName } from "@/lib/invoice";
 import { documentListLabel, money } from "@/lib/format";
 
 export function InvoiceDetailPage() {
   const { id } = useParams();
+  const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
   const [inv, setInv] = useState<InvoiceDetails | null>(null);
+  const loadSeq = useRef(0);
 
-  const load = useCallback(() => {
-    if (id) api.getInvoice(Number(id)).then(setInv);
-  }, [id]);
+  useLayoutEffect(() => {
+    setInv(null);
+  }, [id, tenantScope]);
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    const seq = ++loadSeq.current;
+    const data = await api.getInvoice(Number(id));
+    if (seq !== loadSeq.current) return;
+    setInv(data);
+  }, [id, tenantScope]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const onAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {

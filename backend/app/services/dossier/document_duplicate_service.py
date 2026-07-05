@@ -627,7 +627,8 @@ async def resolve_ingest_duplicate(
         )
 
     if decision.action == "reingest_rejected":
-        from app.services.invoice.pipeline import reset_invoice_for_reprocess
+        from app.services.approval.approval_service import restore_rejected_invoice_file_if_needed
+        from app.services.invoice.invoice_reset import reset_invoice_for_reprocess
 
         if email_sender is not None:
             existing.email_sender = email_sender
@@ -637,6 +638,7 @@ async def resolve_ingest_duplicate(
             existing.email_attachment_name = email_attachment_name
         if email_message_id is not None:
             existing.email_message_id = email_message_id
+        await restore_rejected_invoice_file_if_needed(session, existing)
         await reset_invoice_for_reprocess(session, existing)
         await log_event(
             session,

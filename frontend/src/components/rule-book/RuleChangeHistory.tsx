@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { History } from "lucide-react";
 import { api } from "@/api/client";
 import type { RuleBookChangelogEntry } from "@/api/types";
@@ -50,7 +50,7 @@ function describeEntry(entry: RuleBookChangelogEntry) {
 export function RuleChangeHistory() {
   const CHANGELOG_LIMIT = 10;
 
-  const { data = [], isLoading, isError } = useQuery({
+  const { data = [], isLoading, isError } = useTenantQuery({
     queryKey: [...queryKeys.ruleBookChangelog(), CHANGELOG_LIMIT],
     queryFn: () => api.getRuleBookChangelog(CHANGELOG_LIMIT),
   });

@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type EmployeeImportMode, type EmployeeImportResult } from "@/api/client";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 import {
   employeeMasterFromApi,
@@ -16,7 +17,7 @@ import {
 import type { EmployeeMaster, VendorMaster, CustomerMaster } from "@/lib/v4RuleBookTypes";
 
 export function useCustomerMasters(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.customerMasters(),
     queryFn: async () => {
       const rows = await api.listCustomerMasters();
@@ -27,7 +28,7 @@ export function useCustomerMasters(enabled = true) {
 }
 
 export function useVendorMasters(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.vendorMasters(),
     queryFn: async () => {
       const rows = await api.listVendorMasters();
@@ -38,7 +39,7 @@ export function useVendorMasters(enabled = true) {
 }
 
 export function useEmployeeMasters(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.employeeMasters(),
     queryFn: async () => {
       const rows = await api.listEmployeeMasters();
@@ -49,7 +50,7 @@ export function useEmployeeMasters(enabled = true) {
 }
 
 export function usePendingVendors(enabled = true) {
-  return useQuery({
+  return useTenantQuery({
     queryKey: queryKeys.pendingVendors(),
     queryFn: async () => {
       const rows = await api.listPendingVendors({ fresh: true });

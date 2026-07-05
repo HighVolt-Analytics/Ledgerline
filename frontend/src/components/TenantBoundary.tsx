@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { getActiveTenantId } from "@/api/client";
 import { useAuth } from "@/context/AuthContext";
 import { PageLoader } from "@/components/PageLoader";
 import { isTenantScopeConsistent } from "@/lib/tenantSession";
@@ -10,6 +11,8 @@ import { isTenantScopeConsistent } from "@/lib/tenantSession";
 export function TenantBoundary({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   const tenantId = user?.tenant_id ?? null;
+  const jwtTenantId = getActiveTenantId();
+  const boundaryKey = `${jwtTenantId ?? "signed-out"}:${tenantId ?? "signed-out"}`;
 
   if (loading) {
     return <PageLoader />;
@@ -19,5 +22,5 @@ export function TenantBoundary({ children }: { children: ReactNode }) {
     return <PageLoader />;
   }
 
-  return <div key={tenantId ?? "signed-out"}>{children}</div>;
+  return <div key={boundaryKey}>{children}</div>;
 }

@@ -36,7 +36,8 @@ _LLM_SYSTEM = """You classify finance documents for accounts payable.
 Return JSON only with keys:
 suggested_dt, confidence, reasoning, perspective,
 seller, buyer, invoice_no, invoice_date, due_date, po_reference,
-subtotal, gst, gst_rate, total, currency, abn, vendor, document_heading, line_items, field_confidence, extracted_fields.
+subtotal, gst, gst_rate, total, currency, abn, vendor, document_heading,
+bank_bsb, bank_account, bank_name, line_items, field_confidence, extracted_fields.
 
 Rules:
 - suggested_dt must be one of the catalogue codes provided, or empty string if unsure.
@@ -44,6 +45,10 @@ Rules:
 - perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
 {party_rules}
 - line_items is a list of {{description, amount, qty, unit_price}}.
+- line_items must be product/service rows only — never header metadata (Customer, Ship Date, Invoice No, BSB, etc.).
+- If a row is a field label ending with ":" it is NOT a line item.
+- Leave line_items empty when the document has no product table.
+- bank_bsb, bank_account, bank_name: extract only when explicitly labeled (BSB, Account No, IBAN, SWIFT). Leave empty if absent. Never use phone numbers, invoice numbers, or tax IDs as bank details.
 - field_confidence maps field names to 0.0-1.0.
 - gst_rate is the tax percentage as a number (e.g. 10 for 10%), not a fraction.
 - Use OCR text faithfully; do not invent amounts or parties.
@@ -71,7 +76,8 @@ _LLM_EXTRACT_SYSTEM = """You extract accounts-payable fields from finance docume
 Return JSON only with keys:
 suggested_dt, confidence, reasoning, perspective,
 seller, buyer, invoice_no, invoice_date, due_date, po_reference,
-subtotal, gst, gst_rate, total, currency, abn, vendor, document_heading, line_items, field_confidence, extracted_fields.
+subtotal, gst, gst_rate, total, currency, abn, vendor, document_heading,
+bank_bsb, bank_account, bank_name, line_items, field_confidence, extracted_fields.
 
 Rules:
 - suggested_dt must match confirmed_dt from the user payload.
@@ -79,6 +85,10 @@ Rules:
 - perspective is purchase | sales | unknown.
 {party_rules}
 - line_items is a list of {{description, amount, qty, unit_price}}.
+- line_items must be product/service rows only — never header metadata (Customer, Ship Date, Invoice No, BSB, etc.).
+- If a row is a field label ending with ":" it is NOT a line item.
+- Leave line_items empty when the document has no product table.
+- bank_bsb, bank_account, bank_name: extract only when explicitly labeled (BSB, Account No, IBAN, SWIFT). Leave empty if absent. Never use phone numbers, invoice numbers, or tax IDs as bank details.
 - field_confidence maps field names to 0.0-1.0.
 - gst_rate is the tax percentage as a number (e.g. 10 for 10%), not a fraction.
 - Use OCR text faithfully; do not invent amounts or parties.
@@ -456,6 +466,8 @@ def llm_result_to_invoice_data(
         gst_rate=parse_gst_rate_percent(llm.gst_rate),
         total=llm.total,
         po_reference=(llm.po_reference or "").strip() or None,
+        bank_bsb=(llm.bank_bsb or "").strip() or None,
+        bank_account=(llm.bank_account or "").strip() or None,
         line_items=line_items,
         document_text=ocr_text,
         document_heading=(llm.document_heading or "").strip() or None,

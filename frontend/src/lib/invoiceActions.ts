@@ -24,6 +24,13 @@ export function canApproveClaim(status: string): boolean {
   return (APPROVAL_QUEUE_STATUSES as readonly string[]).includes(status);
 }
 
+/** Approve from drawer — rejected/duplicate rows use Reprocess only. */
+export function canApproveFromDrawer(status: string): boolean {
+  return (
+    canApproveClaim(status) && status !== "rejected" && status !== "duplicate_skipped"
+  );
+}
+
 export function canRejectClaim(status: string): boolean {
   return status === "exception" || status === "processed";
 }
@@ -146,22 +153,40 @@ export async function watchProcessingUntilIdle(
   await refresh();
 }
 
+export type WatchInvoiceUntilSettledOptions = {
+  /** Wait for a pipeline status before treating exception/rejected/processed as settled. */
+  requirePipelineObserved?: boolean;
+};
+
 /** Poll one invoice until it leaves the pipeline (processed / exception / rejected). */
 export async function watchInvoiceUntilSettled(
   invoiceId: number,
   refresh: () => Promise<void>,
-  timeoutMs = PROCESSING_TIMEOUT_MS
+  timeoutMs = PROCESSING_TIMEOUT_MS,
+  options?: WatchInvoiceUntilSettledOptions
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let sawPipeline = !options?.requirePipelineObserved;
   while (Date.now() < deadline) {
     await refresh();
     const inv = await api.getInvoice(invoiceId, { fresh: true });
-    if (!PIPELINE_ACTIVE.has(inv.status)) {
+    if (PIPELINE_ACTIVE.has(inv.status)) {
+      sawPipeline = true;
+    }
+    if (sawPipeline && !PIPELINE_ACTIVE.has(inv.status)) {
       return;
     }
     await new Promise((r) => setTimeout(r, PROCESSING_POLL_MS));
   }
   await refresh();
+}
+
+/** True when a stored path exists or the API verified the blob (reprocess can repair paths). */
+export function invoiceCanAttemptReprocess(inv: {
+  has_stored_file?: boolean;
+  raw_file_path?: string | null;
+}): boolean {
+  return Boolean(inv.has_stored_file || inv.raw_file_path?.trim());
 }
 
 export type ApproveAndProcessResult = {
@@ -178,7 +203,9 @@ export async function approveAndProcess(
     await api.updateInvoice(invoiceId, pendingEdits);
   }
   await api.approve(invoiceId);
-  await watchInvoiceUntilSettled(invoiceId, refresh);
+  await watchInvoiceUntilSettled(invoiceId, refresh, PROCESSING_TIMEOUT_MS, {
+    requirePipelineObserved: true,
+  });
   const invoice = await api.getInvoice(invoiceId, { fresh: true });
 
   if (invoice.status !== "processed") {
@@ -218,6 +245,13 @@ export async function reprocessAndWatch(
     );
     if (!proceed) return;
   }
-  await api.reprocess(invoiceId);
-  await watchInvoiceUntilSettled(invoiceId, refresh);
+  const queued = await api.reprocess(invoiceId);
+  if (!PIPELINE_ACTIVE.has(queued.status)) {
+    throw new Error(
+      `Reprocess did not queue the pipeline (status: ${queued.status}). Check the stored file and try again.`
+    );
+  }
+  await watchInvoiceUntilSettled(invoiceId, refresh, PROCESSING_TIMEOUT_MS, {
+    requirePipelineObserved: true,
+  });
 }

@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
-from app.services.invoice.processing_override_catalog import skip_steps_for
+from app.services.invoice.processing_override_catalog import (
+    clear_processing_overrides,
+    skip_steps_for,
+)
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 
 
@@ -17,6 +20,7 @@ async def reset_invoice_for_reprocess(
     preserve_document_type: bool = False,
 ) -> None:
     """Clear extracted data and journal lines; set status to pending."""
+    clear_processing_overrides(inv)
     inv.status = InvoiceStatus.PENDING
     inv.vendor = None
     inv.abn = None
@@ -135,5 +139,6 @@ async def requeue_invoice_for_pipeline(
     if preserve_extracted_fields:
         await reset_invoice_for_approval(session, inv)
         return
+    clear_processing_overrides(inv)
     keep_dt = preserve_document_type or "classification" in skip_steps_for(inv)
     await reset_invoice_for_reprocess(session, inv, preserve_document_type=keep_dt)

@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAuth } from "@/context/AuthContext";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
@@ -11,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/context/AuthContext";
 import { usePendingVendors, usePromotePendingVendor } from "@/hooks/useMasterData";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
@@ -150,6 +150,8 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 
 export function VendorsPage() {
   const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const { data: pendingQueue = [] } = usePendingVendors(Boolean(user));
   const promoteMutation = usePromotePendingVendor();
   const currency = "AUD";
@@ -164,11 +166,8 @@ export function VendorsPage() {
   useResetOnTenantChange(() => {
     setRows([]);
     setInvoices([]);
-    setLoading(true);
-    setError(null);
     setSearch("");
-    setFormOpen(false);
-    setEditVendor(null);
+    setError(null);
   });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
@@ -176,28 +175,31 @@ export function VendorsPage() {
       setLoading(true);
       setError(null);
     }
+    const seq = ++loadSeq.current;
     try {
       const fresh = options?.fresh ?? !options?.silent;
       const [vendors, invoiceRows] = await Promise.all([
         api.listVendors({ fresh }),
         fetchAllInvoices(fresh),
       ]);
+      if (seq !== loadSeq.current) return;
       setRows(vendors);
       setInvoices(invoiceRows);
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load vendors");
         setRows([]);
         setInvoices([]);
       }
     } finally {
-      if (!options?.silent) setLoading(false);
+      if (seq === loadSeq.current && !options?.silent) setLoading(false);
     }
-  }, []);
+  }, [tenantScope]);
 
   useEffect(() => {
     void load();
-  }, [load, user?.tenant_id]);
+  }, [load, tenantScope]);
 
   useVisibilityPolling(() => {
     void load({ silent: true, fresh: true });

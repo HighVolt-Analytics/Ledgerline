@@ -6,6 +6,7 @@ import re
 from decimal import Decimal
 from typing import Any
 
+from app.services.extraction.line_item_skip_patterns import should_skip_line_row
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
 _LINE_ROW = re.compile(
@@ -20,9 +21,6 @@ _GRN_QTY_TABLE_ROW = re.compile(
     r"^\s*\d+\s+(.+?)\s+\d+(?:\.\d+)?\s+(?:Kg|Nos|Box|Pair|Units?|Ltr|Litre)\s+",
     re.M | re.I,
 )
-_ABN_ROW = re.compile(r"\babn\b", re.I)
-
-
 def _money(raw: str) -> Decimal | None:
     cleaned = re.sub(r"[^\d.\-]", "", raw.replace(",", ""))
     if not cleaned:
@@ -34,15 +32,7 @@ def _money(raw: str) -> Decimal | None:
 
 
 def _skip_line_row(desc: str) -> bool:
-    if re.search(r"sub\s*total|gst|total\s*due|amount\s*due", desc, re.I):
-        return True
-    if re.search(r"\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet|pallet\s*:)\b", desc, re.I):
-        return True
-    if re.search(r"^total\b", desc.strip(), re.I):
-        return True
-    if _ABN_ROW.search(desc):
-        return True
-    return False
+    return should_skip_line_row(desc)
 
 
 _COLUMN_LINE_ROW = re.compile(

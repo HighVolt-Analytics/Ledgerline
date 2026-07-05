@@ -135,7 +135,7 @@ export function documentTypeLabel(
 ): string {
   const row = documentTypes.find((dt) => dt.code.toUpperCase() === code.toUpperCase());
   if (!row) return code;
-  return `${row.code} · ${row.shortTitle || row.title}`;
+  return `${row.code} · ${row.title || row.shortTitle}`;
 }
 
 export function salesBundleRoleLabel(role: SalesBundleRole | string | undefined): string | null {

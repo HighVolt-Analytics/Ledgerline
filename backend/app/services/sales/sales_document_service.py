@@ -31,7 +31,6 @@ from app.services.sales.so_reference import (
     is_plausible_so_reference,
 )
 from app.services.rule_book.rule_book_mapper import load_classification_config
-from app.services.master_data.uom_conversion_service import infer_uom_from_description
 
 EVAL_AWAITING_SO = "awaiting_so"
 
@@ -200,11 +199,6 @@ async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) 
     invoice = await _load_invoice_with_lines(db, invoice)
     qty, unit, _ = _invoice_qty_and_price(invoice)
     first_line = invoice.line_items[0] if invoice.line_items else None
-    line_uom = None
-    if first_line:
-        line_uom = getattr(first_line, "uom", None) or infer_uom_from_description(
-            first_line.description
-        )
 
     so = await _get_or_load_so(db, invoice, so_number)
     if so is None:
@@ -216,7 +210,6 @@ async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) 
             item=first_line.description if first_line else None,
             so_qty=qty,
             so_unit_price=unit,
-            so_uom=line_uom,
             so_currency=invoice.currency,
             so_document_id=invoice.id,
         )

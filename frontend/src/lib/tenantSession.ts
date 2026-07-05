@@ -1,7 +1,9 @@
 import { clearGetCache, getActiveTenantId } from "@/api/client";
 import { getAccessToken, getStoredUser } from "@/lib/authSession";
 import { tenantIdFromToken } from "@/lib/authToken";
+import { clearInvoiceFetchDedupe } from "@/lib/invoices";
 import { queryClient } from "@/lib/queryClient";
+import { clearRecognitionSignalCatalog } from "@/lib/recognitionSignalCatalog";
 
 /** Tenant id from persisted session before applying a new access token. */
 export function readSessionTenantId(): string | null {
@@ -17,6 +19,13 @@ export function tenantSessionWillChange(nextAccessToken: string): boolean {
 export function clearAllTenantCaches(): void {
   queryClient.clear();
   clearGetCache();
+  clearRecognitionSignalCatalog();
+  clearInvoiceFetchDedupe();
+}
+
+/** Whether tenant-scoped queries should run (JWT matches profile). */
+export function tenantQueriesEnabled(profileTenantId: string | null | undefined): boolean {
+  return isTenantScopeConsistent(profileTenantId);
 }
 
 /** True when JWT/session tenant matches the signed-in user profile tenant. */

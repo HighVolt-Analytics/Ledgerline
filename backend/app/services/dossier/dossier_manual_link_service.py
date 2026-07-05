@@ -67,7 +67,7 @@ def _dt_label(code: str, document_types: list[DocumentTypeDefinition]) -> str:
     token = (code or "").strip().upper()
     for row in document_types:
         if row.code.upper() == token:
-            return row.short_title or row.title or token
+            return row.title or row.short_title or token
     return token or "Document"
 
 

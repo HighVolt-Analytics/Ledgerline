@@ -81,11 +81,9 @@ function shouldShowCompared(onDoc: MatchAmountLine, forMatch: MatchAmountLine): 
 function MatchLegAmounts({
   onDocument,
   forMatch,
-  baseUom,
 }: {
   onDocument: MatchAmountLine;
   forMatch: MatchAmountLine;
-  baseUom: string;
 }) {
   const showCompared = shouldShowCompared(onDocument, forMatch);
   return (
@@ -103,7 +101,7 @@ function MatchLegAmounts({
       {showCompared && (
         <>
           <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mt-2 mb-1">
-            Compared ({forMatch.uom || baseUom})
+            Compared
           </div>
           <MatchLineRow label="Qty" value={fmtQtyUom(forMatch.qty, forMatch.uom)} />
           {forMatch.unitPrice != null && (
@@ -301,13 +299,8 @@ export function SalesDetailContent({
   onOpenDnDocument?: () => void;
 }) {
   const display = match.display;
-  const baseUom = display?.baseUom ?? "EA";
-  const varianceSubQty = display
-    ? `Compared in ${baseUom} after UOM conversion`
-    : "(inv_qty − dn_qty) × inv_unit_price";
-  const varianceSubPrice = display
-    ? `Normalized unit prices in ${baseUom}`
-    : "(inv_unit_price − so_unit_price) × inv_qty";
+  const varianceSubQty = "(inv_qty − dn_qty) × inv_unit_price";
+  const varianceSubPrice = "(inv_unit_price − so_unit_price) × inv_qty";
 
   return (
     <>
@@ -327,12 +320,6 @@ export function SalesDetailContent({
         )}
       </div>
 
-      {display?.matchExplanation && (
-        <div className="text-xs text-muted-foreground bg-muted/40 border border-border/60 rounded-md p-2.5 mb-3">
-          {display.matchExplanation}
-        </div>
-      )}
-
       <div className="grid grid-cols-3 gap-2">
         <MatchDocCard
           icon={FileText}
@@ -344,7 +331,6 @@ export function SalesDetailContent({
             <MatchLegAmounts
               onDocument={display.poOnDocument}
               forMatch={display.poForMatch}
-              baseUom={baseUom}
             />
           ) : (
             <LegacyDocAmounts qty={so.soQty} unitPrice={so.soUnitPrice} value={match.poValue} />
@@ -367,7 +353,6 @@ export function SalesDetailContent({
               <MatchLegAmounts
                 onDocument={display.grnOnDocument}
                 forMatch={display.grnForMatch}
-                baseUom={baseUom}
               />
               <MatchLineRow label="Received" value={so.dnDate ?? "—"} />
               <MatchLineRow label="By" value={so.dnShipper ?? "—"} />
@@ -394,7 +379,6 @@ export function SalesDetailContent({
             <MatchLegAmounts
               onDocument={display.invoiceOnDocument}
               forMatch={display.invoiceForMatch}
-              baseUom={baseUom}
             />
           ) : (
             <LegacyDocAmounts

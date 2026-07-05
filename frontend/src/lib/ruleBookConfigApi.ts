@@ -741,20 +741,6 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
       setName: set.set_name,
       isolated: set.isolated,
     })),
-    purchaseMatch: api.purchase_match
-      ? {
-          baseUom: api.purchase_match.base_uom ?? "EA",
-          qtyTolerancePct: api.purchase_match.qty_tolerance_pct ?? 0,
-          uomConversions: (api.purchase_match.uom_conversions ?? []).map((row) => ({
-            id: row.id,
-            vendorKey: row.vendor_key ?? "",
-            sku: row.sku ?? "",
-            fromUom: row.from_uom,
-            toUom: row.to_uom ?? "EA",
-            factor: row.factor,
-          })),
-        }
-      : undefined,
   };
 }
 
@@ -848,21 +834,5 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
       set_name: set.setName,
       ...(set.isolated != null ? { isolated: set.isolated } : {}),
     })),
-    ...(state.purchaseMatch
-      ? {
-          purchase_match: {
-            base_uom: state.purchaseMatch.baseUom,
-            qty_tolerance_pct: state.purchaseMatch.qtyTolerancePct,
-            uom_conversions: state.purchaseMatch.uomConversions.map((row) => ({
-              id: row.id,
-              vendor_key: row.vendorKey ?? "",
-              sku: row.sku ?? "",
-              from_uom: row.fromUom,
-              to_uom: row.toUom,
-              factor: row.factor,
-            })),
-          },
-        }
-      : {}),
   };
 }
