@@ -28,8 +28,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { documentDisplayRef, vendorInvoiceNo } from "@/lib/format";
 import {
-  enrichLineItemsForPreview,
-  lineItemColumnsForPreview,
   lineItemGridTemplateColumns,
   resolvePreviewLineItems,
   countPreviewLineItems,
@@ -40,7 +38,6 @@ import { cn } from "@/lib/cn";
 import {
   approveAndProcess,
   canApproveFromDrawer,
-  canReprocessInvoice,
   canRejectClaim,
   canRequestInfo,
   invoiceCanAttemptReprocess,
@@ -335,10 +332,6 @@ function mapDraftLineItems(inv: InvoiceDetails, draft: InvoiceEditDraft): LineIt
     amount: line.amount || null,
     tax_amount: null,
   }));
-}
-
-function lineItemColumnsFromRows(items: LineItem[]): LineItemColumnVisibility {
-  return lineItemColumnsForPreview(enrichLineItemsForPreview(items));
 }
 
 function LineItemsDrawerGrid({
