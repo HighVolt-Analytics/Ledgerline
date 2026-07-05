@@ -1,9 +1,47 @@
-import { clearGetCache, getActiveTenantId, getAuthToken } from "@/api/client";
+import { ApiError, clearGetCache, getActiveTenantId, getAuthToken } from "@/api/client";
 import { getAccessToken, getStoredUser } from "@/lib/authSession";
 import { tenantIdFromToken } from "@/lib/authToken";
 import { queryClient } from "@/lib/queryClient";
 
 export const TENANT_SCOPE_CHANGED_EVENT = "ledgerline:tenant-scope-changed";
+
+export const TENANT_SCOPE_CHANGED_MESSAGE = "Tenant scope changed";
+
+/** Non-user-facing abort when a fetch completes after tenant scope moved on. */
+export class TenantFetchAbortError extends Error {
+  constructor(message = TENANT_SCOPE_CHANGED_MESSAGE) {
+    super(message);
+    this.name = "TenantFetchAbortError";
+  }
+}
+
+export function isTenantFetchAbortError(err: unknown): boolean {
+  if (err instanceof TenantFetchAbortError) return true;
+  if (err instanceof ApiError && err.status === 409 && err.message === TENANT_SCOPE_CHANGED_MESSAGE) {
+    return true;
+  }
+  if (err instanceof Error && !(err instanceof ApiError) && err.message === TENANT_SCOPE_CHANGED_MESSAGE) {
+    return true;
+  }
+  return false;
+}
+
+export function formatTenantLoadError(message: string, apiHint: string): string {
+  if (message === TENANT_SCOPE_CHANGED_MESSAGE) return message;
+  return message + apiHint;
+}
+
+export const API_PORT_HINT = " Ensure the API is running on port 8001.";
+
+/** Ignore scope-abort failures in manual loaders; optionally retry. */
+export function handleTenantScopedLoadFailure(
+  err: unknown,
+  options?: { retry?: () => void }
+): boolean {
+  if (!isTenantFetchAbortError(err)) return false;
+  options?.retry?.();
+  return true;
+}
 
 /** Bumped on every tenant change / full cache clear so in-flight work can self-abort. */
 let tenantDataGeneration = 0;

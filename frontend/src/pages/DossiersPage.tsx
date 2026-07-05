@@ -13,6 +13,7 @@ import { fetchDossiersPage } from "@/lib/dossierApi";
 import type { DossierSummary } from "@/lib/dossiers";
 import {
   captureTenantFetchScope,
+  handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 
@@ -90,6 +91,15 @@ export function DossiersPage() {
         setTotalPages(Math.max(1, res.pages));
       } catch (err) {
         if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+        if (
+          handleTenantScopedLoadFailure(err, {
+            retry: () => {
+              void load({ silent: true, fresh: true });
+            },
+          })
+        ) {
+          return;
+        }
         setError(err instanceof Error ? err.message : "Failed to load dossiers");
       } finally {
         if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {

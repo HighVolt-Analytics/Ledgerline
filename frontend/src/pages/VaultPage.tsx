@@ -19,7 +19,11 @@ import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
+  API_PORT_HINT,
   captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
+  isTenantFetchAbortError,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
@@ -51,7 +55,7 @@ import { invoiceMatchesListSearch, matchesListSearch } from "@/lib/listSearch";
 import { money, vaultDocLabel, vaultDocSubtitle } from "@/lib/format";
 
 const VAULT_POLL_MS = 30_000;
-const API_HINT = " Ensure the API is running on port 8001.";
+const API_HINT = API_PORT_HINT;
 
 function SourceBadge({ source }: { source: ReturnType<typeof invoiceSourceKind> }) {
   return (
@@ -219,22 +223,37 @@ export function VaultPage() {
       api.getRuleBookConfig(),
     ]);
 
-    if (!isTenantFetchScopeCurrent(scope)) return;
+    if (!isTenantFetchScopeCurrent(scope)) {
+      if (!options?.silent) setLoading(false);
+      return;
+    }
+
+    const vaultRejected =
+      vaultResult.status === "rejected" ? vaultResult.reason : null;
+    const vaultScopeAbort = isTenantFetchAbortError(vaultRejected);
 
     if (vaultResult.status === "fulfilled") {
       setVaultData(vaultResult.value);
+    } else if (vaultScopeAbort) {
+      if (!options?.silent) {
+        handleTenantScopedLoadFailure(vaultRejected, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        });
+      }
     } else if (!options?.silent) {
       setVaultData(null);
       setError(
-        vaultResult.reason instanceof Error
-          ? vaultResult.reason.message + API_HINT
+        vaultRejected instanceof Error
+          ? formatTenantLoadError(vaultRejected.message, API_HINT)
           : "Failed to load vault" + API_HINT
       );
     }
 
     if (invoicesResult.status === "fulfilled") {
       setRows(invoicesResult.value);
-    } else if (!options?.silent) {
+    } else if (!options?.silent && !isTenantFetchAbortError(invoicesResult.reason)) {
       setRows([]);
       setWarning(
         invoicesResult.reason instanceof Error
@@ -245,7 +264,7 @@ export function VaultPage() {
 
     if (configResult.status === "fulfilled") {
       setDocumentSets(ruleBookConfigFromApi(configResult.value).documentSets);
-    } else if (!options?.silent) {
+    } else if (!options?.silent && !isTenantFetchAbortError(configResult.reason)) {
       setDocumentSets([]);
       setWarning((prev) =>
         prev

@@ -7,7 +7,10 @@ import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
+  API_PORT_HINT,
   captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -60,6 +63,8 @@ import {
   watchInvoiceIdsForVendorHold,
 } from "@/lib/bulkUpload";
 
+const UPLOAD_LOAD_HINT =
+  `${API_PORT_HINT.trim()} and migrations are up to date `;
 const INBOX_POLL_MS = 15_000;
 const PROCESSING_WAIT_MS = 120_000;
 const PAGE_SIZE = 10;
@@ -259,6 +264,15 @@ export function UploadPage() {
       };
     } catch (e) {
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return null;
+      if (
+        handleTenantScopedLoadFailure(e, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        })
+      ) {
+        return null;
+      }
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load documents");
         setAll([]);
@@ -595,7 +609,7 @@ export function UploadPage() {
   if (error && workspaceTab === "upload" && captured.length === 0 && !loading) {
     return workspaceShell(
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {error}. Ensure the API is running on port 8001 and migrations are up to date{" "}
+        {formatTenantLoadError(error, UPLOAD_LOAD_HINT)}
         <code className="text-xs">(alembic upgrade head)</code>.
         <div className="mt-3">
           <Button variant="outline" size="sm" onClick={() => void load({ fresh: true })}>

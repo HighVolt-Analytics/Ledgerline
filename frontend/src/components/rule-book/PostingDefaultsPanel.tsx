@@ -51,7 +51,7 @@ function AccountSelect({
 }
 
 export function PostingDefaultsPanel({ defaults, onChange }: PostingDefaultsPanelProps) {
-  const { data: accounts = [], isLoading, isError } = useChartOfAccounts();
+  const { data: accounts = [], isLoading, isError, blocked } = useChartOfAccounts();
 
   const taxOptions = useMemo(
     () =>
@@ -75,7 +75,7 @@ export function PostingDefaultsPanel({ defaults, onChange }: PostingDefaultsPane
     [accounts]
   );
 
-  if (isLoading) {
+  if (isLoading || blocked) {
     return (
       <Card className="p-4 mb-0 text-sm text-muted-foreground" data-testid="posting-defaults-panel">
         Loading chart of accounts…

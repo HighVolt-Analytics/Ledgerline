@@ -26,6 +26,7 @@ import {
   yearFromPeriod,
 } from "@/lib/reconciliation";
 import { cn } from "@/lib/cn";
+import { API_PORT_HINT, formatTenantLoadError } from "@/lib/tenantSession";
 
 export function ReconciliationPage() {
   const { user } = useAuth();
@@ -34,6 +35,7 @@ export function ReconciliationPage() {
     data: overview,
     isLoading,
     error,
+    blocked,
   } = useReconciliationOverview(Boolean(user));
 
   const [postingDefaults, setPostingDefaults] = useState<PostingDefaults>({
@@ -160,16 +162,17 @@ export function ReconciliationPage() {
     );
   }
 
-  if (error) {
+  if (error && !blocked) {
+    const message =
+      error instanceof Error ? error.message : "Failed to load reconciliation";
     return (
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {error instanceof Error ? error.message : "Failed to load reconciliation"}. Ensure the API
-        is running on port 8001.
+        {formatTenantLoadError(message, API_PORT_HINT)}
       </Card>
     );
   }
 
-  if (isLoading || !overview) {
+  if (isLoading || blocked || !overview) {
     return <PageLoader label="Loading reconciliation…" />;
   }
 

@@ -24,7 +24,10 @@ import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
+  API_PORT_HINT,
   captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 
@@ -158,6 +161,15 @@ export function DocumentMatrixPanel({
       setMatrixData(data);
     } catch (e) {
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+      if (
+        handleTenantScopedLoadFailure(e, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        })
+      ) {
+        return;
+      }
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load document matrix");
         setMatrixData([]);
@@ -294,7 +306,7 @@ export function DocumentMatrixPanel({
   if (error) {
     return (
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {error}. Ensure the API is running on port 8001.
+        {formatTenantLoadError(error, API_PORT_HINT)}
       </Card>
     );
   }
