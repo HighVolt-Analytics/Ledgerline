@@ -1,57 +1,101 @@
 import {
   useQuery,
   type QueryKey,
-  type UseQueryOptions,
   type UseQueryResult,
 } from "@tanstack/react-query";
+import { getActiveTenantId } from "@/api/client";
 import { useAuth } from "@/context/AuthContext";
-import { guardedTenantData, isTenantScopeConsistent } from "@/lib/tenantSession";
+import { useTenantOwnedData } from "@/hooks/useTenantOwnedData";
+import {
+  canRenderTenantOwnedUi,
+  captureTenantFetchScope,
+  isTenantFetchAbortError,
+  isTenantFetchScopeCurrent,
+  TenantFetchAbortError,
+} from "@/lib/tenantSession";
 
-type TenantQueryOptions<
-  TQueryFnData = unknown,
-  TError = Error,
-  TData = TQueryFnData,
-  TQueryKey extends QueryKey = QueryKey,
-> = UseQueryOptions<TQueryFnData, TError, TData, TQueryKey>;
+export function tenantIdFromQueryKey(key: QueryKey): string | null {
+  const first = key[0];
+  return typeof first === "string" && first !== "signed-out" && first !== "unknown"
+    ? first
+    : null;
+}
 
-export type TenantQueryResult<
-  TData = unknown,
-  TError = Error,
-> = Omit<UseQueryResult<TData, TError>, "data"> & {
-  data: TData | undefined;
-  blocked: boolean;
-  tenantId: string | null;
+type TenantUseQueryOptions<TQueryFnData, TError = Error> = {
+  /** Tenant-scoped key from queryKeys.*() (first element must be tenant id). */
+  queryKey: QueryKey;
+  queryFn: () => Promise<TQueryFnData>;
+  enabled?: boolean;
+  staleTime?: number;
+  gcTime?: number;
+  refetchInterval?: number | false;
+  refetchOnMount?: boolean | "always";
+  retry?: boolean | number | ((failureCount: number, error: TError) => boolean);
 };
 
-/** Tenant-gated useQuery — masks data until JWT scope and profile tenant align. */
-export function useTenantQuery<
-  TQueryFnData = unknown,
-  TError = Error,
-  TData = TQueryFnData,
-  TQueryKey extends QueryKey = QueryKey,
->(
-  options: TenantQueryOptions<TQueryFnData, TError, TData, TQueryKey>
-): TenantQueryResult<TData, TError> {
+function mergeScopeRetry<TError>(
+  userRetry: TenantUseQueryOptions<unknown, TError>["retry"]
+): (failureCount: number, err: unknown) => boolean {
+  return (failureCount, err) => {
+    if (isTenantFetchAbortError(err) && failureCount < 2) return true;
+    if (userRetry === undefined) return false;
+    if (typeof userRetry === "boolean") return userRetry;
+    if (typeof userRetry === "number") return failureCount < userRetry;
+    return userRetry(failureCount, err as TError);
+  };
+}
+
+/**
+ * Tenant-scoped useQuery: requires tenant-prefixed keys, aborts fetches across
+ * tenant changes, and masks results when scope is inconsistent.
+ */
+export function useTenantQuery<TQueryFnData, TError = Error, TData = TQueryFnData>(
+  options: TenantUseQueryOptions<TQueryFnData, TError>
+): UseQueryResult<TData, TError> & { blocked: boolean; tenantId: string | null } {
   const { user } = useAuth();
-  const tenantId = user?.tenant_id ?? null;
-  const scopeOk = isTenantScopeConsistent(tenantId);
-  const callerEnabled = options.enabled ?? true;
+  const profileTenantId = user?.tenant_id ?? null;
+  const scopeOk = canRenderTenantOwnedUi(profileTenantId);
+  const activeTenantId = getActiveTenantId();
+  const keyTenantId = tenantIdFromQueryKey(options.queryKey);
+  const { retry: userRetry, ...queryOptions } = options;
 
   const query = useQuery({
-    ...options,
-    enabled: scopeOk && callerEnabled,
+    ...queryOptions,
+    structuralSharing: false,
+    retry: mergeScopeRetry(userRetry),
+    enabled:
+      (typeof options.enabled === "boolean" ? options.enabled : true) &&
+      scopeOk &&
+      Boolean(activeTenantId) &&
+      keyTenantId === activeTenantId,
+    queryFn: async () => {
+      const scope = captureTenantFetchScope();
+      const data = await options.queryFn();
+      if (!isTenantFetchScopeCurrent(scope)) {
+        throw new TenantFetchAbortError();
+      }
+      return data;
+    },
   });
 
-  const safeData = guardedTenantData(query.data, {
-    profileTenantId: tenantId,
-    isLoading: query.isLoading || query.isFetching,
-    dataTenantId: tenantId,
-  });
+  const { data: safeData, blocked, tenantId } = useTenantOwnedData(
+    query.data as TData | undefined,
+    {
+      isLoading: query.isLoading || query.isPending,
+      queryKeyTenantId: keyTenantId,
+      dataTenantId: keyTenantId,
+    }
+  );
+
+  const scopeAbortError =
+    query.isError && isTenantFetchAbortError(query.error) ? query.error : null;
 
   return {
     ...query,
-    data: safeData,
-    blocked: !scopeOk || safeData === undefined,
+    isError: query.isError && !scopeAbortError,
+    error: scopeAbortError ? null : (query.error as TError | null),
+    data: safeData as TData | undefined,
+    blocked: blocked || Boolean(scopeAbortError),
     tenantId,
-  } as TenantQueryResult<TData, TError>;
+  } as unknown as UseQueryResult<TData, TError> & { blocked: boolean; tenantId: string | null };
 }

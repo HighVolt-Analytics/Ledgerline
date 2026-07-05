@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ChevronDown,
@@ -17,6 +17,15 @@ import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  API_PORT_HINT,
+  captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
+  isTenantFetchAbortError,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
@@ -46,7 +55,7 @@ import { invoiceMatchesListSearch, matchesListSearch } from "@/lib/listSearch";
 import { money, vaultDocLabel, vaultDocSubtitle } from "@/lib/format";
 
 const VAULT_POLL_MS = 30_000;
-const API_HINT = " Ensure the API is running on port 8001.";
+const API_HINT = API_PORT_HINT;
 
 function SourceBadge({ source }: { source: ReturnType<typeof invoiceSourceKind> }) {
   return (
@@ -162,8 +171,6 @@ type DrawerTab = "fields" | "audit";
 
 export function VaultPage() {
   const { user } = useAuth();
-  const tenantScope = user?.tenant_id ?? null;
-  const loadSeq = useRef(0);
   const { data: ruleBook } = useRuleBookConfig();
   const [searchParams, setSearchParams] = useSearchParams();
   const [vaultData, setVaultData] = useState<Awaited<ReturnType<typeof api.getVaultTree>> | null>(
@@ -186,13 +193,28 @@ export function VaultPage() {
 
   const orgLabel = user?.tenant_name ?? "your organisation";
 
+  useResetOnTenantChange(() => {
+    setVaultData(null);
+    setRows([]);
+    setDocumentSets([]);
+    setSelectedId(null);
+    setSelection(null);
+    setExpanded(new Set());
+    setLoading(true);
+    setError(null);
+    setWarning(null);
+    setDrawerId(null);
+    setDrawerOpen(false);
+    setDeepLinkNotice(null);
+  });
+
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const scope = captureTenantFetchScope();
     if (!options?.silent) {
       setLoading(true);
       setError(null);
       setWarning(null);
     }
-    const seq = ++loadSeq.current;
     const fresh = options?.fresh ?? !options?.silent;
 
     const [vaultResult, invoicesResult, configResult] = await Promise.allSettled([
@@ -201,22 +223,37 @@ export function VaultPage() {
       api.getRuleBookConfig(),
     ]);
 
-    if (seq !== loadSeq.current) return;
+    if (!isTenantFetchScopeCurrent(scope)) {
+      if (!options?.silent) setLoading(false);
+      return;
+    }
+
+    const vaultRejected =
+      vaultResult.status === "rejected" ? vaultResult.reason : null;
+    const vaultScopeAbort = isTenantFetchAbortError(vaultRejected);
 
     if (vaultResult.status === "fulfilled") {
       setVaultData(vaultResult.value);
+    } else if (vaultScopeAbort) {
+      if (!options?.silent) {
+        handleTenantScopedLoadFailure(vaultRejected, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        });
+      }
     } else if (!options?.silent) {
       setVaultData(null);
       setError(
-        vaultResult.reason instanceof Error
-          ? vaultResult.reason.message + API_HINT
+        vaultRejected instanceof Error
+          ? formatTenantLoadError(vaultRejected.message, API_HINT)
           : "Failed to load vault" + API_HINT
       );
     }
 
     if (invoicesResult.status === "fulfilled") {
       setRows(invoicesResult.value);
-    } else if (!options?.silent) {
+    } else if (!options?.silent && !isTenantFetchAbortError(invoicesResult.reason)) {
       setRows([]);
       setWarning(
         invoicesResult.reason instanceof Error
@@ -227,7 +264,7 @@ export function VaultPage() {
 
     if (configResult.status === "fulfilled") {
       setDocumentSets(ruleBookConfigFromApi(configResult.value).documentSets);
-    } else if (!options?.silent) {
+    } else if (!options?.silent && !isTenantFetchAbortError(configResult.reason)) {
       setDocumentSets([]);
       setWarning((prev) =>
         prev
@@ -237,17 +274,17 @@ export function VaultPage() {
     }
 
     if (!options?.silent) setLoading(false);
-  }, [tenantScope]);
+  }, []);
 
   useEffect(() => {
     void load();
-  }, [load, tenantScope]);
+  }, [load, user?.tenant_id]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     setSelectedId(null);
     setSelection(null);
     setExpanded(new Set());
-  }, [tenantScope]);
+  }, [user?.tenant_id]);
 
   useVisibilityPolling(() => {
     void load({ silent: true, fresh: true });

@@ -32,6 +32,7 @@ import {
 import { defaultReportPeriod } from "@/lib/reportsData";
 import { activityLabel } from "@/lib/notifications";
 import { cn } from "@/lib/cn";
+import { API_PORT_HINT, formatTenantLoadError } from "@/lib/tenantSession";
 
 const CHART_MARGIN = { top: 4, right: 4, left: -18, bottom: 0 };
 const EMAIL_BAR_FILL = "hsl(186 64% 34%)";
@@ -147,11 +148,12 @@ export function DashboardPage() {
     />
   );
 
-  if (error) {
+  if (error && !overviewBlocked) {
+    const message =
+      error instanceof Error ? error.message : "Failed to load dashboard";
     return (
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {error instanceof Error ? error.message : "Failed to load dashboard"}. Ensure the API is
-        running on port 8001.
+        {formatTenantLoadError(message, API_PORT_HINT)}
       </Card>
     );
   }

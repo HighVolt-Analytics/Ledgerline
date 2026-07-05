@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  API_PORT_HINT,
+  captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { Invoice, TopVendorRow, Vendor } from "@/api/types";
@@ -10,7 +18,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/context/AuthContext";
 import { usePendingVendors, usePromotePendingVendor } from "@/hooks/useMasterData";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
@@ -150,8 +157,6 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 
 export function VendorsPage() {
   const { user } = useAuth();
-  const tenantScope = user?.tenant_id ?? null;
-  const loadSeq = useRef(0);
   const { data: pendingQueue = [] } = usePendingVendors(Boolean(user));
   const promoteMutation = usePromotePendingVendor();
   const currency = "AUD";
@@ -166,40 +171,52 @@ export function VendorsPage() {
   useResetOnTenantChange(() => {
     setRows([]);
     setInvoices([]);
-    setSearch("");
+    setLoading(true);
     setError(null);
+    setSearch("");
+    setFormOpen(false);
+    setEditVendor(null);
   });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const scope = captureTenantFetchScope();
     if (!options?.silent) {
       setLoading(true);
       setError(null);
     }
-    const seq = ++loadSeq.current;
     try {
       const fresh = options?.fresh ?? !options?.silent;
       const [vendors, invoiceRows] = await Promise.all([
         api.listVendors({ fresh }),
         fetchAllInvoices(fresh),
       ]);
-      if (seq !== loadSeq.current) return;
+      if (!isTenantFetchScopeCurrent(scope)) return;
       setRows(vendors);
       setInvoices(invoiceRows);
     } catch (e) {
-      if (seq !== loadSeq.current) return;
+      if (!isTenantFetchScopeCurrent(scope)) return;
+      if (
+        handleTenantScopedLoadFailure(e, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        })
+      ) {
+        return;
+      }
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load vendors");
         setRows([]);
         setInvoices([]);
       }
     } finally {
-      if (seq === loadSeq.current && !options?.silent) setLoading(false);
+      if (isTenantFetchScopeCurrent(scope) && !options?.silent) setLoading(false);
     }
-  }, [tenantScope]);
+  }, []);
 
   useEffect(() => {
     void load();
-  }, [load, tenantScope]);
+  }, [load, user?.tenant_id]);
 
   useVisibilityPolling(() => {
     void load({ silent: true, fresh: true });
@@ -265,7 +282,7 @@ export function VendorsPage() {
     return (
       <>
         <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-          {error}. Ensure the API is running on port 8001.
+          {formatTenantLoadError(error, API_PORT_HINT)}
         </Card>
         <VendorFormDialog
           open={formOpen}

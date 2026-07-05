@@ -33,9 +33,16 @@ import {
 import { cn } from "@/lib/cn";
 import { queryKeys } from "@/lib/queryClient";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
+  isTenantFetchScopeCurrent,
+  API_PORT_HINT,
+} from "@/lib/tenantSession";
 
 const APPROVAL_POLL_MS = 15_000;
-const API_HINT = " Ensure the API is running on port 8001.";
 
 const COLUMN_EMPTY_HINT: Record<ApprovalBoardColumnKey, string> = {
   pending: "Documents waiting for classification or rescan",
@@ -76,6 +83,19 @@ export function ApprovalsPage() {
   busyRef.current = busyId;
   processingIdsRef.current = processingIds;
 
+  useResetOnTenantChange(() => {
+    loadSeq.current += 1;
+    setInvoices([]);
+    setLoading(true);
+    setError(null);
+    setDrawerInvoice(null);
+    setDrawerOpen(false);
+    setDrawerEditMode(false);
+    setSearchQuery("");
+    setBusyId(null);
+    setProcessingIds(new Set());
+  });
+
   function openDrawer(inv: Invoice, edit = false) {
     setDrawerInvoice(inv);
     setDrawerEditMode(edit);
@@ -83,6 +103,7 @@ export function ApprovalsPage() {
   }
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     if (!options?.silent) {
       setLoading(true);
@@ -93,7 +114,7 @@ export function ApprovalsPage() {
 
     try {
       const rows = await fetchApprovalsBoard(fresh);
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       const activeProcessing = processingIdsRef.current;
       setInvoices((prev) => {
         const prevById = new Map(prev.map((inv) => [inv.id, inv]));
@@ -103,17 +124,26 @@ export function ApprovalsPage() {
       });
       if (!options?.silent) setError(null);
     } catch (reason) {
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+      if (
+        handleTenantScopedLoadFailure(reason, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        })
+      ) {
+        return;
+      }
       if (!options?.silent) {
         setInvoices([]);
         setError(
           reason instanceof Error
-            ? reason.message + API_HINT
-            : "Failed to load approvals" + API_HINT
+            ? formatTenantLoadError(reason.message, API_PORT_HINT)
+            : "Failed to load approvals" + API_PORT_HINT
         );
       }
     } finally {
-      if (seq === loadSeq.current && !options?.silent) {
+      if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
         setLoading(false);
       }
     }

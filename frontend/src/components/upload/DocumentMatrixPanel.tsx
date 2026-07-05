@@ -22,6 +22,14 @@ import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { approveAndProcess } from "@/lib/invoiceActions";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  API_PORT_HINT,
+  captureTenantFetchScope,
+  formatTenantLoadError,
+  handleTenantScopedLoadFailure,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 
 const MATRIX_POLL_MS = 15_000;
 const PAGE_SIZE = 10;
@@ -123,7 +131,7 @@ export function DocumentMatrixPanel({
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  useEffect(() => {
+  useResetOnTenantChange(() => {
     loadSeq.current += 1;
     setMatrixData([]);
     setPage(1);
@@ -131,7 +139,8 @@ export function DocumentMatrixPanel({
     setFlagDrawerId(null);
     setDrawerInvoiceId(null);
     setDrawerOpen(false);
-  }, [tenantScope]);
+    setLoading(true);
+  });
 
   function openInvoiceDrawer(invoiceId: number) {
     setDrawerInvoiceId(invoiceId);
@@ -139,6 +148,7 @@ export function DocumentMatrixPanel({
   }
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     if (!options?.silent) {
       setLoading(true);
@@ -147,16 +157,27 @@ export function DocumentMatrixPanel({
     const fresh = options?.fresh ?? !options?.silent;
     try {
       const data = await fetchAllMatrixRows(fresh);
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       setMatrixData(data);
     } catch (e) {
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+      if (
+        handleTenantScopedLoadFailure(e, {
+          retry: () => {
+            void load({ silent: true, fresh: true });
+          },
+        })
+      ) {
+        return;
+      }
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load document matrix");
         setMatrixData([]);
       }
     } finally {
-      if (seq === loadSeq.current && !options?.silent) setLoading(false);
+      if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
+        setLoading(false);
+      }
     }
   }, [tenantScope]);
 
@@ -285,7 +306,7 @@ export function DocumentMatrixPanel({
   if (error) {
     return (
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {error}. Ensure the API is running on port 8001.
+        {formatTenantLoadError(error, API_PORT_HINT)}
       </Card>
     );
   }

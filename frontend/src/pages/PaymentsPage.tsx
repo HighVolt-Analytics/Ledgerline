@@ -710,7 +710,7 @@ export function PaymentsPage() {
       <PageTabPanel value={tab} active={tab} className="mt-4">
         {isLoading ? (
           <div className="text-sm text-muted-foreground py-8">Loading payments…</div>
-        ) : isError ? (
+        ) : isError && !paymentsBlocked ? (
           <div className="text-sm text-destructive py-8">Could not load payments.</div>
         ) : tabPayments.length === 0 ? (
           <EmptyState

@@ -1,26 +1,45 @@
-import { type ReactNode } from "react";
+import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { getActiveTenantId } from "@/api/client";
-import { useAuth } from "@/context/AuthContext";
 import { PageLoader } from "@/components/PageLoader";
-import { isTenantScopeConsistent } from "@/lib/tenantSession";
+import { useAuth } from "@/context/AuthContext";
+import {
+  canRenderTenantOwnedUi,
+  endTenantTransition,
+  getTenantDataGeneration,
+  isTenantScopeConsistent,
+  isTenantTransitionActive,
+  subscribeTenantScope,
+} from "@/lib/tenantSession";
 
 /**
- * Remounts tenant-scoped UI when tenant_id changes and blocks render while
- * JWT scope and profile tenant are out of sync (mid-switch).
+ * Remounts tenant-scoped UI when tenant_id / generation changes and blocks render
+ * while JWT scope and profile tenant are out of sync or a switch is in flight.
  */
 export function TenantBoundary({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
-  const tenantId = user?.tenant_id ?? null;
+  const generation = useSyncExternalStore(
+    subscribeTenantScope,
+    getTenantDataGeneration,
+    getTenantDataGeneration
+  );
+
+  const profileTenantId = user?.tenant_id ?? null;
   const jwtTenantId = getActiveTenantId();
-  const boundaryKey = `${jwtTenantId ?? "signed-out"}:${tenantId ?? "signed-out"}`;
+  const scopeOk = isTenantScopeConsistent(profileTenantId);
+  const canRender = canRenderTenantOwnedUi(profileTenantId);
 
-  if (loading) {
-    return <PageLoader />;
+  // Release transition lock when scope is consistent (covers stuck mid-switch state).
+  useEffect(() => {
+    if (!loading && scopeOk && isTenantTransitionActive()) {
+      endTenantTransition();
+    }
+  }, [loading, scopeOk, profileTenantId, jwtTenantId, generation]);
+
+  if (loading || (user && !canRender)) {
+    return <PageLoader label="Loading organisation…" />;
   }
 
-  if (user && !isTenantScopeConsistent(tenantId)) {
-    return <PageLoader />;
-  }
-
-  return <div key={boundaryKey}>{children}</div>;
+  return (
+    <div key={`${profileTenantId ?? "signed-out"}:${generation}`}>{children}</div>
+  );
 }
