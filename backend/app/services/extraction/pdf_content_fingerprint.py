@@ -45,6 +45,13 @@ def compute_pdf_content_fingerprint(
     return compute_sha256_bytes("\n".join(parts).encode("utf-8"))
 
 
+def compute_pdf_content_fingerprint_from_pages(pages: list[PdfPageText]) -> str | None:
+    """Fingerprint the full document from pre-extracted page text."""
+    if not pages:
+        return None
+    return compute_pdf_content_fingerprint(pages, 0, len(pages) - 1)
+
+
 def compute_pdf_bytes_content_fingerprint(data: bytes) -> str | None:
     """Extract page text from PDF bytes and fingerprint the full document."""
     tmp_path: Path | None = None
@@ -53,10 +60,10 @@ def compute_pdf_bytes_content_fingerprint(data: bytes) -> str | None:
             handle.write(data)
             tmp_path = Path(handle.name)
 
-        pages = extract_pdf_page_texts(tmp_path)
-        if not pages:
+        extraction = extract_pdf_page_texts(tmp_path)
+        if not extraction.pages:
             return None
-        return compute_pdf_content_fingerprint(pages, 0, len(pages) - 1)
+        return compute_pdf_content_fingerprint_from_pages(extraction.pages)
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)

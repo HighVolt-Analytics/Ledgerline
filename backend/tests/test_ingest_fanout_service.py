@@ -13,7 +13,7 @@ from app.services.ingest.ingest_fanout_service import (
     ingest_file_with_fanout,
     ingest_upload_file,
 )
-from app.services.extraction.pdf_page_text_service import PdfPageText
+from app.services.extraction.pdf_page_text_service import PdfPageText, PdfPageTextExtraction
 from app.services.extraction.pdf_split_service import extract_pdf_page_range_bytes, segment_upload_filename
 
 
@@ -112,7 +112,7 @@ async def test_ingest_upload_fanout_from_segmented_pdf(
 
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
-        lambda _path: pages,
+        lambda _path: PdfPageTextExtraction(pages=pages),
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
@@ -159,7 +159,7 @@ async def test_upload_api_returns_segment_meta(
     ]
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
-        lambda _path: pages,
+        lambda _path: PdfPageTextExtraction(pages=pages),
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
@@ -196,6 +196,13 @@ async def test_ingest_file_with_fanout_applies_source_metadata(
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/channel.pdf",
+    )
+    async def _allow_channel(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "app.services.credit_service.assert_can_ingest_via_channel",
+        _allow_channel,
     )
 
     result = await ingest_file_with_fanout(
@@ -306,7 +313,7 @@ async def test_multi_segment_ignores_purchase_document_type_param(
     ]
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
-        lambda _path: pages,
+        lambda _path: PdfPageTextExtraction(pages=pages),
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",

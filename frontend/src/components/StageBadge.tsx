@@ -1,4 +1,5 @@
 import type { Invoice } from "@/api/types";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export type PipelineStageState = "done" | "pending" | "fail" | "skipped";
@@ -39,9 +40,11 @@ export function invoiceCurrentStageState(
 export function StageBadge({
   stage,
   state,
+  processing = false,
 }: {
   stage: string;
   state?: PipelineStageState;
+  processing?: boolean;
 }) {
   const className =
     (state && stylesByState[state]) ||
@@ -51,10 +54,13 @@ export function StageBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap",
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap",
         className
       )}
     >
+      {processing ? (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
+      ) : null}
       {stage}
     </span>
   );

@@ -1317,3 +1317,26 @@ input.app-numeric-input {
   background: hsl(var(--primary) / 0.04);
   box-shadow: 0 0 0 1px hsl(var(--primary) / 0.12);
 }
+
+.upload-col-processing {
+  width: 1rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-col-processing__ring {
+  display: block;
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 9999px;
+  border: 2px solid hsl(var(--primary) / 0.25);
+  border-top-color: hsl(var(--primary));
+  animation: upload-col-spin 0.85s linear infinite;
+}
+
+@keyframes upload-col-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

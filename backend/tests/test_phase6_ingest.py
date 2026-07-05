@@ -310,7 +310,7 @@ async def test_ingest_email_attachments_splits_mixed_bundle(
     _enable_pdf_split,
 ) -> None:
     from app.models.audit import AuditLog
-    from app.services.extraction.pdf_page_text_service import PdfPageText
+    from app.services.extraction.pdf_page_text_service import PdfPageText, PdfPageTextExtraction
 
     pages = [
         PdfPageText(0, "PURCHASE ORDER\nPO Number: PO-9001\nVendor: Acme"),
@@ -319,7 +319,7 @@ async def test_ingest_email_attachments_splits_mixed_bundle(
     ]
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
-        lambda _path: pages,
+        lambda _path: PdfPageTextExtraction(pages=pages),
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",

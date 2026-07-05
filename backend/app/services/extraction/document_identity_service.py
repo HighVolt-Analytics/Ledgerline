@@ -15,7 +15,7 @@ from app.services.extraction.extraction_field_values import custom_extraction_fi
 from app.services.extraction.layout_field_extractor import extract_key_value_fields
 from app.services.extraction.pdf_parser import parse_text_fields
 from app.services.extraction.permit_ocr_extractors import extract_permit_fields_from_text
-from app.services.extraction.pdf_page_text_service import extract_pdf_page_texts
+from app.services.extraction.pdf_page_text_service import PdfPageText, extract_pdf_page_texts
 from app.services.master_data.vendor_name_utils import normalize_vendor_name
 from app.utils.hashing import compute_sha256_bytes
 
@@ -186,6 +186,27 @@ def compute_business_fingerprint(fields: dict[str, str]) -> str | None:
     return compute_sha256_bytes(payload.encode("utf-8"))
 
 
+def extract_identity_fields_from_pages(
+    pages: list[PdfPageText],
+    *,
+    custom_field_keys: list[str] | None = None,
+) -> dict[str, str]:
+    """Extract identity fields from pre-extracted PDF page text."""
+    if not pages:
+        return {}
+    combined = "\n".join(page.text for page in pages if page.text.strip())
+    return extract_identity_fields(combined, custom_field_keys=custom_field_keys)
+
+
+def compute_business_fingerprint_from_pages(
+    pages: list[PdfPageText],
+    *,
+    custom_field_keys: list[str] | None = None,
+) -> str | None:
+    fields = extract_identity_fields_from_pages(pages, custom_field_keys=custom_field_keys)
+    return compute_business_fingerprint(fields)
+
+
 def extract_identity_fields_from_pdf_bytes(
     data: bytes,
     *,
@@ -197,11 +218,11 @@ def extract_identity_fields_from_pdf_bytes(
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
             handle.write(data)
             tmp_path = Path(handle.name)
-        pages = extract_pdf_page_texts(tmp_path)
-        if not pages:
-            return {}
-        combined = "\n".join(page.text for page in pages if page.text.strip())
-        return extract_identity_fields(combined, custom_field_keys=custom_field_keys)
+        extraction = extract_pdf_page_texts(tmp_path)
+        return extract_identity_fields_from_pages(
+            extraction.pages,
+            custom_field_keys=custom_field_keys,
+        )
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
