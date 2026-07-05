@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { ChartOfAccountRow } from "@/api/types";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
-import { newClientRowKey } from "@/lib/clientRowKey";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useChartOfAccounts(enabled = true) {
@@ -35,10 +34,8 @@ export function useSaveChartOfAccounts() {
   });
 }
 
-export type ChartOfAccountRowLocal = ChartOfAccountRow & { _rowKey: string };
-
-export function newChartOfAccountRow(): ChartOfAccountRowLocal {
-  return { code: "", name: "", type: "Expense", _rowKey: newClientRowKey("coa") };
+export function newChartOfAccountRow(): ChartOfAccountRow {
+  return { code: "", name: "", type: "Expense" };
 }
 
 export const CHART_OF_ACCOUNT_TYPES = [

@@ -6,6 +6,10 @@ import { api } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import { filterNavItems, type FlatNavItem } from "@/lib/appNavigation";
 import { documentDisplayRef } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -172,22 +176,23 @@ export function GlobalSearchBar({ navItems, className }: GlobalSearchBarProps) {
     }
 
     let cancelled = false;
+    const scope = captureTenantFetchScope();
     setInvoiceLoading(true);
     setInvoiceError(null);
     const timer = window.setTimeout(() => {
       void api
         .listInvoices({ q: trimmedQuery, page_size: "8" }, { fresh: true })
         .then((data) => {
-          if (cancelled) return;
+          if (cancelled || !isTenantFetchScopeCurrent(scope)) return;
           setInvoiceRows(buildInvoiceRows(data));
         })
         .catch((err: unknown) => {
-          if (cancelled) return;
+          if (cancelled || !isTenantFetchScopeCurrent(scope)) return;
           setInvoiceRows([]);
           setInvoiceError(err instanceof Error ? err.message : "Invoice search failed");
         })
         .finally(() => {
-          if (!cancelled) setInvoiceLoading(false);
+          if (!cancelled && isTenantFetchScopeCurrent(scope)) setInvoiceLoading(false);
         });
     }, 200);
 

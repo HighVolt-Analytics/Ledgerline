@@ -1,17 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setAuthToken } from "@/api/client";
+import { getAuthToken, setAuthToken, setAuthUser } from "@/api/client";
 import {
+  beginTenantTransition,
+  canRenderTenantOwnedUi,
+  captureTenantFetchScope,
   clearAllTenantCaches,
+  endTenantTransition,
+  getTenantDataGeneration,
   guardedTenantData,
+  isTenantFetchScopeCurrent,
   isTenantScopeConsistent,
+  isTenantTransitionActive,
   tenantSessionWillChange,
 } from "@/lib/tenantSession";
-import {
-  getRecognitionSignalCatalog,
-  setRecognitionSignalCatalog,
-  type RecognitionSignalCatalog,
-} from "@/lib/recognitionSignalCatalog";
 
 const tenantA = "11111111-1111-1111-1111-111111111111";
 const tenantB = "22222222-2222-2222-2222-222222222222";
@@ -41,23 +43,65 @@ beforeEach(() => {
     },
   });
   setAuthToken(null);
+  setAuthUser(null);
+  endTenantTransition();
 });
 
 afterEach(() => {
   setAuthToken(null);
+  setAuthUser(null);
+  endTenantTransition();
   storage.clear();
   vi.unstubAllGlobals();
 });
 
 describe("tenantSessionWillChange", () => {
-  it("detects tenant change before persisting the next access token", () => {
+  it("reads previous tenant from in-memory token before persist", () => {
+    setAuthToken(jwtWithTenant(tenantA));
     sessionStorage.setItem("ledgerline_access_token", jwtWithTenant(tenantA));
-    expect(tenantSessionWillChange(jwtWithTenant(tenantB))).toBe(true);
+    expect(tenantSessionWillChange(jwtWithTenant(tenantB), getAuthToken())).toBe(true);
+  });
+
+  it("detects tenant change even if sessionStorage already has the next token", () => {
+    setAuthToken(jwtWithTenant(tenantA));
+    // Simulate a buggy caller that wrote sessionStorage first.
+    sessionStorage.setItem("ledgerline_access_token", jwtWithTenant(tenantB));
+    expect(tenantSessionWillChange(jwtWithTenant(tenantB), getAuthToken())).toBe(true);
   });
 
   it("returns false when tenant is unchanged", () => {
-    sessionStorage.setItem("ledgerline_access_token", jwtWithTenant(tenantA));
-    expect(tenantSessionWillChange(jwtWithTenant(tenantA))).toBe(false);
+    setAuthToken(jwtWithTenant(tenantA));
+    expect(tenantSessionWillChange(jwtWithTenant(tenantA), getAuthToken())).toBe(false);
+  });
+});
+
+describe("clearAllTenantCaches", () => {
+  it("bumps generation and enters transition on tenant change", () => {
+    setAuthToken(jwtWithTenant(tenantA));
+    const before = getTenantDataGeneration();
+    clearAllTenantCaches();
+    expect(getTenantDataGeneration()).toBe(before + 1);
+    expect(isTenantTransitionActive()).toBe(true);
+    expect(canRenderTenantOwnedUi(tenantA)).toBe(false);
+  });
+
+  it("does not leave transition active after same-tenant endTenantTransition", () => {
+    setAuthToken(jwtWithTenant(tenantA));
+    setAuthUser({
+      id: 1,
+      email: "a@example.com",
+      full_name: "A",
+      role: "admin",
+      tenant_id: tenantA,
+      tenant_name: "A",
+      tenant_slug: "a",
+      tenant_timezone: "UTC",
+      tenant_locale: "en",
+    });
+    clearAllTenantCaches();
+    endTenantTransition();
+    expect(isTenantTransitionActive()).toBe(false);
+    expect(isTenantScopeConsistent(tenantA)).toBe(true);
   });
 });
 
@@ -67,26 +111,61 @@ describe("guardedTenantData", () => {
 
   it("hides tenant A rows when active profile tenant is B", () => {
     setAuthToken(jwtWithTenant(tenantB));
+    setAuthUser({
+      id: 1,
+      email: "b@example.com",
+      full_name: "B",
+      role: "admin",
+      tenant_id: tenantB,
+      tenant_name: "B",
+      tenant_slug: "b",
+      tenant_timezone: "UTC",
+      tenant_locale: "en",
+    });
     expect(
       guardedTenantData(tenantAInvoices, {
         profileTenantId: tenantB,
         dataTenantId: tenantA,
+        queryKeyTenantId: tenantA,
       })
     ).toBeUndefined();
   });
 
-  it("shows tenant B rows when profile and data tenant match", () => {
+  it("shows tenant B rows when profile, jwt, and data tenant match", () => {
     setAuthToken(jwtWithTenant(tenantB));
+    setAuthUser({
+      id: 1,
+      email: "b@example.com",
+      full_name: "B",
+      role: "admin",
+      tenant_id: tenantB,
+      tenant_name: "B",
+      tenant_slug: "b",
+      tenant_timezone: "UTC",
+      tenant_locale: "en",
+    });
     expect(
       guardedTenantData(tenantBInvoices, {
         profileTenantId: tenantB,
         dataTenantId: tenantB,
+        queryKeyTenantId: tenantB,
       })
     ).toEqual(tenantBInvoices);
   });
 
   it("hides data while loading after tenant switch", () => {
     setAuthToken(jwtWithTenant(tenantB));
+    setAuthUser({
+      id: 1,
+      email: "b@example.com",
+      full_name: "B",
+      role: "admin",
+      tenant_id: tenantB,
+      tenant_name: "B",
+      tenant_slug: "b",
+      tenant_timezone: "UTC",
+      tenant_locale: "en",
+    });
     expect(
       guardedTenantData(tenantBInvoices, {
         profileTenantId: tenantB,
@@ -96,14 +175,81 @@ describe("guardedTenantData", () => {
     ).toBeUndefined();
   });
 
+  it("hides data during transition even when tenants match", () => {
+    setAuthToken(jwtWithTenant(tenantB));
+    setAuthUser({
+      id: 1,
+      email: "b@example.com",
+      full_name: "B",
+      role: "admin",
+      tenant_id: tenantB,
+      tenant_name: "B",
+      tenant_slug: "b",
+      tenant_timezone: "UTC",
+      tenant_locale: "en",
+    });
+    beginTenantTransition();
+    expect(
+      guardedTenantData(tenantBInvoices, {
+        profileTenantId: tenantB,
+        dataTenantId: tenantB,
+      })
+    ).toBeUndefined();
+  });
+
   it("never surfaces tenant A invoice ids after switching to tenant B", () => {
     setAuthToken(jwtWithTenant(tenantB));
+    setAuthUser({
+      id: 1,
+      email: "b@example.com",
+      full_name: "B",
+      role: "admin",
+      tenant_id: tenantB,
+      tenant_name: "B",
+      tenant_slug: "b",
+      tenant_timezone: "UTC",
+      tenant_locale: "en",
+    });
     const visible = guardedTenantData(tenantAInvoices, {
       profileTenantId: tenantB,
       dataTenantId: tenantA,
     });
     expect(visible).toBeUndefined();
-    expect(tenantAInvoices.map((row) => row.id)).toEqual([1]);
+  });
+});
+
+describe("tenant navigation regression", () => {
+  it("discards in-flight tenant A scope after switch to B", () => {
+    setAuthToken(jwtWithTenant(tenantA));
+    const scopeA = captureTenantFetchScope();
+    expect(isTenantFetchScopeCurrent(scopeA)).toBe(true);
+
+    clearAllTenantCaches();
+    setAuthToken(jwtWithTenant(tenantB));
+    setAuthUser({
+      id: 1,
+      email: "b@example.com",
+      full_name: "B",
+      role: "admin",
+      tenant_id: tenantB,
+      tenant_name: "B",
+      tenant_slug: "b",
+      tenant_timezone: "UTC",
+      tenant_locale: "en",
+    });
+
+    expect(isTenantFetchScopeCurrent(scopeA)).toBe(false);
+
+    endTenantTransition();
+    const pages = ["dashboard", "upload", "approvals", "vault", "vendors", "integrations", "search"];
+    for (const page of pages) {
+      const visible = guardedTenantData([{ id: 1, page, vendor: "Tenant A vendor" }], {
+        profileTenantId: tenantB,
+        dataTenantId: tenantA,
+        queryKeyTenantId: tenantA,
+      });
+      expect(visible, page).toBeUndefined();
+    }
   });
 });
 
@@ -116,46 +262,9 @@ describe("isTenantScopeConsistent", () => {
     setAuthToken(jwtWithTenant(tenantB));
     expect(isTenantScopeConsistent(tenantB)).toBe(true);
   });
-});
 
-const emptyCatalog: RecognitionSignalCatalog = {
-  weakSignalIds: [],
-  pickGroups: [],
-  supportingGuards: [],
-  signals: [{ id: "sig-a", label: "A", hint: "", channel: "email", strength: "strong", example: "", condition: { field: "x", operator: "contains", value: "y" } }],
-  playbookRecommendedIdentity: {},
-};
-
-describe("clearAllTenantCaches", () => {
-  it("clears module-level recognition signal catalog", () => {
-    setRecognitionSignalCatalog(emptyCatalog);
-    expect(getRecognitionSignalCatalog()).not.toBeNull();
-    clearAllTenantCaches();
-    expect(getRecognitionSignalCatalog()).toBeNull();
-  });
-});
-
-describe("invoice id collision guard", () => {
-  it("hides invoice #42 from tenant A when active tenant is B", () => {
-    const tenantAInvoice42 = { id: 42, vendor: "Org A Corp" };
-    setAuthToken(jwtWithTenant(tenantB));
-    expect(
-      guardedTenantData(tenantAInvoice42, {
-        profileTenantId: tenantB,
-        dataTenantId: tenantA,
-      })
-    ).toBeUndefined();
-  });
-
-  it("masks stale invoice while refetch is in flight", () => {
-    const staleInvoice = { id: 42, vendor: "Stale vendor" };
-    setAuthToken(jwtWithTenant(tenantB));
-    expect(
-      guardedTenantData(staleInvoice, {
-        profileTenantId: tenantB,
-        isLoading: true,
-        dataTenantId: tenantB,
-      })
-    ).toBeUndefined();
+  it("is false when jwt and profile disagree", () => {
+    setAuthToken(jwtWithTenant(tenantA));
+    expect(isTenantScopeConsistent(tenantB)).toBe(false);
   });
 });

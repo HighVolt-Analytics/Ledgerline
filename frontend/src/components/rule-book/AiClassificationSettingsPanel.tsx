@@ -1,10 +1,10 @@
-import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
 import type { AiClassificationConfig } from "@/lib/v4RuleBookTypes";
 import { api } from "@/api/client";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 
 type AiClassificationSettingsPanelProps = {

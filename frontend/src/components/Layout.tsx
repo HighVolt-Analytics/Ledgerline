@@ -15,7 +15,6 @@ import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
 import { useCollections } from "@/hooks/useCollections";
-import { useTenantOwnedData } from "@/hooks/useTenantOwnedData";
 import { collectionsOpenCount } from "@/lib/collectionsQueue";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
 import { canAccessModulePath } from "@/lib/tenantModules";
@@ -58,10 +57,8 @@ export function Layout() {
   const { user, logout } = useAuth();
   const { data: billing } = useBilling(Boolean(user));
   const { theme, toggleTheme } = useTheme();
-  const { data: badgesRaw } = useNavBadges();
-  const { data: badges } = useTenantOwnedData(badgesRaw);
-  const { data: collectionRowsRaw = [] } = useCollections();
-  const { data: collectionRows = [] } = useTenantOwnedData(collectionRowsRaw);
+  const { data: badges } = useNavBadges();
+  const { data: collectionRows = [] } = useCollections();
   const { permissions } = usePermissions();
   const enabledModules = permissions?.enabled_modules;
   const canShowNavItem = (item: NavItem) =>

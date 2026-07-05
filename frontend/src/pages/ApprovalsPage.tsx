@@ -34,6 +34,10 @@ import { cn } from "@/lib/cn";
 import { queryKeys } from "@/lib/queryClient";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 
 const APPROVAL_POLL_MS = 15_000;
 const API_HINT = " Ensure the API is running on port 8001.";
@@ -97,6 +101,7 @@ export function ApprovalsPage() {
   }
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     if (!options?.silent) {
       setLoading(true);
@@ -107,7 +112,7 @@ export function ApprovalsPage() {
 
     try {
       const rows = await fetchApprovalsBoard(fresh);
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       const activeProcessing = processingIdsRef.current;
       setInvoices((prev) => {
         const prevById = new Map(prev.map((inv) => [inv.id, inv]));
@@ -117,7 +122,7 @@ export function ApprovalsPage() {
       });
       if (!options?.silent) setError(null);
     } catch (reason) {
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       if (!options?.silent) {
         setInvoices([]);
         setError(
@@ -127,7 +132,7 @@ export function ApprovalsPage() {
         );
       }
     } finally {
-      if (seq === loadSeq.current && !options?.silent) {
+      if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
         setLoading(false);
       }
     }
