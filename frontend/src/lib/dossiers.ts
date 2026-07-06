@@ -447,13 +447,28 @@ export function pipelineBlockedFromStageId(
   pipeline: DossierPipelineStep[],
   stageId: DossierPipelineStageId
 ): boolean {
+  const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  const step = byStage.get(stageId);
+  if (isStageBlocked(step)) {
+    return true;
+  }
+
   const fail = firstPipelineFailure(pipeline);
-  if (!fail) return false;
-  const failOrder =
-    DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === fail.stageId)?.order ?? 0;
+  if (fail) {
+    const failOrder =
+      DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === fail.stageId)?.order ?? 0;
+    const stageOrder =
+      DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.order ?? 0;
+    return stageOrder > failOrder;
+  }
+
+  const bottleneck = firstPipelineBottleneck(pipeline);
+  if (!bottleneck) return false;
+  const bottleneckOrder =
+    DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === bottleneck.stageId)?.order ?? 0;
   const stageOrder =
     DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.order ?? 0;
-  return stageOrder > failOrder;
+  return stageOrder > bottleneckOrder;
 }
 
 export function dossierStageDescription(stageId: DossierPipelineStageId): string {
