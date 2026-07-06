@@ -8,6 +8,7 @@ from app.schemas.document_type import DocumentTypeDefinition
 from app.services.classification.document_type_catalog import (
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
+    ROUTE_SALES,
     ROUTE_TEAM,
     ROUTE_VAULT,
     get_document_type_definition,
@@ -16,6 +17,7 @@ from app.services.classification.document_type_playbook_profile_service import a
 from app.services.rule_book.validation_rule_catalog import effective_validation_rules, enabled_rule_codes
 
 _PAYABLE_ROUTES = frozenset({ROUTE_PURCHASE, ROUTE_EXPENSES})
+_RECEIVABLE_ROUTES = frozenset({ROUTE_SALES})
 _EXEMPT_ROUTES = frozenset({ROUTE_TEAM, ROUTE_VAULT})
 _SUPPORTING_PURCHASE_DOCS = frozenset({"po", "grn"})
 
@@ -66,6 +68,28 @@ def vendor_registration_required(
         return route in _PAYABLE_ROUTES
 
     return route in _PAYABLE_ROUTES
+
+
+def customer_registration_required(
+    *,
+    route_target: str | None,
+    document_type: DocumentTypeDefinition | None = None,
+) -> bool:
+    """Whether unknown customers should trigger pending_customer / registration hold."""
+    route = (route_target or "").strip()
+    if route not in _RECEIVABLE_ROUTES:
+        return False
+
+    if document_type is not None:
+        if not document_type.enabled:
+            return False
+        if not allows_posting_pipeline(document_type):
+            return False
+        if not vendor_master_check_enabled(document_type):
+            return False
+        return True
+
+    return route in _RECEIVABLE_ROUTES
 
 
 def persisted_vendor_confidence(

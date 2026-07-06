@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
+import { ListDetailSkeleton } from "@/components/skeleton/PageSkeletons";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
 import { ListSearchInput } from "@/components/ListSearchInput";
@@ -145,7 +146,7 @@ export function ExpensesManagementPage() {
 
       <PageTabPanel value="expenses" active={tab} className="mt-4">
         {isLoading ? (
-          <div className="text-sm text-muted-foreground py-8">Loading business expenses…</div>
+          <ListDetailSkeleton />
         ) : claims.length === 0 ? (
           <EmptyState
             title="No business expenses yet"

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   Clock,
@@ -10,7 +10,15 @@ import {
   X,
 } from "lucide-react";
 import { api, ApiError } from "@/api/client";
-import type { InvoiceDetails, InvoiceClassificationAudit, InvoiceUpdatePayload, LineItem, PipelineAuditStep, PurchaseDossier, SalesDossierResponse } from "@/api/types";
+import type {
+  InvoiceDetails,
+  InvoiceClassificationAudit,
+  InvoiceUpdatePayload,
+  LineItem,
+  PipelineAuditStep,
+  PurchaseDossier,
+  SalesDossierResponse,
+} from "@/api/types";
 import {
   InvoiceDocumentViewer,
   InvoicePreviewModeToggle,
@@ -23,6 +31,7 @@ import {
 } from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
+import { PageTabs } from "@/components/PageTabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,7 +61,7 @@ import {
   invoiceFieldConfidence,
 } from "@/lib/invoice";
 import { LineGlAccountCell } from "@/components/invoices/LineGlAccountCell";
-import { threeWayMatchTabLabel } from "@/lib/documentBundleConfig";
+import { effectiveMatchPolicy, isTwoWayMatchMode, matchTabLabel } from "@/lib/documentPlaybookConfig";
 import { InvoiceProcessingOverridesSection } from "@/components/invoices/InvoiceProcessingOverridesSection";
 import { InvoicePurchaseDossierSection } from "@/components/invoices/InvoicePurchaseDossierSection";
 import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDossierSection";
@@ -95,8 +104,8 @@ const TAB_LABELS: Record<Exclude<Tab, "po">, string> = {
   pipeline: "Pipeline (dev)",
 };
 
-function tabLabel(tab: Tab, routeTarget?: string | null): string {
-  if (tab === "po") return threeWayMatchTabLabel(routeTarget);
+function tabLabel(tab: Tab, routeTarget?: string | null, matchMode?: string | null): string {
+  if (tab === "po") return matchTabLabel(routeTarget, matchMode);
   return TAB_LABELS[tab];
 }
 
@@ -813,6 +822,21 @@ export function InvoiceDetailDrawer({
       .finally(() => setDossierLoading(false));
   }, [inv, tab]);
 
+  const reloadDossier = useCallback(() => {
+    if (!inv) return;
+    setDossierLoading(true);
+    const isSales = (inv.route_target ?? "").toLowerCase().includes("sales");
+    const request = isSales
+      ? api.fetchSalesDossier(inv.id, { fresh: true }).then(setSalesDossier)
+      : api.getPurchaseDossier(inv.id, { fresh: true }).then(setDossier);
+    void request
+      .catch(() => {
+        if (isSales) setSalesDossier(null);
+        else setDossier(null);
+      })
+      .finally(() => setDossierLoading(false));
+  }, [inv]);
+
   useEffect(() => {
     if (!inv || tab !== "audit") return;
     setAuditLoading(true);
@@ -914,6 +938,11 @@ export function InvoiceDetailDrawer({
       ruleBook.documentTypes.find((dt) => dt.code.toUpperCase() === code.toUpperCase()) ?? null
     );
   }, [resolvedDocumentTypeCode, ruleBook]);
+
+  const invoiceMatchMode = useMemo(() => {
+    if (resolvedDocType) return effectiveMatchPolicy(resolvedDocType).mode;
+    return null;
+  }, [resolvedDocType]);
 
   const absentFields = resolvedDocType?.absentFields ?? [];
 
@@ -1217,7 +1246,7 @@ export function InvoiceDetailDrawer({
         role="dialog"
         aria-modal="true"
         data-state={sheetState}
-        className="invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-background p-0 shadow-lg"
+        className="invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-card p-0 shadow-lg"
       >
         {loading || !inv ? (
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
@@ -1307,28 +1336,15 @@ export function InvoiceDetailDrawer({
               </div>
 
               <div className="invoice-drawer-detail-pane p-4 md:p-5">
-                <div
-                  role="tablist"
-                  className="inline-flex h-10 flex-wrap items-center justify-center rounded-md bg-muted p-1 text-muted-foreground"
-                >
-                  {TABS.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      role="tab"
-                      aria-selected={tab === t}
-                      onClick={() => selectTab(t)}
-                      className={cn(
-                        "inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all",
-                        tab === t
-                          ? "bg-background text-foreground shadow-sm"
-                          : "hover:text-foreground"
-                      )}
-                    >
-                      {tabLabel(t, inv?.route_target)}
-                    </button>
-                  ))}
-                </div>
+                <PageTabs
+                  value={tab}
+                  onChange={(v) => selectTab(v as Tab)}
+                  tabs={TABS.map((t) => ({
+                    value: t,
+                    label: tabLabel(t, inv?.route_target, invoiceMatchMode),
+                    secondary: t === "overrides" || t === "pipeline",
+                  }))}
+                />
 
                 {tab === "fields" && inv && (
                   <div className="mt-4 space-y-3">
@@ -1462,14 +1478,26 @@ export function InvoiceDetailDrawer({
                       dossier={salesDossier}
                       loading={dossierLoading}
                       customer={inv.vendor ?? undefined}
+                      twoWay={isTwoWayMatchMode(invoiceMatchMode)}
+                      routeTarget={inv.route_target}
                       onOpenSibling={(id) => setViewId(id)}
+                      onMutated={() => {
+                        reloadDossier();
+                        onUpdated?.();
+                      }}
                     />
                   ) : (
                     <InvoicePurchaseDossierSection
                       dossier={dossier}
                       loading={dossierLoading}
                       vendor={inv.vendor ?? undefined}
+                      twoWay={isTwoWayMatchMode(invoiceMatchMode)}
+                      routeTarget={inv.route_target}
                       onOpenSibling={(id) => setViewId(id)}
+                      onMutated={() => {
+                        reloadDossier();
+                        onUpdated?.();
+                      }}
                     />
                   )
                 )}

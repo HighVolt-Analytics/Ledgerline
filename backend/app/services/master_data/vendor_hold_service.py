@@ -21,6 +21,7 @@ from app.services.invoice.invoice_evaluation_service import (
     EVAL_PENDING_VENDOR,
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
+    ROUTE_SALES,
 )
 from app.services.invoice.invoice_reset import reset_invoice_for_reprocess
 from app.services.master_data.master_data_service import (
@@ -290,6 +291,11 @@ async def apply_vendor_hold_if_needed(
     invoice: Invoice,
 ) -> bool:
     """Set exception + pending_vendor when registration is required. Returns True if held."""
+    if (invoice.route_target or "").strip() == ROUTE_SALES:
+        from app.services.master_data.customer_hold_service import apply_customer_hold_if_needed
+
+        return await apply_customer_hold_if_needed(session, invoice)
+
     if not await _registration_required_for_invoice(session, invoice):
         await _log_vendor_outcome_if_changed(
             session,

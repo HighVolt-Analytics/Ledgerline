@@ -28,7 +28,32 @@ import type {
   ThreeWayMatchDisplay,
   MatchAmountLine,
 } from "@/lib/v4MockData";
-import type { PaymentApi, PurchaseOrderApi, SalesOrderApi, MatchAmountLineApi, ThreeWayMatchApi, ThreeWayMatchDisplayApi } from "@/api/types";
+import type { PaymentApi, PurchaseOrderApi, SalesOrderApi, MatchAmountLineApi, ThreeWayMatchApi, ThreeWayMatchDisplayApi, TwoWaySalesMatchApi } from "@/api/types";
+
+export const SALES_TWO_WAY_MODE = "two_way_dn_invoice";
+export const SALES_THREE_WAY_MODE = "three_way_so_dn";
+export const PURCHASE_TWO_WAY_MODE = "two_way_po_ses";
+export const PURCHASE_THREE_WAY_MODE = "three_way_po_grn";
+
+export function isSalesTwoWayMode(matchMode?: string | null): boolean {
+  return (matchMode ?? SALES_THREE_WAY_MODE) === SALES_TWO_WAY_MODE;
+}
+
+export function isPurchaseTwoWayMode(matchMode?: string | null): boolean {
+  return (matchMode ?? PURCHASE_THREE_WAY_MODE) === PURCHASE_TWO_WAY_MODE;
+}
+
+export function splitSalesRegisterRows(rows: SalesOrderApi[]) {
+  const threeWayRows = rows.filter((row) => !isSalesTwoWayMode(row.match_mode));
+  const twoWayRows = rows.filter((row) => isSalesTwoWayMode(row.match_mode));
+  return { threeWayRows, twoWayRows };
+}
+
+export function splitPurchaseRegisterRows(rows: PurchaseOrderApi[]) {
+  const threeWayRows = rows.filter((row) => !isPurchaseTwoWayMode(row.match_mode));
+  const twoWayRows = rows.filter((row) => isPurchaseTwoWayMode(row.match_mode));
+  return { threeWayRows, twoWayRows };
+}
 
 function parseAmount(value: string | null | undefined): number {
   if (value == null || value === "") return 0;
@@ -174,10 +199,15 @@ export function invoiceToSalesRow(inv: Invoice): SalesRegisterRow {
 }
 
 export function salesKpisFromRegister(salesRows: SalesOrderApi[], routed: Invoice[]) {
-  const openSos = salesRows.filter((r) => r.match.status !== "3-Way Match").length;
-  const missingDn = salesRows.filter((r) => r.match.status === "No DN").length;
-  const matched = salesRows.filter((r) => r.match.status === "3-Way Match").length;
-  const matchPct = salesRows.length > 0 ? Math.round((matched / salesRows.length) * 100) : 0;
+  const { threeWayRows, twoWayRows } = splitSalesRegisterRows(salesRows);
+  const openSos = threeWayRows.filter((r) => r.match.status !== "3-Way Match").length;
+  const missingDn = threeWayRows.filter((r) => r.match.status === "No DN").length;
+  const matched = threeWayRows.filter((r) => r.match.status === "3-Way Match").length;
+  const matchPct =
+    threeWayRows.length > 0 ? Math.round((matched / threeWayRows.length) * 100) : 0;
+  const twoWayMatched = twoWayRows.filter((r) => r.match.status === "2-Way Match").length;
+  const twoWayMatchPct =
+    twoWayRows.length > 0 ? Math.round((twoWayMatched / twoWayRows.length) * 100) : 0;
   const variancesAwaiting = salesRows.filter((r) =>
     salesNeedsVarianceApproval(r.match.status, r.variance_approved)
   ).length;
@@ -198,6 +228,8 @@ export function salesKpisFromRegister(salesRows: SalesOrderApi[], routed: Invoic
     openSos,
     missingDn,
     matchPct,
+    twoWayMatchPct,
+    twoWayCount: twoWayRows.length,
     variancesAwaiting,
     needsAction,
     open,
@@ -414,10 +446,15 @@ export function purchaseRulesToCategories(rules: PurchaseRule[]): ExpenseCategor
 }
 
 export function purchaseKpisFromRegister(rows: PurchaseOrderApi[], routed: Invoice[]) {
-  const openPos = rows.filter((r) => r.match.status !== "3-Way Match").length;
-  const missingGrn = rows.filter((r) => r.match.status === "No GRN").length;
-  const matched = rows.filter((r) => r.match.status === "3-Way Match").length;
-  const matchPct = rows.length > 0 ? Math.round((matched / rows.length) * 100) : 0;
+  const { threeWayRows, twoWayRows } = splitPurchaseRegisterRows(rows);
+  const openPos = threeWayRows.filter((r) => r.match.status !== "3-Way Match").length;
+  const missingGrn = threeWayRows.filter((r) => r.match.status === "No GRN").length;
+  const matched = threeWayRows.filter((r) => r.match.status === "3-Way Match").length;
+  const matchPct =
+    threeWayRows.length > 0 ? Math.round((matched / threeWayRows.length) * 100) : 0;
+  const twoWayMatched = twoWayRows.filter((r) => r.match.status === "2-Way Match").length;
+  const twoWayMatchPct =
+    twoWayRows.length > 0 ? Math.round((twoWayMatched / twoWayRows.length) * 100) : 0;
   const variancesAwaiting = rows.filter((r) =>
     purchaseNeedsVarianceApproval(r.match.status, r.variance_approved)
   ).length;
@@ -428,6 +465,8 @@ export function purchaseKpisFromRegister(rows: PurchaseOrderApi[], routed: Invoi
     openPos,
     missingGrn,
     matchPct,
+    twoWayMatchPct,
+    twoWayCount: twoWayRows.length,
     variancesAwaiting,
     needsAction,
     withoutPoRef,
@@ -487,6 +526,7 @@ export function apiPurchaseToRow(row: PurchaseOrderApi): {
   invoiceId: number | null;
   po: PurchaseOrder;
   m: ThreeWayMatch;
+  matchMode: string;
   threeWayAuditStatus: PurchaseOrderApi["three_way_match_status"];
 } {
   const po: PurchaseOrder = {
@@ -519,6 +559,7 @@ export function apiPurchaseToRow(row: PurchaseOrderApi): {
     invoiceId: row.invoice_id,
     po,
     m,
+    matchMode: row.match_mode ?? PURCHASE_THREE_WAY_MODE,
     threeWayAuditStatus: row.three_way_match_status ?? null,
   };
 }
@@ -528,6 +569,7 @@ export function apiSalesToRow(row: SalesOrderApi): {
   invoiceId: number | null;
   so: SalesOrder;
   m: ThreeWayMatch;
+  matchMode: string;
   threeWayAuditStatus: SalesOrderApi["three_way_match_status"];
 } {
   const so: SalesOrder = {
@@ -560,8 +602,42 @@ export function apiSalesToRow(row: SalesOrderApi): {
     invoiceId: row.invoice_id,
     so,
     m,
+    matchMode: row.match_mode ?? SALES_THREE_WAY_MODE,
     threeWayAuditStatus: row.three_way_match_status ?? null,
   };
+}
+
+export type SalesTwoWayOrphanRow = {
+  kind: "orphan";
+  invoiceId: number;
+  dnInvoiceId: number | null;
+  invoiceNo: string;
+  customer: string;
+  dnQty: number | null;
+  invoiceQty: number;
+  m: ThreeWayMatch;
+};
+
+export function apiTwoWaySalesOrphanToRow(row: TwoWaySalesMatchApi): SalesTwoWayOrphanRow {
+  return {
+    kind: "orphan",
+    invoiceId: row.invoice_id,
+    dnInvoiceId: row.dn_invoice_id,
+    invoiceNo: row.invoice_no ?? "—",
+    customer: row.customer ?? "—",
+    dnQty: row.dn_qty,
+    invoiceQty: row.invoice_qty,
+    m: mapThreeWayMatchFromApi(row.match),
+  };
+}
+
+export type SalesRegisterTableRow =
+  | ({ kind: "register" } & ReturnType<typeof apiSalesToRow>)
+  | SalesTwoWayOrphanRow;
+
+export function salesTwoWayTableRowKey(row: SalesRegisterTableRow): string {
+  if (row.kind === "orphan") return `orphan-${row.invoiceId}`;
+  return `${row.salesId}-${row.invoiceId ?? "none"}`;
 }
 
 export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {

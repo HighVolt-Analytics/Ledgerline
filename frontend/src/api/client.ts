@@ -171,9 +171,18 @@ const TENANT_EXEMPT_API_PATHS = new Set([
   "/api/auth/refresh",
 ]);
 
-function isTenantScopedApiPath(path: string): boolean {
+/** Public invite accept flows (no tenant session). */
+const TENANT_EXEMPT_API_PREFIXES = ["/api/auth/invite/", "/api/mailboxes/invites/"];
+
+export function apiPathWithoutQuery(path: string): string {
+  return path.split("?")[0] ?? path;
+}
+
+export function isTenantScopedApiPath(path: string): boolean {
   if (!path.startsWith("/api/")) return false;
-  if (AUTH_RETRY_PATHS.has(path) || TENANT_EXEMPT_API_PATHS.has(path)) return false;
+  const bare = apiPathWithoutQuery(path);
+  if (AUTH_RETRY_PATHS.has(bare) || TENANT_EXEMPT_API_PATHS.has(bare)) return false;
+  if (TENANT_EXEMPT_API_PREFIXES.some((prefix) => bare.startsWith(prefix))) return false;
   return true;
 }
 
@@ -1199,6 +1208,25 @@ export const api = {
     }),
   dismissPendingVendor: (pendingId: number) =>
     request<void>(`/api/pending-vendors/${pendingId}/dismiss`, { method: "POST" }),
+  listPendingCustomers: (options?: FreshRequestOptions) => {
+    const path = "/api/pending-customers";
+    if (options?.fresh) bustGetCache(path);
+    return request<Array<Record<string, unknown>>>(path);
+  },
+  createPendingCustomer: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/api/pending-customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  promotePendingCustomer: (pendingId: number, body: Record<string, unknown>) =>
+    request<Record<string, unknown>>(`/api/pending-customers/${pendingId}/promote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  dismissPendingCustomer: (pendingId: number) =>
+    request<void>(`/api/pending-customers/${pendingId}/dismiss`, { method: "POST" }),
   getRuleBookConfig: () => request<RuleBookConfig>("/api/rule-book/config"),
   getAiProviders: () =>
     request<import("@/api/types").AiProvidersResponse>("/api/rule-book/ai-providers"),
@@ -1267,6 +1295,7 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<BillingState>(path);
   },
+  getGeoCountry: () => request<{ country_code: string | null }>("/api/geo/country"),
   getBillingUsage: (page = 1, pageSize = 50, options?: FreshRequestOptions) => {
     const path = `/api/billing/usage?page=${page}&page_size=${pageSize}`;
     if (options?.fresh) bustGetCache(path);
@@ -1351,10 +1380,18 @@ export const api = {
       undefined,
       `documents_bundle_${dateFrom.slice(0, 7)}.csv`
     );
-    saveBlobAsFile(blob, filename);
+    const text = await blob.text();
+    const dataRows = Math.max(0, text.trim().split(/\r?\n/).length - 1);
+    saveBlobAsFile(new Blob([text], { type: blob.type || "text/csv" }), filename);
+    return { dataRows };
   },
   listPurchases: (options?: FreshRequestOptions) => {
     const path = "/api/purchases";
+    if (options?.fresh) bustGetCache(path);
+    return request<PurchaseOrderApi[]>(path);
+  },
+  listPurchasesTwoWay: (options?: FreshRequestOptions) => {
+    const path = "/api/purchases/two-way";
     if (options?.fresh) bustGetCache(path);
     return request<PurchaseOrderApi[]>(path);
   },
@@ -1375,6 +1412,11 @@ export const api = {
     const path = "/api/sales";
     if (options?.fresh) bustGetCache(path);
     return request<SalesOrderApi[]>(path);
+  },
+  listSalesTwoWay: (options?: FreshRequestOptions) => {
+    const path = "/api/sales/two-way";
+    if (options?.fresh) bustGetCache(path);
+    return request<import("@/api/types").TwoWaySalesListApi>(path);
   },
   approveSalesVariance: (salesOrderId: number) =>
     request<SalesOrderApi>(`/api/sales/${salesOrderId}/approve-variance`, {

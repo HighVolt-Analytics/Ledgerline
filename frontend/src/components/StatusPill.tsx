@@ -6,10 +6,10 @@ const BASE =
 
 export const pillTones = {
   amber:
-    "border-[hsl(36_80%_45%/0.45)] bg-[hsl(36_80%_45%/0.08)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]",
+    "border-[rgb(var(--system-yellow-rgb)/0.35)] bg-[rgb(var(--system-yellow-rgb)/0.12)] text-[var(--system-yellow-text)]",
   blue: "border-[hsl(200_50%_50%/0.35)] bg-[hsl(200_50%_50%/0.08)] text-[hsl(200_45%_40%)] dark:text-[hsl(200_50%_65%)]",
   muted: "border-border bg-muted/50 text-muted-foreground",
-  ok: "border-[hsl(var(--chart-1)/0.4)] bg-[hsl(var(--chart-1)/0.08)] text-[hsl(var(--chart-1))]",
+  ok: "border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success))]",
   bad: "border-destructive/40 bg-destructive/5 text-destructive",
   whatsapp:
     "bg-[hsl(145_63%_42%/0.16)] text-[hsl(145_55%_34%)] dark:text-[hsl(145_55%_60%)] border-transparent",

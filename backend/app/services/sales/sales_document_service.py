@@ -195,12 +195,20 @@ async def _get_or_load_so(
     ).scalar_one_or_none()
 
 
-async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) -> SalesOrder:
+async def _create_or_update_so_from_invoice(
+    db: AsyncSession,
+    invoice: Invoice,
+    so_number: str,
+    *,
+    so_document_id: int | None = None,
+) -> tuple[SalesOrder, bool]:
+    """Create or update a sales order row from invoice line data. Returns (so, created)."""
     invoice = await _load_invoice_with_lines(db, invoice)
     qty, unit, _ = _invoice_qty_and_price(invoice)
     first_line = invoice.line_items[0] if invoice.line_items else None
 
     so = await _get_or_load_so(db, invoice, so_number)
+    created = so is None
     if so is None:
         so = SalesOrder(
             tenant_id=invoice.tenant_id,
@@ -211,7 +219,7 @@ async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) 
             so_qty=qty,
             so_unit_price=unit,
             so_currency=invoice.currency,
-            so_document_id=invoice.id,
+            so_document_id=so_document_id,
         )
         db.add(so)
         await db.flush()
@@ -223,7 +231,8 @@ async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) 
             )
         ).scalar_one()
     else:
-        so.so_document_id = invoice.id
+        if so_document_id is not None:
+            so.so_document_id = so_document_id
         if not so.customer:
             so.customer = invoice.vendor
         if so.so_qty <= 0:
@@ -237,6 +246,14 @@ async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) 
     if not so.ledger:
         code_so_from_invoice(so, invoice, config)
     inherit_so_coding_to_invoice(so, invoice, config=config)
+    return so, created
+
+
+async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) -> SalesOrder:
+    so, _created = await _create_or_update_so_from_invoice(
+        db, invoice, so_number, so_document_id=invoice.id
+    )
+    config = await load_classification_config(db, invoice.tenant_id)
 
     commercial: Invoice | None = None
     if so.invoice_id:
@@ -271,18 +288,20 @@ async def _sync_so_document(db: AsyncSession, invoice: Invoice, so_number: str) 
 
 
 async def _sync_dn_document(db: AsyncSession, invoice: Invoice, so_number: str) -> SalesOrder | None:
-    so = await _get_or_load_so(db, invoice, so_number)
-    if so is None:
-        invoice.evaluation_status = EVAL_AWAITING_SO
-        invoice.status = InvoiceStatus.EXCEPTION
+    so, created = await _create_or_update_so_from_invoice(db, invoice, so_number)
+    if created:
         await log_event(
             db,
-            "sales_awaiting_so",
+            "sales_so_auto_registered",
             invoice_id=invoice.id,
-            detail={"so_number": so_number, "document_type": SalesDocumentType.DN.value},
+            detail={
+                "so_number": so_number,
+                "sales_order_id": so.id,
+                "source": "dn",
+            },
         )
-        await db.flush()
-        return None
+    if invoice.evaluation_status == EVAL_AWAITING_SO:
+        invoice.evaluation_status = None
 
     invoice = await _load_invoice_with_lines(db, invoice)
     await attach_dn_invoice_to_so(db, dn_invoice=invoice, so=so)
@@ -339,18 +358,20 @@ async def _sync_orphan_dn_document(db: AsyncSession, invoice: Invoice) -> None:
 
 
 async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, so_number: str) -> SalesOrder | None:
-    so = await _get_or_load_so(db, invoice, so_number)
-    if so is None:
-        invoice.evaluation_status = EVAL_AWAITING_SO
-        invoice.status = InvoiceStatus.EXCEPTION
+    so, created = await _create_or_update_so_from_invoice(db, invoice, so_number)
+    if created:
         await log_event(
             db,
-            "sales_awaiting_so",
+            "sales_so_auto_registered",
             invoice_id=invoice.id,
-            detail={"so_number": so_number, "document_type": SalesDocumentType.INVOICE.value},
+            detail={
+                "so_number": so_number,
+                "sales_order_id": so.id,
+                "source": "commercial_invoice",
+            },
         )
-        await db.flush()
-        return None
+    if invoice.evaluation_status == EVAL_AWAITING_SO:
+        invoice.evaluation_status = None
 
     invoice = await _load_invoice_with_lines(db, invoice)
     so.invoice_id = invoice.id
@@ -393,7 +414,7 @@ async def sync_sales_document(
     *,
     explicit_document_type: str | None = None,
 ) -> SalesOrder | None:
-    """SO-first sync: SO doc creates SO; DN/invoice require existing SO."""
+    """SO-first sync: SO doc creates SO; DN/invoice auto-register SO when ref is plausible."""
     if invoice.route_target != ROUTE_SALES:
         return None
 

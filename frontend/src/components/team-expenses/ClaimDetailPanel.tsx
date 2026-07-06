@@ -128,7 +128,7 @@ export function ClaimDetailPanel({
       </div>
 
       {!hasStoredFile && canApprove && (
-        <p className="text-xs text-amber-600 dark:text-amber-400 mt-3">
+        <p className="text-xs ds-warning-text mt-3">
           Upload a receipt before this claim can be approved.
         </p>
       )}

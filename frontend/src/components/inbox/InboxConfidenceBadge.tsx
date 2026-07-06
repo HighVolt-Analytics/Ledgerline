@@ -9,7 +9,7 @@ export function InboxConfidenceBadge({ value }: { value: number | null }) {
     value >= 95
       ? "border-[hsl(var(--chart-1)/0.4)] text-[hsl(var(--chart-1))]"
       : value >= 80
-        ? "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
+        ? "border-[rgb(var(--system-yellow-rgb)/0.35)] ds-warning-text"
         : "border-destructive/40 text-destructive";
   return (
     <Badge variant="outline" className={cn("tnum font-medium", tone)}>

@@ -43,9 +43,9 @@ export function salesActionIssue(inv: Invoice, coverage: SalesRegisterCoverage):
   if (docType === "so") return "SO document not linked to register";
   if (docType === "dn") return "DN document not linked to register";
 
-  const soRef = inv.so_reference?.trim().toUpperCase();
+  const soRef = inv.so_reference?.trim();
   if (!soRef) return "Missing SO reference";
-  if (!coverage.soNumbers.has(soRef)) return `SO ${inv.so_reference?.trim()} not in register`;
+  if (!coverage.soNumbers.has(soRef.toUpperCase())) return "Awaiting register sync";
   return "Awaiting register sync";
 }
 

@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { KpiCard } from "@/components/KpiCard";
+import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { CollectionRow } from "@/components/collections/CollectionRow";
+import { ListRowSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useCollectionMutations } from "@/hooks/useCollectionMutations";
 import { useCollections } from "@/hooks/useCollections";
 import { useTenantTime } from "@/hooks/useTenantTime";
@@ -89,7 +91,11 @@ export function CollectionsPage() {
 
       <PageTabPanel value={tab} active={tab} className="mt-4 space-y-2">
         {isLoading || collectionsBlocked ? (
-          <div className="text-sm text-muted-foreground py-8">Loading collections…</div>
+          <Card className="p-2 space-y-1">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <ListRowSkeleton key={i} actionWidth="w-20" />
+            ))}
+          </Card>
         ) : isError && !collectionsBlocked ? (
           <div className="text-sm text-destructive py-8">Could not load collections.</div>
         ) : tabRows.length === 0 ? (

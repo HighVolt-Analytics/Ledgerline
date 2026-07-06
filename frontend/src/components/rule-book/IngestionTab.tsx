@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { RuleBookEmptyPanel } from "./RuleBookEmptyPanel";
 import { Switch } from "@/components/ui/switch";
 import { DEFAULT_MAILBOX } from "@/lib/v4RuleBookMockData";
 import type { EmailCaptureRule } from "@/lib/v4RuleBookTypes";
@@ -197,9 +198,11 @@ export function IngestionTab({
           );
         })}
         {sorted.length === 0 && (
-          <Card className="p-6 text-center text-sm text-muted-foreground">
-            No ingestion rules yet. Add a rule to accept matching email attachments into the pipeline.
-          </Card>
+          <RuleBookEmptyPanel
+            icon={Inbox}
+            title="No ingestion rules yet"
+            hint="Add a rule to accept matching email attachments into the pipeline."
+          />
         )}
       </div>
     </div>

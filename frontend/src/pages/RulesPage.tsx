@@ -174,7 +174,7 @@ export function RulesPage() {
         </div>
       );
     }
-    return <PageLoader label="Loading rule book…" />;
+    return <PageLoader variant="rules" />;
   }
 
   const saveLabel =
@@ -210,7 +210,7 @@ export function RulesPage() {
 
       {!canEdit ? (
         <Card
-          className="p-3 mb-5 border-amber-500/30 bg-amber-500/5 text-sm"
+          className="p-3 mb-5 ds-warning-panel border text-sm"
           data-testid="rulebook-readonly"
         >
           View-only mode — only organisation admins can edit rules, masters, and trigger remaps.
@@ -220,7 +220,6 @@ export function RulesPage() {
       <PageTabs
         value={tab}
         onChange={setTab}
-        variant="pill"
         className="mb-5 w-full"
         data-testid="rulebook-tabs"
         tabs={RULEBOOK_TABS.map((t) => {

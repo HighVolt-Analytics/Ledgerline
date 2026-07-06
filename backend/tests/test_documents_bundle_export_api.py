@@ -232,6 +232,98 @@ async def test_documents_bundle_export_universal_match_yes(
     assert row[header.index("2 way match")] == "No"
 
 
+@pytest.mark.asyncio
+async def test_documents_bundle_export_with_empty_tenant_document_types(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    from app.models.tenant_rule_book_config import TenantRuleBookConfig
+    from app.services.rule_book.rule_book_config_io import clear_posting_config_cache
+
+    row = await db_session.get(TenantRuleBookConfig, TESTING_TENANT_UUID)
+    assert row is not None
+    row.config = {**row.config, "document_types": []}
+    await db_session.flush()
+    clear_posting_config_cache()
+
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Supplier",
+            document_type_code="DT-01",
+            invoice_no="INV-CATALOG-FALLBACK",
+            invoice_date=date(2026, 7, 8),
+            status=InvoiceStatus.PROCESSED,
+            file_hash="bundle-empty-catalogue",
+        )
+    )
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-07-01&date_to=2026-07-31"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    invoice_nos = {r[header.index("Invoice no.")] for r in data}
+    assert "INV-CATALOG-FALLBACK" in invoice_nos
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_dual_linkage_invoice_no_and_po_reference(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Buyer",
+        document_type_code="DT-01",
+        invoice_no="INV-DUAL-100",
+        po_reference="PO-DUAL-99",
+        purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        route_target=ROUTE_PURCHASE,
+        invoice_date=date(2026, 7, 10),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-dual-anchor",
+    )
+    invoice_no_sibling = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Carrier",
+        document_type_code="DT-26",
+        invoice_no="INV-DUAL-100",
+        po_reference="OTHER-PO",
+        invoice_date=date(2026, 7, 9),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-dual-inv-sibling",
+    )
+    po_sibling = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Supplier",
+        document_type_code="DT-02",
+        invoice_no="PO-DOC-ONLY",
+        po_reference="PO-DUAL-99",
+        purchase_document_type=PurchaseDocumentType.PO.value,
+        invoice_date=date(2026, 7, 8),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-dual-po-sibling",
+    )
+    db_session.add_all([anchor, invoice_no_sibling, po_sibling])
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-07-01&date_to=2026-07-31"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    row = next(r for r in data if r[header.index("Invoice no.")] == "INV-DUAL-100")
+
+    customer_col = header.index("Customer invoice")
+    po_col = header.index("PO (supporting)")
+    assert_csv_hyperlink(row[customer_col], url=vault_view_path(invoice_no_sibling.id))
+    assert_csv_hyperlink(row[po_col], url=vault_view_path(po_sibling.id))
+
+
 def test_linked_docs_helpers_still_support_audit_export() -> None:
     from app.schemas.dossier import DossierLinkedDocumentResponse
 

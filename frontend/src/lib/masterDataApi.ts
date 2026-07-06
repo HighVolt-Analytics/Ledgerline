@@ -14,6 +14,8 @@ export type PendingVendorRecord = {
   resolvedAt?: string;
 };
 
+export type PendingCustomerRecord = PendingVendorRecord;
+
 function mapPendingVendor(raw: Record<string, unknown>): PendingVendorRecord {
   return {
     id: Number(raw.id),
@@ -27,6 +29,10 @@ function mapPendingVendor(raw: Record<string, unknown>): PendingVendorRecord {
     createdAt: String(raw.created_at),
     resolvedAt: raw.resolved_at as string | undefined,
   };
+}
+
+function mapPendingCustomer(raw: Record<string, unknown>): PendingCustomerRecord {
+  return mapPendingVendor(raw);
 }
 
 export function customerMasterFromApi(raw: Record<string, unknown>): CustomerMaster {
@@ -201,4 +207,4 @@ export function employeeMasterToUpdateBody(patch: Partial<EmployeeMaster>): Reco
   return out;
 }
 
-export { mapPendingVendor };
+export { mapPendingCustomer, mapPendingVendor };

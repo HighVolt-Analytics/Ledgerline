@@ -1,13 +1,17 @@
 import { Fragment, useState } from "react";
-import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronRight, ClipboardCheck, Loader2, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/context/ToastContext";
 import {
   useCreateCustomerMaster,
   useCustomerMasters,
   useDeleteCustomerMaster,
+  useDismissPendingCustomer,
+  usePendingCustomers,
+  usePromotePendingCustomer,
   useUpdateCustomerMaster,
 } from "@/hooks/useMasterData";
 import { cn } from "@/lib/cn";
@@ -20,7 +24,7 @@ import { CustomerDetailPanel } from "./CustomerDetailPanel";
 function StatusDot({ status }: { status: string }) {
   const tone: Record<string, string> = {
     Active: "bg-[hsl(var(--chart-1))]",
-    "On hold": "bg-[hsl(43_74%_49%)]",
+    "On hold": "bg-[#9c4e2a] dark:bg-[#edc0a6]",
     "Pending registration": "bg-destructive",
   };
   return (
@@ -40,9 +44,14 @@ export function CustomerMastersPanel() {
   const [quickName, setQuickName] = useState("");
 
   const { data: customers = [], isLoading } = useCustomerMasters();
+  const { data: pendingQueue = [] } = usePendingCustomers();
   const createMutation = useCreateCustomerMaster();
   const updateMutation = useUpdateCustomerMaster();
   const deleteMutation = useDeleteCustomerMaster();
+  const promoteMutation = usePromotePendingCustomer();
+  const dismissMutation = useDismissPendingCustomer();
+
+  const registrationPending = customers.filter((c) => c.status === "Pending registration");
 
   const getDraft = (customer: CustomerMaster) => drafts[customer.id] ?? customer;
 
@@ -110,15 +119,50 @@ export function CustomerMastersPanel() {
     }
   };
 
+  const completePendingRegistration = (pendingId: number, name: string) => {
+    promoteMutation.mutate(
+      { pendingId, body: { name, status: "Pending registration" } },
+      {
+        onSuccess: (customer) => {
+          setExpandedId(customer.id);
+          toast({ title: "Customer created", description: "Complete GL and billing details." });
+        },
+        onError: (err) =>
+          toast({
+            title: "Could not register customer",
+            description: err instanceof Error ? err.message : "Registration failed",
+            variant: "destructive",
+          }),
+      }
+    );
+  };
+
+  const dismissPending = (pendingId: number, name: string) => {
+    dismissMutation.mutate(pendingId, {
+      onSuccess: () => toast({ title: "Removed from queue", description: name }),
+      onError: (err) =>
+        toast({
+          title: "Could not dismiss",
+          description: err instanceof Error ? err.message : "Dismiss failed",
+          variant: "destructive",
+        }),
+    });
+  };
+
   if (isLoading) {
-    return <div className="text-sm text-muted-foreground py-8">Loading customer masters…</div>;
+    return (
+      <div className="space-y-4" data-testid="customer-masters-panel">
+        <InlineTableSkeleton rows={6} columns={5} />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4" data-testid="customer-masters-panel">
       <p className="text-sm text-muted-foreground max-w-2xl">
-        Canonical customer records for sales GL routing, aliases, and billing. For email sender
-        matching, use Capture registry.
+        Canonical customer records for sales GL routing, aliases, and billing. Unknown customers
+        from sales documents are flagged for registration. For email sender matching, use Capture
+        registry.
       </p>
 
       <Card className="p-3 flex flex-wrap items-end gap-2">
@@ -240,6 +284,77 @@ export function CustomerMastersPanel() {
             )}
           </tbody>
         </table>
+      </Card>
+
+      <Card
+        className="p-4 border-destructive/30 bg-destructive/5"
+        data-testid="pending-customer-queue"
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <AlertCircle className="h-4 w-4 text-destructive" />
+          <h3 className="text-sm font-semibold">Pending customer registration queue</h3>
+        </div>
+        {pendingQueue.length === 0 && registrationPending.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No customers pending registration.</p>
+        ) : (
+          <div className="space-y-2">
+            {pendingQueue.map((item) => (
+              <div
+                key={`pending-${item.id}`}
+                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-background p-3"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">{item.detectedName}</div>
+                  <div className="text-xs text-muted-foreground">
+                    Detected on sales document · match confidence {item.confidence}% (below threshold)
+                    {item.detectedAbn ? ` · ABN ${item.detectedAbn}` : ""}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  disabled={promoteMutation.isPending}
+                  onClick={() => completePendingRegistration(item.id, item.detectedName)}
+                  data-testid={`complete-registration-pending-customer-${item.id}`}
+                >
+                  <ClipboardCheck className="h-4 w-4 mr-1" />
+                  Complete Registration
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={dismissMutation.isPending}
+                  onClick={() => dismissPending(item.id, item.detectedName)}
+                  data-testid={`dismiss-pending-customer-${item.id}`}
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  Dismiss
+                </Button>
+              </div>
+            ))}
+            {registrationPending.map((customer) => (
+              <div
+                key={`in-progress-${customer.id}`}
+                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-background p-3"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">{customer.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    Registration in progress · match confidence {customer.matchConfidence}% · complete
+                    GL details
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setExpandedId(customer.id)}
+                  data-testid={`resume-registration-${customer.id}`}
+                >
+                  Resume
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );

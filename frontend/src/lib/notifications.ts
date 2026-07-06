@@ -125,3 +125,37 @@ export function formatUnreadBadge(count: number): string {
   if (count > 9) return "9+";
   return String(count);
 }
+
+export type NotificationDayGroup = "Today" | "Yesterday" | "Earlier";
+
+function startOfLocalDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+export function notificationDayGroup(iso: string | null | undefined): NotificationDayGroup {
+  if (!iso) return "Earlier";
+  const created = new Date(iso);
+  if (Number.isNaN(created.getTime())) return "Earlier";
+  const day = startOfLocalDay(created);
+  const today = startOfLocalDay(new Date());
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (day === today) return "Today";
+  if (day === today - dayMs) return "Yesterday";
+  return "Earlier";
+}
+
+export function groupNotificationsByDay<T extends { created_at: string }>(
+  items: T[]
+): { label: NotificationDayGroup; items: T[] }[] {
+  const buckets: Record<NotificationDayGroup, T[]> = {
+    Today: [],
+    Yesterday: [],
+    Earlier: [],
+  };
+  for (const item of items) {
+    buckets[notificationDayGroup(item.created_at)].push(item);
+  }
+  return (["Today", "Yesterday", "Earlier"] as const)
+    .filter((label) => buckets[label].length > 0)
+    .map((label) => ({ label, items: buckets[label] }));
+}

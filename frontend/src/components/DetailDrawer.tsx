@@ -66,7 +66,7 @@ export function DetailDrawer({
         aria-modal="true"
         data-state={sheetState}
         className={cn(
-          "invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-background p-0 shadow-lg",
+          "invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-card p-0 shadow-lg",
           PANEL_CLASS[size]
         )}
       >

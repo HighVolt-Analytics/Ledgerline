@@ -206,3 +206,68 @@ def test_playbook_preset_catalog_parity() -> None:
     assert len(PROFILE_PRESETS) == 19
     assert "ar_goods" in PROFILE_PRESETS
     assert PROFILE_PRESETS["ar_goods"].match_mode == "three_way_so_dn"
+
+
+def test_sync_stale_match_policy_on_save() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_payload
+
+    payload = validate_rule_book_config_payload(
+        {
+            "document_types": [
+                {
+                    "code": "DT-26",
+                    "title": "AR goods invoice",
+                    "shortTitle": "AR goods",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "recognition_mode": "signals",
+                    "recognition_signals": ["heading_invoice"],
+                    "llm_prompt": "",
+                    "routeTarget": "Sales Management",
+                    "playbookProfile": "ar_goods_2way",
+                    "matchPolicy": {"mode": "three_way_so_dn"},
+                    "approvalPolicy": {"mode": "touchless_on_clean_match"},
+                }
+            ]
+        }
+    )
+    assert payload.document_types[0].playbook_profile == "ar_goods_2way"
+    assert payload.document_types[0].match_policy is not None
+    assert payload.document_types[0].match_policy.mode == "two_way_dn_invoice"
+    assert payload.document_types[0].approval_policy is not None
+    assert payload.document_types[0].approval_policy.mode == "supervisor_on_exception"
+
+
+def test_infer_ar_goods_routes_to_sales() -> None:
+    from app.services.classification.document_type_recognition_signals import infer_document_metadata
+
+    klass, posting, route = infer_document_metadata("ar_goods")
+    assert klass == "Transactional"
+    assert posting == "Yes"
+    assert route == "Sales Management"
+
+    _, _, route_2way = infer_document_metadata("ar_goods_2way")
+    assert route_2way == "Sales Management"
+
+
+def test_apply_sample_proposal_sets_match_policy() -> None:
+    from app.schemas.document_type_sample_analysis import DocumentTypeSampleProposal
+    from app.services.classification.document_type_sample_analyzer import apply_sample_proposal_to_draft
+
+    draft = _definition(playbookProfile="po_goods", matchPolicy={"mode": "three_way_po_grn"})
+    proposal = DocumentTypeSampleProposal(
+        recognition_signals=["heading_invoice"],
+        extraction_fields=["invoice_no"],
+        required_fields=["invoice_no"],
+        absent_fields=[],
+        playbook_profile="po_services",
+        match_mode="two_way_po_ses",
+        approval_mode="touchless_on_clean_match",
+        min_route_confidence=0.65,
+    )
+    updated = apply_sample_proposal_to_draft(draft, proposal)
+    assert updated.playbook_profile == "po_services"
+    assert updated.match_policy is not None
+    assert updated.match_policy.mode == "two_way_po_ses"
+    assert updated.approval_policy is not None
+    assert updated.approval_policy.mode == "touchless_on_clean_match"

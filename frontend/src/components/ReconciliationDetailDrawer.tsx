@@ -63,7 +63,7 @@ export function ReconciliationDetailDrawer({
         role="dialog"
         aria-modal="true"
         data-state={sheetState}
-        className="invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-background p-0 shadow-lg max-w-lg"
+        className="invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-card p-0 shadow-lg max-w-lg"
       >
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border shrink-0">
           <div>

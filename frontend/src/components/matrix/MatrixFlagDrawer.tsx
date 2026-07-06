@@ -50,9 +50,9 @@ export function MatrixFlagDrawer({ row, open, onClose, busy = false, onResolve }
     >
       <div className="space-y-4 -mt-1">
         {row.reason && (
-          <Card className="p-3 bg-[hsl(43_74%_49%/0.08)] border-[hsl(43_74%_49%/0.3)]">
+          <Card className="p-3 ds-warning-panel border">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="h-4 w-4 text-[hsl(36_80%_40%)] dark:text-[hsl(43_74%_62%)] mt-0.5 shrink-0" />
+              <AlertTriangle className="h-4 w-4 ds-warning-text mt-0.5 shrink-0" />
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
                   Primary issue

@@ -1,0 +1,13 @@
+/* Grotesk S SH (headline/sidebar) — provide font files locally.
+   Put the files in: frontend/public/fonts/
+   - GroteskSSH-SH-Semibold.woff2  (required)
+*/
+
+@font-face {
+  font-family: "Grotesk S SH";
+  src: url("/fonts/GroteskSSH-SH-Semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+

@@ -23,12 +23,14 @@ from app.api import (
     notifications,
     dossiers,
     employee_masters,
+    geo,
     invoices,
     mailboxes,
     tenants,
     tenant_members,
     platform,
     payments,
+    pending_customers,
     pending_vendors,
     processing,
     purchases,
@@ -109,6 +111,7 @@ if _settings.root_path:
     app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
 
 app.include_router(auth.router, prefix="/api")
+app.include_router(geo.router, prefix="/api")
 # Stripe webhooks — no JWT.
 app.include_router(stripe_webhooks.router, prefix="/api")
 # OAuth Microsoft redirect — no JWT (must be before authenticated mailboxes router).
@@ -142,6 +145,7 @@ app.include_router(customer_masters.router, prefix="/api", dependencies=_api_dep
 app.include_router(customers.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(employee_masters.router, prefix="/api", dependencies=_module_deps("team_expenses"))
 app.include_router(pending_vendors.router, prefix="/api", dependencies=_api_deps)
+app.include_router(pending_customers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(reports.router, prefix="/api", dependencies=_module_deps("reports"))
 app.include_router(rule_book.router, prefix="/api", dependencies=_module_deps("rule_book"))
 app.include_router(settings_api.router, prefix="/api", dependencies=_api_deps)

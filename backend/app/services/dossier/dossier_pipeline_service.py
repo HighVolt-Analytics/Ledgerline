@@ -119,6 +119,8 @@ _EVENT_STAGE.update(
         "validation_bypassed_after_human_approval": 11,
         "routing_review_required": 11,
         "three_way_match_evaluated": 12,
+        "match_phase_evaluated": 12,
+        "match_context_incomplete": 12,
         "purchase_variance_approved": 12,
         "invoice_approved": 13,
         "approval_required": 13,

@@ -26,6 +26,7 @@ from app.services.rule_book.rule_book_mapper import (
 from app.services.purchase.po_reference import is_plausible_po_reference
 from app.services.rule_book.rule_engine import (
     doc_to_sample_email,
+    detect_customer,
     detect_vendor,
     match_email_capture_rule,
     match_expense_rule,
@@ -37,6 +38,7 @@ from app.schemas.master_data import PendingVendorCreate
 from app.schemas.rule_book_config import validate_rule_book_config_payload
 from app.services.purchase.expense_vendor_policy import (
     EVAL_UNMATCHED_EXPENSE_VENDOR,
+    customer_detection_evaluation_status,
     expense_vendor_hold_above,
     is_unmatched_expense_vendor_status,
     vendor_detection_evaluation_status,
@@ -120,14 +122,13 @@ def evaluate_invoice_routing(
     *,
     mapping_rule_type: str | None = None,
     route_override: str | None = None,
+    customer_masters: list | None = None,
 ) -> InvoiceEvaluationResult:
-    """Evaluate email route, vendor detection, and category rules for one invoice."""
+    """Evaluate email route, vendor/customer detection, and category rules for one invoice."""
     doc = invoice_to_eval_document(invoice)
     email = doc_to_sample_email(doc, default_mailbox="accounts@acme-hospitality.com.au")
     email_rule = match_email_capture_rule(email, config.email_capture_rules)
-    vendor_match = detect_vendor(doc, config.vendor_masters, config.vendor_detection_config)
     threshold = config.vendor_detection_config.threshold
-    confidence = vendor_match.confidence
     purchase = match_purchase_rule(doc, config.purchase_rules)
     sales = match_sales_rule(doc, config.sales_rules)
     expense = match_expense_rule(doc, config.expense_rules)
@@ -140,8 +141,6 @@ def evaluate_invoice_routing(
     matched_rule_ids: list[str] = []
     if email_rule:
         matched_rule_ids.append(f"email:{email_rule.id}")
-    if vendor_match.vendor and confidence >= threshold:
-        matched_rule_ids.append(f"vendor:{vendor_match.vendor.id}")
     if sales:
         matched_rule_ids.append(f"sales:{sales.id}")
     elif purchase:
@@ -190,11 +189,12 @@ def evaluate_invoice_routing(
 
     is_fallback = mapping_rule_type == FALLBACK_RULE_TYPE
 
-    from app.services.master_data.vendor_detection import find_matching_vendor_master
-
-    known_master = find_matching_vendor_master(doc.vendor, doc.abn, config.vendor_masters)
-
+    from app.services.master_data.vendor_detection import (
+        find_matching_customer_master,
+        find_matching_vendor_master,
+    )
     from app.services.master_data.vendor_registration_policy import (
+        customer_registration_required,
         persisted_vendor_confidence,
         resolve_document_type_definition,
         vendor_registration_required,
@@ -204,24 +204,53 @@ def evaluate_invoice_routing(
         dt_code,
         document_types=config.document_types,
     )
-    route_for_vendor = (route_override or route_target or "").strip()
-    registration_required = vendor_registration_required(
-        route_target=route_for_vendor or route_target,
-        document_type=dt_definition,
-        purchase_document_type=invoice.purchase_document_type,
-    )
-    vendor_flag = vendor_detection_evaluation_status(
-        route_target=route_for_vendor or None,
-        confidence=confidence,
-        threshold=threshold,
-        known_master=known_master,
-        amount=_invoice_amount(invoice),
-        hold_above=expense_vendor_hold_above(config),
-        registration_required=registration_required,
-    )
+    route_for_counterparty = (route_override or route_target or "").strip()
+    is_sales_route = route_for_counterparty == ROUTE_SALES
 
-    if vendor_flag:
-        evaluation_status = vendor_flag
+    if is_sales_route:
+        masters = customer_masters or []
+        customer_match = detect_customer(
+            doc,
+            masters,
+            config.vendor_detection_config,
+        )
+        confidence = customer_match.confidence
+        known_master = find_matching_customer_master(doc.vendor, doc.abn, masters)
+        registration_required = customer_registration_required(
+            route_target=route_for_counterparty or route_target,
+            document_type=dt_definition,
+        )
+        counterparty_flag = customer_detection_evaluation_status(
+            confidence=confidence,
+            threshold=threshold,
+            known_master=known_master,
+            registration_required=registration_required,
+        )
+        if customer_match.customer and confidence >= threshold:
+            matched_rule_ids.append(f"customer:{customer_match.customer.id}")
+    else:
+        vendor_match = detect_vendor(doc, config.vendor_masters, config.vendor_detection_config)
+        confidence = vendor_match.confidence
+        known_master = find_matching_vendor_master(doc.vendor, doc.abn, config.vendor_masters)
+        registration_required = vendor_registration_required(
+            route_target=route_for_counterparty or route_target,
+            document_type=dt_definition,
+            purchase_document_type=invoice.purchase_document_type,
+        )
+        counterparty_flag = vendor_detection_evaluation_status(
+            route_target=route_for_counterparty or None,
+            confidence=confidence,
+            threshold=threshold,
+            known_master=known_master,
+            amount=_invoice_amount(invoice),
+            hold_above=expense_vendor_hold_above(config),
+            registration_required=registration_required,
+        )
+        if vendor_match.vendor and confidence >= threshold:
+            matched_rule_ids.append(f"vendor:{vendor_match.vendor.id}")
+
+    if counterparty_flag:
+        evaluation_status = counterparty_flag
     elif dt_code and dt_confidence < dt_min_confidence:
         evaluation_status = EVAL_NEEDS_REVIEW
     elif is_fallback:
@@ -229,13 +258,22 @@ def evaluate_invoice_routing(
     elif purchase or sales or expense or team or (
         "perspective:sales" in matched_rule_ids
     ) or (
-        vendor_match.vendor and vendor_match.vendor.default_ledger.strip()
+        is_sales_route
+        and customer_match.customer
+        and customer_match.customer.default_ledger.strip()
+    ) or (
+        not is_sales_route
+        and vendor_match.vendor
+        and vendor_match.vendor.default_ledger.strip()
     ) or (known_master and known_master.default_ledger.strip()):
         evaluation_status = EVAL_AUTO_CODED
     else:
         evaluation_status = EVAL_NEEDS_REVIEW
 
-    if known_master and f"vendor:{known_master.id}" not in matched_rule_ids:
+    if is_sales_route:
+        if known_master and f"customer:{known_master.id}" not in matched_rule_ids:
+            matched_rule_ids.append(f"customer:{known_master.id}")
+    elif known_master and f"vendor:{known_master.id}" not in matched_rule_ids:
         matched_rule_ids.append(f"vendor:{known_master.id}")
 
     return InvoiceEvaluationResult(
@@ -302,11 +340,15 @@ async def apply_invoice_evaluation(
     )
 
     mapping_detail = map_invoice_with_details(invoice, config=config)
+    from app.services.master_data.customer_master_service import list_customer_masters
+
+    customer_masters = await list_customer_masters(session, invoice.tenant_id)
     result = evaluate_invoice_routing(
         invoice,
         config,
         mapping_rule_type=mapping_detail.rule_type,
         route_override=prior_route,
+        customer_masters=customer_masters,
     )
 
     if (prior_route or "").strip() and not dt_confident:
@@ -367,7 +409,11 @@ async def apply_invoice_evaluation(
         )
 
     if enqueue_pending and invoice.evaluation_status == EVAL_PENDING_VENDOR:
-        await _maybe_enqueue_pending_vendor(session, invoice, result, config=config)
+        route = (invoice.route_target or "").strip()
+        if route == ROUTE_SALES:
+            await _maybe_enqueue_pending_customer(session, invoice, result, config=config)
+        else:
+            await _maybe_enqueue_pending_vendor(session, invoice, result, config=config)
 
     from app.services.purchase.purchase_match_service import sync_purchase_order_from_invoice
 
@@ -433,6 +479,87 @@ async def ensure_pending_vendor_queued(
         return True
     except ValueError:
         return False
+
+
+async def ensure_pending_customer_queued(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    config: RuleBookConfigPayload | None = None,
+    confidence: float | None = None,
+) -> bool:
+    """Ensure a pending_customers row exists for a sales invoice awaiting registration."""
+    if config is None:
+        config = await load_classification_config(session, invoice.tenant_id)
+
+    from app.services.master_data.vendor_registration_policy import (
+        customer_registration_required,
+        resolve_document_type_definition,
+    )
+
+    definition = resolve_document_type_definition(
+        invoice.document_type_code,
+        document_types=config.document_types,
+    )
+    if not customer_registration_required(
+        route_target=invoice.route_target,
+        document_type=definition,
+    ):
+        return False
+
+    name = (invoice.vendor or "").strip()
+    if not name:
+        return False
+
+    from app.services.master_data.customer_master_service import (
+        create_pending_customer,
+        list_customer_masters,
+        list_pending_customers,
+    )
+    from app.services.master_data.vendor_detection import find_matching_customer_master
+
+    db_masters = await list_customer_masters(session, invoice.tenant_id)
+    if find_matching_customer_master(name, invoice.abn, db_masters):
+        return False
+
+    existing = await list_pending_customers(session, invoice.tenant_id)
+    for row in existing:
+        if row.detected_name.strip().lower() == name.lower():
+            return True
+
+    try:
+        from app.schemas.master_data import PendingCustomerCreate
+
+        await create_pending_customer(
+            session,
+            invoice.tenant_id,
+            PendingCustomerCreate(
+                detected_name=name,
+                detected_abn=invoice.abn,
+                source_invoice_id=invoice.id,
+                confidence=confidence if confidence is not None else float(invoice.vendor_confidence or 0),
+            ),
+        )
+        return True
+    except ValueError:
+        return False
+
+
+async def _maybe_enqueue_pending_customer(
+    session: AsyncSession,
+    invoice: Invoice,
+    result: InvoiceEvaluationResult,
+    *,
+    config: RuleBookConfigPayload | None = None,
+) -> None:
+    if invoice.evaluation_status != EVAL_PENDING_VENDOR:
+        return
+    await ensure_pending_customer_queued(
+        session,
+        invoice,
+        config=config,
+        confidence=result.vendor_confidence,
+    )
 
 
 async def _maybe_enqueue_pending_vendor(

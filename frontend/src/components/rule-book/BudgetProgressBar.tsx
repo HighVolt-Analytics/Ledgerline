@@ -11,7 +11,11 @@ export function BudgetProgressBar({
 }) {
   const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
   const tone =
-    pct >= 100 ? "bg-destructive" : pct >= 80 ? "bg-[hsl(43_74%_49%)]" : "bg-primary";
+    pct >= 100
+      ? "bg-destructive"
+      : pct >= 80
+        ? "bg-[rgb(var(--system-yellow-rgb)/1)]"
+        : "bg-primary";
 
   return (
     <div className="min-w-0">

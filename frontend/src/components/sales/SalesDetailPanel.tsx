@@ -159,13 +159,38 @@ function VarianceRow({ label, sub, value }: { label: string; sub: string; value:
         <span
           className={cn(
             "tnum text-sm font-medium",
-            value !== 0 && "text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
+            value !== 0 && "ds-warning-text"
           )}
         >
           {fmtAud(value)}
         </span>
       </div>
       <div className="font-mono text-[10px] text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
+export function SalesTwoWayFormulaHint() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        data-testid="button-sales-two-way-formula"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Calculator className="h-3.5 w-3.5" /> Two-way formula
+      </button>
+      {open && (
+        <Card className="absolute right-0 z-10 mt-1 p-3 max-w-xs text-xs space-y-1.5 shadow-md">
+          <div className="font-medium">Two-way match formula</div>
+          <div className="font-mono">qty_variance = (invoice_qty − dn_qty) × invoice_unit_price</div>
+          <div className="text-muted-foreground pt-1">
+            DN quantity must align with invoiced quantity within tolerance.
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -275,20 +300,26 @@ export function SalesDetailContent({
   so,
   match,
   invoiceId,
+  twoWay = false,
+  dnQty = null,
+  invoiceQty = 0,
   busy = false,
-  canApproveVariance,
+  canApproveVariance = false,
   onApprove,
   onRecordDn,
   onOpenInvoice,
   onOpenSoDocument,
   onOpenDnDocument,
 }: {
-  so: SalesOrder;
+  so?: SalesOrder;
   match: ThreeWayMatch;
   invoiceId: number | null;
+  twoWay?: boolean;
+  dnQty?: number | null;
+  invoiceQty?: number;
   busy?: boolean;
-  canApproveVariance: boolean;
-  onApprove: () => void | Promise<void>;
+  canApproveVariance?: boolean;
+  onApprove?: () => void | Promise<void>;
   onRecordDn?: (body: {
     dn_qty: number;
     shipper?: string;
@@ -300,7 +331,88 @@ export function SalesDetailContent({
 }) {
   const display = match.display;
   const varianceSubQty = "(inv_qty − dn_qty) × inv_unit_price";
-  const varianceSubPrice = "(inv_unit_price − so_unit_price) × inv_qty";
+
+  if (twoWay) {
+    const resolvedDnQty = so?.dnQty ?? dnQty;
+    const resolvedInvoiceQty = so?.invoiceQty ?? invoiceQty;
+    return (
+      <>
+        <div className="flex items-center justify-end gap-2 mb-3">
+          <SalesTwoWayFormulaHint />
+          {invoiceId != null && onOpenInvoice && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={onOpenInvoice}
+            >
+              <ExternalLink className="h-3.5 w-3.5 mr-1" />
+              Linked invoice
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <MatchDocCard
+            icon={Truck}
+            title="Delivery Note"
+            tone={resolvedDnQty == null ? "red" : "muted"}
+            onOpenDocument={onOpenDnDocument}
+          >
+            {display?.poOnDocument && display.poForMatch ? (
+              <MatchLegAmounts
+                onDocument={display.poOnDocument}
+                forMatch={display.poForMatch}
+              />
+            ) : (
+              <MatchLineRow label="Qty" value={resolvedDnQty == null ? "—" : String(resolvedDnQty)} />
+            )}
+          </MatchDocCard>
+
+          <MatchDocCard
+            icon={Receipt}
+            title="Customer Invoice"
+            tone="muted"
+            onOpenDocument={onOpenInvoice}
+          >
+            {so && <MatchLineRow label="No." value={so.invoiceNo} />}
+            {display?.invoiceOnDocument && display.invoiceForMatch ? (
+              <MatchLegAmounts
+                onDocument={display.invoiceOnDocument}
+                forMatch={display.invoiceForMatch}
+              />
+            ) : (
+              <LegacyDocAmounts
+                qty={resolvedInvoiceQty}
+                unitPrice={so?.invoiceUnitPrice ?? match.invoiceValue / (resolvedInvoiceQty || 1)}
+                value={match.invoiceValue}
+              />
+            )}
+          </MatchDocCard>
+        </div>
+
+        <Card className="p-3 mt-3 bg-muted/30">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">
+            Match reconciliation
+          </div>
+          <VarianceRow label="Quantity variance" sub={varianceSubQty} value={match.qtyVarianceValue} />
+          <div className="border-t border-border/60 mt-2 pt-2 flex items-center justify-between text-sm">
+            <span className="font-medium">Total deviation</span>
+            <span className="tnum font-semibold">{fmtAud(match.totalDeviation)}</span>
+          </div>
+        </Card>
+
+        {invoiceId != null && (
+          <DocumentAuditTrail docId={String(invoiceId)} invoiceId={invoiceId} />
+        )}
+      </>
+    );
+  }
+
+  if (!so || !onApprove) return null;
+
+  const varianceSubPriceFull = "(inv_unit_price − so_unit_price) × inv_qty";
 
   return (
     <>
@@ -410,7 +522,7 @@ export function SalesDetailContent({
           />
           <VarianceRow
             label="Price variance"
-            sub={varianceSubPrice}
+            sub={varianceSubPriceFull}
             value={match.priceVarianceValue}
           />
         </div>
@@ -420,7 +532,7 @@ export function SalesDetailContent({
             className={cn(
               "tnum font-semibold",
               match.totalDeviation !== 0
-                ? "text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
+                ? "ds-warning-text"
                 : "text-primary"
             )}
           >

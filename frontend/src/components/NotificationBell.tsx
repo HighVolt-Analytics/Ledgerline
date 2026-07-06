@@ -1,25 +1,116 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { Bell } from "lucide-react";
+import { Bell, CheckCheck, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useNotifications } from "@/hooks/useNotifications";
+import type { NotificationItem } from "@/api/types";
 import {
   formatUnreadBadge,
-  notificationSeverityClass,
+  groupNotificationsByDay,
   notificationSeverityIcon,
   relativeNotificationTime,
 } from "@/lib/notifications";
 import { cn } from "@/lib/cn";
 
-export function NotificationBell() {
+type NotificationBellProps = {
+  collapsed?: boolean;
+};
+
+function severityKpiTone(severity: NotificationItem["severity"]): "rose" | "rust" | "blue" {
+  if (severity === "error") return "rose";
+  if (severity === "action") return "rust";
+  return "blue";
+}
+
+function NotificationCard({
+  item,
+  onOpen,
+}: {
+  item: NotificationItem;
+  onOpen: (href: string | null) => void;
+}) {
+  const Icon = notificationSeverityIcon(item.severity);
+  const tone = severityKpiTone(item.severity);
+
+  return (
+    <article
+      className={cn(
+        "notifications-drawer__item",
+        item.is_unread && "notifications-drawer__item--unread"
+      )}
+      data-testid={`notification-item-${item.id}`}
+    >
+      {item.is_unread ? (
+        <span
+          className={cn(
+            "notifications-drawer__item-rail",
+            `notifications-drawer__item-rail--${tone}`
+          )}
+          aria-hidden
+        />
+      ) : null}
+
+      <div className={cn("notifications-drawer__item-icon", `kpi-module-icon--${tone}`)}>
+        <Icon className="h-4 w-4" />
+      </div>
+
+      <div className="notifications-drawer__item-body">
+        <div className="notifications-drawer__item-top">
+          <h3 className="notifications-drawer__item-title">{item.title}</h3>
+        </div>
+        {item.summary ? (
+          <p className="notifications-drawer__item-summary">{item.summary}</p>
+        ) : null}
+        <div className="notifications-drawer__item-meta">
+          <span className="notifications-drawer__item-time">
+            {relativeNotificationTime(item.created_at)}
+          </span>
+          {item.href ? (
+            <button
+              type="button"
+              className="notifications-drawer__link"
+              onClick={() => onOpen(item.href)}
+            >
+              View
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+export function NotificationBell({ collapsed = false }: NotificationBellProps) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const { data, isLoading, markAllRead } = useNotifications();
 
   const unreadCount = data?.unread_count ?? 0;
   const badgeLabel = formatUnreadBadge(unreadCount);
   const items = data?.items ?? [];
+  const groups = groupNotificationsByDay(items);
 
-  function handleItemClick(href: string | null) {
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
+
+  function handleItemOpen(href: string | null) {
     setOpen(false);
     if (href) navigate(href);
   }
@@ -30,96 +121,120 @@ export function NotificationBell() {
   }
 
   return (
-    <div className="relative shrink-0 overflow-visible">
+    <>
       <button
         type="button"
+        className={cn(
+          "primary-sidebar__topic primary-sidebar__notifications-trigger",
+          open && "primary-sidebar__topic--active"
+        )}
         data-testid="button-notifications"
         aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
         aria-expanded={open}
-        className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground hover-elevate shrink-0"
-        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="dialog"
+        data-sidebar-tip={collapsed ? "Notifications" : undefined}
+        onClick={() => setOpen(true)}
       >
-        <Bell className="h-[18px] w-[18px] shrink-0" strokeWidth={2} aria-hidden />
-      </button>
-      {badgeLabel ? (
-        <span
-          className="pointer-events-none absolute right-0 top-0 z-10 flex h-3.5 min-w-[1.125rem] -translate-y-1/2 translate-x-1/2 items-center justify-center rounded-full bg-destructive px-1 text-[8px] font-bold leading-none text-destructive-foreground ring-2 ring-background"
-          aria-hidden
-        >
-          {badgeLabel}
+        <span className="primary-sidebar__notifications-icon-wrap">
+          <Bell className="primary-sidebar__topic-icon" aria-hidden />
+          {badgeLabel ? (
+            <span className="primary-sidebar__notifications-badge" aria-hidden>
+              {badgeLabel}
+            </span>
+          ) : null}
         </span>
-      ) : null}
+        {!collapsed && (
+          <span className="primary-sidebar__topic-label">Notifications</span>
+        )}
+      </button>
 
-      {open ? (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
-          <div className="absolute right-0 top-full z-50 mt-1 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-md border border-border bg-popover shadow-md">
-            <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-              <p className="text-sm font-semibold">Notifications</p>
+      {mounted
+        ? createPortal(
+            <>
               <button
                 type="button"
-                className="text-xs text-primary hover:underline disabled:opacity-50"
-                disabled={unreadCount === 0 || markAllRead.isPending}
-                onClick={handleMarkAllRead}
+                className="invoice-drawer-backdrop"
+                data-state={open ? "open" : "closed"}
+                aria-label="Close notifications"
+                tabIndex={open ? 0 : -1}
+                style={{ pointerEvents: open ? "auto" : "none" }}
+                onClick={() => setOpen(false)}
+              />
+              <aside
+                role="dialog"
+                aria-modal="true"
+                aria-label="Notifications"
+                data-testid="menu-notifications"
+                data-state={open ? "open" : "closed"}
+                className={cn(
+                  "invoice-drawer-panel invoice-drawer-panel--sheet notifications-drawer",
+                  "flex h-full flex-col gap-0 border-l border-border bg-card p-0 shadow-lg"
+                )}
+                style={{ pointerEvents: open ? "auto" : "none" }}
               >
-                Mark all read
-              </button>
-            </div>
+                <header className="notifications-drawer__header">
+                  <div className="notifications-drawer__header-main">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="notifications-drawer__close"
+                      aria-label="Close notifications"
+                      onClick={() => setOpen(false)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                    <h2 className="notifications-drawer__title">Notifications</h2>
+                    {unreadCount > 0 ? (
+                      <span className="notifications-drawer__count">{unreadCount}</span>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="notifications-drawer__mark-all approvals-action-chip approvals-action-chip--review"
+                    disabled={unreadCount === 0 || markAllRead.isPending}
+                    onClick={handleMarkAllRead}
+                  >
+                    <CheckCheck className="approvals-action-chip__icon" />
+                    Mark all as read
+                  </button>
+                </header>
 
-            <div className="max-h-80 overflow-y-auto">
-              {isLoading ? (
-                <p className="px-3 py-6 text-center text-sm text-muted-foreground">Loading…</p>
-              ) : items.length === 0 ? (
-                <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  No notifications yet
-                </p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {items.map((item) => {
-                    const Icon = notificationSeverityIcon(item.severity);
-                    return (
-                      <li key={item.id}>
-                        <button
-                          type="button"
-                          data-testid={`notification-item-${item.id}`}
-                          className={cn(
-                            "flex w-full gap-2.5 px-3 py-2.5 text-left hover:bg-accent/60 transition-colors",
-                            item.is_unread && "bg-accent/20"
-                          )}
-                          onClick={() => handleItemClick(item.href)}
-                        >
-                          <Icon
-                            className={cn(
-                              "mt-0.5 h-4 w-4 shrink-0",
-                              notificationSeverityClass(item.severity)
-                            )}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-medium leading-snug line-clamp-2">
-                              {item.title}
-                            </span>
-                            {item.summary ? (
-                              <span className="mt-0.5 block text-xs text-muted-foreground line-clamp-2">
-                                {item.summary}
-                              </span>
-                            ) : null}
-                            <span className="mt-1 block text-[11px] text-muted-foreground">
-                              {relativeNotificationTime(item.created_at)}
-                            </span>
-                          </span>
-                          {item.is_unread ? (
-                            <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                          ) : null}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-        </>
-      ) : null}
-    </div>
+                <div className="notifications-drawer__body">
+                  {isLoading ? (
+                    <p className="notifications-drawer__empty">Loading…</p>
+                  ) : items.length === 0 ? (
+                    <div className="notifications-drawer__empty-state">
+                      <span className="notifications-drawer__empty-icon">
+                        <Bell className="h-5 w-5" />
+                      </span>
+                      <p className="notifications-drawer__empty-title">No notifications yet</p>
+                      <p className="notifications-drawer__empty-copy">
+                        Activity from documents, payments, and integrations will show up here.
+                      </p>
+                    </div>
+                  ) : (
+                    groups.map((group) => (
+                      <section key={group.label} className="notifications-drawer__group">
+                        <h3 className="notifications-drawer__group-label">{group.label}</h3>
+                        <div className="notifications-drawer__list">
+                          {group.items.map((item) => (
+                            <NotificationCard
+                              key={item.id}
+                              item={item}
+                              onOpen={handleItemOpen}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ))
+                  )}
+                </div>
+              </aside>
+            </>,
+            document.body
+          )
+        : null}
+    </>
   );
 }

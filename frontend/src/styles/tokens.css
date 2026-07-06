@@ -1,0 +1,203 @@
+/* HighVolt AI CRM design system — token overrides */
+
+:root {
+  /*
+   * Light surfaces
+   * Canvas + primary rail: #EFF0EB
+   * Secondary sidebar card: #FBFBF9
+   * Main content card: soft white (~#FAFBF8), not harsh #FFFFFF
+   */
+  --background: 72 14% 93%; /* #EFF0EB — shell canvas */
+  --foreground: 220 16% 14%;
+  --card: 80 20% 98%; /* #FAFBF8 — main workspace */
+  --card-foreground: 220 16% 14%;
+  --card-border: 72 10% 90%;
+  --popover: 80 20% 98%;
+  --popover-foreground: 220 16% 14%;
+  --popover-border: 72 10% 90%;
+  --border: 72 10% 88%;
+  --input: 72 10% 84%;
+  --input-background: 0 0% 100%; /* white field surface on canvas/card */
+
+  /* Typography */
+  --font-body: Helvetica, Arial, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-headline: "Grotesk S SH", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Primary sidebar + whole-screen canvas */
+  --sidebar: 72 14% 93%; /* #EFF0EB */
+  --sidebar-foreground: 0 0% 9%;
+  --sidebar-border: 72 10% 88%;
+  --sidebar-accent: 72 12% 90%;
+  --sidebar-accent-foreground: 0 0% 9%;
+  --sidebar-ring: 0 0% 9%;
+  --sidebar-primary: 0 0% 9%;
+  --sidebar-primary-foreground: 0 0% 100%;
+
+  /* Secondary sidebar card */
+  --nav-secondary: 60 20% 98%; /* #FBFBF9 */
+  --nav-secondary-foreground: 0 0% 9%;
+  --nav-secondary-border: 72 10% 90%;
+
+  /* Primary sidebar nav item states */
+  --sidebar-item-hover: 72 12% 90%;
+  --sidebar-item-active: 0 0% 100%;
+  --sidebar-item-active-fg: 0 0% 9%;
+
+  /* Secondary sidebar nav item states */
+  --nav-item-hover: 72 12% 92%;
+  --nav-item-active-bg: 0 0% 100%;
+  --nav-item-active-border: 72 10% 86%;
+
+  /* Nav accent — cyan indicators (sidebar rail, tab underline) */
+  --nav-accent: 188 94% 43%; /* #06B6D4 */
+
+  /* iOS SystemYellow (Light/Dark) — used for warnings everywhere */
+  --system-yellow-rgb: 255 204 0; /* #FFCC00 */
+  --system-yellow-text: #8a6a00;
+
+  /* Primary action — black buttons in light mode */
+  --primary: 0 0% 9%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 0 0% 9%;
+  --accent: 72 12% 91%;
+  --accent-foreground: 0 0% 9%;
+
+  --secondary: 72 12% 91%;
+  --secondary-foreground: 220 16% 14%;
+  --muted: 72 12% 92%;
+  --muted-foreground: 220 10% 42%;
+
+  --destructive: 0 72% 42%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 142 64% 38%;
+
+  --chart-1: 0 0% 9%;
+  --chart-2: 0 0% 25%;
+  --chart-3: 199 65% 45%;
+  --chart-4: 24 58% 42%;
+  /* Warning / pending — SystemYellow */
+  --warning: 48 100% 50%; /* ~#FFCC00 */
+  --warning-foreground: 48 100% 50%;
+  --warning-subtle: 48 100% 50%;
+  --warning-border: 48 100% 50%;
+  --warning-muted-bg: 48 100% 92%;
+  --chart-5: 220 10% 55%;
+
+  --radius: 0.5rem; /* 8px base */
+
+  /* Cyan scale */
+  --cyan-50: 183 100% 96%;
+  --cyan-100: 185 96% 90%;
+  --cyan-200: 186 94% 82%;
+  --cyan-300: 187 92% 69%;
+  --cyan-400: 187 85% 53%;
+  --cyan-500: 188 94% 43%;
+  --cyan-600: 192 91% 36%;
+  --cyan-700: 193 82% 31%;
+  --cyan-800: 194 70% 27%;
+  --cyan-900: 194 61% 24%;
+
+  /* Shell layout */
+  --primary-sidebar-width: 10rem;
+  --primary-sidebar-width-basic: 13rem;
+  --primary-sidebar-width-collapsed: 3.5rem;
+  --secondary-sidebar-width: 13.75rem;
+  --shell-card-gap: 8px;
+  --shell-nav-offset: calc(
+    var(--primary-sidebar-width) + var(--shell-card-gap) +
+      var(--secondary-sidebar-width) + var(--shell-card-gap)
+  );
+  --shell-nav-offset-collapsed: calc(
+    var(--primary-sidebar-width-collapsed) + var(--shell-card-gap) +
+      var(--secondary-sidebar-width) + var(--shell-card-gap)
+  );
+
+  --elevate-1: rgba(0, 0, 0, 0.03);
+  --elevate-2: rgba(0, 0, 0, 0.06);
+
+  /* Floating panels — profile menu, dropdowns, period pickers */
+  --shadow-float: 0 4px 6px -1px rgb(0 0 0 / 0.08), 0 12px 28px -4px rgb(0 0 0 / 0.14);
+}
+
+.dark {
+  /*
+   * Dark surfaces
+   * Canvas + primary rail: #080808
+   * Secondary sidebar card: #12161C
+   * Main content card: #1C2026
+   */
+  --background: 0 0% 3%; /* #080808 — shell canvas */
+  --foreground: 210 15% 90%;
+  --card: 214 15% 13%; /* #1C2026 — main workspace */
+  --card-foreground: 210 15% 90%;
+  --card-border: 214 12% 18%;
+  --popover: 214 15% 13%;
+  --popover-foreground: 210 15% 90%;
+  --popover-border: 214 12% 20%;
+  --border: 214 12% 20%;
+  --input: 214 12% 24%;
+  --input-background: 214 12% 16%; /* #24272e — elevated field on dark card */
+
+  --sidebar: 0 0% 3%; /* #080808 */
+  --sidebar-foreground: 0 0% 98%;
+  --sidebar-border: 214 10% 14%;
+  --sidebar-accent: 214 12% 10%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-ring: 0 0% 98%;
+  --sidebar-primary: 0 0% 98%;
+  --sidebar-primary-foreground: 0 0% 9%;
+
+  --nav-secondary: 214 22% 9%; /* #12161C */
+  --nav-secondary-foreground: 0 0% 98%;
+  --nav-secondary-border: 214 12% 14%;
+
+  /* Primary sidebar nav item states */
+  --sidebar-item-hover: 214 12% 11%;
+  --sidebar-item-active: 214 12% 14%;
+  --sidebar-item-active-fg: 0 0% 98%;
+
+  /* Secondary sidebar nav item states */
+  --nav-item-hover: 214 12% 16%;
+  --nav-item-active-bg: 214 22% 9%;
+  --nav-item-active-border: 214 12% 32%;
+
+  /* Nav accent — brighter cyan on dark surfaces */
+  --nav-accent: 187 85% 53%;
+
+  /* Primary action — white buttons in dark mode */
+  --primary: 0 0% 98%;
+  --primary-foreground: 0 0% 9%;
+  --ring: 0 0% 98%;
+  --accent: 214 12% 16%;
+  --accent-foreground: 0 0% 98%;
+
+  --secondary: 214 12% 16%;
+  --secondary-foreground: 210 15% 90%;
+  --muted: 214 12% 15%;
+  --muted-foreground: 210 10% 58%;
+
+  /* Soft coral-red — less neon than pure red on dark surfaces */
+  --destructive: 6 68% 66%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 142 55% 52%;
+
+  --chart-1: 0 0% 98%;
+  --chart-2: 0 0% 75%;
+  --chart-3: 199 65% 60%;
+  --chart-4: 24 70% 62%;
+  --system-yellow-rgb: 255 214 10; /* #FFD60A */
+  --system-yellow-text: #ffd60a;
+  --warning: 50 100% 52%; /* ~#FFD60A */
+  --warning-foreground: 50 100% 52%;
+  --warning-subtle: 50 100% 52%;
+  --warning-border: 50 100% 52%;
+  --warning-muted-bg: 50 100% 10%;
+  --chart-5: 210 10% 62%;
+
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.08);
+
+  --shadow-float: 0 2px 6px rgb(0 0 0 / 0.35), 0 10px 24px -6px rgb(0 0 0 / 0.5);
+
+  --cyan-500: 187 85% 53%;
+}

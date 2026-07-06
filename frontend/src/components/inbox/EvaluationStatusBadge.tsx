@@ -1,15 +1,43 @@
 import type { Invoice } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
+import { approvalStatusChipClass, kpiStatusChipClass, needsReviewStatusChipClass } from "@/lib/kpiModuleColors";
+import {
+  evaluationStatusDescription,
+  evaluationStatusLabel,
+  isNeedsReviewEvaluation,
+} from "@/lib/invoice";
 import { cn } from "@/lib/cn";
-import { evaluationStatusDescription, evaluationStatusLabel } from "@/lib/invoice";
+
+function evaluationChipClass(status: NonNullable<Invoice["evaluation_status"]>): string {
+  switch (status) {
+    case "auto_coded":
+      return kpiStatusChipClass("green");
+    case "needs_review":
+      return needsReviewStatusChipClass();
+    case "awaiting_po":
+      return kpiStatusChipClass("rose");
+    case "pending_vendor":
+      return kpiStatusChipClass("rust");
+    case "unmatched_expense_vendor":
+      return kpiStatusChipClass("sage");
+    default:
+      return approvalStatusChipClass("muted");
+  }
+}
 
 export function EvaluationStatusBadge({
   status,
+  reviewReasons,
 }: {
   status: Invoice["evaluation_status"];
+  reviewReasons?: string[];
 }) {
   const label = status ? evaluationStatusLabel(status) : "—";
-  const title = evaluationStatusDescription(status);
+  const baseTitle = evaluationStatusDescription(status);
+  const title =
+    reviewReasons?.length && isNeedsReviewEvaluation(status)
+      ? `${baseTitle} — ${reviewReasons.join("; ")}`
+      : baseTitle;
 
   if (!status) {
     return (
@@ -18,19 +46,10 @@ export function EvaluationStatusBadge({
       </span>
     );
   }
-  const tone =
-    status === "auto_coded"
-      ? "border-[hsl(var(--chart-1)/0.4)] text-[hsl(var(--chart-1))]"
-      : status === "pending_vendor" || status === "awaiting_po" || status === "awaiting_classification" || status === "needs_rescan"
-        ? "border-destructive/40 text-destructive"
-        : status === "unmatched_expense_vendor"
-          ? "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
-          : "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]";
+
   return (
-    <span title={title}>
-      <Badge variant="outline" className={cn("text-xs font-medium", tone)}>
-        {label}
-      </Badge>
+    <span className={cn(evaluationChipClass(status))} title={title}>
+      {label}
     </span>
   );
 }

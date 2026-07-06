@@ -77,7 +77,8 @@ async def create_tenant(
     if taken:
         raise HTTPException(409, f"Tenant slug '{slug}' is already taken")
 
-    tenant, invite = await create_client_tenant(db, body, invited_by_user_id=ctx.user_id)
+    async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
+        tenant, invite = await create_client_tenant(db, body, invited_by_user_id=ctx.user_id)
     tenant_row = await db.get(Tenant, tenant.id)
     if tenant_row:
         await send_tenant_invite_email(
@@ -103,17 +104,19 @@ async def invite_admin(
     if ctx.user_id is None:
         raise HTTPException(401, "Sign in to invite an admin")
 
-    tenant = await get_client_tenant(db, tenant_id=tenant_id)
+    async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
+        tenant = await get_client_tenant(db, tenant_id=tenant_id)
     if not tenant:
         raise HTTPException(404, "Tenant not found")
 
-    created = await invite_tenant_admin(
-        db,
-        tenant_id=tenant_id,
-        email=str(body.email),
-        full_name=body.full_name,
-        invited_by_user_id=ctx.user_id,
-    )
+    async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
+        created = await invite_tenant_admin(
+            db,
+            tenant_id=tenant_id,
+            email=str(body.email),
+            full_name=body.full_name,
+            invited_by_user_id=ctx.user_id,
+        )
 
     tenant_row = await db.get(Tenant, tenant_id)
     email_sent = False
@@ -160,10 +163,11 @@ async def get_tenant(
 async def list_tenant_members_for_platform(
     tenant_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _ctx: AuthContext = Depends(require_super_admin),
+    ctx: AuthContext = Depends(require_super_admin),
 ) -> ApiEnvelope[TenantMembersListResponse]:
     """List all users and pending invites for a client tenant."""
-    result = await list_client_tenant_members(db, tenant_id=tenant_id)
+    async with cross_tenant_db_lookup(db, restore_tenant_id=ctx.tenant_id):
+        result = await list_client_tenant_members(db, tenant_id=tenant_id)
     if result is None:
         raise HTTPException(404, "Tenant not found")
 

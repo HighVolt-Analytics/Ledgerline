@@ -35,6 +35,7 @@ class SalesOrderResponse(BaseModel):
     status: str
     three_way_match_status: str | None = None
     match: ThreeWayMatchResult
+    match_mode: str = "three_way_so_dn"
     route_target: str | None = None
     evaluation_status: str | None = None
     matched_rule_ids: list[str] = Field(default_factory=list)
@@ -71,3 +72,21 @@ class SalesDossierResponse(BaseModel):
     match_status: str | None = None
     match_summary: DossierMatchSummaryResponse | None = None
     sales_register: SalesOrderResponse | None = None
+
+
+class TwoWaySalesMatchResponse(BaseModel):
+    """DN ↔ invoice match without a sales-order register row."""
+
+    invoice_id: int
+    dn_invoice_id: int | None = None
+    invoice_no: str | None = None
+    customer: str | None = None
+    dn_qty: float | None = None
+    invoice_qty: float = 0
+    invoice_unit_price: float = 0
+    gst_rate: float = 0.1
+    match: ThreeWayMatchResult
+    match_mode: str = "two_way_dn_invoice"
+    route_target: str | None = None
+    evaluation_status: str | None = None
+    document_type_code: str | None = None

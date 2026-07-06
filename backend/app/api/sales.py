@@ -5,12 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, get_auth_context, get_db
 from app.schemas.common import ApiEnvelope
-from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse
+from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse, TwoWaySalesMatchResponse
 from app.services.audit.audit_service import log_event
 from app.services.auth.privilege_service import require_privilege
 from app.services.sales.sales_match_service import (
     approve_sales_variance,
+    filter_two_way_sales_rows,
     list_sales_orders,
+    list_two_way_sales_orphans,
     record_delivery_note,
 )
 
@@ -24,6 +26,22 @@ async def get_sales_orders(
 ) -> ApiEnvelope[list[SalesOrderResponse]]:
     rows = await list_sales_orders(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
+
+
+@router.get("/two-way", response_model=ApiEnvelope[dict])
+async def get_two_way_sales_matches(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[dict]:
+    all_rows = await list_sales_orders(db, ctx.tenant_id)
+    register_rows = filter_two_way_sales_rows(all_rows)
+    orphan_rows = await list_two_way_sales_orphans(db, ctx.tenant_id)
+    return ApiEnvelope(
+        data={
+            "register_rows": register_rows,
+            "orphan_rows": orphan_rows,
+        }
+    )
 
 
 @router.post(

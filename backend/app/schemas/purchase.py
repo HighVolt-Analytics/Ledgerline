@@ -68,6 +68,7 @@ class PurchaseOrderResponse(BaseModel):
     status: str
     three_way_match_status: str | None = None
     match: ThreeWayMatchResult
+    match_mode: str = "three_way_po_grn"
     route_target: str | None = None
     evaluation_status: str | None = None
     matched_rule_ids: list[str] = Field(default_factory=list)

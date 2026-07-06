@@ -256,6 +256,68 @@ async def test_invite_accept_creates_auth_and_membership(
 
 
 @pytest.mark.asyncio
+async def test_invite_preview_uses_platform_lookup_session(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Public preview must resolve invites via platform lookup (PostgreSQL RLS bypass)."""
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    get_settings.cache_clear()
+
+    from app.services.tenant import tenant_members_service as members_svc
+
+    lookup_calls = 0
+    clear_calls = 0
+    original_lookup = members_svc.apply_platform_lookup_session
+    original_clear = members_svc.clear_platform_lookup_session
+
+    async def tracked_lookup(session):
+        nonlocal lookup_calls
+        lookup_calls += 1
+        return await original_lookup(session)
+
+    async def tracked_clear(session):
+        nonlocal clear_calls
+        clear_calls += 1
+        return await original_clear(session)
+
+    monkeypatch.setattr(members_svc, "apply_platform_lookup_session", tracked_lookup)
+    monkeypatch.setattr(members_svc, "clear_platform_lookup_session", tracked_clear)
+
+    admin = await _seed_user(
+        db_session,
+        email="lookup-admin@test.com",
+        role="admin",
+        full_name="Lookup Admin",
+    )
+    headers = _headers(_token_for(admin, role="admin"))
+
+    invited = await client.post(
+        "/api/tenants/current/members/invite",
+        headers=headers,
+        json={
+            "email": f"lookup-preview@{INVITE_DOMAIN}",
+            "full_name": "Lookup Preview",
+            "role": "viewer",
+        },
+    )
+    assert invited.status_code == 200, invited.text
+    token = invited.json()["data"]["accept_url"].split("token=")[1]
+
+    lookup_calls = 0
+    clear_calls = 0
+
+    preview = await client.get(f"/api/auth/invite/preview?token={token}")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["data"]["email"] == f"lookup-preview@{INVITE_DOMAIN}"
+    assert lookup_calls == 1
+    assert clear_calls == 1
+
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
 async def test_permissions_endpoint_returns_matrix(
     client: AsyncClient,
     db_session: AsyncSession,

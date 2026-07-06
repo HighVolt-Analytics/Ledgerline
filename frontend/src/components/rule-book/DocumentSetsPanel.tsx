@@ -1,4 +1,5 @@
 import { Layers, Plus, Trash2 } from "lucide-react";
+import { RuleBookEmptyPanel } from "@/components/rule-book/RuleBookEmptyPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -54,9 +55,7 @@ export function DocumentSetsPanel({ sets, onChange }: DocumentSetsPanelProps) {
 
       <div className="mt-4 space-y-3">
         {sets.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-6 border border-dashed rounded-md">
-            No document sets defined.
-          </p>
+          <RuleBookEmptyPanel icon={Layers} title="No document sets defined." />
         ) : (
           sets.map((set) => (
             <div

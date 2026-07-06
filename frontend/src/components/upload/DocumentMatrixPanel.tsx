@@ -11,6 +11,7 @@ import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
 import { MatrixStageCell } from "@/components/matrix/MatrixStageCell";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { Button } from "@/components/ui/button";
+import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
 import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
@@ -340,7 +341,7 @@ export function DocumentMatrixPanel({
       {!embedded && (
         <div className="flex justify-end mb-4">
           <Button
-            variant="outline"
+            variant="surface"
             size="sm"
             onClick={() => load({ fresh: true })}
             disabled={loading}
@@ -353,7 +354,7 @@ export function DocumentMatrixPanel({
       )}
 
       {loading && matrixData.length === 0 ? (
-        <Card className="p-8 text-center text-sm text-muted-foreground">Loading matrix…</Card>
+        <TableSkeleton rows={6} columns={5} />
       ) : matrixData.length === 0 ? (
         <EmptyState
           title="No documents in the matrix"
@@ -644,7 +645,7 @@ export function DocumentMatrixPanel({
               Skipped (not applicable)
             </span>
             <span className="inline-flex items-center gap-1">
-              <AlertTriangle className="h-3.5 w-3.5 text-[hsl(43_74%_49%)]" />
+              <AlertTriangle className="h-3.5 w-3.5 ds-warning-icon" />
               Anomaly routes through approval before payment
             </span>
           </p>

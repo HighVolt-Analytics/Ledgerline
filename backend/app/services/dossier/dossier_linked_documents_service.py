@@ -112,12 +112,21 @@ async def _finalize_linked_documents(
     response: DossierLinkedDocumentsResponse,
     document_types: list[DocumentTypeDefinition],
 ) -> DossierLinkedDocumentsResponse:
-    from app.services.dossier.dossier_service import append_invoice_no_linked_documents
+    from app.services.dossier.dossier_service import (
+        append_invoice_no_linked_documents,
+        append_reference_linked_documents,
+    )
 
     enriched = await append_invoice_no_linked_documents(
         session,
         invoice,
         response,
+        document_types=document_types,
+    )
+    enriched = await append_reference_linked_documents(
+        session,
+        invoice,
+        enriched,
         document_types=document_types,
     )
     return await apply_manual_links(

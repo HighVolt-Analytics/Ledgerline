@@ -108,6 +108,34 @@ def load_document_type_catalog(tenant_id: int) -> tuple[DocumentTypeDefinition, 
     )
 
 
+def merge_document_type_definitions(
+    tenant_types: Sequence[DocumentTypeDefinition],
+) -> list[DocumentTypeDefinition]:
+    """Shipped catalogue plus tenant overrides (tenant wins on code conflict)."""
+    by_code = {row.code.upper(): row for row in load_shipped_default_document_types()}
+    for row in tenant_types:
+        by_code[row.code.upper()] = row
+    return sorted(by_code.values(), key=lambda row: row.code.upper())
+
+
+def effective_document_types_for_export(
+    tenant_types: Sequence[DocumentTypeDefinition],
+    *,
+    invoice_codes: set[str] | None = None,
+) -> list[DocumentTypeDefinition]:
+    """Catalogue for bundle export — full shipped baseline with tenant overrides."""
+    merged = merge_document_type_definitions(tenant_types)
+    if not invoice_codes:
+        return merged
+    by_code = {row.code.upper(): row for row in merged}
+    shipped = {row.code.upper(): row for row in load_shipped_default_document_types()}
+    for code in invoice_codes:
+        token = (code or "").strip().upper()
+        if token and token not in by_code and token in shipped:
+            by_code[token] = shipped[token]
+    return sorted(by_code.values(), key=lambda row: row.code.upper())
+
+
 def get_document_type_definition(
     code: str,
     *,

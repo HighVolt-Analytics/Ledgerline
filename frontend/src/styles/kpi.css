@@ -1,0 +1,273 @@
+/* KPI module icon tiles — design system accent palette (not Tailwind arbitrary) */
+
+.kpi-module-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+}
+
+.kpi-module-icon svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+/* violet — Active users */
+.kpi-module-icon--violet {
+  background-color: #cfb8ec;
+  color: #5b3a7d;
+}
+
+.dark .kpi-module-icon--violet {
+  background-color: #5b3a7d;
+  color: #ffffff;
+}
+
+/* blue — Mailboxes */
+.kpi-module-icon--blue {
+  background-color: #a8d9f3;
+  color: #245e8d;
+}
+
+.dark .kpi-module-icon--blue {
+  background-color: #245e8d;
+  color: #ffffff;
+}
+
+/* teal — Docs via email */
+.kpi-module-icon--teal {
+  background-color: #b6edf5;
+  color: #275c70;
+}
+
+.dark .kpi-module-icon--teal {
+  background-color: #275c70;
+  color: #ffffff;
+}
+
+/* green — Docs via upload */
+.kpi-module-icon--green {
+  background-color: #b4ddbd;
+  color: #356344;
+}
+
+.dark .kpi-module-icon--green {
+  background-color: #356344;
+  color: #ffffff;
+}
+
+/* sage — Avg processing time */
+.kpi-module-icon--sage {
+  background-color: #b2dfd1;
+  color: #337362;
+}
+
+.dark .kpi-module-icon--sage {
+  background-color: #337362;
+  color: #ffffff;
+}
+
+/* cyan — Total value */
+.kpi-module-icon--cyan {
+  background-color: #b9dee2;
+  color: #3b6f73;
+}
+
+.dark .kpi-module-icon--cyan {
+  background-color: #3b6f73;
+  color: #ffffff;
+}
+
+/* rust — Distinct vendors */
+.kpi-module-icon--rust {
+  background-color: #edc0a6;
+  color: #9c4e2a;
+}
+
+.dark .kpi-module-icon--rust {
+  background-color: #9c4e2a;
+  color: #ffffff;
+}
+
+/* rose — Reconciliation */
+.kpi-module-icon--rose {
+  background-color: #e7b6c3;
+  color: #8b4560;
+}
+
+.dark .kpi-module-icon--rose {
+  background-color: #8b4560;
+  color: #ffffff;
+}
+
+/* KPI status chips — filled pills matching approvals-action-chip + dashboard icon palette */
+.approvals-action-chip--kpi-violet {
+  background: rgb(91 58 125 / 0.14);
+  color: #5b3a7d;
+}
+
+.approvals-action-chip--kpi-blue {
+  background: rgb(36 94 141 / 0.14);
+  color: #245e8d;
+}
+
+.approvals-action-chip--kpi-teal {
+  background: rgb(39 92 112 / 0.14);
+  color: #275c70;
+}
+
+.approvals-action-chip--kpi-green {
+  background: hsl(142 71% 45% / 0.16);
+  color: hsl(142 64% 32%);
+}
+
+.approvals-action-chip--kpi-sage {
+  background: rgb(51 115 98 / 0.14);
+  color: #337362;
+}
+
+.approvals-action-chip--kpi-cyan {
+  background: rgb(185 222 226 / 0.5);
+  color: #3b6f73;
+}
+
+.approvals-action-chip--kpi-rust {
+  background: rgb(156 78 42 / 0.14);
+}
+
+.approvals-action-chip--static.approvals-action-chip--kpi-rust {
+  color: #9c4e2a;
+}
+
+.approvals-action-chip--kpi-rust:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: #9c4e2a;
+}
+
+.approvals-action-chip--kpi-rose {
+  background: rgb(139 69 96 / 0.14);
+  color: #8b4560;
+}
+
+.dark .approvals-action-chip--kpi-violet {
+  background: rgb(207 184 236 / 0.18);
+  color: #cfb8ec;
+}
+
+.dark .approvals-action-chip--kpi-blue {
+  background: rgb(168 217 243 / 0.18);
+  color: #a8d9f3;
+}
+
+.dark .approvals-action-chip--kpi-teal {
+  background: rgb(182 237 245 / 0.18);
+  color: #b6edf5;
+}
+
+.dark .approvals-action-chip--kpi-green {
+  background: hsl(142 71% 45% / 0.2);
+  color: hsl(142 65% 68%);
+}
+
+.dark .approvals-action-chip--kpi-sage {
+  background: rgb(178 223 209 / 0.18);
+  color: #b2dfd1;
+}
+
+.dark .approvals-action-chip--kpi-cyan {
+  background: rgb(185 222 226 / 0.18);
+  color: #b9dee2;
+}
+
+.dark .approvals-action-chip--kpi-rust {
+  background: rgb(237 192 166 / 0.18);
+}
+
+.dark .approvals-action-chip--static.approvals-action-chip--kpi-rust {
+  color: #edc0a6;
+}
+
+.dark
+  .approvals-action-chip--kpi-rust:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
+  .approvals-action-chip__icon {
+  color: #edc0a6;
+}
+
+.dark .approvals-action-chip--kpi-rose {
+  background: rgb(231 182 195 / 0.18);
+  color: #e7b6c3;
+}
+
+/* Status tags (stage / evaluation) — regular weight, single line, not action buttons */
+.status-chip {
+  height: auto;
+  min-height: 1.25rem;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: 1.25;
+  white-space: nowrap;
+  letter-spacing: normal;
+}
+
+/* Semantic warning — iOS SystemYellow (light/dark) */
+.ds-warning-text {
+  color: var(--system-yellow-text);
+}
+
+.dark .ds-warning-text {
+  color: var(--system-yellow-text);
+}
+
+.ds-warning-icon {
+  color: var(--system-yellow-text);
+}
+
+.dark .ds-warning-icon {
+  color: var(--system-yellow-text);
+}
+
+.ds-warning-panel {
+  border-color: hsl(var(--warning-border) / 0.35);
+  background-color: hsl(var(--warning-muted-bg) / 0.65);
+}
+
+.dark .ds-warning-panel {
+  border-color: rgb(var(--system-yellow-rgb) / 0.35);
+  background-color: rgb(var(--system-yellow-rgb) / 0.08);
+}
+
+.ds-warning-outline {
+  border-color: hsl(var(--warning-border) / 0.4);
+  background-color: transparent;
+}
+
+.dark .ds-warning-outline {
+  border-color: rgb(var(--system-yellow-rgb) / 0.35);
+  background-color: transparent;
+}
+
+.ds-warning-panel-strong {
+  border-color: hsl(var(--warning-border) / 0.55);
+  background-color: hsl(var(--warning-muted-bg) / 0.8);
+}
+
+.dark .ds-warning-panel-strong {
+  border-color: rgb(var(--system-yellow-rgb) / 0.4);
+  background-color: rgb(var(--system-yellow-rgb) / 0.1);
+}
+
+.ds-warning-badge {
+  color: var(--system-yellow-text);
+  background-color: hsl(var(--warning-muted-bg) / 0.75);
+  border-color: hsl(var(--warning-border) / 0.45);
+}
+
+.dark .ds-warning-badge {
+  color: var(--system-yellow-text);
+  background-color: rgb(var(--system-yellow-rgb) / 0.12);
+  border-color: rgb(var(--system-yellow-rgb) / 0.35);
+}

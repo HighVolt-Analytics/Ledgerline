@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
@@ -9,7 +9,7 @@ import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge"
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
-import { Badge } from "@/components/ui/badge";
+import { PageLoader } from "@/components/PageLoader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
@@ -19,17 +19,17 @@ import { approveAndProcess, invoiceCanAttemptReprocess, invoiceFieldsFromDetails
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import {
-  APPROVAL_BOARD_COLUMNS,
   APPROVABLE_STATUSES,
+  APPROVAL_QUEUE_STATUSES,
   type ApprovalBoardColumnKey,
-  canShowApproveOnBoard,
   canShowReprocessOnBoard,
   columnForInvoice,
   mergeBoardRowWithLocal,
   PERMANENTLY_DELETABLE,
-  processingQueueCount,
-  reviewQueueCount,
+  needsReviewQueueCount,
+  isNeedsReviewInvoice,
 } from "@/lib/approvalsBoard";
+import { ActionChip } from "@/components/ActionChip";
 import { cn } from "@/lib/cn";
 import { queryKeys } from "@/lib/queryClient";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -44,12 +44,12 @@ import {
 
 const APPROVAL_POLL_MS = 15_000;
 
-const COLUMN_EMPTY_HINT: Record<ApprovalBoardColumnKey, string> = {
-  pending: "Documents waiting for classification or rescan",
-  awaiting: "Classified documents in the pipeline or blocked before approval",
-  approved: "No approved documents yet",
-  rejected: "No rejected documents",
-};
+const KANBAN_COLUMNS: { key: ApprovalBoardColumnKey; label: string }[] = [
+  { key: "pending", label: "To review" },
+  { key: "awaiting", label: "Processing" },
+  { key: "approved", label: "Approved" },
+  { key: "rejected", label: "Rejected" },
+];
 
 function upsertInvoice(rows: Invoice[], row: Invoice): Invoice[] {
   const byId = new Map(rows.map((inv) => [inv.id, inv]));
@@ -198,8 +198,11 @@ export function ApprovalsPage() {
     return cols;
   }, [invoices, searchQuery, processingIds]);
 
-  const reviewCount = useMemo(() => reviewQueueCount(invoices), [invoices]);
-  const processingCount = useMemo(() => processingQueueCount(invoices), [invoices]);
+  const queueCount = useMemo(
+    () => invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
+    [invoices]
+  );
+  const needsReviewCount = useMemo(() => needsReviewQueueCount(invoices), [invoices]);
 
   const invalidateAfterApproval = useCallback(async () => {
     await Promise.all([
@@ -246,6 +249,33 @@ export function ApprovalsPage() {
         return next;
       });
       setBusyId(null);
+    }
+  };
+
+  const runNeedsReviewProcessing = async () => {
+    const targets = invoices.filter(
+      (inv) =>
+        isNeedsReviewInvoice(inv) &&
+        columnForInvoice(inv, undefined, processingIds) === "awaiting" &&
+        APPROVABLE_STATUSES.has(inv.status)
+    );
+    if (!targets.length) {
+      setToast("No needs-review documents in Processing to advance.");
+      return;
+    }
+    setProcessingBusy(true);
+    try {
+      for (const inv of targets) {
+        await approveInvoice(inv.id);
+      }
+      setToast(
+        `Queued ${targets.length} needs-review document${targets.length === 1 ? "" : "s"} for processing.`
+      );
+      await load({ fresh: true });
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Needs-review processing failed");
+    } finally {
+      setProcessingBusy(false);
     }
   };
 
@@ -371,8 +401,8 @@ export function ApprovalsPage() {
   if (loading && invoices.length === 0) {
     return (
       <div>
-        <PageHeader title="Approvals" subtitle="Review, processing, and approved documents." />
-        <Card className="p-8 text-center text-sm text-muted-foreground">Loading approvals…</Card>
+        <PageHeader title="Approvals" subtitle="Review and approve invoices — live data from the API." />
+        <PageLoader variant="kanban" />
       </div>
     );
   }
@@ -387,17 +417,20 @@ export function ApprovalsPage() {
 
   if (
     !loading &&
-    reviewCount === 0 &&
-    processingCount === 0 &&
+    queueCount === 0 &&
+    board.awaiting.length === 0 &&
     board.approved.length === 0 &&
     board.rejected.length === 0
   ) {
     return (
       <div>
-        <PageHeader title="Approvals" subtitle="Review, processing, and approved documents." />
+        <PageHeader
+          title="Approvals"
+          subtitle="Review and approve invoices — live data from the API."
+        />
         <EmptyState
           title="Nothing to approve"
-          hint="Pre-classification issues appear in Review. Classified documents in the pipeline appear in Processing."
+          hint="Exception invoices appear here for review. Rejected files are stored under rejected/org/vendor/year/month in Azure."
           action={
             <Link
               to="/upload"
@@ -412,14 +445,6 @@ export function ApprovalsPage() {
     );
   }
 
-  const subtitleParts: string[] = [];
-  if (reviewCount > 0) subtitleParts.push(`${reviewCount} need review`);
-  if (processingCount > 0) subtitleParts.push(`${processingCount} processing`);
-  const subtitle =
-    subtitleParts.length > 0
-      ? `${subtitleParts.join(" · ")} · reject moves files to rejected storage`
-      : "Reject moves files to rejected/org/vendor/year/month storage";
-
   return (
     <div>
       {toast && (
@@ -430,10 +455,10 @@ export function ApprovalsPage() {
 
       <PageHeader
         title="Approvals"
-        subtitle={subtitle}
+        subtitle={`${queueCount} in approval queue · reject moves files to rejected/org/vendor/year/month`}
         actions={
           <Button
-            variant="outline"
+            variant="surface"
             size="sm"
             onClick={() => load({ fresh: true })}
             disabled={loading}
@@ -450,15 +475,34 @@ export function ApprovalsPage() {
         </Card>
       )}
 
-      {board.awaiting.length > 0 && (
-        <Card className="p-3 mb-4 text-xs border-border bg-muted/40 flex flex-wrap items-center justify-between gap-2">
+      {needsReviewCount > 0 && (
+        <Card className="p-3 mb-4 text-xs border-amber-500/40 bg-amber-500/10 flex flex-wrap items-center justify-between gap-2">
           <p className="text-muted-foreground">
-            {board.awaiting.length} document{board.awaiting.length === 1 ? "" : "s"} processing
-            or blocked after classification (validation, matching, posting). Run processing if
-            they do not advance automatically.
+            {needsReviewCount} document{needsReviewCount === 1 ? "" : "s"} flagged{" "}
+            <span className="font-medium text-foreground">needs review</span> after classification
+            (vendor drift, field confidence, or policy disagreement).
           </p>
           <Button
             variant="outline"
+            size="sm"
+            disabled={processingBusy}
+            onClick={() => void runNeedsReviewProcessing()}
+            data-testid="button-run-needs-review"
+          >
+            {processingBusy ? "Processing…" : "Process needs-review queue"}
+          </Button>
+        </Card>
+      )}
+
+      {board.awaiting.length > 0 && (
+        <Card className="p-3 mb-4 text-xs border-border bg-muted/40 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-muted-foreground">
+            {board.awaiting.length} document{board.awaiting.length === 1 ? "" : "s"} in the
+            pipeline (parse → validate → map → journal). Click Run processing if they
+            do not advance automatically.
+          </p>
+          <Button
+            variant="default"
             size="sm"
             disabled={processingBusy}
             onClick={() => void runProcessing()}
@@ -478,62 +522,80 @@ export function ApprovalsPage() {
         />
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {APPROVAL_BOARD_COLUMNS.map((col) => {
+      <div className="approvals-kanban-board">
+        {KANBAN_COLUMNS.map((col) => {
           const cards = board[col.key];
           return (
-            <Card
+            <section
               key={col.key}
-              className="p-3 bg-muted/30 min-h-[240px]"
+              className="approvals-kanban-column"
               data-testid={`col-${col.key}`}
             >
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold">{col.label}</h3>
-                <Badge variant="outline" className="tnum text-[10px]">
-                  {cards.length}
-                </Badge>
-              </div>
-              <div className="space-y-2">
+              <header className="approvals-kanban-column__header">
+                <h3 className="approvals-kanban-column__title">{col.label}</h3>
+                <span className="approvals-kanban-column__count">
+                  {cards.length} {cards.length === 1 ? "Task" : "Tasks"}
+                </span>
+              </header>
+              <div className="approvals-kanban-column__cards">
                 {cards.map((inv) => (
-                  <Card
+                  <article
                     key={inv.id}
-                    className="p-3 cursor-pointer hover-elevate shadow-sm flex flex-col min-h-[120px]"
+                    className="approvals-kanban-card"
                     data-testid={`card-approval-${inv.id}`}
                     onClick={() => openDrawer(inv)}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium truncate">{inv.vendor ?? "—"}</span>
-                      <Badge variant="outline" className="tnum text-[10px] shrink-0">
-                        {documentDisplayRef(inv)}
-                      </Badge>
+                    <div className="approvals-kanban-card__top">
+                      <span className="approvals-kanban-card__vendor">{inv.vendor ?? "—"}</span>
+                      <span className="approvals-kanban-card__ref">{documentDisplayRef(inv)}</span>
                     </div>
-                    <div className="text-xs text-muted-foreground tnum mt-0.5">
-                      {docNumber(inv)} · {money(inv.total, inv.currency)}
-                      {col.key === "awaiting" && (
-                        <span className="ml-1 capitalize">· {inv.status.replace(/_/g, " ")}</span>
+                    <div className="approvals-kanban-card__subline-row">
+                      <p className="approvals-kanban-card__meta tnum">
+                        {docNumber(inv)} · {money(inv.total, inv.currency)}
+                        {col.key === "awaiting" && (
+                          <span className="ml-1 capitalize">· {inv.status.replace(/_/g, " ")}</span>
+                        )}
+                      </p>
+                      {inv.evaluation_status === "needs_review" && (
+                        <span
+                          className="approvals-kanban-card__review-pill"
+                          title="Needs review"
+                          aria-label="Needs review"
+                          data-testid={`needs-review-${inv.id}`}
+                        >
+                          <AlertTriangle aria-hidden />
+                          Review
+                        </span>
                       )}
                     </div>
+                    {col.key === "awaiting" && inv.evaluation_status ? (
+                      <div className="mt-1.5">
+                        <EvaluationStatusBadge
+                          status={inv.evaluation_status}
+                          reviewReasons={
+                            isNeedsReviewInvoice(inv) ? ["Flagged for manual review"] : undefined
+                          }
+                        />
+                      </div>
+                    ) : null}
                     {col.key === "pending" && inv.evaluation_status ? (
                       <div className="mt-1.5">
                         <EvaluationStatusBadge status={inv.evaluation_status} />
                       </div>
                     ) : null}
                     <div
-                      className="flex items-center gap-1 mt-2 flex-wrap"
+                      className="approvals-kanban-card__actions"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {canShowReprocessOnBoard(inv, col.key) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-1.5 text-[11px]"
+                        <ActionChip
+                          tone="reprocess"
+                          icon={RefreshCw}
+                          label={busyId === inv.id ? "…" : "Reprocess"}
                           disabled={busyId === inv.id}
                           onClick={() => void reprocessInvoice(inv.id)}
-                          data-testid={`reprocess-${inv.id}`}
-                        >
-                          <RefreshCw className="h-3 w-3 mr-0.5" />
-                          {busyId === inv.id ? "…" : "Reprocess"}
-                        </Button>
+                          testId={`reprocess-${inv.id}`}
+                        />
                       )}
                       {col.key === "rejected" && inv.status === "duplicate_skipped" && (
                         <span className="text-[10px] text-muted-foreground leading-tight">
@@ -541,94 +603,73 @@ export function ApprovalsPage() {
                         </span>
                       )}
                       {col.key === "pending" && APPROVABLE_STATUSES.has(inv.status) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-1.5 text-[11px]"
+                        <ActionChip
+                          tone="edit"
+                          icon={Pencil}
+                          label="Edit"
                           onClick={() => openDrawer(inv, true)}
-                          data-testid={`edit-${inv.id}`}
-                        >
-                          <Pencil className="h-3 w-3 mr-0.5" />
-                          Edit
-                        </Button>
+                          testId={`edit-${inv.id}`}
+                        />
                       )}
-                      {canShowApproveOnBoard(inv, col.key) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-1.5 text-[11px] text-[hsl(var(--chart-1))]"
+                      {col.key !== "approved" && APPROVABLE_STATUSES.has(inv.status) && (
+                        <ActionChip
+                          tone="approve"
+                          icon={Check}
+                          label={busyId === inv.id ? "…" : "Approve"}
                           disabled={busyId === inv.id}
                           onClick={() => void approveInvoice(inv.id)}
-                          data-testid={`approve-${inv.id}`}
-                        >
-                          <Check className="h-3 w-3 mr-0.5" />
-                          {busyId === inv.id ? "…" : "Approve"}
-                        </Button>
+                          testId={`approve-${inv.id}`}
+                        />
                       )}
-                      {(col.key === "pending" || col.key === "awaiting") &&
-                        inv.status === "exception" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
-                            disabled={busyId === inv.id || !canReject}
-                            title={canReject ? undefined : "Your role cannot reject documents"}
-                            onClick={() => void rejectInvoice(inv.id)}
-                            data-testid={`reject-${inv.id}`}
-                          >
-                            <X className="h-3 w-3 mr-0.5" />
-                            Reject
-                          </Button>
-                        )}
-                      {col.key === "approved" && inv.status === "processed" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
+                      {col.key === "pending" && inv.status === "exception" && (
+                        <ActionChip
+                          tone="reject"
+                          icon={X}
+                          label="Reject"
                           disabled={busyId === inv.id || !canReject}
                           title={canReject ? undefined : "Your role cannot reject documents"}
                           onClick={() => void rejectInvoice(inv.id)}
-                          data-testid={`reject-${inv.id}`}
-                        >
-                          <X className="h-3 w-3 mr-0.5" />
-                          Reject
-                        </Button>
+                          testId={`reject-${inv.id}`}
+                        />
+                      )}
+                      {col.key === "approved" && inv.status === "processed" && (
+                        <ActionChip
+                          tone="reject"
+                          icon={X}
+                          label="Reject"
+                          disabled={busyId === inv.id || !canReject}
+                          title={canReject ? undefined : "Your role cannot reject documents"}
+                          onClick={() => void rejectInvoice(inv.id)}
+                          testId={`reject-${inv.id}`}
+                        />
                       )}
                       {col.key === "approved" && invoiceCanPublishToLedger(inv) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-1.5 text-[11px] text-primary"
+                        <ActionChip
+                          tone="post"
+                          icon={Send}
+                          label="Post"
                           onClick={() => void publish(inv)}
-                          data-testid={`publish-${inv.id}`}
-                        >
-                          <Send className="h-3 w-3 mr-0.5" />
-                          Post
-                        </Button>
+                          testId={`publish-${inv.id}`}
+                        />
                       )}
                       {col.key === "rejected" && PERMANENTLY_DELETABLE.has(inv.status) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-1.5 text-[11px] text-destructive border-destructive/40"
+                        <ActionChip
+                          tone="delete"
+                          icon={Trash2}
+                          label={busyId === inv.id ? "…" : "Delete"}
                           disabled={busyId === inv.id}
                           onClick={() => void permanentDeleteInvoice(inv.id)}
-                          data-testid={`delete-permanent-${inv.id}`}
-                        >
-                          <Trash2 className="h-3 w-3 mr-0.5" />
-                          {busyId === inv.id ? "…" : "Delete permanently"}
-                        </Button>
+                          testId={`delete-permanent-${inv.id}`}
+                        />
                       )}
                     </div>
-                  </Card>
+                  </article>
                 ))}
                 {cards.length === 0 && (
-                  <p className="text-xs text-muted-foreground py-4 text-center">
-                    {COLUMN_EMPTY_HINT[col.key]}
-                  </p>
+                  <p className="approvals-kanban-empty">Empty</p>
                 )}
               </div>
-            </Card>
+            </section>
           );
         })}
       </div>

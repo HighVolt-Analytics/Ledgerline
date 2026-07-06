@@ -5,6 +5,7 @@ import type { ChartOfAccountRow, SubLedgerRow } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/context/ToastContext";
@@ -209,23 +210,22 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
 
   if (isLoading || blocked) {
     return (
-      <Card className="flex max-w-3xl items-center gap-2 p-6 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading chart of accounts…
+      <Card className="w-full overflow-hidden" data-testid="chart-of-accounts-panel">
+        <InlineTableSkeleton rows={8} columns={4} />
       </Card>
     );
   }
 
   if (isError) {
     return (
-      <Card className="max-w-3xl p-6 text-sm text-destructive">
+      <Card className="w-full p-6 text-sm text-destructive">
         Could not load chart of accounts for this organisation.
       </Card>
     );
   }
 
   return (
-    <div className="max-w-4xl space-y-4" data-testid="chart-of-accounts-panel">
+    <div className="w-full space-y-4" data-testid="chart-of-accounts-panel">
       <p className="text-sm text-muted-foreground">
         GL accounts for this organisation. Optionally define sub-ledgers under each account for
         cost centres or analytical segments. Classification rules reference account names from

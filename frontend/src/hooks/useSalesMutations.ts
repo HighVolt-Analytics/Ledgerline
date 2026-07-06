@@ -13,6 +13,7 @@ export function useSalesMutations() {
   const invalidate = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.sales() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.salesTwoWay() }),
       queryClient.invalidateQueries({ queryKey: queryKeys.routedInvoices(ROUTE_TARGET) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.collections() }),
       queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
