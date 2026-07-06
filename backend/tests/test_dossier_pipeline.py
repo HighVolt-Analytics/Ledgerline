@@ -94,6 +94,31 @@ async def test_pipeline_processed_invoice_full_pass(db_session: AsyncSession) ->
 
 
 @pytest.mark.asyncio
+async def test_pipeline_duplicate_in_progress_does_not_block_canonical_row() -> None:
+    """Concurrent re-submit logs duplicate_in_progress on the original — pipeline must not stall."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        file_hash="canonical-hash",
+    )
+    logs = [
+        _log_at("invoice_uploaded", 1, 0),
+        _log_at("duplicate_in_progress", 1, 1, filename="same.pdf"),
+        _log_at("storage_verified", 1, 2),
+        _log_at("ocr_completed", 1, 3),
+        _log_at("parse_completed", 1, 4, confidence=0.9),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    duplicate = next(s for s in pipeline if s.stage_id == "duplicate")
+    assert duplicate.state == "pass"
+    storage = next(s for s in pipeline if s.stage_id == "storage")
+    assert storage.state == "pass"
+    assert storage.blocked_reason is None
+    assert first_pipeline_failure(pipeline) is None or first_pipeline_failure(pipeline).stage_id != "duplicate"
+
+
+@pytest.mark.asyncio
 async def test_pipeline_duplicate_blocks_downstream(db_session: AsyncSession) -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
