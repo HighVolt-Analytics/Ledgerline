@@ -39,6 +39,11 @@ def test_resolve_gst_rate_percent_zero_rated() -> None:
     assert resolve_gst_rate_percent(data) == Decimal("0.00")
 
 
+def test_resolve_gst_rate_percent_rejects_absurd_inference() -> None:
+    data = InvoiceData(subtotal=Decimal("1"), gst=Decimal("50000"))
+    assert resolve_gst_rate_percent(data) is None
+
+
 def test_expected_gst_amount() -> None:
     assert expected_gst_amount(Decimal("1000"), Decimal("10")) == Decimal("100.00")
     assert expected_gst_amount(Decimal("1000"), Decimal("15")) == Decimal("150.00")

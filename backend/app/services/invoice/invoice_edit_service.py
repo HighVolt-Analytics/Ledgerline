@@ -10,10 +10,18 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.line_item import LineItem
 from app.schemas.invoice import InvoiceUpdateRequest
 from app.services.audit.audit_service import log_event
+from app.services.invoice.invoice_data import ParsedLineItem
 from app.services.invoice.processing_override_catalog import (
     normalise_processing_overrides,
     serialise_processing_overrides,
     validate_skip_steps,
+)
+from app.services.shared.amount_sanity import (
+    plausible_confidence,
+    plausible_gst_rate_percent,
+    plausible_money,
+    plausible_qty,
+    sanitize_parsed_line_item,
 )
 
 _EDITABLE = frozenset(
@@ -77,6 +85,10 @@ async def update_invoice_fields(
     changes: dict[str, dict[str, str | None]] = {}
 
     for field, value in payload.items():
+        if field in {"subtotal", "gst", "total"}:
+            value = plausible_money(value)
+        elif field == "gst_rate":
+            value = plausible_gst_rate_percent(value)
         old = getattr(inv, field)
         if old != value:
             changes[field] = {"from": _serialise(old), "to": _serialise(value)}
@@ -113,18 +125,27 @@ async def update_invoice_fields(
             gl_source = item.get("gl_mapping_source")
             if sub_ledger is not None and not gl_source:
                 gl_source = "manual"
+            cleaned = sanitize_parsed_line_item(
+                ParsedLineItem(
+                    description=item.get("description"),
+                    qty=plausible_qty(item.get("qty")),
+                    unit_price=plausible_money(item.get("unit_price")),
+                    amount=plausible_money(item.get("amount")),
+                    tax_amount=plausible_money(item.get("tax_amount")),
+                )
+            )
             session.add(
                 LineItem(
                     tenant_id=inv.tenant_id,
                     invoice_id=inv.id,
-                    description=item.get("description"),
-                    qty=item.get("qty"),
-                    unit_price=item.get("unit_price"),
-                    amount=item.get("amount"),
-                    tax_amount=item.get("tax_amount"),
+                    description=cleaned.description,
+                    qty=cleaned.qty,
+                    unit_price=cleaned.unit_price,
+                    amount=cleaned.amount,
+                    tax_amount=cleaned.tax_amount,
                     sub_ledger=sub_ledger,
                     gl_mapping_source=gl_source,
-                    gl_mapping_confidence=item.get("gl_mapping_confidence"),
+                    gl_mapping_confidence=plausible_confidence(item.get("gl_mapping_confidence")),
                     gl_mapping_reason=item.get("gl_mapping_reason"),
                 )
             )

@@ -13,6 +13,7 @@ from app.services.classification.document_type_playbook_profile_service import (
     gl_posting_applicable_for_invoice,
 )
 from app.services.master_data.chart_of_accounts_service import sub_ledger_exists
+from app.services.shared.amount_sanity import plausible_confidence
 
 
 def resolve_parent_ledger(
@@ -134,7 +135,5 @@ def apply_sub_ledger_to_line(
 ) -> None:
     line.sub_ledger = (sub_ledger or "").strip() or None
     line.gl_mapping_source = source
-    line.gl_mapping_confidence = (
-        Decimal(str(confidence)) if confidence is not None else None
-    )
+    line.gl_mapping_confidence = plausible_confidence(confidence)
     line.gl_mapping_reason = (reason or "").strip() or None

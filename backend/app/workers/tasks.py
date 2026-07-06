@@ -301,6 +301,13 @@ async def run_pipeline_background(
             poll_inbox=poll_inbox,
         )
         logger.info("inline_pipeline_done", **result)
+    except Exception as exc:
+        logger.error(
+            "inline_pipeline_failed",
+            mailbox_id=mailbox_id,
+            tenant_id=str(tenant_id) if tenant_id else None,
+            error=str(exc),
+        )
     finally:
         _inline_active = False
         _last_run = datetime.now(timezone.utc).isoformat()
