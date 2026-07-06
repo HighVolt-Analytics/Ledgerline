@@ -23,6 +23,9 @@ export function DossierStatusHero({ dossier, onOpenInvoice, onJumpToFailure }: P
 
   if (blocker) {
     const stageLabel = dossierStageLabel(blocker.stageId, dossier.routeTarget);
+    const isFailed = blocker.step.state === "fail";
+    const title = isFailed ? `Failed at ${stageLabel}` : `Blocked at ${stageLabel}`;
+    const jumpLabel = isFailed ? "Jump to failed stage" : "Jump to blocked stage";
     return (
       <div
         className="dossier-status-hero dossier-status-hero--fail"
@@ -32,7 +35,7 @@ export function DossierStatusHero({ dossier, onOpenInvoice, onJumpToFailure }: P
           <AlertTriangle className="h-5 w-5" aria-hidden />
         </div>
         <div className="dossier-status-hero__body">
-          <p className="dossier-status-hero__title">Failed at {stageLabel}</p>
+          <p className="dossier-status-hero__title">{title}</p>
           <p className="dossier-status-hero__message">{blocker.reason}</p>
           {blocker.remediation ? (
             <p className="dossier-status-hero__remediation">
@@ -50,7 +53,7 @@ export function DossierStatusHero({ dossier, onOpenInvoice, onJumpToFailure }: P
             {onJumpToFailure ? (
               <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={onJumpToFailure}>
                 <ArrowDown className="h-3.5 w-3.5 mr-1.5" />
-                Jump to failed stage
+                {jumpLabel}
               </Button>
             ) : null}
             {dossier.invoiceId && onOpenInvoice ? (
