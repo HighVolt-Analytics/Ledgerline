@@ -1,12 +1,16 @@
-import { Check } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import FadeIn from '../ui/FadeIn';
 import SectionLabel from '../ui/SectionLabel';
 import SectionTitle from '../ui/SectionTitle';
-import { pricingPlans } from '../../data/pricing';
+import usePricingRegion from '../../hooks/usePricingRegion';
+import { pricingByCurrency } from '../../data/pricing';
 
 function PricingCard({ plan }) {
   const isPopular = plan.popular;
-  const priceSuffix = plan.price === 'Free' || plan.price === 'Custom' ? '' : 'AUD';
+  const isContact = plan.price === 'Contact us';
+  const includedFeatures = plan.features.filter((feature) => feature.included);
+  const excludedFeatures = plan.features.filter((feature) => !feature.included);
+  const orderedFeatures = [...includedFeatures, ...excludedFeatures];
 
   return (
     <div className={`pricing-card ${isPopular ? 'pricing-card--popular' : ''}`}>
@@ -14,25 +18,40 @@ function PricingCard({ plan }) {
 
       <div>
         <h3 className="text-base font-semibold text-foreground">{plan.name}</h3>
-        <p className="mt-1 text-xs text-muted-foreground">Credit pack</p>
+        <p className="mt-1 text-xs text-muted-foreground">{plan.credits} credits</p>
       </div>
 
       <div className="mt-6 flex items-end gap-1.5">
-        <span className="text-4xl font-semibold tracking-tight text-foreground">{plan.price}</span>
-        {priceSuffix && <span className="mb-1 text-sm text-muted-foreground">/ {priceSuffix}</span>}
+        {plan.price === 'Free' ? (
+          <span className="text-4xl font-semibold tracking-tight text-foreground">Free</span>
+        ) : isContact ? (
+          <span className="text-3xl font-semibold tracking-tight text-foreground">Contact us</span>
+        ) : (
+          <span className="text-4xl font-semibold tracking-tight text-foreground">{plan.price}</span>
+        )}
+        {plan.priceNote && !isContact && (
+          <span className="mb-1 text-sm text-muted-foreground">{plan.priceNote}</span>
+        )}
       </div>
 
-      <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{plan.best}</p>
+      <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{plan.pagesSummary}</p>
 
       <div className="pricing-card-divider my-6" />
 
       <ul className="flex flex-1 flex-col gap-3">
-        {plan.features.map((feature) => (
-          <li key={feature} className="flex items-start gap-2.5 text-sm text-muted-foreground">
-            <span className="pricing-check">
-              <Check className="h-3 w-3" strokeWidth={3} />
+        {orderedFeatures.map((feature) => (
+          <li
+            key={feature.label}
+            className="flex items-start gap-2.5 text-sm text-muted-foreground"
+          >
+            <span className={`pricing-check ${feature.included ? '' : 'pricing-check--excluded'}`}>
+              {feature.included ? (
+                <Check className="h-3 w-3" strokeWidth={3} />
+              ) : (
+                <X className="h-3 w-3" strokeWidth={3} />
+              )}
             </span>
-            <span>{feature}</span>
+            <span>{feature.label}</span>
           </li>
         ))}
       </ul>
@@ -48,21 +67,27 @@ function PricingCard({ plan }) {
 }
 
 export default function PricingSection() {
+  const { currency, regionLabel, isLoading } = usePricingRegion();
+  const plans = pricingByCurrency[currency];
+
   return (
     <section id="pricing" className="mx-auto max-w-[1200px] px-5 py-20 sm:px-8 sm:py-28">
       <FadeIn>
         <div className="text-center">
           <SectionLabel>Pricing</SectionLabel>
-          <SectionTitle className="mt-4">Credit packs. No seat tax.</SectionTitle>
+          <SectionTitle className="mt-4">Plans that scale with your volume</SectionTitle>
           <p className="mx-auto mt-4 max-w-xl text-lg text-muted-foreground">
-            One credit posts one document end to end. Buy what you need; credits never expire.
+            Start free, upgrade when you need more pages, access, and integrations.
+          </p>
+          <p className="mt-3 text-sm text-muted-foreground">
+            {isLoading ? 'Detecting your region…' : `Prices shown for ${regionLabel} (${currency})`}
           </p>
         </div>
       </FadeIn>
 
-      <div className="mt-14 grid grid-cols-1 gap-6 overflow-visible sm:grid-cols-2 lg:grid-cols-4 lg:gap-5">
-        {pricingPlans.map((plan, i) => (
-          <FadeIn key={plan.name} delay={i * 0.07}>
+      <div className="mt-14 grid grid-cols-1 gap-6 overflow-visible lg:grid-cols-3 lg:gap-5">
+        {plans.map((plan, i) => (
+          <FadeIn key={`${currency}-${plan.name}`} delay={i * 0.07}>
             <PricingCard plan={plan} />
           </FadeIn>
         ))}

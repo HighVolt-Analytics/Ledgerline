@@ -1424,6 +1424,12 @@
     color: #ffffff;
   }
 
+  .pricing-check--excluded {
+    background: hsl(0 70% 58%);
+    border-color: hsl(0 68% 52%);
+    color: #ffffff;
+  }
+
   .pricing-card-cta {
     border-radius: 9999px;
     border: 1px solid hsl(220 12% 36% / 0.55);
