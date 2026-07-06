@@ -348,6 +348,21 @@ class Settings(BaseSettings):
     )
     otp_expire_minutes: int = Field(default=5, validation_alias="OTP_EXPIRE_MINUTES")
     dev_otp_code: str = Field(default="123456", validation_alias="DEV_OTP_CODE")
+    super_admin_portal_embed_token: str = Field(
+        default="",
+        validation_alias="SUPER_ADMIN_PORTAL_EMBED_TOKEN",
+        description="Secret token for super-admin portal embed links (treat like a password)",
+    )
+    super_admin_portal_embed_email: str = Field(
+        default="",
+        validation_alias="SUPER_ADMIN_PORTAL_EMBED_EMAIL",
+        description="Super admin account email to sign in when embed token is valid",
+    )
+    super_admin_portal_embed_allowed_origins: str = Field(
+        default="",
+        validation_alias="SUPER_ADMIN_PORTAL_EMBED_ALLOWED_ORIGINS",
+        description="Optional comma-separated origins allowed to call portal-embed login",
+    )
     app_env: str = Field(default="development", validation_alias="APP_ENV")
     environment: str = Field(
         default="",

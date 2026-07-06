@@ -43,10 +43,19 @@ function purchaseRowKey(purchaseId: number, invoiceId: number | null) {
   return `${purchaseId}-${invoiceId ?? "none"}`;
 }
 
-export type PurchaseRegisterTab = "register" | "action";
+export type PurchaseRegisterTab = "register" | "two_way" | "action";
+
+export function PurchaseTwoWayFormulaHint() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Two-way match: <span className="font-mono">PO qty/price ↔ Invoice qty/price</span> (service PO profiles).
+    </p>
+  );
+}
 
 export function PurchaseRegisterPanel({
   registerRows,
+  twoWayRows,
   purchaseRows,
   actionRequired,
   loading,
@@ -62,6 +71,7 @@ export function PurchaseRegisterPanel({
   onApproveVariance,
 }: {
   registerRows: RegisterRow[];
+  twoWayRows: RegisterRow[];
   purchaseRows: PurchaseOrderApi[];
   actionRequired: Invoice[];
   loading: boolean;
@@ -78,6 +88,7 @@ export function PurchaseRegisterPanel({
 }) {
   const { data: ruleBook } = useRuleBookConfig();
   const [registerPage, setRegisterPage] = useState(1);
+  const [twoWayPage, setTwoWayPage] = useState(1);
   const [actionPage, setActionPage] = useState(1);
 
   const coverage = useMemo(
@@ -110,12 +121,35 @@ export function PurchaseRegisterPanel({
     [actionRequired, searchQuery]
   );
 
+  const filteredTwoWay = useMemo(
+    () =>
+      twoWayRows.filter(({ purchaseId, invoiceId, po, m, threeWayAuditStatus }) => {
+        const q = searchQuery.trim().toLowerCase();
+        if (!q) return true;
+        return [
+          purchaseId,
+          invoiceId,
+          po.id,
+          po.vendor,
+          po.invoiceNo,
+          m.status,
+          threeWayAuditStatus,
+        ].some((v) => String(v ?? "").toLowerCase().includes(q));
+      }),
+    [twoWayRows, searchQuery]
+  );
+
   const registerPages = Math.max(1, Math.ceil(filteredRegister.length / PAGE_SIZE));
+  const twoWayPages = Math.max(1, Math.ceil(filteredTwoWay.length / PAGE_SIZE));
   const actionPages = Math.max(1, Math.ceil(filteredAction.length / PAGE_SIZE));
 
   const pagedRegister = filteredRegister.slice(
     (registerPage - 1) * PAGE_SIZE,
     registerPage * PAGE_SIZE
+  );
+  const pagedTwoWay = filteredTwoWay.slice(
+    (twoWayPage - 1) * PAGE_SIZE,
+    twoWayPage * PAGE_SIZE
   );
   const pagedAction = filteredAction.slice(
     (actionPage - 1) * PAGE_SIZE,
@@ -124,8 +158,13 @@ export function PurchaseRegisterPanel({
 
   useEffect(() => {
     setRegisterPage(1);
+    setTwoWayPage(1);
     setActionPage(1);
   }, [searchQuery, activeTab]);
+
+  useEffect(() => {
+    if (twoWayPage > twoWayPages) setTwoWayPage(twoWayPages);
+  }, [twoWayPage, twoWayPages]);
 
   useEffect(() => {
     if (registerPage > registerPages) setRegisterPage(registerPages);
@@ -153,7 +192,7 @@ export function PurchaseRegisterPanel({
               <span className="font-medium text-foreground">Needs action</span>.
             </p>
           </div>
-          {(registerRows.length > 0 || actionRequired.length > 0) && (
+          {(registerRows.length > 0 || twoWayRows.length > 0 || actionRequired.length > 0) && (
             <ListSearchInput
               value={searchQuery}
               onChange={onSearchChange}
@@ -177,6 +216,18 @@ export function PurchaseRegisterPanel({
                   Three-way match
                   <Badge variant="secondary" className="ml-1.5 tnum font-normal">
                     {registerRows.length}
+                  </Badge>
+                </>
+              ),
+            },
+            {
+              value: "two_way",
+              testid: "tab-purchase-two-way",
+              label: (
+                <>
+                  Two-way match
+                  <Badge variant="secondary" className="ml-1.5 tnum font-normal">
+                    {twoWayRows.length}
                   </Badge>
                 </>
               ),
@@ -389,6 +440,107 @@ export function PurchaseRegisterPanel({
                   payment.
                 </p>
               ) : null}
+            </>
+          )}
+        </>
+      ) : activeTab === "two_way" ? (
+        <>
+          <div className="flex flex-wrap items-center justify-end gap-2 px-4 py-2 border-b border-border/60">
+            <PurchaseTwoWayFormulaHint />
+          </div>
+
+          {loading ? (
+            <div className="px-4 py-8 text-sm text-muted-foreground">Loading two-way matches…</div>
+          ) : isError ? (
+            <div className="px-4 py-8 text-sm text-destructive">Could not load two-way matches.</div>
+          ) : twoWayRows.length === 0 ? (
+            <div className="px-4 py-6">
+              <EmptyState
+                title="No two-way matches yet"
+                hint="Service PO documents on 2-way playbook profiles (PO ↔ Invoice) appear here when linked."
+              />
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b border-border text-left">
+                      <th className="px-4 py-2.5 font-medium">PO</th>
+                      <th className="px-3 py-2.5 font-medium">Invoice</th>
+                      <th className="px-3 py-2.5 font-medium">Vendor</th>
+                      <th className="px-3 py-2.5 font-medium text-right">PO Qty · Value</th>
+                      <th className="px-3 py-2.5 font-medium text-right">Invoice Qty · Value</th>
+                      <th className="px-3 py-2.5 font-medium text-right">Qty Var.</th>
+                      <th className="px-3 py-2.5 font-medium text-right">Price Var.</th>
+                      <th className="px-3 py-2.5 font-medium">Match</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedTwoWay.length === 0 && (
+                      <tr>
+                        <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                          No two-way rows match your search.
+                        </td>
+                      </tr>
+                    )}
+                    {pagedTwoWay.map(({ purchaseId, invoiceId, po, m }) => {
+                      const rowKey = purchaseRowKey(purchaseId, invoiceId);
+                      return (
+                        <tr
+                          key={rowKey}
+                          className={cn(
+                            "row-band border-b border-border/60 hover-elevate cursor-pointer",
+                            selectedKey === rowKey && "bg-muted/40"
+                          )}
+                          onClick={() => onSelectKey(rowKey)}
+                        >
+                          <td className="px-4 py-2.5 font-medium">{po.id}</td>
+                          <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                            {po.invoiceNo !== "—" ? po.invoiceNo : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-muted-foreground">{po.vendor}</td>
+                          <td className="px-3 py-2.5 text-right tnum">
+                            {po.poQty} · {fmtAud(m.poValue)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tnum">
+                            {po.invoiceQty} · {fmtAud(m.invoiceValue)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tnum">
+                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tnum">
+                            {m.priceVarianceValue === 0 ? "—" : fmtAud(m.priceVarianceValue)}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <MatchStatusBadge status={m.status} />
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectKey(rowKey);
+                              }}
+                            >
+                              View
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <ListPaginationFooter
+                page={twoWayPage}
+                totalPages={twoWayPages}
+                pageSize={PAGE_SIZE}
+                onPageChange={setTwoWayPage}
+              />
             </>
           )}
         </>

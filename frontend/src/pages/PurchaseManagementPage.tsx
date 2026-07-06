@@ -17,8 +17,13 @@ import { usePurchases } from "@/hooks/usePurchases";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
+import { usePurchasesTwoWay } from "@/hooks/usePurchasesTwoWay";
 import { purchaseActionRequiredInvoices } from "@/lib/purchaseRegisterQueue";
-import { apiPurchaseToRow, purchaseKpisFromRegister } from "@/lib/routePageAdapters";
+import {
+  apiPurchaseToRow,
+  isPurchaseTwoWayMode,
+  purchaseKpisFromRegister,
+} from "@/lib/routePageAdapters";
 
 const ROUTE_TARGET = "Purchase Management";
 const POLL_MS = 15_000;
@@ -35,6 +40,7 @@ export function PurchaseManagementPage() {
     isError,
     refetch: refetchPurchases,
   } = usePurchases();
+  const { data: twoWayPurchaseRows = [], refetch: refetchPurchasesTwoWay } = usePurchasesTwoWay();
   const { data: ruleBook } = useRuleBookConfig();
   const mutations = usePurchaseMutations();
 
@@ -44,6 +50,14 @@ export function PurchaseManagementPage() {
   const [registerTab, setRegisterTab] = useState<PurchaseRegisterTab>("register");
 
   const rows = useMemo(() => purchaseRows.map(apiPurchaseToRow), [purchaseRows]);
+  const threeWayRows = useMemo(
+    () => rows.filter((row) => !isPurchaseTwoWayMode(row.matchMode)),
+    [rows]
+  );
+  const twoWayRows = useMemo(
+    () => twoWayPurchaseRows.map(apiPurchaseToRow),
+    [twoWayPurchaseRows]
+  );
   const actionRequired = useMemo(
     () => purchaseActionRequiredInvoices(routed, purchaseRows),
     [routed, purchaseRows]
@@ -60,7 +74,7 @@ export function PurchaseManagementPage() {
   );
 
   const refetchAll = async () => {
-    await Promise.all([refetchRouted(), refetchPurchases()]);
+    await Promise.all([refetchRouted(), refetchPurchases(), refetchPurchasesTwoWay()]);
   };
 
   useVisibilityPolling(() => {
@@ -105,7 +119,7 @@ export function PurchaseManagementPage() {
 
       <PurchaseCaptureStrip activeRuleCount={activeRuleCount} />
 
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 mb-5">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 mb-5">
         <KpiCard
           label="Open POs"
           value={purchasesLoading ? "…" : kpis.openPos}
@@ -126,8 +140,19 @@ export function PurchaseManagementPage() {
           value={purchasesLoading ? "…" : `${kpis.matchPct}%`}
           testid="kpi-po-matchpct"
           delta={
-            !purchasesLoading && purchaseRows.length > 0
-              ? { dir: "up", text: "of POs clean", good: true }
+            !purchasesLoading && threeWayRows.length > 0
+              ? { dir: "up", text: "of 3-way POs clean", good: true }
+              : undefined
+          }
+        />
+        <KpiCard
+          label="2-Way match pass"
+          value={purchasesLoading ? "…" : `${kpis.twoWayMatchPct}%`}
+          testid="kpi-po-two-way-matchpct"
+          onClick={kpis.twoWayCount > 0 ? () => setRegisterTab("two_way") : undefined}
+          delta={
+            !purchasesLoading && kpis.twoWayCount > 0
+              ? { dir: "up", text: `${kpis.twoWayCount} PO↔Invoice`, good: true }
               : undefined
           }
         />
@@ -145,7 +170,8 @@ export function PurchaseManagementPage() {
       </div>
 
       <PurchaseRegisterPanel
-        registerRows={rows}
+        registerRows={threeWayRows}
+        twoWayRows={twoWayRows}
         purchaseRows={purchaseRows}
         actionRequired={actionRequired}
         loading={purchasesLoading}
@@ -186,6 +212,7 @@ export function PurchaseManagementPage() {
             po={selected.po}
             match={selected.m}
             invoiceId={selected.invoiceId}
+            twoWay={isPurchaseTwoWayMode(selected.matchMode)}
             busy={mutations.busyId === selected.purchaseId}
             canApproveVariance={selected.po.routedForApproval ?? false}
             onApprove={() => handleApproveVariance(selected.purchaseId)}

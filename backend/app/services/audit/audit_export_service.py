@@ -364,6 +364,9 @@ def collect_linked_doc_entries(
         if doc.link_kind == "invoice_no" and doc.invoice_id is not None:
             add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref, doc.invoice_no)
             continue
+        if doc.link_kind in {"po_reference", "so_reference"} and doc.invoice_id is not None:
+            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref, doc.invoice_no)
+            continue
         if doc.present and doc.invoice_id is not None:
             add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref, doc.invoice_no)
 

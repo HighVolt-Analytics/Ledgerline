@@ -13,6 +13,7 @@ import {
   api,
   clearGetCache,
   getAuthToken,
+  hydrateAuthTokenFromSession,
   setAuthToken,
   setAuthUser,
   setUnauthorizedHandler,
@@ -79,6 +80,8 @@ function invalidateSessionCaches(policy: SessionCachePolicy) {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  hydrateAuthTokenFromSession();
+
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
@@ -114,7 +117,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user: profile,
         memberships,
       });
-
       setAuthToken(access);
       setAuthUser(profile);
       if (mountedRef.current) {

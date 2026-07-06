@@ -10,6 +10,12 @@ export function MatchStatusBadge({ status }: { status: MatchStatus }) {
           <Check className="h-3 w-3" /> 3-Way Match
         </StatusPill>
       );
+    case "2-Way Match":
+      return (
+        <StatusPill className={pillTones.ok}>
+          <Check className="h-3 w-3" /> 2-Way Match
+        </StatusPill>
+      );
     case "Qty Variance":
     case "Price Variance":
       return (

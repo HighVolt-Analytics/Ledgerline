@@ -12,7 +12,14 @@ import { DossierSummaryStrip } from "@/components/dossiers/DossierSummaryStrip";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageEyebrowHeader } from "@/components/PageEyebrowHeader";
 import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { fetchDossierById, addDossierManualLink, removeDossierManualLink } from "@/lib/dossierApi";
+import {
+  canRenderTenantOwnedUi,
+  captureTenantFetchScope,
+  handleTenantScopedLoadFailure,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import { firstPipelineFailure, isLegacyMockDossierId, type DossierSummary } from "@/lib/dossiers";
 
 function scrollToFailedStage(stageId: string) {
@@ -54,6 +61,13 @@ export function DossierDetailPage() {
     setDossier(row);
   };
 
+  useResetOnTenantChange(() => {
+    setDossier(undefined);
+    setError(null);
+    setDrawerId(null);
+    setDrawerOpen(false);
+  });
+
   useLayoutEffect(() => {
     setDossier(undefined);
     setError(null);
@@ -66,25 +80,40 @@ export function DossierDetailPage() {
       setDossier(null);
       return;
     }
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
     if (isLegacyMockDossierId(dossierId)) {
       setDossier(null);
       setError(null);
       return;
     }
+    const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     setDossier(undefined);
     setError(null);
     void fetchDossierById(dossierId)
       .then((row) => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setDossier(row);
       })
       .catch((err) => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+        if (handleTenantScopedLoadFailure(err, { retry: () => undefined })) return;
         setError(err instanceof Error ? err.message : "Failed to load dossier");
         setDossier(null);
       });
   }, [dossierId, tenantScope]);
+
+  if (!canRenderTenantOwnedUi(tenantScope) && dossier === undefined) {
+    return (
+      <div className="space-y-4" data-testid="page-dossier-detail-loading">
+        <Link to="/dossiers" className="dossier-back-link" data-testid="link-back-dossiers">
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to dossiers
+        </Link>
+        <p className="text-sm text-muted-foreground">Loading organisation…</p>
+      </div>
+    );
+  }
 
   if (dossier === undefined) {
     return (

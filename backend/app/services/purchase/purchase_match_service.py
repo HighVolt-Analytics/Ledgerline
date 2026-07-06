@@ -292,6 +292,75 @@ def _purchase_rule_from_ids(
     return None, None
 
 
+def _resolve_purchase_match_mode(inv: Invoice | None) -> str:
+    from app.services.classification.document_type_match_service import resolve_match_mode
+
+    if inv is None:
+        return "three_way_po_grn"
+    return resolve_match_mode(document_type_code=inv.document_type_code)
+
+
+def _two_way_outcome_to_match_result(
+    po: PurchaseOrder,
+    inv: Invoice,
+    *,
+    status: str,
+    price_variance: float = 0.0,
+    qty_variance: float = 0.0,
+) -> ThreeWayMatchResult:
+    inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
+    po_qty = Decimal(str(po.po_qty or 0))
+    po_unit = Decimal(str(po.po_unit_price or 0))
+    po_value = _round2(po_qty * po_unit)
+    invoice_value = _round2(inv_qty * inv_unit)
+    invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
+    invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
+    total_deviation = _round2(qty_variance + price_variance)
+    return ThreeWayMatchResult(
+        status=status,
+        qty_variance_value=qty_variance,
+        price_variance_value=price_variance,
+        total_deviation=total_deviation,
+        po_value=po_value,
+        invoice_value=invoice_value,
+        invoice_gst=invoice_gst,
+        invoice_total=invoice_total,
+    )
+
+
+def _attach_purchase_two_way_display(
+    po: PurchaseOrder,
+    inv: Invoice,
+    match: ThreeWayMatchResult,
+) -> ThreeWayMatchResult:
+    po_qty = Decimal(str(po.po_qty or 0))
+    po_unit = Decimal(str(po.po_unit_price or 0))
+    inv_qty, inv_unit, _ = _invoice_qty_and_price(inv)
+    inv_uom = getattr(inv.line_items[0], "uom", None) if inv.line_items else None
+    po_line = _amount_line(
+        qty=po_qty,
+        uom=getattr(po, "po_uom", None),
+        unit_price=po_unit,
+        line_value=match.po_value,
+    )
+    invoice_line = _amount_line(
+        qty=inv_qty,
+        uom=inv_uom,
+        unit_price=inv_unit,
+        line_value=match.invoice_value,
+    )
+    display = ThreeWayMatchDisplay(
+        po_on_document=po_line,
+        po_for_match=po_line,
+        grn_on_document=None,
+        grn_for_match=None,
+        invoice_on_document=invoice_line,
+        invoice_for_match=invoice_line,
+        match_explanation="PO qty/price ↔ Invoice qty/price",
+    )
+    return match.model_copy(update={"display": display})
+
+
 def purchase_order_to_response(
     po: PurchaseOrder,
     inv: Invoice | None,
@@ -300,13 +369,29 @@ def purchase_order_to_response(
 ) -> PurchaseOrderResponse:
     grn = _latest_grn(po)
     match_cfg = config.purchase_match if config is not None else None
-    match = compute_three_way_match(
-        po,
-        inv,
-        match_config=match_cfg,
-        rule_book_config=config,
-    )
-    match = _attach_match_display(po, inv, match)
+    match_mode = _resolve_purchase_match_mode(inv)
+
+    if match_mode == "two_way_po_ses" and inv is not None:
+        from app.services.classification.document_type_match_service import compute_two_way_po_match
+
+        outcome = compute_two_way_po_match(po, inv)
+        detail = outcome.detail or {}
+        match = _two_way_outcome_to_match_result(
+            po,
+            inv,
+            status=outcome.status,
+            price_variance=float(detail.get("price_variance_value") or 0.0),
+            qty_variance=0.0,
+        )
+        match = _attach_purchase_two_way_display(po, inv, match)
+    else:
+        match = compute_three_way_match(
+            po,
+            inv,
+            match_config=match_cfg,
+            rule_book_config=config,
+        )
+        match = _attach_match_display(po, inv, match)
     inv_qty, inv_unit, gst_rate = (Decimal("0"), Decimal("0"), 0.0)
     matched_rule_ids: list[str] = []
     route_target: str | None = None
@@ -357,6 +442,7 @@ def purchase_order_to_response(
         status=po.status.value,
         three_way_match_status=po.three_way_match_status,
         match=match,
+        match_mode=match_mode,
         route_target=route_target,
         evaluation_status=evaluation_status,
         matched_rule_ids=matched_rule_ids,
@@ -437,6 +523,10 @@ async def list_purchase_orders(
         responses.append(purchase_order_to_response(po, inv, config=config))
 
     return responses
+
+
+def filter_two_way_purchase_rows(rows: list[PurchaseOrderResponse]) -> list[PurchaseOrderResponse]:
+    return [row for row in rows if row.match_mode == "two_way_po_ses"]
 
 
 async def sync_purchase_order_from_invoice(

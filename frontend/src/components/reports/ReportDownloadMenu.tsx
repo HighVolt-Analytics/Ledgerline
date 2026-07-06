@@ -80,7 +80,14 @@ export function ReportDownloadMenu({
           break;
         }
         case "documents-bundle": {
-          await api.downloadDocumentsBundleCsv(filter.dateFrom, filter.dateTo);
+          const { dataRows } = await api.downloadDocumentsBundleCsv(
+            filter.dateFrom,
+            filter.dateTo
+          );
+          if (dataRows === 0) {
+            onToast("No transactional posting documents in this period to export.");
+            return;
+          }
           onToast("Documents bundle downloaded.");
           break;
         }

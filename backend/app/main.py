@@ -29,6 +29,7 @@ from app.api import (
     tenant_members,
     platform,
     payments,
+    pending_customers,
     pending_vendors,
     processing,
     purchases,
@@ -136,6 +137,7 @@ app.include_router(customer_masters.router, prefix="/api", dependencies=_api_dep
 app.include_router(customers.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(employee_masters.router, prefix="/api", dependencies=_module_deps("team_expenses"))
 app.include_router(pending_vendors.router, prefix="/api", dependencies=_api_deps)
+app.include_router(pending_customers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(reports.router, prefix="/api", dependencies=_module_deps("reports"))
 app.include_router(rule_book.router, prefix="/api", dependencies=_module_deps("rule_book"))
 app.include_router(settings_api.router, prefix="/api", dependencies=_api_deps)

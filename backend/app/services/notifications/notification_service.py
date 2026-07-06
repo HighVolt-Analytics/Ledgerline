@@ -29,6 +29,7 @@ _NOTIFICATION_EVENTS = frozenset(
         "pipeline_error",
         "validation_failed",
         "vendor_registration_hold",
+        "customer_registration_hold",
         "unmatched_expense_vendor",
         "unmatched_team_vendor",
         "team_expense_approval_required",
@@ -51,6 +52,7 @@ _ACTION_EVENTS = frozenset(
     {
         "validation_failed",
         "vendor_registration_hold",
+        "customer_registration_hold",
         "unmatched_expense_vendor",
         "unmatched_team_vendor",
         "team_expense_approval_required",

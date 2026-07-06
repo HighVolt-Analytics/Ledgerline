@@ -42,11 +42,14 @@ const baseKeys = {
   vendorMasters: ["vendor-masters"] as const,
   employeeMasters: ["employee-masters"] as const,
   pendingVendors: ["pending-vendors"] as const,
+  pendingCustomers: ["pending-customers"] as const,
   vendorPayoutMethods: (vendorId: number) => ["vendor-payout-methods", vendorId] as const,
   routedInvoices: (routeTarget: string) => ["invoices", "routed", routeTarget] as const,
   payablesQueue: ["invoices", "payables"] as const,
   purchases: ["purchases"] as const,
+  purchasesTwoWay: ["purchases", "two-way"] as const,
   sales: ["sales"] as const,
+  salesTwoWay: ["sales", "two-way"] as const,
   collections: ["collections"] as const,
   customerMasters: ["customer-masters"] as const,
   customers: ["customers"] as const,
@@ -61,6 +64,8 @@ const baseKeys = {
   billing: ["billing"] as const,
   appSettings: ["app-settings"] as const,
   mailboxes: ["mailboxes"] as const,
+  myPermissions: ["auth", "permissions"] as const,
+  institutionSettings: ["tenants", "institution-settings"] as const,
 };
 
 export const queryKeys = {
@@ -81,12 +86,15 @@ export const queryKeys = {
   vendorMasters: () => tenantQueryKey(baseKeys.vendorMasters),
   employeeMasters: () => tenantQueryKey(baseKeys.employeeMasters),
   pendingVendors: () => tenantQueryKey(baseKeys.pendingVendors),
+  pendingCustomers: () => tenantQueryKey(baseKeys.pendingCustomers),
   vendorPayoutMethods: (vendorId: number) =>
     tenantQueryKey(baseKeys.vendorPayoutMethods(vendorId)),
   routedInvoices: (routeTarget: string) => tenantQueryKey(baseKeys.routedInvoices(routeTarget)),
   payablesQueue: () => tenantQueryKey(baseKeys.payablesQueue),
   purchases: () => tenantQueryKey(baseKeys.purchases),
+  purchasesTwoWay: () => tenantQueryKey(baseKeys.purchasesTwoWay),
   sales: () => tenantQueryKey(baseKeys.sales),
+  salesTwoWay: () => tenantQueryKey(baseKeys.salesTwoWay),
   collections: () => tenantQueryKey(baseKeys.collections),
   customerMasters: () => tenantQueryKey(baseKeys.customerMasters),
   customers: () => tenantQueryKey(baseKeys.customers),
@@ -101,4 +109,6 @@ export const queryKeys = {
   billing: () => tenantQueryKey(baseKeys.billing),
   appSettings: () => tenantQueryKey(baseKeys.appSettings),
   mailboxes: () => tenantQueryKey(baseKeys.mailboxes),
+  myPermissions: () => tenantQueryKey(baseKeys.myPermissions),
+  institutionSettings: () => tenantQueryKey(baseKeys.institutionSettings),
 };

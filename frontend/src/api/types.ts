@@ -597,6 +597,7 @@ export interface SalesOrderApi {
   status: string;
   three_way_match_status?: "full_match" | "partial" | "mismatch" | null;
   match: ThreeWayMatchApi;
+  match_mode?: string;
   route_target?: string | null;
   evaluation_status?: string | null;
   matched_rule_ids?: string[];
@@ -605,6 +606,27 @@ export interface SalesOrderApi {
   ledger?: string | null;
   sub_ledger?: string | null;
   sales_rule_id?: string | null;
+}
+
+export interface TwoWaySalesMatchApi {
+  invoice_id: number;
+  dn_invoice_id: number | null;
+  invoice_no: string | null;
+  customer: string | null;
+  dn_qty: number | null;
+  invoice_qty: number;
+  invoice_unit_price: number;
+  gst_rate: number;
+  match: ThreeWayMatchApi;
+  match_mode: string;
+  route_target?: string | null;
+  evaluation_status?: string | null;
+  document_type_code?: string | null;
+}
+
+export interface TwoWaySalesListApi {
+  register_rows: SalesOrderApi[];
+  orphan_rows: TwoWaySalesMatchApi[];
 }
 
 export interface CollectionApi {
@@ -659,6 +681,7 @@ export interface PurchaseOrderApi {
   status: string;
   three_way_match_status?: "full_match" | "partial" | "mismatch" | null;
   match: ThreeWayMatchApi;
+  match_mode?: string;
   route_target?: string | null;
   evaluation_status?: string | null;
   matched_rule_ids?: string[];

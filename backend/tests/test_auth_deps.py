@@ -14,12 +14,15 @@ from app.services.auth.auth_service import create_access_token, hash_password
 from app.services.auth.membership_service import ensure_membership
 
 
-def _fake_request() -> Request:
+def _fake_request(tenant_id: str | None = None) -> Request:
+    headers: list[tuple[bytes, bytes]] = []
+    if tenant_id is not None:
+        headers.append((b"x-tenant-id", tenant_id.encode()))
     scope = {
         "type": "http",
         "method": "GET",
         "path": "/",
-        "headers": [],
+        "headers": headers,
         "query_string": b"",
     }
     return Request(scope)
@@ -49,7 +52,9 @@ async def test_context_from_token_uses_jwt_tenant_slug(
         role="admin",
     )
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    ctx = await _context_from_token(creds, db_session, _fake_request())
+    ctx = await _context_from_token(
+        creds, db_session, _fake_request(str(PLATFORM_TENANT_UUID))
+    )
 
     assert ctx is not None
     assert ctx.tenant_id == PLATFORM_TENANT_UUID
@@ -79,7 +84,9 @@ async def test_context_from_token_default_tenant_slug(
         role="admin",
     )
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    ctx = await _context_from_token(creds, db_session, _fake_request())
+    ctx = await _context_from_token(
+        creds, db_session, _fake_request(str(TESTING_TENANT_UUID))
+    )
 
     assert ctx is not None
     assert ctx.tenant_slug == "hv-org"

@@ -210,6 +210,57 @@ async def test_invoice_no_linked_docs_deduplicate_existing_bundle_member(
 
 
 @pytest.mark.asyncio
+async def test_reference_linked_docs_appended_for_po_and_invoice_no(
+    db_session: AsyncSession,
+) -> None:
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Buyer",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-01",
+        invoice_no="INV-REF-UNION",
+        po_reference="PO-REF-UNION",
+        purchase_document_type="invoice",
+        file_hash="ref-union-anchor",
+    )
+    invoice_no_only = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Carrier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-26",
+        invoice_no="INV-REF-UNION",
+        file_hash="ref-union-inv-sibling",
+    )
+    po_only = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Supplier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-02",
+        invoice_no="PO-ONLY-DOC",
+        po_reference="PO-REF-UNION",
+        purchase_document_type="po",
+        file_hash="ref-union-po-sibling",
+    )
+    db_session.add_all([anchor, invoice_no_only, po_only])
+    await db_session.flush()
+
+    linked = await build_dossier_linked_documents(
+        db_session,
+        anchor,
+        definition=None,
+        document_types=[],
+    )
+
+    linked_ids = {
+        doc.invoice_id
+        for doc in linked.documents
+        if doc.invoice_id is not None and not doc.is_anchor
+    }
+    assert invoice_no_only.id in linked_ids
+    assert po_only.id in linked_ids
+
+
+@pytest.mark.asyncio
 async def test_sales_so_dossier_links_so_and_dn_members(db_session: AsyncSession) -> None:
     from app.schemas.document_type import DocumentTypeDefinition
 

@@ -1,12 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import type { RuleBookEvaluateResult } from "@/api/types";
+import { useAuth } from "@/context/AuthContext";
 import { ruleBookConfigToApi } from "@/lib/ruleBookConfigApi";
+import {
+  canRenderTenantOwnedUi,
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 
 const EVAL_DEBOUNCE_MS = 450;
 
 export function useRuleBookEvaluation(ruleBook: RuleBookConfigState | null, enabled = true) {
+  const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
   const [result, setResult] = useState<RuleBookEvaluateResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -14,7 +22,7 @@ export function useRuleBookEvaluation(ruleBook: RuleBookConfigState | null, enab
   const requestIdRef = useRef(0);
 
   useEffect(() => {
-    if (!enabled || !ruleBook) {
+    if (!enabled || !ruleBook || !canRenderTenantOwnedUi(tenantScope)) {
       setResult(null);
       setError(null);
       setIsLoading(false);
@@ -27,15 +35,16 @@ export function useRuleBookEvaluation(ruleBook: RuleBookConfigState | null, enab
 
     timerRef.current = setTimeout(() => {
       const requestId = ++requestIdRef.current;
+      const scope = captureTenantFetchScope();
       api
         .evaluateRuleBook({ config: ruleBookConfigToApi(ruleBook) })
         .then((data) => {
-          if (requestId !== requestIdRef.current) return;
+          if (requestId !== requestIdRef.current || !isTenantFetchScopeCurrent(scope)) return;
           setResult(data);
           setIsLoading(false);
         })
         .catch((err) => {
-          if (requestId !== requestIdRef.current) return;
+          if (requestId !== requestIdRef.current || !isTenantFetchScopeCurrent(scope)) return;
           setError(err instanceof Error ? err.message : "Evaluation failed");
           setResult(null);
           setIsLoading(false);
@@ -45,7 +54,7 @@ export function useRuleBookEvaluation(ruleBook: RuleBookConfigState | null, enab
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [enabled, ruleBook]);
+  }, [enabled, ruleBook, tenantScope]);
 
   return { result, isLoading, error };
 }

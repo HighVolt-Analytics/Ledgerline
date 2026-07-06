@@ -15,7 +15,11 @@ from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.dossier import DossierLinkedDocumentsResponse
 from app.services.audit.audit_export_service import linked_docs_by_dt_code
-from app.services.classification.document_type_klass import is_trans_posting
+from app.services.classification.document_type_catalog import effective_document_types_for_export
+from app.services.classification.document_type_klass import (
+    is_trans_posting,
+    normalize_document_type_identity,
+)
 from app.services.classification.document_type_playbook_service import (
     resolve_definition_for_invoice,
 )
@@ -51,7 +55,8 @@ def documents_bundle_filename(*, date_from: date | None) -> str:
 def _is_transactional_posting(defn: DocumentTypeDefinition | None) -> bool:
     if defn is None:
         return False
-    return is_trans_posting(defn) and (defn.posting or "").strip() == "Yes"
+    _, posting = normalize_document_type_identity(defn)
+    return is_trans_posting(defn) and posting == "Yes"
 
 
 def _dt_type_label(defn: DocumentTypeDefinition | None) -> str:
@@ -190,16 +195,24 @@ async def build_documents_bundle_export(
         raise ValueError("date_from must be on or before date_to")
 
     config = await load_posting_config_for_tenant(db, tenant_id)
-    document_types = config.document_types
-    dt_codes = _dt_codes_ordered(document_types)
-    dt_headers = _dt_column_headers(document_types)
-
     invoices = await _load_invoices(
         db,
         tenant_id=tenant_id,
         date_from=date_from,
         date_to=date_to,
     )
+
+    invoice_codes = {
+        (inv.document_type_code or "").strip().upper()
+        for inv in invoices
+        if (inv.document_type_code or "").strip()
+    }
+    document_types = effective_document_types_for_export(
+        config.document_types,
+        invoice_codes=invoice_codes,
+    )
+    dt_codes = _dt_codes_ordered(document_types)
+    dt_headers = _dt_column_headers(document_types)
 
     csv_rows: list[list[str]] = []
     for invoice in invoices:

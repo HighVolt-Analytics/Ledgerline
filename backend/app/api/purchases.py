@@ -10,6 +10,7 @@ from app.services.audit.audit_service import log_event
 from app.services.auth.privilege_service import require_privilege
 from app.services.purchase.purchase_match_service import (
     approve_purchase_variance,
+    filter_two_way_purchase_rows,
     list_purchase_orders,
     record_goods_receipt,
 )
@@ -24,6 +25,15 @@ async def get_purchase_orders(
 ) -> ApiEnvelope[list[PurchaseOrderResponse]]:
     rows = await list_purchase_orders(db, ctx.tenant_id)
     return ApiEnvelope(data=rows)
+
+
+@router.get("/two-way", response_model=ApiEnvelope[list[PurchaseOrderResponse]])
+async def get_two_way_purchase_orders(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[list[PurchaseOrderResponse]]:
+    rows = await list_purchase_orders(db, ctx.tenant_id)
+    return ApiEnvelope(data=filter_two_way_purchase_rows(rows))
 
 
 @router.post(

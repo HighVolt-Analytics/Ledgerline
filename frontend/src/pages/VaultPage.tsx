@@ -20,6 +20,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
   API_PORT_HINT,
+  canRenderTenantOwnedUi,
   captureTenantFetchScope,
   formatTenantLoadError,
   handleTenantScopedLoadFailure,
@@ -192,6 +193,8 @@ export function VaultPage() {
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
 
   const orgLabel = user?.tenant_name ?? "your organisation";
+  const tenantScope = user?.tenant_id ?? null;
+  const scopeOk = canRenderTenantOwnedUi(tenantScope);
 
   useResetOnTenantChange(() => {
     setVaultData(null);
@@ -209,6 +212,8 @@ export function VaultPage() {
   });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
+
     const scope = captureTenantFetchScope();
     if (!options?.silent) {
       setLoading(true);
@@ -274,7 +279,7 @@ export function VaultPage() {
     }
 
     if (!options?.silent) setLoading(false);
-  }, []);
+  }, [tenantScope]);
 
   useEffect(() => {
     void load();
@@ -428,6 +433,15 @@ export function VaultPage() {
       <div>
         <PageHeader title="Vault" subtitle={`Document vault for ${orgLabel}.`} />
         <Card className="p-8 text-center text-sm text-muted-foreground">Loading vault…</Card>
+      </div>
+    );
+  }
+
+  if (!scopeOk) {
+    return (
+      <div>
+        <PageHeader title="Vault" subtitle={`Document vault for ${orgLabel}.`} />
+        <Card className="p-8 text-center text-sm text-muted-foreground">Loading organisation…</Card>
       </div>
     );
   }
