@@ -144,3 +144,34 @@ class PendingVendorResponse(BaseModel):
     promoted_master_id: str | None
     created_at: datetime
     resolved_at: datetime | None
+
+
+class PendingCustomerCreate(BaseModel):
+    detected_name: str = Field(..., min_length=1, max_length=255)
+    detected_abn: str | None = Field(None, max_length=11)
+    detected_address: str | None = Field(None, max_length=500)
+    source_invoice_id: int | None = None
+    confidence: float = Field(default=0, ge=0, le=100)
+
+
+class PendingCustomerPromote(BaseModel):
+    master_id: str | None = Field(None, min_length=1, max_length=100)
+    name: str | None = Field(None, min_length=1, max_length=255)
+    abn: str = ""
+    default_ledger: str = ""
+    status: str = "Active"
+
+
+class PendingCustomerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    detected_name: str
+    detected_abn: str | None
+    detected_address: str | None
+    source_invoice_id: int | None
+    confidence: float
+    status: str
+    promoted_master_id: str | None
+    created_at: datetime
+    resolved_at: datetime | None

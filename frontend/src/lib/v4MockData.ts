@@ -86,6 +86,7 @@ export type PurchaseOrder = {
 
 export type MatchStatus =
   | "3-Way Match"
+  | "2-Way Match"
   | "Qty Variance"
   | "Price Variance"
   | "Routed for Approval"

@@ -48,5 +48,20 @@ def vendor_detection_evaluation_status(
     return PENDING_VENDOR
 
 
+def customer_detection_evaluation_status(
+    *,
+    confidence: float,
+    threshold: int,
+    known_master: object | None,
+    registration_required: bool = True,
+) -> str | None:
+    """Return pending_vendor when an unknown sales customer is below threshold."""
+    if not registration_required:
+        return None
+    if known_master or confidence >= threshold:
+        return None
+    return PENDING_VENDOR
+
+
 def is_unmatched_expense_vendor_status(evaluation_status: str | None) -> bool:
     return (evaluation_status or "").strip() == EVAL_UNMATCHED_EXPENSE_VENDOR

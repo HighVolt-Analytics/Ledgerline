@@ -136,6 +136,16 @@ def _summarize_vendor_hold(detail: dict[str, Any]) -> str:
     return "Vendor registration hold"
 
 
+def _summarize_customer_hold(detail: dict[str, Any]) -> str:
+    customer = str(detail.get("customer") or detail.get("vendor") or "").strip()
+    confidence = detail.get("customer_confidence", detail.get("vendor_confidence"))
+    if customer and confidence is not None:
+        return f"{customer}: customer confidence {confidence}, registration hold"
+    if customer:
+        return f"{customer}: customer registration hold"
+    return "Customer registration hold"
+
+
 def _summarize_vendor_cleared(detail: dict[str, Any]) -> str:
     vendor = str(detail.get("vendor") or "").strip()
     reason = str(detail.get("reason") or "").strip()
@@ -302,6 +312,8 @@ def summarize_audit_change(
         return _summarize_mapping_applied(d)
     if event == "vendor_registration_hold":
         return _summarize_vendor_hold(d)
+    if event == "customer_registration_hold":
+        return _summarize_customer_hold(d)
     if event == "vendor_registration_cleared":
         return _summarize_vendor_cleared(d)
     if event == "vendor_registration_waived":

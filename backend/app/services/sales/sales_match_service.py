@@ -16,7 +16,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.sales_order import SalesOrder, SalesOrderStatus
 from app.schemas.purchase import MatchAmountLine, ThreeWayMatchDisplay, ThreeWayMatchResult
 from app.schemas.rule_book_config import RuleBookConfigPayload
-from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse
+from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse, TwoWaySalesMatchResponse
 from app.schemas.uom_conversion import PurchaseMatchConfig
 from app.services.audit.audit_service import log_event
 from app.services.invoice.invoice_evaluation_service import ROUTE_SALES, parse_matched_rule_ids
@@ -340,6 +340,41 @@ def _sales_rule_from_ids(
     return None, None
 
 
+def _resolve_sales_match_mode(inv: Invoice | None) -> str:
+    from app.services.classification.document_type_match_service import resolve_match_mode
+
+    if inv is None:
+        return "three_way_so_dn"
+    return resolve_match_mode(document_type_code=inv.document_type_code)
+
+
+def _attach_two_way_display(
+    dn_qty: Decimal,
+    dn_uom: str | None,
+    inv: Invoice,
+    match: ThreeWayMatchResult,
+) -> ThreeWayMatchResult:
+    inv_qty, inv_unit, _ = _invoice_qty_and_price(inv)
+    inv_uom = getattr(inv.line_items[0], "uom", None) if inv.line_items else None
+    dn_line = _amount_line(qty=dn_qty, uom=dn_uom, unit_price=None, line_value=match.po_value)
+    invoice_line = _amount_line(
+        qty=inv_qty,
+        uom=inv_uom,
+        unit_price=inv_unit,
+        line_value=match.invoice_value,
+    )
+    display = ThreeWayMatchDisplay(
+        po_on_document=dn_line,
+        po_for_match=dn_line,
+        grn_on_document=None,
+        grn_for_match=None,
+        invoice_on_document=invoice_line,
+        invoice_for_match=invoice_line,
+        match_explanation="DN qty ↔ Invoice qty",
+    )
+    return match.model_copy(update={"display": display})
+
+
 def sales_order_to_response(
     so: SalesOrder,
     inv: Invoice | None,
@@ -348,13 +383,26 @@ def sales_order_to_response(
 ) -> SalesOrderResponse:
     dn = _latest_dn(so)
     match_cfg = config.purchase_match if config is not None else None
-    match = compute_three_way_match(
-        so,
-        inv,
-        match_config=match_cfg,
-        rule_book_config=config,
-    )
-    match = _attach_match_display(so, inv, match)
+    match_mode = _resolve_sales_match_mode(inv)
+
+    if match_mode == "two_way_dn_invoice" and inv is not None:
+        dn_qty = Decimal(str(dn.dn_qty)) if dn is not None else Decimal("0")
+        dn_uom = getattr(dn, "dn_uom", None) if dn is not None else None
+        match = compute_two_way_dn_match(
+            dn_qty=dn_qty,
+            dn_uom=dn_uom,
+            inv=inv,
+            match_config=match_cfg,
+        )
+        match = _attach_two_way_display(dn_qty, dn_uom, inv, match)
+    else:
+        match = compute_three_way_match(
+            so,
+            inv,
+            match_config=match_cfg,
+            rule_book_config=config,
+        )
+        match = _attach_match_display(so, inv, match)
     inv_qty, inv_unit, gst_rate = (Decimal("0"), Decimal("0"), 0.0)
     matched_rule_ids: list[str] = []
     route_target: str | None = None
@@ -405,6 +453,7 @@ def sales_order_to_response(
         status=so.status.value,
         three_way_match_status=so.three_way_match_status,
         match=match,
+        match_mode=match_mode,
         route_target=route_target,
         evaluation_status=evaluation_status,
         matched_rule_ids=matched_rule_ids,
@@ -482,6 +531,75 @@ async def list_sales_orders(
         responses.append(sales_order_to_response(so, inv, config=config))
 
     return responses
+
+
+async def list_two_way_sales_orphans(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[TwoWaySalesMatchResponse]:
+    """DN ↔ invoice pairs on 2-way playbook without a sales-order register row."""
+    from app.services.classification.document_type_match_service import resolve_match_mode
+
+    routed = (
+        await db.execute(
+            select(Invoice)
+            .where(
+                Invoice.tenant_id == tenant_id,
+                Invoice.route_target == ROUTE_SALES,
+                Invoice.sales_document_type.notin_(("so", "dn")),
+            )
+            .options(selectinload(Invoice.line_items))
+            .order_by(Invoice.created_at.desc())
+        )
+    ).scalars().all()
+
+    config = await load_classification_config(db, tenant_id)
+    match_cfg = config.purchase_match if config is not None else None
+    results: list[TwoWaySalesMatchResponse] = []
+    seen_invoice_ids: set[int] = set()
+
+    for inv in routed:
+        if resolve_match_mode(document_type_code=inv.document_type_code) != "two_way_dn_invoice":
+            continue
+        if inv.id in seen_invoice_ids:
+            continue
+        so = await load_sales_order_for_invoice(db, inv)
+        if so is not None:
+            continue
+        ctx = await resolve_ar_match_context(db, inv, requested_mode="two_way_dn_invoice")
+        if ctx.effective_mode != "two_way_dn_invoice" or ctx.dn_invoice is None:
+            continue
+        seen_invoice_ids.add(inv.id)
+        dn_qty, dn_uom = await _load_dn_invoice_qty(db, ctx.dn_invoice)
+        match = compute_two_way_dn_match(
+            dn_qty=dn_qty,
+            dn_uom=dn_uom,
+            inv=inv,
+            match_config=match_cfg,
+        )
+        match = _attach_two_way_display(dn_qty, dn_uom, inv, match)
+        inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
+        results.append(
+            TwoWaySalesMatchResponse(
+                invoice_id=inv.id,
+                dn_invoice_id=ctx.dn_invoice.id,
+                invoice_no=inv.invoice_no,
+                customer=inv.vendor,
+                dn_qty=float(dn_qty),
+                invoice_qty=float(inv_qty),
+                invoice_unit_price=float(inv_unit),
+                gst_rate=gst_rate,
+                match=match,
+                route_target=inv.route_target,
+                evaluation_status=inv.evaluation_status,
+                document_type_code=inv.document_type_code,
+            )
+        )
+    return results
+
+
+def filter_two_way_sales_rows(rows: list[SalesOrderResponse]) -> list[SalesOrderResponse]:
+    return [row for row in rows if row.match_mode == "two_way_dn_invoice"]
 
 
 async def load_sales_order_for_invoice(

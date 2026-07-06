@@ -174,6 +174,50 @@ async def fetch_linked_invoices_by_invoice_no(
     return list(rows)
 
 
+async def fetch_linked_invoices_by_po_reference(
+    session: AsyncSession,
+    anchor: Invoice,
+) -> list[Invoice]:
+    """Sibling invoices sharing the same plausible PO reference as the anchor."""
+    po_ref = effective_po_reference(anchor.po_reference)
+    if not po_ref or not is_plausible_po_reference(po_ref):
+        return []
+    rows = (
+        await session.execute(
+            select(Invoice)
+            .where(
+                Invoice.tenant_id == anchor.tenant_id,
+                Invoice.po_reference == po_ref,
+                Invoice.id != anchor.id,
+            )
+            .order_by(Invoice.id.asc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+async def fetch_linked_invoices_by_so_reference(
+    session: AsyncSession,
+    anchor: Invoice,
+) -> list[Invoice]:
+    """Sibling invoices sharing the same plausible SO reference as the anchor."""
+    so_ref = resolve_so_reference_from_invoice(anchor)
+    if not so_ref or not is_plausible_so_reference(so_ref):
+        return []
+    rows = (
+        await session.execute(
+            select(Invoice)
+            .where(
+                Invoice.tenant_id == anchor.tenant_id,
+                Invoice.so_reference == so_ref,
+                Invoice.id != anchor.id,
+            )
+            .order_by(Invoice.id.asc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
 def _linked_invoice_ids(response: DossierLinkedDocumentsResponse) -> set[int]:
     ids: set[int] = set()
     for doc in response.documents:
@@ -205,6 +249,31 @@ def _invoice_no_linked_document(
         has_file=has_stored_path(row.raw_file_path),
         linkage_detail=f"Linked on invoice no {invoice_no}",
         link_kind="invoice_no",
+    )
+
+
+def _reference_linked_document(
+    row: Invoice,
+    *,
+    reference_label: str,
+    link_kind: str,
+    document_types,
+) -> DossierLinkedDocumentResponse:
+    code = (row.document_type_code or "").strip().upper()
+    return DossierLinkedDocumentResponse(
+        id=f"{link_kind}-{row.id}",
+        document_type_code=code,
+        label=_linked_doc_dt_label(code, document_types),
+        document_ref=display_document_ref(row),
+        invoice_no=(row.invoice_no or "").strip() or None,
+        present=True,
+        requirement="advisory",
+        linked_dossier_id=dossier_public_id(row),
+        invoice_id=row.id,
+        is_anchor=False,
+        has_file=has_stored_path(row.raw_file_path),
+        linkage_detail=f"Linked on {reference_label}",
+        link_kind=link_kind,
     )
 
 
@@ -264,6 +333,65 @@ async def append_invoice_no_linked_documents(
             "linkage_label": linkage_label,
             "documents": list(response.documents) + extra,
         }
+    )
+
+
+async def append_reference_linked_documents(
+    session: AsyncSession,
+    anchor: Invoice,
+    response: DossierLinkedDocumentsResponse,
+    *,
+    document_types=None,
+) -> DossierLinkedDocumentsResponse:
+    """
+    Append invoices linked by PO or SO reference (additive; dedupe by invoice id).
+
+    Unions with bundle / invoice_no linked docs so transactional anchors with both
+    invoice no and reference no export all supporting documents.
+    """
+    if document_types is None:
+        document_types = (
+            await load_posting_config_for_tenant(session, anchor.tenant_id)
+        ).document_types
+
+    seen = _linked_invoice_ids(response)
+    extra: list[DossierLinkedDocumentResponse] = []
+
+    po_ref = effective_po_reference(anchor.po_reference)
+    if po_ref and is_plausible_po_reference(po_ref):
+        for row in await fetch_linked_invoices_by_po_reference(session, anchor):
+            if row.id in seen:
+                continue
+            extra.append(
+                _reference_linked_document(
+                    row,
+                    reference_label=po_ref,
+                    link_kind="po_reference",
+                    document_types=document_types,
+                )
+            )
+            seen.add(row.id)
+
+    so_ref = resolve_so_reference_from_invoice(anchor)
+    if so_ref and is_plausible_so_reference(so_ref):
+        for row in await fetch_linked_invoices_by_so_reference(session, anchor):
+            if row.id in seen:
+                continue
+            extra.append(
+                _reference_linked_document(
+                    row,
+                    reference_label=so_ref,
+                    link_kind="so_reference",
+                    document_types=document_types,
+                )
+            )
+            seen.add(row.id)
+
+    if not extra:
+        return response
+
+    return response.model_copy(
+        update={"documents": list(response.documents) + extra},
     )
 
 

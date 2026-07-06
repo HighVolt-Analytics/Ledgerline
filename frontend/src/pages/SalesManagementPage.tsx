@@ -17,8 +17,16 @@ import { useSales } from "@/hooks/useSales";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
+import { useSalesTwoWay } from "@/hooks/useSalesTwoWay";
 import { salesActionRequiredInvoices } from "@/lib/salesRegisterQueue";
-import { apiSalesToRow, salesKpisFromRegister } from "@/lib/routePageAdapters";
+import {
+  apiSalesToRow,
+  apiTwoWaySalesOrphanToRow,
+  isSalesTwoWayMode,
+  salesKpisFromRegister,
+  type SalesRegisterTableRow,
+  type SalesTwoWayOrphanRow,
+} from "@/lib/routePageAdapters";
 
 const ROUTE_TARGET = "Sales Management";
 const POLL_MS = 15_000;
@@ -28,13 +36,24 @@ function salesRowKey(salesId: number, invoiceId: number | null) {
 }
 
 export function SalesManagementPage() {
-  const { data: routed = [], refetch: refetchRouted } = useRoutedInvoices(ROUTE_TARGET);
+  const {
+    data: routed = [],
+    refetch: refetchRouted,
+    blocked: routedBlocked,
+  } = useRoutedInvoices(ROUTE_TARGET);
   const {
     data: salesRows = [],
     isLoading: salesLoading,
     isError,
     refetch: refetchSales,
+    blocked: salesBlocked,
   } = useSales();
+  const tenantDataBlocked = routedBlocked || salesBlocked;
+  const {
+    data: twoWayData,
+    isLoading: twoWayLoading,
+    refetch: refetchSalesTwoWay,
+  } = useSalesTwoWay(!tenantDataBlocked);
   const { data: ruleBook } = useRuleBookConfig();
   const mutations = useSalesMutations();
 
@@ -43,7 +62,22 @@ export function SalesManagementPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [registerTab, setRegisterTab] = useState<SalesRegisterTab>("register");
 
-  const rows = useMemo(() => salesRows.map(apiSalesToRow), [salesRows]);
+  const rows = useMemo(
+    () => (tenantDataBlocked ? [] : salesRows).map(apiSalesToRow),
+    [salesRows, tenantDataBlocked]
+  );
+  const threeWayRows = useMemo(
+    () => rows.filter((row) => !isSalesTwoWayMode(row.matchMode)),
+    [rows]
+  );
+  const twoWayRows = useMemo((): SalesRegisterTableRow[] => {
+    if (tenantDataBlocked) return [];
+    const registerTwoWay = rows
+      .filter((row) => isSalesTwoWayMode(row.matchMode))
+      .map((row) => ({ kind: "register" as const, ...row }));
+    const orphans = (twoWayData?.orphan_rows ?? []).map(apiTwoWaySalesOrphanToRow);
+    return [...registerTwoWay, ...orphans];
+  }, [rows, twoWayData, tenantDataBlocked]);
   const actionRequired = useMemo(
     () => salesActionRequiredInvoices(routed, salesRows),
     [routed, salesRows]
@@ -54,13 +88,18 @@ export function SalesManagementPage() {
   );
   const selected =
     rows.find((r) => salesRowKey(r.salesId, r.invoiceId) === selectedKey) ?? null;
+  const selectedTwoWayOrphan =
+    twoWayRows.find(
+      (r): r is SalesTwoWayOrphanRow =>
+        r.kind === "orphan" && `orphan-${r.invoiceId}` === selectedKey
+    ) ?? null;
   const activeRuleCount = useMemo(
     () => (ruleBook?.salesRules ?? []).filter((r) => r.enabled).length,
     [ruleBook?.salesRules]
   );
 
   const refetchAll = async () => {
-    await Promise.all([refetchRouted(), refetchSales()]);
+    await Promise.all([refetchRouted(), refetchSales(), refetchSalesTwoWay()]);
   };
 
   useVisibilityPolling(() => {
@@ -105,7 +144,7 @@ export function SalesManagementPage() {
 
       <SalesCaptureStrip activeRuleCount={activeRuleCount} />
 
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 mb-5">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 mb-5">
         <KpiCard
           label="Open SOs"
           value={salesLoading ? "…" : kpis.openSos}
@@ -126,8 +165,19 @@ export function SalesManagementPage() {
           value={salesLoading ? "…" : `${kpis.matchPct}%`}
           testid="kpi-sales-matchpct"
           delta={
-            !salesLoading && salesRows.length > 0
-              ? { dir: "up", text: "of SOs clean", good: true }
+            !salesLoading && threeWayRows.length > 0
+              ? { dir: "up", text: "of 3-way SOs clean", good: true }
+              : undefined
+          }
+        />
+        <KpiCard
+          label="2-Way match pass"
+          value={salesLoading || twoWayLoading ? "…" : `${kpis.twoWayMatchPct}%`}
+          testid="kpi-sales-two-way-matchpct"
+          onClick={kpis.twoWayCount > 0 ? () => setRegisterTab("two_way") : undefined}
+          delta={
+            !salesLoading && kpis.twoWayCount > 0
+              ? { dir: "up", text: `${kpis.twoWayCount} DN↔Invoice`, good: true }
               : undefined
           }
         />
@@ -145,10 +195,11 @@ export function SalesManagementPage() {
       </div>
 
       <SalesRegisterPanel
-        registerRows={rows}
+        registerRows={threeWayRows}
+        twoWayRows={twoWayRows}
         salesRows={salesRows}
         actionRequired={actionRequired}
-        loading={salesLoading}
+        loading={salesLoading || twoWayLoading || tenantDataBlocked}
         isError={isError}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -162,50 +213,76 @@ export function SalesManagementPage() {
       />
 
       <SalesDetailSheet
-        open={!!selected}
+        open={!!selected || !!selectedTwoWayOrphan}
         onClose={() => setSelectedKey(null)}
         title={
-          <span className="flex items-center gap-2">
-            {selected?.so.id}
-            {selected && selected.so.invoiceNo !== "—" && (
-              <span className="text-muted-foreground font-normal font-mono text-sm">
-                {selected.so.invoiceNo}
-              </span>
-            )}
-            {selected && <MatchStatusBadge status={selected.m.status} />}
-          </span>
+          selectedTwoWayOrphan ? (
+            <span className="flex items-center gap-2">
+              {selectedTwoWayOrphan.invoiceNo}
+              <MatchStatusBadge status={selectedTwoWayOrphan.m.status} />
+            </span>
+          ) : (
+            <span className="flex items-center gap-2">
+              {selected?.so.id}
+              {selected && selected.so.invoiceNo !== "—" && (
+                <span className="text-muted-foreground font-normal font-mono text-sm">
+                  {selected.so.invoiceNo}
+                </span>
+              )}
+              {selected && <MatchStatusBadge status={selected.m.status} />}
+            </span>
+          )
         }
         subtitle={
-          selected
-            ? `${selected.so.customer} · ${selected.so.item} · requested by ${selected.so.requestor}`
-            : undefined
+          selectedTwoWayOrphan
+            ? `${selectedTwoWayOrphan.customer} · DN ↔ Invoice two-way match`
+            : selected
+              ? `${selected.so.customer} · ${selected.so.item} · requested by ${selected.so.requestor}`
+              : undefined
         }
       >
-        {selected && (
+        {selectedTwoWayOrphan ? (
           <SalesDetailContent
-            so={selected.so}
-            match={selected.m}
-            invoiceId={selected.invoiceId}
-            busy={mutations.busyId === selected.salesId}
-            canApproveVariance={selected.so.routedForApproval ?? false}
-            onApprove={() => handleApproveVariance(selected.salesId)}
-            onRecordDn={(body) => handleRecordDn(selected.salesId, body)}
-            onOpenInvoice={
-              selected.invoiceId != null
-                ? () => setDrawerInvoiceId(selected.invoiceId)
-                : undefined
-            }
-            onOpenSoDocument={
-              selected.so.soDocumentId != null
-                ? () => setDrawerInvoiceId(selected.so.soDocumentId!)
-                : undefined
-            }
+            match={selectedTwoWayOrphan.m}
+            invoiceId={selectedTwoWayOrphan.invoiceId}
+            twoWay
+            dnQty={selectedTwoWayOrphan.dnQty}
+            invoiceQty={selectedTwoWayOrphan.invoiceQty}
+            onOpenInvoice={() => setDrawerInvoiceId(selectedTwoWayOrphan.invoiceId)}
             onOpenDnDocument={
-              selected.so.dnDocumentId != null
-                ? () => setDrawerInvoiceId(selected.so.dnDocumentId!)
+              selectedTwoWayOrphan.dnInvoiceId != null
+                ? () => setDrawerInvoiceId(selectedTwoWayOrphan.dnInvoiceId!)
                 : undefined
             }
           />
+        ) : (
+          selected && (
+            <SalesDetailContent
+              so={selected.so}
+              match={selected.m}
+              invoiceId={selected.invoiceId}
+              twoWay={isSalesTwoWayMode(selected.matchMode)}
+              busy={mutations.busyId === selected.salesId}
+              canApproveVariance={selected.so.routedForApproval ?? false}
+              onApprove={() => handleApproveVariance(selected.salesId)}
+              onRecordDn={(body) => handleRecordDn(selected.salesId, body)}
+              onOpenInvoice={
+                selected.invoiceId != null
+                  ? () => setDrawerInvoiceId(selected.invoiceId)
+                  : undefined
+              }
+              onOpenSoDocument={
+                selected.so.soDocumentId != null
+                  ? () => setDrawerInvoiceId(selected.so.soDocumentId!)
+                  : undefined
+              }
+              onOpenDnDocument={
+                selected.so.dnDocumentId != null
+                  ? () => setDrawerInvoiceId(selected.so.dnDocumentId!)
+                  : undefined
+              }
+            />
+          )
         )}
       </SalesDetailSheet>
 

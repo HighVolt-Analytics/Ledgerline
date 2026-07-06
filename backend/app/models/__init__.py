@@ -41,6 +41,7 @@ from app.models.user import User, UserRole
 from app.models.user_notification_cursor import UserNotificationCursor
 from app.models.user_tenant_mapping import UserTenantMapping
 from app.models.employee_master import EmployeeMasterRecord
+from app.models.pending_customer import PendingCustomer
 from app.models.pending_vendor import PendingVendor
 from app.models.vendor import VendorRegistry
 from app.models.vendor_master import VendorMasterRecord

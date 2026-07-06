@@ -10,6 +10,7 @@ import {
   customerMasterToCreateBody,
   customerMasterToUpdateBody,
   mapPendingVendor,
+  mapPendingCustomer,
   vendorMasterFromApi,
   vendorMasterToCreateBody,
   vendorMasterToUpdateBody,
@@ -62,6 +63,19 @@ export function usePendingVendors(enabled = true) {
   });
 }
 
+export function usePendingCustomers(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.pendingCustomers(),
+    queryFn: async () => {
+      const rows = await api.listPendingCustomers({ fresh: true });
+      return rows.map((row) => mapPendingCustomer(row as Record<string, unknown>));
+    },
+    enabled,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+}
+
 function patchVendorInCache(
   queryClient: ReturnType<typeof useQueryClient>,
   updated: VendorMaster
@@ -85,6 +99,10 @@ function removeVendorFromCache(queryClient: ReturnType<typeof useQueryClient>, i
 
 function invalidatePendingVendors(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: queryKeys.pendingVendors() });
+}
+
+function invalidatePendingCustomers(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.pendingCustomers() });
 }
 
 export function useCreateVendorMaster() {
@@ -154,6 +172,7 @@ export function useCreateCustomerMaster() {
     },
     onSuccess: (created) => {
       appendCustomerInCache(queryClient, created);
+      invalidatePendingCustomers(queryClient);
     },
   });
 }
@@ -274,5 +293,39 @@ export function useDismissPendingVendor() {
   return useMutation({
     mutationFn: (pendingId: number) => api.dismissPendingVendor(pendingId),
     onSuccess: () => invalidatePendingVendors(queryClient),
+  });
+}
+
+export function usePromotePendingCustomer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      pendingId,
+      body,
+    }: {
+      pendingId: number;
+      body: { masterId?: string; name?: string; abn?: string; defaultLedger?: string; status?: string };
+    }) => {
+      const raw = await api.promotePendingCustomer(pendingId, {
+        master_id: body.masterId,
+        name: body.name,
+        abn: body.abn,
+        default_ledger: body.defaultLedger,
+        status: body.status,
+      });
+      return customerMasterFromApi(raw as Record<string, unknown>);
+    },
+    onSuccess: (customer) => {
+      appendCustomerInCache(queryClient, customer);
+      invalidatePendingCustomers(queryClient);
+    },
+  });
+}
+
+export function useDismissPendingCustomer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (pendingId: number) => api.dismissPendingCustomer(pendingId),
+    onSuccess: () => invalidatePendingCustomers(queryClient),
   });
 }

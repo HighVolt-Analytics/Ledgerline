@@ -22,7 +22,11 @@ import { invoiceValidationConfidence } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { buildSalesRegisterCoverage, salesActionIssue } from "@/lib/salesRegisterQueue";
 import { fmtAud } from "@/lib/v4MockData";
-import type { apiSalesToRow } from "@/lib/routePageAdapters";
+import {
+  type apiSalesToRow,
+  salesTwoWayTableRowKey,
+  type SalesRegisterTableRow,
+} from "@/lib/routePageAdapters";
 
 const PAGE_SIZE = 10;
 
@@ -43,10 +47,19 @@ function salesRowKey(salesId: number, invoiceId: number | null) {
   return `${salesId}-${invoiceId ?? "none"}`;
 }
 
-export type SalesRegisterTab = "register" | "action";
+export type SalesRegisterTab = "register" | "two_way" | "action";
+
+export function SalesTwoWayFormulaHint() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Two-way match: <span className="font-mono">DN qty = Invoice qty</span> (playbook 2-way profiles).
+    </p>
+  );
+}
 
 export function SalesRegisterPanel({
   registerRows,
+  twoWayRows,
   salesRows,
   actionRequired,
   loading,
@@ -62,6 +75,7 @@ export function SalesRegisterPanel({
   onApproveVariance,
 }: {
   registerRows: RegisterRow[];
+  twoWayRows: SalesRegisterTableRow[];
   salesRows: SalesOrderApi[];
   actionRequired: Invoice[];
   loading: boolean;
@@ -78,6 +92,7 @@ export function SalesRegisterPanel({
 }) {
   const { data: ruleBook } = useRuleBookConfig();
   const [registerPage, setRegisterPage] = useState(1);
+  const [twoWayPage, setTwoWayPage] = useState(1);
   const [actionPage, setActionPage] = useState(1);
 
   const coverage = useMemo(
@@ -110,12 +125,35 @@ export function SalesRegisterPanel({
     [actionRequired, searchQuery]
   );
 
+  const filteredTwoWay = useMemo(
+    () =>
+      twoWayRows.filter((row) => {
+        const q = searchQuery.trim().toLowerCase();
+        if (!q) return true;
+        if (row.kind === "orphan") {
+          return [row.invoiceId, row.invoiceNo, row.customer, row.m.status].some((v) =>
+            String(v ?? "").toLowerCase().includes(q)
+          );
+        }
+        const { salesId, invoiceId, so, m } = row;
+        return [salesId, invoiceId, so.id, so.customer, so.invoiceNo, m.status].some((v) =>
+          String(v ?? "").toLowerCase().includes(q)
+        );
+      }),
+    [twoWayRows, searchQuery]
+  );
+
   const registerPages = Math.max(1, Math.ceil(filteredRegister.length / PAGE_SIZE));
+  const twoWayPages = Math.max(1, Math.ceil(filteredTwoWay.length / PAGE_SIZE));
   const actionPages = Math.max(1, Math.ceil(filteredAction.length / PAGE_SIZE));
 
   const pagedRegister = filteredRegister.slice(
     (registerPage - 1) * PAGE_SIZE,
     registerPage * PAGE_SIZE
+  );
+  const pagedTwoWay = filteredTwoWay.slice(
+    (twoWayPage - 1) * PAGE_SIZE,
+    twoWayPage * PAGE_SIZE
   );
   const pagedAction = filteredAction.slice(
     (actionPage - 1) * PAGE_SIZE,
@@ -124,8 +162,13 @@ export function SalesRegisterPanel({
 
   useEffect(() => {
     setRegisterPage(1);
+    setTwoWayPage(1);
     setActionPage(1);
   }, [searchQuery, activeTab]);
+
+  useEffect(() => {
+    if (twoWayPage > twoWayPages) setTwoWayPage(twoWayPages);
+  }, [twoWayPage, twoWayPages]);
 
   useEffect(() => {
     if (registerPage > registerPages) setRegisterPage(registerPages);
@@ -153,7 +196,7 @@ export function SalesRegisterPanel({
               <span className="font-medium text-foreground">Needs action</span>.
             </p>
           </div>
-          {(registerRows.length > 0 || actionRequired.length > 0) && (
+          {(registerRows.length > 0 || twoWayRows.length > 0 || actionRequired.length > 0) && (
             <ListSearchInput
               value={searchQuery}
               onChange={onSearchChange}
@@ -177,6 +220,18 @@ export function SalesRegisterPanel({
                   Three-way match
                   <Badge variant="secondary" className="ml-1.5 tnum font-normal">
                     {registerRows.length}
+                  </Badge>
+                </>
+              ),
+            },
+            {
+              value: "two_way",
+              testid: "tab-sales-two-way",
+              label: (
+                <>
+                  Two-way match
+                  <Badge variant="secondary" className="ml-1.5 tnum font-normal">
+                    {twoWayRows.length}
                   </Badge>
                 </>
               ),
@@ -388,6 +443,139 @@ export function SalesRegisterPanel({
                   and SO unit price = Invoice unit price. Variances route for tiered approval before collections.
                 </p>
               ) : null}
+            </>
+          )}
+        </>
+      ) : activeTab === "two_way" ? (
+        <>
+          <div className="flex flex-wrap items-center justify-end gap-2 px-4 py-2 border-b border-border/60">
+            <SalesTwoWayFormulaHint />
+          </div>
+
+          {loading ? (
+            <div className="px-4 py-8 text-sm text-muted-foreground">Loading two-way matches…</div>
+          ) : isError ? (
+            <div className="px-4 py-8 text-sm text-destructive">Could not load two-way matches.</div>
+          ) : twoWayRows.length === 0 ? (
+            <div className="px-4 py-6">
+              <EmptyState
+                title="No two-way matches yet"
+                hint="Documents on 2-way playbook profiles (DN ↔ Invoice) appear here when linked."
+              />
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b border-border text-left">
+                      <th className="px-4 py-2.5 font-medium">Invoice</th>
+                      <th className="px-3 py-2.5 font-medium">Customer</th>
+                      <th className="px-3 py-2.5 font-medium text-right">DN Qty</th>
+                      <th className="px-3 py-2.5 font-medium text-right">Invoice Qty · Value</th>
+                      <th className="px-3 py-2.5 font-medium text-right">Qty Var.</th>
+                      <th className="px-3 py-2.5 font-medium">Match</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedTwoWay.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                          No two-way rows match your search.
+                        </td>
+                      </tr>
+                    )}
+                    {pagedTwoWay.map((row) => {
+                      const rowKey = salesTwoWayTableRowKey(row);
+                      if (row.kind === "orphan") {
+                        return (
+                          <tr
+                            key={rowKey}
+                            className={cn(
+                              "row-band border-b border-border/60 hover-elevate cursor-pointer",
+                              selectedKey === rowKey && "bg-muted/40"
+                            )}
+                            onClick={() => onSelectKey(rowKey)}
+                          >
+                            <td className="px-4 py-2.5 font-mono text-xs">{row.invoiceNo}</td>
+                            <td className="px-3 py-2.5 text-muted-foreground">{row.customer}</td>
+                            <td className="px-3 py-2.5 text-right tnum">{row.dnQty ?? "—"}</td>
+                            <td className="px-3 py-2.5 text-right tnum">
+                              {row.invoiceQty} · {fmtAud(row.m.invoiceValue)}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tnum">
+                              {row.m.qtyVarianceValue === 0 ? "—" : fmtAud(row.m.qtyVarianceValue)}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <MatchStatusBadge status={row.m.status} />
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenInvoice(row.invoiceId);
+                                }}
+                              >
+                                View
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const { salesId, invoiceId, so, m } = row;
+                      const innerKey = salesRowKey(salesId, invoiceId);
+                      return (
+                        <tr
+                          key={rowKey}
+                          className={cn(
+                            "row-band border-b border-border/60 hover-elevate cursor-pointer",
+                            selectedKey === innerKey && "bg-muted/40"
+                          )}
+                          onClick={() => onSelectKey(innerKey)}
+                        >
+                          <td className="px-4 py-2.5 font-mono text-xs">
+                            {so.invoiceNo !== "—" ? so.invoiceNo : so.id}
+                          </td>
+                          <td className="px-3 py-2.5 text-muted-foreground">{so.customer}</td>
+                          <td className="px-3 py-2.5 text-right tnum">{so.dnQty ?? "—"}</td>
+                          <td className="px-3 py-2.5 text-right tnum">
+                            {so.invoiceQty} · {fmtAud(m.invoiceValue)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tnum">
+                            {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue)}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <MatchStatusBadge status={m.status} />
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectKey(innerKey);
+                              }}
+                            >
+                              View
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <ListPaginationFooter
+                page={twoWayPage}
+                totalPages={twoWayPages}
+                pageSize={PAGE_SIZE}
+                onPageChange={setTwoWayPage}
+              />
             </>
           )}
         </>

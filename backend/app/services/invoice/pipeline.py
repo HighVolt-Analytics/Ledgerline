@@ -201,14 +201,20 @@ async def _replace_line_items(
     invoice: Invoice,
     lines: list[ParsedLineItem],
 ) -> None:
-    await session.execute(
-        delete(LineItem).where(
-            *line_items_for_invoice(invoice.tenant_id, invoice.id),
+    stale = list(invoice.line_items)
+    if stale:
+        for item in stale:
+            await session.delete(item)
+    else:
+        await session.execute(
+            delete(LineItem).where(
+                *line_items_for_invoice(invoice.tenant_id, invoice.id),
+            )
         )
-    )
+    invoice.line_items.clear()
     await session.flush()
     for line in lines:
-        session.add(
+        invoice.line_items.append(
             LineItem(
                 tenant_id=invoice.tenant_id,
                 invoice_id=invoice.id,
@@ -219,6 +225,7 @@ async def _replace_line_items(
                 tax_amount=line.tax_amount,
             )
         )
+    await session.flush()
 
 
 def _resolve_header_mapping(

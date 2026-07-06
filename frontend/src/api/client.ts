@@ -1199,6 +1199,25 @@ export const api = {
     }),
   dismissPendingVendor: (pendingId: number) =>
     request<void>(`/api/pending-vendors/${pendingId}/dismiss`, { method: "POST" }),
+  listPendingCustomers: (options?: FreshRequestOptions) => {
+    const path = "/api/pending-customers";
+    if (options?.fresh) bustGetCache(path);
+    return request<Array<Record<string, unknown>>>(path);
+  },
+  createPendingCustomer: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/api/pending-customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  promotePendingCustomer: (pendingId: number, body: Record<string, unknown>) =>
+    request<Record<string, unknown>>(`/api/pending-customers/${pendingId}/promote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  dismissPendingCustomer: (pendingId: number) =>
+    request<void>(`/api/pending-customers/${pendingId}/dismiss`, { method: "POST" }),
   getRuleBookConfig: () => request<RuleBookConfig>("/api/rule-book/config"),
   getAiProviders: () =>
     request<import("@/api/types").AiProvidersResponse>("/api/rule-book/ai-providers"),
@@ -1351,10 +1370,18 @@ export const api = {
       undefined,
       `documents_bundle_${dateFrom.slice(0, 7)}.csv`
     );
-    saveBlobAsFile(blob, filename);
+    const text = await blob.text();
+    const dataRows = Math.max(0, text.trim().split(/\r?\n/).length - 1);
+    saveBlobAsFile(new Blob([text], { type: blob.type || "text/csv" }), filename);
+    return { dataRows };
   },
   listPurchases: (options?: FreshRequestOptions) => {
     const path = "/api/purchases";
+    if (options?.fresh) bustGetCache(path);
+    return request<PurchaseOrderApi[]>(path);
+  },
+  listPurchasesTwoWay: (options?: FreshRequestOptions) => {
+    const path = "/api/purchases/two-way";
     if (options?.fresh) bustGetCache(path);
     return request<PurchaseOrderApi[]>(path);
   },
@@ -1375,6 +1402,11 @@ export const api = {
     const path = "/api/sales";
     if (options?.fresh) bustGetCache(path);
     return request<SalesOrderApi[]>(path);
+  },
+  listSalesTwoWay: (options?: FreshRequestOptions) => {
+    const path = "/api/sales/two-way";
+    if (options?.fresh) bustGetCache(path);
+    return request<import("@/api/types").TwoWaySalesListApi>(path);
   },
   approveSalesVariance: (salesOrderId: number) =>
     request<SalesOrderApi>(`/api/sales/${salesOrderId}/approve-variance`, {
