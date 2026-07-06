@@ -163,9 +163,23 @@ _REMEDIATION: dict[str, str] = {
     "MATCH_FAILED_SALES": "Link SO/DN, approve variance, or update sales register lines.",
     "APPROVAL_REQUIRED": "Route to the approver named in the playbook policy.",
     "MAP_SUSPENSE": "Map to a real GL account in the rule book or approve suspense mapping.",
+    "MAP_CONFIG": "Set Post to ledger for this document type in Rule Book → Document types.",
+    "PIPELINE_ERROR": "Fix the reported issue and reprocess the dossier from the exception queue.",
     "RECON_HALTED": "Clear the daily reconciliation halt before posting.",
     "PAY_FAILED": "Review payment details and re-release from the payments queue.",
 }
+
+_PIPELINE_ERROR_SUPERSEDED_BY = frozenset(
+    {
+        "storage_verified",
+        "parse_completed",
+        "invoice_parsed",
+        "validation_passed",
+        "mapping_applied",
+        "invoice_processed",
+        "invoice_published_to_ledger",
+    }
+)
 
 
 def _fmt_at(at: datetime | None) -> str | None:
@@ -632,6 +646,10 @@ def _resolve_duplicate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPi
         # Informational repeat-submission or controlled re-ingest on the canonical row.
         return _duplicate_pass_step(inv, logs)
     if wm >= 2:
+        return _duplicate_pass_step(inv, logs)
+    # Canonical row already stored — duplicate was cleared at ingest even if this cycle
+    # has no storage_verified yet (e.g. after requeue or early pipeline_error).
+    if (inv.file_hash or "").strip():
         return _duplicate_pass_step(inv, logs)
     return _step("duplicate", state="pending", detail="—")
 
@@ -1498,6 +1516,90 @@ def _apply_pay_stage(
         break
 
 
+def _pipeline_error_stage_id(message: str) -> tuple[str, str, str]:
+    """Map pipeline_error text to stage_id, exception_code, remediation key."""
+    lower = message.lower()
+    if "post to ledger" in lower or (
+        "document type" in lower and ("configure" in lower or "not configured" in lower)
+    ):
+        return "map_gl", "MAP_CONFIG", "MAP_CONFIG"
+    if "ocr" in lower or "parse" in lower or "stored file" in lower:
+        return "extract", "PARSE_FAILED", "PARSE_FAILED"
+    if "classification" in lower or "confidence" in lower:
+        return "confidence_gate", "CLASSIFICATION_GATE", "CLASSIFICATION_GATE"
+    if "duplicate" in lower:
+        return "duplicate", "DUPLICATE_FILE", "DUPLICATE_FILE"
+    return "extract", "PIPELINE_ERROR", "PIPELINE_ERROR"
+
+
+def _pipeline_error_stale(logs: list[AuditLog], err_log: AuditLog) -> bool:
+    for event in _PIPELINE_ERROR_SUPERSEDED_BY:
+        success = _latest_log(logs, event)
+        if success is not None and _is_after(success, err_log):
+            return True
+    return False
+
+
+def _apply_pipeline_error(
+    steps: list[DossierPipelineStepResponse],
+    inv: Invoice,
+    logs: list[AuditLog],
+) -> list[DossierPipelineStepResponse]:
+    """Surface audit pipeline_error on the dossier when processing aborted early."""
+    if inv.status != InvoiceStatus.EXCEPTION:
+        return steps
+    err_log = _latest_log(logs, "pipeline_error")
+    if err_log is None or _pipeline_error_stale(logs, err_log):
+        return steps
+    if any(step.state == "fail" for step in steps):
+        return steps
+
+    message = _detail_from_log(err_log, fallback="Pipeline processing failed")
+    stage_id, exception_code, remediation_key = _pipeline_error_stage_id(message)
+    try:
+        stage_idx = STAGE_IDS.index(stage_id)
+    except ValueError:
+        return steps
+
+    out: list[DossierPipelineStepResponse] = []
+    for i, step in enumerate(steps):
+        if i < stage_idx:
+            out.append(step)
+            continue
+        if i == stage_idx:
+            out.append(
+                step.model_copy(
+                    update={
+                        "state": "fail",
+                        "detail": message,
+                        "at": _fmt_at(err_log.created_at),
+                        "exception_code": exception_code,
+                        "failure_reason": message,
+                        "remediation": _REMEDIATION.get(remediation_key, _REMEDIATION["PIPELINE_ERROR"]),
+                        "blocked_reason": None,
+                    }
+                )
+            )
+            continue
+        if step.state in ("fail", "waived"):
+            out.append(step)
+            continue
+        blocked_detail = step.detail if step.detail and step.detail != "—" else None
+        out.append(
+            step.model_copy(
+                update={
+                    "state": "pending",
+                    "detail": blocked_detail or "—",
+                    "blocked_reason": None,
+                    "exception_code": None,
+                    "failure_reason": None,
+                    "remediation": None,
+                }
+            )
+        )
+    return out
+
+
 def _apply_blocked_downstream(steps: list[DossierPipelineStepResponse]) -> list[DossierPipelineStepResponse]:
     fail_idx: int | None = None
     for i, step in enumerate(steps):
@@ -1560,6 +1662,7 @@ def build_dossier_pipeline(
 ) -> list[DossierPipelineStepResponse]:
     cycle_logs = _cycle_logs(logs)
     steps = _build_raw_steps(inv, cycle_logs, document_types=document_types)
+    steps = _apply_pipeline_error(steps, inv, cycle_logs)
     _apply_pay_stage(steps, payment_status=payment_status, payment_detail=payment_detail)
     steps = _apply_blocked_downstream(steps)
     _apply_durations(steps)
