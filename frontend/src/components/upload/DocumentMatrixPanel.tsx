@@ -291,7 +291,9 @@ export function DocumentMatrixPanel({
     try {
       if (action === "unique") {
         if (QUEUE_STATUSES.has(inv.status)) {
-          await approveAndProcess(inv.id, () => load({ silent: true, fresh: true }));
+          await approveAndProcess(inv.id, async () => {
+            await load({ silent: true, fresh: true });
+          });
           setToast(`${documentDisplayRef(inv)} approved and processed`);
         } else {
           setToast(`${documentDisplayRef(inv)} — open the document to resolve routing or mapping`);

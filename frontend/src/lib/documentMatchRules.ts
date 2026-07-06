@@ -4,11 +4,14 @@
 
 import type { ChartOfAccountRow } from "@/api/types";
 import { hasValidPostTo } from "@/lib/documentTypePostToValidation";
+import type { ConditionOperator } from "@/lib/v4RuleBookTypes";
 import type {
   DocumentRuleCondition,
   DocumentRuleConditionGroup,
+  DocumentTypePostTo,
   RecognitionMode,
 } from "@/lib/v5DocumentTypes";
+import { emptyDocumentTypePostTo } from "@/lib/v5DocumentTypes";
 import { extractionFieldLabel, normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
 import { newClientRowKey } from "@/lib/clientRowKey";
 
@@ -567,7 +570,7 @@ export function documentTypeReadiness(
     llmPrompt: string;
     code: string;
     posting: string;
-    postTo?: { ledger: string };
+    postTo?: DocumentTypePostTo;
     classifier: { root: DocumentRuleConditionGroup };
   },
   options?: { coaAccounts?: ChartOfAccountRow[] }
@@ -582,7 +585,7 @@ export function documentTypeReadiness(
   const hasCode = Boolean(draft.code.trim());
   const accounts = options?.coaAccounts ?? [];
   const hasPostTo = hasValidPostTo(
-    { posting: draft.posting, postTo: draft.postTo ?? { ledger: "", subLedger: "" } },
+    { posting: draft.posting, postTo: draft.postTo ?? emptyDocumentTypePostTo() },
     accounts
   );
 
