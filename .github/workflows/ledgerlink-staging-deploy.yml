@@ -109,7 +109,7 @@ jobs:
         run: |
           kubectl exec deployment/ledgerlink-api \
             -n "${{ env.NAMESPACE }}" \
-            -- sh -lc "cd /app && alembic upgrade head"
+            -- sh -lc "cd /app && python scripts/ensure_alembic_upgradeable.py && alembic upgrade head"
 
       - name: Verify API health via cluster service
         run: |
