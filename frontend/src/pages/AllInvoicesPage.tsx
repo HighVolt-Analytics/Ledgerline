@@ -109,7 +109,7 @@ export function AllInvoicesPage() {
                   </td>
                   <td className="px-3 py-2.5">{counterpartyName(row)}</td>
                   <td className="px-3 py-2.5 tnum">{row.invoice_date ?? "—"}</td>
-                  <td className="px-3 py-2.5 text-right tnum">{money(row.total_amount, row.currency)}</td>
+                  <td className="px-3 py-2.5 text-right tnum">{money(row.total, row.currency)}</td>
                   <td className="px-3 py-2.5">
                     <StageBadge {...invoiceStageBadgeProps(row)} />
                   </td>
