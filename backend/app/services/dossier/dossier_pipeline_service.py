@@ -27,6 +27,7 @@ from app.services.invoice.pipeline_stages import (
     _validation_results,
 )
 from app.services.integration.publish_service import is_published_from_audit_logs
+from app.services.invoice.processing_cycle_service import latest_cycle_reset_log_id_from_logs
 
 DossierStageState = Literal["pass", "fail", "waived", "pending"]
 
@@ -190,6 +191,14 @@ def _detail_from_log(log: AuditLog | None, *, fallback: str = "—") -> str:
     return summary or fallback
 
 
+def _cycle_logs(logs: list[AuditLog]) -> list[AuditLog]:
+    """Audit entries from the current processing cycle (after last requeue/reject)."""
+    reset_id = latest_cycle_reset_log_id_from_logs(logs)
+    if reset_id <= 0:
+        return logs
+    return [entry for entry in logs if entry.id > reset_id]
+
+
 def _watermark(logs: list[AuditLog], inv: Invoice) -> int:
     wm = _STATUS_FLOOR.get(inv.status, -1)
     for entry in logs:
@@ -198,8 +207,56 @@ def _watermark(logs: list[AuditLog], inv: Invoice) -> int:
             wm = max(wm, idx)
     if inv.status == InvoiceStatus.EXCEPTION:
         # Exception can stop anywhere — trust audit trail, not status floor.
-        wm = max(( _EVENT_STAGE.get(e.event, -1) for e in logs), default=-1)
+        wm = max((_EVENT_STAGE.get(e.event, -1) for e in logs), default=-1)
     return wm
+
+
+def _map_gl_complete(inv: Invoice, logs: list[AuditLog]) -> bool:
+    if _is_vault_route(inv):
+        return True
+    return bool(_latest_log(logs, "mapping_applied") or (inv.account_name or "").strip())
+
+
+def _routing_review_fail_for_stage(
+    logs: list[AuditLog],
+    inv: Invoice,
+    *,
+    gate: str,
+    stage_id: str,
+    exception_code: str,
+    remediation: str,
+) -> DossierPipelineStepResponse | None:
+    """Fail a stage when routing_review_required blocks on a specific gate."""
+    if inv.status != InvoiceStatus.EXCEPTION:
+        return None
+    routing = _latest_log(logs, "routing_review_required")
+    if routing is None or _routing_review_gate(routing) != gate:
+        return None
+    resolved = _latest_log(logs, "classification_resolved")
+    if resolved and _is_after(resolved, routing):
+        return None
+    validate_pass = _latest_log(logs, "validation_passed")
+    if validate_pass and _is_after(validate_pass, routing):
+        return None
+    gate_pass = _latest_log(logs, "classification_gate_passed")
+    if gate == "classification" and gate_pass and _is_after(gate_pass, routing):
+        return None
+    quality_pass = _latest_log(logs, "image_quality_gate_passed")
+    if gate == "image_quality" and quality_pass and _is_after(quality_pass, routing):
+        return None
+    reason = _detail_from_log(routing, fallback="routing_review_required")
+    detail_dict = _routing_review_detail(routing)
+    reason_labels = _format_review_reasons(detail_dict.get("review_reasons"))
+    failure = reason_labels or reason
+    return _step(
+        stage_id,
+        state="fail",
+        detail=failure,
+        at=routing.created_at,
+        exception_code=exception_code,
+        failure_reason=failure,
+        remediation=remediation,
+    )
 
 
 def _validation_checks(
@@ -668,6 +725,17 @@ def _resolve_ocr(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipeline
 
 
 def _resolve_quality(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    routing_fail = _routing_review_fail_for_stage(
+        logs,
+        inv,
+        gate="image_quality",
+        stage_id="quality",
+        exception_code="IMAGE_QUALITY",
+        remediation=_REMEDIATION["IMAGE_QUALITY"],
+    )
+    if routing_fail is not None:
+        return routing_fail
+
     quality_pass = _latest_log(logs, "image_quality_gate_passed")
     quality_fail = _latest_log(logs, "image_quality_gate_failed")
     quality_log = quality_pass or quality_fail
@@ -713,6 +781,20 @@ def _resolve_llm_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossie
         if conf:
             detail = f"{detail} · {conf}"
         return _step("llm_classify", state="pass", detail=detail)
+    gate_pass = _latest_log(logs, "classification_gate_passed")
+    document_classified = _latest_log(logs, "document_classified")
+    classification_resolved = _latest_log(logs, "classification_resolved")
+    if gate_pass or document_classified or classification_resolved:
+        dt = (
+            (inv.document_type_code or inv.llm_suggested_dt or "—").strip()
+            or "—"
+        )
+        at = (
+            (gate_pass or document_classified or classification_resolved).created_at
+            if (gate_pass or document_classified or classification_resolved)
+            else None
+        )
+        return _step("llm_classify", state="pass", detail=f"llm_classified · {dt} · skipped", at=at)
     if _legacy_capture_complete(logs, wm) and (inv.document_type_code or inv.llm_suggested_dt):
         return _step("llm_classify", state="pass", detail="llm_classified · legacy run")
     return _step("llm_classify", state="pending", detail="—")
@@ -1222,6 +1304,9 @@ def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
     if _is_vault_route(inv):
         return _step("journal", state="waived", detail="Not required — vault route")
 
+    if not _map_gl_complete(inv, logs):
+        return _step("journal", state="pending", detail="—")
+
     processed = _latest_log(logs, "invoice_processed", "purchase_document_processed")
     if inv.status in (InvoiceStatus.JOURNALING, InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 15:
         at = processed.created_at if processed else None
@@ -1237,6 +1322,9 @@ def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 def _resolve_reconcile(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
     if _is_vault_route(inv):
         return _step("reconcile", state="waived", detail="Not required — vault route")
+
+    if not _map_gl_complete(inv, logs):
+        return _step("reconcile", state="pending", detail="—")
 
     recon_halt = _latest_log(logs, "reconciliation_halted")
     recon_skip = _latest_log(logs, "reconciliation_skipped")
@@ -1264,6 +1352,9 @@ def _resolve_reconcile(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPi
 def _resolve_post(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
     if _is_vault_route(inv):
         return _step("post", state="waived", detail="Not required — vault route")
+
+    if not _map_gl_complete(inv, logs):
+        return _step("post", state="pending", detail="—")
 
     doc_type = (inv.purchase_document_type or "").strip().lower()
     if doc_type in ("po", "grn"):
@@ -1405,12 +1496,25 @@ def _apply_blocked_downstream(steps: list[DossierPipelineStepResponse]) -> list[
         if step.state == "fail":
             fail_idx = i
             break
+
+    bottleneck_idx: int | None = None
     if fail_idx is None:
+        for i, step in enumerate(steps):
+            if step.state != "pending" or not step.detail or step.detail == "—":
+                continue
+            if any(steps[j].state == "pass" for j in range(i + 1, len(steps))):
+                bottleneck_idx = i
+                break
+
+    block_idx = fail_idx if fail_idx is not None else bottleneck_idx
+    if block_idx is None:
         return steps
-    fail_label = _STAGE_LABELS.get(steps[fail_idx].stage_id, steps[fail_idx].stage_id)
+
+    block_label = _STAGE_LABELS.get(steps[block_idx].stage_id, steps[block_idx].stage_id)
+    block_prefix = "must pass" if fail_idx is not None else "must complete"
     out: list[DossierPipelineStepResponse] = []
     for i, step in enumerate(steps):
-        if i <= fail_idx:
+        if i <= block_idx:
             out.append(step)
             continue
         if step.state in ("fail", "waived"):
@@ -1426,7 +1530,7 @@ def _apply_blocked_downstream(steps: list[DossierPipelineStepResponse]) -> list[
                     "state": "pending",
                     "detail": blocked_detail or "—",
                     "blocked_reason": (
-                        f'Blocked — upstream stage "{fail_label}" must pass before this stage can run.'
+                        f'Blocked — upstream stage "{block_label}" {block_prefix} before this stage can run.'
                     ),
                     "exception_code": None,
                     "failure_reason": None,
@@ -1446,7 +1550,8 @@ def build_dossier_pipeline(
     compact: bool = False,
     document_types: list | None = None,
 ) -> list[DossierPipelineStepResponse]:
-    steps = _build_raw_steps(inv, logs, document_types=document_types)
+    cycle_logs = _cycle_logs(logs)
+    steps = _build_raw_steps(inv, cycle_logs, document_types=document_types)
     _apply_pay_stage(steps, payment_status=payment_status, payment_detail=payment_detail)
     steps = _apply_blocked_downstream(steps)
     _apply_durations(steps)

@@ -656,3 +656,101 @@ async def test_compact_pipeline_keeps_failure_fields_on_failed_step(
     ingest = next(s for s in pipeline if s.stage_id == "ingest")
     assert ingest.failure_reason is None
     assert ingest.remediation is None
+
+
+def _log_id(event: str, invoice_id: int, log_id: int, **detail: object) -> AuditLog:
+    return AuditLog(
+        id=log_id,
+        event=event,
+        invoice_id=invoice_id,
+        created_at=datetime.now(timezone.utc) + timedelta(seconds=log_id),
+        detail=dict(detail),
+    )
+
+
+@pytest.mark.asyncio
+async def test_pipeline_llm_classify_inferred_when_gate_passed_without_llm_log() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Spectra",
+        status=InvoiceStatus.PARSING,
+        document_type_code="DT-01",
+    )
+    logs = [
+        _log("invoice_uploaded", 1),
+        _log("parse_completed", 1),
+        _log("classification_gate_passed", 1, confirmed_dt="DT-01"),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    llm = next(s for s in pipeline if s.stage_id == "llm_classify")
+    assert llm.state == "pass"
+    assert "skipped" in llm.detail or "DT-01" in llm.detail
+
+
+@pytest.mark.asyncio
+async def test_pipeline_map_gl_pending_blocks_journal_and_post() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Spectra",
+        status=InvoiceStatus.MAPPING,
+    )
+    logs = [
+        _log("invoice_uploaded", 1),
+        _log("parse_completed", 1),
+        _log("validation_passed", 1),
+        _log("invoice_processed", 1),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    map_gl = next(s for s in pipeline if s.stage_id == "map_gl")
+    journal = next(s for s in pipeline if s.stage_id == "journal")
+    post = next(s for s in pipeline if s.stage_id == "post")
+    assert map_gl.state == "pending"
+    assert map_gl.detail == "Awaiting mapping"
+    assert journal.state == "pending"
+    assert post.state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_cycle_reset_ignores_stale_processed_logs() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Spectra",
+        status=InvoiceStatus.MAPPING,
+    )
+    logs = [
+        _log_id("invoice_uploaded", 1, 1),
+        _log_id("invoice_processed", 1, 2),
+        _log_id("mapping_applied", 1, 3, account_name="5100"),
+        _log_id("invoice_requeued", 1, 4),
+        _log_id("validation_passed", 1, 5),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    map_gl = next(s for s in pipeline if s.stage_id == "map_gl")
+    journal = next(s for s in pipeline if s.stage_id == "journal")
+    assert map_gl.state == "pending"
+    assert journal.state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_image_quality_routing_review_fails_quality_stage() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Spectra",
+        status=InvoiceStatus.EXCEPTION,
+    )
+    logs = [
+        _log("invoice_uploaded", 1),
+        _log(
+            "routing_review_required",
+            1,
+            gate="image_quality",
+            review_reasons=["OCR_SPARSE"],
+            sparse=True,
+            text_length=12,
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    quality = next(s for s in pipeline if s.stage_id == "quality")
+    assert quality.state == "fail"
+    assert quality.exception_code == "IMAGE_QUALITY"
+    assert first_pipeline_failure(pipeline) is not None

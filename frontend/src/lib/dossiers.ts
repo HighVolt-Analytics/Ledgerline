@@ -214,15 +214,52 @@ export function dossierStageStateLabel(state: DossierStageState): string {
   return "Waiting";
 }
 
+export function firstPipelineFailure(
+  pipeline: DossierPipelineStep[]
+): DossierPipelineStep | undefined {
+  const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  for (const stage of DOSSIER_PIPELINE_STAGES) {
+    const step = byStage.get(stage.id);
+    if (step?.state === "fail") return step;
+  }
+  return undefined;
+}
+
+/** First pending stage that is blocking forward progress. */
+export function firstPipelineBottleneck(
+  pipeline: DossierPipelineStep[]
+): { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined {
+  const fail = firstPipelineFailure(pipeline);
+  if (fail) return { stageId: fail.stageId, step: fail };
+
+  const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  for (const stage of DOSSIER_PIPELINE_STAGES) {
+    const step = byStage.get(stage.id);
+    if (!step) break;
+    if (step.state === "pending" && step.detail && step.detail !== "—") {
+      return { stageId: stage.id, step };
+    }
+    if (step.state === "pending") {
+      return { stageId: stage.id, step };
+    }
+  }
+  return undefined;
+}
+
 export function pipelineActiveStage(
   pipeline: DossierPipelineStep[]
 ): { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined {
+  const bottleneck = firstPipelineBottleneck(pipeline);
+  if (bottleneck) return bottleneck;
+
   const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
   let last: { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined;
   for (const stage of DOSSIER_PIPELINE_STAGES) {
     const step = byStage.get(stage.id);
-    if (!step || step.state === "pending") break;
-    last = { stageId: stage.id, step };
+    if (!step) break;
+    if (step.state === "pass" || step.state === "waived") {
+      last = { stageId: stage.id, step };
+    }
   }
   return last;
 }
@@ -244,7 +281,7 @@ export function pipelineProgressSummary(
 
 export function dossierBlockerFromSummary(dossier: Pick<
   DossierSummary,
-  "pipeline" | "blockerStageId" | "blockerReason" | "blockerRemediation"
+  "pipeline" | "blockerStageId" | "blockerReason" | "blockerRemediation" | "outcome" | "outcomeBanner"
 >): {
   stageId: DossierPipelineStageId;
   reason: string;
@@ -253,19 +290,52 @@ export function dossierBlockerFromSummary(dossier: Pick<
   step: DossierPipelineStep;
 } | undefined {
   const fail = firstPipelineFailure(dossier.pipeline);
-  if (!fail) return undefined;
-  const reason =
-    dossier.blockerReason?.trim() ||
-    fail.failureReason?.trim() ||
-    (fail.detail !== "—" ? fail.detail : "") ||
-    "This stage did not pass.";
-  return {
-    stageId: (dossier.blockerStageId as DossierPipelineStageId | undefined) ?? fail.stageId,
-    reason,
-    remediation: dossier.blockerRemediation ?? fail.remediation,
-    exceptionCode: fail.exceptionCode,
-    step: fail,
-  };
+  if (fail) {
+    const reason =
+      dossier.blockerReason?.trim() ||
+      fail.failureReason?.trim() ||
+      (fail.detail !== "—" ? fail.detail : "") ||
+      "This stage did not pass.";
+    return {
+      stageId: (dossier.blockerStageId as DossierPipelineStageId | undefined) ?? fail.stageId,
+      reason,
+      remediation: dossier.blockerRemediation ?? fail.remediation,
+      exceptionCode: fail.exceptionCode,
+      step: fail,
+    };
+  }
+
+  if (dossier.outcome === "blocked") {
+    const bottleneck = firstPipelineBottleneck(dossier.pipeline);
+    const reason =
+      dossier.blockerReason?.trim() ||
+      dossier.outcomeBanner?.trim() ||
+      bottleneck?.step.detail?.trim() ||
+      "Pipeline blocked — review required";
+    if (bottleneck) {
+      return {
+        stageId: bottleneck.stageId,
+        reason,
+        remediation: dossier.blockerRemediation,
+        exceptionCode: bottleneck.step.exceptionCode,
+        step: bottleneck.step,
+      };
+    }
+    return {
+      stageId: "validate",
+      reason,
+      remediation: dossier.blockerRemediation,
+      exceptionCode: null,
+      step: {
+        stageId: "validate",
+        state: "pending",
+        detail: reason,
+        at: null,
+      },
+    };
+  }
+
+  return undefined;
 }
 
 export function stageIdsForPhase(phaseId: DossierPipelinePhaseId): DossierPipelineStageId[] {
@@ -371,17 +441,6 @@ export function dossierStageLabel(
     return "Customer hold";
   }
   return DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.label ?? stageId;
-}
-
-export function firstPipelineFailure(
-  pipeline: DossierPipelineStep[]
-): DossierPipelineStep | undefined {
-  const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
-  for (const stage of DOSSIER_PIPELINE_STAGES) {
-    const step = byStage.get(stage.id);
-    if (step?.state === "fail") return step;
-  }
-  return undefined;
 }
 
 export function pipelineBlockedFromStageId(
