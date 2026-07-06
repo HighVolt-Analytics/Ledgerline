@@ -15,7 +15,6 @@ from app.services.shared.file_storage import has_stored_path, stored_file_availa
 from app.services.sales.sales_linking_service import find_dn_invoices_by_invoice_no
 from app.services.sales.sales_match_service import (
     _latest_dn,
-    compute_three_way_match,
     load_sales_order_for_invoice,
     sales_order_to_response,
 )
@@ -231,8 +230,6 @@ async def build_sales_dossier(
             commercial_for_match = loaded.get(so_row.invoice_id)
             if commercial_for_match is None:
                 commercial_for_match = await _invoice_by_id(session, so_row.invoice_id)
-        match = compute_three_way_match(so_row, commercial_for_match)
-        match_status = match.status
         from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
 
         config = await load_posting_config_for_tenant(session, invoice.tenant_id)
@@ -241,6 +238,8 @@ async def build_sales_dossier(
             commercial_for_match,
             config=config,
         )
+        match = sales_register.match
+        match_status = match.status
 
     return SalesDossierResponse(
         so_reference=so_reference,

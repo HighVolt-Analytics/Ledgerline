@@ -27,7 +27,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Select } from "@/components/ui/select";
-import { mailboxDisplayName, counterpartyColumnLabel, counterpartyMatchColumnLabel } from "@/lib/invoice";
+import {
+  counterpartyColumnLabel,
+  counterpartyMatchColumnLabel,
+  isNeedsReviewEvaluation,
+  mailboxDisplayName,
+} from "@/lib/invoice";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
@@ -166,6 +171,7 @@ export function UploadPage() {
   const [all, setAll] = useState<Invoice[]>([]);
   const [totalInvoices, setTotalInvoices] = useState(0);
   const [source, setSource] = useState("all");
+  const [evalFilter, setEvalFilter] = useState<"all" | "needs_review">("all");
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get("q") ?? "");
   const debouncedSearch = useDebouncedValue(searchQuery.trim());
 
@@ -334,7 +340,12 @@ export function UploadPage() {
     return sortInvoicesNewestFirst(rows);
   }, [all, tenantScope]);
 
-  const filtered = useMemo(() => captured, [captured]);
+  const filtered = useMemo(() => {
+    if (evalFilter === "needs_review") {
+      return captured.filter((inv) => isNeedsReviewEvaluation(inv.evaluation_status));
+    }
+    return captured;
+  }, [captured, evalFilter]);
 
   const inboxPollMs = useMemo(
     () =>
@@ -877,6 +888,19 @@ export function UploadPage() {
               placeholder="Search this list…"
               testId="input-upload-search"
               className="w-full sm:max-w-xs"
+            />
+            <Select
+              value={evalFilter}
+              onValueChange={(value) => {
+                setEvalFilter(value === "needs_review" ? "needs_review" : "all");
+                setPage(1);
+              }}
+              data-testid="select-eval-filter"
+              className="w-full sm:w-[200px] h-8 text-xs"
+              options={[
+                { value: "all", label: "All evaluations" },
+                { value: "needs_review", label: "Needs review only" },
+              ]}
             />
             <Select
               value={source}

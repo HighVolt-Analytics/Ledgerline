@@ -1,7 +1,11 @@
 import type { Invoice } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { approvalStatusChipClass, kpiStatusChipClass, needsReviewStatusChipClass } from "@/lib/kpiModuleColors";
-import { evaluationStatusDescription, evaluationStatusLabel } from "@/lib/invoice";
+import {
+  evaluationStatusDescription,
+  evaluationStatusLabel,
+  isNeedsReviewEvaluation,
+} from "@/lib/invoice";
 import { cn } from "@/lib/cn";
 
 function evaluationChipClass(status: NonNullable<Invoice["evaluation_status"]>): string {
@@ -23,11 +27,17 @@ function evaluationChipClass(status: NonNullable<Invoice["evaluation_status"]>):
 
 export function EvaluationStatusBadge({
   status,
+  reviewReasons,
 }: {
   status: Invoice["evaluation_status"];
+  reviewReasons?: string[];
 }) {
   const label = status ? evaluationStatusLabel(status) : "—";
-  const title = evaluationStatusDescription(status);
+  const baseTitle = evaluationStatusDescription(status);
+  const title =
+    reviewReasons?.length && isNeedsReviewEvaluation(status)
+      ? `${baseTitle} — ${reviewReasons.join("; ")}`
+      : baseTitle;
 
   if (!status) {
     return (

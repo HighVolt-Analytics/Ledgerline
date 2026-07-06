@@ -104,7 +104,14 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
     ],
     invoiceStatus: "validating",
   },
-  match: { auditEvents: ["three_way_match_evaluated", "purchase_variance_approved"] },
+  match: {
+    auditEvents: [
+      "three_way_match_evaluated",
+      "match_phase_evaluated",
+      "match_context_incomplete",
+      "purchase_variance_approved",
+    ],
+  },
   approve: {
     auditEvents: ["invoice_approved", "approval_requested"],
   },

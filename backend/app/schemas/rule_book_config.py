@@ -657,6 +657,67 @@ def _backfill_document_type_klass(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _sync_match_policy_with_playbook(data: dict[str, Any]) -> dict[str, Any]:
+    """Align match/approval policies with playbook preset when clearly stale or cross-route."""
+    from app.services.classification.playbook_profile_catalog import preset_for_profile
+
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    purchase_match_modes = frozenset({"three_way_po_grn", "two_way_po_ses"})
+    sales_match_modes = frozenset({"three_way_so_dn", "two_way_dn_invoice"})
+    sales_profiles = frozenset({"ar_goods", "ar_goods_2way"})
+    purchase_profiles = frozenset({"po_goods", "po_services"})
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        profile = str(row.get("playbook_profile") or row.get("playbookProfile") or "").strip().lower()
+        if not profile:
+            merged.append(row)
+            continue
+        try:
+            preset = preset_for_profile(profile)  # type: ignore[arg-type]
+        except Exception:
+            merged.append(row)
+            continue
+
+        raw_match = row.get("match_policy") or row.get("matchPolicy")
+        current_mode = ""
+        if isinstance(raw_match, dict):
+            current_mode = str(raw_match.get("mode") or "").strip().lower()
+
+        should_sync = not current_mode or current_mode == "none"
+        if not should_sync and profile in sales_profiles and current_mode in purchase_match_modes:
+            should_sync = True
+        if not should_sync and profile in purchase_profiles and current_mode in sales_match_modes:
+            should_sync = True
+        if not should_sync:
+            stale_pairs = {
+                ("ar_goods_2way", "three_way_so_dn"),
+                ("ar_goods", "two_way_dn_invoice"),
+                ("po_services", "three_way_po_grn"),
+                ("po_goods", "two_way_po_ses"),
+            }
+            if (profile, current_mode) in stale_pairs:
+                should_sync = True
+
+        if should_sync:
+            row = {
+                **row,
+                "match_policy": {"mode": preset.match_mode},
+                "matchPolicy": {"mode": preset.match_mode},
+                "approval_policy": {"mode": preset.approval_mode},
+                "approvalPolicy": {"mode": preset.approval_mode},
+            }
+        merged.append(row)
+    data["document_types"] = merged
+    return data
+
+
 def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
     """Persist structural playbook inference once when saving — not at runtime."""
     from app.services.classification.playbook_profile_catalog import (
@@ -859,6 +920,7 @@ def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPay
 
         data = migrate_document_types_recognition(data)
         data = _backfill_playbook_profiles(data)
+        data = _sync_match_policy_with_playbook(data)
         data = _backfill_document_type_post_to(data)
         data = _backfill_validation_rules(data)
         data = _migrate_ai_classification(data)

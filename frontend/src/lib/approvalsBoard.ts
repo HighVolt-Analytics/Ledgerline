@@ -4,6 +4,7 @@ import {
   invoiceCanAttemptReprocess,
   PIPELINE_STATUSES as PIPELINE_STATUS_LIST,
 } from "@/lib/invoiceActions";
+import { isNeedsReviewEvaluation } from "@/lib/invoice";
 
 export type ApprovalBoardColumnApi = "review" | "processing" | "approved" | "rejected";
 
@@ -67,6 +68,18 @@ export function reviewQueueCount(invoices: Invoice[]): number {
 
 export function processingQueueCount(invoices: Invoice[]): number {
   return invoices.filter((inv) => columnForInvoice(inv) === "awaiting").length;
+}
+
+export function needsReviewQueueCount(invoices: Invoice[]): number {
+  return invoices.filter((inv) => isNeedsReviewInvoice(inv)).length;
+}
+
+export function isNeedsReviewInvoice(inv: Invoice): boolean {
+  return isNeedsReviewEvaluation(inv.evaluation_status);
+}
+
+export function filterNeedsReviewInvoices(invoices: Invoice[]): Invoice[] {
+  return invoices.filter((inv) => isNeedsReviewInvoice(inv));
 }
 
 export function boardStatusPriority(status: string): number {

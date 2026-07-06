@@ -114,7 +114,7 @@ export function PurchaseManagementPage() {
 
       <PageHeader
         title="Purchase Management"
-        subtitle="PO → GRN → Invoice three-way matching. Variances are routed for tiered approval before payment."
+        subtitle="PO → GRN → Invoice matching (3-way or 2-way per playbook). Variances are routed for tiered approval before payment."
       />
 
       <PurchaseCaptureStrip activeRuleCount={activeRuleCount} />

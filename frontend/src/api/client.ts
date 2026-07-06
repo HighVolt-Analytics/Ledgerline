@@ -171,9 +171,18 @@ const TENANT_EXEMPT_API_PATHS = new Set([
   "/api/auth/refresh",
 ]);
 
-function isTenantScopedApiPath(path: string): boolean {
+/** Public invite accept flows (no tenant session). */
+const TENANT_EXEMPT_API_PREFIXES = ["/api/auth/invite/", "/api/mailboxes/invites/"];
+
+export function apiPathWithoutQuery(path: string): string {
+  return path.split("?")[0] ?? path;
+}
+
+export function isTenantScopedApiPath(path: string): boolean {
   if (!path.startsWith("/api/")) return false;
-  if (AUTH_RETRY_PATHS.has(path) || TENANT_EXEMPT_API_PATHS.has(path)) return false;
+  const bare = apiPathWithoutQuery(path);
+  if (AUTH_RETRY_PATHS.has(bare) || TENANT_EXEMPT_API_PATHS.has(bare)) return false;
+  if (TENANT_EXEMPT_API_PREFIXES.some((prefix) => bare.startsWith(prefix))) return false;
   return true;
 }
 

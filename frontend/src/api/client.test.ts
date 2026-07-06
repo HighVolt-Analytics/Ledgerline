@@ -69,6 +69,33 @@ describe("tenant-scoped request guards", () => {
     });
   });
 
+  it("allows public tenant invite preview without a tenant session", async () => {
+    setAuthToken(null);
+    sessionStorage.clear();
+
+    let requestedPath = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        requestedPath = url;
+        return Promise.resolve(
+          envelope({
+            email: "invitee@example.com",
+            full_name: "Invitee",
+            role: "viewer",
+            tenant_name: "Acme",
+            tenant_slug: "acme",
+            expired: false,
+            accepted: false,
+          })
+        );
+      })
+    );
+
+    await api.previewTenantInvite("test-token");
+    expect(requestedPath).toContain("/api/auth/invite/preview?token=test-token");
+  });
+
   it("sends Authorization from sessionStorage when in-memory token is unset", async () => {
     setAuthToken(null);
     sessionStorage.setItem(ACCESS_KEY, jwtWithTenant(tenantA));

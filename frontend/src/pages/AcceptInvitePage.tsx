@@ -13,7 +13,8 @@ export function AcceptInvitePage() {
 
   const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fatalError, setFatalError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -22,9 +23,12 @@ export function AcceptInvitePage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  const canShowForm =
+    !loading && preview && !done && !fatalError && !preview.expired && !preview.accepted;
+
   useEffect(() => {
     if (!token) {
-      setError("Missing invite token");
+      setFatalError("Missing invite token");
       setLoading(false);
       return;
     }
@@ -33,24 +37,26 @@ export function AcceptInvitePage() {
       .then((data) => {
         setPreview(data);
         setFullName(data.full_name);
-        if (data.expired) setError("This invitation has expired.");
-        if (data.accepted) setError("This invitation has already been accepted.");
+        if (data.expired) setFatalError("This invitation has expired.");
+        if (data.accepted) setFatalError("This invitation has already been accepted.");
       })
-      .catch(() => setError("Invitation not found"))
+      .catch((err) =>
+        setFatalError(err instanceof Error ? err.message : "Invitation not found")
+      )
       .finally(() => setLoading(false));
   }, [token]);
 
   const accept = async () => {
     if (password.length < 8) {
-      setError("Password must be at least 8 characters");
+      setFormError("Password must be at least 8 characters");
       return;
     }
     if (password !== confirm) {
-      setError("Passwords do not match");
+      setFormError("Passwords do not match");
       return;
     }
     setBusy(true);
-    setError(null);
+    setFormError(null);
     try {
       await api.acceptTenantInvite({
         token,
@@ -59,7 +65,7 @@ export function AcceptInvitePage() {
       });
       setDone(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not accept invitation");
+      setFormError(err instanceof Error ? err.message : "Could not accept invitation");
     } finally {
       setBusy(false);
     }
@@ -84,7 +90,7 @@ export function AcceptInvitePage() {
         </div>
       )}
 
-      {!loading && preview && !done && !error && (
+      {canShowForm && (
         <div className="auth-form">
           <p className="auth-invite-meta">
             Join <strong>{preview.tenant_name}</strong> as{" "}
@@ -152,7 +158,8 @@ export function AcceptInvitePage() {
         </div>
       )}
 
-      {error ? <p className="auth-error">{error}</p> : null}
+      {fatalError ? <p className="auth-error">{fatalError}</p> : null}
+      {formError ? <p className="auth-error">{formError}</p> : null}
 
       {done && (
         <div className="auth-form">

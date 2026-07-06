@@ -1,14 +1,15 @@
 import {
   APPROVAL_MODE_OPTIONS,
-  MATCH_MODE_OPTIONS,
   PLAYBOOK_PROFILE_OPTIONS,
   approvalModeLabel,
   effectiveApprovalPolicy,
   effectiveMatchPolicy,
   effectivePlaybookProfile,
   matchModeLabel,
+  matchModeOptionsForRoute,
   playbookProfileLabel,
   playbookPresetForProfile,
+  playbookProfilesForRoute,
   type ApprovalMode,
   type MatchMode,
   type PlaybookProfile,
@@ -50,6 +51,10 @@ export function PlaybookPolicyEditor({
   const profile = effectivePlaybookProfile(draft);
   const match = effectiveMatchPolicy(draft);
   const approval = effectiveApprovalPolicy(draft);
+  const profileOptions = PLAYBOOK_PROFILE_OPTIONS.filter((row) =>
+    playbookProfilesForRoute(draft.routeTarget).includes(row.value)
+  );
+  const matchOptions = matchModeOptionsForRoute(draft.routeTarget);
 
   return (
     <div className="space-y-3">
@@ -70,14 +75,15 @@ export function PlaybookPolicyEditor({
           }}
           className="h-9 w-full rounded-md border border-border bg-field px-2 text-sm disabled:opacity-50"
         >
-          {PLAYBOOK_PROFILE_OPTIONS.map((row) => (
+          {profileOptions.map((row) => (
             <option key={row.value} value={row.value}>
               {row.label}
             </option>
           ))}
         </select>
         <p className="text-[11px] text-muted-foreground">
-          Preset for 3-way match, approval, and supporting-document enforcement. Override below if needed.
+          Preset for match mode, approval, and supporting-document enforcement. Override below if
+          needed.
         </p>
       </div>
 
@@ -95,7 +101,7 @@ export function PlaybookPolicyEditor({
             }
             className="h-9 w-full rounded-md border border-border bg-field px-2 text-sm disabled:opacity-50"
           >
-            {MATCH_MODE_OPTIONS.map((row) => (
+            {matchOptions.map((row) => (
               <option key={row.value} value={row.value}>
                 {row.label}
               </option>

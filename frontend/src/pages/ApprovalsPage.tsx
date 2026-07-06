@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
+import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
@@ -25,6 +26,8 @@ import {
   columnForInvoice,
   mergeBoardRowWithLocal,
   PERMANENTLY_DELETABLE,
+  needsReviewQueueCount,
+  isNeedsReviewInvoice,
 } from "@/lib/approvalsBoard";
 import { ActionChip } from "@/components/ActionChip";
 import { cn } from "@/lib/cn";
@@ -199,6 +202,7 @@ export function ApprovalsPage() {
     () => invoices.filter((inv) => APPROVAL_QUEUE_STATUSES.has(inv.status)).length,
     [invoices]
   );
+  const needsReviewCount = useMemo(() => needsReviewQueueCount(invoices), [invoices]);
 
   const invalidateAfterApproval = useCallback(async () => {
     await Promise.all([
@@ -245,6 +249,33 @@ export function ApprovalsPage() {
         return next;
       });
       setBusyId(null);
+    }
+  };
+
+  const runNeedsReviewProcessing = async () => {
+    const targets = invoices.filter(
+      (inv) =>
+        isNeedsReviewInvoice(inv) &&
+        columnForInvoice(inv, undefined, processingIds) === "awaiting" &&
+        APPROVABLE_STATUSES.has(inv.status)
+    );
+    if (!targets.length) {
+      setToast("No needs-review documents in Processing to advance.");
+      return;
+    }
+    setProcessingBusy(true);
+    try {
+      for (const inv of targets) {
+        await approveInvoice(inv.id);
+      }
+      setToast(
+        `Queued ${targets.length} needs-review document${targets.length === 1 ? "" : "s"} for processing.`
+      );
+      await load({ fresh: true });
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Needs-review processing failed");
+    } finally {
+      setProcessingBusy(false);
     }
   };
 
@@ -444,6 +475,25 @@ export function ApprovalsPage() {
         </Card>
       )}
 
+      {needsReviewCount > 0 && (
+        <Card className="p-3 mb-4 text-xs border-amber-500/40 bg-amber-500/10 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-muted-foreground">
+            {needsReviewCount} document{needsReviewCount === 1 ? "" : "s"} flagged{" "}
+            <span className="font-medium text-foreground">needs review</span> after classification
+            (vendor drift, field confidence, or policy disagreement).
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={processingBusy}
+            onClick={() => void runNeedsReviewProcessing()}
+            data-testid="button-run-needs-review"
+          >
+            {processingBusy ? "Processing…" : "Process needs-review queue"}
+          </Button>
+        </Card>
+      )}
+
       {board.awaiting.length > 0 && (
         <Card className="p-3 mb-4 text-xs border-border bg-muted/40 flex flex-wrap items-center justify-between gap-2">
           <p className="text-muted-foreground">
@@ -518,6 +568,21 @@ export function ApprovalsPage() {
                         </span>
                       )}
                     </div>
+                    {col.key === "awaiting" && inv.evaluation_status ? (
+                      <div className="mt-1.5">
+                        <EvaluationStatusBadge
+                          status={inv.evaluation_status}
+                          reviewReasons={
+                            isNeedsReviewInvoice(inv) ? ["Flagged for manual review"] : undefined
+                          }
+                        />
+                      </div>
+                    ) : null}
+                    {col.key === "pending" && inv.evaluation_status ? (
+                      <div className="mt-1.5">
+                        <EvaluationStatusBadge status={inv.evaluation_status} />
+                      </div>
+                    ) : null}
                     <div
                       className="approvals-kanban-card__actions"
                       onClick={(e) => e.stopPropagation()}

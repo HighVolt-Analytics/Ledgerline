@@ -479,6 +479,15 @@ def apply_sample_proposal_to_draft(
         "playbook_profile": proposal.playbook_profile or draft.playbook_profile,
         "purchase_bundle_role": proposal.purchase_bundle_role or draft.purchase_bundle_role,
     }
+    if proposal.playbook_profile:
+        from app.schemas.playbook_policy import ApprovalPolicy, MatchPolicy
+        from app.services.classification.playbook_profile_catalog import preset_for_profile
+
+        preset = preset_for_profile(proposal.playbook_profile)
+        updates["match_policy"] = MatchPolicy(mode=proposal.match_mode or preset.match_mode)
+        updates["approval_policy"] = ApprovalPolicy(
+            mode=proposal.approval_mode or preset.approval_mode
+        )
     if proposal.llm_prompt and not (draft.llm_prompt or "").strip():
         updates["llm_prompt"] = proposal.llm_prompt
         updates["recognition_mode"] = "prompt"

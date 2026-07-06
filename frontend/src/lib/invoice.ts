@@ -388,6 +388,10 @@ export function invoiceVendorConfidence(
   return null;
 }
 
+export function isNeedsReviewEvaluation(status: string | null | undefined): boolean {
+  return (status ?? "").trim() === "needs_review";
+}
+
 export function evaluationStatusLabel(
   status: Invoice["evaluation_status"]
 ): string {
