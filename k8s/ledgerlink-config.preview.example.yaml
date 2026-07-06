@@ -27,6 +27,8 @@ data:
   GRAPH_OAUTH_FRONTEND_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/integrations"
   LOG_LEVEL: "INFO"
   AUTH_REQUIRED: "true"
+  DEFAULT_TENANT_SLUG: "qa-sandbox"
+  DEFAULT_TENANT_NAME: "LedgerLink QA Sandbox"
   STRIPE_MODE: "test"
   STRIPE_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/payments"
   STRIPE_REFRESH_URL: "https://staging.highvolt.tech/ledgerlink/payments"

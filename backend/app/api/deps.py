@@ -16,7 +16,7 @@ from app.tenant_roles import TenantRole
 from app.schemas.common import ApiEnvelope, ErrorDetail, ResponseMeta
 from app.services.auth.auth_service import decode_access_token
 from app.services.auth.membership_service import resolve_auth_principals
-from app.services.tenant.tenant_context_service import get_or_create_default_tenant, get_tenant_slug
+from app.services.tenant.tenant_context_service import get_tenant_slug
 from app.tenant_context import set_jwt_tenant_id, set_request_tenant_id
 from app.tenant_isolation.resolution import TenantResolutionService
 from app.tenant_rls import apply_platform_lookup_session, apply_rls_session_context
@@ -150,29 +150,9 @@ async def require_user(
         )
         return ctx
 
-    settings = get_settings()
-    if not settings.auth_required:
-        tenant = await get_or_create_default_tenant(db)
-        set_request_tenant_id(tenant.id)
-        await apply_rls_session_context(db, tenant.id)
-        logger.debug(
-            "auth_context_resolved",
-            tenant_id=str(tenant.id),
-            user_id=None,
-            role=UserRole.ADMIN.value,
-            path=request.url.path,
-            x_tenant_id=request.headers.get("X-Tenant-Id"),
-            auth_bypass=True,
-        )
-        return AuthContext(
-            user_id=None,
-            tenant_id=tenant.id,
-            tenant_slug=tenant.slug,
-            email="system@local",
-            role=UserRole.ADMIN.value,
-            tenant=tenant,
-        )
-
+    # Never impersonate a default org — tenant APIs always require a valid JWT.
+    if creds and creds.credentials:
+        raise HTTPException(401, "Invalid or expired token")
     raise HTTPException(401, "Authentication required")
 
 

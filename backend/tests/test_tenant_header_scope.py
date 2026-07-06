@@ -13,7 +13,7 @@ from app.tenant_ids import TESTING_TENANT_UUID
 
 @pytest.mark.asyncio
 async def test_header_mismatch_returns_403(
-    client: AsyncClient,
+    anon_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -39,13 +39,13 @@ async def test_header_mismatch_returns_403(
         role=user.role.value,
     )
 
-    ok = await client.get(
+    ok = await anon_client.get(
         "/api/auth/me",
         headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": str(TESTING_TENANT_UUID)},
     )
     assert ok.status_code == 200
 
-    bad = await client.get(
+    bad = await anon_client.get(
         "/api/auth/me",
         headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "999"},
     )
@@ -56,7 +56,7 @@ async def test_header_mismatch_returns_403(
 
 @pytest.mark.asyncio
 async def test_missing_header_returns_403(
-    client: AsyncClient,
+    anon_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -82,7 +82,7 @@ async def test_missing_header_returns_403(
         role=user.role.value,
     )
 
-    missing = await client.get(
+    missing = await anon_client.get(
         "/api/auth/me",
         headers={"Authorization": f"Bearer {token}"},
     )

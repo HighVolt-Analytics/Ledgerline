@@ -68,6 +68,12 @@ _settings = get_settings()
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     configure_logging(settings.log_level)
+    if not settings.auth_required:
+        logger.warning(
+            "auth_required_disabled",
+            msg="AUTH_REQUIRED=false — API will reject unauthenticated tenant requests; "
+            "do not disable in staging or production",
+        )
     if settings.application_insights_runtime_enabled:
         setup_application_insights(settings.applicationinsights_connection_string)
     async with async_session_factory() as session:

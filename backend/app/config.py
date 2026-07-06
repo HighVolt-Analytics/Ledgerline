@@ -374,8 +374,8 @@ class Settings(BaseSettings):
         validation_alias="API_BASE_PATH",
         description="Public API path prefix (e.g. /api or /ledgerlink/api)",
     )
-    default_tenant_slug: str = Field(default="testing", validation_alias="DEFAULT_TENANT_SLUG")
-    default_tenant_name: str = Field(default="Testing", validation_alias="DEFAULT_TENANT_NAME")
+    default_tenant_slug: str = Field(default="qa-sandbox", validation_alias="DEFAULT_TENANT_SLUG")
+    default_tenant_name: str = Field(default="LedgerLink QA Sandbox", validation_alias="DEFAULT_TENANT_NAME")
     approval_policy_unlock_code: str = "000000"
 
     # Meta / WhatsApp Cloud API
