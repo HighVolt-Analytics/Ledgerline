@@ -1,4 +1,4 @@
-"""Validation rules VR03 → VR05 → VR06 → VR07 → VR08 → VR01 → VR02 (assessment brief)."""
+"""Validation rules VR03 → VR05 → VR07 → VR08 → VR01 → VR02 (assessment brief)."""
 
 
 
@@ -192,26 +192,6 @@ async def vr05_abn(
 
 
 
-def vr06_dates(
-    data: InvoiceData,
-    *,
-    absent_fields: frozenset[str] | None = None,
-) -> ValidationResult:
-    absent = absent_fields or frozenset()
-    if data.invoice_date is None and "invoice_date" not in absent:
-        return ValidationResult("VR06", False, "invoice_date required")
-    if data.due_date is None and "due_date" not in absent:
-        return ValidationResult("VR06", False, "due_date required")
-    if data.invoice_date is None or data.due_date is None:
-        return ValidationResult("VR06", True, "Dates valid (partial)")
-    if data.due_date < data.invoice_date:
-        return ValidationResult("VR06", False, "due_date must be on or after invoice_date")
-    return ValidationResult("VR06", True, "Dates valid")
-
-
-
-
-
 def vr07_currency(data: InvoiceData, *, expected_currency: str) -> ValidationResult:
     expected = expected_currency.strip().upper()
     currency = (data.currency or expected).upper()
@@ -398,7 +378,7 @@ def _skipped(rule: str, reason: str) -> ValidationResult:
     return ValidationResult(rule, True, reason, skipped=True)
 
 
-_SYNC_RULES = [vr03_required, vr06_dates, vr07_currency, vr08_gst, vr01_total]
+_SYNC_RULES = [vr03_required, vr07_currency, vr08_gst, vr01_total]
 
 
 def _append_playbook_validations(

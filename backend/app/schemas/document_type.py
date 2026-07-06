@@ -55,6 +55,7 @@ DocumentTypeRouteTarget = Literal[
 
 PurchaseBundleRole = Literal["", "po", "grn"]
 SalesBundleRole = Literal["", "so", "dn"]
+RecognitionMode = Literal["signals", "prompt"]
 
 
 def _empty_classifier_root() -> dict[str, Any]:
@@ -97,15 +98,15 @@ class DocumentTypeDefinition(BaseModel):
     short_title: str = Field(alias="shortTitle")
     klass: str
     posting: str
-    one_line: str = Field(alias="oneLine")
-    llm_hint: str = Field(default="", alias="llmHint")
+    recognition_mode: RecognitionMode = Field(default="signals", alias="recognitionMode")
+    recognition_signals: list[str] = Field(default_factory=list, alias="recognitionSignals")
+    llm_prompt: str = Field(default="", alias="llmPrompt")
     route_target: DocumentTypeRouteTarget = Field(
         default="Vault",
         alias="routeTarget",
     )
     enabled: bool = True
     classifier: DocumentTypeClassifier = Field(default_factory=DocumentTypeClassifier)
-    classifier_customized: bool = Field(default=False, alias="classifierCustomized")
     matrix_template_code: str = Field(
         default="",
         max_length=16,
@@ -170,6 +171,28 @@ class DocumentTypeDefinition(BaseModel):
         if posting != self.posting:
             object.__setattr__(self, "posting", posting)
         return self
+
+    @field_validator("recognition_mode", mode="before")
+    @classmethod
+    def _normalize_recognition_mode(cls, value: Any) -> str:
+        token = str(value or "signals").strip().lower()
+        return token if token in {"signals", "prompt"} else "signals"
+
+    @field_validator("recognition_signals", mode="before")
+    @classmethod
+    def _normalize_recognition_signals(cls, value: Any) -> list[str]:
+        from app.services.classification.recognition_signal_registry import SIGNAL_CONDITIONS
+
+        if value is None or not isinstance(value, list):
+            return []
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for item in value:
+            token = str(item).strip()
+            if token in SIGNAL_CONDITIONS and token not in seen:
+                seen.add(token)
+                normalized.append(token)
+        return normalized
 
     @field_validator("matrix_template_code", mode="before")
     @classmethod

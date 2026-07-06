@@ -107,10 +107,16 @@ export interface OrgAiBrief {
 
 export type ChartOfAccountType = "Expense" | "Asset" | "Liability" | "Revenue" | "Equity";
 
+export interface SubLedgerRow {
+  code: string;
+  name: string;
+}
+
 export interface ChartOfAccountRow {
   code: string;
   name: string;
   type: ChartOfAccountType;
+  subLedgers?: SubLedgerRow[];
 }
 
 export interface ChartOfAccountsPayload {
@@ -378,6 +384,12 @@ export interface LineItem {
   unit_price: string | null;
   amount: string | null;
   tax_amount: string | null;
+  sub_ledger?: string | null;
+  parent_ledger?: string | null;
+  effective_ledger?: string | null;
+  gl_mapping_source?: string | null;
+  gl_mapping_confidence?: number | null;
+  gl_mapping_reason?: string | null;
 }
 
 export interface JournalEntry {
@@ -403,6 +415,10 @@ export interface LineItemUpdatePayload {
   unit_price?: string | null;
   amount?: string | null;
   tax_amount?: string | null;
+  sub_ledger?: string | null;
+  gl_mapping_source?: string | null;
+  gl_mapping_confidence?: number | null;
+  gl_mapping_reason?: string | null;
 }
 
 export interface InvoiceUpdatePayload {
@@ -1220,7 +1236,9 @@ export interface RuleBookConfig {
     short_title: string;
     klass: string;
     posting: string;
-    one_line: string;
+    recognition_mode?: "signals" | "prompt";
+    recognition_signals?: string[];
+    llm_prompt?: string;
     route_target: string;
     enabled: boolean;
     classifier: {
@@ -1260,7 +1278,6 @@ export interface RuleBookConfig {
     bundle_mandatory: string[];
     bundle_conditional: string[];
     purchase_bundle_role?: string;
-    llm_hint?: string;
     post_to?: {
       ledger: string;
       sub_ledger: string;

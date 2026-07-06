@@ -29,7 +29,7 @@ def _catalogue_text(defn: DocumentTypeDefinition) -> str:
             defn.code,
             defn.title,
             defn.short_title,
-            defn.one_line,
+            defn.llm_prompt,
             defn.playbook_profile,
         ]
         if part

@@ -38,7 +38,7 @@ import {
 } from "@/components/upload/UploadInvoiceListRow";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryClient";
-import { shouldClearProcessingId } from "@/lib/approvalsBoard";
+import { mergeBoardRowWithLocal, shouldClearProcessingId } from "@/lib/approvalsBoard";
 import {
   BULK_UPLOAD_MAX_FILES,
   filterUploadFiles,
@@ -150,6 +150,7 @@ export function UploadPage() {
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const loadSeq = useRef(0);
+  const loadInFlightRef = useRef(false);
   const mailboxesRef = useRef<ConnectedMailbox[]>([]);
   const initialLoadDoneRef = useRef(false);
   const { data: ruleBook } = useRuleBookConfig();
@@ -181,6 +182,7 @@ export function UploadPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
+  const processingIdsRef = useRef(processingIds);
   const tenantScope = user?.tenant_id ?? null;
 
   useResetOnTenantChange(() => {
@@ -204,11 +206,14 @@ export function UploadPage() {
   });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    if (options?.silent && loadInFlightRef.current) return null;
     const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     if (!options?.silent) {
       setLoading(true);
       setError(null);
+    } else {
+      loadInFlightRef.current = true;
     }
     const fresh = options?.fresh ?? !options?.silent;
     const refreshMailboxes = !options?.silent;
@@ -232,7 +237,13 @@ export function UploadPage() {
       const invoiceRows = invoiceRes.data;
       const metaTotal = invoiceRes.meta?.total ?? invoiceRows.length;
       const metaPages = invoiceRes.meta?.pages ?? 1;
-      setAll((prev) => (sameUploadListRows(prev, invoiceRows) ? prev : invoiceRows));
+      setAll((prev) => {
+        const prevById = new Map(prev.map((inv) => [inv.id, inv]));
+        const merged = invoiceRows.map((row) =>
+          mergeBoardRowWithLocal(row, prevById.get(row.id), processingIdsRef.current)
+        );
+        return sameUploadListRows(prev, merged) ? prev : merged;
+      });
       setTotalInvoices(metaTotal);
       setTotalPages(Math.max(1, metaPages));
       setError(null);
@@ -271,6 +282,9 @@ export function UploadPage() {
       }
       return null;
     } finally {
+      if (options?.silent) {
+        loadInFlightRef.current = false;
+      }
       if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
         setLoading(false);
       }
@@ -280,6 +294,10 @@ export function UploadPage() {
   useEffect(() => {
     mailboxesRef.current = mailboxes;
   }, [mailboxes]);
+
+  useEffect(() => {
+    processingIdsRef.current = processingIds;
+  }, [processingIds]);
 
   useEffect(() => {
     setPage(1);
@@ -318,7 +336,8 @@ export function UploadPage() {
 
   useVisibilityPolling(() => {
     if (!initialLoadDoneRef.current) return;
-    void load({ silent: true, fresh: true });
+    const processing = uploadListHasActiveProcessing(filtered, processingIdsRef.current);
+    void load({ silent: true, fresh: processing });
   }, inboxPollMs);
 
   useEffect(() => {
@@ -917,7 +936,7 @@ export function UploadPage() {
                   >
                     Evaluation
                   </th>
-                  <th className="px-3 py-2 font-medium text-right">VR pass</th>
+                  <th className="px-3 py-2 font-medium text-right">Rule pass</th>
                   <th className="px-3 py-2 font-medium text-right">
                     {counterpartyMatchColumnLabel({ mixed: true })}
                   </th>

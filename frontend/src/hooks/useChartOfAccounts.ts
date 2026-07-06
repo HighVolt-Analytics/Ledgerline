@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
-import type { ChartOfAccountRow } from "@/api/types";
+import type { ChartOfAccountRow, SubLedgerRow } from "@/api/types";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
+import { newClientRowKey } from "@/lib/clientRowKey";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useChartOfAccounts(enabled = true) {
@@ -10,10 +11,14 @@ export function useChartOfAccounts(enabled = true) {
     queryKey: queryKeys.chartOfAccounts(),
     queryFn: async () => {
       const res = await api.getChartOfAccounts();
-      return (res.accounts ?? []).map((row) => ({
-        ...row,
-        type: normalizeChartOfAccountType(row.type),
-      }));
+      return (res.accounts ?? []).map((row) => {
+        const raw = row as ChartOfAccountRow & { sub_ledgers?: SubLedgerRow[] };
+        return {
+          ...row,
+          type: normalizeChartOfAccountType(row.type),
+          subLedgers: normalizeSubLedgers(raw.subLedgers ?? raw.sub_ledgers),
+        };
+      });
     },
     enabled,
     staleTime: 0,
@@ -34,8 +39,41 @@ export function useSaveChartOfAccounts() {
   });
 }
 
-export function newChartOfAccountRow(): ChartOfAccountRow {
-  return { code: "", name: "", type: "Expense" };
+export type ChartOfAccountRowLocal = ChartOfAccountRow & { _rowKey: string };
+
+export function newChartOfAccountRow(): ChartOfAccountRowLocal {
+  return {
+    code: "",
+    name: "",
+    type: "Expense",
+    subLedgers: [],
+    _rowKey: newClientRowKey("coa"),
+  };
+}
+
+function normalizeSubLedgers(
+  value: SubLedgerRow[] | { code: string; name: string }[] | undefined
+): SubLedgerRow[] {
+  if (!value?.length) return [];
+  return value.map((row) => ({
+    code: (row.code ?? "").trim(),
+    name: (row.name ?? "").trim(),
+  }));
+}
+
+export function chartOfAccountRowToPayload(row: ChartOfAccountRow): ChartOfAccountRow & {
+  sub_ledgers?: SubLedgerRow[];
+} {
+  const subLedgers = (row.subLedgers ?? [])
+    .map((sub) => ({ code: sub.code.trim(), name: sub.name.trim() }))
+    .filter((sub) => sub.code || sub.name);
+  return {
+    code: row.code.trim(),
+    name: row.name.trim(),
+    type: row.type,
+    subLedgers,
+    sub_ledgers: subLedgers,
+  };
 }
 
 export const CHART_OF_ACCOUNT_TYPES = [

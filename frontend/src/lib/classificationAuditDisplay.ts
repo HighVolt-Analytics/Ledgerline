@@ -1,9 +1,23 @@
 import type { InvoiceClassificationAudit } from "@/api/types";
+import { documentTypeLabelForCode } from "@/lib/documentTypeResolve";
+import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
 /** One decimal place — avoids rounding 84.6% up to 85%. */
 export function formatClassificationConfidence(value: number | undefined | null): string {
   if (value == null || Number.isNaN(value)) return "—";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+/** DT code with catalogue title, e.g. "DT-11 · Purchase Invoice". */
+export function formatDtCodeWithName(
+  documentTypes: DocumentTypeDefinition[],
+  code: string | null | undefined
+): string {
+  const token = (code ?? "").trim();
+  if (!token) return "—";
+  const name = documentTypeLabelForCode(documentTypes, token);
+  if (!name || name.toUpperCase() === token.toUpperCase()) return token;
+  return `${token} · ${name}`;
 }
 
 const REVIEW_REASON_LABELS: Record<string, string> = {

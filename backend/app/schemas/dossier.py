@@ -153,6 +153,9 @@ class DossierSummaryResponse(BaseModel):
     owner: str
     outcome: str
     outcome_banner: str
+    blocker_stage_id: str | None = None
+    blocker_reason: str | None = None
+    blocker_remediation: str | None = None
     pipeline: list[DossierPipelineStepResponse] = Field(default_factory=list)
     linked_documents: DossierLinkedDocumentsResponse
     approval_chain: DossierApprovalChainResponse

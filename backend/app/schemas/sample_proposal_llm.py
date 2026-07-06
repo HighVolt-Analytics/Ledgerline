@@ -22,7 +22,7 @@ class LlmSampleProposal(BaseModel):
     required_fields: list[str] = Field(default_factory=list)
     absent_fields: list[str] = Field(default_factory=list)
     classifier_layout: str = "grouped"
-    one_line: str = ""
+    llm_prompt: str = ""
     suggested_title: str | None = None
     purchase_bundle_role: str = ""
     confidence: float = 0.0

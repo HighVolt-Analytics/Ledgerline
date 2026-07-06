@@ -50,7 +50,7 @@ def test_has_valid_document_type_post_to() -> None:
         short_title="Invoice",
         klass="Transactional",
         posting="Yes",
-        one_line="Test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         route_target="Purchase Management",
         post_to=DocumentTypePostTo(ledger="Operating Expenses"),
     )
@@ -84,7 +84,7 @@ def test_validate_rule_book_config_for_save_rejects_missing_post_to() -> None:
                         "shortTitle": "Missing GL",
                         "klass": "Transactional",
                         "posting": "Yes",
-                        "oneLine": "Needs Post to",
+                        "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "Needs Post to",
                         "routeTarget": "Purchase Management",
                         "enabled": True,
                         "postTo": {"ledger": ""},

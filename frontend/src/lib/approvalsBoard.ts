@@ -139,9 +139,10 @@ export function mergeBoardRowWithLocal(
   processingIds: ReadonlySet<number>
 ): Invoice {
   if (processingIds.has(row.id)) {
+    // Prefer server pipeline progress; once settled, always take fresh server data
+    // instead of a stale optimistic pending row from upload/approve.
     if (PIPELINE_STATUSES.has(row.status)) return row;
-    if (local && PIPELINE_STATUSES.has(local.status)) return local;
-    if (local?.status === "pending") return local;
+    if (local && PIPELINE_STATUSES.has(local.status)) return row;
   }
   return row;
 }

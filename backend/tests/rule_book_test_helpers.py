@@ -43,7 +43,9 @@ def mapping_doc_type_config(
         short_title=title,
         klass=klass,
         posting=posting,
-        one_line=f"Test type {code}",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
         route_target=route_target,
         post_to=DocumentTypePostTo(ledger=ledger),
     )

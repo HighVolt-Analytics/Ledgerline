@@ -1674,6 +1674,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         },
     )
 
+    if not should_skip(invoice, "line_gl_mapping"):
+        from app.services.classification.line_gl_mapping_service import apply_line_gl_mapping
+
+        await apply_line_gl_mapping(session, loaded, map_config)
+    else:
+        await _log_processing_override_skip(session, invoice, "line_gl_mapping")
+
     if requires_gl_mapping_review(
         loaded,
         mapping_detail,

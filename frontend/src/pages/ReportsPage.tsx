@@ -430,7 +430,7 @@ export function ReportsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                <th className="py-1.5 font-medium">Account</th>
+                <th className="py-1.5 font-medium">GL Account</th>
                 <th className="py-1.5 font-medium text-right">Lines</th>
                 <th className="py-1.5 font-medium text-right">Net</th>
               </tr>

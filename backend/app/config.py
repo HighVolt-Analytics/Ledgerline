@@ -169,6 +169,20 @@ class Settings(BaseSettings):
         le=50,
         validation_alias="PDF_SEGMENT_MAX_SEGMENTS",
     )
+    pdf_segment_llm_enabled: bool = Field(
+        default=True,
+        validation_alias="PDF_SEGMENT_LLM_ENABLED",
+    )
+    pdf_segment_llm_timeout_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        validation_alias="PDF_SEGMENT_LLM_TIMEOUT_SECONDS",
+    )
+    pdf_segment_llm_prompt_version: str = Field(
+        default="v1",
+        validation_alias="PDF_SEGMENT_LLM_PROMPT_VERSION",
+    )
     azure_di_read_model_id: str = Field(
         default="prebuilt-read",
         validation_alias="AZURE_DI_READ_MODEL_ID",
@@ -235,6 +249,10 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
         validation_alias="RUNTIME_LLM_MIN_CONFIDENCE",
+    )
+    line_gl_llm_enabled: bool = Field(
+        default=True,
+        validation_alias="LINE_GL_LLM_ENABLED",
     )
     google_gemini_api_key: str = Field(
         default="",
@@ -673,6 +691,13 @@ class Settings(BaseSettings):
     @property
     def runtime_llm_available(self) -> bool:
         return bool(self.runtime_llm_enabled and self.azure_openai_configured)
+
+    @property
+    def line_gl_llm_available(self) -> bool:
+        return bool(
+            self.line_gl_llm_enabled
+            and self.runtime_llm_available
+        )
 
     @property
     def gemini_configured(self) -> bool:

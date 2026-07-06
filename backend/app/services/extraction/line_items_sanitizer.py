@@ -6,6 +6,7 @@ import re
 from typing import Mapping
 
 from app.services.extraction.line_item_skip_patterns import (
+    HEADER_DEDUP_EXTRACTED_FIELD_KEYS,
     is_metadata_line_description,
     should_skip_line_row,
 )
@@ -21,24 +22,16 @@ def _header_scalar_values(
     vendor: str | None = None,
     invoice_no: str | None = None,
     po_reference: str | None = None,
+    so_reference: str | None = None,
+    cost_centre: str | None = None,
     extracted_fields: Mapping[str, str] | None = None,
 ) -> set[str]:
     values: set[str] = set()
-    for raw in (vendor, invoice_no, po_reference):
+    for raw in (vendor, invoice_no, po_reference, so_reference, cost_centre):
         token = _normalize_text(raw)
         if token and len(token) >= 3:
             values.add(token)
-    for key in (
-        "seller_name",
-        "buyer_name",
-        "seller_tax_id",
-        "buyer_tax_id",
-        "billing_address",
-        "document_heading",
-        "so_reference",
-        "delivery_date",
-        "customer",
-    ):
+    for key in HEADER_DEDUP_EXTRACTED_FIELD_KEYS:
         if extracted_fields and extracted_fields.get(key):
             token = _normalize_text(str(extracted_fields[key]))
             if token and len(token) >= 3:
@@ -88,6 +81,8 @@ def sanitize_line_items(
     vendor: str | None = None,
     invoice_no: str | None = None,
     po_reference: str | None = None,
+    so_reference: str | None = None,
+    cost_centre: str | None = None,
 ) -> list[ParsedLineItem]:
     """Drop summary/metadata/header duplicate rows from merged line items."""
     del ocr_text  # reserved for future OCR cross-checks
@@ -95,6 +90,8 @@ def sanitize_line_items(
         vendor=vendor,
         invoice_no=invoice_no,
         po_reference=po_reference,
+        so_reference=so_reference,
+        cost_centre=cost_centre,
         extracted_fields=extracted_fields,
     )
 

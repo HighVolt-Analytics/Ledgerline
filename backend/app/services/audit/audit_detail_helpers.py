@@ -90,7 +90,7 @@ VR_CHECK_NAMES: dict[str, str] = {
     "VR07": "Local currency",
     "VR08": "GST rate check",
     "VR09": "Line arithmetic",
-    "VR10": "Tax invoice (AU)",
+    "VR10": "Tax invoice wording",
     "VR11": "Date sanity",
     "VR12": "Vendor master",
     "VR14": "PO status & currency",

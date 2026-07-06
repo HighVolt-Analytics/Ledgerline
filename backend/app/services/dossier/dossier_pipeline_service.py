@@ -361,6 +361,58 @@ def _routing_review_gate(log: AuditLog | None) -> str:
     return str(_routing_review_detail(log).get("gate") or "").strip().lower()
 
 
+_REVIEW_REASON_LABELS: dict[str, str] = {
+    "LLM_LOW_CONF": "LLM confidence below auto-route threshold",
+    "CLASSIFIER_RULE_MISMATCH": "Custom classifier rules do not match document text",
+    "DT_NOT_IN_CATALOGUE": "Suggested type is not in your Rule Book",
+    "DT_DISABLED": "Suggested document type is disabled",
+    "LLM_INVALID": "Classification model returned no usable result",
+    "OCR_SPARSE": "OCR text is too sparse",
+    "IMAGE_QUALITY_LOW": "Scan or image quality is too poor",
+    "DT_MISMATCH": "LLM and policy classifiers disagree",
+    "POLICY_LOW_CONF": "Policy classifier confidence is too low",
+    "PERSPECTIVE_AMBIGUOUS": "Could not determine purchase vs sales perspective",
+    "EXTRACTION_GAP": "Required fields missing for suggested document type",
+    "NEVER_AUTO_POLICY": "Document type is configured to always require review",
+    "PROVIDER_UNAVAILABLE": "Document AI provider unavailable",
+    "VENDOR_CLASSIFICATION_DRIFT": "Vendor classification differs from recent history",
+    "FIELD_CONFIDENCE_LOW": "Extracted field confidence is too low",
+}
+
+
+def _format_review_reasons(reasons: object) -> str:
+    if not isinstance(reasons, list) or not reasons:
+        return ""
+    labels: list[str] = []
+    for raw in reasons:
+        token = str(raw).strip()
+        if not token:
+            continue
+        labels.append(_REVIEW_REASON_LABELS.get(token, token.replace("_", " ").lower()))
+    return "; ".join(labels)
+
+
+def _latest_classification_gate_log(logs: list[AuditLog]) -> AuditLog | None:
+    gate_pass = _latest_log(logs, "classification_gate_passed")
+    gate_fail = _latest_log(logs, "classification_gate_failed")
+    if gate_pass and gate_fail:
+        return gate_pass if _is_after(gate_pass, gate_fail) else gate_fail
+    return gate_pass or gate_fail
+
+
+def _looks_like_non_classification_routing(detail: dict[str, object]) -> bool:
+    gate = str(detail.get("gate") or "").strip().lower()
+    if gate in ("image_quality", "field_confidence", "vendor_classification_drift", "playbook"):
+        return True
+    if gate:
+        return False
+    if detail.get("low_confidence_fields"):
+        return True
+    if detail.get("sparse") is not None or detail.get("text_length") is not None:
+        return True
+    return False
+
+
 def classification_review_pending(logs: list[AuditLog]) -> bool:
     """True when classify stage is blocked pending human DT confirmation."""
     return _classification_routing_review(logs) is not None
@@ -376,6 +428,13 @@ def _classification_routing_review(logs: list[AuditLog]) -> AuditLog | None:
     validate_pass = _latest_log(logs, "validation_passed")
     if validate_pass and validate_pass.created_at > routing.created_at:
         return None
+    gate_log = _latest_classification_gate_log(logs)
+    if (
+        gate_log is not None
+        and gate_log.event == "classification_gate_passed"
+        and _is_after(gate_log, routing)
+    ):
+        return None
     gate = _routing_review_gate(routing)
     detail = _routing_review_detail(routing)
     if gate == "classification":
@@ -384,7 +443,7 @@ def _classification_routing_review(logs: list[AuditLog]) -> AuditLog | None:
         return None
     if detail.get("no_classifier_match"):
         return routing
-    if gate == "" and validate_pass is None:
+    if gate == "" and validate_pass is None and not _looks_like_non_classification_routing(detail):
         return routing
     return None
 
@@ -668,7 +727,8 @@ def _resolve_confidence_gate(inv: Invoice, logs: list[AuditLog], wm: int) -> Dos
     if classification_review:
         detail = _detail_from_log(classification_review, fallback="Awaiting human classification")
         detail_dict = _routing_review_detail(classification_review)
-        reason = str(detail_dict.get("reason") or detail).strip() or "Awaiting human classification"
+        reason_labels = _format_review_reasons(detail_dict.get("review_reasons"))
+        reason = reason_labels or str(detail_dict.get("reason") or detail).strip() or "Awaiting human classification"
         return _step(
             "confidence_gate",
             state="fail",
@@ -707,11 +767,11 @@ def _resolve_confidence_gate(inv: Invoice, logs: list[AuditLog], wm: int) -> Dos
             detail = f"Auto-route · {conf}"
         if not passed:
             reasons = detail_dict.get("review_reasons") or []
-            failure = ", ".join(str(r) for r in reasons) if reasons else detail
+            failure = _format_review_reasons(reasons) or detail
             return _step(
                 "confidence_gate",
                 state="fail",
-                detail=detail,
+                detail=failure,
                 at=gate_log.created_at,
                 exception_code="CLASSIFICATION_GATE",
                 failure_reason=failure,
@@ -1395,12 +1455,24 @@ def build_dossier_pipeline(
         raise RuntimeError(f"expected {len(STAGE_IDS)} pipeline stages, got {len(steps)}")
 
     if compact:
-        return [
-            step.model_copy(
-                update={"checks": [], "evidence": [], "failure_reason": None, "remediation": None}
-            )
-            for step in steps
-        ]
+        compacted: list[DossierPipelineStepResponse] = []
+        for step in steps:
+            if step.state == "fail":
+                compacted.append(
+                    step.model_copy(update={"checks": [], "evidence": []})
+                )
+            else:
+                compacted.append(
+                    step.model_copy(
+                        update={
+                            "checks": [],
+                            "evidence": [],
+                            "failure_reason": None,
+                            "remediation": None,
+                        }
+                    )
+                )
+        return compacted
     return steps
 
 

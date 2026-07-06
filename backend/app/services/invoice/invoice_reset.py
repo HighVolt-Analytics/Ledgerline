@@ -18,9 +18,11 @@ async def reset_invoice_for_reprocess(
     inv: Invoice,
     *,
     preserve_document_type: bool = False,
+    clear_overrides: bool = True,
 ) -> None:
     """Clear extracted data and journal lines; set status to pending."""
-    clear_processing_overrides(inv)
+    if clear_overrides:
+        clear_processing_overrides(inv)
     inv.status = InvoiceStatus.PENDING
     inv.vendor = None
     inv.abn = None
@@ -139,6 +141,10 @@ async def requeue_invoice_for_pipeline(
     if preserve_extracted_fields:
         await reset_invoice_for_approval(session, inv)
         return
-    clear_processing_overrides(inv)
     keep_dt = preserve_document_type or "classification" in skip_steps_for(inv)
-    await reset_invoice_for_reprocess(session, inv, preserve_document_type=keep_dt)
+    await reset_invoice_for_reprocess(
+        session,
+        inv,
+        preserve_document_type=keep_dt,
+        clear_overrides=False,
+    )

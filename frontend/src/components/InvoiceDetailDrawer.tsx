@@ -270,6 +270,7 @@ type LineItemDraft = {
   qty: string;
   unit_price: string;
   amount: string;
+  sub_ledger: string;
 };
 
 type InvoiceEditDraft = {
@@ -312,6 +313,7 @@ function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = [
       qty: strField(line.qty),
       unit_price: strField(line.unit_price),
       amount: strField(line.amount),
+      sub_ledger: strField(line.sub_ledger),
     })),
     skip_steps: skipStepsFromInvoice(inv.processing_overrides),
     extractedFields,
@@ -319,7 +321,7 @@ function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = [
 }
 
 function emptyLineItem(): LineItemDraft {
-  return { description: "", qty: "", unit_price: "", amount: "" };
+  return { description: "", qty: "", unit_price: "", amount: "", sub_ledger: "" };
 }
 
 function mapDraftLineItems(inv: InvoiceDetails, draft: InvoiceEditDraft): LineItem[] {
@@ -331,6 +333,7 @@ function mapDraftLineItems(inv: InvoiceDetails, draft: InvoiceEditDraft): LineIt
     unit_price: line.unit_price || null,
     amount: line.amount || null,
     tax_amount: null,
+    sub_ledger: line.sub_ledger || null,
   }));
 }
 
@@ -341,6 +344,7 @@ function LineItemsDrawerGrid({
   showGlAccount = false,
   inv,
   postingApplies = true,
+  parentLedger = "",
   previewItems,
   draftItems,
   onDraftChange,
@@ -352,6 +356,7 @@ function LineItemsDrawerGrid({
   showGlAccount?: boolean;
   inv?: InvoiceDetails;
   postingApplies?: boolean;
+  parentLedger?: string;
   previewItems?: PreviewLineItem[];
   draftItems?: LineItemDraft[];
   onDraftChange?: (items: LineItemDraft[]) => void;
@@ -441,6 +446,30 @@ function LineItemsDrawerGrid({
                   />
                 </div>
               )}
+              {showGlAccount && postingApplies && parentLedger ? (
+                <div className="px-3 py-2 align-top">
+                  <LineGlAccountCell
+                    line={{
+                      id: line.id ?? -(index + 1),
+                      invoice_id: inv?.id ?? 0,
+                      description: line.description,
+                      qty: line.qty,
+                      unit_price: line.unit_price,
+                      amount: line.amount,
+                      tax_amount: null,
+                      sub_ledger: line.sub_ledger || null,
+                    }}
+                    parentLedger={parentLedger}
+                    postingApplies={postingApplies}
+                    editable
+                    onSubLedgerChange={(sub_ledger) => {
+                      const next = [...draftItems];
+                      next[index] = { ...line, sub_ledger };
+                      onDraftChange(next);
+                    }}
+                  />
+                </div>
+              ) : null}
               {withActions && (
                 <div className="px-1 py-2 flex justify-center">
                   <Button
@@ -504,7 +533,11 @@ function LineItemsDrawerGrid({
               )}
               {showGlAccount && inv && (
                 <div className="px-3 py-2 align-top">
-                  <LineGlAccountCell inv={inv} line={line} postingApplies={postingApplies} />
+                  <LineGlAccountCell
+                    line={line}
+                    parentLedger={parentLedger || line.parent_ledger || inv.account_name || ""}
+                    postingApplies={postingApplies}
+                  />
                 </div>
               )}
             </div>
@@ -539,6 +572,8 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
       qty: optionalText(line.qty),
       unit_price: optionalText(line.unit_price),
       amount: optionalText(line.amount),
+      sub_ledger: optionalText(line.sub_ledger),
+      gl_mapping_source: line.sub_ledger.trim() ? "manual" : undefined,
     })),
   };
   const overridesPatch = inv
@@ -878,6 +913,12 @@ export function InvoiceDetailDrawer({
     () => (inv ? glPostingApplicable(inv, ruleBook?.documentTypes) : true),
     [inv, ruleBook?.documentTypes]
   );
+
+  const parentLedger = useMemo(() => {
+    const fromDocType = resolvedDocType?.postTo?.ledger?.trim();
+    if (fromDocType) return fromDocType;
+    return inv?.account_name?.trim() ?? "";
+  }, [resolvedDocType?.postTo?.ledger, inv?.account_name]);
 
   const previewLineItems = useMemo((): LineItem[] | undefined => {
     if (!inv || !editing || !draft) return undefined;
@@ -1287,6 +1328,7 @@ export function InvoiceDetailDrawer({
                       audit={classificationAudit}
                       loading={classificationLoading}
                       catalogueCodes={catalogueCodes}
+                      documentTypes={ruleBook?.documentTypes ?? []}
                       requiresConfirm={classificationConfirmRequired}
                       onConfirmDt={
                         classificationConfirmRequired
@@ -1368,6 +1410,10 @@ export function InvoiceDetailDrawer({
                       columns={drawerLineItems.columns}
                       withActions
                       editable
+                      showGlAccount
+                      inv={inv}
+                      postingApplies={postingApplies}
+                      parentLedger={parentLedger}
                       draftItems={draft.line_items}
                       onDraftChange={(line_items) => setDraft({ ...draft, line_items })}
                       emptyMessage="No line items — add one below"
@@ -1395,6 +1441,7 @@ export function InvoiceDetailDrawer({
                       previewItems={drawerLineItems.previewItems}
                       inv={inv}
                       postingApplies={postingApplies}
+                      parentLedger={parentLedger}
                       showGlAccount
                       emptyMessage="No line items"
                     />
@@ -1508,14 +1555,38 @@ export function InvoiceDetailDrawer({
                   >
                     Cancel
                   </Button>
-                  <Button
-                    size="sm"
-                    data-testid="button-save-edits"
-                    disabled={actionBusy || !draft}
-                    onClick={() => void handleSaveEdits()}
-                  >
-                    {actionBusy ? "Saving…" : "Save changes"}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      data-testid="button-save-edits"
+                      disabled={actionBusy || !draft}
+                      onClick={() => void handleSaveEdits()}
+                    >
+                      {actionBusy ? "Saving…" : "Save changes"}
+                    </Button>
+                    {inv.status === "rejected" && invoiceCanAttemptReprocess(inv) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-reprocess"
+                        disabled={actionBusy || !invoiceCanAttemptReprocess(inv)}
+                        onClick={() => void handleReprocess()}
+                      >
+                        Reprocess
+                      </Button>
+                    )}
+                    {canApproveFromDrawer(inv.status) && (
+                      <Button
+                        size="sm"
+                        data-testid="button-approve-process"
+                        disabled={actionBusy || !inv.has_stored_file}
+                        onClick={() => void handleApproveAndProcess()}
+                      >
+                        <Send className="h-4 w-4 mr-1" />
+                        Approve &amp; process
+                      </Button>
+                    )}
+                  </div>
                 </>
               ) : (
                 <>

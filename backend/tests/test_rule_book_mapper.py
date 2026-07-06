@@ -114,7 +114,7 @@ def test_transactional_missing_post_to_raises() -> None:
                     short_title="Missing GL",
                     klass="Transactional",
                     posting="Yes",
-                    one_line="Needs Post to",
+                    recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="Needs Post to",
                     route_target="Purchase Management",
                     post_to=DocumentTypePostTo(ledger=""),
                 )

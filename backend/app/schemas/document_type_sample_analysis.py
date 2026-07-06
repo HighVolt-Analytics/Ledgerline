@@ -60,7 +60,7 @@ class DocumentTypeSampleProposal(BaseModel):
     extraction_fields: list[str] = Field(default_factory=list)
     required_fields: list[str] = Field(default_factory=list)
     absent_fields: list[str] = Field(default_factory=list)
-    one_line: str = ""
+    llm_prompt: str = ""
     suggested_title: str | None = None
     suggested_short_title: str | None = None
     klass: str = "Non-transactional"

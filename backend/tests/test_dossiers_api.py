@@ -192,3 +192,42 @@ async def test_resolve_invoice_for_dossier(db_session: AsyncSession) -> None:
     found = await resolve_invoice_for_dossier(db_session, TESTING_TENANT_UUID, inv.document_ref or "")
     assert found is not None
     assert found.id == inv.id
+
+
+@pytest.mark.asyncio
+async def test_list_dossiers_compact_includes_blocker_fields(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Blocked Vendor",
+        invoice_no="INV-BLOCK",
+        document_type_code="DT-01",
+        status=InvoiceStatus.EXCEPTION,
+        validation_results='[{"rule":"VR12","passed":false,"message":"Vendor not found","skipped":false}]',
+        file_hash="dossier-blocker-list",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    await assign_document_ref(db_session, inv)
+    db_session.add(
+        AuditLog(
+            event="validation_failed",
+            invoice_id=inv.id,
+            created_at=datetime.now(timezone.utc),
+            detail={"reason": "VR12"},
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/dossiers?page=1&page_size=50")
+    assert res.status_code == 200
+    row = next(r for r in res.json()["data"] if r["id"] == inv.document_ref)
+    assert row["blocker_stage_id"] == "validate"
+    assert row["blocker_reason"]
+    failed = next(s for s in row["pipeline"] if s["stage_id"] == "validate")
+    assert failed["state"] == "fail"
+    assert failed["failure_reason"]
+    assert failed["remediation"]
+    passed = next(s for s in row["pipeline"] if s["stage_id"] == "ingest")
+    assert passed.get("failure_reason") is None

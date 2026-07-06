@@ -58,7 +58,7 @@ def test_requires_gl_mapping_review_for_posting_fallback_only() -> None:
             "shortTitle": "Tax",
             "klass": "Transactional",
             "posting": "Yes",
-            "oneLine": "x",
+            "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "x",
             "routeTarget": "Purchase Management",
             "enabled": True,
         }
@@ -70,7 +70,7 @@ def test_requires_gl_mapping_review_for_posting_fallback_only() -> None:
             "shortTitle": "Bank",
             "klass": "Non-transactional",
             "posting": "No",
-            "oneLine": "x",
+            "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "x",
             "routeTarget": "Vault",
             "enabled": True,
         }

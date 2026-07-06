@@ -84,4 +84,28 @@ describe("documentTypePostToValidation", () => {
       ).some((row) => row.id === "post-to-required")
     ).toBe(true);
   });
+
+  it("warns when sub-ledger is not in catalog for ledger with sub-ledgers", () => {
+    const coaWithSubs: ChartOfAccountRow[] = [
+      {
+        code: "6110",
+        name: "Cloud Hosting Expense",
+        type: "Expense",
+        subLedgers: [{ code: "01", name: "AWS Production" }],
+      },
+    ];
+    const warnings = postToConfigWarnings(
+      {
+        posting: "Yes",
+        postTo: {
+          ...emptyDocumentTypePostTo(),
+          ledger: "Cloud Hosting Expense",
+          subLedger: "Legacy Free Text",
+        },
+        code: "DT-1",
+      } as never,
+      coaWithSubs
+    );
+    expect(warnings.some((row) => row.id === "post-to-sub-ledger-not-in-coa")).toBe(true);
+  });
 });

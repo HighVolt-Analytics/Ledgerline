@@ -1,6 +1,6 @@
 """Unit tests for dossier pipeline builder."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.dossier.dossier_pipeline_service import STAGE_IDS, build_dossier_pipeline, first_pipeline_failure
+from app.services.dossier.dossier_pipeline_service import (
+    STAGE_IDS,
+    build_dossier_pipeline,
+    classification_review_pending,
+    first_pipeline_failure,
+)
+from app.services.dossier.dossier_service import _confidence_pct, build_dossier_summary
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -17,6 +23,15 @@ def _log(event: str, invoice_id: int, **detail: object) -> AuditLog:
         event=event,
         invoice_id=invoice_id,
         created_at=datetime.now(timezone.utc),
+        detail=dict(detail),
+    )
+
+
+def _log_at(event: str, invoice_id: int, offset_sec: int = 0, **detail: object) -> AuditLog:
+    return AuditLog(
+        event=event,
+        invoice_id=invoice_id,
+        created_at=datetime.now(timezone.utc) + timedelta(seconds=offset_sec),
         detail=dict(detail),
     )
 
@@ -189,6 +204,154 @@ async def test_pipeline_gate_passes_when_resolve_supersedes_stale_gate_fail() ->
     gate = next(s for s in pipeline if s.stage_id == "confidence_gate")
     assert gate.state == "pass"
     assert "Human confirmed" in gate.detail
+
+
+@pytest.mark.asyncio
+async def test_gate_pass_supersedes_stale_classification_routing_review() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.MAPPING,
+        document_type_code="DT-03",
+        document_type_confidence=0.92,
+        llm_suggested_dt="DT-03",
+        llm_confidence=0.92,
+    )
+    logs = [
+        _log_at("invoice_uploaded", 1, 0),
+        _log_at("llm_classified", 1, 1, llm_suggested_dt="DT-03", llm_confidence=0.51),
+        _log_at("classification_gate_failed", 1, 2, review_reasons=["LLM_LOW_CONF"]),
+        _log_at(
+            "routing_review_required",
+            1,
+            3,
+            gate="classification",
+            review_reasons=["LLM_LOW_CONF"],
+        ),
+        _log_at("llm_classified", 1, 10, llm_suggested_dt="DT-03", llm_confidence=0.92),
+        _log_at(
+            "classification_gate_passed",
+            1,
+            11,
+            llm_suggested_dt="DT-03",
+            llm_confidence=0.92,
+            compare_passed=True,
+        ),
+        _log_at("document_classified", 1, 12, confirmed_dt="DT-03"),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    gate = next(s for s in pipeline if s.stage_id == "confidence_gate")
+    assert gate.state == "pass"
+    assert gate.exception_code is None
+    assert classification_review_pending(logs) is False
+    doc_type = next(s for s in pipeline if s.stage_id == "document_type")
+    assert doc_type.state == "pass"
+
+
+@pytest.mark.asyncio
+async def test_ocr_failure_routing_superseded_by_successful_reclassify() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.MAPPING,
+        document_type_code="DT-01",
+        document_type_confidence=0.95,
+        llm_suggested_dt="DT-01",
+        llm_confidence=0.95,
+    )
+    logs = [
+        _log_at("invoice_uploaded", 1, 0),
+        _log_at("parsing_failed", 1, 1, reason="ocr_failed"),
+        _log_at(
+            "routing_review_required",
+            1,
+            2,
+            gate="classification",
+            review_reasons=["PROVIDER_UNAVAILABLE"],
+            provider_unavailable=True,
+        ),
+        _log_at("parse_completed", 1, 10, confidence=0.9),
+        _log_at("llm_classified", 1, 11, llm_suggested_dt="DT-01", llm_confidence=0.95),
+        _log_at(
+            "classification_gate_passed",
+            1,
+            12,
+            llm_suggested_dt="DT-01",
+            llm_confidence=0.95,
+            compare_passed=True,
+        ),
+        _log_at("document_classified", 1, 13, confirmed_dt="DT-01"),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    gate = next(s for s in pipeline if s.stage_id == "confidence_gate")
+    assert gate.state == "pass"
+    assert classification_review_pending(logs) is False
+    assert first_pipeline_failure(pipeline) is None or first_pipeline_failure(pipeline).stage_id != "confidence_gate"
+
+
+@pytest.mark.asyncio
+async def test_gate_failure_shows_human_readable_review_reasons() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        llm_suggested_dt="DT-03",
+        llm_confidence=0.51,
+        evaluation_status="awaiting_classification",
+    )
+    logs = [
+        _log_at("llm_classified", 1, 0, llm_suggested_dt="DT-03", llm_confidence=0.51),
+        _log_at("classification_gate_failed", 1, 1, review_reasons=["LLM_LOW_CONF"]),
+        _log_at(
+            "routing_review_required",
+            1,
+            2,
+            gate="classification",
+            review_reasons=["LLM_LOW_CONF"],
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    gate = next(s for s in pipeline if s.stage_id == "confidence_gate")
+    assert gate.state == "fail"
+    assert "LLM confidence below auto-route threshold" in (gate.failure_reason or "")
+
+
+def test_confidence_display_does_not_round_up_pending() -> None:
+    assert _confidence_pct(0.846, floor=True) == 84
+    assert _confidence_pct(0.846) == 85
+
+
+@pytest.mark.asyncio
+async def test_summary_label_shows_review_when_pending_with_suggestion(
+    db_session: AsyncSession,
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        llm_suggested_dt="DT-03",
+        llm_confidence=0.846,
+        evaluation_status="awaiting_classification",
+        file_hash="dossier-pending-label",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    logs = [
+        _log_at("llm_classified", inv.id, 0, llm_suggested_dt="DT-03", llm_confidence=0.846),
+        _log_at("classification_gate_failed", inv.id, 1, review_reasons=["LLM_LOW_CONF"]),
+        _log_at(
+            "routing_review_required",
+            inv.id,
+            2,
+            gate="classification",
+            review_reasons=["LLM_LOW_CONF"],
+        ),
+    ]
+    summary = await build_dossier_summary(db_session, inv, logs, compact=True)
+    assert "needs review" in summary.classification_label.lower()
+    assert summary.classification_confidence == 84
+    assert summary.document_type_code == "DT-03"
 
 
 @pytest.mark.asyncio
@@ -466,3 +629,30 @@ async def test_pipeline_validate_fail_blocks_processed_downstream(
     map_gl = next(s for s in pipeline if s.stage_id == "map_gl")
     assert map_gl.state == "pending"
     assert map_gl.blocked_reason
+
+
+@pytest.mark.asyncio
+async def test_compact_pipeline_keeps_failure_fields_on_failed_step(
+    db_session: AsyncSession,
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Unknown Co",
+        status=InvoiceStatus.EXCEPTION,
+        validation_results='[{"rule":"VR12","passed":false,"message":"Vendor not found","skipped":false}]',
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    logs = [
+        _log("validation_failed", inv.id, reason="VR12"),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs, compact=True)
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert validate.state == "fail"
+    assert validate.failure_reason
+    assert validate.remediation
+    assert validate.checks == []
+    assert validate.evidence == []
+    ingest = next(s for s in pipeline if s.stage_id == "ingest")
+    assert ingest.failure_reason is None
+    assert ingest.remediation is None

@@ -10,7 +10,8 @@ export type ProcessingOverrideStepId =
   | "playbook"
   | "validation"
   | "mapping_review"
-  | "vendor_registration";
+  | "vendor_registration"
+  | "line_gl_mapping";
 
 export type ProcessingOverrideStepDef = {
   id: ProcessingOverrideStepId;
@@ -58,6 +59,11 @@ export const PROCESSING_OVERRIDE_STEPS: ProcessingOverrideStepDef[] = [
     id: "vendor_registration",
     label: "Vendor registration hold",
     hint: "Continue when the vendor is not yet in the vendor registry.",
+  },
+  {
+    id: "line_gl_mapping",
+    label: "Line GL mapping",
+    hint: "Skip LLM sub-ledger assignment for line items.",
   },
 ];
 

@@ -129,7 +129,7 @@ export function UploadInvoiceMobileRow({
       </div>
       <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1">
-          VR pass
+          Rule pass
           <UploadColumnCell mode={modes.vrPass}>
             <InboxConfidenceBadge
               value={invoiceValidationConfidence(inv, documentTypes)}

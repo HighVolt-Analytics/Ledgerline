@@ -4,8 +4,10 @@ import {
   classificationReviewReasons,
   classificationStatusMessage,
   formatClassificationConfidence,
+  formatDtCodeWithName,
   reviewReasonLabel,
 } from "@/lib/classificationAuditDisplay";
+import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
 type InvoiceClassificationPanelProps = {
   audit: InvoiceClassificationAudit | null;
@@ -14,6 +16,7 @@ type InvoiceClassificationPanelProps = {
   onConfirmDt?: (code: string) => void;
   onChangeDt?: (code: string) => void;
   catalogueCodes?: string[];
+  documentTypes?: DocumentTypeDefinition[];
 };
 
 export function InvoiceClassificationPanel({
@@ -23,6 +26,7 @@ export function InvoiceClassificationPanel({
   onConfirmDt,
   onChangeDt,
   catalogueCodes = [],
+  documentTypes = [],
 }: InvoiceClassificationPanelProps) {
   if (loading) {
     return (
@@ -55,19 +59,25 @@ export function InvoiceClassificationPanel({
       <div className="grid gap-2 sm:grid-cols-3">
         <div className="rounded border border-border/60 bg-background/50 p-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">LLM suggested</div>
-          <div className="mt-1 font-medium text-foreground">{llmDt || "—"}</div>
+          <div className="mt-1 font-medium text-foreground">
+            {formatDtCodeWithName(documentTypes, llmDt)}
+          </div>
           <div className="text-muted-foreground tnum">{formatClassificationConfidence(audit.llm_confidence)}</div>
         </div>
         <div className="rounded border border-border/60 bg-background/50 p-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Policy winner</div>
-          <div className="mt-1 font-medium text-foreground">{policyDt || "—"}</div>
+          <div className="mt-1 font-medium text-foreground">
+            {formatDtCodeWithName(documentTypes, policyDt)}
+          </div>
           <div className="text-muted-foreground tnum">
             {formatClassificationConfidence(audit.policy_winner_confidence)}
           </div>
         </div>
         <div className="rounded border border-border/60 bg-background/50 p-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Confirmed</div>
-          <div className="mt-1 font-medium text-foreground">{confirmed || "—"}</div>
+          <div className="mt-1 font-medium text-foreground">
+            {formatDtCodeWithName(documentTypes, confirmed)}
+          </div>
           <div className="text-muted-foreground tnum">
             {formatClassificationConfidence(audit.confirmed_confidence ?? audit.document_type_confidence)}
           </div>
@@ -111,7 +121,7 @@ export function InvoiceClassificationPanel({
               className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted"
               onClick={() => onConfirmDt(llmDt)}
             >
-              Confirm {llmDt}
+              Confirm {formatDtCodeWithName(documentTypes, llmDt)}
             </button>
           ) : null}
           {onChangeDt ? (
@@ -128,7 +138,7 @@ export function InvoiceClassificationPanel({
               </option>
               {catalogueCodes.map((code) => (
                 <option key={code} value={code}>
-                  {code}
+                  {formatDtCodeWithName(documentTypes, code)}
                 </option>
               ))}
             </select>

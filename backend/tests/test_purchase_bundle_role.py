@@ -24,7 +24,7 @@ def _po_type(**kwargs) -> DocumentTypeDefinition:
         shortTitle="PO",
         klass="Non-transactional",
         posting="No",
-        oneLine="Purchase order",
+        recognition_mode="signals", recognition_signals=["heading_po"], llm_prompt="Purchase order",
         routeTarget="Purchase Management",
         purchaseBundleRole="po",
     )
@@ -39,7 +39,7 @@ def _grn_type(**kwargs) -> DocumentTypeDefinition:
         shortTitle="GRN",
         klass="Non-transactional",
         posting="No",
-        oneLine="Goods receipt",
+        recognition_mode="signals", recognition_signals=["heading_grn"], llm_prompt="Goods receipt",
         routeTarget="Purchase Management",
         purchaseBundleRole="grn",
     )
@@ -54,7 +54,7 @@ def test_split_bundle_items_only_user_codes() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Purchase Management",
         bundleMandatory=["DT-02", "DT-03"],
     )
@@ -152,7 +152,7 @@ async def test_bundle_mandatory_infers_po_role_from_title(db_session: AsyncSessi
         shortTitle="PO (supporting)",
         klass="Non-transactional",
         posting="No",
-        oneLine="Purchase order copy",
+        recognition_mode="signals", recognition_signals=["heading_po"], llm_prompt="Purchase order copy",
         routeTarget="Purchase Management",
     )
     satisfied = await _bundle_dt_satisfied(

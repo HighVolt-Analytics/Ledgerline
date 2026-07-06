@@ -4,9 +4,28 @@ import {
   autoRouteThresholdSummary,
   classificationStatusMessage,
   formatClassificationConfidence,
+  formatDtCodeWithName,
   requiresClassificationConfirm,
   reviewReasonLabel,
 } from "@/lib/classificationAuditDisplay";
+
+describe("formatDtCodeWithName", () => {
+  const catalogue = [
+    { code: "DT-11", title: "Purchase Invoice", shortTitle: "Invoice" },
+  ] as never;
+
+  it("shows code and catalogue title", () => {
+    expect(formatDtCodeWithName(catalogue, "DT-11")).toBe("DT-11 · Purchase Invoice");
+  });
+
+  it("falls back to code when not in catalogue", () => {
+    expect(formatDtCodeWithName(catalogue, "DT-99")).toBe("DT-99");
+  });
+
+  it("shows em dash for empty code", () => {
+    expect(formatDtCodeWithName(catalogue, "")).toBe("—");
+  });
+});
 
 describe("formatClassificationConfidence", () => {
   it("shows one decimal place without rounding up to the next whole percent", () => {

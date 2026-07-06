@@ -59,12 +59,13 @@ def _money(value: Decimal | float | int | None) -> float:
     return float(value)
 
 
-def _confidence_pct(value: float | None) -> int:
+def _confidence_pct(value: float | None, *, floor: bool = False) -> int:
     if value is None:
         return 0
     if value <= 1:
-        return int(round(value * 100))
-    return int(round(value))
+        pct = value * 100
+        return int(pct) if floor else int(round(pct))
+    return int(value) if floor else int(round(value))
 
 
 def _document_type_title(code: str, document_types) -> str:
@@ -368,14 +369,18 @@ async def build_dossier_summary(
     display_code = code or suggested
     pending_classify = classification_review_pending(logs)
     dt_title = _document_type_title(display_code, config.document_types) if display_code else ""
-    if dt_title:
+    if pending_classify and not code:
+        classification_label = (
+            f"{dt_title} (needs review)" if dt_title else "Needs classification review"
+        )
+    elif dt_title:
         classification_label = dt_title
     elif pending_classify:
         classification_label = "Needs classification review"
     else:
         classification_label = (invoice.route_target or "Unclassified").replace("_", " ").title()
     if pending_classify and not code:
-        classification_confidence = _confidence_pct(invoice.llm_confidence)
+        classification_confidence = _confidence_pct(invoice.llm_confidence, floor=True)
     else:
         classification_confidence = _confidence_pct(invoice.document_type_confidence)
     sla_label, sla_breached = _sla(invoice, today=institution_today)
@@ -414,6 +419,9 @@ async def build_dossier_summary(
         owner=_owner_from_logs(logs),
         outcome=outcome,
         outcome_banner=banner,
+        blocker_stage_id=fail.stage_id if fail else None,
+        blocker_reason=(fail.failure_reason or fail.detail) if fail else None,
+        blocker_remediation=fail.remediation if fail else None,
         pipeline=pipeline,
         linked_documents=linked,
         approval_chain=approval,

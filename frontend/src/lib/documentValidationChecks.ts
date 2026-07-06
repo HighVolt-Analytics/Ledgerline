@@ -70,8 +70,6 @@ export const CONFIGURABLE_VALIDATION_CHECKS = [
 
   { code: "VR05", label: "ABN / tax ID", group: "Tax" },
 
-  { code: "VR06", label: "Invoice & due dates", group: "Dates" },
-
   { code: "VR07", label: "Local currency", group: "Currency" },
 
   { code: "VR08", label: "GST rate check", group: "Tax" },
@@ -80,7 +78,7 @@ export const CONFIGURABLE_VALIDATION_CHECKS = [
 
   { code: "VR09", label: "Line arithmetic", group: "Arithmetic" },
 
-  { code: "VR10", label: "Tax invoice (AU)", group: "Tax" },
+  { code: "VR10", label: "Tax invoice wording", group: "Tax" },
 
   { code: "VR11", label: "Date sanity", group: "Dates" },
 
@@ -118,8 +116,6 @@ export const VALIDATION_CHECK_DESCRIPTIONS: Record<string, string> = {
 
   VR05: "ABN / tax ID format and checksum validation.",
 
-  VR06: "Invoice date and due date must be valid.",
-
   VR07: "Currency must match organisation country.",
 
   VR08: "GST must match extracted tax rate × subtotal within tolerance.",
@@ -128,7 +124,7 @@ export const VALIDATION_CHECK_DESCRIPTIONS: Record<string, string> = {
 
   VR09: "Line amounts must reconcile to subtotal; qty × price per line.",
 
-  VR10: 'Tax Invoice wording required for taxable supplies ≥ AUD 1,000.',
+  VR10: "Checks required tax-invoice wording on the document based on your organisation country (e.g. AU/NZ ≥ threshold, or when tax is charged).",
 
   VR11: "Invoice date cannot be future; over 12 months needs approval.",
 
@@ -205,8 +201,6 @@ const STANDARD_FINANCE_RULES: ValidationRuleConfig[] = [
   { code: "VR03", enabled: true, severity: "block" },
 
   { code: "VR05", enabled: true, severity: "block" },
-
-  { code: "VR06", enabled: true, severity: "block" },
 
   { code: "VR07", enabled: true, severity: "block" },
 

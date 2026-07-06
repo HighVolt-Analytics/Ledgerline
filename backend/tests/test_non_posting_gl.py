@@ -22,7 +22,7 @@ def _contract_definition() -> DocumentTypeDefinition:
             "shortTitle": "Contract / SOW",
             "klass": "Non-transactional",
             "posting": "No",
-            "oneLine": "Supporting bundle member",
+            "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "Supporting bundle member",
             "playbook_profile": "supporting",
             "enabled": True,
             "route_target": "Purchase Management",

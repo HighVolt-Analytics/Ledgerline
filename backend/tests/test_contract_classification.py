@@ -23,7 +23,7 @@ def _org_dt03() -> DocumentTypeDefinition:
         shortTitle="GRN",
         klass="Non-transactional",
         posting="No",
-        oneLine="GRN",
+        recognition_mode="signals", recognition_signals=["heading_grn"], llm_prompt="GRN",
         routeTarget="Purchase Management",
         purchaseBundleRole="grn",
         classifier=DocumentTypeClassifier.model_validate(
@@ -79,7 +79,7 @@ def _org_dt04() -> DocumentTypeDefinition:
         shortTitle="Contract",
         klass="Non-transactional",
         posting="No",
-        oneLine="Contract register",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Vault",
         classifier=DocumentTypeClassifier.model_validate(
             {

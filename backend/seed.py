@@ -64,7 +64,7 @@ async def seed() -> None:
             if status == InvoiceStatus.PROCESSED:
                 validation = json.dumps([
                     {"rule": r, "passed": True, "message": "OK"}
-                    for r in ("VR03", "VR05", "VR06", "VR07", "VR08", "VR01", "VR02")
+                    for r in ("VR03", "VR05", "VR07", "VR08", "VR01", "VR02")
                 ])
 
             inv = Invoice(

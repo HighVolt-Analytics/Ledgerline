@@ -4,16 +4,16 @@ import { DossierOutcomeBadge, DossierTypeBadge } from "@/components/dossiers/Dos
 import { DossierPipelinePhaseStrip } from "@/components/dossiers/DossierPipelinePhaseStrip";
 import type { DossierSummary } from "@/lib/dossiers";
 import {
-  dossierPipelineCounts,
+  dossierBlockerFromSummary,
   dossierStageLabel,
-  firstPipelineFailure,
+  pipelineProgressSummary,
 } from "@/lib/dossiers";
 import { linkedDocumentCounts } from "@/lib/dossierLinkedDocuments";
 import { money } from "@/lib/format";
 
 export function DossierCard({ dossier }: { dossier: DossierSummary }) {
-  const { pass, fail, waived } = dossierPipelineCounts(dossier.pipeline);
-  const firstFail = firstPipelineFailure(dossier.pipeline);
+  const blocker = dossierBlockerFromSummary(dossier);
+  const progress = pipelineProgressSummary(dossier.pipeline, dossier.routeTarget);
   const bundle = linkedDocumentCounts(dossier.linkedDocuments);
 
   return (
@@ -35,22 +35,26 @@ export function DossierCard({ dossier }: { dossier: DossierSummary }) {
       <DossierPipelinePhaseStrip
         pipeline={dossier.pipeline}
         className="dossier-card__pipeline"
+        showLegend
       />
 
-      {firstFail ? (
+      {blocker ? (
         <div className="dossier-card__blocker">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span>
-            Blocked at {dossierStageLabel(firstFail.stageId, dossier.routeTarget)}
-            {firstFail.exceptionCode ? ` · ${firstFail.exceptionCode}` : ""}
-          </span>
+          <div className="min-w-0">
+            <div className="dossier-card__blocker-title">
+              Failed at {dossierStageLabel(blocker.stageId, dossier.routeTarget)}
+              {blocker.exceptionCode ? (
+                <span className="dossier-pipeline-stage__code tnum ml-1.5">{blocker.exceptionCode}</span>
+              ) : null}
+            </div>
+            <p className="dossier-card__blocker-detail">{blocker.reason}</p>
+          </div>
         </div>
       ) : null}
 
       <div className="dossier-card__stats">
-        <span className="dossier-card__stat--pass">{pass} pass</span>
-        {fail > 0 ? <span className="dossier-card__stat--fail">{fail} fail</span> : null}
-        {waived > 0 ? <span className="dossier-card__stat--waived">{waived} waived</span> : null}
+        <span className="dossier-card__stat--muted">{progress}</span>
       </div>
 
       <div className="dossier-card__foot">

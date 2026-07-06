@@ -55,3 +55,13 @@ def test_enrich_line_items_from_text_skips_pallet_rows() -> None:
     assert len(enriched) == 1
     assert enriched[0].description == "Sandisk 4TB SSD"
     assert enriched[0].amount == Decimal("17925")
+
+
+def test_enrich_line_items_from_text_parses_sgd_rows() -> None:
+    items = [
+        ParsedLineItem(description="Consulting retainer", qty=Decimal("1"), unit_price=None, amount=None),
+    ]
+    text = "Consulting retainer 1 SGD 500.00 SGD 500.00"
+    enriched = enrich_line_items_from_text(items, text)
+    assert enriched[0].unit_price == Decimal("500")
+    assert enriched[0].amount == Decimal("500")

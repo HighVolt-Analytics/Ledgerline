@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Search, Settings2, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { MatchRuleFieldSelect } from "@/components/rule-book/MatchRuleFieldSelect";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
 import type { ConditionOperator } from "@/lib/v4RuleBookTypes";
 import {
   BOOLEAN_OPERATORS,
-  compileMatchRulesToClassifier,
   CUSTOM_MATCH_RULE_FIELD,
   documentTypeWithMatchRulesForm,
   emptyMatchRulesForm,
@@ -24,27 +22,8 @@ import {
   type MatchRulesForm,
   withRowKey,
 } from "@/lib/documentMatchRules";
-import {
-  applyRecognitionSignals,
-  applyUserRecognitionMode,
-  inferUserRecognitionMode,
-  recognitionSignalChoices,
-  selectedRecognitionSignals,
-  USER_RECOGNITION_MODES,
-  type UserRecognitionMode,
-} from "@/lib/documentUserRecognition";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
-import type { RecognitionSignalId } from "@/lib/documentClassifierBuilder";
 import { formatExtractionFieldKeyInput } from "@/lib/documentExtractionFields";
-
-type DocumentMatchRulesEditorProps = {
-  draft: DocumentTypeDefinition;
-  onChange: (next: DocumentTypeDefinition) => void;
-  onOpenAdvanced: () => void;
-  onFormChange?: (form: MatchRulesForm) => void;
-  /** Custom types: strict match/exclude rules only (no AI description tab). */
-  rulesOnly?: boolean;
-};
 
 function defaultTextRule(): MatchRuleRow {
   return withRowKey({ field: "document_heading", operator: "contains", value: "" });
@@ -234,104 +213,7 @@ function RuleSection({
   );
 }
 
-function RecognitionSignalsPanel({
-  draft,
-  onChange,
-}: {
-  draft: DocumentTypeDefinition;
-  onChange: (next: DocumentTypeDefinition) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const options = useMemo(() => recognitionSignalChoices(), []);
-  const selected = useMemo(() => new Set(selectedRecognitionSignals(draft)), [draft]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter(
-      (row) =>
-        row.label.toLowerCase().includes(q) ||
-        row.hint.toLowerCase().includes(q) ||
-        row.channel.toLowerCase().includes(q)
-    );
-  }, [options, query]);
-
-  const byChannel = useMemo(() => {
-    const map = new Map<string, typeof options>();
-    for (const row of filtered) {
-      const key = row.channel || "General";
-      const list = map.get(key) ?? [];
-      list.push(row);
-      map.set(key, list);
-    }
-    return [...map.entries()];
-  }, [filtered]);
-
-  const toggle = (signalId: RecognitionSignalId, checked: boolean) => {
-    const next = new Set(selected);
-    if (checked) next.add(signalId);
-    else next.delete(signalId);
-    onChange(applyRecognitionSignals(draft, [...next]));
-  };
-
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        Tick every pattern that usually appears on this document. A match on{" "}
-        <strong>any</strong> ticked signal can classify it (grouped by document family).
-      </p>
-      <div className="relative">
-        <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search signals — invoice, quote, bank, GRN…"
-          className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-2 text-xs"
-        />
-      </div>
-      {options.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Signal catalogue is loading. Save and refresh, or use AI description / match rules.
-        </p>
-      ) : (
-        <div className="max-h-64 space-y-3 overflow-y-auto rounded-md border border-border bg-muted/20 p-3">
-          {byChannel.map(([channel, rows]) => (
-            <div key={channel}>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {channel}
-              </p>
-              <ul className="space-y-2">
-                {rows.map((signal) => {
-                  const checked = selected.has(signal.id);
-                  return (
-                    <li key={signal.id}>
-                      <label className="flex cursor-pointer items-start gap-2.5">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 h-4 w-4 rounded border-input"
-                          checked={checked}
-                          onChange={(e) => toggle(signal.id, e.target.checked)}
-                        />
-                        <span className="min-w-0">
-                          <span className="block text-sm text-foreground">{signal.label}</span>
-                          {signal.hint ? (
-                            <span className="block text-xs text-muted-foreground">{signal.hint}</span>
-                          ) : null}
-                        </span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MatchRulesPanel({
+export function MatchRulesPanel({
   draft,
   onChange,
   onFormChange,
@@ -387,7 +269,7 @@ function MatchRulesPanel({
 
       <p className="text-[11px] text-muted-foreground">
         Combine OCR text, extracted amounts/dates, email channel, and automatic checks. Add custom
-        extraction fields under Processing → Fields to use them here as match rules.
+        extraction fields under Processing, Fields to use them here as match rules.
       </p>
 
       <RuleSection
@@ -409,8 +291,8 @@ function MatchRulesPanel({
         title="Do not match if"
         hint={
           form.excludeMode === "any"
-            ? "Exclude when any rule matches. “Has …” field checks also suppress those fields after OCR."
-            : "Exclude only when all rules match. “Has …” field checks also suppress those fields after OCR."
+            ? 'Exclude when any rule matches. "Has ..." field checks also suppress those fields after OCR.'
+            : 'Exclude only when all rules match. "Has ..." field checks also suppress those fields after OCR.'
         }
         mode={form.excludeMode}
         onModeChange={(excludeMode) => applyForm({ ...form, excludeMode })}
@@ -425,134 +307,9 @@ function MatchRulesPanel({
   );
 }
 
-export function DocumentMatchRulesEditor({
-  draft,
-  onChange,
-  onOpenAdvanced,
-  onFormChange,
-  rulesOnly = false,
-}: DocumentMatchRulesEditorProps) {
-  const mode = useMemo(() => inferUserRecognitionMode(draft), [draft]);
-  const [activeMode, setActiveMode] = useState<UserRecognitionMode>(rulesOnly ? "rules" : mode);
-
-  useEffect(() => {
-    setActiveMode(rulesOnly ? "rules" : mode);
-  }, [mode, rulesOnly]);
-
-  const setCatalogueEnabled = (enabled: boolean) => {
-    onChange({ ...draft, enabled });
-  };
-
-  const switchMode = (nextMode: UserRecognitionMode) => {
-    setActiveMode(nextMode);
-    onChange(applyUserRecognitionMode(draft, nextMode));
-  };
-
-  return (
-    <div className="space-y-4" data-testid="document-match-rules-editor">
-      <div className="flex items-center gap-2">
-        <Switch id="dt-ai-enabled" checked={draft.enabled} onCheckedChange={setCatalogueEnabled} />
-        <label htmlFor="dt-ai-enabled" className="text-sm text-foreground cursor-pointer">
-          {rulesOnly ? "Include in document type catalogue" : "Include in AI classification catalogue"}
-        </label>
-      </div>
-
-      {rulesOnly ? (
-        <p className="text-xs text-muted-foreground">
-          Recognition uses strict match and exclude rules on OCR fields after upload. Adjust rules
-          below — AI description is not used for this type.
-        </p>
-      ) : null}
-
-      {!rulesOnly ? (
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-foreground">How should we recognise this type?</p>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {USER_RECOGNITION_MODES.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={cn(
-                  "rounded-lg border p-3 text-left transition-colors",
-                  activeMode === option.id
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-primary/30"
-                )}
-                onClick={() => switchMode(option.id)}
-              >
-                <span className="block text-sm font-medium text-foreground">{option.label}</span>
-                <span className="mt-1 block text-[11px] leading-snug text-muted-foreground">
-                  {option.hint}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {!rulesOnly && activeMode === "ai" ? (
-        <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">
-            Write a clear description in <strong>How to recognise this document</strong> above.
-            The AI uses that summary (plus the optional hint below) when choosing a type. No OCR
-            match rules are required — best for distinctive layouts, letter types, or internal forms.
-          </p>
-          <div className="space-y-1.5">
-            <label htmlFor="dt-llm-hint" className="text-xs font-medium text-foreground">
-              Extra AI hint (optional)
-            </label>
-            <textarea
-              id="dt-llm-hint"
-              rows={2}
-              value={draft.llmHint ?? ""}
-              onChange={(e) => onChange({ ...draft, llmHint: e.target.value })}
-              placeholder="e.g. Often a PDF letterhead; may say ‘statement of account’ not ‘invoice’"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Need stricter checks after OCR? Switch to <strong>Document signals</strong> or{" "}
-            <strong>Match / exclude rules</strong>.
-          </p>
-        </div>
-      ) : null}
-
-      {!rulesOnly && activeMode === "signals" ? (
-        <RecognitionSignalsPanel draft={draft} onChange={onChange} />
-      ) : null}
-
-      {rulesOnly || activeMode === "rules" ? (
-        <MatchRulesPanel draft={draft} onChange={onChange} onFormChange={onFormChange} />
-      ) : null}
-
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-        <p className="text-xs text-muted-foreground">
-          {rulesOnly || activeMode === "rules"
-            ? "Exclude rules using Has … field checks define fields that must not appear after extraction."
-            : activeMode === "signals"
-              ? "Signals compile to grouped OR conditions for AI hints and pipeline checks."
-              : "AI description is optional. Switch to Match / exclude rules for strict checks."}
-        </p>
-        <Button type="button" size="sm" variant="outline" className="h-8" onClick={onOpenAdvanced}>
-          <Settings2 className="h-3.5 w-3.5 mr-1" />
-          Advanced condition tree
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 export function syncDraftClassifierFromForm(
   draft: DocumentTypeDefinition,
   form: MatchRulesForm = emptyMatchRulesForm()
 ): DocumentTypeDefinition {
-  return {
-    ...draft,
-    classifierCustomized: false,
-    classifier: {
-      ...draft.classifier,
-      enabled: true,
-      root: compileMatchRulesToClassifier(form),
-    },
-  };
+  return documentTypeWithMatchRulesForm(draft, form);
 }

@@ -28,7 +28,7 @@ def _definition(**kwargs) -> DocumentTypeDefinition:
         shortTitle="Contract",
         klass="Non-transactional",
         posting="No",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Vault",
         validationProfile="non_actionable",
     )

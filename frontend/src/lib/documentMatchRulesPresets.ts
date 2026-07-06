@@ -132,11 +132,11 @@ export type ContextualPhraseHint = {
 
 type HintContext = {
   title?: string;
-  oneLine?: string;
+  llmPrompt?: string;
 };
 
 function haystack(ctx: HintContext): string {
-  return `${ctx.title ?? ""} ${ctx.oneLine ?? ""}`.trim().toLowerCase();
+  return `${ctx.title ?? ""} ${ctx.llmPrompt ?? ""}`.trim().toLowerCase();
 }
 
 /** Optional phrase bundles inferred from the type name — user edits values after adding. */

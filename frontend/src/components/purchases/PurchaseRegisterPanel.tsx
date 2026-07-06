@@ -414,7 +414,7 @@ export function PurchaseRegisterPanel({
                       <th className="px-3 py-2 font-medium">Issue</th>
                       <th className="px-3 py-2 font-medium">Stage</th>
                       <th className="px-3 py-2 font-medium">Evaluation</th>
-                      <th className="px-3 py-2 font-medium text-right">VR pass</th>
+                      <th className="px-3 py-2 font-medium text-right">Rule pass</th>
                       <th className="px-3 py-2 font-medium text-right">Total</th>
                       <th className="px-4 py-2 font-medium text-right">Received</th>
                       <th className="px-4 py-2 font-medium text-right">Action</th>
