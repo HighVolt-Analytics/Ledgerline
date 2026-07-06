@@ -37,6 +37,26 @@ async def test_get_invoice(client: AsyncClient, db_session: AsyncSession) -> Non
 
 
 @pytest.mark.asyncio
+async def test_get_invoice_pipeline(client: AsyncClient, db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PENDING,
+        currency="AUD",
+        file_hash="pipeline-1",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.get(f"/api/invoices/{inv.id}/pipeline")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["error"] is None
+    assert "steps" in body["data"]
+    assert isinstance(body["data"]["steps"], list)
+
+
+@pytest.mark.asyncio
 async def test_not_found(client: AsyncClient) -> None:
     res = await client.get("/api/invoices/99999")
     assert res.status_code == 404
