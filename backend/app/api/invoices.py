@@ -718,6 +718,9 @@ async def reprocess_invoice(
             db, inv, tenant_id=ctx.tenant_id, verify_stored_file=True
         ),
     )
+
+
+@router.get("/{invoice_id:int}/pipeline", response_model=ApiEnvelope[PipelineStepsResponse])
 async def invoice_pipeline(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
