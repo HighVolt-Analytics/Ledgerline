@@ -41,6 +41,12 @@ import { tenantMonthStartIso, tenantTodayIso } from "@/lib/tenantTime";
 
 const CHART_MARGIN = { top: 4, right: 12, left: 8, bottom: 0 };
 const PIE_HOVER_OFFSET = 6;
+const SUSPENSE_ACCOUNT_COLOR = "hsl(var(--cyan-500))";
+
+function reportAccountColor(account: string, index: number): string {
+  if (account.toLowerCase().includes("suspense")) return SUSPENSE_ACCOUNT_COLOR;
+  return REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length]!;
+}
 
 type PieSectorProps = {
   cx?: number;
@@ -63,8 +69,7 @@ function renderActivePieSector(props: PieSectorProps) {
       startAngle={startAngle}
       endAngle={endAngle}
       fill={fill}
-      stroke="hsl(var(--background))"
-      strokeWidth={2}
+      stroke="none"
     />
   );
 }
@@ -218,7 +223,7 @@ export function ReportsPage() {
           title="Reports"
           subtitle="Spend analytics, GL distribution and tax summary."
         />
-        <PageLoader />
+        <PageLoader variant="reports" />
       </div>
     );
   }
@@ -360,7 +365,7 @@ export function ReportsPage() {
                     {byAccount.map((row, index) => (
                       <Cell
                         key={row.account}
-                        fill={REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length]}
+                        fill={reportAccountColor(row.account, index)}
                         opacity={hoveredBar === null || hoveredBar === index ? 1 : 0.5}
                         onMouseEnter={() => setHoveredBar(index)}
                       />
@@ -390,6 +395,7 @@ export function ReportsPage() {
                     cy="50%"
                     outerRadius={85}
                     innerRadius={45}
+                    stroke="none"
                     isAnimationActive
                     animationDuration={500}
                     animationEasing="ease-out"
@@ -401,7 +407,7 @@ export function ReportsPage() {
                     {byAccount.map((row, index) => (
                       <Cell
                         key={row.account}
-                        fill={REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length]}
+                        fill={reportAccountColor(row.account, index)}
                         opacity={activePieIndex === null || activePieIndex === index ? 1 : 0.5}
                       />
                     ))}

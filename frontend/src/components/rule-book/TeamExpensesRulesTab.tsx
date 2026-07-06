@@ -27,6 +27,7 @@ import {
   reconcileSubLedgerOnLedgerChange,
   SubLedgerField,
 } from "./SubLedgerField";
+import { RuleBookEmptyPanel } from "./RuleBookEmptyPanel";
 
 function ChannelBadge({ channel }: { channel: string }) {
   if (channel === "Any") {
@@ -328,9 +329,11 @@ export function TeamExpensesRulesTab({
           );
         })}
         {rules.length === 0 && (
-          <Card className="p-6 text-center text-sm text-muted-foreground md:col-span-2">
-            No team expense rules yet.
-          </Card>
+          <RuleBookEmptyPanel
+            className="md:col-span-2"
+            icon={Users}
+            title="No team expense rules yet."
+          />
         )}
       </div>
     </div>

@@ -8,14 +8,16 @@ import {
   handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
-import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2, AlertTriangle } from "lucide-react";
 import { api } from "@/api/client";
 import type { Invoice, TopVendorRow, Vendor } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { VendorFormDialog } from "@/components/VendorFormDialog";
+import { AccountBadge } from "@/components/rule-book/AccountBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { usePendingVendors, usePromotePendingVendor } from "@/hooks/useMasterData";
@@ -127,23 +129,6 @@ function vendorDisplayEmail(vendor: Vendor, stats: VendorInvoiceStats): string {
 function vendorTerms(stats: VendorInvoiceStats): string {
   if (stats.netDays != null) return `Net ${stats.netDays}`;
   return "—";
-}
-
-function AccountBadge({ account }: { account: string }) {
-  const suspense = account === "Suspense Account";
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "font-normal",
-        suspense
-          ? "border-destructive/40 text-destructive"
-          : "border-border text-foreground"
-      )}
-    >
-      {account}
-    </Badge>
-  );
 }
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
@@ -301,7 +286,7 @@ export function VendorsPage() {
           title="Vendors"
           subtitle="Vendor master with default coding, payment terms and spend."
         />
-        <Card className="p-8 text-center text-sm text-muted-foreground">Loading vendors…</Card>
+        <TableSkeleton rows={8} columns={5} />
       </div>
     );
   }
@@ -366,7 +351,7 @@ export function VendorsPage() {
               Add vendor
             </Button>
             <Button
-              variant="outline"
+              variant="surface"
               size="sm"
               onClick={() => load({ fresh: true })}
               disabled={loading}
@@ -423,16 +408,16 @@ export function VendorsPage() {
       </div>
 
       {pendingQueue.length > 0 && (
-        <Card
-          className="p-4 mb-6 border-destructive/30 bg-destructive/5"
-          data-testid="vendors-pending-queue"
-        >
-          <h3 className="text-sm font-semibold mb-3">Pending vendor registration</h3>
+        <Card className="p-4 mb-6" data-testid="vendors-pending-queue">
+          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0" aria-hidden />
+            Pending vendor registration
+          </h3>
           <div className="space-y-2">
             {pendingQueue.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-border bg-background p-3"
+                className="vendors-pending-item flex items-center justify-between gap-3 flex-wrap rounded-lg border p-3"
               >
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{item.detectedName}</div>
@@ -522,7 +507,7 @@ export function VendorsPage() {
                               "font-normal cursor-pointer",
                               status === "Active"
                                 ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
-                                : "border-destructive/40 text-destructive"
+                                : "border-[rgb(var(--system-yellow-rgb)/0.35)] text-[var(--system-yellow-text)]"
                             )}
                           >
                             {status}

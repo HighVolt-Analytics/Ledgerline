@@ -59,7 +59,7 @@ export function InvoiceProcessingOverridesSection({
                 <div className="text-sm font-medium text-foreground">{step.label}</div>
                 <p className="mt-0.5 text-xs text-muted-foreground">{step.hint}</p>
                 {!running && (
-                  <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                  <p className="mt-1 text-xs font-medium ds-warning-text">
                     Skipped on reprocess
                   </p>
                 )}

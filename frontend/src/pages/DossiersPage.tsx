@@ -6,6 +6,7 @@ import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Select } from "@/components/ui/select";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
@@ -131,7 +132,7 @@ export function DossiersPage() {
         subtitle="Latest posting bundles — invoice, supporting documents, full pipeline, and posting outcome."
         actions={
           <Button
-            variant="outline"
+            variant="surface"
             size="sm"
             className="h-8 gap-1.5 text-xs"
             onClick={() => void load({ fresh: true })}
@@ -170,7 +171,7 @@ export function DossiersPage() {
         {error ? (
           <div className="px-4 py-10 text-center text-sm text-destructive">{error}</div>
         ) : loading && rows.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-muted-foreground">Loading dossiers…</div>
+          <TableSkeleton rows={8} columns={5} className="border-0 shadow-none" />
         ) : rows.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">{emptyMessage}</div>
         ) : (

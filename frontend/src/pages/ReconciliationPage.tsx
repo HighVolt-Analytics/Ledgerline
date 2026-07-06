@@ -173,7 +173,7 @@ export function ReconciliationPage() {
   }
 
   if (isLoading || blocked || !overview) {
-    return <PageLoader label="Loading reconciliation…" />;
+    return <PageLoader variant="reports" />;
   }
 
   if (!hasAnyDocuments) {
@@ -189,7 +189,7 @@ export function ReconciliationPage() {
   }
 
   if (!periodRecon) {
-    return <PageLoader label="Loading reconciliation…" />;
+    return <PageLoader variant="reports" />;
   }
 
   const e = periodRecon;

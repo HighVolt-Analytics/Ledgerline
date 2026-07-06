@@ -40,7 +40,7 @@ function statusTone(status: string | null | undefined): string {
     return "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]";
   }
   if (status === "pending") {
-    return "border-[hsl(36_80%_70%)] text-[hsl(36_80%_28%)] dark:text-[hsl(43_74%_72%)]";
+    return "border-[rgb(var(--system-yellow-rgb)/0.35)] text-[var(--system-yellow-text)]";
   }
   if (status === "disabled") {
     return "border-destructive/40 text-destructive";

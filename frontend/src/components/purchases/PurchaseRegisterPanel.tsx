@@ -14,6 +14,7 @@ import { VarianceFormulaHint } from "@/components/purchases/PurchaseDetailPanel"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { cn } from "@/lib/cn";
 import { documentDisplayRef, money } from "@/lib/format";
@@ -186,10 +187,8 @@ export function PurchaseRegisterPanel({
               <ClipboardList className="h-4 w-4 text-primary shrink-0" />
               Purchase register
             </h3>
-            <p className="text-xs text-muted-foreground mt-1 max-w-2xl">
-              Three-way match for PO-linked invoices. Documents that still need a PO link or
-              register sync appear under{" "}
-              <span className="font-medium text-foreground">Needs action</span>.
+            <p className="text-xs text-muted-foreground mt-1 max-w-full whitespace-nowrap truncate">
+              Three-way match for PO-linked invoices. Unlinked or unsynced documents are in the second tab.
             </p>
           </div>
           {(registerRows.length > 0 || twoWayRows.length > 0 || actionRequired.length > 0) && (
@@ -203,7 +202,6 @@ export function PurchaseRegisterPanel({
         </div>
 
         <PageTabs
-          variant="pill"
           value={activeTab}
           onChange={(v) => onTabChange(v as PurchaseRegisterTab)}
           data-testid="purchase-register-tabs"
@@ -238,15 +236,9 @@ export function PurchaseRegisterPanel({
               label: (
                 <>
                   Needs action
-                  {actionRequired.length > 0 ? (
-                    <Badge variant="destructive" className="ml-1.5 tnum font-normal">
-                      {actionRequired.length}
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="ml-1.5 tnum font-normal">
-                      0
-                    </Badge>
-                  )}
+                  <Badge variant="secondary" className="ml-1.5 tnum font-normal">
+                    {actionRequired.length}
+                  </Badge>
                 </>
               ),
             },
@@ -256,11 +248,11 @@ export function PurchaseRegisterPanel({
 
       {showActionBanner ? (
         <div
-          className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs"
+          className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border ds-warning-panel-strong px-3 py-2 text-xs"
           role="status"
         >
           <span className="inline-flex items-center gap-1.5 text-foreground">
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <AlertTriangle className="h-3.5 w-3.5 ds-warning-text shrink-0" />
             {actionRequired.length} document{actionRequired.length === 1 ? "" : "s"} need attention
             before three-way match.
           </span>
@@ -283,7 +275,7 @@ export function PurchaseRegisterPanel({
           </div>
 
           {loading ? (
-            <div className="px-4 py-8 text-sm text-muted-foreground">Loading purchase register…</div>
+            <InlineTableSkeleton rows={6} columns={12} />
           ) : isError ? (
             <div className="px-4 py-8 text-sm text-destructive">Could not load purchase register.</div>
           ) : registerRows.length === 0 ? (
@@ -374,7 +366,7 @@ export function PurchaseRegisterPanel({
                             className={cn(
                               "px-3 py-2.5 text-right tnum whitespace-nowrap",
                               m.qtyVarianceValue !== 0 &&
-                                "text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)] font-medium"
+                                "ds-warning-text font-medium"
                             )}
                           >
                             {m.qtyVarianceValue === 0 ? "—" : fmtAud(m.qtyVarianceValue)}
@@ -383,7 +375,7 @@ export function PurchaseRegisterPanel({
                             className={cn(
                               "px-3 py-2.5 text-right tnum whitespace-nowrap",
                               m.priceVarianceValue !== 0 &&
-                                "text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)] font-medium"
+                                "ds-warning-text font-medium"
                             )}
                           >
                             {m.priceVarianceValue === 0 ? "—" : fmtAud(m.priceVarianceValue)}
@@ -450,7 +442,7 @@ export function PurchaseRegisterPanel({
           </div>
 
           {loading ? (
-            <div className="px-4 py-8 text-sm text-muted-foreground">Loading two-way matches…</div>
+            <InlineTableSkeleton rows={5} columns={9} />
           ) : isError ? (
             <div className="px-4 py-8 text-sm text-destructive">Could not load two-way matches.</div>
           ) : twoWayRows.length === 0 ? (
@@ -547,7 +539,7 @@ export function PurchaseRegisterPanel({
       ) : (
         <>
           {loading ? (
-            <div className="px-4 py-8 text-sm text-muted-foreground">Loading action queue…</div>
+            <InlineTableSkeleton rows={5} columns={9} />
           ) : actionRequired.length === 0 ? (
             <div className="px-4 py-6">
               <EmptyState
@@ -594,7 +586,7 @@ export function PurchaseRegisterPanel({
                           </div>
                         </td>
                         <td className="px-3 py-2.5 max-w-[140px] truncate">{inv.vendor ?? "—"}</td>
-                        <td className="px-3 py-2.5 text-xs text-amber-800 dark:text-amber-200 max-w-[180px]">
+                        <td className="px-3 py-2.5 text-xs ds-warning-text max-w-[180px]">
                           {purchaseActionIssue(inv, coverage)}
                         </td>
                         <td className="px-3 py-2.5">

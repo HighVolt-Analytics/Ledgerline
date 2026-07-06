@@ -1,7 +1,7 @@
 import { Download, Shield, Upload, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { PageLoader } from "@/components/PageLoader";
+import { WalletCardSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useWalletSummary } from "@/hooks/useWalletSummary";
 import { cn } from "@/lib/cn";
 import { money } from "@/lib/format";
@@ -37,7 +37,7 @@ export function WalletCard({
     if (stripeLoading) {
       return (
         <Card className="p-4" data-testid="card-wallet">
-          <PageLoader label="Loading wallet…" />
+          <WalletCardSkeleton />
         </Card>
       );
     }
@@ -84,7 +84,7 @@ export function WalletCard({
   if (isLoading && !wallet) {
     return (
       <Card className="p-4" data-testid="card-wallet">
-        <PageLoader label="Loading wallet…" />
+        <WalletCardSkeleton />
       </Card>
     );
   }

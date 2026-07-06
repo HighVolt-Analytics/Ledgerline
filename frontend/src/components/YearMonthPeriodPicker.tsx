@@ -95,7 +95,7 @@ function PeriodMenu({
                   >
                     <span className="truncate">{opt.label}</span>
                     {selected && (
-                      <Check className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--chart-1))]" strokeWidth={2.5} />
+                      <Check className="dropdown-accent h-3.5 w-3.5" strokeWidth={2.5} />
                     )}
                   </button>
                 );

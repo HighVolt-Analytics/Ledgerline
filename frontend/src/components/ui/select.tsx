@@ -24,7 +24,7 @@ export function toSelectOptions(items: readonly string[]): SelectOption[] {
 }
 
 const triggerBase =
-  "inline-flex max-w-full items-center justify-between gap-2 rounded-md border border-input bg-background shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex max-w-full items-center justify-between gap-2 rounded-md border border-border bg-field transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 const triggerSize = {
   sm: "h-8 px-2 text-xs",
@@ -198,10 +198,7 @@ export function Select({
                   >
                     <span className="truncate">{option.label}</span>
                     {isSelected && (
-                      <Check
-                        className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--chart-1))]"
-                        strokeWidth={2.5}
-                      />
+                      <Check className="dropdown-accent h-3.5 w-3.5" strokeWidth={2.5} />
                     )}
                   </button>
                 );

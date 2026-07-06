@@ -2,7 +2,7 @@ import { useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, Scale } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { PageLoader } from "@/components/PageLoader";
+import { LedgerOverviewSkeleton } from "@/components/skeleton/PageSkeletons";
 import { cn } from "@/lib/cn";
 import { money } from "@/lib/format";
 import type { ReconSummary } from "@/lib/reconciliation";
@@ -18,7 +18,7 @@ export function LedgerOverview({ recon, loading = false, currency = "AUD" }: Led
   const fmt = (v: number) => money(v, currency);
 
   if (loading) {
-    return <PageLoader label="Loading ledger overview…" />;
+    return <LedgerOverviewSkeleton />;
   }
 
   if (!recon) {

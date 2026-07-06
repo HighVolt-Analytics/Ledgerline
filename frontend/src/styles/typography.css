@@ -1,0 +1,459 @@
+/* Editorial type scale — Saans / body + Grotesk headlines */
+
+
+
+:root {
+
+  /* Page title only (h1 in PageHeader) */
+
+  --type-headline-size: 20px;
+
+  --type-headline-weight: 500;
+
+  --type-headline-leading: 1.3;
+
+  --type-headline-tracking: -0.35px;
+
+
+
+  /* Page subtitle under headline */
+
+  --type-page-subline-size: 13px;
+
+  --type-page-subline-leading: 1.45;
+
+  --type-page-subline-tracking: 0;
+
+
+
+  /* Section headings inside a page (h2) */
+
+  --type-section-size: 17px;
+
+  --type-section-weight: 600;
+
+  --type-section-leading: 1.35;
+
+  --type-section-tracking: -0.15px;
+
+
+
+  /* Card / block headings inside a page (h3) */
+
+  --type-card-title-size: 15px;
+
+  --type-card-title-weight: 600;
+
+  --type-card-title-leading: 1.35;
+
+  --type-card-title-tracking: -0.1px;
+
+
+
+  /* Legacy alias — maps to section tier */
+
+  --type-subhead-size: 17px;
+
+  --type-subhead-weight: 600;
+
+  --type-subhead-leading: 1.35;
+
+  --type-subhead-tracking: -0.15px;
+
+
+
+  --type-body-lg-size: 17px;
+
+  --type-body-lg-weight: 400;
+
+  --type-body-lg-leading: 1.5;
+
+  --type-body-lg-tracking: -0.05px;
+
+
+
+  --type-body-size: 16px;
+
+  --type-body-weight: 400;
+
+  --type-body-leading: 1.5;
+
+  --type-body-tracking: 0;
+
+
+
+  --type-body-sm-size: 14px;
+
+  --type-body-sm-weight: 400;
+
+  --type-body-sm-leading: 1.45;
+
+  --type-body-sm-tracking: 0;
+
+
+
+  --type-caption-size: 12px;
+
+  --type-caption-weight: 400;
+
+  --type-caption-leading: 1.4;
+
+  --type-caption-tracking: 0;
+
+}
+
+
+
+.type-headline {
+
+  font-family: var(--font-headline);
+
+  font-size: var(--type-headline-size);
+
+  font-weight: var(--type-headline-weight);
+
+  line-height: var(--type-headline-leading);
+
+  letter-spacing: var(--type-headline-tracking);
+
+}
+
+
+
+.type-section {
+
+  font-family: var(--font-headline);
+
+  font-size: var(--type-section-size);
+
+  font-weight: var(--type-section-weight);
+
+  line-height: var(--type-section-leading);
+
+  letter-spacing: var(--type-section-tracking);
+
+}
+
+
+
+.type-card-title {
+
+  font-family: var(--font-headline);
+
+  font-size: var(--type-card-title-size);
+
+  font-weight: var(--type-card-title-weight);
+
+  line-height: var(--type-card-title-leading);
+
+  letter-spacing: var(--type-card-title-tracking);
+
+}
+
+
+
+.type-subhead {
+
+  font-family: var(--font-headline);
+
+  font-size: var(--type-subhead-size);
+
+  font-weight: var(--type-subhead-weight);
+
+  line-height: var(--type-subhead-leading);
+
+  letter-spacing: var(--type-subhead-tracking);
+
+}
+
+
+
+.type-body-lg {
+
+  font-size: var(--type-body-lg-size);
+
+  font-weight: var(--type-body-lg-weight);
+
+  line-height: var(--type-body-lg-leading);
+
+  letter-spacing: var(--type-body-lg-tracking);
+
+}
+
+
+
+.type-body {
+
+  font-size: var(--type-body-size);
+
+  font-weight: var(--type-body-weight);
+
+  line-height: var(--type-body-leading);
+
+  letter-spacing: var(--type-body-tracking);
+
+}
+
+
+
+.type-body-sm {
+
+  font-size: var(--type-body-sm-size);
+
+  font-weight: var(--type-body-sm-weight);
+
+  line-height: var(--type-body-sm-leading);
+
+  letter-spacing: var(--type-body-sm-tracking);
+
+}
+
+
+
+.type-caption {
+
+  font-size: var(--type-caption-size);
+
+  font-weight: var(--type-caption-weight);
+
+  line-height: var(--type-caption-leading);
+
+  letter-spacing: var(--type-caption-tracking);
+
+}
+
+
+
+/* Page header — divider spans full header width (including actions) */
+.page-header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.page-header__intro {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+
+
+.page-header__headline {
+
+  margin: 0;
+
+}
+
+
+
+.page-header__subline {
+
+  margin: 6px 0 0;
+
+  font-size: var(--type-page-subline-size);
+
+  line-height: var(--type-page-subline-leading);
+
+  letter-spacing: var(--type-page-subline-tracking);
+
+}
+
+
+
+/* Empty / informational cards */
+
+.empty-state__title {
+
+  margin: 0 0 8px;
+
+  font-family: var(--font-headline);
+
+  font-size: var(--type-card-title-size);
+
+  font-weight: var(--type-card-title-weight);
+
+  line-height: var(--type-card-title-leading);
+
+  letter-spacing: var(--type-card-title-tracking);
+
+  color: hsl(var(--foreground));
+
+}
+
+
+
+.empty-state__hint {
+
+  margin: 0;
+
+  font-size: var(--type-body-sm-size);
+
+  line-height: var(--type-body-sm-leading);
+
+  color: hsl(var(--muted-foreground));
+
+}
+
+
+
+/* Main workspace — default reading size */
+
+.app-workspace__main,
+.app-workspace__scroll {
+
+  font-size: var(--type-body-size);
+
+  line-height: var(--type-body-leading);
+
+  font-weight: var(--type-body-weight);
+
+}
+
+
+
+/*
+
+ * Heading hierarchy inside pages:
+
+ * ONLY .page-header__headline (h1) uses --type-headline-size.
+
+ * h2 → section tier. h3 → card tier. Explicit text-[…] sizes are left alone.
+
+ */
+
+.app-workspace__main h2,
+.app-workspace__scroll h2 {
+
+  font-family: var(--font-headline);
+
+  font-size: var(--type-section-size);
+
+  font-weight: var(--type-section-weight);
+
+  line-height: var(--type-section-leading);
+
+  letter-spacing: var(--type-section-tracking);
+
+}
+
+
+
+.app-workspace__main h3:not([class*="text-["]),
+.app-workspace__scroll h3:not([class*="text-["]) {
+
+  font-family: var(--font-headline);
+
+  font-size: var(--type-card-title-size);
+
+  font-weight: var(--type-card-title-weight);
+
+  line-height: var(--type-card-title-leading);
+
+  letter-spacing: var(--type-card-title-tracking);
+
+}
+
+
+
+/* Lead / intro paragraphs that were set too small */
+
+.app-workspace__main p.text-sm.text-muted-foreground,
+.app-workspace__scroll p.text-sm.text-muted-foreground {
+
+  font-size: var(--type-body-lg-size);
+
+  line-height: var(--type-body-lg-leading);
+
+  letter-spacing: var(--type-body-lg-tracking);
+
+  font-weight: var(--type-body-lg-weight);
+
+}
+
+
+
+.app-workspace__main p.text-xs.text-muted-foreground,
+.app-workspace__scroll p.text-xs.text-muted-foreground {
+
+  font-size: var(--type-body-size);
+
+  line-height: var(--type-body-leading);
+
+  font-weight: var(--type-body-weight);
+
+}
+
+
+
+/* Section intros inside cards (max-width descriptions) */
+
+.app-workspace__main p.text-xs.text-muted-foreground[class*="max-w"],
+.app-workspace__scroll p.text-xs.text-muted-foreground[class*="max-w"] {
+
+  font-size: var(--type-body-sm-size);
+
+  line-height: var(--type-body-sm-leading);
+
+}
+
+
+
+/* Loading / status lines in main content */
+
+.app-workspace__main div.text-sm.text-muted-foreground,
+.app-workspace__scroll div.text-sm.text-muted-foreground {
+
+  font-size: var(--type-body-size);
+
+  line-height: var(--type-body-leading);
+
+}
+
+
+
+/* Card body copy at default body-sm unless upgraded above */
+
+.app-workspace__main .text-sm:not(.text-muted-foreground),
+.app-workspace__scroll .text-sm:not(.text-muted-foreground) {
+
+  font-size: var(--type-body-sm-size);
+
+  line-height: var(--type-body-sm-leading);
+
+}
+
+
+
+/* KPI cards — keep original compact scale */
+
+.app-workspace__main .kpi-card p.text-xs.font-medium.text-muted-foreground,
+.app-workspace__scroll .kpi-card p.text-xs.font-medium.text-muted-foreground {
+
+  font-size: 0.75rem;
+
+  line-height: 1rem;
+
+}
+
+
+
+.app-workspace__main .kpi-card p.text-lg.font-semibold,
+.app-workspace__scroll .kpi-card p.text-lg.font-semibold {
+
+  font-size: 1.125rem;
+
+  line-height: 1.25;
+
+}
+
+
+
+.app-workspace__main .kpi-card span.text-xs.font-medium,
+.app-workspace__scroll .kpi-card span.text-xs.font-medium {
+
+  font-size: 0.75rem;
+
+  line-height: 1rem;
+
+}
+
+

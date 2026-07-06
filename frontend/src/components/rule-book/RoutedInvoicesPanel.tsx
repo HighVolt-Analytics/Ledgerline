@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { useMemo, useState } from "react";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
+import { RoutedPanelSkeleton } from "@/components/skeleton/PageSkeletons";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import {
   EvaluationStatusBadge,
@@ -145,12 +146,13 @@ export function RoutedInvoicesPanel({
         ) : null}
       </div>
       {isLoading ? (
-        <div className="px-4 py-8 text-sm text-muted-foreground">Loading routed documents…</div>
+        <RoutedPanelSkeleton />
       ) : isError ? (
         <div className="px-4 py-8 text-sm text-destructive">Could not load documents.</div>
       ) : rows.length === 0 ? (
-        <div className="p-4">
+        <div className="px-4 py-6">
           <EmptyState
+            className="mt-0 mx-0 w-full max-w-none !px-20 !py-24"
             title="No routed documents yet"
             hint={`Documents with route target “${routeTarget}” appear here after the pipeline MAP step or a remap.`}
           />

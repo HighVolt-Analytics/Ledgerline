@@ -10,6 +10,7 @@ import { PaymentRow } from "@/components/payments/PaymentRow";
 import { WalletCard } from "@/components/payments/WalletCard";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { usePaymentMutations, usePayments, useAppSettings } from "@/hooks/usePayments";
 import {
   useConnectStripe,
@@ -321,7 +322,7 @@ export function PaymentsPage() {
             environmentBanner.tone === "info" &&
               "border-border bg-muted/40 text-muted-foreground",
             environmentBanner.tone === "warning" &&
-              "border-[hsl(36_80%_70%)] bg-[hsl(36_80%_96%)] text-[hsl(36_80%_28%)] dark:border-[hsl(43_74%_35%)] dark:bg-[hsl(43_74%_12%)] dark:text-[hsl(43_74%_72%)]"
+              "ds-warning-panel border ds-warning-text"
           )}
           data-testid="banner-payment-environment"
         >
@@ -416,7 +417,7 @@ export function PaymentsPage() {
               readinessBanner.tone === "success" &&
                 "border-primary/30 bg-primary/10 text-primary",
               readinessBanner.tone === "warning" &&
-                "border-[hsl(36_80%_70%)] bg-[hsl(36_80%_96%)] text-[hsl(36_80%_28%)] dark:border-[hsl(43_74%_35%)] dark:bg-[hsl(43_74%_12%)] dark:text-[hsl(43_74%_72%)]",
+                "ds-warning-panel border ds-warning-text",
               readinessBanner.tone === "neutral" &&
                 "border-border bg-muted/40 text-muted-foreground"
             )}
@@ -663,9 +664,9 @@ export function PaymentsPage() {
         ) : null}
       </Card>
 
-      <Card className="p-3 mb-5 border-amber-500/30 bg-amber-500/5">
+      <Card className="p-3 mb-5 ds-warning-panel border">
         <div className="flex items-start gap-2.5">
-          <Shield className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+          <Shield className="h-4 w-4 ds-warning-text mt-0.5 shrink-0" />
           <div className="text-xs text-muted-foreground">
             <span className="font-medium text-foreground">
               Real Stripe payouts are disabled.
@@ -676,7 +677,7 @@ export function PaymentsPage() {
             Use <span className="text-foreground">Validate payment</span> for dry-run readiness
             checks.
             {paymentsExecutionEnabled ? (
-              <span className="block mt-1 text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]">
+              <span className="block mt-1 ds-warning-text">
                 STRIPE_PAYMENTS_EXECUTION_ENABLED is true in server config, but real execution
                 endpoints are not enabled in this build.
               </span>
@@ -709,11 +710,12 @@ export function PaymentsPage() {
 
       <PageTabPanel value={tab} active={tab} className="mt-4">
         {isLoading ? (
-          <div className="text-sm text-muted-foreground py-8">Loading payments…</div>
+          <TableSkeleton rows={7} columns={5} />
         ) : isError && !paymentsBlocked ? (
           <div className="text-sm text-destructive py-8">Could not load payments.</div>
         ) : tabPayments.length === 0 ? (
           <EmptyState
+            className="mt-0 w-full max-w-none"
             title={`No ${tab} payments`}
             hint="Processed invoices with due dates create payment rows automatically."
           />

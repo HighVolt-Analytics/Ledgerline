@@ -159,7 +159,7 @@ function VarianceRow({ label, sub, value }: { label: string; sub: string; value:
         <span
           className={cn(
             "tnum text-sm font-medium",
-            value !== 0 && "text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
+            value !== 0 && "ds-warning-text"
           )}
         >
           {fmtAud(value)}
@@ -532,7 +532,7 @@ export function SalesDetailContent({
             className={cn(
               "tnum font-semibold",
               match.totalDeviation !== 0
-                ? "text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
+                ? "ds-warning-text"
                 : "text-primary"
             )}
           >

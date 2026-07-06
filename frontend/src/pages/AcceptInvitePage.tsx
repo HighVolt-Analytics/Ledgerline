@@ -2,10 +2,9 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import type { InvitePreview } from "@/api/types";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
 import { formatTenantRole } from "@/lib/tenantRoles";
+import { Eye, EyeOff } from "lucide-react";
 
 export function AcceptInvitePage() {
   const [params] = useSearchParams();
@@ -20,6 +19,8 @@ export function AcceptInvitePage() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -65,68 +66,113 @@ export function AcceptInvitePage() {
   };
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
-      <Card className="w-full max-w-md p-6">
-        <h1 className="text-lg font-semibold mb-1">Accept invitation</h1>
-        {loading && <p className="text-sm text-muted-foreground">Loading invitation…</p>}
+    <AuthCenteredCard
+      title={done ? "Account created" : "Sign up for Ledgerline"}
+      subtitle={
+        done
+          ? "Your account is ready. Sign in to continue."
+          : "Create your account to join your organisation."
+      }
+    >
+      {loading && (
+        <div className="auth-form" aria-busy="true" aria-label="Loading">
+          <div className="auth-skeleton auth-skeleton-line w-52" />
+          <div className="auth-skeleton auth-skeleton-input" />
+          <div className="auth-skeleton auth-skeleton-input" />
+          <div className="auth-skeleton auth-skeleton-input" />
+          <div className="auth-skeleton auth-skeleton-button" />
+        </div>
+      )}
 
-        {!loading && preview && !done && !error && (
-          <>
-            <p className="text-sm text-muted-foreground mb-4">
-              Join <strong>{preview.tenant_name}</strong> as{" "}
-              <strong>{formatTenantRole(preview.role)}</strong> ({preview.email})
-            </p>
-            <div className="space-y-3">
-              <Input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Full name"
-              />
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password"
-                autoComplete="new-password"
-              />
-              <Input
-                type="password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                placeholder="Confirm password"
-                autoComplete="new-password"
-              />
-            </div>
-            <Button className="w-full mt-4" disabled={busy} onClick={() => void accept()}>
-              {busy ? "Creating account…" : "Accept & create account"}
-            </Button>
-          </>
-        )}
-
-        {error && <p className="text-sm text-destructive mt-2">{error}</p>}
-
-        {done && (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Your account is ready. Sign in to complete organisation setup.
-            </p>
-            <Button
-              className="w-full"
-              onClick={() => navigate("/login", { state: { fromInvite: true } })}
-            >
-              Go to sign in
-            </Button>
-          </div>
-        )}
-
-        {!loading && !token && (
-          <p className="text-sm text-muted-foreground">
-            <Link to="/login" className="text-primary underline">
-              Back to sign in
-            </Link>
+      {!loading && preview && !done && !error && (
+        <div className="auth-form">
+          <p className="auth-invite-meta">
+            Join <strong>{preview.tenant_name}</strong> as{" "}
+            <strong>{formatTenantRole(preview.role)}</strong>
+            <span>({preview.email})</span>
           </p>
-        )}
-      </Card>
-    </div>
+
+          <input
+            className="auth-input"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Full name"
+          />
+
+          <div className="auth-input-wrap">
+            <input
+              type={showPassword ? "text" : "password"}
+              className="auth-input"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              className="auth-input-toggle"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              onClick={() => setShowPassword((v) => !v)}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+
+          <div className="auth-input-wrap">
+            <input
+              type={showConfirm ? "text" : "password"}
+              className="auth-input"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder="Confirm password"
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              className="auth-input-toggle"
+              aria-label={showConfirm ? "Hide password" : "Show password"}
+              onClick={() => setShowConfirm((v) => !v)}
+            >
+              {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+
+          <button type="button" className="auth-submit" disabled={busy} onClick={() => void accept()}>
+            {busy ? "Creating account…" : "Create account"}
+          </button>
+
+          <div className="auth-footer">
+            <p>
+              Already have an account?{" "}
+              <Link to="/login" className="auth-link-accent">
+                Log in
+              </Link>
+            </p>
+          </div>
+        </div>
+      )}
+
+      {error ? <p className="auth-error">{error}</p> : null}
+
+      {done && (
+        <div className="auth-form">
+          <button
+            type="button"
+            className="auth-submit"
+            onClick={() => navigate("/login", { state: { fromInvite: true } })}
+          >
+            Go to sign in
+          </button>
+        </div>
+      )}
+
+      {!loading && !token && (
+        <div className="auth-footer">
+          <Link to="/login" className="auth-link-accent">
+            Back to sign in
+          </Link>
+        </div>
+      )}
+    </AuthCenteredCard>
   );
 }

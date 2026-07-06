@@ -253,7 +253,7 @@ export function PipelineDebugPanel({ invoice }: PipelineDebugPanelProps) {
 
   return (
     <div className="mt-4 space-y-4">
-      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+      <div className="rounded-md border ds-warning-panel-strong px-3 py-2 text-xs ds-warning-text">
         <strong>Dev only.</strong> Temporary pipeline inspector — delete this tab when development
         is done.
       </div>
@@ -268,7 +268,14 @@ export function PipelineDebugPanel({ invoice }: PipelineDebugPanelProps) {
             </>
           ) : null}
         </div>
-        <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load()}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="bg-card"
+          disabled={loading}
+          onClick={() => void load()}
+        >
           <RefreshCw className={cn("h-3.5 w-3.5 mr-1", loading && "animate-spin")} />
           Refresh
         </Button>

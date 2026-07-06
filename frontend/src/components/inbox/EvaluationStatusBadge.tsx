@@ -1,7 +1,25 @@
 import type { Invoice } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/cn";
+import { approvalStatusChipClass, kpiStatusChipClass, needsReviewStatusChipClass } from "@/lib/kpiModuleColors";
 import { evaluationStatusDescription, evaluationStatusLabel } from "@/lib/invoice";
+import { cn } from "@/lib/cn";
+
+function evaluationChipClass(status: NonNullable<Invoice["evaluation_status"]>): string {
+  switch (status) {
+    case "auto_coded":
+      return kpiStatusChipClass("green");
+    case "needs_review":
+      return needsReviewStatusChipClass();
+    case "awaiting_po":
+      return kpiStatusChipClass("rose");
+    case "pending_vendor":
+      return kpiStatusChipClass("rust");
+    case "unmatched_expense_vendor":
+      return kpiStatusChipClass("sage");
+    default:
+      return approvalStatusChipClass("muted");
+  }
+}
 
 export function EvaluationStatusBadge({
   status,
@@ -18,19 +36,10 @@ export function EvaluationStatusBadge({
       </span>
     );
   }
-  const tone =
-    status === "auto_coded"
-      ? "border-[hsl(var(--chart-1)/0.4)] text-[hsl(var(--chart-1))]"
-      : status === "pending_vendor" || status === "awaiting_po" || status === "awaiting_classification" || status === "needs_rescan"
-        ? "border-destructive/40 text-destructive"
-        : status === "unmatched_expense_vendor"
-          ? "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
-          : "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]";
+
   return (
-    <span title={title}>
-      <Badge variant="outline" className={cn("text-xs font-medium", tone)}>
-        {label}
-      </Badge>
+    <span className={cn(evaluationChipClass(status))} title={title}>
+      {label}
     </span>
   );
 }

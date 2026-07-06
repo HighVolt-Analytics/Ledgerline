@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import { PageTabs } from "@/components/PageTabs";
 import { cn } from "@/lib/cn";
 
 export type InvoiceFilePreviewResult = {
@@ -165,34 +166,15 @@ export function InvoicePreviewModeToggle({
   if (!hasOriginal) return null;
 
   return (
-    <div
-      className="inline-flex h-9 w-full rounded-md bg-muted p-1 text-muted-foreground mb-3"
-      role="tablist"
-      aria-label="Document preview mode"
-    >
-      {(
-        [
-          { id: "summary" as const, label: "Summary" },
-          { id: "original" as const, label: "Original" },
-        ] as const
-      ).map((opt) => (
-        <button
-          key={opt.id}
-          type="button"
-          role="tab"
-          aria-selected={mode === opt.id}
-          data-testid={opt.id === "original" ? "tab-preview-original" : "tab-preview-summary"}
-          onClick={() => onChange(opt.id)}
-          className={cn(
-            "inline-flex flex-1 items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all",
-            mode === opt.id
-              ? "bg-background text-foreground shadow-sm"
-              : "hover:text-foreground"
-          )}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
+    <PageTabs
+      className="mb-3 w-full"
+      value={mode}
+      onChange={(v) => onChange(v as PreviewPaneMode)}
+      data-testid="invoice-preview-mode-tabs"
+      tabs={[
+        { value: "summary", label: "Summary", testid: "tab-preview-summary" },
+        { value: "original", label: "Original", testid: "tab-preview-original" },
+      ]}
+    />
   );
 }

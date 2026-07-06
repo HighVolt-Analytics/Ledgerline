@@ -89,7 +89,7 @@ function ReadinessResultPanel({ result }: { result: PaymentExecutionReadinessRes
         "mt-2 rounded-md border px-3 py-2 text-xs space-y-1.5",
         result.can_execute
           ? "border-primary/40 bg-primary/5 text-foreground"
-          : "border-[hsl(36_80%_38%/0.35)] bg-[hsl(36_80%_38%/0.08)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]"
+          : "ds-warning-panel border ds-warning-text"
       )}
       data-testid={`payment-readiness-result-${result.payment_id}`}
     >

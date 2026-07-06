@@ -642,7 +642,7 @@ export function DossierLinkedDocumentsPanel({
 
         {linked.enforceBundle && !linked.linkageKey ? (
           <p
-            className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100"
+            className="mb-3 rounded-md border ds-warning-panel-strong px-3 py-2 text-xs ds-warning-text"
             data-testid="bundle-linkage-hint"
           >
             Enter or extract a valid {refShort} reference on this invoice to link required supporting

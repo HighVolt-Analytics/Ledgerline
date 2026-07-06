@@ -29,7 +29,7 @@ const OPERATORS: { key: ConditionOperator; label: string }[] = [
 ];
 
 const valueInputCls =
-  "h-8 w-[180px] shrink-0 rounded-md border border-input bg-background px-2 text-xs font-mono shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+  "h-8 w-[180px] shrink-0 rounded-md border border-border bg-field px-2 text-xs font-mono shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 function updateAtPath(
   root: RuleConditionGroup,

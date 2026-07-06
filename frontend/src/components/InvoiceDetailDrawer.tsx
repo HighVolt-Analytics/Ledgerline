@@ -23,6 +23,7 @@ import {
 } from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
+import { PageTabs } from "@/components/PageTabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1217,7 +1218,7 @@ export function InvoiceDetailDrawer({
         role="dialog"
         aria-modal="true"
         data-state={sheetState}
-        className="invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-background p-0 shadow-lg"
+        className="invoice-drawer-panel pointer-events-auto flex h-full flex-col gap-0 border-l border-border bg-card p-0 shadow-lg"
       >
         {loading || !inv ? (
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
@@ -1307,28 +1308,15 @@ export function InvoiceDetailDrawer({
               </div>
 
               <div className="invoice-drawer-detail-pane p-4 md:p-5">
-                <div
-                  role="tablist"
-                  className="inline-flex h-10 flex-wrap items-center justify-center rounded-md bg-muted p-1 text-muted-foreground"
-                >
-                  {TABS.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      role="tab"
-                      aria-selected={tab === t}
-                      onClick={() => selectTab(t)}
-                      className={cn(
-                        "inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all",
-                        tab === t
-                          ? "bg-background text-foreground shadow-sm"
-                          : "hover:text-foreground"
-                      )}
-                    >
-                      {tabLabel(t, inv?.route_target)}
-                    </button>
-                  ))}
-                </div>
+                <PageTabs
+                  value={tab}
+                  onChange={(v) => selectTab(v as Tab)}
+                  tabs={TABS.map((t) => ({
+                    value: t,
+                    label: tabLabel(t, inv?.route_target),
+                    secondary: t === "overrides" || t === "pipeline",
+                  }))}
+                />
 
                 {tab === "fields" && inv && (
                   <div className="mt-4 space-y-3">

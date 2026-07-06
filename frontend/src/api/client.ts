@@ -1286,6 +1286,7 @@ export const api = {
     if (options?.fresh) bustGetCache(path);
     return request<BillingState>(path);
   },
+  getGeoCountry: () => request<{ country_code: string | null }>("/api/geo/country"),
   getBillingUsage: (page = 1, pageSize = 50, options?: FreshRequestOptions) => {
     const path = `/api/billing/usage?page=${page}&page_size=${pageSize}`;
     if (options?.fresh) bustGetCache(path);

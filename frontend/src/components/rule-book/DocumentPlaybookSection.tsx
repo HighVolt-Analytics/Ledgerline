@@ -68,7 +68,7 @@ export function PlaybookPolicyEditor({
               approvalPolicy: { mode: preset.approvalMode },
             });
           }}
-          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+          className="h-9 w-full rounded-md border border-border bg-field px-2 text-sm disabled:opacity-50"
         >
           {PLAYBOOK_PROFILE_OPTIONS.map((row) => (
             <option key={row.value} value={row.value}>
@@ -93,7 +93,7 @@ export function PlaybookPolicyEditor({
                 matchPolicy: { mode: e.target.value as MatchMode },
               })
             }
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+            className="h-9 w-full rounded-md border border-border bg-field px-2 text-sm disabled:opacity-50"
           >
             {MATCH_MODE_OPTIONS.map((row) => (
               <option key={row.value} value={row.value}>
@@ -114,7 +114,7 @@ export function PlaybookPolicyEditor({
                 approvalPolicy: { mode: e.target.value as ApprovalMode },
               })
             }
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+            className="h-9 w-full rounded-md border border-border bg-field px-2 text-sm disabled:opacity-50"
           >
             {APPROVAL_MODE_OPTIONS.map((row) => (
               <option key={row.value} value={row.value}>

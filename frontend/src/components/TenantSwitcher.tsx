@@ -179,7 +179,7 @@ export function TenantSwitcher({
         className="flex items-center gap-2 h-9 min-w-0 max-w-[10rem] sm:max-w-[12rem] px-3 rounded-full border border-border bg-card text-sm hover-elevate shrink-0"
       >
         {current?.is_platform ? (
-          <Shield className="h-4 w-4 text-amber-500 shrink-0" />
+          <Shield className="h-4 w-4 ds-warning-icon shrink-0" />
         ) : (
           <Building2 className="h-4 w-4 text-primary shrink-0" />
         )}
@@ -200,7 +200,7 @@ export function TenantSwitcher({
               ref={menuRef}
               role="listbox"
               data-testid="menu-tenant-switcher"
-              className="fixed z-[250] rounded-lg border border-border bg-popover shadow-lg text-sm overflow-hidden"
+              className="fixed z-[250] rounded-lg border border-border bg-popover shadow-float text-sm overflow-hidden"
               style={{
                 top: menuStyle.top,
                 left: menuStyle.left,
@@ -239,9 +239,9 @@ export function TenantSwitcher({
                       >
                         <span className="shrink-0">
                           {m.is_platform ? (
-                            <Shield className="h-4 w-4 text-amber-500" />
+                            <Shield className="h-4 w-4 dropdown-accent" />
                           ) : (
-                            <Building2 className="h-4 w-4 text-primary" />
+                            <Building2 className="h-4 w-4 dropdown-accent" />
                           )}
                         </span>
                         <span className="flex-1 min-w-0">
@@ -260,7 +260,7 @@ export function TenantSwitcher({
                         {busy ? (
                           <span className="text-xs text-muted-foreground shrink-0">…</span>
                         ) : selected ? (
-                          <Check className="h-4 w-4 text-[hsl(var(--chart-1))] shrink-0" />
+                          <Check className="dropdown-accent h-4 w-4" />
                         ) : null}
                       </button>
                     </li>

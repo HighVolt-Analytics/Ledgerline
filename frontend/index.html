@@ -15,9 +15,12 @@
     <script>
       (function () {
         try {
-          if (localStorage.getItem("ledgerline_theme") === "dark") {
-            document.documentElement.classList.add("dark");
-          }
+          var pref = localStorage.getItem("ledgerline_theme");
+          var dark =
+            pref === "dark" ||
+            (pref === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
         } catch (e) {}
       })();
     </script>

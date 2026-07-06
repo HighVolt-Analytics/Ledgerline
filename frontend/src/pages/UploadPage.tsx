@@ -25,6 +25,7 @@ import { DocumentMatrixPanel } from "@/components/upload/DocumentMatrixPanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Select } from "@/components/ui/select";
 import { mailboxDisplayName, counterpartyColumnLabel, counterpartyMatchColumnLabel } from "@/lib/invoice";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
@@ -33,6 +34,7 @@ import { sortInvoicesNewestFirst } from "@/lib/invoices";
 import { cn } from "@/lib/cn";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useNavBadges } from "@/hooks/useNavBadges";
+import { ActionChip } from "@/components/ActionChip";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
 import {
   UploadInvoiceMobileRow,
@@ -613,7 +615,6 @@ export function UploadPage() {
         }
       />
       <PageTabs
-        variant="pill"
         className="mb-5"
         value={workspaceTab}
         onChange={(value) => setWorkspaceTab(value as "upload" | "matrix")}
@@ -770,45 +771,31 @@ export function UploadPage() {
                 </div>
                 <div className="mt-3 flex items-center gap-1.5 min-w-0">
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 shrink-0 px-2 text-xs"
-                      data-testid={`button-import-${mb.email}`}
+                    <ActionChip
+                      tone="edit"
+                      icon={Calendar}
+                      label="Import"
+                      testId={`button-import-${mb.email}`}
                       disabled={importBusy || fetching === mb.email}
                       onClick={() => setImportMailbox(mb)}
-                    >
-                      <Calendar className="h-3 w-3 mr-1 shrink-0" />
-                      Import
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 shrink-0 px-2 text-xs"
-                      data-testid={`button-fetch-${mb.email}`}
+                    />
+                    <ActionChip
+                      tone="post"
+                      icon={RefreshCw}
+                      label="Fetch"
+                      testId={`button-fetch-${mb.email}`}
                       disabled={fetching === mb.email || importBusy}
+                      iconClassName={fetching === mb.email ? "animate-spin" : undefined}
                       onClick={() => void fetchMailbox(mb)}
-                    >
-                      <RefreshCw
-                        className={cn("h-3 w-3 mr-1 shrink-0", fetching === mb.email && "animate-spin")}
-                      />
-                      Fetch
-                    </Button>
+                    />
                     {isAdmin ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 shrink-0 px-2 text-xs"
-                      data-testid={`button-toggle-${mb.email}`}
-                      onClick={() => toggleMailboxActive(mb)}
-                    >
-                      {mb.is_active ? (
-                        <Pause className="h-3 w-3 mr-1 shrink-0" />
-                      ) : (
-                        <Play className="h-3 w-3 mr-1 shrink-0" />
-                      )}
-                      {mb.is_active ? "Pause" : "Resume"}
-                    </Button>
+                      <ActionChip
+                        tone={mb.is_active ? "pending" : "approve"}
+                        icon={mb.is_active ? Pause : Play}
+                        label={mb.is_active ? "Pause" : "Resume"}
+                        testId={`button-toggle-${mb.email}`}
+                        onClick={() => toggleMailboxActive(mb)}
+                      />
                     ) : null}
                   </div>
                   {isAdmin ? (
@@ -861,7 +848,7 @@ export function UploadPage() {
       )}
 
       {loading && captured.length === 0 ? (
-        <Card className="p-8 text-center text-sm text-muted-foreground">Loading documents…</Card>
+        <InlineTableSkeleton rows={8} columns={6} />
       ) : captured.length === 0 ? (
         <EmptyState
           title="No documents yet"

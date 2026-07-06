@@ -3,6 +3,7 @@ import { History } from "lucide-react";
 import { api } from "@/api/client";
 import type { RuleBookChangelogEntry } from "@/api/types";
 import { Card } from "@/components/ui/card";
+import { InlineListSkeleton } from "@/components/skeleton/PageSkeletons";
 import { queryKeys } from "@/lib/queryClient";
 
 function formatWhen(iso: string) {
@@ -62,7 +63,7 @@ export function RuleChangeHistory() {
         <h3 className="text-sm font-semibold">Rule change history</h3>
       </div>
       {isLoading ? (
-        <div className="px-4 py-6 text-sm text-muted-foreground">Loading change history…</div>
+        <InlineListSkeleton rows={4} />
       ) : isError ? (
         <div className="px-4 py-6 text-sm text-destructive">Could not load change history.</div>
       ) : data.length === 0 ? (

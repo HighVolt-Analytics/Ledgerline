@@ -2,6 +2,7 @@ import { Fragment, useState } from "react";
 import { AlertCircle, ChevronDown, ChevronRight, ClipboardCheck, Loader2, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/context/ToastContext";
 import {
@@ -23,7 +24,7 @@ import { CustomerDetailPanel } from "./CustomerDetailPanel";
 function StatusDot({ status }: { status: string }) {
   const tone: Record<string, string> = {
     Active: "bg-[hsl(var(--chart-1))]",
-    "On hold": "bg-[hsl(43_74%_49%)]",
+    "On hold": "bg-[#9c4e2a] dark:bg-[#edc0a6]",
     "Pending registration": "bg-destructive",
   };
   return (
@@ -149,7 +150,11 @@ export function CustomerMastersPanel() {
   };
 
   if (isLoading) {
-    return <div className="text-sm text-muted-foreground py-8">Loading customer masters…</div>;
+    return (
+      <div className="space-y-4" data-testid="customer-masters-panel">
+        <InlineTableSkeleton rows={6} columns={5} />
+      </div>
+    );
   }
 
   return (

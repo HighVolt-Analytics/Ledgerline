@@ -1,23 +1,39 @@
 import type { ReactNode } from "react";
+import { cn } from "@/lib/cn";
 
 export function PageHeader({
   title,
   subtitle,
+  eyebrow,
   actions,
+  children,
 }: {
   title: string;
   subtitle?: string;
+  eyebrow?: string;
   actions?: ReactNode;
+  /** Tabs or toolbar rendered inside the sticky page header region */
+  children?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
-      <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-        {subtitle && (
-          <p className="text-sm text-muted-foreground mt-1 hidden sm:block">{subtitle}</p>
-        )}
+    <div className="page-top-sticky">
+      <div className="page-header flex flex-wrap items-start justify-between gap-4">
+        <div className="page-header__main min-w-0 flex-1">
+          {eyebrow ? (
+            <p className={cn("type-caption font-medium text-muted-foreground mb-1.5")}>{eyebrow}</p>
+          ) : null}
+          <div className="page-header__intro">
+            <h1 className="page-header__headline type-headline text-foreground">{title}</h1>
+            {subtitle ? (
+              <p className={cn("page-header__subline text-muted-foreground max-w-3xl")}>
+                {subtitle}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        {actions ? <div className="flex items-center gap-2 flex-wrap shrink-0">{actions}</div> : null}
       </div>
-      {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
+      {children ? <div className="page-top-sticky__below">{children}</div> : null}
     </div>
   );
 }

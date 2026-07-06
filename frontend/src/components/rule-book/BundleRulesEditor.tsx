@@ -8,15 +8,11 @@ import {
   documentTypeLabel,
   dossierBookLabel,
   linkageReferenceLabel,
-  linkageReferenceShort,
-  mergeBundleItems,
   normalizeBundleConditional,
   normalizeDtCodeList,
   PURCHASE_BUNDLE_ROLE_OPTIONS,
   SALES_BUNDLE_ROLE_OPTIONS,
   suggestedMandatoryBundleMembers,
-  supportingDocumentRequirementsTitle,
-  threeWayMatchTabLabel,
   type PurchaseBundleRole,
   type SalesBundleRole,
 } from "@/lib/documentBundleConfig";
@@ -70,8 +66,8 @@ function BundleDtCodePicker({
   const toneClasses =
     tone === "warn"
       ? {
-          active: "border-amber-500 bg-amber-500/10 text-amber-800 dark:text-amber-300",
-          idle: "border-border bg-muted/40 text-muted-foreground hover:border-amber-500/40",
+          active: "border-[#9c4e2a] ds-warning-panel-strong ds-warning-text",
+          idle: "border-border bg-muted/40 text-muted-foreground hover:border-[rgb(156_78_42/0.35)]",
         }
       : {
           active: "border-primary bg-primary/10 text-primary",
@@ -131,7 +127,7 @@ function BundleDtCodePicker({
 function BundleWarnings({ warnings }: { warnings: BundleConfigWarning[] }) {
   if (!warnings.length) return null;
   return (
-    <ul className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+    <ul className="space-y-1 rounded-md border ds-warning-panel-strong px-3 py-2 text-xs ds-warning-text">
       {warnings.map((warning) => (
         <li key={warning.id}>{warning.message}</li>
       ))}
@@ -213,7 +209,7 @@ function DetailChipList({
   }
   const toneClass =
     tone === "warn"
-      ? "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+      ? "ds-warning-panel-strong border ds-warning-text"
       : "border-border bg-muted/40 text-foreground";
   return (
     <div className="flex flex-wrap gap-1.5">

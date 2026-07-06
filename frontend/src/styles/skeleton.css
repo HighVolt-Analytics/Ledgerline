@@ -1,0 +1,39 @@
+/* Layout-aware page skeletons — shimmer placeholders */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: hsl(var(--muted));
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--foreground) / 0.07),
+    transparent
+  );
+  animation: skeleton-shimmer 1.15s ease-in-out infinite;
+}
+
+.skeleton--circle {
+  border-radius: 9999px;
+}
+
+.skeleton--pill {
+  border-radius: 9999px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}

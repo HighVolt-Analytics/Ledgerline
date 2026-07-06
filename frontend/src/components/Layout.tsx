@@ -1,69 +1,265 @@
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useMemo, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent } from "react";
 import {
-  ChevronDown,
+  BarChart3,
+  BookOpen,
+  CheckCircle2,
+  ChevronRight,
   Coins,
-  Moon,
-  Sun,
+  CreditCard,
+  FolderKanban,
+  LayoutDashboard,
+  LayoutGrid,
+  Link2,
+  PinOff,
+  Plug,
+  Receipt,
+  Search,
+  Settings,
+  ShoppingCart,
+  TrendingUp,
+  Upload,
+  Users,
+  Vault,
+  Wallet,
 } from "lucide-react";
-import { LogoBlock } from "@/components/Logo";
-import { GlobalSearchBar } from "@/components/GlobalSearchBar";
+import { GlobalSearchDialog } from "@/components/GlobalSearchBar";
+import { Logo } from "@/components/Logo";
 import { NotificationBell } from "@/components/NotificationBell";
-import { TenantSwitcher } from "@/components/TenantSwitcher";
-import { Button } from "@/components/ui/button";
+import { ProfileSidebarMenu } from "@/components/ProfileSidebarMenu";
+import { SettingsSidebarMenu } from "@/components/SettingsSidebarMenu";
 import { useAuth } from "@/context/AuthContext";
-import { useTheme } from "@/context/ThemeContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
 import { useCollections } from "@/hooks/useCollections";
-import { collectionsOpenCount } from "@/lib/collectionsQueue";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
+import type { FlatNavItem } from "@/lib/appNavigation";
+import { collectionsOpenCount } from "@/lib/collectionsQueue";
 import { canAccessModulePath } from "@/lib/tenantModules";
-import {
-  flattenNavItems,
-  MOBILE_NAV,
-  NAV_GROUPS,
-  type NavItem,
-} from "@/lib/appNavigation";
 import { queryClient, queryKeys } from "@/lib/queryClient";
-import { useBilling } from "@/hooks/useBilling";
 import { cn } from "@/lib/cn";
 
+type NavItem = {
+  to: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?:
+    | "upload"
+    | "approvals"
+    | "team_expenses"
+    | "business_expenses"
+    | "sales"
+    | "payments"
+    | "collections";
+  moduleKey?: string;
+};
+
+type NavGroup = {
+  label: string;
+  items: NavItem[];
+  /** Nested groups show a header + tree line for sub-items */
+  nested?: boolean;
+};
+
+const WORKSPACE_GROUPS: NavGroup[] = [
+  {
+    label: "",
+    nested: false,
+    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard }],
+  },
+  {
+    label: "Documents",
+    nested: true,
+    items: [
+      { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
+      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses" },
+      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses" },
+      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart, moduleKey: "purchase" },
+      { to: "/sales", label: "Sales Management", icon: TrendingUp, badge: "sales", moduleKey: "sales" },
+    ],
+  },
+];
+
+const OPERATIONS_GROUPS: NavGroup[] = [
+  {
+    label: "",
+    nested: false,
+    items: [{ to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" }],
+  },
+  {
+    label: "Records",
+    nested: true,
+    items: [
+      { to: "/dossiers", label: "Dossiers", icon: FolderKanban, moduleKey: "dossiers" },
+      { to: "/vendors", label: "Vendors", icon: Users },
+      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
+    ],
+  },
+];
+
+const FINANCE_GROUPS: NavGroup[] = [
+  {
+    label: "Payments",
+    nested: true,
+    items: [
+      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
+      { to: "/collections", label: "Collections", icon: Coins, badge: "collections", moduleKey: "sales" },
+      { to: "/ledger-link", label: "Ledger Link", icon: Link2, moduleKey: "ledger_link" },
+    ],
+  },
+  {
+    label: "Treasury",
+    nested: true,
+    items: [
+      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
+      { to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" },
+    ],
+  },
+];
+
+const SETTINGS_GROUPS: NavGroup[] = [
+  {
+    label: "",
+    nested: false,
+    items: [
+      { to: "/integrations", label: "Integrations", icon: Plug },
+      { to: "/billing", label: "Billing & Credits", icon: CreditCard },
+      { to: "/settings", label: "Organisation", icon: Settings },
+    ],
+  },
+];
+
+type PrimarySection = {
+  id: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  groups: NavGroup[];
+};
+
+const MAIN_PRIMARY_SECTIONS: PrimarySection[] = [
+  { id: "workspace", label: "Workspace", icon: LayoutGrid, groups: WORKSPACE_GROUPS },
+  { id: "operations", label: "Operations", icon: FolderKanban, groups: OPERATIONS_GROUPS },
+  { id: "finance", label: "Finance", icon: Wallet, groups: FINANCE_GROUPS },
+];
+
+const SETTINGS_SECTION: PrimarySection = {
+  id: "settings",
+  label: "Settings",
+  icon: Settings,
+  groups: SETTINGS_GROUPS,
+};
+
+const ALL_SECTIONS: PrimarySection[] = [...MAIN_PRIMARY_SECTIONS, SETTINGS_SECTION];
+
+const MOBILE_NAV: NavItem[] = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
+  { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
+  { to: "/settings", label: "Settings", icon: Settings },
+];
+
 const TRUST = ["SOC 2 Type II", "ISO 27001", "Bank-level encryption", "7-year retention"];
-
-function NavBadge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="ml-auto rounded-full bg-sidebar-accent text-sidebar-accent-foreground text-[10px] font-semibold px-1.5 py-0.5 tnum">
-      {children}
-    </span>
-  );
-}
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((p) => p[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
+const PIN_STORAGE_KEY = "ledgerline_sidebar_pinned";
 
 function navTestId(label: string) {
   return `nav-${label.toLowerCase().replace(/\s+|&/g, "-")}`;
 }
 
+function pathMatchesItem(pathname: string, to: string) {
+  if (to === "/") return pathname === "/";
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+function sectionForPath(pathname: string): string {
+  let bestSection = "workspace";
+  let bestPathLen = -1;
+  for (const section of ALL_SECTIONS) {
+    for (const group of section.groups) {
+      for (const item of group.items) {
+        if (pathMatchesItem(pathname, item.to) && item.to.length > bestPathLen) {
+          bestSection = section.id;
+          bestPathLen = item.to.length;
+        }
+      }
+    }
+  }
+  return bestSection;
+}
+
+function isNavItemActive(pathname: string, to: string): boolean {
+  if (!pathMatchesItem(pathname, to)) return false;
+  for (const section of ALL_SECTIONS) {
+    for (const group of section.groups) {
+      for (const item of group.items) {
+        if (
+          item.to !== to &&
+          item.to.length > to.length &&
+          pathMatchesItem(pathname, item.to)
+        ) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+function navLinkEnd(to: string): boolean {
+  if (to === "/") return true;
+  for (const section of ALL_SECTIONS) {
+    for (const group of section.groups) {
+      for (const item of group.items) {
+        if (item.to !== to && item.to.startsWith(`${to}/`)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function visibleGroupsForSection(
+  section: PrimarySection,
+  canShow: (item: NavItem) => boolean
+): NavGroup[] {
+  return section.groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(canShow),
+    }))
+    .filter((group) => group.items.length > 0);
+}
+
+function positionSidebarTip(el: HTMLElement) {
+  const rect = el.getBoundingClientRect();
+  el.style.setProperty("--sidebar-tip-top", `${Math.round(rect.top + rect.height / 2)}px`);
+  el.style.setProperty("--sidebar-tip-left", `${Math.round(rect.right + 10)}px`);
+}
+
+function onSidebarTipIntent(event: PointerEvent | FocusEvent) {
+  const tip = (event.target as HTMLElement | null)?.closest?.("[data-sidebar-tip]");
+  if (tip instanceof HTMLElement && tip.dataset.sidebarTip) {
+    positionSidebarTip(tip);
+  }
+}
+
+function badgeCount(
+  badge: NavItem["badge"],
+  counts: Record<string, number>
+): number {
+  if (!badge) return 0;
+  return counts[badge] ?? 0;
+}
+
 export function Layout() {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const { user, logout } = useAuth();
-  const { data: billing } = useBilling(Boolean(user));
-  const { theme, toggleTheme } = useTheme();
+  const { user } = useAuth();
   const { data: badges } = useNavBadges();
   const { data: collectionRows = [] } = useCollections();
   const { permissions } = usePermissions();
   const enabledModules = permissions?.enabled_modules;
+
   const canShowNavItem = (item: NavItem) =>
     canAccessModulePath(item.to, enabledModules, item.moduleKey) &&
     canAccessNavPath(item.to, permissions);
+
   const counts = {
     upload: badges?.inbox_count ?? 0,
     approvals: badges?.pending_approval ?? 0,
@@ -73,204 +269,312 @@ export function Layout() {
     payments: badges?.payments_queue_count ?? 0,
     collections: badges?.collections_queue_count ?? collectionsOpenCount(collectionRows),
   };
-  const connected = badges?.integrations_connected ?? 0;
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [expandedSection, setExpandedSection] = useState<string | null>(() =>
+    sectionForPath(pathname)
+  );
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [primaryPinned, setPrimaryPinned] = useState(() => {
+    try {
+      return localStorage.getItem(PIN_STORAGE_KEY) !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const sidebarCollapsed = !primaryPinned;
+  const prevPathname = useRef(pathname);
 
-  const searchableNavItems = useMemo(
-    () =>
-      flattenNavItems(NAV_GROUPS).filter(
-        (item) =>
-          canAccessModulePath(item.to, enabledModules, item.moduleKey) &&
-          canAccessNavPath(item.to, permissions)
-      ),
+  useEffect(() => {
+    try {
+      localStorage.setItem(PIN_STORAGE_KEY, String(primaryPinned));
+    } catch {
+      /* ignore */
+    }
+  }, [primaryPinned]);
+
+  const routeSection = sectionForPath(pathname);
+
+  useEffect(() => {
+    const section = sectionForPath(pathname);
+    if (prevPathname.current !== pathname) {
+      setExpandedSection(section);
+    }
+    prevPathname.current = pathname;
+  }, [pathname]);
+
+  const handleSectionTopicClick = (id: string) => {
+    setExpandedSection((prev) => (prev === id ? null : id));
+  };
+
+  const shouldShowSectionSubnav = (sectionId: string) => expandedSection === sectionId;
+
+  const visibleSettingsGroups = useMemo(
+    () => visibleGroupsForSection(SETTINGS_SECTION, canShowNavItem),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [enabledModules, permissions]
+  );
+
+  const settingsMenuItems = useMemo(
+    () =>
+      visibleSettingsGroups.flatMap((group) =>
+        group.items.map((item) => ({
+          to: item.to,
+          label: item.label,
+          icon: item.icon,
+        }))
+      ),
+    [visibleSettingsGroups]
+  );
+
+  const searchableNavItems = useMemo((): FlatNavItem[] => {
+    const items: FlatNavItem[] = [];
+    for (const section of ALL_SECTIONS) {
+      for (const group of section.groups) {
+        for (const item of group.items) {
+          if (!canShowNavItem(item)) continue;
+          items.push({
+            to: item.to,
+            label: item.label,
+            icon: item.icon as FlatNavItem["icon"],
+            badge: item.badge,
+            moduleKey: item.moduleKey,
+            group: group.label || section.label,
+          });
+        }
+      }
+    }
+    return items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabledModules, permissions]);
+
+  const collapsedNavItems = useMemo(
+    () =>
+      MAIN_PRIMARY_SECTIONS.flatMap((section) =>
+        visibleGroupsForSection(section, canShowNavItem).flatMap((group) =>
+          group.items.map((item) => ({
+            ...item,
+            level: group.nested ? ("nested" as const) : ("subfield" as const),
+          }))
+        )
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [enabledModules, permissions]
+  );
+
+  const renderPrimaryNavItem = (
+    item: NavItem,
+    level: "subfield" | "nested",
+    iconOnly: boolean
+  ) => {
+    const active = isNavItemActive(pathname, item.to);
+    const count = badgeCount(item.badge, counts);
+    const ItemIcon = item.icon;
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        end={navLinkEnd(item.to)}
+        aria-label={iconOnly ? item.label : undefined}
+        data-sidebar-tip={iconOnly ? item.label : undefined}
+        data-testid={navTestId(item.label)}
+        className={cn(
+          "primary-sidebar__nav-item",
+          level === "nested"
+            ? "primary-sidebar__nav-item--nested"
+            : "primary-sidebar__nav-item--subfield",
+          active && "primary-sidebar__nav-item--active",
+          iconOnly && "primary-sidebar__nav-item--icon-only"
+        )}
+      >
+        <ItemIcon className="primary-sidebar__nav-item-icon" aria-hidden />
+        {!iconOnly && (
+          <>
+            <span className="primary-sidebar__nav-item-label">{item.label}</span>
+            {count > 0 && (
+              <span className="primary-sidebar__nav-item-badge">{count}</span>
+            )}
+            <ChevronRight className="primary-sidebar__nav-item-chevron" aria-hidden />
+          </>
+        )}
+        {iconOnly && count > 0 && (
+          <span className="primary-sidebar__nav-item-dot" aria-label={`${count} pending`} />
+        )}
+      </NavLink>
+    );
+  };
+
+  const renderPrimarySubnav = (groups: NavGroup[], iconOnly = false) => (
+    <div
+      className={cn(
+        "primary-sidebar__subnav",
+        iconOnly && "primary-sidebar__subnav--icon-only"
+      )}
+      data-testid="primary-sidebar-subnav"
+    >
+      {groups.map((group) =>
+        group.nested ? (
+          <div key={group.label} className="primary-sidebar__subnav-group">
+            {!iconOnly && (
+              <p className="primary-sidebar__subnav-group-label">{group.label}</p>
+            )}
+            <div className="primary-sidebar__subnav-list">
+              {group.items.map((item) => renderPrimaryNavItem(item, "nested", iconOnly))}
+            </div>
+          </div>
+        ) : (
+          <div key={group.label || "flat"} className="primary-sidebar__subnav-flat">
+            {group.items.map((item) => renderPrimaryNavItem(item, "subfield", iconOnly))}
+          </div>
+        )
+      )}
+    </div>
   );
 
   const refreshCounts = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
   };
 
-  const renderNavLink = (to: string, label: string, Icon: NavItem["icon"], badge?: NavItem["badge"]) => {
-    const active = pathname === to || (to !== "/" && pathname.startsWith(to));
-    let badgeEl = null;
-    if (badge === "upload" && counts.upload > 0) {
-      badgeEl = <NavBadge>{counts.upload}</NavBadge>;
-    }
-    if (badge === "approvals" && counts.approvals > 0) {
-      badgeEl = <NavBadge>{counts.approvals}</NavBadge>;
-    }
-    if (badge === "team_expenses" && counts.team_expenses > 0) {
-      badgeEl = <NavBadge>{counts.team_expenses}</NavBadge>;
-    }
-    if (badge === "business_expenses" && counts.business_expenses > 0) {
-      badgeEl = <NavBadge>{counts.business_expenses}</NavBadge>;
-    }
-    if (badge === "sales" && counts.sales > 0) {
-      badgeEl = <NavBadge>{counts.sales}</NavBadge>;
-    }
-    if (badge === "payments" && counts.payments > 0) {
-      badgeEl = <NavBadge>{counts.payments}</NavBadge>;
-    }
-    if (badge === "collections" && counts.collections > 0) {
-      badgeEl = <NavBadge>{counts.collections}</NavBadge>;
-    }
-    return (
-      <NavLink
-        key={to}
-        to={to}
-        end={to === "/"}
-        data-testid={navTestId(label)}
-        className={cn(
-          "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-          active
-            ? "bg-sidebar-primary text-sidebar-primary-foreground"
-            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        )}
-      >
-        <Icon className="h-[18px] w-[18px] shrink-0" />
-        <span className="flex-1 truncate">{label}</span>
-        {badgeEl}
-      </NavLink>
-    );
-  };
-
-  return (
-    <div className="grid h-[100dvh] w-full grid-cols-1 md:grid-cols-[248px_1fr] overflow-hidden bg-background text-foreground">
-      <aside
-        className="app-sidebar hidden md:flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border overflow-y-auto"
-        style={{ overscrollBehavior: "contain" }}
-      >
-        <div className="px-4 py-4 text-sidebar-foreground border-b border-sidebar-border">
-          <LogoBlock />
-        </div>
-        <nav className="flex-1 px-2 py-3 space-y-3">
-          {NAV_GROUPS.map((group) => (
-            <div key={group.label}>
-              <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/45">
-                {group.label}
-              </p>
-              <div className="space-y-0.5">
-                {group.items
-                  .filter(canShowNavItem)
-                  .map(({ to, label, icon: Icon, badge }) =>
-                    renderNavLink(to, label, Icon, badge)
-                  )}
+  const primarySidebarInner = (
+    <>
+      <div className="primary-sidebar__header">
+        <div className="primary-sidebar__header-brand">
+          <div
+            className={cn("primary-sidebar__logo", sidebarCollapsed && "primary-sidebar__logo--collapsed")}
+            role={sidebarCollapsed ? "button" : undefined}
+            tabIndex={sidebarCollapsed ? 0 : undefined}
+            onClick={sidebarCollapsed ? () => setPrimaryPinned(true) : undefined}
+            onKeyDown={
+              sidebarCollapsed
+                ? (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setPrimaryPinned(true);
+                    }
+                  }
+                : undefined
+            }
+            data-sidebar-tip={sidebarCollapsed ? "Expand sidebar" : undefined}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : undefined}
+          >
+            <span className="text-sidebar-foreground shrink-0 primary-sidebar__logo-mark">
+              <Logo size={sidebarCollapsed ? 30 : 24} />
+            </span>
+            {!sidebarCollapsed && (
+              <div className="primary-sidebar__logo-label flex flex-col min-w-0 leading-none">
+                <span className="font-semibold text-[13px] tracking-tight truncate">Ledgerline</span>
               </div>
+            )}
+          </div>
+          {!sidebarCollapsed && (
+            <button
+              type="button"
+              className="primary-sidebar__pin"
+              onClick={() => setPrimaryPinned(false)}
+              aria-label="Collapse sidebar"
+              data-testid="button-sidebar-collapse"
+            >
+              <PinOff className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {sidebarCollapsed ? (
+        <nav className="primary-sidebar__nav primary-sidebar__nav--collapsed-icons" aria-label="Main navigation">
+          <div className="primary-sidebar__collapsed-list">
+            {collapsedNavItems.map((item) => renderPrimaryNavItem(item, item.level, true))}
+          </div>
+        </nav>
+      ) : (
+        <nav className="primary-sidebar__nav" aria-label="Main sections">
+          {MAIN_PRIMARY_SECTIONS.map(({ id, label, icon: Icon, groups }) => (
+            <div key={id} className="primary-sidebar__section">
+              <button
+                type="button"
+                className={cn(
+                  "primary-sidebar__topic",
+                  routeSection === id && "primary-sidebar__topic--active"
+                )}
+                onClick={() => handleSectionTopicClick(id)}
+                aria-current={routeSection === id ? "true" : undefined}
+                aria-expanded={expandedSection === id}
+                data-testid={`nav-section-${id}`}
+              >
+                <Icon className="primary-sidebar__topic-icon" />
+                <span className="primary-sidebar__topic-label truncate">{label}</span>
+                <ChevronRight
+                  className={cn(
+                    "primary-sidebar__topic-chevron",
+                    expandedSection === id && "primary-sidebar__topic-chevron--open"
+                  )}
+                  aria-hidden
+                />
+              </button>
+              {shouldShowSectionSubnav(id) &&
+                renderPrimarySubnav(
+                  visibleGroupsForSection({ id, label, icon: Icon, groups }, canShowNavItem),
+                  false
+                )}
             </div>
           ))}
         </nav>
-        <div className="px-4 py-3 border-t border-sidebar-border">
-          <div className="flex items-center gap-2 text-[11px] text-sidebar-foreground/55">
-            <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--chart-1))]" />
-            {connected} integrations connected
-          </div>
-          <div className="mt-2.5 flex flex-wrap gap-x-2 gap-y-1">
-            {TRUST.map((t) => (
-              <span key={t} className="text-[10px] text-sidebar-foreground/40">
-                {t}
-              </span>
-            ))}
-          </div>
-        </div>
+      )}
+
+      <div className="primary-sidebar__footer">
+        <button
+          type="button"
+          className={cn(
+            "primary-sidebar__topic",
+            searchOpen && "primary-sidebar__topic--active"
+          )}
+          data-testid="button-global-search"
+          data-sidebar-tip={sidebarCollapsed ? "Search" : undefined}
+          aria-label="Search"
+          aria-haspopup="dialog"
+          aria-expanded={searchOpen}
+          onClick={() => setSearchOpen(true)}
+        >
+          <Search className="primary-sidebar__topic-icon" />
+          {!sidebarCollapsed && <span className="primary-sidebar__topic-label">Search</span>}
+        </button>
+        <SettingsSidebarMenu
+          collapsed={sidebarCollapsed}
+          items={settingsMenuItems}
+          isActive={routeSection === "settings"}
+        />
+        <NotificationBell collapsed={sidebarCollapsed} />
+        <ProfileSidebarMenu collapsed={sidebarCollapsed} />
+      </div>
+    </>
+  );
+
+  return (
+    <div
+      className={cn(
+        "app-shell app-shell--basic-sidebar grid-cols-1",
+        sidebarCollapsed && "app-shell--primary-collapsed"
+      )}
+    >
+      <aside
+        className="primary-sidebar"
+        data-testid="primary-sidebar"
+        onPointerOver={sidebarCollapsed ? onSidebarTipIntent : undefined}
+        onFocusCapture={sidebarCollapsed ? onSidebarTipIntent : undefined}
+      >
+        {primarySidebarInner}
       </aside>
 
-      <div className="flex flex-col overflow-hidden min-w-0">
-        <header className="relative flex min-w-0 items-center gap-2 sm:gap-3 border-b border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 h-12 md:h-14 shrink-0 z-20 overflow-visible">
-          <div className="flex min-w-0 items-center gap-2 shrink-0">
-            <div className="md:hidden text-primary shrink-0">
-              <LogoBlock collapsed />
-            </div>
-            <TenantSwitcher />
-          </div>
+      <GlobalSearchDialog
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        navItems={searchableNavItems}
+      />
 
-          <GlobalSearchBar
-            navItems={searchableNavItems}
-            className="min-w-0 flex-1 basis-0 sm:flex-none sm:basis-auto sm:w-56 md:w-64 lg:w-72 sm:max-w-[40vw]"
-          />
-
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto z-10">
-            <button
-              type="button"
-              onClick={() => navigate("/billing")}
-              data-testid="button-credits-badge"
-              className="flex items-center gap-1.5 h-9 px-2.5 rounded-md border border-border bg-card text-sm hover-elevate whitespace-nowrap"
-            >
-              <Coins className="h-4 w-4 text-primary shrink-0" />
-              <span className="tnum font-medium">
-                {(billing?.balance ?? 0).toLocaleString()}
-              </span>
-              <span className="hidden sm:inline text-muted-foreground text-xs">credits</span>
-            </button>
-            <NotificationBell />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleTheme}
-              data-testid="button-theme-toggle"
-              aria-label="Toggle theme"
-              className="shrink-0"
-            >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-            <div className="relative shrink-0">
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded-md pl-1 pr-2 py-1 hover-elevate"
-              data-testid="button-user-menu"
-              onClick={() => setUserMenuOpen((o) => !o)}
-            >
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
-                {user ? initials(user.full_name) : "?"}
-              </span>
-              <span className="hidden md:block text-sm font-medium max-w-[10rem] lg:max-w-[14rem] truncate">
-                {user?.full_name ?? "User"}
-              </span>
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-            {userMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-md border border-border bg-popover p-1 shadow-md text-sm">
-                  <div className="px-2 py-1.5">
-                    <div className="font-medium">{user?.full_name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {user?.is_support_session
-                        ? `Platform support · ${user.tenant_name}`
-                        : `${user?.role} · ${user?.tenant_name}`}
-                    </div>
-                  </div>
-                  <div className="my-1 h-px bg-border" />
-                  <button
-                    type="button"
-                    className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent"
-                    onClick={() => {
-                      setUserMenuOpen(false);
-                      navigate("/settings");
-                    }}
-                  >
-                    Profile settings
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent text-destructive"
-                    onClick={() => {
-                      setUserMenuOpen(false);
-                      logout();
-                      navigate("/login");
-                    }}
-                  >
-                    Sign out
-                  </button>
-                </div>
-              </>
-            )}
-            </div>
-          </div>
-        </header>
-
+      <div className="app-shell__cards app-shell__cards--single">
+      {/* Main workspace */}
+      <div className="app-workspace">
         {user?.is_support_session && (
           <div
-            className="shrink-0 border-b border-[hsl(43_74%_49%/0.5)] bg-[hsl(43_74%_49%/0.08)] px-4 md:px-6 py-2 text-sm text-[hsl(36_80%_28%)] dark:text-[hsl(43_74%_72%)]"
+            className="shrink-0 border-b ds-warning-panel border px-4 md:px-6 py-2 text-sm ds-warning-text"
             data-testid="banner-support-mode"
           >
             Platform support mode — viewing <strong>{user.tenant_name}</strong>. Actions are
@@ -278,14 +582,13 @@ export function Layout() {
           </div>
         )}
 
-        <main
-          className="flex-1 overflow-y-auto min-h-0 px-3 py-4 sm:px-4 md:px-6 md:py-6"
-          style={{ overscrollBehavior: "contain" }}
-        >
-          <Outlet key={user?.tenant_id ?? "anon"} context={{ refreshCounts }} />
+        <main className="app-workspace__main">
+          <div className="app-workspace__scroll">
+            <Outlet key={user?.tenant_id ?? "anon"} context={{ refreshCounts }} />
+          </div>
         </main>
 
-        <footer className="shrink-0 border-t border-border bg-background/95 backdrop-blur px-3 sm:px-4 md:px-6 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-[11px] text-muted-foreground">
+        <footer className="app-workspace__footer flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="font-medium text-foreground/70 shrink-0">Ledgerline v4</span>
           {user?.email && !user.is_support_session && (
             <span className="hidden sm:inline truncate max-w-[10rem] md:max-w-none">
@@ -297,32 +600,32 @@ export function Layout() {
               {t}
             </span>
           ))}
-          <span className="ml-auto hidden sm:inline">© 2026 Ledgerline</span>
+          <span className="ml-auto hidden sm:inline">© 2026 Ledgerline · Sandbox environment</span>
           <span className="ml-auto sm:hidden">© 2026</span>
         </footer>
 
-        <nav className="md:hidden flex items-center justify-around border-t border-border bg-background px-1 py-1.5 shrink-0">
-          {MOBILE_NAV.filter(canShowNavItem).map(({ to, label, icon: Icon, badge }) => {
-            const active = pathname === to || (to !== "/" && pathname.startsWith(to));
+        <nav className="app-mobile-nav" aria-label="Mobile navigation">
+          {MOBILE_NAV.filter(canShowNavItem).map(({ to, label, icon: Icon }) => {
+            const active = isNavItemActive(pathname, to);
             return (
               <NavLink
                 key={to}
                 to={to}
-                end={to === "/"}
+                end={navLinkEnd(to)}
                 className={cn(
-                  "flex flex-col items-center gap-0.5 px-3 py-1 rounded-md text-[10px] whitespace-nowrap",
-                  active ? "text-primary" : "text-muted-foreground"
+                  "app-mobile-nav__link",
+                  active && "app-mobile-nav__link--active"
                 )}
               >
                 <Icon className="h-4 w-4" />
                 {label}
-                {badge === "upload" && counts.upload > 0 && (
-                  <span className="sr-only">{counts.upload} upload</span>
-                )}
               </NavLink>
             );
           })}
         </nav>
+
+        <div className="app-workspace__portal" data-app-workspace-portal />
+      </div>
       </div>
     </div>
   );
