@@ -1112,6 +1112,19 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             await _log_processing_override_skip(session, invoice, "classification")
         await log_event(
             session,
+            "llm_classified",
+            invoice_id=invoice.id,
+            detail={
+                "llm_suggested_dt": override_dt,
+                "llm_confidence": float(invoice.document_type_confidence or 0.95),
+                "skipped": True,
+                "human_locked": bool(human_locked_dt),
+                "processing_override": classification_override and not human_locked_dt,
+                "document_ai_provider": provider_token,
+            },
+        )
+        await log_event(
+            session,
             "classification_gate_passed",
             invoice_id=invoice.id,
             detail={
