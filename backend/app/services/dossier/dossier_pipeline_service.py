@@ -688,6 +688,17 @@ def _resolve_storage(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
         )
     if _legacy_capture_complete(logs, wm):
         return _step("storage", state="pass", detail="storage_verified · legacy run")
+    # File persisted at ingest — cycle reset drops storage_verified from the audit view.
+    from app.services.shared.file_storage import has_stored_path
+
+    if (inv.file_hash or "").strip() and has_stored_path(inv.raw_file_path):
+        ingest_log = _latest_log(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
+        return _step(
+            "storage",
+            state="pass",
+            detail="Stored file on record",
+            at=ingest_log.created_at if ingest_log else inv.created_at,
+        )
     return _step("storage", state="pending", detail="—")
 
 
