@@ -24,6 +24,7 @@ from app.models.connected_mailbox import (
 )
 from app.services.shared.token_vault import decrypt_secret, encrypt_secret
 from app.tenant_ids import parse_tenant_id
+from app.tenant_rls import apply_rls_session_context
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -180,8 +181,19 @@ async def _refresh_tokens(refresh_token: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(_token_endpoint(), data=data)
         if response.is_error:
-            logger.error("oauth_refresh_failed", body=response.text[:500])
-            response.raise_for_status()
+            body = response.text[:500]
+            logger.error("oauth_refresh_failed", body=body)
+            detail = body
+            try:
+                payload = response.json()
+                detail = str(
+                    payload.get("error_description")
+                    or payload.get("error")
+                    or body
+                )
+            except Exception:
+                pass
+            raise RuntimeError(f"Microsoft token refresh failed: {detail[:400]}")
         return response.json()
 
 
@@ -374,7 +386,16 @@ async def resolve_mailbox_access_token(
         except Exception as exc:
             row.connection_status = STATUS_ERROR
             row.last_error = str(exc)[:500]
-            await session.flush()
+            try:
+                await session.flush()
+            except Exception:
+                await session.rollback()
+                await apply_rls_session_context(session, mailbox.tenant_id)
+                row = await session.get(ConnectedMailbox, mailbox.id)
+                if row is not None:
+                    row.connection_status = STATUS_ERROR
+                    row.last_error = str(exc)[:500]
+                    await session.flush()
             raise
 
     if mailbox.auth_type == AUTH_APPLICATION:

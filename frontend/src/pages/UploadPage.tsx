@@ -125,6 +125,10 @@ function mailboxNickname(mb: ConnectedMailbox): string {
   return mailboxDisplayName(mb.email, mb.display_name);
 }
 
+function isMailboxPollable(mb: ConnectedMailbox): boolean {
+  return mb.is_active && mb.connection_status === "connected";
+}
+
 function uploadListRowSignature(inv: Invoice): string {
   return [
     inv.id,
@@ -449,6 +453,13 @@ export function UploadPage() {
   }
 
   async function fetchMailbox(mailbox: ConnectedMailbox) {
+    if (!isMailboxPollable(mailbox)) {
+      setFetchNotice(
+        mailbox.last_error ||
+          "Mailbox is not connected — send a reconnect invitation to restore fetch."
+      );
+      return;
+    }
     setFetching(mailbox.email);
     setFetchNotice(null);
     const beforeTotal = totalInvoices;
@@ -457,6 +468,7 @@ export function UploadPage() {
       await api.triggerProcess(mailbox.id);
       setFetchNotice("Fetch queued — waiting for worker…");
       await waitForProcessingIdle();
+      void refetchMailboxes();
 
       let latestTotal = beforeTotal;
       for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -475,8 +487,27 @@ export function UploadPage() {
       setFetchNotice(null);
     } catch (e) {
       setFetchNotice(e instanceof Error ? e.message : "Fetch failed");
+      void refetchMailboxes();
     } finally {
       setFetching(null);
+    }
+  }
+
+  async function reconnectMailbox(mb: ConnectedMailbox) {
+    setFetchNotice(null);
+    try {
+      const result = await api.createMailboxConnectionRequest({
+        email: mb.email,
+        display_name: mb.display_name ?? undefined,
+        message: "Please reconnect your mailbox to restore invoice capture.",
+      });
+      setFetchNotice(
+        result.email_sent
+          ? `Reconnect invitation sent to ${mb.email}`
+          : `Reconnect invitation created for ${mb.email}. Share the invite link from Integrations if email delivery failed.`
+      );
+    } catch (e) {
+      setFetchNotice(e instanceof Error ? e.message : "Failed to send reconnect invitation");
     }
   }
 
@@ -780,14 +811,29 @@ export function UploadPage() {
                   </span>
                   <span className="tnum shrink-0">{docCount} docs</span>
                 </div>
+                {mb.connection_status === "error" && mb.last_error ? (
+                  <p className="mt-2 text-xs text-destructive line-clamp-3" title={mb.last_error}>
+                    {mb.last_error}
+                  </p>
+                ) : null}
                 <div className="mt-3 flex items-center gap-1.5 min-w-0">
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                    {mb.connection_status === "error" && isAdmin ? (
+                      <ActionChip
+                        tone="approve"
+                        icon={Mail}
+                        label="Reconnect"
+                        testId={`button-reconnect-${mb.email}`}
+                        disabled={importBusy || fetching === mb.email}
+                        onClick={() => void reconnectMailbox(mb)}
+                      />
+                    ) : null}
                     <ActionChip
                       tone="edit"
                       icon={Calendar}
                       label="Import"
                       testId={`button-import-${mb.email}`}
-                      disabled={importBusy || fetching === mb.email}
+                      disabled={importBusy || fetching === mb.email || !isMailboxPollable(mb)}
                       onClick={() => setImportMailbox(mb)}
                     />
                     <ActionChip
@@ -795,7 +841,9 @@ export function UploadPage() {
                       icon={RefreshCw}
                       label="Fetch"
                       testId={`button-fetch-${mb.email}`}
-                      disabled={fetching === mb.email || importBusy}
+                      disabled={
+                        fetching === mb.email || importBusy || !isMailboxPollable(mb)
+                      }
                       iconClassName={fetching === mb.email ? "animate-spin" : undefined}
                       onClick={() => void fetchMailbox(mb)}
                     />
