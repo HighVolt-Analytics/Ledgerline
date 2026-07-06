@@ -11,6 +11,11 @@ from app.services.extraction.line_item_skip_patterns import (
     should_skip_line_row,
 )
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
+from app.services.shared.amount_sanity import (
+    plausible_money,
+    plausible_qty,
+    sanitize_parsed_line_item,
+)
 
 _LINE_ROW = re.compile(
     r"^(.{4,80}?)\s+(\d+(?:\.\d+)?)\s+\$?\s*([\d,]+\.?\d*)\s+\$?\s*([\d,]+\.?\d*)\s*$",
@@ -29,7 +34,19 @@ def _money(raw: str) -> Decimal | None:
     if not cleaned:
         return None
     try:
-        return Decimal(cleaned)
+        return plausible_money(Decimal(cleaned))
+    except Exception:
+        return None
+
+
+def _qty(raw: str | Decimal | int | float) -> Decimal | None:
+    if isinstance(raw, Decimal):
+        return plausible_qty(raw)
+    try:
+        cleaned = re.sub(r"[^\d.]", "", str(raw).replace(",", ""))
+        if not cleaned:
+            return None
+        return plausible_qty(Decimal(cleaned))
     except Exception:
         return None
 
@@ -58,7 +75,7 @@ def _parse_row_for_description(text: str, description: str) -> ParsedLineItem | 
         cols = [part.strip() for part in re.split(r"\s{2,}|\t+", line) if part.strip()]
         if len(cols) >= 4 and cols[0].lower().startswith(needle.lower()[: min(len(needle), 20)]):
             try:
-                qty = Decimal(re.sub(r"[^\d.]", "", cols[1]))
+                qty = _qty(cols[1])
             except Exception:
                 qty = None
             return ParsedLineItem(
@@ -76,7 +93,7 @@ def _parse_row_for_description(text: str, description: str) -> ParsedLineItem | 
         if m:
             return ParsedLineItem(
                 description=needle,
-                qty=Decimal(m.group(1)),
+                qty=_qty(m.group(1)),
                 unit_price=_money(m.group(2)),
                 amount=_money(m.group(3)),
             )
@@ -121,7 +138,7 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
         items.append(
             ParsedLineItem(
                 description=desc.strip(),
-                qty=Decimal(qty_s),
+                qty=_qty(qty_s),
                 unit_price=_money(unit_s),
                 amount=_money(amt_s),
             )
@@ -136,7 +153,7 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
         items.append(
             ParsedLineItem(
                 description=desc.strip(),
-                qty=Decimal(qty_s),
+                qty=_qty(qty_s),
                 unit_price=_money(unit_s),
                 amount=_money(amt_s),
             )
@@ -151,7 +168,7 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
         items.append(
             ParsedLineItem(
                 description=desc.strip(),
-                qty=Decimal(qty_s),
+                qty=_qty(qty_s),
                 unit_price=None,
                 amount=None,
             )
@@ -168,8 +185,8 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
             m.group(0),
             re.I,
         )
-        qty = Decimal(qty_match[1]) if len(qty_match) >= 2 else (
-            Decimal(qty_match[0]) if qty_match else None
+        qty = _qty(qty_match[1]) if len(qty_match) >= 2 else (
+            _qty(qty_match[0]) if qty_match else None
         )
         items.append(
             ParsedLineItem(
@@ -225,7 +242,7 @@ def parse_line_items_from_di_items(items_field: Any) -> list[ParsedLineItem]:
         parsed.append(
             ParsedLineItem(
                 description=description,
-                qty=Decimal(str(qty)) if qty is not None else None,
+                qty=_qty(qty) if qty is not None else None,
                 unit_price=_money(str(unit)) if unit is not None else None,
                 amount=_money(str(amount)) if amount is not None else None,
                 tax_amount=_money(str(tax)) if tax is not None else None,
@@ -248,7 +265,7 @@ def enrich_parsed_line_items(items: list[ParsedLineItem]) -> list[ParsedLineItem
             amount = qty * unit_price
         if unit_price is None and amount is not None and qty is not None and qty > 0:
             unit_price = amount / qty
-        enriched.append(
+        enriched.append(sanitize_parsed_line_item(
             ParsedLineItem(
                 description=item.description,
                 qty=qty,
@@ -256,7 +273,7 @@ def enrich_parsed_line_items(items: list[ParsedLineItem]) -> list[ParsedLineItem
                 amount=amount,
                 tax_amount=item.tax_amount,
             )
-        )
+        ))
     return enriched
 
 
@@ -347,7 +364,7 @@ def deserialize_line_items(raw: object) -> list[ParsedLineItem]:
         qty = None
         if qty_raw is not None and str(qty_raw).strip():
             try:
-                qty = Decimal(str(qty_raw).replace(",", ""))
+                qty = _qty(str(qty_raw).replace(",", ""))
             except Exception:
                 qty = None
         items.append(
@@ -375,11 +392,13 @@ def ensure_line_items(data: InvoiceData) -> None:
     if data.subtotal is None:
         return
     data.line_items.append(
-        ParsedLineItem(
-            description="General charges",
-            qty=Decimal("1"),
-            unit_price=data.subtotal,
-            amount=data.subtotal,
-            tax_amount=data.gst,
+        sanitize_parsed_line_item(
+            ParsedLineItem(
+                description="General charges",
+                qty=Decimal("1"),
+                unit_price=data.subtotal,
+                amount=data.subtotal,
+                tax_amount=data.gst,
+            )
         )
     )

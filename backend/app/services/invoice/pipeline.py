@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.services.shared.amount_sanity import plausible_money
+from app.services.shared.amount_sanity import plausible_money, sanitize_parsed_line_item
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
 from app.models.journal import JournalEntry
@@ -214,15 +214,16 @@ async def _replace_line_items(
     invoice.line_items.clear()
     await session.flush()
     for line in lines:
+        cleaned = sanitize_parsed_line_item(line)
         invoice.line_items.append(
             LineItem(
                 tenant_id=invoice.tenant_id,
                 invoice_id=invoice.id,
-                description=line.description,
-                qty=line.qty,
-                unit_price=line.unit_price,
-                amount=line.amount,
-                tax_amount=line.tax_amount,
+                description=cleaned.description,
+                qty=cleaned.qty,
+                unit_price=cleaned.unit_price,
+                amount=cleaned.amount,
+                tax_amount=cleaned.tax_amount,
             )
         )
     await session.flush()

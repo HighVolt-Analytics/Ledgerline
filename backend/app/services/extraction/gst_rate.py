@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.services.invoice.invoice_data import InvoiceData
+from app.services.shared.amount_sanity import plausible_gst_rate_percent
 
 _GST_RATE_PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
@@ -41,7 +42,7 @@ def parse_gst_rate_percent(raw: Any) -> Decimal | None:
         return None
     if value <= Decimal("1"):
         value = (value * Decimal("100")).quantize(Decimal("0.01"))
-    return value.quantize(Decimal("0.01"))
+    return plausible_gst_rate_percent(value.quantize(Decimal("0.01")))
 
 
 def _rate_from_object(obj: object) -> Decimal | None:
@@ -66,7 +67,8 @@ def _rate_from_object(obj: object) -> Decimal | None:
     subtotal = getattr(obj, "subtotal", None)
     gst = getattr(obj, "gst", None)
     if subtotal is not None and gst is not None and subtotal > 0:
-        return ((gst / subtotal) * Decimal("100")).quantize(Decimal("0.01"))
+        inferred = ((gst / subtotal) * Decimal("100")).quantize(Decimal("0.01"))
+        return plausible_gst_rate_percent(inferred)
     return None
 
 

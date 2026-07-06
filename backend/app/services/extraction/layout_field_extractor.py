@@ -6,7 +6,7 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from app.schemas.document_layout import DocumentLayoutResult, LayoutParagraph
-from app.services.shared.amount_sanity import plausible_money
+from app.services.shared.amount_sanity import plausible_money, plausible_qty, sanitize_parsed_line_item
 from app.services.extraction.document_heading_utils import extract_document_heading_signals, is_doc_title_line
 from app.services.invoice.invoice_data import ParsedLineItem
 
@@ -183,7 +183,7 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
                 qty_raw = grid.get((row, qty_col), "").strip()
                 if qty_raw:
                     try:
-                        qty = Decimal(re.sub(r"[^\d.]", "", qty_raw))
+                        qty = plausible_qty(Decimal(re.sub(r"[^\d.]", "", qty_raw)))
                     except InvalidOperation:
                         qty = None
             if unit_price_col >= 0:
@@ -191,13 +191,15 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
             if amount_col >= 0:
                 amount = _money_value(grid.get((row, amount_col), ""))
             if amount is None and qty is not None and unit_price is not None:
-                amount = qty * unit_price
+                amount = plausible_money(qty * unit_price)
             items.append(
-                ParsedLineItem(
-                    description=desc,
-                    qty=qty,
-                    unit_price=unit_price,
-                    amount=amount,
+                sanitize_parsed_line_item(
+                    ParsedLineItem(
+                        description=desc,
+                        qty=qty,
+                        unit_price=unit_price,
+                        amount=amount,
+                    )
                 )
             )
 

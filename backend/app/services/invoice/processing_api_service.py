@@ -29,6 +29,9 @@ async def validate_mailbox_for_processing(
         raise LookupError("Mailbox not found")
     if not mb.is_active:
         raise ValueError("Mailbox is paused")
+    if not mb.is_pollable:
+        detail = mb.last_error or "Mailbox is not connected — send a reconnect invitation"
+        raise ValueError(detail)
 
 
 async def queue_processing(

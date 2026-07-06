@@ -16,6 +16,7 @@ from app.services.ingest.mailbox_inbox_poll import poll_connected_mailbox
 from app.services.ingest.mailbox_oauth_service import resolve_mailbox_access_token
 from app.services.tenant.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.invoice.pipeline import EmailIngestResult, ingest_email_attachments
+from app.tenant_rls import apply_rls_session_context
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -66,6 +67,14 @@ async def _poll_mailbox_emails(
     )
 
 
+async def _recover_poll_session_if_needed(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Rollback only when the session transaction is invalid (e.g. after a DB error)."""
+    if session.is_active:
+        return
+    await session.rollback()
+    await apply_rls_session_context(session, tenant_id)
+
+
 async def _ingest_mailbox(
     session: AsyncSession,
     mb: ConnectedMailbox,
@@ -80,19 +89,25 @@ async def _ingest_mailbox(
         access_token = await resolve_mailbox_access_token(session, mb)
     except Exception as exc:
         logger.warning("poll_mailbox_token_failed", mailbox=mb.email, error=str(exc))
+        await _recover_poll_session_if_needed(session, mb.tenant_id)
         return EmailIngestResult()
 
-    emails = await _poll_mailbox_emails(mb, access_token=access_token, known_ids=known_ids)
-    result = await ingest_email_attachments(
-        session,
-        emails,
-        tenant_id=mb.tenant_id,
-        tenant_slug=org.slug,
-        connected_mailbox_id=mb.id,
-        known_message_ids=known_ids,
-    )
-    mb.last_poll_at = datetime.now(timezone.utc)
-    return result
+    try:
+        emails = await _poll_mailbox_emails(mb, access_token=access_token, known_ids=known_ids)
+        result = await ingest_email_attachments(
+            session,
+            emails,
+            tenant_id=mb.tenant_id,
+            tenant_slug=org.slug,
+            connected_mailbox_id=mb.id,
+            known_message_ids=known_ids,
+        )
+        mb.last_poll_at = datetime.now(timezone.utc)
+        return result
+    except Exception as exc:
+        logger.warning("poll_mailbox_ingest_failed", mailbox=mb.email, error=str(exc))
+        await _recover_poll_session_if_needed(session, mb.tenant_id)
+        raise
 
 
 async def poll_all_and_ingest(
@@ -130,8 +145,12 @@ async def poll_all_and_ingest(
             )
             continue
 
-        mb_known_ids = await known_message_ids(session, tenant_id=mb.tenant_id)
-        result = await _ingest_mailbox(session, mb, known_ids=mb_known_ids)
+        try:
+            mb_known_ids = await known_message_ids(session, tenant_id=mb.tenant_id)
+            result = await _ingest_mailbox(session, mb, known_ids=mb_known_ids)
+        except Exception as exc:
+            logger.warning("poll_mailbox_failed", mailbox=mb.email, error=str(exc))
+            continue
         merged.ingested_count += result.ingested_count
         merged.message_ids.extend(result.message_ids)
         merged.preskip_exceptions.update(result.preskip_exceptions)
