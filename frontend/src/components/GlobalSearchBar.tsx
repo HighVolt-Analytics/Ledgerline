@@ -7,7 +7,9 @@ import type { Invoice } from "@/api/types";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
+  canRenderTenantOwnedUi,
   captureTenantFetchScope,
+  isTenantFetchAbortError,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 import { filterNavItems, type FlatNavItem } from "@/lib/appNavigation";
@@ -175,6 +177,12 @@ export function GlobalSearchBar({ navItems, className }: GlobalSearchBarProps) {
       return;
     }
 
+    if (!canRenderTenantOwnedUi(user?.tenant_id)) {
+      setInvoiceRows([]);
+      setInvoiceLoading(false);
+      return;
+    }
+
     let cancelled = false;
     const scope = captureTenantFetchScope();
     setInvoiceLoading(true);
@@ -187,12 +195,12 @@ export function GlobalSearchBar({ navItems, className }: GlobalSearchBarProps) {
           setInvoiceRows(buildInvoiceRows(data));
         })
         .catch((err: unknown) => {
-          if (cancelled || !isTenantFetchScopeCurrent(scope)) return;
+          if (cancelled || isTenantFetchAbortError(err)) return;
           setInvoiceRows([]);
           setInvoiceError(err instanceof Error ? err.message : "Invoice search failed");
         })
         .finally(() => {
-          if (!cancelled && isTenantFetchScopeCurrent(scope)) setInvoiceLoading(false);
+          if (!cancelled) setInvoiceLoading(false);
         });
     }, 200);
 

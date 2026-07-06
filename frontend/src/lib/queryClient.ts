@@ -61,6 +61,8 @@ const baseKeys = {
   billing: ["billing"] as const,
   appSettings: ["app-settings"] as const,
   mailboxes: ["mailboxes"] as const,
+  myPermissions: ["auth", "permissions"] as const,
+  institutionSettings: ["tenants", "institution-settings"] as const,
 };
 
 export const queryKeys = {
@@ -101,4 +103,6 @@ export const queryKeys = {
   billing: () => tenantQueryKey(baseKeys.billing),
   appSettings: () => tenantQueryKey(baseKeys.appSettings),
   mailboxes: () => tenantQueryKey(baseKeys.mailboxes),
+  myPermissions: () => tenantQueryKey(baseKeys.myPermissions),
+  institutionSettings: () => tenantQueryKey(baseKeys.institutionSettings),
 };

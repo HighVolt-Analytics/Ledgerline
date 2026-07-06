@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, bind_db_to_tenant, get_auth_context, get_db, require_admin
+from app.tenant_scoped import get_for_tenant
 from app.config import get_settings
 from app.models.connected_mailbox import AUTH_DELEGATED, ConnectedMailbox
 from app.models.invoice import Invoice
@@ -547,8 +548,8 @@ async def remove_mailbox(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_admin),
 ) -> None:
-    row = await db.get(ConnectedMailbox, mailbox_id)
-    if not row or row.tenant_id != ctx.tenant_id:
+    row = await get_for_tenant(db, ConnectedMailbox, mailbox_id, ctx.tenant_id)
+    if not row:
         raise HTTPException(404, "Mailbox not found")
     await db.execute(
         update(Invoice)
@@ -653,8 +654,8 @@ async def toggle_mailbox(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_admin),
 ) -> ApiEnvelope[MailboxResponse]:
-    row = await db.get(ConnectedMailbox, mailbox_id)
-    if not row or row.tenant_id != ctx.tenant_id:
+    row = await get_for_tenant(db, ConnectedMailbox, mailbox_id, ctx.tenant_id)
+    if not row:
         raise HTTPException(404, "Mailbox not found")
     row.is_active = not row.is_active
     row.last_poll_at = row.last_poll_at or datetime.now(timezone.utc)
@@ -670,8 +671,8 @@ async def disconnect_mailbox(
     ctx=Depends(require_admin),
 ) -> ApiEnvelope[MailboxResponse]:
     """Revoke stored OAuth tokens for a delegated mailbox."""
-    row = await db.get(ConnectedMailbox, mailbox_id)
-    if not row or row.tenant_id != ctx.tenant_id:
+    row = await get_for_tenant(db, ConnectedMailbox, mailbox_id, ctx.tenant_id)
+    if not row:
         raise HTTPException(404, "Mailbox not found")
     if row.auth_type != AUTH_DELEGATED:
         raise HTTPException(422, "Only OAuth-connected mailboxes can be disconnected")

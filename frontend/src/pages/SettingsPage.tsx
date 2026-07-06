@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { cn } from "@/lib/cn";
 import {
   COUNTRIES,
@@ -29,6 +31,7 @@ const TABS = [
 
 export function SettingsPage() {
   const { user, refreshUser } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
@@ -45,29 +48,51 @@ export function SettingsPage() {
   const [timezone, setTimezone] = useState("");
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileSaving, setProfileSaving] = useState(false);
+  const {
+    data: institution,
+    isLoading: institutionLoading,
+    blocked: institutionBlocked,
+  } = useInstitutionSettings(Boolean(user));
+
+  useResetOnTenantChange(() => {
+    setBusinessName("");
+    setIndustry(INDUSTRIES[1]);
+    setCountry("AU");
+    setPhone("");
+    setTimezone("");
+    setSaved(false);
+  });
 
   useEffect(() => {
     const next = TABS.find((t) => t.id === tabParam)?.id ?? "profile";
     setTab(next);
   }, [tabParam]);
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setProfileLoading(false);
+      return;
+    }
     setEmail(user.email);
-    setProfileLoading(true);
-    api
-      .getInstitutionSettings()
-      .then((inst) => {
-        setBusinessName(inst.name);
-        setCountry(inst.country);
-        setTimezone(inst.timezone);
-      })
-      .catch(() => {
-        setBusinessName(user.tenant_name);
-        setCountry("AU");
-        setTimezone(user.tenant_timezone);
-      })
-      .finally(() => setProfileLoading(false));
-  }, [user]);
+    setProfileLoading(institutionLoading || institutionBlocked);
+  }, [user, institutionLoading, institutionBlocked]);
+
+  useEffect(() => {
+    if (!user || institutionBlocked || institutionLoading) {
+      if (!user) setProfileLoading(false);
+      return;
+    }
+    if (institution) {
+      setBusinessName(institution.name);
+      setCountry(institution.country);
+      setTimezone(institution.timezone);
+      setProfileLoading(false);
+      return;
+    }
+    setBusinessName(user.tenant_name);
+    setCountry("AU");
+    setTimezone(user.tenant_timezone);
+    setProfileLoading(false);
+  }, [user, institution, institutionBlocked, institutionLoading, tenantScope]);
 
   useEffect(() => {
     if (!saved) return;

@@ -7,12 +7,14 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.models.auth_account import AuthAccount
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
-from app.services.auth_service import create_access_token, hash_password
-from app.services.membership_service import ensure_membership
+from app.services.auth.auth_service import create_access_token, hash_password
+from app.services.auth.membership_service import ensure_membership
 from app.tenant_ids import TESTING_TENANT_UUID
+from tests.auth_test_helpers import tenant_auth_headers
 
 
 async def _seed_multi_tenant_user(
@@ -21,10 +23,18 @@ async def _seed_multi_tenant_user(
     email: str,
     other_tenant: Tenant,
 ) -> tuple[User, Invoice, Invoice]:
-    user = User(
-        tenant_id=TESTING_TENANT_UUID,
+    account = AuthAccount(
         email=email,
         password_hash=hash_password("password123"),
+    )
+    db_session.add(account)
+    await db_session.flush()
+
+    user = User(
+        tenant_id=TESTING_TENANT_UUID,
+        auth_account_id=account.id,
+        email=email,
+        password_hash=account.password_hash,
         full_name="Switcher",
         role=UserRole.ADMIN,
         is_active=True,
@@ -34,8 +44,20 @@ async def _seed_multi_tenant_user(
     await ensure_membership(
         db_session, user_id=user.id, tenant_id=TESTING_TENANT_UUID, role="admin"
     )
+
+    other_user = User(
+        tenant_id=other_tenant.id,
+        auth_account_id=account.id,
+        email=email,
+        password_hash=account.password_hash,
+        full_name="Switcher",
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    db_session.add(other_user)
+    await db_session.flush()
     await ensure_membership(
-        db_session, user_id=user.id, tenant_id=other_tenant.id, role="admin"
+        db_session, user_id=other_user.id, tenant_id=other_tenant.id, role="admin"
     )
     home_inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
@@ -85,7 +107,7 @@ async def test_switch_tenant_limits_invoice_list_to_target_tenant(
     )
     res_home = await client.get(
         "/api/invoices",
-        headers={"Authorization": f"Bearer {home_token}"},
+        headers=tenant_auth_headers(home_token, TESTING_TENANT_UUID),
     )
     assert res_home.status_code == 200
     home_ids = {row["id"] for row in res_home.json()["data"]}
@@ -94,7 +116,7 @@ async def test_switch_tenant_limits_invoice_list_to_target_tenant(
 
     switch = await client.post(
         "/api/auth/switch-tenant",
-        headers={"Authorization": f"Bearer {home_token}"},
+        headers=tenant_auth_headers(home_token, TESTING_TENANT_UUID),
         json={"tenant_id": str(other.id)},
     )
     assert switch.status_code == 200
@@ -102,7 +124,7 @@ async def test_switch_tenant_limits_invoice_list_to_target_tenant(
 
     res_other = await client.get(
         "/api/invoices",
-        headers={"Authorization": f"Bearer {switched_token}"},
+        headers=tenant_auth_headers(switched_token, other.id),
     )
     assert res_other.status_code == 200
     other_ids = {row["id"] for row in res_other.json()["data"]}

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { COUNTRIES, INDUSTRIES, SelectField, type Industry } from "@/data/orgSetup.tsx";
 import { useAuth } from "@/context/AuthContext";
+import { canRenderTenantOwnedUi, captureTenantFetchScope, isTenantFetchScopeCurrent } from "@/lib/tenantSession";
 
 export function OnboardingPage() {
   const navigate = useNavigate();
@@ -25,9 +26,12 @@ export function OnboardingPage() {
       navigate("/", { replace: true });
       return;
     }
+    if (!canRenderTenantOwnedUi(user?.tenant_id)) return;
+    const scope = captureTenantFetchScope();
     void api
       .getOnboardingStatus()
       .then((status) => {
+        if (!isTenantFetchScopeCurrent(scope)) return;
         if (status.completed) {
           navigate("/", { replace: true });
           return;

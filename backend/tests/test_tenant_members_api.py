@@ -9,6 +9,9 @@ from app.models.user import User, UserRole
 from app.services.auth.auth_service import create_access_token, hash_password
 from app.services.auth.membership_service import ensure_membership
 from app.tenant_ids import TESTING_TENANT_UUID
+from tests.auth_test_helpers import tenant_auth_headers
+
+INVITE_DOMAIN = "highvolt.tech"
 
 
 async def _seed_user(
@@ -43,6 +46,19 @@ def _token_for(user: User, *, role: str) -> str:
     )
 
 
+def _headers(token: str) -> dict[str, str]:
+    return tenant_auth_headers(token, TESTING_TENANT_UUID)
+
+
+@pytest.fixture(autouse=True)
+def _invite_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deliverable invite emails + public accept links in tests."""
+    monkeypatch.setenv("PUBLIC_APP_URL", "http://localhost:5173")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.mark.asyncio
 async def test_admin_lists_and_invites_member(
     client: AsyncClient,
@@ -58,7 +74,7 @@ async def test_admin_lists_and_invites_member(
         role="admin",
         full_name="Admin User",
     )
-    headers = {"Authorization": f"Bearer {_token_for(admin, role='admin')}"}
+    headers = _headers(_token_for(admin, role="admin"))
 
     listed = await client.get("/api/tenants/current/members", headers=headers)
     assert listed.status_code == 200
@@ -69,17 +85,17 @@ async def test_admin_lists_and_invites_member(
         "/api/tenants/current/members/invite",
         headers=headers,
         json={
-            "email": "new-hire@test.com",
+            "email": f"new-hire@{INVITE_DOMAIN}",
             "full_name": "New Hire",
             "role": "bookkeeper",
         },
     )
-    assert invited.status_code == 200
+    assert invited.status_code == 200, invited.text
     assert "accept-invite" in invited.json()["data"]["accept_url"]
 
     listed2 = await client.get("/api/tenants/current/members", headers=headers)
     pending = listed2.json()["data"]["pending_invites"]
-    assert any(p["email"] == "new-hire@test.com" for p in pending)
+    assert any(p["email"] == f"new-hire@{INVITE_DOMAIN}" for p in pending)
 
     get_settings.cache_clear()
 
@@ -99,18 +115,18 @@ async def test_admin_revokes_pending_invite(
         role="admin",
         full_name="Revoke Admin",
     )
-    headers = {"Authorization": f"Bearer {_token_for(admin, role='admin')}"}
+    headers = _headers(_token_for(admin, role="admin"))
 
     invited = await client.post(
         "/api/tenants/current/members/invite",
         headers=headers,
         json={
-            "email": "revoke-me@test.com",
+            "email": f"revoke-me@{INVITE_DOMAIN}",
             "full_name": "Revoke Me",
             "role": "viewer",
         },
     )
-    assert invited.status_code == 200
+    assert invited.status_code == 200, invited.text
     invite_id = invited.json()["data"]["invite_id"]
 
     revoked = await client.delete(
@@ -121,7 +137,7 @@ async def test_admin_revokes_pending_invite(
 
     listed = await client.get("/api/tenants/current/members", headers=headers)
     pending = listed.json()["data"]["pending_invites"]
-    assert not any(p["email"] == "revoke-me@test.com" for p in pending)
+    assert not any(p["email"] == f"revoke-me@{INVITE_DOMAIN}" for p in pending)
 
     get_settings.cache_clear()
 
@@ -141,13 +157,13 @@ async def test_viewer_cannot_invite(
         role="viewer",
         full_name="Viewer User",
     )
-    headers = {"Authorization": f"Bearer {_token_for(viewer, role='viewer')}"}
+    headers = _headers(_token_for(viewer, role="viewer"))
 
     res = await client.post(
         "/api/tenants/current/members/invite",
         headers=headers,
         json={
-            "email": "blocked@test.com",
+            "email": f"blocked@{INVITE_DOMAIN}",
             "full_name": "Blocked",
             "role": "viewer",
         },
@@ -172,7 +188,7 @@ async def test_last_admin_cannot_be_demoted(
         role="admin",
         full_name="Sole Admin",
     )
-    headers = {"Authorization": f"Bearer {_token_for(admin, role='admin')}"}
+    headers = _headers(_token_for(admin, role="admin"))
 
     res = await client.patch(
         f"/api/tenants/current/members/{admin.id}",
@@ -199,24 +215,24 @@ async def test_invite_accept_creates_auth_and_membership(
         role="admin",
         full_name="Invite Admin",
     )
-    headers = {"Authorization": f"Bearer {_token_for(admin, role='admin')}"}
+    headers = _headers(_token_for(admin, role="admin"))
 
     invited = await client.post(
         "/api/tenants/current/members/invite",
         headers=headers,
         json={
-            "email": "accept-me@test.com",
+            "email": f"accept-me@{INVITE_DOMAIN}",
             "full_name": "Accept Me",
             "role": "auditor",
         },
     )
-    assert invited.status_code == 200
+    assert invited.status_code == 200, invited.text
     accept_url = invited.json()["data"]["accept_url"]
     token = accept_url.split("token=")[1]
 
     preview = await client.get(f"/api/auth/invite/preview?token={token}")
     assert preview.status_code == 200
-    assert preview.json()["data"]["email"] == "accept-me@test.com"
+    assert preview.json()["data"]["email"] == f"accept-me@{INVITE_DOMAIN}"
     assert preview.json()["data"]["role"] == "auditor"
 
     accepted = await client.post(
@@ -228,11 +244,13 @@ async def test_invite_accept_creates_auth_and_membership(
         },
     )
     assert accepted.status_code == 200
-    assert accepted.json()["data"]["email"] == "accept-me@test.com"
+    assert accepted.json()["data"]["email"] == f"accept-me@{INVITE_DOMAIN}"
 
     listed = await client.get("/api/tenants/current/members", headers=headers)
     members = listed.json()["data"]["members"]
-    assert any(m["email"] == "accept-me@test.com" and m["role"] == "auditor" for m in members)
+    assert any(
+        m["email"] == f"accept-me@{INVITE_DOMAIN}" and m["role"] == "auditor" for m in members
+    )
 
     get_settings.cache_clear()
 
@@ -252,7 +270,7 @@ async def test_permissions_endpoint_returns_matrix(
         role="bookkeeper",
         full_name="Bookkeeper",
     )
-    headers = {"Authorization": f"Bearer {_token_for(user, role='bookkeeper')}"}
+    headers = _headers(_token_for(user, role="bookkeeper"))
 
     res = await client.get("/api/auth/me/permissions", headers=headers)
     assert res.status_code == 200

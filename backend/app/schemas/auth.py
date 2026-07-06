@@ -72,3 +72,15 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user: UserResponse
     memberships: list[TenantAccountSummary] = Field(default_factory=list)
+
+
+class PortalEmbedLoginRequest(BaseModel):
+    access_token: str = Field(min_length=8)
+
+
+class PortalEmbedLoginResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+    memberships: list[TenantAccountSummary] = Field(default_factory=list)

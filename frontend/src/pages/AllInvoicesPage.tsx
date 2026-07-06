@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Invoice } from "@/api/types";
 import { useAuth } from "@/context/AuthContext";
@@ -12,38 +12,46 @@ import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
 import { fetchAllInvoices } from "@/lib/invoices";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import {
+  canRenderTenantOwnedUi,
   captureTenantFetchScope,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 
 export function AllInvoicesPage() {
   const { user } = useAuth();
+  const tenantScope = user?.tenant_id ?? null;
+  const loadSeq = useRef(0);
   const [rows, setRows] = useState<Invoice[]>([]);
   const [status, setStatus] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const loadSeq = useRef(0);
 
   useResetOnTenantChange(() => {
-    loadSeq.current += 1;
     setRows([]);
     setSearchQuery("");
   });
 
+  useLayoutEffect(() => {
+    setRows([]);
+  }, [status, tenantScope]);
+
   useEffect(() => {
-    const scope = captureTenantFetchScope();
-    const seq = ++loadSeq.current;
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
     const params: Record<string, string> = {};
     if (status) params.status = status;
+    const scope = captureTenantFetchScope();
+    const seq = ++loadSeq.current;
     void fetchAllInvoices(false, params).then((data) => {
       if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       setRows(data);
     });
-  }, [status, user?.tenant_id]);
+  }, [status, tenantScope]);
 
   const filtered = useMemo(
     () => rows.filter((row) => invoiceMatchesListSearch(row, searchQuery)),
     [rows, searchQuery]
   );
+
+  const showRows = canRenderTenantOwnedUi(tenantScope) ? filtered : [];
 
   return (
     <div>
@@ -85,26 +93,30 @@ export function AllInvoicesPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 && (
+              {showRows.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
-                    No invoices match your search.
+                    No invoices match your filters.
                   </td>
                 </tr>
               )}
-              {filtered.map((r) => (
-                <tr key={r.id} className="row-band border-b border-border last:border-0 hover-elevate">
-                  <td className="px-3 py-2.5 font-medium tnum">{documentListLabel(r)}</td>
-                  <td className="px-3 py-2.5">{counterpartyName(r)}</td>
-                  <td className="px-3 py-2.5 tnum text-muted-foreground">{r.invoice_date ?? "—"}</td>
-                  <td className="px-3 py-2.5 text-right tnum">{money(r.total)}</td>
+              {showRows.map((row) => (
+                <tr key={row.id} className="row-band border-t border-border/60">
                   <td className="px-3 py-2.5">
-                    <StageBadge {...invoiceStageBadgeProps(r)} />
+                    <Link to={`/invoices/${row.id}`} className="hover:text-primary hover:underline">
+                      {documentListLabel(row)}
+                    </Link>
+                  </td>
+                  <td className="px-3 py-2.5">{counterpartyName(row)}</td>
+                  <td className="px-3 py-2.5 tnum">{row.invoice_date ?? "—"}</td>
+                  <td className="px-3 py-2.5 text-right tnum">{money(row.total_amount, row.currency)}</td>
+                  <td className="px-3 py-2.5">
+                    <StageBadge {...invoiceStageBadgeProps(row)} />
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     <Link
-                      to={`/invoices/${r.id}`}
-                      className="text-primary text-xs font-medium hover:underline"
+                      to={`/invoices/${row.id}`}
+                      className="text-xs text-primary hover:underline"
                     >
                       Open
                     </Link>

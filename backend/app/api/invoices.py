@@ -655,6 +655,7 @@ async def attach_invoice_file(
     await log_event(
         db,
         "invoice_file_attached",
+        tenant_id=ctx.tenant_id,
         invoice_id=inv.id,
         detail={"path": stored, "filename": file.filename},
     )
@@ -704,6 +705,7 @@ async def reprocess_invoice(
     await log_event(
         db,
         "invoice_requeued",
+        tenant_id=ctx.tenant_id,
         invoice_id=inv.id,
         detail={
             "previous_status": previous_status,

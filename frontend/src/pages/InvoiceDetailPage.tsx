@@ -1,16 +1,24 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Upload } from "lucide-react";
 import { api } from "@/api/client";
 import type { InvoiceDetails } from "@/api/types";
 import { InvoiceDocumentViewer } from "@/components/InvoiceFilePreview";
 import { PageHeader } from "@/components/PageHeader";
+import { PageLoader } from "@/components/PageLoader";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { counterpartyLabel, counterpartyName } from "@/lib/invoice";
 import { documentListLabel, money } from "@/lib/format";
+import {
+  canRenderTenantOwnedUi,
+  captureTenantFetchScope,
+  handleTenantScopedLoadFailure,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 
 export function InvoiceDetailPage() {
   const { id } = useParams();
@@ -19,16 +27,23 @@ export function InvoiceDetailPage() {
   const [inv, setInv] = useState<InvoiceDetails | null>(null);
   const loadSeq = useRef(0);
 
-  useLayoutEffect(() => {
+  useResetOnTenantChange(() => {
     setInv(null);
-  }, [id, tenantScope]);
+  });
 
   const load = useCallback(async () => {
-    if (!id) return;
+    if (!id || !canRenderTenantOwnedUi(tenantScope)) return;
+    const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
-    const data = await api.getInvoice(Number(id));
-    if (seq !== loadSeq.current) return;
-    setInv(data);
+    try {
+      const data = await api.getInvoice(Number(id));
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+      setInv(data);
+    } catch (err) {
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
+      if (handleTenantScopedLoadFailure(err, { retry: () => void load() })) return;
+      setInv(null);
+    }
   }, [id, tenantScope]);
 
   useEffect(() => {
@@ -58,7 +73,9 @@ export function InvoiceDetailPage() {
     }
   };
 
-  if (!inv) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!canRenderTenantOwnedUi(tenantScope) || !inv) {
+    return <PageLoader label="Loading invoice…" />;
+  }
 
   const canApprove =
     inv.has_stored_file &&
