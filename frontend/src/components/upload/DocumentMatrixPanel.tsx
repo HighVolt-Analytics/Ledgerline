@@ -20,6 +20,7 @@ import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData
 import { cn } from "@/lib/cn";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { approveAndProcess } from "@/lib/invoiceActions";
+import { isInvoicePipelineActive } from "@/lib/uploadColumnState";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
@@ -32,6 +33,7 @@ import {
 } from "@/lib/tenantSession";
 
 const MATRIX_POLL_MS = 15_000;
+const MATRIX_POLL_FAST_MS = 4_000;
 const PAGE_SIZE = 10;
 
 const QUEUE_STATUSES = new Set(["exception", "duplicate_skipped", "rejected"]);
@@ -119,6 +121,7 @@ export function DocumentMatrixPanel({
   const { user } = useAuth();
   const tenantScope = user?.tenant_id ?? null;
   const loadSeq = useRef(0);
+  const loadInFlightRef = useRef(false);
   const [matrixData, setMatrixData] = useState<MatrixRow[]>([]);
   const [filter, setFilter] = useState<MatrixFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -148,11 +151,14 @@ export function DocumentMatrixPanel({
   }
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    if (options?.silent && loadInFlightRef.current) return null;
     const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     if (!options?.silent) {
       setLoading(true);
       setError(null);
+    } else {
+      loadInFlightRef.current = true;
     }
     const fresh = options?.fresh ?? !options?.silent;
     try {
@@ -175,6 +181,9 @@ export function DocumentMatrixPanel({
         setMatrixData([]);
       }
     } finally {
+      if (options?.silent) {
+        loadInFlightRef.current = false;
+      }
       if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
         setLoading(false);
       }
@@ -195,10 +204,6 @@ export function DocumentMatrixPanel({
     };
   }, [load, refreshRef]);
 
-  useVisibilityPolling(() => {
-    void load({ silent: true, fresh: true });
-  }, MATRIX_POLL_MS);
-
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 3000);
@@ -209,6 +214,17 @@ export function DocumentMatrixPanel({
     () => sortMatrixRowsNewestFirst(matrixData).map(rowFromApi),
     [matrixData]
   );
+
+  const hasActiveProcessing = useMemo(
+    () => matrixRows.some((row) => isInvoicePipelineActive(row.inv)),
+    [matrixRows]
+  );
+
+  const matrixPollMs = hasActiveProcessing ? MATRIX_POLL_FAST_MS : MATRIX_POLL_MS;
+
+  useVisibilityPolling(() => {
+    void load({ silent: true, fresh: hasActiveProcessing });
+  }, matrixPollMs);
 
   const filteredRows = useMemo(
     () =>

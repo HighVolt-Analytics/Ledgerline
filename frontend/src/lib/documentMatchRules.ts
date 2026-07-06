@@ -7,17 +7,9 @@ import { hasValidPostTo } from "@/lib/documentTypePostToValidation";
 import type {
   DocumentRuleCondition,
   DocumentRuleConditionGroup,
+  RecognitionMode,
 } from "@/lib/v5DocumentTypes";
-import { parseSignalsFromClassifier } from "@/lib/documentClassifierBuilder";
-import {
-  extractionFieldLabel,
-  normalizeExtractionFieldKeys,
-} from "@/lib/documentExtractionFields";
-import { allRecognitionSignalOptions } from "@/lib/documentTypeTemplateMeta";
-import {
-  allRecognitionSignalIds,
-  getRecognitionSignalCatalog,
-} from "@/lib/recognitionSignalCatalog";
+import { extractionFieldLabel, normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
 import { newClientRowKey } from "@/lib/clientRowKey";
 
 export type MatchRuleMode = "any" | "all";
@@ -359,14 +351,17 @@ export function documentTypeWithMatchRulesForm(
   draft: import("@/lib/v5DocumentTypes").DocumentTypeDefinition,
   form: MatchRulesForm
 ) {
+  const compilable = hasCompilableMatchRules(form);
   return {
     ...draft,
     enabled: true,
-    classifierCustomized: false,
+    recognitionMode: "signals" as RecognitionMode,
+    recognitionSignals: [],
+    llmPrompt: "",
     absentFields: absentFieldsFromExcludeRules(form.excludeRules),
     classifier: {
       ...draft.classifier,
-      enabled: true,
+      enabled: compilable,
       root: compileMatchRulesToClassifier(form),
     },
   };
@@ -567,28 +562,22 @@ export function isGenericDocumentTypeTitle(title: string): boolean {
 export function documentTypeReadiness(
   draft: {
     title: string;
-    oneLine: string;
+    recognitionMode: RecognitionMode;
+    recognitionSignals: string[];
+    llmPrompt: string;
     code: string;
     posting: string;
     postTo?: { ledger: string };
     classifier: { root: DocumentRuleConditionGroup };
   },
-  matchRulesForm?: MatchRulesForm,
   options?: { coaAccounts?: ChartOfAccountRow[] }
 ): { ready: boolean; items: { label: string; done: boolean }[] } {
-  const { form } = matchRulesForm
-    ? { form: matchRulesForm }
-    : parseClassifierToMatchRules(draft.classifier.root);
-  const hasRules = hasCompilableMatchRules(form);
-  const hasPartialRules = hasActionableMatchRules(form);
-  const hasSignals =
-    parseSignalsFromClassifier(
-      draft.classifier.root,
-      allRecognitionSignalIds(getRecognitionSignalCatalog()).length > 0
-        ? allRecognitionSignalIds(getRecognitionSignalCatalog())
-        : allRecognitionSignalOptions().map((row) => row.id)
-    ).length > 0;
-  const hasDescription = draft.oneLine.trim().length >= 20;
+  const hasPrompt = draft.recognitionMode === "prompt" && draft.llmPrompt.trim().length >= 20;
+  const matchRules = parseClassifierToMatchRules(draft.classifier.root);
+  const hasMatchRules = hasCompilableMatchRules(matchRules.form);
+  const hasSignals = (draft.recognitionSignals?.length ?? 0) > 0;
+  const hasRecognition =
+    draft.recognitionMode === "prompt" ? hasPrompt : hasMatchRules || hasSignals;
   const hasName = !isGenericDocumentTypeTitle(draft.title);
   const hasCode = Boolean(draft.code.trim());
   const accounts = options?.coaAccounts ?? [];
@@ -600,10 +589,11 @@ export function documentTypeReadiness(
   const items = [
     { label: "Specific document name", done: hasName },
     {
-      label: hasPartialRules
-        ? "Complete match or exclude rules"
-        : "Match / exclude rules, signals, or description (20+ chars)",
-      done: hasRules || hasSignals || hasDescription,
+      label:
+        draft.recognitionMode === "prompt"
+          ? "Recognition prompt (20+ characters)"
+          : "Match when rules configured",
+      done: hasRecognition,
     },
     { label: "Unique code", done: hasCode },
     { label: "Post to ledger (from chart of accounts)", done: hasPostTo },

@@ -71,7 +71,8 @@ async def test_image_quality_override_skips_sparse_gate(
         return None
 
     monkeypatch.setattr("app.services.pipeline.open_pdf_for_reading", _fake_open)
-    monkeypatch.setattr("app.services.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.shared.file_storage.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.invoice.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
     monkeypatch.setattr(
         "app.services.invoice_pipeline_phases.read_for_classification",
         _fake_read,
@@ -121,7 +122,7 @@ async def test_image_quality_override_skips_sparse_gate(
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
-        "app.services.pipeline._resolve_header_mapping",
+        "app.services.invoice.pipeline._resolve_header_mapping",
         lambda *_a, **_k: (
             type("M", (), {"account_code": "100", "account_name": "Suspense"})(),
             type("D", (), {"rule_type": "default", "match_reason": "test"})(),
@@ -132,7 +133,7 @@ async def test_image_quality_override_skips_sparse_gate(
         lambda *_a, **_k: False,
     )
     monkeypatch.setattr(
-        "app.services.publish_service.publish_invoice_to_ledger",
+        "app.services.integration.publish_service.publish_invoice_to_ledger",
         AsyncMock(),
     )
 
@@ -213,7 +214,8 @@ async def test_validation_override_bypasses_failed_checks(
         )
 
     monkeypatch.setattr("app.services.pipeline.open_pdf_for_reading", _fake_open)
-    monkeypatch.setattr("app.services.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.shared.file_storage.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.invoice.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
     monkeypatch.setattr(
         "app.services.invoice_pipeline_phases.read_for_classification",
         _fake_read,
@@ -256,7 +258,7 @@ async def test_validation_override_bypasses_failed_checks(
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
-        "app.services.pipeline._resolve_header_mapping",
+        "app.services.invoice.pipeline._resolve_header_mapping",
         lambda *_a, **_k: (
             type("M", (), {"account_code": "100", "account_name": "Suspense"})(),
             type("D", (), {"rule_type": "default", "match_reason": "test"})(),
@@ -276,7 +278,7 @@ async def test_validation_override_bypasses_failed_checks(
     )
     monkeypatch.setattr("app.services.pipeline.save_reconciliation", AsyncMock())
     monkeypatch.setattr(
-        "app.services.publish_service.publish_invoice_to_ledger",
+        "app.services.integration.publish_service.publish_invoice_to_ledger",
         AsyncMock(),
     )
 
@@ -347,7 +349,8 @@ async def test_vendor_registration_override_skips_hold(
         raise AssertionError("vendor hold must not run when vendor_registration override active")
 
     monkeypatch.setattr("app.services.pipeline.open_pdf_for_reading", _fake_open)
-    monkeypatch.setattr("app.services.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.shared.file_storage.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.invoice.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
     monkeypatch.setattr(
         "app.services.invoice_pipeline_phases.read_for_classification",
         _fake_read,
@@ -388,7 +391,7 @@ async def test_vendor_registration_override_skips_hold(
         _vendor_hold,
     )
     monkeypatch.setattr(
-        "app.services.pipeline._resolve_header_mapping",
+        "app.services.invoice.pipeline._resolve_header_mapping",
         lambda *_a, **_k: (
             type("M", (), {"account_code": "100", "account_name": "Suspense"})(),
             type("D", (), {"rule_type": "default", "match_reason": "test"})(),
@@ -408,7 +411,7 @@ async def test_vendor_registration_override_skips_hold(
     )
     monkeypatch.setattr("app.services.pipeline.save_reconciliation", AsyncMock())
     monkeypatch.setattr(
-        "app.services.publish_service.publish_invoice_to_ledger",
+        "app.services.integration.publish_service.publish_invoice_to_ledger",
         AsyncMock(),
     )
 

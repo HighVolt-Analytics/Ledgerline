@@ -89,7 +89,7 @@ def compile_catalogue_recognition(defn: DocumentTypeDefinition) -> str:
     rules = compile_recognition_rules_text(defn.classifier)
     if rules:
         parts.append(rules)
-    hint = (defn.llm_hint or "").strip()
-    if hint:
-        parts.append(hint)
+    prompt = (defn.llm_prompt or "").strip()
+    if prompt:
+        parts.append(prompt)
     return " ".join(parts).strip()

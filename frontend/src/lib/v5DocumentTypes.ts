@@ -61,14 +61,17 @@ export function emptyDocumentTypePostTo(): DocumentTypePostTo {
   };
 }
 
+export type RecognitionMode = "signals" | "prompt";
+
 export type V5DocumentType = {
   code: string;
   title: string;
   shortTitle: string;
   klass: DocumentTypeClass;
   posting: string;
-  oneLine: string;
-  llmHint?: string;
+  recognitionMode: RecognitionMode;
+  recognitionSignals: string[];
+  llmPrompt: string;
   routeTarget: string;
   enabled: boolean;
   classifier: DocumentTypeClassifier;
@@ -92,7 +95,6 @@ export type V5DocumentType = {
   bundleConditional: string[];
   purchaseBundleRole: import("@/lib/documentBundleConfig").PurchaseBundleRole;
   salesBundleRole: import("@/lib/documentBundleConfig").SalesBundleRole;
-  classifierCustomized?: boolean;
   sampleAnalysis?: DocumentTypeSampleAnalysis;
   /** Shipped matrix template this org type was created from (e.g. DT-07). Org code is separate. */
   matrixTemplateCode?: string;
@@ -137,8 +139,9 @@ export function createBlankDocumentType(existing: DocumentTypeDefinition[]): Doc
     shortTitle: "",
     klass: KLASS_NON_TRANSACTIONAL,
     posting,
-    oneLine: "",
-    llmHint: "",
+    recognitionMode: "signals",
+    recognitionSignals: [],
+    llmPrompt: "",
     routeTarget: "Vault",
     enabled: false,
     classifier: {

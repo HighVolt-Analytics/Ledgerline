@@ -1,58 +1,86 @@
 import { describe, expect, it } from "vitest";
 
-import { lineAccountReason, suggestLineAccount } from "@/lib/lineGlAccount";
+import type { ChartOfAccountRow, LineItem } from "@/api/types";
+import {
+  effectiveLineLedger,
+  lineGlMappingReason,
+  lineGlSourceLabel,
+  suggestLineSubLedger,
+} from "@/lib/lineGlAccount";
 
-const baseInv = { account_name: "Office Supplies" };
+const coa: ChartOfAccountRow[] = [
+  {
+    code: "6110",
+    name: "Cloud Hosting Expense",
+    type: "Expense",
+    subLedgers: [
+      { code: "01", name: "AWS Production" },
+      { code: "02", name: "Azure Staging" },
+    ],
+  },
+  {
+    code: "6100",
+    name: "Operating Expenses",
+    type: "Expense",
+  },
+];
 
-const baseLine = { description: "General supplies" };
+const baseLine: LineItem = {
+  id: 1,
+  invoice_id: 1,
+  description: "AWS monthly hosting",
+  qty: "1",
+  unit_price: "100",
+  amount: "100",
+  tax_amount: null,
+  sub_ledger: null,
+  parent_ledger: "Cloud Hosting Expense",
+  effective_ledger: null,
+  gl_mapping_source: "llm",
+  gl_mapping_reason: "Hosting infrastructure",
+};
 
-describe("suggestLineAccount", () => {
-  it("maps steel descriptions to Raw Materials", () => {
+describe("lineGlAccount", () => {
+  it("uses sub-ledger as effective display when catalog exists", () => {
     expect(
-      suggestLineAccount(baseInv, { description: "Steel coil 5mm" }, true),
-    ).toBe("Raw Materials");
+      effectiveLineLedger(
+        { ...baseLine, sub_ledger: "AWS Production" },
+        "Cloud Hosting Expense"
+      )
+    ).toBe("AWS Production");
   });
 
-  it("maps freight descriptions to Freight & Logistics", () => {
+  it("falls back to parent ledger when no sub-ledger", () => {
     expect(
-      suggestLineAccount(baseInv, { description: "Freight charges" }, true),
-    ).toBe("Freight & Logistics");
+      effectiveLineLedger(
+        { ...baseLine, parent_ledger: null, effective_ledger: null, sub_ledger: null },
+        "Operating Expenses"
+      )
+    ).toBe("Operating Expenses");
   });
 
-  it("falls back to invoice account_name then Suspense Account", () => {
-    expect(suggestLineAccount(baseInv, baseLine, true)).toBe("Office Supplies");
+  it("suggests sub-ledger from description keywords within catalog", () => {
     expect(
-      suggestLineAccount(
-        { account_name: null },
-        { description: "Misc item" },
-        true,
-      ),
-    ).toBe("Suspense Account");
+      suggestLineSubLedger(
+        { description: "AWS monthly hosting", sub_ledger: null },
+        coa,
+        "Cloud Hosting Expense"
+      )
+    ).toBe("AWS Production");
   });
 
-  it("returns reference-document label when posting does not apply", () => {
-    expect(suggestLineAccount(baseInv, baseLine, false)).toBe(
-      "Not posted — reference document",
-    );
-  });
-});
-
-describe("lineAccountReason", () => {
-  it("returns awaiting rule book mapping for suspense", () => {
-    expect(lineAccountReason("Suspense Account", "Acme Pty Ltd")).toBe(
-      "Awaiting rule book mapping",
-    );
+  it("labels mapping sources honestly", () => {
+    expect(lineGlSourceLabel("llm")).toBe("LLM");
+    expect(lineGlSourceLabel("doc_type_default")).toBe("Doc type default");
   });
 
-  it("returns vendor rule text for Raw Materials", () => {
-    expect(lineAccountReason("Raw Materials", "Acme Pty Ltd")).toBe(
-      "Raw Materials match: Acme Pty Ltd vendor rule",
-    );
-  });
-
-  it("returns compliance message for non-posting documents", () => {
-    expect(lineAccountReason("Not posted — reference document", null)).toBe(
-      "Supporting / compliance document — no ledger entry",
-    );
+  it("builds mapping reason from persisted metadata", () => {
+    expect(
+      lineGlMappingReason(
+        { ...baseLine, sub_ledger: "AWS Production" },
+        "Cloud Hosting Expense",
+        true
+      )
+    ).toContain("LLM");
   });
 });

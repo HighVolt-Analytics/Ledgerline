@@ -33,5 +33,9 @@ class LineItem(Base):
     tax_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     uom: Mapped[str | None] = mapped_column(String(32), nullable=True)
     sku: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    sub_ledger: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    gl_mapping_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    gl_mapping_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    gl_mapping_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="line_items")

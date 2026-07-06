@@ -15,7 +15,6 @@ FINANCE_VALIDATION_RULE_CODES = frozenset(
     {
         "VR03",
         "VR05",
-        "VR06",
         "VR07",
         "VR08",
         "VR01",

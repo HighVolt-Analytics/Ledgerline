@@ -16,7 +16,7 @@ export function DossierPipelinePanel({
   return (
     <SectionBlock
       label="Processing pipeline"
-      description="15 steps from upload to archive. Expand a step for validation checks and audit detail."
+      description="20 stages across 5 phases from upload to archive. Expand a stage for validation checks and audit detail."
       className="dossier-detail-grid__main"
     >
       <DossierPipelineTimeline pipeline={pipeline} routeTarget={routeTarget} />

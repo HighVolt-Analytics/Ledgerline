@@ -39,7 +39,7 @@ def test_heading_alignment_grn_dt03() -> None:
         shortTitle="GRN",
         klass="Non-transactional",
         posting="No",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Purchase Management",
         purchaseBundleRole="grn",
     )
@@ -58,7 +58,7 @@ def test_heading_alignment_contract_penalises_invoice_header() -> None:
         shortTitle="Contract",
         klass="Non-transactional",
         posting="No",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Vault",
         playbook_profile="master_data",
     )
@@ -83,7 +83,7 @@ def test_heading_alignment_cargo_clearance_permit_dt03() -> None:
         shortTitle="Cargo Clearance Permit",
         klass="Non-transactional",
         posting="No",
-        oneLine="Import customs clearance permit",
+        recognition_mode="prompt", recognition_signals=[], llm_prompt="Import customs clearance permit",
         routeTarget="Purchase Management",
         playbook_profile="import_dossier",
     )

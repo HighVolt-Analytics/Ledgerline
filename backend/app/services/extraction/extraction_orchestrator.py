@@ -310,6 +310,8 @@ def merge_extraction_sources(
             vendor=merged.vendor,
             invoice_no=merged.invoice_no,
             po_reference=merged.po_reference,
+            so_reference=(merged.extracted_fields or {}).get("so_reference"),
+            cost_centre=merged.cost_centre,
         )
         if merged_items != merged.line_items:
             fill["line_items"] = merged_items

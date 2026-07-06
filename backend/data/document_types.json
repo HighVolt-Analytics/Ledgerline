@@ -5,7 +5,6 @@
     "shortTitle": "PO goods invoice",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Standard 3-way match goods invoice against an approved PO and GRN.",
     "extraction": [
       "Vendor name & tax ID / ABN",
       "Vendor invoice number, invoice date",
@@ -61,7 +60,6 @@
     "klass": "Non-transactional",
     "posting": "No",
     "purchaseBundleRole": "po",
-    "oneLine": "Supporting bundle member — PO PDF that anchors the 3-way match dossier.",
     "extraction": [
       "PO number",
       "Vendor, lines, prices, currency, terms"
@@ -91,7 +89,6 @@
     "klass": "Non-transactional",
     "posting": "No",
     "purchaseBundleRole": "grn",
-    "oneLine": "Supporting bundle member — GRN PDF that completes the 3-way match.",
     "extraction": [
       "GRN / delivery docket number",
       "Received qty per line",
@@ -121,7 +118,6 @@
     "shortTitle": "Credit note",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Negative-amount note that mirrors and reduces an original invoice — never auto-nets against unrelated invoices.",
     "extraction": [
       "Original invoice reference",
       "Credit reason",
@@ -159,7 +155,6 @@
     "shortTitle": "Debit note",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Buyer-issued (charges vendor) or vendor-issued (additional charge) — never posts touchlessly.",
     "extraction": [
       "Debit note number, date",
       "Cause reference (claim / clause)",
@@ -194,7 +189,6 @@
     "shortTitle": "Proforma / advance",
     "klass": "Transactional",
     "posting": "Down-payment",
-    "oneLine": "A proforma is NEVER posted as a payable/expense and NEVER creates an input tax credit (not a tax invoice).",
     "extraction": [
       "PO with down-payment terms / signed contract",
       "Advance % and amount",
@@ -229,7 +223,6 @@
     "shortTitle": "Recurring / contract",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Matched to the contract register; lease invoices post to lease liability under AASB 16, not rent expense.",
     "extraction": [
       "Contract/lease ID",
       "Service period",
@@ -272,7 +265,6 @@
     "shortTitle": "Utility invoice",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Matched to site/meter register with consumption analytics; > ±40% deviation flags facilities review.",
     "extraction": [
       "Account number → site → cost centre",
       "Meter reads (estimated vs actual)",
@@ -310,7 +302,6 @@
     "shortTitle": "Freight / broker",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Matched to shipment; broker disbursements split duty/GST pass-through from taxable service fee.",
     "extraction": [
       "AWB / BL / container number",
       "Base freight, fuel surcharge %, terminal fees",
@@ -350,7 +341,6 @@
     "shortTitle": "Import dossier",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Landed-cost dossier — mandatory and blocking bundle of commercial invoice, customs entry, transport doc, packing list.",
     "extraction": [
       "Commercial invoice",
       "Customs entry / import declaration",
@@ -390,7 +380,6 @@
     "shortTitle": "Intercompany",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Symmetry rule — both entities book the same period, amount and FX reference rate; mirror entry validated.",
     "extraction": [
       "IC partner",
       "IC agreement reference",
@@ -428,7 +417,6 @@
     "shortTitle": "Expense claim",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Per-line policy & receipt checks with fraud analytics; FBT-flagged lines tagged for the FBT register.",
     "extraction": [
       "Employee ID + claim ID",
       "Itemised receipts per line",
@@ -466,7 +454,6 @@
     "shortTitle": "Vendor statement",
     "klass": "Non-transactional",
     "posting": "No",
-    "oneLine": "NEVER posted as an invoice — auto-reconciled vs the AP subledger to detect missing invoices and duplicates.",
     "extraction": [
       "Vendor",
       "Statement period",
@@ -500,7 +487,6 @@
     "shortTitle": "Contract / SOW",
     "klass": "Non-transactional",
     "posting": "No",
-    "oneLine": "Supporting bundle member — the contract register entry that validates recurring & services rates.",
     "extraction": [
       "Contract / lease ID",
       "Rate card, milestones, escalation terms"
@@ -529,7 +515,6 @@
     "shortTitle": "SES / timesheet",
     "klass": "Non-transactional",
     "posting": "No",
-    "oneLine": "Supporting bundle member — the service-receipt evidence for DT-02 services matching.",
     "extraction": [
       "SES / timesheet number",
       "Approved hours / milestone",
@@ -559,7 +544,6 @@
     "shortTitle": "Remittance advice",
     "klass": "Non-transactional",
     "posting": "No",
-    "oneLine": "Supporting document — confirms which invoices a payment settles; not posted itself.",
     "extraction": [
       "Payment reference",
       "Settled invoice references",
@@ -589,7 +573,6 @@
     "shortTitle": "RCTI / self-billing",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "We generate the invoice from receipt/consumption data; a vendor invoice for an RCTI vendor is blocked as duplicate-risk.",
     "extraction": [
       "RCTI agreement reference",
       "Receipt / consumption data",
@@ -621,7 +604,6 @@
     "shortTitle": "Consignment / ERS",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Consignment receipt creates no liability; ERS GRN auto-generates the invoice — vendor invoices are blocked.",
     "extraction": [
       "Agreement reference",
       "Consumption / withdrawal qty",
@@ -655,7 +637,6 @@
     "shortTitle": "One-time vendor",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Highest fraud-risk class — independent call-back bank verification, sanctions screen and collusion check mandatory.",
     "extraction": [
       "Vendor verification evidence (bank confirmation)",
       "W-form / ABN check",
@@ -693,7 +674,6 @@
     "shortTitle": "Dunning letter",
     "klass": "Non-transactional",
     "posting": "No",
-    "oneLine": "Informational only — links to the referenced invoice's status; disconnection notices flagged urgent.",
     "extraction": [
       "Referenced invoice(s)",
       "Demanded amount",
@@ -726,7 +706,6 @@
     "shortTitle": "Bank-detail change",
     "klass": "Non-transactional",
     "posting": "No",
-    "oneLine": "Critical fraud control — never update bank details from an email/letter alone; independent call-back + 4-eyes required.",
     "extraction": [
       "Vendor",
       "Proposed new bank details",
@@ -760,7 +739,6 @@
     "shortTitle": "Quote / spam",
     "klass": "Non-transactional",
     "posting": "No",
-    "oneLine": "Non-actionable — auto-archived with 30-day recoverability; never hard-deleted, never posted as a payable.",
     "extraction": [
       "Sender",
       "Subject / type"
@@ -790,7 +768,6 @@
     "shortTitle": "Tax authority notice",
     "klass": "Non-transactional",
     "posting": "Route",
-    "oneLine": "Compliance class — routed to the Tax team, not the AP posting flow.",
     "extraction": [
       "Issuing authority",
       "Notice / assessment reference",
@@ -821,7 +798,6 @@
     "shortTitle": "Customer invoice",
     "klass": "Transactional",
     "posting": "Yes",
-    "oneLine": "Outbound customer tax invoice — tenant is seller; routes to Sales Management for AR and revenue posting.",
     "extraction": [
       "Customer name & tax ID / ABN",
       "Invoice number, invoice date, due date",
@@ -865,7 +841,6 @@
     "klass": "Non-transactional",
     "posting": "No",
     "salesBundleRole": "so",
-    "oneLine": "Supporting bundle member — sales order PDF that anchors the outbound 3-way match dossier.",
     "extraction": [
       "SO number",
       "Customer, lines, prices, currency, terms"
@@ -891,7 +866,6 @@
     "klass": "Non-transactional",
     "posting": "No",
     "salesBundleRole": "dn",
-    "oneLine": "Outbound delivery note or dispatch docket linked to a sales order.",
     "extraction": [
       "Delivery note number",
       "SO reference",

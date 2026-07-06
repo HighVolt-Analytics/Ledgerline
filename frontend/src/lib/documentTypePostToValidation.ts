@@ -1,5 +1,9 @@
 import type { ChartOfAccountRow } from "@/api/types";
-import { ledgerExistsInCoa } from "@/lib/coaAccountOptions";
+import {
+  ledgerExistsInCoa,
+  ledgerHasSubLedgerCatalog,
+  subLedgerExistsInCoa,
+} from "@/lib/coaAccountOptions";
 import { suggestedLedgerForPlaybookProfile } from "@/lib/documentTypeGlDefaults";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
@@ -44,6 +48,20 @@ export function postToConfigWarnings(
       id: "post-to-not-in-coa",
       message:
         "Selected ledger is not in your chart of accounts — update Settings or pick a valid account.",
+    });
+  }
+
+  const subLedger = docType.postTo?.subLedger?.trim() ?? "";
+  if (
+    subLedger &&
+    ledgerExistsInCoa(ledger, accounts) &&
+    ledgerHasSubLedgerCatalog(ledger, accounts) &&
+    !subLedgerExistsInCoa(ledger, subLedger, accounts)
+  ) {
+    warnings.push({
+      id: "post-to-sub-ledger-not-in-coa",
+      message:
+        "Sub-ledger is not defined under this ledger in chart of accounts — pick a valid sub-ledger or update Settings.",
     });
   }
 

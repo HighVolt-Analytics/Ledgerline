@@ -154,6 +154,7 @@ async def extract_fields(
     )
     if provider == DocumentAiProvider.GEMINI_VISION:
         llm = await extract_fields_gemini(
+            ocr,
             path,
             org=org,
             document_types=document_types,
@@ -163,6 +164,7 @@ async def extract_fields(
         return ExtractFieldsResult(llm=llm, ocr=ocr)
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
         llm = await extract_fields_azure_foundry(
+            ocr,
             path,
             org=org,
             document_types=document_types,

@@ -7,11 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
+import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import { nextRulePriority } from "@/lib/rulePriority";
 import type { ExpenseRule } from "@/lib/v4RuleBookTypes";
 import { LEDGER_ACCOUNTS } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
 import { FieldLabel } from "./FieldLabel";
+import {
+  reconcileSubLedgerOnLedgerChange,
+  SubLedgerField,
+} from "./SubLedgerField";
 
 function MatchChip({ children }: { children: ReactNode }) {
   return (
@@ -29,6 +34,7 @@ export function ExpensesRulesTab({
   onChange: (rules: ExpenseRule[]) => void;
 }) {
   const { toast } = useToast();
+  const { data: coaAccounts = [] } = useChartOfAccounts();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const update = (id: string, patch: Partial<ExpenseRule>) =>
@@ -198,16 +204,27 @@ export function ExpensesRulesTab({
                       <FieldLabel label="Ledger (GL)">
                         <Select
                           value={rule.postTo.ledger}
-                          onValueChange={(ledger) => updatePost(rule.id, { ledger })}
+                          onValueChange={(ledger) =>
+                            updatePost(rule.id, {
+                              ledger,
+                              subLedger: reconcileSubLedgerOnLedgerChange(
+                                ledger,
+                                rule.postTo.subLedger,
+                                coaAccounts
+                              ),
+                            })
+                          }
                           options={toSelectOptions(LEDGER_ACCOUNTS)}
                           className="w-full"
                         />
                       </FieldLabel>
                       <FieldLabel label="Sub-ledger">
-                        <Input
+                        <SubLedgerField
+                          ledger={rule.postTo.ledger}
                           value={rule.postTo.subLedger}
-                          onChange={(e) => updatePost(rule.id, { subLedger: e.target.value })}
-                          className="h-8 text-xs"
+                          onChange={(subLedger) => updatePost(rule.id, { subLedger })}
+                          accounts={coaAccounts}
+                          size="sm"
                         />
                       </FieldLabel>
                     </div>

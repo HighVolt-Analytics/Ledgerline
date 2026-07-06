@@ -217,12 +217,11 @@ class EmployeeMaster(BaseModel):
 ChartOfAccountType = Literal["Expense", "Asset", "Liability", "Revenue", "Equity"]
 
 
-class ChartOfAccountEntry(BaseModel):
-    """GL account row stored per tenant in rule book config."""
+class SubLedgerEntry(BaseModel):
+    """Optional sub-ledger row nested under a main GL account."""
 
     code: str = Field(..., min_length=1, max_length=32)
     name: str = Field(..., min_length=1, max_length=128)
-    type: ChartOfAccountType = "Expense"
 
     @field_validator("code", "name", mode="before")
     @classmethod
@@ -230,6 +229,36 @@ class ChartOfAccountEntry(BaseModel):
         if isinstance(value, str):
             return value.strip()
         return value
+
+
+class ChartOfAccountEntry(BaseModel):
+    """GL account row stored per tenant in rule book config."""
+
+    code: str = Field(..., min_length=1, max_length=32)
+    name: str = Field(..., min_length=1, max_length=128)
+    type: ChartOfAccountType = "Expense"
+    sub_ledgers: list[SubLedgerEntry] = Field(default_factory=list)
+
+    @field_validator("code", "name", mode="before")
+    @classmethod
+    def _strip_text(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @model_validator(mode="after")
+    def _unique_sub_ledger_codes_and_names(self) -> ChartOfAccountEntry:
+        codes = [item.code.strip().upper() for item in self.sub_ledgers]
+        if len(codes) != len(set(codes)):
+            raise ValueError(
+                f"sub-ledger codes must be unique within account {self.code!r}"
+            )
+        names = [item.name.strip().lower() for item in self.sub_ledgers]
+        if len(names) != len(set(names)):
+            raise ValueError(
+                f"sub-ledger names must be unique within account {self.code!r}"
+            )
+        return self
 
 
 class PostingDefaults(BaseModel):
@@ -824,6 +853,11 @@ def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPay
         data = _backfill_document_type_klass(data)
         data = _merge_document_type_classifiers(data)
         data = _merge_document_type_fields(data)
+        from app.services.classification.document_type_recognition_migration import (
+            migrate_document_types_recognition,
+        )
+
+        data = migrate_document_types_recognition(data)
         data = _backfill_playbook_profiles(data)
         data = _backfill_document_type_post_to(data)
         data = _backfill_validation_rules(data)
@@ -835,6 +869,12 @@ def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPay
 def validate_rule_book_config_for_save(data: dict[str, Any]) -> RuleBookConfigPayload:
     """Validate and normalize config before persisting (includes Post to checks)."""
     payload = validate_rule_book_config_payload(data)
+    from app.services.classification.document_type_recognition_migration import (
+        sync_classifier_from_recognition,
+    )
+
+    synced_types = [sync_classifier_from_recognition(defn) for defn in payload.document_types]
+    payload = payload.model_copy(update={"document_types": synced_types})
     _validate_transactional_document_type_post_to(payload)
     return payload
 

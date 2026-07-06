@@ -21,7 +21,7 @@ def _document_type(code: str, ledger: str, *, posting: str = "Yes") -> dict:
         "shortTitle": f"Test {code}",
         "klass": "Transactional",
         "posting": posting,
-        "oneLine": f"Test document type {code}",
+        "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": f"Test document type {code}",
         "routeTarget": "Purchase Management",
         "enabled": True,
         "postTo": {"ledger": ledger, "subLedger": ""},

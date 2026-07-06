@@ -45,8 +45,8 @@ from app.services.extraction.pdf_page_text_service import (
 )
 from app.services.extraction.pdf_segment_service import (
     purchase_document_type_from_heading,
-    segment_pdf_pages,
 )
+from app.services.extraction.pdf_segment_llm_service import segment_pdf_pages_smart
 from app.services.extraction.pdf_split_service import extract_pdf_page_range_bytes, segment_upload_filename
 from app.services.purchase.purchase_document_service import normalize_purchase_document_type
 from app.services.master_data.vendor_resolver import UNKNOWN_SLUG
@@ -570,7 +570,7 @@ async def ingest_file_with_fanout(
                 parent_file_hash=parent_hash,
             )
 
-        segment_result = segment_pdf_pages(
+        segment_result = await segment_pdf_pages_smart(
             pages,
             max_segments=settings.pdf_segment_max_segments,
             document_types=document_types,
@@ -579,7 +579,12 @@ async def ingest_file_with_fanout(
         )
         segments = segment_result.segments
 
-        if len(segments) <= 1 and len(pages) > 1 and not segment_result.cap_exceeded:
+        if (
+            len(segments) <= 1
+            and len(pages) > 1
+            and not segment_result.cap_exceeded
+            and segment_result.segmentation_method == "rules"
+        ):
             fallback = extract_pdf_page_texts_via_full_di(tmp_path)
             if fallback is not None and fallback.pages:
                 pages = fallback.pages
@@ -593,7 +598,7 @@ async def ingest_file_with_fanout(
                     pages,
                     custom_field_keys=custom_field_keys,
                 )
-                segment_result = segment_pdf_pages(
+                segment_result = await segment_pdf_pages_smart(
                     pages,
                     max_segments=settings.pdf_segment_max_segments,
                     document_types=document_types,
@@ -724,6 +729,9 @@ async def ingest_file_with_fanout(
                     "heading_kind": segment.heading_kind,
                     "boundary_confidence": segment.boundary_confidence,
                     "purchase_document_type": segment_type,
+                    "segmentation_method": segment_result.segmentation_method,
+                    "llm_reasoning": segment_result.llm_reasoning,
+                    "prompt_version": settings.pdf_segment_llm_prompt_version,
                 },
             )
 

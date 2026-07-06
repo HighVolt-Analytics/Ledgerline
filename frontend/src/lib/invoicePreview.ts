@@ -49,6 +49,31 @@ export type DocumentContentProfile = {
   emailSender: string | null;
 };
 
+/** Keep in sync with backend HEADER_DEDUP_EXTRACTED_FIELD_KEYS. */
+const HEADER_DEDUP_EXTRACTED_FIELD_KEYS = [
+  "seller_name",
+  "buyer_name",
+  "seller_tax_id",
+  "buyer_tax_id",
+  "seller_abn",
+  "buyer_abn",
+  "billing_address",
+  "document_heading",
+  "so_reference",
+  "cost_centre",
+  "consignment_ref",
+  "permit_no",
+  "bank_name",
+  "bank_bsb",
+  "bank_account",
+  "customer",
+  "delivery_date",
+] as const;
+
+/** Keep in sync with backend OPTIONAL_CURRENCY_MONEY_PREFIX. */
+const OPTIONAL_CURRENCY_MONEY_PREFIX =
+  "(?:[$€£¥]|(?:AUD|USD|SGD|NZD|GBP|EUR|CAD|INR|MYR|THB|HKD|JPY|CNY)\\s*)?";
+
 const PROFILE_SCALAR_KEYS = new Set([
   "vendor",
   "abn",
@@ -378,7 +403,10 @@ export function isSummaryLineDescription(description: string | null | undefined)
   if (!text) return false;
   if (/^(?:total|subtotal|grand total|gst|tax)\b/.test(text)) return true;
   if (/\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet)\b/.test(text)) return true;
-  if (/^(?:customer|ship(?:ped)?(?:\s*(?:to|date|qty|ped))?|delivery\s*date|invoice\s*(?:no|number|#)|po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*reference|bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number)?|payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|phone|tel(?:ephone)?|mobile|email|fax|address|attn|attention)\s*:?\s*$/.test(text)) {
+  if (/^(?:customer|ship(?:ped)?(?:\s*(?:to|date|qty|ped))?|delivery\s*date|invoice\s*(?:no|number|#|date)|po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*(?:no|number|reference)?|bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number)?|payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|consignment|permit|cost\s*cent(?:er|re)|phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention)\s*:?\s*$/.test(text)) {
+    return true;
+  }
+  if (/^(?:tel(?:ephone)?|phone|mobile|fax)\s*(?:no\.?|number|#)?\s*:?\s*\+?\d/i.test(text)) {
     return true;
   }
   if (/^(?:description|item|product|qty|quantity|unit\s*price|amount|rate|uom|sku)\s*:?\s*$/.test(text)) {
@@ -388,8 +416,50 @@ export function isSummaryLineDescription(description: string | null | undefined)
   return false;
 }
 
-function filterLineItemsForPreview(items: LineItem[]): LineItem[] {
-  return items.filter((line) => !isSummaryLineDescription(line.description));
+function duplicatesHeaderLineDescription(
+  description: string | null | undefined,
+  headerValues: Set<string>
+): boolean {
+  const normalized = normalizeDescriptionKey(description);
+  if (!normalized || normalized.length < 3) return false;
+  if (headerValues.has(normalized)) return true;
+  for (const value of headerValues) {
+    if (value.length >= 8 && (normalized.includes(value) || value.includes(normalized))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function buildLineItemHeaderValues(inv: InvoiceDetails): Set<string> {
+  const values = new Set<string>();
+  const add = (raw: string | null | undefined) => {
+    const token = normalizeDescriptionKey(raw);
+    if (token.length >= 3) values.add(token);
+  };
+  add(inv.vendor);
+  add(inv.invoice_no);
+  add(inv.po_reference);
+  add(inv.so_reference);
+  add(inv.cost_centre);
+  const extracted = inv.extracted_fields ?? {};
+  for (const key of HEADER_DEDUP_EXTRACTED_FIELD_KEYS) {
+    add(extracted[key]);
+  }
+  return values;
+}
+
+export function filterLineItemsForPreview(
+  items: LineItem[],
+  headerValues?: Set<string>
+): LineItem[] {
+  return items.filter((line) => {
+    if (isSummaryLineDescription(line.description)) return false;
+    if (headerValues && duplicatesHeaderLineDescription(line.description, headerValues)) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function amountsRoughlyEqual(a: number, b: number): boolean {
@@ -461,7 +531,7 @@ function parseRowFromTextLine(description: string, line: string): ParsedTextLine
   const escaped = escapeRegExp(needle);
   const inline = line.match(
     new RegExp(
-      `${escaped}\\s+(\\d+(?:\\.\\d+)?)\\s+(?:[$€£]|AUD\\s*)?([\\d,]+\\.?\\d*)\\s+(?:[$€£]|AUD\\s*)?([\\d,]+\\.?\\d*)`,
+      `${escaped}\\s+(\\d+(?:\\.\\d+)?)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)`,
       "i"
     )
   );
@@ -530,7 +600,10 @@ type ParsedTextLineRow = {
 
 function parseLineItemRowsFromDocumentText(text: string): Map<string, ParsedTextLineRow> {
   const rows = new Map<string, ParsedTextLineRow>();
-  const fullRow = /^(.{4,120}?)\s+(\d+(?:\.\d+)?)\s+(?:[$€£]|AUD\s*)?([\d,]+\.?\d*)\s+(?:[$€£]|AUD\s*)?([\d,]+\.?\d*)\s*$/i;
+  const fullRow = new RegExp(
+    `^(.{4,120}?)\\s+(\\d+(?:\\.\\d+)?)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s*$`,
+    "i"
+  );
 
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -565,7 +638,10 @@ function parseLineItemRowsFromDocumentText(text: string): Map<string, ParsedText
     }
 
     const tail = trimmed.match(
-      /(\d+(?:\.\d+)?)\s+(?:[$€£]|AUD\s*)?([\d,]+\.?\d*)\s+(?:[$€£]|AUD\s*)?([\d,]+\.?\d*)\s*$/i
+      new RegExp(
+        `(\\d+(?:\\.\\d+)?)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s*$`,
+        "i"
+      )
     );
     if (!tail) continue;
     const desc = trimmed.slice(0, trimmed.length - tail[0].length).trim();
@@ -837,7 +913,8 @@ export function buildDocumentContentProfile(
   if (total) totals.total = total;
 
   let bankDetails: string | null = null;
-  const bankParts = [inv.bank_bsb, inv.bank_account]
+  const bankName = invoiceScalarRaw(inv, "bank_name");
+  const bankParts = [bankName, inv.bank_bsb, inv.bank_account]
     .map((v) => (v == null ? "" : String(v).trim()))
     .filter(Boolean);
   if (
@@ -847,7 +924,10 @@ export function buildDocumentContentProfile(
     bankDetails = bankParts.join(" / ");
   }
 
-  const rawLineItems = filterLineItemsForPreview(options.lineItems ?? inv.line_items);
+  const rawLineItems = filterLineItemsForPreview(
+    options.lineItems ?? inv.line_items,
+    buildLineItemHeaderValues(inv)
+  );
   const sanitizedLineItems = sanitizeLineItemValues(rawLineItems, total);
   const sourceLineItems = enrichLineItemsFromDocumentText(
     sanitizedLineItems,

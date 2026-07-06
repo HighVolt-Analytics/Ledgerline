@@ -217,7 +217,7 @@ async def test_sales_so_dossier_links_so_and_dn_members(db_session: AsyncSession
         base = dict(
             klass="Transactional",
             posting="Yes",
-            oneLine="test",
+            recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         )
         base.update(kwargs)
         return DocumentTypeDefinition(**base)

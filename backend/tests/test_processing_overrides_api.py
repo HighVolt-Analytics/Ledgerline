@@ -60,3 +60,27 @@ async def test_patch_processing_overrides_rejects_unknown_step(
         json={"processing_overrides": {"skip_steps": ["made_up_gate"]}},
     )
     assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_patch_processing_overrides_null_clears(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        file_hash="override-patch-clear-1",
+        total=Decimal("100.00"),
+        processing_overrides={"skip_steps": ["validation"]},
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.patch(
+        f"/api/invoices/{inv.id}",
+        json={"processing_overrides": None},
+    )
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["processing_overrides"]["skip_steps"] == []

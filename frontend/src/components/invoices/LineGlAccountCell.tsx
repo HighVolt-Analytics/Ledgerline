@@ -1,42 +1,42 @@
 import { useEffect, useMemo, useState } from "react";
 import { Sparkles } from "lucide-react";
 
-import type { InvoiceDetails, LineItem } from "@/api/types";
-import { Select } from "@/components/ui/select";
-import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
-import { coaTypesForRouteTarget } from "@/lib/coaAccountOptions";
+import type { LineItem } from "@/api/types";
+import { SubLedgerField } from "@/components/rule-book/SubLedgerField";
+import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
+import { ledgerHasSubLedgerCatalog } from "@/lib/coaAccountOptions";
 import {
-  lineAccountReason,
-  mergeGlAccountOptions,
-  suggestLineAccount,
+  effectiveLineLedger,
+  lineGlMappingReason,
+  suggestLineSubLedger,
 } from "@/lib/lineGlAccount";
 
 type LineGlAccountCellProps = {
-  inv: InvoiceDetails;
   line: LineItem;
+  parentLedger: string;
   postingApplies: boolean;
+  onSubLedgerChange?: (subLedger: string) => void;
+  editable?: boolean;
 };
 
-export function LineGlAccountCell({ inv, line, postingApplies }: LineGlAccountCellProps) {
-  const { options: coaOptions } = useCoaAccountOptions({
-    types: coaTypesForRouteTarget(inv.route_target ?? ""),
-    includeEmpty: false,
-  });
-
-  const defaultAccount = suggestLineAccount(inv, line, postingApplies);
-  const [account, setAccount] = useState(defaultAccount);
+export function LineGlAccountCell({
+  line,
+  parentLedger,
+  postingApplies,
+  onSubLedgerChange,
+  editable = false,
+}: LineGlAccountCellProps) {
+  const { data: accounts = [] } = useChartOfAccounts();
+  const hasCatalog = ledgerHasSubLedgerCatalog(parentLedger, accounts);
+  const suggested = useMemo(
+    () => suggestLineSubLedger(line, accounts, parentLedger),
+    [accounts, line, parentLedger]
+  );
+  const [subLedger, setSubLedger] = useState(line.sub_ledger?.trim() ?? suggested);
 
   useEffect(() => {
-    setAccount(suggestLineAccount(inv, line, postingApplies));
-  }, [inv, line, postingApplies]);
-
-  const selectOptions = useMemo(() => {
-    const coaNames = coaOptions.map((option) => option.value).filter(Boolean);
-    return mergeGlAccountOptions(defaultAccount, inv.account_name, coaNames).map((opt) => ({
-      value: opt,
-      label: opt,
-    }));
-  }, [coaOptions, defaultAccount, inv.account_name]);
+    setSubLedger(line.sub_ledger?.trim() ?? suggested);
+  }, [line.sub_ledger, line.id, suggested]);
 
   if (!postingApplies) {
     return (
@@ -44,22 +44,54 @@ export function LineGlAccountCell({ inv, line, postingApplies }: LineGlAccountCe
     );
   }
 
-  const reason = lineAccountReason(account, inv.vendor);
+  if (!parentLedger.trim()) {
+    return (
+      <span className="text-xs text-muted-foreground">Configure document type Post to ledger</span>
+    );
+  }
+
+  const reason = lineGlMappingReason(line, parentLedger, hasCatalog);
+  const displayLedger = effectiveLineLedger(line, parentLedger);
+
+  if (!hasCatalog) {
+    return (
+      <div className="space-y-1">
+        <span className="text-xs text-foreground">{displayLedger}</span>
+        {line.gl_mapping_reason ? (
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
+            <Sparkles className="h-3 w-3 text-primary shrink-0" />
+            <span className="truncate">{reason}</span>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <>
-      <Select
-        value={account}
-        onValueChange={setAccount}
-        className="invoice-drawer-gl-select w-full"
-        options={selectOptions}
-        data-testid="invoice-gl-select"
-      />
+      <p className="text-[10px] text-muted-foreground mb-1 truncate" title={parentLedger}>
+        {parentLedger}
+      </p>
+      {editable && onSubLedgerChange ? (
+        <SubLedgerField
+          ledger={parentLedger}
+          value={subLedger}
+          onChange={(value) => {
+            setSubLedger(value);
+            onSubLedgerChange(value);
+          }}
+          accounts={accounts}
+          className="invoice-drawer-gl-select w-full"
+          data-testid="invoice-gl-select"
+        />
+      ) : (
+        <span className="text-xs text-foreground block">
+          {subLedger || "— Optional —"}
+        </span>
+      )}
       <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground min-w-0">
         <Sparkles className="h-3 w-3 text-primary shrink-0" />
-        <span className="truncate">
-          AI: {account} · {reason}
-        </span>
+        <span className="truncate">{reason}</span>
       </div>
     </>
   );

@@ -7,77 +7,16 @@ import {
   DossierPipelinePanel,
 } from "@/components/dossiers/DossierDetailSections";
 import { DossierOutcomeBadge, DossierTypeBadge } from "@/components/dossiers/DossierOutcomeBadge";
-import {
-  DossierOutcomeBanner,
-  DossierSummaryStrip,
-} from "@/components/dossiers/DossierSummaryStrip";
+import { DossierStatusHero } from "@/components/dossiers/DossierStatusHero";
+import { DossierSummaryStrip } from "@/components/dossiers/DossierSummaryStrip";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageEyebrowHeader } from "@/components/PageEyebrowHeader";
 import { useAuth } from "@/context/AuthContext";
 import { fetchDossierById, addDossierManualLink, removeDossierManualLink } from "@/lib/dossierApi";
 import { firstPipelineFailure, isLegacyMockDossierId, type DossierSummary } from "@/lib/dossiers";
-import { ROUTE_SALES } from "@/lib/invoice";
 
-function DossierPlaybookRemedy({
-  dossier,
-  onOpenInvoice,
-}: {
-  dossier: DossierSummary;
-  onOpenInvoice: () => void;
-}) {
-  const fail = firstPipelineFailure(dossier.pipeline);
-  if (!fail || fail.stageId !== "bundle" || fail.state !== "fail") return null;
-
-  const isSales =
-    dossier.routeTarget === ROUTE_SALES ||
-    dossier.linkedDocuments.linkageKind === "so_reference";
-  const isLinkage =
-    fail.exceptionCode === "LINKAGE_KEY_MISSING" ||
-    !(isSales ? dossier.soReference || dossier.linkageReference : dossier.poReference);
-  const isBundle = fail.exceptionCode === "BUNDLE_INCOMPLETE";
-
-  if (!isLinkage && !isBundle) return null;
-
-  return (
-    <div
-      className="mb-4 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm"
-      data-testid="dossier-playbook-remedy"
-    >
-      <p className="font-medium text-foreground">Next step</p>
-      {isLinkage ? (
-        <p className="mt-1 text-muted-foreground">
-          {isSales ? (
-            <>
-              This dossier needs an SO linkage key for sales 3-way match. Capture the sales order
-              number, or{" "}
-            </>
-          ) : (
-            <>
-              This dossier needs a PO linkage key for 3-way match. Capture the PO number, or{" "}
-            </>
-          )}
-          {dossier.invoiceId ? (
-            <button
-              type="button"
-              className="text-primary underline underline-offset-2"
-              onClick={onOpenInvoice}
-            >
-              reclassify as Direct expense
-            </button>
-          ) : (
-            "reclassify as Direct expense"
-          )}{" "}
-          if this is not a {isSales ? "SO" : "PO"}-backed invoice.
-        </p>
-      ) : (
-        <p className="mt-1 text-muted-foreground">
-          {isSales
-            ? "Upload SO and delivery note supporting documents on the same SO number below, or open the invoice to complete the dossier."
-            : "Upload PO and GRN supporting documents on the same PO number below, or open the invoice to complete the dossier."}
-        </p>
-      )}
-    </div>
-  );
+function scrollToFailedStage(stageId: string) {
+  document.getElementById(`dossier-stage-${stageId}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function captureLabel(channel: string): string {
@@ -195,14 +134,22 @@ export function DossierDetailPage() {
         }
       />
 
-      <DossierSummaryStrip dossier={dossier} />
-      <DossierOutcomeBanner message={dossier.outcomeBanner} />
-      <DossierPlaybookRemedy dossier={dossier} onOpenInvoice={() => {
-        if (dossier.invoiceId) {
-          setDrawerId(dossier.invoiceId);
-          setDrawerOpen(true);
+      <DossierStatusHero
+        dossier={dossier}
+        onOpenInvoice={
+          dossier.invoiceId
+            ? () => {
+                setDrawerId(dossier.invoiceId!);
+                setDrawerOpen(true);
+              }
+            : undefined
         }
-      }} />
+        onJumpToFailure={() => {
+          const fail = firstPipelineFailure(dossier.pipeline);
+          if (fail) scrollToFailedStage(fail.stageId);
+        }}
+      />
+      <DossierSummaryStrip dossier={dossier} />
 
       <div className="dossier-detail-grid">
         <DossierPipelinePanel pipeline={dossier.pipeline} routeTarget={dossier.routeTarget} />

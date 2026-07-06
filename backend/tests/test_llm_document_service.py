@@ -106,3 +106,94 @@ def test_llm_result_to_invoice_data_prefers_seller_for_vendor() -> None:
         ocr=OcrArtifact(success=True, text="Permit", text_length=6),
     )
     assert parsed.vendor == "SPECTRA INNOVATIONS PTE LTD"
+
+
+def test_llm_result_schema_omits_currency_default_when_not_in_payload() -> None:
+    result = LlmDocumentResult.model_validate(
+        {"suggested_dt": "DT-02", "confidence": 0.9, "vendor": "Permit Authority"}
+    )
+    assert result.currency == ""
+
+
+def test_llm_result_maps_so_reference_cost_centre_and_bank_name() -> None:
+    llm = LlmDocumentResult(
+        suggested_dt="DT-03",
+        confidence=0.9,
+        so_reference="SO-9001",
+        cost_centre="CC-42",
+        bank_bsb="062-000",
+        bank_account="12345678",
+        bank_name="Commonwealth Bank",
+        currency="SGD",
+        total=Decimal("100"),
+    )
+    parsed = llm_result_to_invoice_data(
+        llm,
+        ocr=OcrArtifact(success=True, text="SO-9001 CC-42", text_length=14),
+    )
+    assert parsed.cost_centre == "CC-42"
+    assert parsed.currency == "SGD"
+    assert parsed.extracted_fields["so_reference"] == "SO-9001"
+    assert parsed.extracted_fields["bank_name"] == "Commonwealth Bank"
+    assert "Commonwealth Bank" in parsed.extracted_fields["bank_details"]
+    assert parsed.bank_bsb == "062-000"
+    assert parsed.bank_account == "12345678"
+
+
+def test_build_structure_extract_prompts_lists_all_scalar_keys() -> None:
+    from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
+    from app.services.extraction.llm_document_service import build_structure_extract_prompts
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    dt = DocumentTypeDefinition(
+        code="DT-01",
+        title="Invoice",
+        shortTitle="Invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
+        routeTarget="Purchase Management",
+        classifier=DocumentTypeClassifier(),
+    )
+    system, _user = build_structure_extract_prompts(
+        ocr=OcrArtifact(success=True, text="Invoice", text_length=7),
+        org=OrgContext(),
+        document_types=[dt],
+        confirmed_dt="DT-01",
+    )
+    assert "so_reference" in system
+    assert "cost_centre" in system
+    assert "bank_name" in system
+
+
+def test_llm_result_sanitizes_metadata_line_items() -> None:
+    llm = LlmDocumentResult.model_validate(
+        {
+            "suggested_dt": "DT-03",
+            "confidence": 0.9,
+            "vendor": "Acme Pty Ltd",
+            "seller": {"name": "Acme Pty Ltd"},
+            "line_items": [
+                {"description": "Customer:", "qty": "1"},
+                {
+                    "description": "Widget assembly",
+                    "qty": "2",
+                    "unit_price": "50",
+                    "amount": "100",
+                },
+            ],
+        }
+    )
+    parsed = llm_result_to_invoice_data(
+        llm,
+        ocr=OcrArtifact(
+            success=True,
+            text="TAX INVOICE\nAcme Pty Ltd\nWidget assembly    2    50.00    100.00",
+            text_length=60,
+        ),
+    )
+    assert len(parsed.line_items) == 1
+    assert parsed.line_items[0].description == "Widget assembly"
+    assert parsed.line_items[0].amount == Decimal("100")

@@ -182,10 +182,14 @@ describe("shouldClearProcessingId", () => {
 });
 
 describe("mergeBoardRowWithLocal", () => {
-  it("keeps optimistic pending while approve is in flight", () => {
+  it("prefers settled server row over stale optimistic pending", () => {
     const local = inv(7, "pending");
-    const remote = inv(7, "exception");
-    expect(mergeBoardRowWithLocal(remote, local, new Set([7]))).toEqual(local);
+    const remote = inv(7, "exception", {
+      vendor: "Acme Pty Ltd",
+      total: "1200",
+      document_type_code: "DT-03",
+    });
+    expect(mergeBoardRowWithLocal(remote, local, new Set([7]))).toEqual(remote);
   });
 
   it("uses server status when not optimistically processing", () => {
@@ -197,6 +201,16 @@ describe("mergeBoardRowWithLocal", () => {
   it("accepts remote pipeline status once backend catches up", () => {
     const local = inv(7, "pending");
     const remote = inv(7, "parsing");
+    expect(mergeBoardRowWithLocal(remote, local, new Set([7]))).toEqual(remote);
+  });
+
+  it("accepts remote processed row after upload pipeline completes", () => {
+    const local = inv(7, "pending");
+    const remote = inv(7, "processed", {
+      vendor: "Vendor Co",
+      total: "500",
+      document_type_code: "DT-01",
+    });
     expect(mergeBoardRowWithLocal(remote, local, new Set([7]))).toEqual(remote);
   });
 });

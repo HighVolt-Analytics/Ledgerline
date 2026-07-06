@@ -13,6 +13,10 @@ from app.models.purchase_order import PurchaseOrderStatus
 from app.schemas.rule_book_config import RuleBookConfigPayload, VendorMaster
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.purchase.purchase_match_service import load_purchase_order_for_invoice
+from app.services.rule_book.tax_invoice_policy import (
+    document_has_tax_invoice_wording,
+    tax_invoice_policy_for_country,
+)
 from app.services.rule_book.validator import ValidationResult
 from app.services.master_data.vendor_detection import find_matching_vendor_master, normalize_abn_digits
 
@@ -21,7 +25,6 @@ SUBTOTAL_TOLERANCE = Decimal("0.05")
 PRICE_MATCH_PCT = Decimal("0.02")
 PRICE_MATCH_CAP_AUD = Decimal("100")
 FREIGHT_TOLERANCE_AUD = Decimal("100")
-BUYER_IDENTITY_THRESHOLD_AUD = Decimal("1000")
 FUZZY_AMOUNT_PCT = Decimal("0.005")
 FUZZY_DATE_DAYS = 7
 
@@ -29,7 +32,6 @@ _FREIGHT_KEYWORDS = re.compile(
     r"\b(freight|delivery|surcharge|shipping|carriage|handling)\b",
     re.I,
 )
-_TAX_INVOICE_RE = re.compile(r"tax\s+invoice", re.I)
 _BLOCKED_VENDOR_STATUSES = frozenset({"blocked", "inactive", "suspended", "closed"})
 
 
@@ -62,26 +64,48 @@ def vr09_line_arithmetic(data: InvoiceData) -> ValidationResult:
     return ValidationResult("VR09", True, "Line arithmetic within tolerance")
 
 
-def vr10_tax_invoice_au(data: InvoiceData) -> ValidationResult:
-    text = _document_text(data)
-    has_tax_invoice_phrase = bool(_TAX_INVOICE_RE.search(text))
-    subtotal = data.subtotal or data.total or Decimal("0")
+def vr10_tax_invoice_wording(
+    data: InvoiceData,
+    *,
+    country: str,
+    currency: str,
+) -> ValidationResult:
+    policy = tax_invoice_policy_for_country(country)
+    if policy is None:
+        return ValidationResult(
+            "VR10",
+            True,
+            f"Tax invoice wording rule not configured for {country or 'unknown country'}",
+            skipped=True,
+        )
+    if not policy.enabled:
+        return ValidationResult(
+            "VR10",
+            True,
+            f"Tax invoice wording rule not applicable for {country}",
+            skipped=True,
+        )
 
-    if subtotal >= BUYER_IDENTITY_THRESHOLD_AUD and not has_tax_invoice_phrase:
+    text = _document_text(data)
+    has_wording = document_has_tax_invoice_wording(text, policy)
+    subtotal = data.subtotal or data.total or Decimal("0")
+    tax_amount = data.gst or Decimal("0")
+
+    if policy.amount_threshold is not None and subtotal >= policy.amount_threshold and not has_wording:
         return ValidationResult(
             "VR10",
             False,
-            f'Taxable supply ≥ AUD {BUYER_IDENTITY_THRESHOLD_AUD} requires "Tax Invoice" on document',
+            f"Taxable supply ≥ {currency} {policy.amount_threshold} requires tax-invoice wording on document",
         )
-    if (data.gst or Decimal("0")) > 0 and not has_tax_invoice_phrase:
+    if policy.enforce_when_tax_present and tax_amount > 0 and not has_wording:
         return ValidationResult(
             "VR10",
             False,
-            'GST charged but document does not state "Tax Invoice"',
+            f"Tax charged but document does not state required tax-invoice wording for {country}",
         )
-    if has_tax_invoice_phrase:
-        return ValidationResult("VR10", True, "Tax Invoice stated on document")
-    return ValidationResult("VR10", True, "Tax invoice rule not applicable")
+    if has_wording:
+        return ValidationResult("VR10", True, "Tax-invoice wording stated on document")
+    return ValidationResult("VR10", True, "Tax invoice wording rule not applicable")
 
 
 def vr11_date_sanity(data: InvoiceData, *, today: date | None = None) -> ValidationResult:
@@ -281,7 +305,15 @@ async def run_extended_validations(
     if code == "VR09":
         return vr09_line_arithmetic(data)
     if code == "VR10":
-        return vr10_tax_invoice_au(data)
+        from app.models.tenant import Tenant
+        from app.tenant_settings import tenant_country, tenant_currency
+
+        tenant = await session.get(Tenant, tenant_id)
+        return vr10_tax_invoice_wording(
+            data,
+            country=tenant_country(tenant),
+            currency=tenant_currency(tenant),
+        )
     if code == "VR11":
         from app.models.tenant import Tenant
         from app.tenant_settings import tenant_today

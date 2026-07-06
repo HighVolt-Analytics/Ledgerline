@@ -73,6 +73,7 @@ _PRESET_EXTRACTION_LABELS: dict[str, str] = {
     "invoice_date": "Invoice date",
     "due_date": "Due date",
     "po_reference": "PO reference",
+    "so_reference": "SO reference",
     "cost_centre": "Cost centre",
     "subtotal": "Subtotal",
     "gst": "Tax (GST/VAT)",
@@ -252,6 +253,8 @@ _LLM_RESERVED_RAW_KEYS = frozenset(
         "invoice_date",
         "due_date",
         "po_reference",
+        "so_reference",
+        "cost_centre",
         "subtotal",
         "gst",
         "gst_rate",
@@ -260,6 +263,9 @@ _LLM_RESERVED_RAW_KEYS = frozenset(
         "abn",
         "vendor",
         "document_heading",
+        "bank_bsb",
+        "bank_account",
+        "bank_name",
     }
 )
 

@@ -14,7 +14,7 @@ def _grn_dt() -> DocumentTypeDefinition:
             "shortTitle": "GRN",
             "klass": "Non-transactional",
             "posting": "No",
-            "oneLine": "Goods received",
+            "recognition_mode": "signals", "recognition_signals": ["heading_grn"], "llm_prompt": "Goods received",
             "routeTarget": "Vault",
             "enabled": True,
             "classifier": {
@@ -56,7 +56,7 @@ def test_recognition_test_single_and_condition() -> None:
             "shortTitle": "Invoice",
             "klass": "Transactional",
             "posting": "No",
-            "oneLine": "Tax invoice",
+            "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "Tax invoice",
             "routeTarget": "Vault",
             "enabled": True,
             "classifier": {

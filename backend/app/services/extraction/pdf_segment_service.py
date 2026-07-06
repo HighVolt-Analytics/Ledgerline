@@ -35,6 +35,8 @@ class PdfSegmentResult:
     segments: list[PdfDocumentSegment]
     cap_exceeded: bool = False
     detected_boundary_count: int = 0
+    segmentation_method: str = "rules"
+    llm_reasoning: str | None = None
 
 
 def _page_kind_token(

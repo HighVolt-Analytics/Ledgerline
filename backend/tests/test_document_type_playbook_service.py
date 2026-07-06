@@ -35,7 +35,7 @@ def _definition(**kwargs) -> DocumentTypeDefinition:
         shortTitle="PO goods",
         klass="Transactional",
         posting="Yes",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Purchase Management",
         extraction=[
             "Vendor name & tax ID / ABN",

@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Select } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import {
   coaTypesForMainLedger,
@@ -19,6 +18,10 @@ import {
 import type { DocumentTypeDefinition, DocumentTypePostTo } from "@/lib/v5DocumentTypes";
 import { AccountBadge } from "@/components/rule-book/AccountBadge";
 import { FieldLabel } from "@/components/rule-book/FieldLabel";
+import {
+  reconcileSubLedgerOnLedgerChange,
+  SubLedgerField,
+} from "@/components/rule-book/SubLedgerField";
 
 type DocumentTypePostToEditorProps = {
   draft: DocumentTypeDefinition;
@@ -134,7 +137,17 @@ export function DocumentTypePostToEditor({
           <FieldLabel label="Ledger (GL)">
             <Select
               value={postTo.ledger}
-              onValueChange={(ledger) => onChange({ ...postTo, ledger })}
+              onValueChange={(ledger) =>
+                onChange({
+                  ...postTo,
+                  ledger,
+                  subLedger: reconcileSubLedgerOnLedgerChange(
+                    ledger,
+                    postTo.subLedger,
+                    allAccounts
+                  ),
+                })
+              }
               options={mainOptions}
               disabled={disabled}
               className="w-full"
@@ -149,12 +162,13 @@ export function DocumentTypePostToEditor({
           ) : null}
         </div>
         <FieldLabel label="Sub-ledger">
-          <Input
+          <SubLedgerField
+            ledger={postTo.ledger}
             value={postTo.subLedger}
-            onChange={(e) => onChange({ ...postTo, subLedger: e.target.value })}
-            className="h-9 text-sm"
+            onChange={(subLedger) => onChange({ ...postTo, subLedger })}
+            accounts={allAccounts}
             disabled={disabled}
-            placeholder="Optional"
+            data-testid="dt-post-to-sub-ledger"
           />
         </FieldLabel>
       </div>

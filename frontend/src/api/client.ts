@@ -250,10 +250,8 @@ function bustGetCache(path: string, method = "GET") {
   getCacheGeneration += 1;
   const key = getRequestKey(path, method);
   getCache.delete(key);
-  inflightGets.delete(key);
   const metaKey = getRequestKey(`${path}#meta`, method);
   getCache.delete(metaKey);
-  inflightGets.delete(metaKey);
 }
 
 function bustGetCacheByPrefix(pathPrefix: string, method = "GET") {
@@ -1295,6 +1293,18 @@ export const api = {
       `/api/audit-log/export?${params.toString()}`,
       undefined,
       `audit_log_${month}.csv`
+    );
+    saveBlobAsFile(blob, filename);
+  },
+  downloadDocumentsBundleCsv: async (dateFrom: string, dateTo: string) => {
+    const params = new URLSearchParams({
+      date_from: dateFrom,
+      date_to: dateTo,
+    });
+    const { blob, filename } = await requestBlob(
+      `/api/reports/documents-bundle/export?${params.toString()}`,
+      undefined,
+      `documents_bundle_${dateFrom.slice(0, 7)}.csv`
     );
     saveBlobAsFile(blob, filename);
   },

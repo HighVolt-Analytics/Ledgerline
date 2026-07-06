@@ -13,16 +13,13 @@ from app.config import get_settings
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.classification.classifier_catalogue_compiler import compile_catalogue_recognition
-from app.services.classification.document_type_field_keys import CANONICAL_EXTRACTION_FIELD_KEYS
-from app.services.extraction.extraction_field_values import (
-    custom_extraction_field_descriptors,
-    custom_extraction_field_keys,
-    custom_extraction_field_keys_for_dt,
-    custom_extraction_fields_prompt_lines,
-)
+from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
 from app.services.extraction.party_field_service import PARTY_LLM_RULES
-from app.services.extraction.llm_document_service import _normalize_llm_raw
+from app.services.extraction.llm_document_service import (
+    _custom_keys_for_dt,
+    _normalize_llm_raw,
+    build_structure_extract_prompts,
+)
 from app.services.tenant.tenant_org_context import OrgContext
 from app.services.extraction.vision_pdf import pdf_page_images
 from app.utils.logger import get_logger
@@ -41,7 +38,15 @@ Rules:
 - Do not extract invoice amounts, line items, or dates — classification only.
 - few_shot_examples are prior reviewer corrections. When document_heading or text_excerpt
   closely matches a few-shot example, strongly prefer that example's human_confirmed_dt.
-- Examples with vendor_key match the sender/vendor — prefer those when the layout matches that supplier."""
+- Examples with vendor_key match the sender/vendor — prefer those when the layout matches that supplier.
+- Each catalogue row has recognition_mode signals or prompt.
+- When recognition_mode is signals, treat recognition_rules as deterministic match hints for that code.
+- When recognition_mode is prompt, treat llm_prompt as the authoritative description for that code."""
+
+_FOUNDRY_READ_SYSTEM = """You read finance document images for accounts payable OCR.
+Return JSON only with keys: document_heading, text_excerpt.
+- document_heading is the primary visible document title or heading.
+- text_excerpt is the full visible document text including tables, amounts, and labels (max 12000 chars)."""
 
 
 def is_azure_foundry_vision_available() -> bool:
@@ -59,23 +64,8 @@ def _chat_url() -> str:
     )
 
 
-def _catalogue_rows(document_types: Sequence[DocumentTypeDefinition]) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for defn in document_types:
-        if not defn.enabled:
-            continue
-        hint = getattr(defn, "llm_hint", None) or defn.llm_hint or ""
-        recognition = compile_catalogue_recognition(defn)
-        row: dict[str, str] = {
-            "code": defn.code.strip().upper(),
-            "title": defn.title,
-            "one_line": defn.one_line,
-            "llm_hint": str(hint).strip(),
-        }
-        if recognition:
-            row["recognition_rules"] = recognition
-        rows.append(row)
-    return rows
+def _catalogue_rows(document_types: Sequence[DocumentTypeDefinition]) -> list[dict[str, Any]]:
+    return build_llm_catalogue_rows(document_types)
 
 
 def _vision_content(user_text: str, images: list[bytes]) -> list[dict[str, Any]]:
@@ -153,10 +143,7 @@ async def read_for_classification_azure_foundry(
     if not images:
         raise ValueError("azure_foundry_no_pages")
 
-    system = """You read finance document images for accounts payable OCR.
-Return JSON only with keys: document_heading, text_excerpt.
-- document_heading is the primary visible document title or heading.
-- text_excerpt is plain text of visible headings and key labels (max 2000 chars)."""
+    system = _FOUNDRY_READ_SYSTEM
 
     user_text = json.dumps(
         {
@@ -177,7 +164,7 @@ Return JSON only with keys: document_heading, text_excerpt.
     if raw is None:
         raise ValueError("azure_foundry_read_failed")
 
-    excerpt = str(raw.get("text_excerpt") or raw.get("document_heading") or "").strip()
+    excerpt = str(raw.get("text_excerpt") or raw.get("document_heading") or "").strip()[:12000]
     text_length = len(excerpt)
     sparse = text_length < settings.ocr_min_text_chars
     deployment = settings.azure_ai_foundry_deployment.strip() or "gpt-4o"
@@ -247,7 +234,8 @@ async def classify_only_azure_foundry(
 
 
 async def extract_fields_azure_foundry(
-    file_path: str | Path,
+    ocr: OcrArtifact,
+    file_path: str | Path | None = None,
     *,
     org: OrgContext,
     document_types: Sequence[DocumentTypeDefinition],
@@ -255,48 +243,22 @@ async def extract_fields_azure_foundry(
     few_shots: Sequence[dict[str, str]] | None = None,
 ) -> LlmDocumentResult | None:
     settings = get_settings()
-    path = Path(file_path)
-    images = pdf_page_images(path)
-    if not images:
-        return None
-
     dt_token = confirmed_dt.strip().upper()
-    custom_keys = custom_extraction_field_keys_for_dt(document_types, dt_token)
-    if not custom_keys:
-        custom_keys = custom_extraction_field_keys(document_types)
-
-    descriptors = custom_extraction_field_descriptors(custom_keys)
-    custom_hint = ""
-    if descriptors:
-        custom_hint = "\n" + "\n".join(custom_extraction_fields_prompt_lines(descriptors))
-
-    system = f"""You extract accounts-payable fields from finance document images.
-Return JSON only with keys:
-suggested_dt, confidence, reasoning, perspective,
-seller, buyer, invoice_no, invoice_date, due_date, po_reference,
-subtotal, gst, gst_rate, total, currency, abn, vendor, document_heading,
-bank_bsb, bank_account, bank_name, line_items, field_confidence, extracted_fields.
-Use confirmed_dt as suggested_dt. Extract faithfully from the images.
-- line_items must be product/service rows only — never header metadata (Customer, Ship Date, Invoice No, BSB, etc.).
-- If a row is a field label ending with ":" it is NOT a line item.
-- bank_bsb, bank_account, bank_name: extract only when explicitly labeled. Leave empty if absent.
-{PARTY_LLM_RULES}{custom_hint}"""
-
-    user_text = json.dumps(
-        {
-            "confirmed_dt": dt_token,
-            "tenant": {
-                "legal_name": org.legal_name,
-                "abn": org.abn,
-            },
-            "catalogue": _catalogue_rows(document_types),
-            "few_shot_examples": list(few_shots or [])[:5],
-            "custom_extraction_fields": custom_keys,
-            "custom_extraction_field_descriptors": descriptors,
-            "canonical_extraction_fields": sorted(CANONICAL_EXTRACTION_FIELD_KEYS),
-        },
-        default=str,
+    custom_keys = _custom_keys_for_dt(document_types, dt_token)
+    system, user_text = build_structure_extract_prompts(
+        ocr=ocr,
+        org=org,
+        document_types=document_types,
+        confirmed_dt=dt_token,
+        few_shots=few_shots,
+        custom_keys=custom_keys,
+        sparse=ocr.sparse,
     )
+
+    images: list[bytes] = []
+    if ocr.sparse and file_path is not None:
+        path = Path(file_path)
+        images = pdf_page_images(path)
 
     raw = await _vision_json(
         system=system,

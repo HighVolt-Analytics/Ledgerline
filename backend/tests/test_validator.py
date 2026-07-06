@@ -29,8 +29,6 @@ from app.services.rule_book.validator import (
 
     vr05_abn,
 
-    vr06_dates,
-
     vr07_currency,
 
     vr08_gst,
@@ -136,34 +134,6 @@ async def test_vr05_foreign_tax_id_requires_checksum_mode(
     assert (await vr05_abn(sample_invoice_data, db_session, tenant_id=TESTING_TENANT_UUID)).passed
 
     get_settings.cache_clear()
-
-
-
-
-
-def test_vr06_fail_missing_due(sample_invoice_data: InvoiceData) -> None:
-
-    sample_invoice_data.due_date = None
-
-    assert not vr06_dates(sample_invoice_data).passed
-
-
-
-
-
-def test_vr06_fail_due_before_invoice(sample_invoice_data: InvoiceData) -> None:
-
-    sample_invoice_data.due_date = sample_invoice_data.invoice_date.replace(day=1)
-
-    assert not vr06_dates(sample_invoice_data).passed
-
-
-
-
-
-def test_vr06_pass(sample_invoice_data: InvoiceData) -> None:
-
-    assert vr06_dates(sample_invoice_data).passed
 
 
 
@@ -530,7 +500,6 @@ async def test_all_pass(db_session: AsyncSession, sample_invoice_data: InvoiceDa
         "VR02",
         "VR03",
         "VR05",
-        "VR06",
         "VR07",
         "VR08",
         "VR01",

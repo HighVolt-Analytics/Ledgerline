@@ -187,7 +187,7 @@ async def test_approve_requires_compulsory_fields_when_configured(
         shortTitle="Direct",
         klass="Transactional",
         posting="Yes",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Expenses Management",
         extractionFields=["vendor", "invoice_no", "total"],
         requiredFields=["vendor", "invoice_no", "total"],

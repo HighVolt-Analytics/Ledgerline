@@ -36,3 +36,27 @@ def test_sanitize_removes_summary_rows() -> None:
     cleaned = sanitize_line_items(items)
     assert len(cleaned) == 1
     assert cleaned[0].description == "SEO Services"
+
+
+def test_sanitize_removes_phone_fragment_rows() -> None:
+    items = [
+        ParsedLineItem(description="Tel No:+91", qty=Decimal("22"), unit_price=Decimal("2889"), amount=Decimal("6699")),
+        ParsedLineItem(description="TAMOXILON 20", qty=Decimal("1"), unit_price=Decimal("1.60"), amount=Decimal("16000")),
+    ]
+    cleaned = sanitize_line_items(items)
+    assert len(cleaned) == 1
+    assert cleaned[0].description == "TAMOXILON 20"
+
+
+def test_sanitize_removes_vendor_and_so_reference_duplicates() -> None:
+    items = [
+        ParsedLineItem(description="High Volt Analytics Pty Ltd", qty=Decimal("1"), amount=Decimal("100")),
+        ParsedLineItem(description="Widget", qty=Decimal("2"), unit_price=Decimal("50"), amount=Decimal("100")),
+    ]
+    cleaned = sanitize_line_items(
+        items,
+        vendor="High Volt Analytics Pty Ltd",
+        so_reference="SO-9001",
+    )
+    assert len(cleaned) == 1
+    assert cleaned[0].description == "Widget"

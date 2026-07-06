@@ -35,12 +35,15 @@ const COLUMN_STAGE: Record<UploadListColumnId, MatrixStage> = {
 
 const PIPELINE_ACTIVE = new Set<string>(PIPELINE_STATUSES);
 
+const SETTLED_STATUSES = new Set(["processed", "exception", "rejected", "duplicate_skipped"]);
+
 export function isInvoicePipelineActive(
   inv: Pick<Invoice, "status" | "id">,
   processingIds?: ReadonlySet<number>
 ): boolean {
-  if (processingIds?.has(inv.id)) return true;
-  return PIPELINE_ACTIVE.has(inv.status);
+  if (PIPELINE_ACTIVE.has(inv.status)) return true;
+  if (processingIds?.has(inv.id) && !SETTLED_STATUSES.has(inv.status)) return true;
+  return false;
 }
 
 function requiredStageComplete(inv: Invoice, column: UploadListColumnId): boolean {

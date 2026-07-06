@@ -32,7 +32,7 @@ def _dt_definition(**kwargs) -> DocumentTypeDefinition:
         shortTitle="Test",
         klass="Transactional",
         posting="Yes",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Purchase Management",
         requiredFields=["vendor", "total", "gst"],
         extractionFields=["vendor", "total", "gst"],

@@ -14,7 +14,7 @@ function dt(partial: Partial<DocumentTypeDefinition>): DocumentTypeDefinition {
     shortTitle: "Test",
     klass: "Transactional",
     posting: "Yes",
-    oneLine: "test",
+    recognitionMode: "signals", recognitionSignals: ["heading_invoice"], llmPrompt: "",
     routeTarget: "Purchase Management",
     enabled: true,
     playbookProfile: "po_goods",

@@ -317,26 +317,39 @@ def vault_csv_link(invoice_id: int | None, *, label: str = "View in Vault") -> s
     return excel_hyperlink(vault_view_path(invoice_id), label)
 
 
-def format_linked_docs_export(
+@dataclass(frozen=True)
+class LinkedDocExportEntry:
+    invoice_id: int
+    document_type_code: str
+    document_ref: str | None
+    invoice_no: str | None = None
+
+
+def collect_linked_doc_entries(
     anchor_invoice_id: int,
     linked: DossierLinkedDocumentsResponse,
-) -> str:
-    """
-    Excel-friendly linked dossier documents (bundle, invoice_no, manual).
-
-    One clickable link per document; multiple links stack on separate lines in the cell.
-    """
-    link_entries: list[tuple[str, str]] = []
+) -> list[LinkedDocExportEntry]:
+    """Linked dossier documents for export (bundle, invoice_no, manual)."""
+    entries: list[LinkedDocExportEntry] = []
     seen: set[int] = {anchor_invoice_id}
 
-    def add_entry(inv_id: int, dt_code: str, doc_ref: str | None) -> None:
+    def add_entry(
+        inv_id: int,
+        dt_code: str,
+        doc_ref: str | None,
+        invoice_no: str | None = None,
+    ) -> None:
         if inv_id in seen:
             return
         seen.add(inv_id)
-        code = (dt_code or "").strip() or "?"
-        ref = (doc_ref or "").strip()
-        label = f"{code}:{ref}" if ref else code
-        link_entries.append((vault_view_path(inv_id), label))
+        entries.append(
+            LinkedDocExportEntry(
+                invoice_id=inv_id,
+                document_type_code=(dt_code or "").strip() or "?",
+                document_ref=(doc_ref or "").strip() or None,
+                invoice_no=(invoice_no or "").strip() or None,
+            )
+        )
 
     for doc in linked.documents:
         if doc.is_anchor:
@@ -346,14 +359,71 @@ def format_linked_docs_export(
             add_entry(ml.invoice_id, ml.document_type_code, ml.document_ref)
             continue
         if doc.link_kind == "manual" and doc.invoice_id is not None:
-            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref)
+            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref, doc.invoice_no)
             continue
         if doc.link_kind == "invoice_no" and doc.invoice_id is not None:
-            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref)
+            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref, doc.invoice_no)
             continue
         if doc.present and doc.invoice_id is not None:
-            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref)
+            add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref, doc.invoice_no)
 
+    return entries
+
+
+def _audit_export_label(entry: LinkedDocExportEntry) -> str:
+    code = entry.document_type_code
+    ref = (entry.document_ref or "").strip()
+    return f"{code}:{ref}" if ref else code
+
+
+def _bundle_export_label(entry: LinkedDocExportEntry) -> str:
+    ref = (entry.document_ref or "").strip()
+    if ref:
+        return ref
+    inv_no = (entry.invoice_no or "").strip()
+    if inv_no:
+        return inv_no
+    return f"DOC-{entry.invoice_id}"
+
+
+def linked_docs_by_dt_code(
+    anchor_invoice_id: int,
+    linked: DossierLinkedDocumentsResponse,
+    *,
+    label_fn: str = "bundle",
+    invoice_dt_code_by_id: dict[int, str] | None = None,
+) -> dict[str, str]:
+    """Group linked documents by DT code with Excel hyperlink cells per column."""
+    pick_label = _bundle_export_label if label_fn == "bundle" else _audit_export_label
+    by_dt: dict[str, list[tuple[str, str]]] = {}
+    for entry in collect_linked_doc_entries(anchor_invoice_id, linked):
+        code = entry.document_type_code.upper()
+        if invoice_dt_code_by_id:
+            actual = (invoice_dt_code_by_id.get(entry.invoice_id) or "").strip().upper()
+            if actual:
+                code = actual
+        bucket = by_dt.setdefault(code, [])
+        bucket.append((vault_view_path(entry.invoice_id), pick_label(entry)))
+    return {
+        code: excel_hyperlinks_joined(links)
+        for code, links in by_dt.items()
+        if links
+    }
+
+
+def format_linked_docs_export(
+    anchor_invoice_id: int,
+    linked: DossierLinkedDocumentsResponse,
+) -> str:
+    """
+    Excel-friendly linked dossier documents (bundle, invoice_no, manual).
+
+    One clickable link per document; multiple links stack on separate lines in the cell.
+    """
+    link_entries = [
+        (vault_view_path(entry.invoice_id), _audit_export_label(entry))
+        for entry in collect_linked_doc_entries(anchor_invoice_id, linked)
+    ]
     return excel_hyperlinks_joined(link_entries)
 
 
