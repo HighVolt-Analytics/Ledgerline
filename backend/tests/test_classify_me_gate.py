@@ -29,7 +29,7 @@ def _dt03() -> DocumentTypeDefinition:
             "shortTitle": "Tax Inv",
             "klass": "Transactional",
             "posting": "Yes",
-            "oneLine": "Tax invoice",
+            "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "Tax invoice",
             "routeTarget": "Purchase Management",
             "enabled": True,
             "requiredFields": ["vendor", "invoice_no", "total"],
@@ -269,7 +269,7 @@ def _custom_grn_dt() -> DocumentTypeDefinition:
             "shortTitle": "GRN",
             "klass": "Non-transactional",
             "posting": "No",
-            "oneLine": "GRN only",
+            "recognition_mode": "signals", "recognition_signals": ["heading_grn"], "llm_prompt": "GRN only",
             "routeTarget": "Vault",
             "enabled": True,
             "minRouteConfidence": 0.75,
@@ -401,17 +401,18 @@ async def test_gemini_ocr_read_does_not_classify(
     async def _fake_generate(*, system: str, user_parts, timeout_seconds: int):
         assert "classify" not in system.lower()
         assert "suggested_dt" not in system
+        assert "12000" in system
         return {
             "document_heading": "Tax Invoice",
             "text_excerpt": "Tax Invoice from Acme",
         }
 
     monkeypatch.setattr(
-        "app.services.gemini_vision_client._generate_json",
+        "app.services.extraction.gemini_vision_client._generate_json",
         _fake_generate,
     )
     monkeypatch.setattr(
-        "app.services.gemini_vision_client.pdf_page_images",
+        "app.services.extraction.gemini_vision_client.pdf_page_images",
         lambda *_args, **_kwargs: [b"fake-png"],
     )
 

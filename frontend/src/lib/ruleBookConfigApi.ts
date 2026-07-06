@@ -35,6 +35,7 @@ import {
 } from "@/lib/documentCompulsoryFields";
 import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { normalizeDtCodeList } from "@/lib/documentBundleConfig";
+import { hydrateRecognitionFromClassifier } from "@/lib/documentTypeRecognition";
 import {
   mergeConfigurableRules,
   normalizeValidationRules,
@@ -466,18 +467,34 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     String(raw.playbook_profile ?? raw.playbookProfile ?? playbookProfile),
     String(raw.posting ?? "No")
   );
-  return {
+  return hydrateRecognitionFromClassifier({
     code: String(raw.code),
     title: String(raw.title),
     shortTitle: String(raw.short_title ?? raw.shortTitle ?? ""),
     klass,
     posting,
-    oneLine: String(raw.one_line ?? raw.oneLine ?? ""),
-    llmHint: String(raw.llm_hint ?? raw.llmHint ?? ""),
+    recognitionMode:
+      String(raw.recognition_mode ?? raw.recognitionMode ?? "signals").toLowerCase() === "prompt"
+        ? "prompt"
+        : "signals",
+    recognitionSignals: (() => {
+      const rawSignals = raw.recognition_signals ?? raw.recognitionSignals;
+      return Array.isArray(rawSignals)
+        ? rawSignals.map((item: unknown) => String(item))
+        : [];
+    })(),
+    llmPrompt: String(
+      raw.llm_prompt ??
+        raw.llmPrompt ??
+        raw.llm_hint ??
+        raw.llmHint ??
+        raw.one_line ??
+        raw.oneLine ??
+        ""
+    ),
     routeTarget: String(raw.route_target ?? raw.routeTarget ?? ROUTE_TARGETS[3]),
     enabled: raw.enabled !== false,
     classifier: mapClassifier(raw.classifier as Record<string, unknown> | undefined),
-    classifierCustomized: Boolean(raw.classifier_customized ?? raw.classifierCustomized),
     requiredFields,
     absentFields: (raw.absent_fields ?? raw.absentFields ?? []) as string[],
     minRouteConfidence: Number(raw.min_route_confidence ?? raw.minRouteConfidence ?? 0.65),
@@ -517,7 +534,7 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     postTo: mapDocumentTypePostTo(
       (raw.post_to ?? raw.postTo) as Record<string, unknown> | undefined
     ),
-  };
+  });
 }
 
 function documentTypeToApi(
@@ -535,8 +552,9 @@ function documentTypeToApi(
     short_title: docType.shortTitle,
     klass: identity.klass,
     posting: identity.posting,
-    one_line: docType.oneLine,
-    llm_hint: docType.llmHint ?? "",
+    recognition_mode: docType.recognitionMode,
+    recognition_signals: docType.recognitionSignals,
+    llm_prompt: docType.llmPrompt,
     route_target: docType.routeTarget,
     enabled: docType.enabled,
     classifier: {
@@ -547,7 +565,6 @@ function documentTypeToApi(
         docType.classifier.root as unknown as RuleConditionGroup
       ),
     },
-    ...(docType.classifierCustomized ? { classifier_customized: true } : {}),
     required_fields: requiredFields,
     absent_fields: docType.absentFields,
     ...(docType.minRouteConfidence != null

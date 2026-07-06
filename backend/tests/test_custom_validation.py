@@ -84,7 +84,7 @@ async def test_universal_duplicate_always_runs(db_session: AsyncSession) -> None
                     "shortTitle": "Direct",
                     "klass": "Transactional",
                     "posting": "Yes",
-                    "oneLine": "Test",
+                    "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "",
                     "validationProfile": "direct_expense",
                     "validationRules": [
                         ValidationRuleConfig(code="VR03", enabled=True, severity="block"),

@@ -114,7 +114,6 @@ const VALIDATION_RULE_FIELDS: Record<string, readonly string[]> = {
   VR01: ["subtotal", "gst", "total"],
   VR02: ["invoice_no"],
   VR05: ["abn"],
-  VR06: ["invoice_date", "due_date"],
   VR07: ["currency"],
   VR08: ["subtotal", "gst", "gst_rate", "total"],
   VR09: ["line_items"],

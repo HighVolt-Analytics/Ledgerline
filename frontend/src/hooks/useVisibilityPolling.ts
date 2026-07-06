@@ -17,21 +17,27 @@ export function useVisibilityPolling(
     let cancelled = false;
     let timer: number | undefined;
 
+    const tick = () => {
+      if (cancelled) return;
+      if (document.visibilityState === "visible") {
+        void saved.current();
+      }
+    };
+
     const schedule = () => {
+      if (cancelled) return;
       const waitMs = Math.max(1000, intervalRef.current);
       timer = window.setTimeout(() => {
-        if (cancelled) return;
-        if (document.visibilityState === "visible") {
-          void saved.current();
-        }
+        tick();
         schedule();
       }, waitMs);
     };
 
+    tick();
     schedule();
     return () => {
       cancelled = true;
       if (timer != null) window.clearTimeout(timer);
     };
-  }, [enabled]);
+  }, [enabled, intervalMs]);
 }

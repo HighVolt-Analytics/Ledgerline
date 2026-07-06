@@ -37,7 +37,7 @@ export function InvoiceProcessingOverridesSection({
         <h3 className="text-sm font-semibold text-foreground">Processing overrides</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           {editable
-            ? "Unchecked steps are skipped on the next reprocess or approve. Save changes or use Reprocess / Approve to apply."
+            ? "Unchecked steps are skipped on the next reprocess or approve. Save changes or use Approve / Reprocess to apply."
             : "Steps skipped on reprocess are shown below. Open this tab or click Edit to change them."}
         </p>
       </div>

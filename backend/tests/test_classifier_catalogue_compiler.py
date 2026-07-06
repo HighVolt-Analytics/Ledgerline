@@ -1,12 +1,13 @@
-"""Tests for classifier catalogue compiler."""
+"""Tests for classifier catalogue compiler and LLM catalogue rows."""
 
 from __future__ import annotations
 
-from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
+from app.schemas.document_type import DocumentTypeDefinition
 from app.services.classification.classifier_catalogue_compiler import (
     compile_catalogue_recognition,
     compile_recognition_rules_text,
 )
+from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
 
 
 def _custom_dt() -> DocumentTypeDefinition:
@@ -17,8 +18,9 @@ def _custom_dt() -> DocumentTypeDefinition:
             "shortTitle": "GRN",
             "klass": "Non-transactional",
             "posting": "No",
-            "oneLine": "Warehouse goods received note",
-            "llmHint": "Often handwritten",
+            "recognition_mode": "signals",
+            "recognition_signals": ["heading_grn", "text_grn"],
+            "llm_prompt": "Often handwritten warehouse goods received note",
             "routeTarget": "Vault",
             "enabled": True,
             "classifier": {
@@ -55,8 +57,35 @@ def test_compile_recognition_rules_text() -> None:
     assert "GRN / delivery heading" in text
 
 
-def test_compile_catalogue_recognition_merges_hint() -> None:
+def test_compile_catalogue_recognition_merges_prompt() -> None:
     defn = _custom_dt()
     merged = compile_catalogue_recognition(defn)
     assert "Match rules" in merged
     assert "handwritten" in merged.lower()
+
+
+def test_build_llm_catalogue_rows_signals_mode() -> None:
+    defn = _custom_dt()
+    rows = build_llm_catalogue_rows([defn])
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["code"] == "DT-99"
+    assert row["recognition_mode"] == "signals"
+    assert "recognition_rules" in row
+    assert "Match rules" in row["recognition_rules"]
+    assert "one_line" not in row
+    assert "llm_hint" not in row
+
+
+def test_build_llm_catalogue_rows_prompt_mode() -> None:
+    defn = _custom_dt().model_copy(
+        update={
+            "recognition_mode": "prompt",
+            "recognition_signals": [],
+            "llm_prompt": "Custom permit letter from customs broker",
+        }
+    )
+    rows = build_llm_catalogue_rows([defn])
+    assert rows[0]["recognition_mode"] == "prompt"
+    assert rows[0]["llm_prompt"] == "Custom permit letter from customs broker"
+    assert "recognition_signals" not in rows[0]

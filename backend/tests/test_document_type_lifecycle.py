@@ -15,7 +15,7 @@ def _type(code: str, **kwargs) -> DocumentTypeDefinition:
         shortTitle=code,
         klass="Transactional",
         posting="Yes",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Purchase Management",
         classifier=DocumentTypeClassifier(enabled=False, priority=100, confidence=0.85),
     )

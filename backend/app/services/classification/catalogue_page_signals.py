@@ -44,7 +44,7 @@ def build_catalogue_page_matchers(
         if not defn.enabled:
             continue
         phrases: list[str] = []
-        for raw in (defn.short_title, defn.title, defn.one_line):
+        for raw in (defn.short_title, defn.title, defn.llm_prompt):
             token = (raw or "").strip().lower()
             if len(token) >= _MIN_PHRASE_LEN:
                 phrases.append(token)
@@ -118,7 +118,7 @@ def heading_kind_from_token(
                 continue
             if defn.code.strip().upper() != code:
                 continue
-            for label in (defn.title, defn.short_title, defn.one_line):
+            for label in (defn.title, defn.short_title, defn.llm_prompt):
                 kind = infer_page_document_kind(label or "")
                 if kind:
                     return kind

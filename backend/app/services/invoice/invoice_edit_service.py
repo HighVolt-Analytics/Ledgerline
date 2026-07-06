@@ -68,7 +68,11 @@ async def update_invoice_fields(
 
     payload = body.model_dump(exclude_unset=True)
     line_items_payload = payload.pop("line_items", None)
-    overrides_payload = payload.pop("processing_overrides", None)
+    overrides_explicit = "processing_overrides" in body.model_fields_set
+    overrides_payload = (
+        payload.pop("processing_overrides", None) if overrides_explicit else None
+    )
+    overrides_requested = overrides_explicit
     extracted_fields_payload = payload.pop("extracted_fields", None)
     changes: dict[str, dict[str, str | None]] = {}
 
@@ -103,6 +107,12 @@ async def update_invoice_fields(
         await session.flush()
 
         for item in line_items_payload:
+            sub_ledger = item.get("sub_ledger")
+            if isinstance(sub_ledger, str):
+                sub_ledger = sub_ledger.strip() or None
+            gl_source = item.get("gl_mapping_source")
+            if sub_ledger is not None and not gl_source:
+                gl_source = "manual"
             session.add(
                 LineItem(
                     tenant_id=inv.tenant_id,
@@ -112,6 +122,10 @@ async def update_invoice_fields(
                     unit_price=item.get("unit_price"),
                     amount=item.get("amount"),
                     tax_amount=item.get("tax_amount"),
+                    sub_ledger=sub_ledger,
+                    gl_mapping_source=gl_source,
+                    gl_mapping_confidence=item.get("gl_mapping_confidence"),
+                    gl_mapping_reason=item.get("gl_mapping_reason"),
                 )
             )
         changes["line_items"] = {
@@ -119,29 +133,50 @@ async def update_invoice_fields(
             "to": str(len(line_items_payload)),
         }
 
-    if overrides_payload is not None:
-        skip_steps = validate_skip_steps(list(overrides_payload.get("skip_steps") or []))
-        new_raw = serialise_processing_overrides(skip_steps)
-        old_norm = normalise_processing_overrides(inv.processing_overrides)
-        new_norm = normalise_processing_overrides(new_raw)
-        if old_norm.skip_steps != new_norm.skip_steps:
-            inv.processing_overrides = new_raw
-            await session.flush()
-            await log_event(
-                session,
-                "processing_overrides_updated",
-                invoice_id=inv.id,
-                detail={
-                    "from": old_norm.skip_steps,
-                    "to": new_norm.skip_steps,
-                },
-                actor_name=actor_name,
-                actor_email=actor_email,
-            )
-            changes["processing_overrides"] = {
-                "from": ",".join(old_norm.skip_steps) or None,
-                "to": ",".join(new_norm.skip_steps) or None,
-            }
+    if overrides_requested:
+        if overrides_payload is None:
+            old_norm = normalise_processing_overrides(inv.processing_overrides)
+            if old_norm.skip_steps:
+                inv.processing_overrides = None
+                await session.flush()
+                await log_event(
+                    session,
+                    "processing_overrides_updated",
+                    invoice_id=inv.id,
+                    detail={
+                        "from": old_norm.skip_steps,
+                        "to": [],
+                    },
+                    actor_name=actor_name,
+                    actor_email=actor_email,
+                )
+                changes["processing_overrides"] = {
+                    "from": ",".join(old_norm.skip_steps) or None,
+                    "to": None,
+                }
+        else:
+            skip_steps = validate_skip_steps(list(overrides_payload.get("skip_steps") or []))
+            new_raw = serialise_processing_overrides(skip_steps)
+            old_norm = normalise_processing_overrides(inv.processing_overrides)
+            new_norm = normalise_processing_overrides(new_raw)
+            if old_norm.skip_steps != new_norm.skip_steps:
+                inv.processing_overrides = new_raw
+                await session.flush()
+                await log_event(
+                    session,
+                    "processing_overrides_updated",
+                    invoice_id=inv.id,
+                    detail={
+                        "from": old_norm.skip_steps,
+                        "to": new_norm.skip_steps,
+                    },
+                    actor_name=actor_name,
+                    actor_email=actor_email,
+                )
+                changes["processing_overrides"] = {
+                    "from": ",".join(old_norm.skip_steps) or None,
+                    "to": ",".join(new_norm.skip_steps) or None,
+                }
 
     if not changes:
         return False

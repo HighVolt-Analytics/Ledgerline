@@ -125,6 +125,10 @@ class LineItemUpdateRequest(BaseModel):
     unit_price: Decimal | None = None
     amount: Decimal | None = None
     tax_amount: Decimal | None = None
+    sub_ledger: str | None = None
+    gl_mapping_source: str | None = None
+    gl_mapping_confidence: Decimal | None = None
+    gl_mapping_reason: str | None = None
 
 
 class InvoiceUpdateRequest(BaseModel):

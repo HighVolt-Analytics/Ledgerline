@@ -6,20 +6,53 @@ import re
 
 _ABN_ROW = re.compile(r"\babn\b", re.I)
 
+# Extracted-field keys whose values must not appear as product line descriptions.
+HEADER_DEDUP_EXTRACTED_FIELD_KEYS: tuple[str, ...] = (
+    "seller_name",
+    "buyer_name",
+    "seller_tax_id",
+    "buyer_tax_id",
+    "seller_abn",
+    "buyer_abn",
+    "billing_address",
+    "document_heading",
+    "so_reference",
+    "cost_centre",
+    "consignment_ref",
+    "permit_no",
+    "bank_name",
+    "bank_bsb",
+    "bank_account",
+    "customer",
+    "delivery_date",
+)
+
+# Optional prefix for money columns in OCR line-item rows (shared with frontend invoicePreview.ts).
+OPTIONAL_CURRENCY_MONEY_PREFIX = (
+    r"(?:[$€£¥]|(?:AUD|USD|SGD|NZD|GBP|EUR|CAD|INR|MYR|THB|HKD|JPY|CNY)\s*)?"
+)
+
 # Metadata field labels that must never appear as product line rows.
 _METADATA_LABEL = re.compile(
     r"^(?:"
-    r"customer|ship(?:ped)?\s*(?:to|date|qty|ped)?|delivery\s*date|invoice\s*(?:no|number|#)|"
-    r"po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*reference|"
+    r"customer|ship(?:ped)?\s*(?:to|date|qty|ped)?|delivery\s*date|invoice\s*(?:no|number|#|date)|"
+    r"po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*(?:no|number|reference)?|"
     r"bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number)?|"
     r"payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|"
-    r"phone|tel(?:ephone)?|mobile|email|fax|address|attn|attention"
+    r"consignment|permit|cost\s*cent(?:er|re)|"
+    r"phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention"
     r")\s*:?\s*$",
     re.I,
 )
 
 _TABLE_HEADER = re.compile(
     r"^(?:description|item|product|qty|quantity|unit\s*price|amount|rate|uom|sku)\s*:?\s*$",
+    re.I,
+)
+
+# Phone / fax fragments (e.g. "Tel No:+91" from OCR header bleed into line tables).
+_PHONE_LINE = re.compile(
+    r"^(?:tel(?:ephone)?|phone|mobile|fax)\s*(?:no\.?|number|#)?\s*:?\s*\+?\d",
     re.I,
 )
 
@@ -54,6 +87,8 @@ def is_metadata_line_description(desc: str | None) -> bool:
     if _METADATA_LABEL.match(text):
         return True
     if _TABLE_HEADER.match(text):
+        return True
+    if _PHONE_LINE.match(text):
         return True
     return False
 

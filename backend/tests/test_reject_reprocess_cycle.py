@@ -25,6 +25,7 @@ from app.services.integration.publish_service import (
 from app.services.invoice.invoice_edit_service import invoice_has_manual_field_edits
 from app.services.invoice.invoice_reset import requeue_invoice_for_pipeline
 from app.services.invoice.processing_cycle_service import latest_cycle_reset_log_id_from_logs
+from app.services.invoice.processing_override_catalog import normalise_processing_overrides
 from app.tenant_ids import TESTING_TENANT_UUID
 
 _TID = TESTING_TENANT_UUID
@@ -162,7 +163,7 @@ async def test_prior_manual_edits_ignored_after_requeue(
 
 
 @pytest.mark.asyncio
-async def test_full_requeue_clears_processing_overrides(
+async def test_full_requeue_preserves_processing_overrides(
     db_session: AsyncSession,
 ) -> None:
     inv = Invoice(
@@ -178,7 +179,10 @@ async def test_full_requeue_clears_processing_overrides(
     await requeue_invoice_for_pipeline(db_session, inv, preserve_extracted_fields=False)
     await db_session.flush()
 
-    assert inv.processing_overrides is None
+    assert normalise_processing_overrides(inv.processing_overrides).skip_steps == [
+        "playbook",
+        "validation",
+    ]
     assert inv.status == InvoiceStatus.PENDING
 
 
@@ -283,7 +287,7 @@ async def test_reprocess_from_rejected_restores_vault_and_queues_pending(
     assert res.status_code == 200
     body = res.json()["data"]
     assert body["status"] == "pending"
-    assert not body.get("processing_overrides", {}).get("skip_steps")
+    assert body["processing_overrides"]["skip_steps"] == ["validation"]
     assert body["published_to_ledger"] is False
     assert "invoice" in body["raw_file_path"].replace("\\", "/")
     assert not pdf.is_file()

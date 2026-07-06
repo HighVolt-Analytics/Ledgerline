@@ -60,7 +60,7 @@ def test_resolve_match_mode_from_definition() -> None:
         shortTitle="Services",
         klass="Transactional",
         posting="Yes",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Purchase Management",
         matchPolicy={"mode": "two_way_po_ses"},
     )

@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, get_auth_context, get_db
@@ -14,6 +14,9 @@ from app.schemas.reports_api import (
     ReportsAnalyticsRequest,
     ReportsDocumentsRequest,
     ReportsWorkbookRequest,
+)
+from app.services.reports.documents_bundle_export_service import (
+    build_documents_bundle_export,
 )
 from app.services.reports.reports_service import build_analytics, list_documents
 from app.services.reports.reports_workbook_service import (
@@ -55,6 +58,30 @@ async def reports_documents(
     except ValueError as exc:
         raise http_bad_request(exc) from exc
     return ApiEnvelope(data=rows)
+
+
+@router.get("/documents-bundle/export")
+async def export_documents_bundle_csv(
+    params: Annotated[ReportsDocumentsRequest, Query()],
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> Response:
+    """Download documents bundle matrix CSV for auditors."""
+    try:
+        payload = await build_documents_bundle_export(
+            db,
+            tenant_id=ctx.tenant_id,
+            date_from=params.date_from,
+            date_to=params.date_to,
+        )
+    except ValueError as exc:
+        raise http_bad_request(exc) from exc
+
+    return Response(
+        content=payload.csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{payload.filename}"'},
+    )
 
 
 @router.post("/generate", response_model=ApiEnvelope[dict[str, str]])

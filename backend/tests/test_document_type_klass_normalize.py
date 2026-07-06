@@ -74,7 +74,7 @@ def test_document_type_definition_normalizes_klass_on_validate() -> None:
             "shortTitle": "Legacy",
             "klass": "Supporting",
             "posting": "Maybe",
-            "oneLine": "Test",
+            "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "",
             "playbook_profile": "supporting",
         }
     )
@@ -90,7 +90,7 @@ def test_allows_posting_pipeline_after_klass_collapse() -> None:
             "shortTitle": "Invoice",
             "klass": KLASS_TRANSACTIONAL,
             "posting": "Yes",
-            "oneLine": "Posts",
+            "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "Posts",
             "playbook_profile": "po_goods",
         }
     )
@@ -101,7 +101,7 @@ def test_allows_posting_pipeline_after_klass_collapse() -> None:
             "shortTitle": "PO",
             "klass": KLASS_NON_TRANSACTIONAL,
             "posting": "No",
-            "oneLine": "Supporting",
+            "recognition_mode": "signals", "recognition_signals": ["heading_grn"], "llm_prompt": "Supporting",
             "playbook_profile": "supporting",
             "purchase_bundle_role": "po",
         }
@@ -128,7 +128,7 @@ def test_gl_posting_not_applicable_for_non_trans_klass() -> None:
             "shortTitle": "PO",
             "klass": KLASS_NON_TRANSACTIONAL,
             "posting": "No",
-            "oneLine": "Supporting",
+            "recognition_mode": "signals", "recognition_signals": ["heading_grn"], "llm_prompt": "Supporting",
             "playbook_profile": "supporting",
         }
     )

@@ -43,6 +43,7 @@ from app.services.invoice.invoice_evaluation_service import (
     apply_invoice_evaluation,
     load_config_for_tenant,
 )
+from app.services.invoice.line_item_gl_service import build_line_item_responses
 from app.schemas.journal import JournalEntryResponse
 from app.schemas.line_item import LineItemResponse
 from app.schemas.purchase import PurchaseDossierResponse
@@ -92,6 +93,16 @@ from app.services.invoice.invoice_response_service import (
 )
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
+
+
+async def _line_items_response(
+    db: AsyncSession,
+    inv: Invoice,
+    *,
+    tenant_id,
+) -> list[LineItemResponse]:
+    config = await load_config_for_tenant(db, tenant_id)
+    return build_line_item_responses(inv, config)
 
 
 async def _get_invoice_for_tenant(
@@ -296,7 +307,7 @@ async def get_invoice(
     return ApiEnvelope(
         data=InvoiceWithDetails(
             **base.model_dump(),
-            line_items=[LineItemResponse.model_validate(li) for li in inv.line_items],
+            line_items=await _line_items_response(db, inv, tenant_id=ctx.tenant_id),
             journal_entries=[
                 JournalEntryResponse.model_validate(je) for je in inv.journal_entries
             ],
@@ -353,7 +364,7 @@ async def patch_invoice(
     return ApiEnvelope(
         data=InvoiceWithDetails(
             **base.model_dump(),
-            line_items=[LineItemResponse.model_validate(li) for li in inv.line_items],
+            line_items=await _line_items_response(db, inv, tenant_id=ctx.tenant_id),
             journal_entries=[
                 JournalEntryResponse.model_validate(je) for je in inv.journal_entries
             ],
@@ -395,13 +406,15 @@ async def get_line_items(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[LineItemResponse]]:
-    await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
-    rows = (
+    inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
+    inv = (
         await db.execute(
-            select(LineItem).where(*line_items_for_invoice(ctx.tenant_id, invoice_id))
+            select(Invoice)
+            .where(Invoice.id == inv.id, Invoice.tenant_id == ctx.tenant_id)
+            .options(selectinload(Invoice.line_items))
         )
-    ).scalars().all()
-    return ApiEnvelope(data=[LineItemResponse.model_validate(r) for r in rows])
+    ).scalar_one()
+    return ApiEnvelope(data=await _line_items_response(db, inv, tenant_id=ctx.tenant_id))
 
 
 @router.get(
@@ -797,7 +810,12 @@ async def resolve_classification(
     )
 
     if body.reprocess:
-        await reset_invoice_for_reprocess(db, inv, preserve_document_type=True)
+        await reset_invoice_for_reprocess(
+            db,
+            inv,
+            preserve_document_type=True,
+            clear_overrides=False,
+        )
         await db.commit()
         background_tasks.add_task(
             process_invoice_background,

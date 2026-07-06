@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
 import {
-  applyTemplateSignalsToClassifier,
   getDocumentTypeTemplate,
   routeConfidencePreset,
   ROUTE_CONFIDENCE_VALUES,
@@ -12,10 +11,8 @@ import {
   type RouteConfidencePreset,
 } from "@/lib/documentTypeTemplates";
 import { allRecognitionSignalOptions } from "@/lib/documentTypeTemplateMeta";
-import {
-  parseSignalsFromClassifier,
-  type RecognitionSignalId,
-} from "@/lib/documentClassifierBuilder";
+import type { RecognitionSignalId } from "@/lib/documentClassifierBuilder";
+import { applyRecognitionSignalIds } from "@/lib/documentTypeRecognition";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
 type SimpleClassifierSectionProps = {
@@ -45,8 +42,8 @@ export function SimpleClassifierSection({
   const allowedIds = useMemo(() => signalOptions.map((s) => s.id), [signalOptions]);
 
   const selectedSignals = useMemo(
-    () => parseSignalsFromClassifier(draft.classifier.root, allowedIds),
-    [draft.classifier.root, allowedIds]
+    () => draft.recognitionSignals as RecognitionSignalId[],
+    [draft.recognitionSignals]
   );
 
   const confidencePreset = routeConfidencePreset(draft.minRouteConfidence);
@@ -56,11 +53,15 @@ export function SimpleClassifierSection({
     if (checked) nextSet.add(signalId);
     else nextSet.delete(signalId);
     const nextIds = allowedIds.filter((id) => nextSet.has(id));
-    onChange({
-      ...draft,
-      classifierCustomized: false,
-      classifier: applyTemplateSignalsToClassifier(template, nextIds),
-    });
+    onChange(
+      applyRecognitionSignalIds(
+        {
+          ...draft,
+          recognitionMode: "signals",
+        },
+        nextIds
+      )
+    );
   };
 
   const setConfidencePreset = (preset: RouteConfidencePreset) => {

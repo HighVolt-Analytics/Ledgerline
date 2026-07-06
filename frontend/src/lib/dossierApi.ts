@@ -148,6 +148,9 @@ export type DossierSummaryApi = {
   owner: string;
   outcome: string;
   outcome_banner: string;
+  blocker_stage_id?: string | null;
+  blocker_reason?: string | null;
+  blocker_remediation?: string | null;
   pipeline: DossierPipelineStepApi[];
   linked_documents: DossierLinkedDocumentsApi;
   approval_chain: DossierApprovalChainApi;
@@ -322,6 +325,9 @@ export function mapDossierFromApi(row: DossierSummaryApi): DossierSummary {
     owner: row.owner,
     outcome: row.outcome as DossierOutcome,
     outcomeBanner: row.outcome_banner,
+    blockerStageId: (row.blocker_stage_id as DossierPipelineStageId | undefined) ?? null,
+    blockerReason: row.blocker_reason ?? null,
+    blockerRemediation: row.blocker_remediation ?? null,
     pipeline: normalizePipeline(row.pipeline.map(mapPipelineStep)),
     linkedDocuments: mapLinkedDocuments(row.linked_documents),
     approvalChain: mapApprovalChain(row.approval_chain),

@@ -14,6 +14,7 @@ import {
 export type ReportDownloadKind =
   | "workbook"
   | "documents"
+  | "documents-bundle"
   | "gl"
   | "vendors"
   | "audit"
@@ -22,6 +23,7 @@ export type ReportDownloadKind =
 const TYPE_OPTIONS: SelectOption[] = [
   { value: "workbook", label: "Excel workbook" },
   { value: "documents", label: "Document register (CSV)" },
+  { value: "documents-bundle", label: "Documents bundle (CSV)" },
   { value: "gl", label: "GL account summary (CSV)" },
   { value: "vendors", label: "Top vendors (CSV)" },
   { value: "audit", label: "Audit trail (CSV)" },
@@ -75,6 +77,11 @@ export function ReportDownloadMenu({
           }
           downloadDocumentRegisterCsv(rows, month);
           onToast("Document register downloaded.");
+          break;
+        }
+        case "documents-bundle": {
+          await api.downloadDocumentsBundleCsv(filter.dateFrom, filter.dateTo);
+          onToast("Documents bundle downloaded.");
           break;
         }
         case "gl": {

@@ -352,12 +352,31 @@ def build_classifier_context_from_ocr(
     return build_document_classifier_context(invoice=invoice, parsed=parsed)
 
 
+def _classifier_customized(defn: DocumentTypeDefinition) -> bool:
+    """True when match rules differ from recognition-derived defaults."""
+    mode = (defn.recognition_mode or "signals").strip().lower()
+    if mode == "prompt":
+        return bool((defn.llm_prompt or "").strip())
+
+    from app.services.classification.document_type_recognition_migration import (
+        sync_classifier_from_recognition,
+    )
+
+    synced = sync_classifier_from_recognition(defn)
+    return defn.classifier.model_dump() != synced.classifier.model_dump()
+
+
 def is_user_defined_document_type(defn: DocumentTypeDefinition) -> bool:
     """Org custom type vs shipped matrix template."""
-    if defn.classifier_customized:
+    from app.services.classification.document_type_playbook_service import is_dt_code
+
+    if _classifier_customized(defn):
         return True
     token = (defn.matrix_template_code or "").strip()
-    return not token
+    if token:
+        return False
+    code = (defn.code or "").strip().upper()
+    return not is_dt_code(code)
 
 
 def classifier_rules_match_ocr(

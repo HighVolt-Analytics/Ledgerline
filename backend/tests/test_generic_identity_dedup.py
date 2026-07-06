@@ -93,7 +93,7 @@ def test_catalogue_two_document_types_split_two_page_pdf() -> None:
                 "shortTitle": "Alpha sheet",
                 "klass": "Transactional",
                 "posting": "Yes",
-                "oneLine": "Alpha logistics",
+                "recognition_mode": "prompt", "recognition_signals": [], "llm_prompt": "Alpha logistics",
                 "routeTarget": "Vault",
                 "enabled": True,
             }
@@ -105,7 +105,7 @@ def test_catalogue_two_document_types_split_two_page_pdf() -> None:
                 "shortTitle": "Beta sheet",
                 "klass": "Transactional",
                 "posting": "Yes",
-                "oneLine": "Beta customs",
+                "recognition_mode": "prompt", "recognition_signals": [], "llm_prompt": "Beta customs",
                 "routeTarget": "Vault",
                 "enabled": True,
             }
@@ -130,7 +130,7 @@ def test_secondary_pass_splits_catalogue_only_page_kind() -> None:
                 "shortTitle": "Release note",
                 "klass": "Transactional",
                 "posting": "No",
-                "oneLine": "Internal warehouse release",
+                "recognition_mode": "prompt", "recognition_signals": [], "llm_prompt": "Internal warehouse release",
                 "routeTarget": "Vault",
                 "enabled": True,
                 "classifier": {
@@ -172,7 +172,7 @@ def test_catalogue_dt_token_maps_to_heading_kind() -> None:
                 "shortTitle": "Packing List",
                 "klass": "Transactional",
                 "posting": "No",
-                "oneLine": "Packing list for shipment",
+                "recognition_mode": "prompt", "recognition_signals": [], "llm_prompt": "Packing list for shipment",
                 "routeTarget": "Vault",
                 "enabled": True,
             }

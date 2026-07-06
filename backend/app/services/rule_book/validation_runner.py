@@ -33,7 +33,6 @@ from app.services.rule_book.validator import (
     vr03_po_document,
     vr03_required,
     vr05_abn,
-    vr06_dates,
     vr07_currency,
     vr08_gst,
     vr02_unique,
@@ -207,14 +206,6 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
             tenant_id=ctx.tenant_id,
             sender=ctx.sender,
         )
-    if code == "VR06":
-        definition = _definition_for_context(ctx)
-        absent = frozenset(
-            str(f).strip().lower()
-            for f in (definition.absent_fields if definition else [])
-            if str(f).strip()
-        )
-        return vr06_dates(data, absent_fields=absent)
     if code == "VR07":
         from app.models.tenant import Tenant
         from app.tenant_settings import tenant_currency

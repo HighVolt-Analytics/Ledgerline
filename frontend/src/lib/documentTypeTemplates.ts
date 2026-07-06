@@ -38,7 +38,7 @@ import {
   ensureExtractionSuperset,
 } from "@/lib/documentCompulsoryFields";
 import { matchRulesFormForTemplate } from "@/lib/shippedTemplateMatchRules";
-import { initializeCustomDocumentTypeRecognition } from "@/lib/documentUserRecognition";
+import { syncClassifierFromRecognition } from "@/lib/documentTypeRecognition";
 
 export type { RouteConfidencePreset, RecognitionSignalOption };
 
@@ -54,7 +54,6 @@ type ShippedCatalogRow = {
   shortTitle: string;
   klass: DocumentTypeClass;
   posting: string;
-  oneLine: string;
   purchaseBundleRole?: string;
   salesBundleRole?: string;
   bundleMandatory?: string[];
@@ -147,7 +146,7 @@ function buildTemplateFromShippedRow(row: ShippedCatalogRow): DocumentTypeTempla
   return {
     id: code as DocumentTypeTemplateId,
     label: row.title || row.shortTitle,
-    description: row.oneLine,
+    description: row.title || row.shortTitle,
     shippedCode: code,
     routeTarget: routeTargetForDocumentTypeCode(code),
     klass: row.klass,
@@ -175,7 +174,7 @@ export const DOCUMENT_TYPE_TEMPLATES: DocumentTypeTemplate[] = [
   {
     id: "custom",
     label: "Custom type",
-    description: "Blank type with match / exclude rules and processing sections.",
+    description: "Blank type with recognition signals or prompt and processing sections.",
     shippedCode: "",
     routeTarget: "Vault",
     klass: "Non-transactional",
@@ -200,22 +199,6 @@ export function getDocumentTypeTemplate(id: DocumentTypeTemplateId): DocumentTyp
 
 function shippedRowForCode(code: string) {
   return SHIPPED_ROWS.find((row) => row.code.toUpperCase() === code.toUpperCase());
-}
-
-/** Shipped templates use the same match/exclude rules editor as custom types. */
-function matchRulesClassifierFromTemplate(
-  template: DocumentTypeTemplate
-): DocumentTypeClassifier {
-  const preset = template.shippedCode
-    ? CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]
-    : undefined;
-  const form = matchRulesFormForTemplate(template);
-  return {
-    enabled: true,
-    priority: preset?.priority ?? template.classifierPriority,
-    confidence: preset?.confidence ?? 0.85,
-    root: compileMatchRulesToClassifier(form),
-  };
 }
 
 /** Simple classifier presets derived from shipped template signals (for JSON seed files). */
@@ -296,10 +279,16 @@ export function documentTypeFromTemplate(
   const defaults = template.shippedCode ? defaultsRowForCode(template.shippedCode) : {};
   const matchForm =
     templateId === "custom" ? null : matchRulesFormForTemplate(template);
+  const defaultSignals = [...template.defaultSignalIds];
   const classifier =
     templateId === "custom"
       ? base.classifier
-      : matchRulesClassifierFromTemplate(template);
+      : buildClassifierFromSignals(defaultSignals, template.classifierLayout, {
+          priority: CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]?.priority ??
+            template.classifierPriority,
+          confidence: CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]?.confidence ?? 0.85,
+          enabled: defaultSignals.length > 0,
+        });
   const code = orgCodeForNewType(existing);
   const matrixTemplateCode =
     templateId !== "custom" && template.shippedCode ? template.shippedCode.toUpperCase() : "";
@@ -318,16 +307,14 @@ export function documentTypeFromTemplate(
       ? ["document_heading", "document_text"]
       : [...template.defaultExtractionFields];
   const extractionFields = ensureExtractionSuperset(requiredFields, baseExtraction);
-  const oneLine =
-    shipped?.oneLine ?? (templateId === "custom" ? "" : template.description);
-
   const payload: DocumentTypeDefinition = {
     ...base,
     code,
     title: shipped?.title ?? (templateId === "custom" ? "" : template.label),
     shortTitle: shipped?.shortTitle ?? (templateId === "custom" ? "" : template.label),
-    oneLine,
-    llmHint: templateId === "custom" ? "" : oneLine,
+    recognitionMode: "signals",
+    recognitionSignals: templateId === "custom" ? [] : [...defaultSignals],
+    llmPrompt: "",
     klass: template.klass,
     posting: template.posting,
     routeTarget: template.routeTarget,
@@ -346,7 +333,6 @@ export function documentTypeFromTemplate(
         ? 0.75
         : defaults.min_route_confidence ?? ROUTE_CONFIDENCE_VALUES[template.defaultRouteConfidence],
     classifier,
-    classifierCustomized: false,
     matrixTemplateCode,
     enabled: true,
     bundleMandatory: (() => {
@@ -368,14 +354,13 @@ export function documentTypeFromTemplate(
   };
 
   if (templateId === "custom") {
-    return initializeCustomDocumentTypeRecognition(payload);
+    return syncClassifierFromRecognition(payload);
   }
 
-  return {
+  return syncClassifierFromRecognition({
     ...payload,
     enabled: true,
-    classifierCustomized: false,
-  };
+  });
 }
 
 export function applyTemplateSignalsToClassifier(

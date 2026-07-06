@@ -53,7 +53,7 @@ async def test_analyze_samples_with_pdf(
             "shortTitle": "PO goods",
             "klass": "Transactional",
             "posting": "Yes",
-            "oneLine": "Test",
+            "recognition_mode": "signals", "recognition_signals": ["heading_invoice"], "llm_prompt": "",
             "routeTarget": "Vault",
             "enabled": True,
             "classifier": {

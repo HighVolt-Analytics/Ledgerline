@@ -33,7 +33,7 @@ def _contract_type() -> DocumentTypeDefinition:
         shortTitle="Contract",
         klass="Non-transactional",
         posting="No",
-        oneLine="Supporting contract",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget=ROUTE_VAULT,
         validation_profile="non_actionable",
         playbook_profile="supporting",
@@ -65,7 +65,7 @@ def test_vendor_registration_required_for_purchase_when_vr12_on() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        oneLine="Tax invoice",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="Tax invoice",
         routeTarget=ROUTE_PURCHASE,
         validation_rules=[
             ValidationRuleConfig(code="VR12", enabled=True, severity="block"),
@@ -91,7 +91,7 @@ def test_vendor_registration_required_when_non_actionable_profile_but_vr12_expli
         shortTitle="GRN",
         klass="Non-transactional",
         posting="Yes",
-        oneLine="Goods receipt note",
+        recognition_mode="signals", recognition_signals=["heading_grn"], llm_prompt="Goods receipt note",
         routeTarget=ROUTE_PURCHASE,
         validation_profile="non_actionable",
         validation_rules=[
@@ -119,7 +119,7 @@ def test_vendor_registration_not_required_when_vr12_disabled() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        oneLine="Tax invoice",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="Tax invoice",
         routeTarget=ROUTE_PURCHASE,
         validation_rules=[
             ValidationRuleConfig(code="VR12", enabled=False, severity="block"),

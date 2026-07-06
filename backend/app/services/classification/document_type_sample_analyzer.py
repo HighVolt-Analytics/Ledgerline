@@ -393,7 +393,7 @@ def analyze_parsed_document_samples(
         extraction_fields=merged_fields,
         required_fields=required,
         absent_fields=absent,
-        one_line=suggest_one_line(merged_signals, headings=headings),
+        llm_prompt=suggest_one_line(merged_signals, headings=headings),
         suggested_title=suggested_title,
         suggested_short_title=suggested_short_title,
         klass=klass,
@@ -469,7 +469,9 @@ def apply_sample_proposal_to_draft(
     )
     updates: dict[str, object] = {
         "classifier": classifier,
-        "classifier_customized": False,
+        "recognition_mode": "signals",
+        "recognition_signals": list(signals),
+        "llm_prompt": "",
         "extraction_fields": proposal.extraction_fields,
         "required_fields": proposal.required_fields,
         "absent_fields": proposal.absent_fields,
@@ -477,11 +479,16 @@ def apply_sample_proposal_to_draft(
         "playbook_profile": proposal.playbook_profile or draft.playbook_profile,
         "purchase_bundle_role": proposal.purchase_bundle_role or draft.purchase_bundle_role,
     }
-    if proposal.one_line and draft.one_line.strip().lower() in {
-        "",
-        "describe how this document type is identified and processed.",
-    }:
-        updates["one_line"] = proposal.one_line
+    if proposal.llm_prompt and not (draft.llm_prompt or "").strip():
+        updates["llm_prompt"] = proposal.llm_prompt
+        updates["recognition_mode"] = "prompt"
+        updates["recognition_signals"] = []
+        updates["classifier"] = classifier.model_copy(
+            update={
+                "enabled": False,
+                "root": {"type": "group", "operator": "AND", "children": []},
+            }
+        )
     if proposal.suggested_title and draft.title.strip().lower() in {
         "new document type",
         "new type",

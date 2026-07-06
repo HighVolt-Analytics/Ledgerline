@@ -17,6 +17,7 @@ ProcessingOverrideStepId = Literal[
     "validation",
     "mapping_review",
     "vendor_registration",
+    "line_gl_mapping",
 ]
 
 SKIPPABLE_STEP_IDS: frozenset[str] = frozenset(
@@ -29,6 +30,7 @@ SKIPPABLE_STEP_IDS: frozenset[str] = frozenset(
         "validation",
         "mapping_review",
         "vendor_registration",
+        "line_gl_mapping",
     }
 )
 
@@ -79,6 +81,11 @@ PROCESSING_OVERRIDE_STEPS: tuple[ProcessingOverrideStepInfo, ...] = (
         step_id="vendor_registration",
         label="Vendor registration hold",
         hint="Continue when the vendor is not yet in the vendor registry.",
+    ),
+    ProcessingOverrideStepInfo(
+        step_id="line_gl_mapping",
+        label="Line GL mapping",
+        hint="Skip LLM sub-ledger assignment for line items.",
     ),
 )
 

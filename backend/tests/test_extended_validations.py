@@ -6,7 +6,7 @@ from decimal import Decimal
 from app.schemas.rule_book_config import VendorMaster
 from app.services.rule_book.extended_validations import (
     vr09_line_arithmetic,
-    vr10_tax_invoice_au,
+    vr10_tax_invoice_wording,
     vr11_date_sanity,
     vr12_vendor_master,
     vr16_freight_surcharges,
@@ -46,20 +46,59 @@ def test_vr09_line_arithmetic_fails_when_lines_do_not_sum() -> None:
     assert result.passed is False
 
 
-def test_vr10_requires_tax_invoice_for_large_taxable_supply() -> None:
+def test_vr10_au_requires_tax_invoice_for_large_taxable_supply() -> None:
     data = InvoiceData(subtotal=Decimal("1500.00"), document_text="Invoice only")
-    result = vr10_tax_invoice_au(data)
+    result = vr10_tax_invoice_wording(data, country="AU", currency="AUD")
     assert result.passed is False
+    assert "AUD 1000" in result.message
 
 
-def test_vr10_passes_when_tax_invoice_stated() -> None:
+def test_vr10_au_passes_when_tax_invoice_stated() -> None:
     data = InvoiceData(
         subtotal=Decimal("1500.00"),
         gst=Decimal("150.00"),
         document_text="Tax Invoice for services rendered",
     )
-    result = vr10_tax_invoice_au(data)
+    result = vr10_tax_invoice_wording(data, country="AU", currency="AUD")
     assert result.passed is True
+
+
+def test_vr10_sg_fails_when_gst_without_wording() -> None:
+    data = InvoiceData(
+        subtotal=Decimal("200.00"),
+        gst=Decimal("18.00"),
+        document_text="Invoice only",
+    )
+    result = vr10_tax_invoice_wording(data, country="SG", currency="SGD")
+    assert result.passed is False
+
+
+def test_vr10_us_skips_rule() -> None:
+    data = InvoiceData(
+        subtotal=Decimal("5000.00"),
+        gst=Decimal("500.00"),
+        document_text="Invoice only",
+    )
+    result = vr10_tax_invoice_wording(data, country="US", currency="USD")
+    assert result.passed is True
+    assert result.skipped is True
+
+
+def test_vr10_gb_passes_with_vat_invoice_phrase() -> None:
+    data = InvoiceData(
+        subtotal=Decimal("500.00"),
+        gst=Decimal("100.00"),
+        document_text="VAT Invoice for consulting",
+    )
+    result = vr10_tax_invoice_wording(data, country="GB", currency="GBP")
+    assert result.passed is True
+
+
+def test_vr10_nz_uses_local_threshold() -> None:
+    data = InvoiceData(subtotal=Decimal("1500.00"), document_text="Invoice only")
+    result = vr10_tax_invoice_wording(data, country="NZ", currency="NZD")
+    assert result.passed is False
+    assert "NZD 1000" in result.message
 
 
 def test_vr11_rejects_future_invoice_date() -> None:

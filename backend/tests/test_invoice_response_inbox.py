@@ -25,7 +25,7 @@ def _vault_permit_type() -> DocumentTypeDefinition:
         shortTitle="Clearance permit",
         klass="Non-transactional",
         posting="No",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Vault",
         validationProfile="non_actionable",
         playbookProfile="supporting",
@@ -60,7 +60,7 @@ def test_inbox_response_exposes_payable_metrics() -> None:
         shortTitle="Invoice",
         klass="Transactional",
         posting="Yes",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Purchase Management",
         validationProfile="standard",
     )

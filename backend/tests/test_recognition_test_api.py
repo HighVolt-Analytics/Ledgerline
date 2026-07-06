@@ -13,7 +13,7 @@ def _grn_draft() -> dict:
         "shortTitle": "GRN",
         "klass": "Non-transactional",
         "posting": "No",
-        "oneLine": "Goods received",
+        "recognition_mode": "signals", "recognition_signals": ["heading_grn"], "llm_prompt": "Goods received",
         "routeTarget": "Vault",
         "enabled": True,
         "classifier": {

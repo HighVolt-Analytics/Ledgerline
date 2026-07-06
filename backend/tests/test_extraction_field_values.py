@@ -35,7 +35,7 @@ def _definition(**kwargs) -> DocumentTypeDefinition:
         shortTitle="Contract",
         klass="Non-transactional",
         posting="No",
-        oneLine="test",
+        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
         routeTarget="Vault",
         classifier=DocumentTypeClassifier(),
         extraction_fields=["vendor", "contract_party"],
@@ -186,6 +186,58 @@ def test_build_llm_user_payload_includes_descriptors() -> None:
     assert data["custom_extraction_field_descriptors"] == [
         {"key": "contract_party", "label": "Contract Party"}
     ]
+    assert data["ocr"]["text_excerpt"] == "Contract Party: Acme"
+
+
+def test_build_llm_user_payload_includes_invoice_fields() -> None:
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    ocr = OcrArtifact(
+        success=True,
+        text="Invoice body",
+        text_length=12,
+        payload_json={
+            "invoice_fields": {"vendor": "Acme", "invoice_no": "INV-9"},
+            "document_heading": "Tax Invoice",
+        },
+    )
+    import json
+
+    data = json.loads(
+        build_llm_user_payload(
+            ocr=ocr,
+            org=OrgContext(),
+            document_types=[_definition()],
+            confirmed_dt="DT-01",
+        )
+    )
+    assert data["invoice_fields"] == {"vendor": "Acme", "invoice_no": "INV-9"}
+    assert data["ocr"]["document_heading"] == "Tax Invoice"
+
+
+def test_build_structure_extract_prompts_uses_ocr_payload() -> None:
+    from app.services.extraction.llm_document_service import build_structure_extract_prompts
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    ocr = OcrArtifact(
+        success=True,
+        text="Vendor: Acme\nTotal: 50",
+        text_length=18,
+        layout_kv={"Total": "50"},
+    )
+    system, user = build_structure_extract_prompts(
+        ocr=ocr,
+        org=OrgContext(),
+        document_types=[_definition()],
+        confirmed_dt="DT-01",
+    )
+    import json
+
+    assert "structure" in system.lower() or "ocr" in system.lower()
+    data = json.loads(user)
+    assert data["confirmed_dt"] == "DT-01"
+    assert "Vendor: Acme" in data["ocr"]["text_excerpt"]
+    assert data["ocr"]["layout_kv"] == {"Total": "50"}
 
 
 def test_normalize_llm_raw_harvests_custom_field_with_keys() -> None:

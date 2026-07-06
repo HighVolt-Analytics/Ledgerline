@@ -39,7 +39,7 @@ def extract_permit_fields_from_text(text: str | None) -> dict[str, str]:
         if _valid_permit_token(token):
             out["permit_no"] = token
 
-    if "permit_no" not in out:
+    if "permit_no" not in out and re.search(r"(?i)permit|clearance", body):
         for fallback in _PERMIT_NO_FALLBACK.finditer(body):
             token = fallback.group(1).strip().upper()
             if _valid_permit_token(token):

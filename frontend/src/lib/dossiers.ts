@@ -194,6 +194,9 @@ export type DossierSummary = {
   owner: string;
   outcome: DossierOutcome;
   outcomeBanner: string;
+  blockerStageId?: DossierPipelineStageId | null;
+  blockerReason?: string | null;
+  blockerRemediation?: string | null;
   pipeline: DossierPipelineStep[];
   linkedDocuments: DossierLinkedDocuments;
   approvalChain: DossierApprovalChain;
@@ -202,6 +205,87 @@ export type DossierSummary = {
 /** Demo-only IDs from dossiersMockData (DOS-0401 … DOS-0410) — not in the API. */
 export function isLegacyMockDossierId(id: string): boolean {
   return /^DOS-\d{4}$/i.test(id.trim());
+}
+
+export function dossierStageStateLabel(state: DossierStageState): string {
+  if (state === "pass") return "Complete";
+  if (state === "fail") return "Failed";
+  if (state === "waived") return "Skipped";
+  return "Waiting";
+}
+
+export function pipelineActiveStage(
+  pipeline: DossierPipelineStep[]
+): { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined {
+  const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  let last: { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined;
+  for (const stage of DOSSIER_PIPELINE_STAGES) {
+    const step = byStage.get(stage.id);
+    if (!step || step.state === "pending") break;
+    last = { stageId: stage.id, step };
+  }
+  return last;
+}
+
+export function pipelineProgressSummary(
+  pipeline: DossierPipelineStep[],
+  routeTarget?: string | null
+): string {
+  const complete = pipeline.filter(
+    (step) => step.state === "pass" || step.state === "waived"
+  ).length;
+  const total = DOSSIER_PIPELINE_STAGES.length;
+  const fail = firstPipelineFailure(pipeline);
+  if (fail) {
+    return `${complete} of ${total} complete · failed at ${dossierStageLabel(fail.stageId, routeTarget)}`;
+  }
+  return `${complete} of ${total} complete`;
+}
+
+export function dossierBlockerFromSummary(dossier: Pick<
+  DossierSummary,
+  "pipeline" | "blockerStageId" | "blockerReason" | "blockerRemediation"
+>): {
+  stageId: DossierPipelineStageId;
+  reason: string;
+  remediation?: string | null;
+  exceptionCode?: string | null;
+  step: DossierPipelineStep;
+} | undefined {
+  const fail = firstPipelineFailure(dossier.pipeline);
+  if (!fail) return undefined;
+  const reason =
+    dossier.blockerReason?.trim() ||
+    fail.failureReason?.trim() ||
+    (fail.detail !== "—" ? fail.detail : "") ||
+    "This stage did not pass.";
+  return {
+    stageId: (dossier.blockerStageId as DossierPipelineStageId | undefined) ?? fail.stageId,
+    reason,
+    remediation: dossier.blockerRemediation ?? fail.remediation,
+    exceptionCode: fail.exceptionCode,
+    step: fail,
+  };
+}
+
+export function stageIdsForPhase(phaseId: DossierPipelinePhaseId): DossierPipelineStageId[] {
+  return DOSSIER_PIPELINE_STAGES.filter((stage) => stage.phase === phaseId).map((stage) => stage.id);
+}
+
+export function phaseStageSummary(
+  pipeline: DossierPipelineStep[],
+  phaseId: DossierPipelinePhaseId,
+  routeTarget?: string | null
+): string {
+  const ids = stageIdsForPhase(phaseId);
+  const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  const steps = ids.map((id) => byStage.get(id)).filter(Boolean) as DossierPipelineStep[];
+  const complete = steps.filter((step) => step.state === "pass" || step.state === "waived").length;
+  const failed = steps.find((step) => step.state === "fail");
+  if (failed) {
+    return `Failed at ${dossierStageLabel(failed.stageId, routeTarget)}`;
+  }
+  return `${complete}/${ids.length} complete`;
 }
 
 export function pipelineStageSummary(pipeline: DossierPipelineStep[]): string {

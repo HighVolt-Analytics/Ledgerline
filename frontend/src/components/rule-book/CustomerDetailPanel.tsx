@@ -1,9 +1,14 @@
 import { Shield } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
+import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import type { CustomerMaster } from "@/lib/v4RuleBookTypes";
 import { LEDGER_ACCOUNTS } from "@/lib/v4RuleBookTypes";
 import { FieldLabel } from "./FieldLabel";
+import {
+  reconcileSubLedgerOnLedgerChange,
+  SubLedgerField,
+} from "./SubLedgerField";
 
 const CUSTOMER_LEDGER_OPTIONS = [
   "—",
@@ -29,6 +34,7 @@ export function CustomerDetailPanel({
   customer: CustomerMaster;
   onChange: (patch: Partial<CustomerMaster>) => void;
 }) {
+  const { data: coaAccounts = [] } = useChartOfAccounts();
   return (
     <div className="bg-muted/20 p-4 space-y-4" data-testid={`customer-detail-${customer.id}`}>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
@@ -97,7 +103,14 @@ export function CustomerDetailPanel({
           <Select
             value={customer.defaultLedger || "—"}
             onValueChange={(defaultLedger) =>
-              onChange({ defaultLedger: defaultLedger === "—" ? "" : defaultLedger })
+              onChange({
+                defaultLedger: defaultLedger === "—" ? "" : defaultLedger,
+                defaultSubLedger: reconcileSubLedgerOnLedgerChange(
+                  defaultLedger === "—" ? "" : defaultLedger,
+                  customer.defaultSubLedger,
+                  coaAccounts
+                ),
+              })
             }
             options={toSelectOptions(CUSTOMER_LEDGER_OPTIONS)}
             size="sm"
@@ -105,10 +118,12 @@ export function CustomerDetailPanel({
           />
         </FieldLabel>
         <FieldLabel label="Sub-ledger">
-          <Input
+          <SubLedgerField
+            ledger={customer.defaultLedger}
             value={customer.defaultSubLedger}
-            onChange={(e) => onChange({ defaultSubLedger: e.target.value })}
-            className="h-8 text-xs"
+            onChange={(defaultSubLedger) => onChange({ defaultSubLedger })}
+            accounts={coaAccounts}
+            size="sm"
           />
         </FieldLabel>
         <FieldLabel label="Payment terms">

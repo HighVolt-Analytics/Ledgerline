@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ListSearchInput } from "@/components/ListSearchInput";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
 import { matchesListSearch } from "@/lib/listSearch";
 import { ROUTE_TARGETS } from "@/lib/v4RuleBookTypes";
@@ -46,21 +45,18 @@ import {
 } from "@/lib/documentCompulsoryFields";
 import {
   documentTypeFromTemplate,
-  inferTemplateIdFromDefinition,
 } from "@/lib/documentTypeTemplates";
 import { bundleConfigWarnings } from "@/lib/documentTypeBundleValidation";
 import { normalizeBundleConditional } from "@/lib/documentBundleConfig";
-import { DocumentConditionBuilder } from "@/components/rule-book/DocumentConditionBuilder";
-import { DocumentMatchRulesEditor } from "@/components/rule-book/DocumentMatchRulesEditor";
+import { DocumentRecognitionEditor } from "@/components/rule-book/DocumentRecognitionEditor";
 import { documentTypeReadiness } from "@/lib/documentMatchRules";
+import { recognitionSummary } from "@/lib/documentTypeRecognition";
 import {
   DocumentTypePostToDetail,
   DocumentTypePostToEditor,
 } from "@/components/rule-book/DocumentTypePostToSection";
 import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
 import { postToMissingOnCard } from "@/lib/documentTypePostToValidation";
-import type { MatchRulesForm } from "@/lib/documentMatchRules";
-
 const CLASS_BADGE_CLASSES: Record<DocumentTypeClass, string> = {
   Transactional: "text-primary bg-primary/10 border-primary/20",
   "Non-transactional": "text-slate-600 dark:text-slate-300 bg-slate-500/10 border-slate-500/20",
@@ -490,7 +486,9 @@ function DocumentTypeDetailDialog({
               >
                 {docType.title}
               </h2>
-              <p className="text-sm leading-relaxed text-muted-foreground">{docType.oneLine}</p>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {recognitionSummary(docType)}
+              </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               {canEdit ? (
@@ -616,14 +614,7 @@ function DocumentTypeEditDialog({
   onSave: () => void;
 }) {
   useDialogLock();
-  const templateId = useMemo(
-    () => inferTemplateIdFromDefinition(draft),
-    [draft]
-  );
-  const advancedMode = Boolean(draft.classifierCustomized);
-  const isUserDefinedType = templateId === "custom" || !draft.matrixTemplateCode?.trim();
   const [showAdvancedIdentity, setShowAdvancedIdentity] = useState(!isNew);
-  const [matchRulesForm, setMatchRulesForm] = useState<MatchRulesForm | null>(null);
   const { data: coaAccounts = [] } = useChartOfAccounts();
 
   const readiness = useMemo(
@@ -631,39 +622,35 @@ function DocumentTypeEditDialog({
       documentTypeReadiness(
         {
           title: draft.title,
-          oneLine: draft.oneLine,
+          recognitionMode: draft.recognitionMode,
+          recognitionSignals: draft.recognitionSignals,
+          llmPrompt: draft.llmPrompt,
           code: draft.code,
           posting: derivedPostingForDraft(draft),
           postTo: draft.postTo,
           classifier: draft.classifier,
         },
-        matchRulesForm ?? undefined,
         { coaAccounts }
       ),
-    [draft.title, draft.oneLine, draft.code, draft.classifier, draft.postTo, draft.klass, draft.playbookProfile, draft.posting, matchRulesForm, coaAccounts]
+    [
+      draft.title,
+      draft.recognitionMode,
+      draft.recognitionSignals,
+      draft.llmPrompt,
+      draft.code,
+      draft.classifier,
+      draft.postTo,
+      draft.klass,
+      draft.playbookProfile,
+      draft.posting,
+      coaAccounts,
+    ]
   );
 
   const bundleWarnings = useMemo(
     () => bundleConfigWarnings(draft, documentTypes),
     [draft, documentTypes]
   );
-
-  function patchClassifier(
-    classifier: Partial<DocumentTypeDefinition["classifier"]>
-  ): DocumentTypeDefinition {
-    return {
-      ...draft,
-      classifierCustomized: true,
-      classifier: { ...draft.classifier, ...classifier },
-    };
-  }
-
-  function useSimpleMode() {
-    onChange({
-      ...draft,
-      classifierCustomized: false,
-    });
-  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -758,25 +745,6 @@ function DocumentTypeEditDialog({
                   ) : null}
                 </div>
               )}
-              <div className="space-y-1.5 sm:col-span-2">
-                <FieldLabel htmlFor="dt-oneline">
-                  {isUserDefinedType
-                    ? "Notes for operators (optional)"
-                    : "How to recognise this document (AI + humans)"}
-                </FieldLabel>
-                <textarea
-                  id="dt-oneline"
-                  rows={2}
-                  value={draft.oneLine}
-                  onChange={(e) => onChange({ ...draft, oneLine: e.target.value })}
-                  placeholder={
-                    isUserDefinedType
-                      ? "Optional — match rules below are required for recognition."
-                      : "e.g. Goods received note with PO ref; often handwritten. Not a tax invoice."
-                  }
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                />
-              </div>
               {isNew && !showAdvancedIdentity ? (
                 <div className="sm:col-span-2">
                   <Button
@@ -843,92 +811,8 @@ function DocumentTypeEditDialog({
             </div>
           </DetailCard>
 
-          <DetailCard
-            title="Recognition"
-            hint={
-              advancedMode
-                ? "Advanced condition tree — AND/OR rules on OCR fields"
-                : "Match / exclude rules on headings, OCR text, and field presence"
-            }
-          >
-            {advancedMode ? (
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs text-muted-foreground">
-                    Build AND/OR condition trees on attachment name, document text, headings, and
-                    field presence flags.
-                  </p>
-                  <Button type="button" size="sm" variant="outline" className="h-8" onClick={useSimpleMode}>
-                    Use simple recognition
-                  </Button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id="dt-classifier-enabled"
-                    checked={draft.classifier.enabled}
-                    onCheckedChange={(enabled) => onChange(patchClassifier({ enabled }))}
-                  />
-                  <FieldLabel htmlFor="dt-classifier-enabled">
-                    Use classifier rules for this type
-                  </FieldLabel>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <FieldLabel htmlFor="dt-classifier-priority">Priority (tie-breaker)</FieldLabel>
-                    <Input
-                      id="dt-classifier-priority"
-                      type="number"
-                      min={1}
-                      value={draft.classifier.priority}
-                      onChange={(e) =>
-                        onChange(patchClassifier({ priority: Number(e.target.value) || 100 }))
-                      }
-                      className="h-9 text-sm"
-                      disabled={!draft.classifier.enabled}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <FieldLabel htmlFor="dt-classifier-confidence">Rule strength hint</FieldLabel>
-                    <Input
-                      id="dt-classifier-confidence"
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={draft.classifier.confidence}
-                      onChange={(e) =>
-                        onChange(
-                          patchClassifier({
-                            confidence: Math.min(1, Math.max(0, Number(e.target.value) || 0)),
-                          })
-                        )
-                      }
-                      className="h-9 text-sm"
-                      disabled={!draft.classifier.enabled}
-                    />
-                  </div>
-                </div>
-                {draft.classifier.enabled ? (
-                  <DocumentConditionBuilder
-                    root={draft.classifier.root}
-                    extractionFields={draft.extractionFields}
-                    onChange={(root) => onChange(patchClassifier({ root }))}
-                  />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Enable the classifier to add deterministic recognition rules.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <DocumentMatchRulesEditor
-                draft={draft}
-                onChange={onChange}
-                onOpenAdvanced={() => onChange({ ...draft, classifierCustomized: true })}
-                onFormChange={setMatchRulesForm}
-                rulesOnly
-              />
-            )}
+          <DetailCard title="Recognition" hint="Recognition signals or AI prompt for classification">
+            <DocumentRecognitionEditor draft={draft} onChange={onChange} />
           </DetailCard>
 
           <DetailCard title="Processing playbook" hint="Match and approval preset">
@@ -1052,7 +936,8 @@ export function DocumentTypesTab({
           docType.code,
           docType.title,
           docType.shortTitle,
-          docType.oneLine,
+          docType.llmPrompt,
+          recognitionSummary(docType),
           docType.klass,
           docType.routeTarget
         )
@@ -1215,7 +1100,7 @@ export function DocumentTypesTab({
                 {docType.title || docType.shortTitle}
               </div>
               <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                {docType.oneLine}
+                {recognitionSummary(docType)}
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <ClassBadge klass={docType.klass} />

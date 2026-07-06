@@ -9,6 +9,10 @@ from app.schemas.document_type import DocumentTypeDefinition, DocumentTypePostTo
 from app.schemas.rule_book_config import ChartOfAccountEntry, RuleBookConfigPayload
 from app.services.classification.document_type_catalog import get_document_type_definition
 from app.services.classification.document_type_gl_defaults import resolve_coa_account_name
+from app.services.master_data.chart_of_accounts_service import (
+    ledger_has_sub_ledger_catalog,
+    sub_ledger_exists,
+)
 from app.services.master_data.vendor_registration_policy import resolve_document_type_definition
 
 
@@ -27,6 +31,21 @@ def ledger_exists_in_coa(ledger: str, accounts: Sequence[ChartOfAccountEntry]) -
     if not cleaned:
         return False
     return bool(resolve_coa_account_name(cleaned, list(accounts)))
+
+
+def sub_ledger_valid_for_post_to(
+    ledger: str,
+    sub_ledger: str,
+    accounts: Sequence[ChartOfAccountEntry],
+) -> bool:
+    """Soft validation: blank sub-ledger is always valid; when catalog exists, value must match."""
+    cleaned_sub = (sub_ledger or "").strip()
+    if not cleaned_sub:
+        return True
+    account_list = list(accounts)
+    if not ledger_has_sub_ledger_catalog(ledger, account_list):
+        return True
+    return sub_ledger_exists(ledger, cleaned_sub, account_list)
 
 
 def has_valid_document_type_post_to(

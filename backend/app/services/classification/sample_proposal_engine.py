@@ -50,7 +50,8 @@ def _sample_prompt_payload(
         {
             "code": defn.code,
             "title": defn.title,
-            "one_line": defn.one_line,
+            "recognition_mode": defn.recognition_mode,
+            "llm_prompt": defn.llm_prompt,
             "playbook_profile": defn.playbook_profile,
         }
         for defn in catalogue
@@ -65,7 +66,7 @@ def _sample_prompt_payload(
 _LLM_SYSTEM = """You analyze uploaded business document samples for an accounts-payable rule book.
 Return JSON only with keys:
 playbook_profile, recognition_signals, extraction_fields, required_fields, absent_fields,
-classifier_layout, one_line, suggested_title, purchase_bundle_role, confidence, reasoning.
+classifier_layout, llm_prompt, suggested_title, purchase_bundle_role, confidence, reasoning.
 
 Use only known recognition signal ids and canonical field keys.
 confidence is 0.0-1.0. reasoning is one short paragraph for the user."""
@@ -114,7 +115,7 @@ def _merge_llm_into_proposal(
         updates.update(
             {
                 "playbook_profile": llm.playbook_profile,
-                "one_line": llm.one_line or heuristic.one_line,
+                "llm_prompt": llm.llm_prompt or heuristic.llm_prompt,
                 "classifier_layout": llm.classifier_layout,
                 "purchase_bundle_role": llm.purchase_bundle_role or heuristic.purchase_bundle_role,
             }

@@ -6,7 +6,10 @@ import re
 from decimal import Decimal
 from typing import Any
 
-from app.services.extraction.line_item_skip_patterns import should_skip_line_row
+from app.services.extraction.line_item_skip_patterns import (
+    OPTIONAL_CURRENCY_MONEY_PREFIX,
+    should_skip_line_row,
+)
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
 _LINE_ROW = re.compile(
@@ -66,7 +69,7 @@ def _parse_row_for_description(text: str, description: str) -> ParsedLineItem | 
             )
 
         m = re.search(
-            rf"{escaped}\s+(\d+(?:\.\d+)?)\s+(?:[$€£]|AUD\s*)?([\d,]+\.?\d*)\s+(?:[$€£]|AUD\s*)?([\d,]+\.?\d*)",
+            rf"{escaped}\s+(\d+(?:\.\d+)?)\s+{OPTIONAL_CURRENCY_MONEY_PREFIX}([\d,]+\.?\d*)\s+{OPTIONAL_CURRENCY_MONEY_PREFIX}([\d,]+\.?\d*)",
             line,
             re.I,
         )
@@ -212,12 +215,12 @@ def parse_line_items_from_di_items(items_field: Any) -> list[ParsedLineItem]:
     for item in values:
         desc = _line_prop(item, "Description")
         qty = _line_prop(item, "Quantity")
-        unit = _line_prop(item, "UnitPrice") or _line_prop(item, "UnitPrice")
+        unit = _line_prop(item, "UnitPrice")
         amount = _line_prop(item, "Amount")
         tax = _line_prop(item, "Tax")
 
         description = str(desc).strip() if desc else None
-        if not description:
+        if not description or _skip_line_row(description):
             continue
         parsed.append(
             ParsedLineItem(

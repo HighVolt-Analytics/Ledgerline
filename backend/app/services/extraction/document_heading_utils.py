@@ -315,7 +315,7 @@ def _definition_metadata_blob(definition: DocumentTypeDefinition) -> str:
     parts = [
         definition.short_title or "",
         definition.title or "",
-        definition.one_line or "",
+        definition.llm_prompt or "",
         " ".join(definition.extraction or []),
     ]
     return " ".join(parts).lower()

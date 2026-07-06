@@ -88,11 +88,13 @@ class LlmDocumentResult(BaseModel):
     invoice_date: str = ""
     due_date: str = ""
     po_reference: str = ""
+    so_reference: str = ""
+    cost_centre: str = ""
     subtotal: Decimal | None = None
     gst: Decimal | None = None
     gst_rate: Decimal | None = None
     total: Decimal | None = None
-    currency: str = "AUD"
+    currency: str = ""
     abn: str = ""
     vendor: str = ""
     document_heading: str = ""
@@ -101,6 +103,7 @@ class LlmDocumentResult(BaseModel):
     bank_name: str = ""
     line_items: list[LlmLineItem] = Field(default_factory=list)
     field_confidence: dict[str, float] = Field(default_factory=dict)
+    extracted_fields: dict[str, str] = Field(default_factory=dict)
     raw: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -116,8 +119,11 @@ class LlmDocumentResult(BaseModel):
             "invoice_date",
             "due_date",
             "po_reference",
+            "so_reference",
+            "cost_centre",
             "currency",
             "abn",
+            "vendor",
             "document_heading",
             "bank_bsb",
             "bank_account",

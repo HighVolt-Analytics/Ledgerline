@@ -1,4 +1,4 @@
-import type { ChartOfAccountRow, ChartOfAccountType } from "@/api/types";
+import type { ChartOfAccountRow, ChartOfAccountType, SubLedgerRow } from "@/api/types";
 
 export type CoaSelectOption = { value: string; label: string };
 
@@ -186,4 +186,55 @@ export function postingRoleForMainLedger(
   const types = coaTypesForMainLedger(playbookProfile, routeTarget);
   if (types?.length === 1 && types[0] === "Revenue") return "revenue";
   return undefined;
+}
+
+export function subLedgersForLedger(
+  ledgerName: string,
+  accounts: ChartOfAccountRow[]
+): SubLedgerRow[] {
+  const resolved = resolveCoaAccountName(ledgerName, accounts);
+  if (!resolved) return [];
+  const entry = accounts.find((row) => row.name === resolved);
+  return entry?.subLedgers ?? [];
+}
+
+export function subLedgerExistsInCoa(
+  ledger: string,
+  subLedger: string,
+  accounts: ChartOfAccountRow[]
+): boolean {
+  const cleaned = subLedger.trim();
+  if (!cleaned) return false;
+  const catalog = subLedgersForLedger(ledger, accounts);
+  if (!catalog.length) return false;
+  const lowered = cleaned.toLowerCase();
+  return catalog.some((row) => row.name.toLowerCase() === lowered);
+}
+
+export function ledgerHasSubLedgerCatalog(
+  ledger: string,
+  accounts: ChartOfAccountRow[]
+): boolean {
+  return subLedgersForLedger(ledger, accounts).length > 0;
+}
+
+export function formatSubLedgerLabel(sub: SubLedgerRow): string {
+  const code = sub.code.trim();
+  const name = sub.name.trim();
+  if (code && name) return `${code} — ${name}`;
+  return name || code;
+}
+
+export function subLedgersToSelectOptions(
+  subLedgers: SubLedgerRow[],
+  { includeEmpty = true, emptyLabel = "— Optional —" }: { includeEmpty?: boolean; emptyLabel?: string } = {}
+): CoaSelectOption[] {
+  const options = subLedgers.map((sub) => ({
+    value: sub.name,
+    label: formatSubLedgerLabel(sub),
+  }));
+  if (includeEmpty) {
+    return [{ value: "", label: emptyLabel }, ...options];
+  }
+  return options;
 }

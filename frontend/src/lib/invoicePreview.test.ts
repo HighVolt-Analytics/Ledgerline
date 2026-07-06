@@ -7,6 +7,7 @@ import {
   contentHasFinancialBody,
   enrichLineItemsForPreview,
   enrichLineItemsFromDocumentText,
+  filterLineItemsForPreview,
   isCompactReceiptStyle,
   isSummaryLineDescription,
   lineItemColumnsForPreview,
@@ -553,6 +554,37 @@ describe("isSummaryLineDescription", () => {
     expect(isSummaryLineDescription("Shipped Qty:")).toBe(true);
     expect(isSummaryLineDescription("Ship Date:")).toBe(true);
     expect(isSummaryLineDescription("Widget assembly kit")).toBe(false);
+  });
+});
+
+describe("filterLineItemsForPreview", () => {
+  it("drops vendor name duplicated as a line row", () => {
+    const headerValues = new Set(["high volt analytics pty ltd"]);
+    const filtered = filterLineItemsForPreview(
+      [
+        {
+          id: 1,
+          invoice_id: 42,
+          description: "High Volt Analytics Pty Ltd",
+          qty: "1",
+          unit_price: "100",
+          amount: "100",
+          tax_amount: null,
+        },
+        {
+          id: 2,
+          invoice_id: 42,
+          description: "SEO Services",
+          qty: "1",
+          unit_price: "35000",
+          amount: "35000",
+          tax_amount: null,
+        },
+      ],
+      headerValues
+    );
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.description).toBe("SEO Services");
   });
 });
 
