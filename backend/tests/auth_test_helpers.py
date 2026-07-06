@@ -82,3 +82,14 @@ async def login_via_otp(
     )
     assert verify.status_code == 200, verify.text
     return verify.json()["data"]["access_token"]
+
+
+def tenant_auth_headers(
+    token: str,
+    tenant_id: uuid.UUID | str,
+) -> dict[str, str]:
+    """Bearer + X-Tenant-Id headers required for authenticated tenant API calls."""
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-Tenant-Id": str(tenant_id),
+    }

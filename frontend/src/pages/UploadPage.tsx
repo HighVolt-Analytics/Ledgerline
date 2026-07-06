@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-react";
 import { api } from "@/api/client";
@@ -6,8 +6,10 @@ import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types"
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import { useMailboxes } from "@/hooks/useMailboxes";
 import {
   API_PORT_HINT,
+  canRenderTenantOwnedUi,
   captureTenantFetchScope,
   formatTenantLoadError,
   handleTenantScopedLoadFailure,
@@ -154,8 +156,12 @@ export function UploadPage() {
   const mailboxesRef = useRef<ConnectedMailbox[]>([]);
   const initialLoadDoneRef = useRef(false);
   const { data: ruleBook } = useRuleBookConfig();
+  const {
+    data: mailboxQueryData = [],
+    blocked: mailboxesBlocked,
+    refetch: refetchMailboxes,
+  } = useMailboxes(Boolean(user) && workspaceTab === "upload");
   const [all, setAll] = useState<Invoice[]>([]);
-  const [mailboxes, setMailboxes] = useState<ConnectedMailbox[]>([]);
   const [totalInvoices, setTotalInvoices] = useState(0);
   const [source, setSource] = useState("all");
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get("q") ?? "");
@@ -184,13 +190,20 @@ export function UploadPage() {
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
   const processingIdsRef = useRef(processingIds);
   const tenantScope = user?.tenant_id ?? null;
+  const mailboxes = canRenderTenantOwnedUi(tenantScope) && !mailboxesBlocked ? mailboxQueryData : [];
+
+  useLayoutEffect(() => {
+    mailboxesRef.current = [];
+    if (source !== "all" && !mailboxes.some((mb) => mb.email === source)) {
+      setSource("all");
+    }
+  }, [tenantScope, mailboxes, source]);
 
   useResetOnTenantChange(() => {
     loadSeq.current += 1;
     initialLoadDoneRef.current = false;
     mailboxesRef.current = [];
     setAll([]);
-    setMailboxes([]);
     setTotalInvoices(0);
     setTotalPages(1);
     setPage(1);
@@ -206,6 +219,7 @@ export function UploadPage() {
   });
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return null;
     if (options?.silent && loadInFlightRef.current) return null;
     const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
@@ -250,13 +264,7 @@ export function UploadPage() {
       initialLoadDoneRef.current = true;
 
       if (refreshMailboxes) {
-        void api
-          .listMailboxes({ fresh })
-          .catch(() => [] as ConnectedMailbox[])
-          .then((mbs) => {
-            if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
-            setMailboxes(mbs);
-          });
+        void refetchMailboxes();
       }
 
       return {
@@ -277,7 +285,6 @@ export function UploadPage() {
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load documents");
         setAll([]);
-        setMailboxes([]);
         mailboxesRef.current = [];
       }
       return null;
@@ -289,7 +296,7 @@ export function UploadPage() {
         setLoading(false);
       }
     }
-  }, [page, source, debouncedSearch, tenantScope]);
+  }, [page, source, debouncedSearch, tenantScope, refetchMailboxes]);
 
   useEffect(() => {
     mailboxesRef.current = mailboxes;
@@ -320,9 +327,10 @@ export function UploadPage() {
   }, [fetchNotice]);
 
   const captured = useMemo(() => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return [];
     const rows = all.filter((r) => r.status !== "duplicate_skipped");
     return sortInvoicesNewestFirst(rows);
-  }, [all]);
+  }, [all, tenantScope]);
 
   const filtered = useMemo(() => captured, [captured]);
 
@@ -398,8 +406,8 @@ export function UploadPage() {
     return result;
   }
 
-  function applyMailboxUpdate(updated: ConnectedMailbox) {
-    setMailboxes((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+  function applyMailboxUpdate(_updated: ConnectedMailbox) {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes() });
   }
 
   async function toggleMailboxActive(mb: ConnectedMailbox) {
@@ -416,7 +424,7 @@ export function UploadPage() {
     setFetchNotice(null);
     try {
       await api.removeMailbox(mb.id);
-      setMailboxes((prev) => prev.filter((m) => m.id !== mb.id));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes() });
       if (source === mb.email) {
         setSource("all");
         setPage(1);

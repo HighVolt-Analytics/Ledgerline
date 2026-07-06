@@ -33,6 +33,11 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import {
+  canRenderTenantOwnedUi,
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
 import { useStripeAccount, useStripeReadiness } from "@/hooks/useStripe";
 import { useAccountingIntegrations } from "@/hooks/useAccountingIntegrations";
 
@@ -163,6 +168,9 @@ export function IntegrationsPage() {
   const [vbBusy, setVbBusy] = useState(false);
   const [vbAuthToken, setVbAuthToken] = useState("");
 
+  const scopeOk = canRenderTenantOwnedUi(tenantScope);
+  const visibleMailboxes = scopeOk ? mailboxes : [];
+
   useResetOnTenantChange(() => {
     setS(null);
     setMailboxes([]);
@@ -186,54 +194,62 @@ export function IntegrationsPage() {
   });
 
   const loadMailboxes = useCallback((fresh = false) => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
+    const scope = captureTenantFetchScope();
     const seq = loadSeq.current;
     api.listMailboxes({ fresh }).then((rows) => {
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       setMailboxes(rows);
     }).catch(() => {
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       setMailboxes([]);
     });
   }, [tenantScope]);
 
   const loadRequests = useCallback((fresh = false) => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
+    const scope = captureTenantFetchScope();
     const seq = loadSeq.current;
     api
       .listMailboxConnectionRequests({ fresh })
       .then((rows) => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setRequests(rows);
       })
       .catch(() => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setRequests([]);
       });
   }, [tenantScope]);
 
   const loadWhatsapp = useCallback((fresh = false) => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
+    const scope = captureTenantFetchScope();
     const seq = loadSeq.current;
     api
       .getWhatsappStatus({ fresh })
       .then((status) => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setWaConnections(status.connections);
         setWaWebhookUrl(status.webhook_callback_url);
         setWaOAuthUrl(status.oauth_callback_url);
         setWaError(null);
       })
       .catch(() => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setWaConnections([]);
         setWaWebhookUrl("");
       });
   }, [tenantScope]);
 
   const loadViber = useCallback((fresh = false) => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
+    const scope = captureTenantFetchScope();
     const seq = loadSeq.current;
     api
       .getViberStatus({ fresh })
       .then((status) => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setVbConnections(status.connections);
         setVbWebhookUrl(status.webhook_callback_url);
         setVbWebhookReachable(status.webhook_reachable);
@@ -241,7 +257,7 @@ export function IntegrationsPage() {
         setVbError(null);
       })
       .catch(() => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setVbConnections([]);
         setVbWebhookUrl("");
         setVbWebhookReachable(null);
@@ -254,9 +270,11 @@ export function IntegrationsPage() {
   }, [tenantScope]);
 
   useEffect(() => {
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
+    const scope = captureTenantFetchScope();
     const seq = loadSeq.current;
     api.getSettings().then((settings) => {
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
       setS(settings);
     });
     loadMailboxes();
@@ -930,7 +948,7 @@ export function IntegrationsPage() {
             </p>
           </div>
         </div>
-        {mailboxes.length === 0 ? (
+        {visibleMailboxes.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {user?.role === "admin" ? (
               <>
@@ -943,7 +961,7 @@ export function IntegrationsPage() {
           </p>
         ) : (
           <ul className="space-y-2">
-            {mailboxes.map((mb) => (
+            {visibleMailboxes.map((mb) => (
               <li
                 key={mb.id}
                 className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm"

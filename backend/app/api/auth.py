@@ -14,6 +14,8 @@ from app.models.user import User, UserRole
 from app.schemas.auth import (
     LoginChallengeResponse,
     LoginRequest,
+    PortalEmbedLoginRequest,
+    PortalEmbedLoginResponse,
     RefreshTokenRequest,
     SelectTenantRequest,
     SwitchTenantRequest,
@@ -63,6 +65,10 @@ from app.services.auth.membership_enumeration import (
 )
 from app.services.auth.membership_service import ensure_membership, user_has_tenant_access
 from app.services.auth.privilege_service import matrix_role_for_context, permissions_for_context
+from app.services.auth.super_admin_portal_embed_service import (
+    check_portal_embed_request,
+    resolve_portal_embed_login_target,
+)
 from app.services.tenant.tenant_module_service import enabled_modules_map
 from app.services.tenant.tenant_context_service import get_tenant_slug
 from app.services.tenant.tenant_members_service import accept_invite, preview_invite
@@ -209,6 +215,48 @@ async def _send_login_otp_or_raise(*, account: AuthAccount, otp: str) -> None:
         return
     await clear_otp(auth_account_id=account.id, email=account.email)
     raise HTTPException(status_code=503, detail=_OTP_EMAIL_FAILURE_MESSAGE)
+
+
+@router.post("/portal-embed/login", response_model=ApiEnvelope[PortalEmbedLoginResponse])
+async def portal_embed_login(
+    body: PortalEmbedLoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_preauth_db),
+) -> ApiEnvelope[PortalEmbedLoginResponse]:
+    from app.config import get_settings
+
+    settings = get_settings()
+    origin = request.headers.get("origin")
+    check_portal_embed_request(settings, access_token=body.access_token, origin=origin)
+
+    target = await resolve_portal_embed_login_target(db, settings=settings)
+    access, refresh = await _mint_session_tokens(
+        db,
+        user=target.user,
+        tenant=target.tenant,
+        role=target.role,
+    )
+    memberships: list[TenantAccountSummary] = []
+    if target.user.auth_account_id:
+        memberships = await _membership_summaries_for_account(
+            db, auth_account_id=target.user.auth_account_id
+        )
+
+    logger.info(
+        "portal_embed_login_ok",
+        email=target.user.email,
+        user_id=target.user.id,
+        tenant_id=str(target.tenant.id),
+        tenant_slug=target.tenant.slug,
+    )
+    return ApiEnvelope(
+        data=PortalEmbedLoginResponse(
+            access_token=access,
+            refresh_token=refresh,
+            user=_user_response(target.user, target.tenant, role=target.role),
+            memberships=memberships,
+        )
+    )
 
 
 @router.post("/login", response_model=ApiEnvelope[LoginChallengeResponse])

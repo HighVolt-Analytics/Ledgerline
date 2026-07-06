@@ -91,8 +91,8 @@ import { getAccessToken, getRefreshToken } from "@/lib/authSession";
 /** Public URL prefix; endpoint paths include /api (e.g. BASE + /api/auth/login). */
 const BASE = resolveApiBase();
 
-/** Dedupe concurrent GETs and cache briefly to avoid StrictMode double-fetch. */
-const GET_CACHE_MS = 30_000;
+/** Dedupe concurrent GETs only — no response cache (avoids cross-tenant bleed). */
+const GET_CACHE_MS = 0;
 const inflightGets = new Map<string, Promise<unknown>>();
 const getCache = new Map<string, { data: unknown; at: number }>();
 /** Bumped on mutation so in-flight GETs cannot repopulate cache with stale rows. */
@@ -159,6 +159,32 @@ const AUTH_RETRY_PATHS = new Set([
   "/api/auth/login",
   "/api/auth/logout",
 ]);
+
+/** Pre-auth endpoints that must not require a resolved tenant id. */
+const TENANT_EXEMPT_API_PATHS = new Set([
+  "/api/auth/login",
+  "/api/auth/verify-otp",
+  "/api/auth/resend-otp",
+  "/api/auth/select-tenant",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+  "/api/auth/refresh",
+]);
+
+function isTenantScopedApiPath(path: string): boolean {
+  if (!path.startsWith("/api/")) return false;
+  if (AUTH_RETRY_PATHS.has(path) || TENANT_EXEMPT_API_PATHS.has(path)) return false;
+  return true;
+}
+
+function requireTenantIdForPath(path: string): string | null {
+  if (!isTenantScopedApiPath(path)) return resolveActiveTenantId();
+  const tid = resolveActiveTenantId();
+  if (!tid) {
+    throw new ApiError("Tenant scope required", 401);
+  }
+  return tid;
+}
 
 async function tryRefreshSession(): Promise<boolean> {
   if (!getRefreshToken()) return false;
@@ -236,8 +262,10 @@ export function clearGetCache() {
   inflightGets.clear();
 }
 
-function getRequestKey(path: string, method: string) {
-  return `${resolveActiveTenantId() ?? "anon"}:${method}:${path}`;
+function getRequestKey(path: string, method: string): string | null {
+  const tid = resolveActiveTenantId();
+  if (!tid) return null;
+  return `${tid}:${method}:${path}`;
 }
 
 function invalidateGetCache() {
@@ -249,9 +277,9 @@ function invalidateGetCache() {
 function bustGetCache(path: string, method = "GET") {
   getCacheGeneration += 1;
   const key = getRequestKey(path, method);
-  getCache.delete(key);
+  if (key) getCache.delete(key);
   const metaKey = getRequestKey(`${path}#meta`, method);
-  getCache.delete(metaKey);
+  if (metaKey) getCache.delete(metaKey);
 }
 
 function bustGetCacheByPrefix(pathPrefix: string, method = "GET") {
@@ -275,10 +303,23 @@ export type ApiRequestOptions = RequestInit & { timeoutMs?: number };
 
 function withAuthHeaders(init?: RequestInit): Headers {
   const headers = new Headers(init?.headers);
-  if (authToken) {
-    headers.set("Authorization", `Bearer ${authToken}`);
+  const token = authToken ?? getAccessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
   return headers;
+}
+
+/** Load in-memory token from sessionStorage before the first React render. */
+export function hydrateAuthTokenFromSession(): void {
+  if (authToken) return;
+  if (typeof sessionStorage === "undefined") return;
+  const token = getAccessToken();
+  if (token) authToken = token;
+}
+
+if (typeof sessionStorage !== "undefined") {
+  hydrateAuthTokenFromSession();
 }
 
 async function parseErrorResponse(res: Response): Promise<string> {  /* Convert backend error response → readable message */
@@ -386,7 +427,7 @@ async function fetchEnvelope<T>(
           return fetchEnvelope<T>(path, init, true);
         }
       }
-      if (res.status === 401 && authToken && !AUTH_RETRY_PATHS.has(path)) {
+      if (res.status === 401 && (authToken ?? getAccessToken()) && !AUTH_RETRY_PATHS.has(path)) {
         void notifyUnauthorized();
       }
       throw new ApiError(msg, res.status);
@@ -410,39 +451,42 @@ async function fetchEnvelope<T>(
 
 async function request<T>(path: string, init?: ApiRequestOptions): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
+  const requestTenantId = requireTenantIdForPath(path);
+
   if (method !== "GET") {
     invalidateGetCache();
-    const requestTenantId = resolveActiveTenantId();
     const data = await fetchEnvelope<T>(path, init);
     assertSameTenantActive(requestTenantId);
     return data;
   }
 
-  const requestTenantId = resolveActiveTenantId();
   const key = getRequestKey(path, method);
-  const cached = getCache.get(key);
-  if (cached && Date.now() - cached.at < GET_CACHE_MS) {
-    assertSameTenantActive(requestTenantId);
-    return cached.data as T;
+  if (key) {
+    const cached = getCache.get(key);
+    if (cached && Date.now() - cached.at < GET_CACHE_MS) {
+      assertSameTenantActive(requestTenantId);
+      return cached.data as T;
+    }
+
+    const inflight = inflightGets.get(key);
+    if (inflight) return inflight as Promise<T>;
   }
 
-  const inflight = inflightGets.get(key);
-  if (inflight) return inflight as Promise<T>;
-
   const cacheGeneration = getCacheGeneration;
+  const inflightKey = key ?? `__no_cache__:${method}:${path}`;
   const promise = fetchEnvelope<T>(path, init)
     .then((data) => {
       assertSameTenantActive(requestTenantId);
-      if (canRememberGetCache(cacheGeneration)) {
+      if (key && canRememberGetCache(cacheGeneration)) {
         rememberGetCache(key, data);
       }
       return data;
     })
     .finally(() => {
-      inflightGets.delete(key);
+      inflightGets.delete(inflightKey);
     });
 
-  inflightGets.set(key, promise);
+  inflightGets.set(inflightKey, promise);
   return promise;
 }
 
@@ -451,24 +495,27 @@ async function requestWithMeta<T>(
   init?: RequestInit
 ): Promise<{ data: T; meta: ApiEnvelope<T>["meta"] }> {
   const method = (init?.method ?? "GET").toUpperCase();
-  const requestTenantId = resolveActiveTenantId();
+  const requestTenantId = requireTenantIdForPath(path);
   const key = getRequestKey(`${path}#meta`, method);
 
   if (method === "GET") {
-    const cached = getCache.get(key);
-    if (cached && Date.now() - cached.at < GET_CACHE_MS) {
-      assertSameTenantActive(requestTenantId);
-      return cached.data as { data: T; meta: ApiEnvelope<T>["meta"] };
-    }
-    const inflight = inflightGets.get(key);
-    if (inflight) {
-      return inflight as Promise<{ data: T; meta: ApiEnvelope<T>["meta"] }>;
+    if (key) {
+      const cached = getCache.get(key);
+      if (cached && Date.now() - cached.at < GET_CACHE_MS) {
+        assertSameTenantActive(requestTenantId);
+        return cached.data as { data: T; meta: ApiEnvelope<T>["meta"] };
+      }
+      const inflight = inflightGets.get(key);
+      if (inflight) {
+        return inflight as Promise<{ data: T; meta: ApiEnvelope<T>["meta"] }>;
+      }
     }
   } else {
     invalidateGetCache();
   }
 
   const cacheGeneration = getCacheGeneration;
+  const inflightKey = key ?? `__no_cache__:${method}:${path}#meta`;
   const promise = (async () => {
     const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
     if (!res.ok) {
@@ -485,17 +532,15 @@ async function requestWithMeta<T>(
   })();
 
   if (method === "GET") {
-    inflightGets.set(
-      key,
-      promise.then((payload) => {
-        assertSameTenantActive(requestTenantId);
-        if (canRememberGetCache(cacheGeneration)) {
-          rememberGetCache(key, payload);
-        }
-        return payload;
-      })
-    );
-    return promise.finally(() => inflightGets.delete(key));
+    const tracked = promise.then((payload) => {
+      assertSameTenantActive(requestTenantId);
+      if (key && canRememberGetCache(cacheGeneration)) {
+        rememberGetCache(key, payload);
+      }
+      return payload;
+    });
+    inflightGets.set(inflightKey, tracked);
+    return tracked.finally(() => inflightGets.delete(inflightKey));
   }
 
   return promise;

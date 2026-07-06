@@ -31,6 +31,7 @@ export default defineConfig({
       "src/lib/authToken.test.ts",
       "src/lib/tenantSession.test.ts",
       "src/lib/uploadColumnState.test.ts",
+      "src/lib/pageTenantIsolation.test.ts",
       "src/api/client.test.ts",
     ],
   },

@@ -11,6 +11,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { getRouterBasename } from "@/lib/routerBasename";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { SuperAdminEmbedPage } from "@/pages/SuperAdminEmbedPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 import { SetupPage } from "@/pages/SetupPage";
@@ -118,6 +119,7 @@ export default function App() {
     <BrowserRouter basename={routerBasename}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/platform/embed" element={<SuperAdminEmbedPage />} />
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
         <Route path="/setup" element={<SetupPage />} />
         <Route

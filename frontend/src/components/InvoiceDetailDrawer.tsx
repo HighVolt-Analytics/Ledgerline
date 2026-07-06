@@ -59,6 +59,11 @@ import { InvoiceSalesDossierSection } from "@/components/invoices/InvoiceSalesDo
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useAuth } from "@/context/AuthContext";
 import {
+  canRenderTenantOwnedUi,
+  captureTenantFetchScope,
+  isTenantFetchScopeCurrent,
+} from "@/lib/tenantSession";
+import {
   extractionFieldsForDocumentType,
   isPresetExtractionFieldKey,
   normalizeExtractionFieldKeys,
@@ -753,20 +758,23 @@ export function InvoiceDetailDrawer({
       }
       return;
     }
+    if (!canRenderTenantOwnedUi(tenantScope)) return;
+
+    const scope = captureTenantFetchScope();
     const seq = ++loadSeq.current;
     setLoading(true);
     api
       .getInvoice(activeInvoiceId, { fresh: true })
       .then((data) => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setInv(data);
       })
       .catch(() => {
-        if (seq !== loadSeq.current) return;
+        if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return;
         setInv(null);
       })
       .finally(() => {
-        if (seq === loadSeq.current) setLoading(false);
+        if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope)) setLoading(false);
       });
   }, [mounted, activeInvoiceId, tenantScope]);
 

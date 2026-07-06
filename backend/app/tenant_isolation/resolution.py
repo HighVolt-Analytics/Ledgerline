@@ -95,8 +95,11 @@ class TenantResolutionService:
         resolved_tenant_id: uuid.UUID | None,
         x_tenant_id_hdr: str | None,
     ) -> str | None:
-        if resolved_tenant_id is None or not x_tenant_id_hdr:
+        """Require X-Tenant-Id on authenticated tenant-scoped requests; must match JWT tenant."""
+        if resolved_tenant_id is None:
             return None
+        if not x_tenant_id_hdr or not str(x_tenant_id_hdr).strip():
+            return "X-Tenant-Id header is required"
         hdr_tid = parse_tenant_id(x_tenant_id_hdr)
         if hdr_tid is None:
             return "X-Tenant-Id must be a UUID"
