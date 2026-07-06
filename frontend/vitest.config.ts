@@ -16,6 +16,7 @@ export default defineConfig({
       "src/lib/documentCompulsoryFields.test.ts",
       "src/lib/documentExtractionFields.test.ts",
       "src/lib/documentBundleConfig.test.ts",
+      "src/lib/documentPlaybookConfig.test.ts",
       "src/lib/documentMatchRules.test.ts",
       "src/lib/documentTypePostTo.test.ts",
       "src/lib/invoice.test.ts",
@@ -33,6 +34,7 @@ export default defineConfig({
       "src/lib/uploadColumnState.test.ts",
       "src/lib/pageTenantIsolation.test.ts",
       "src/api/client.test.ts",
+      "src/api/clientInvitePaths.test.ts",
     ],
   },
 });

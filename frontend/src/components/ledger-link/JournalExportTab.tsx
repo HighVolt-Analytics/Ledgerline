@@ -8,6 +8,14 @@ import { cn } from "@/lib/cn";
 import { money } from "@/lib/format";
 import { EXPORT_TARGETS } from "@/lib/v4MockData";
 import { ExportStatusBadge } from "./ExportStatusBadge";
+import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
+
+const TARGET_BRANDS: Record<string, Parameters<typeof IntegrationBrandIcon>[0]["id"] | null> = {
+  Xero: "xero",
+  "QuickBooks Online": "qbo",
+  MYOB: "myob",
+  Stripe: "stripe",
+};
 
 type ExportPreviewRow = {
   id: string;
@@ -124,7 +132,12 @@ export function JournalExportTab({
                       : "border-border bg-card text-muted-foreground hover-elevate"
                   )}
                 >
-                  {t}
+                  <span className="inline-flex items-center gap-2">
+                    {TARGET_BRANDS[t] ? (
+                      <IntegrationBrandIcon id={TARGET_BRANDS[t]} size={14} />
+                    ) : null}
+                    <span>{t}</span>
+                  </span>
                 </button>
               ))}
             </div>

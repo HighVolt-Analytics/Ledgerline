@@ -1,0 +1,37 @@
+/* Rule book — dashed empty panels */
+.rule-book-empty-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  min-height: 11.5rem;
+  padding: 2.75rem 1.5rem;
+  border-radius: 0.75rem;
+  border: 1px dashed hsl(var(--border));
+  background: hsl(var(--card) / 0.5);
+  text-align: center;
+}
+
+.rule-book-empty-panel__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground) / 0.5);
+}
+
+.rule-book-empty-panel__title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: hsl(var(--foreground));
+}
+
+.rule-book-empty-panel__hint {
+  margin: 0;
+  max-width: 28rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: hsl(var(--muted-foreground));
+}

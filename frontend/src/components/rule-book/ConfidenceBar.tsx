@@ -7,7 +7,7 @@ export function ConfidenceBar({ value }: { value: number }) {
       : value >= 70
         ? "bg-primary"
         : value >= 40
-          ? "bg-[hsl(43_74%_49%)]"
+          ? "bg-[#9c4e2a] dark:bg-[#edc0a6]"
           : "bg-destructive";
   return (
     <div className="flex items-center gap-2 min-w-[100px]">

@@ -1,12 +1,52 @@
 @import "./styles/ledgerline.css";
+@import "./styles/fonts.css";
+@import "./styles/kpi.css";
+@import "./styles/tokens.css";
+@import "./styles/typography.css";
+@import "./styles/shell.css";
 @import "./styles/dossiers.css"; /* dossier page layout + cards */
+@import "./styles/integrations.css";
+@import "./styles/auth.css";
+@import "./styles/skeleton.css";
+@import "./styles/approvals-kanban.css";
+@import "./styles/rule-book.css";
+@import "./styles/purchases.css";
+@import "./styles/billing.css";
+
+/* Form field surface — white (light) / elevated gray (dark), distinct from page canvas */
+.bg-field {
+  background-color: hsl(var(--input-background));
+}
+
+.vendors-pending-item {
+  background-color: hsl(var(--nav-secondary));
+  border-color: hsl(var(--nav-secondary-border));
+}
 
 #root {
   min-height: 100vh;
 }
 
 body {
-  font-family: Inter, system-ui, sans-serif;
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  font-weight: var(--type-body-weight);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-headline);
+  font-weight: 500;
+}
+
+/* Floating panel shadow — profile menus, dropdowns (theme-aware, black not foreground) */
+.shadow-float {
+  box-shadow: var(--shadow-float);
 }
 
 /* Shared dropdown option list — matches period picker month menu */
@@ -16,9 +56,7 @@ body {
   border-radius: 0.5rem;
   border: 1px solid hsl(var(--border));
   background-color: hsl(var(--popover));
-  box-shadow:
-    0 4px 6px -1px hsl(var(--foreground) / 0.06),
-    0 10px 24px -4px hsl(var(--foreground) / 0.12);
+  box-shadow: var(--shadow-float);
   padding: 0.25rem;
 }
 
@@ -37,20 +75,27 @@ body {
   justify-content: space-between;
   gap: 0.5rem;
   width: 100%;
-  padding: 0.5rem 0.625rem;
+  padding: 0.625rem 0.75rem;
   border: none;
   border-radius: 0.375rem;
   background: transparent;
-  font-size: 0.75rem;
-  line-height: 1.25rem;
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
   color: hsl(var(--foreground));
   text-align: left;
   cursor: pointer;
   transition: background-color 120ms ease;
 }
 
+/* Cyan accent — dropdown icons & selected ticks (light + dark) */
+.dropdown-accent {
+  color: hsl(var(--nav-accent));
+  flex-shrink: 0;
+}
+
 .app-dropdown-option--md {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-leading);
 }
 
 .app-dropdown-option:hover {
@@ -256,9 +301,7 @@ body::-webkit-scrollbar-button,
   border-radius: 0.5rem;
   border: 1px solid hsl(var(--border));
   background-color: hsl(var(--popover));
-  box-shadow:
-    0 4px 6px -1px hsl(var(--foreground) / 0.06),
-    0 10px 24px -4px hsl(var(--foreground) / 0.12);
+  box-shadow: var(--shadow-float);
   padding: 0.25rem;
 }
 
@@ -268,7 +311,7 @@ body::-webkit-scrollbar-button,
   justify-content: space-between;
   gap: 0.5rem;
   width: 100%;
-  padding: 0.5rem 0.625rem;
+  padding: 0.625rem 0.75rem;
   border: none;
   border-radius: 0.375rem;
   background: transparent;
@@ -371,24 +414,24 @@ body::-webkit-scrollbar-button,
   font-weight: 500;
 }
 
-/* Privilege matrix toggles — v3 pill switch with sliding knob */
+/* Pill switch — cyan active track, elevated thumb */
 [role="switch"].app-switch {
   display: inline-flex;
-  height: 1.25rem;
-  width: 2.25rem;
+  height: 1.5rem;
+  width: 2.75rem;
   flex-shrink: 0;
   cursor: pointer;
   align-items: center;
   border-radius: 9999px;
-  border: 2px solid transparent;
-  padding: 0.125rem;
-  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.06);
+  border: none;
+  padding: 2px;
+  box-shadow: none;
   transition: background-color 0.2s ease;
   background-color: hsl(var(--muted));
 }
 
 [role="switch"].app-switch[aria-checked="true"] {
-  background-color: hsl(var(--primary));
+  background-color: hsl(var(--cyan-500));
 }
 
 [role="switch"].app-switch:disabled {
@@ -404,17 +447,26 @@ body::-webkit-scrollbar-button,
 [role="switch"].app-switch .app-switch-thumb {
   pointer-events: none;
   display: block;
-  height: 1rem;
-  width: 1rem;
+  height: 1.25rem;
+  width: 1.25rem;
   border-radius: 9999px;
-  background-color: hsl(var(--background));
-  box-shadow: 0 1px 3px hsl(var(--foreground) / 0.25);
+  background-color: hsl(var(--card));
+  box-shadow:
+    0 1px 2px hsl(0 0% 0% / 0.14),
+    0 2px 5px hsl(0 0% 0% / 0.18);
   transform: translateX(0);
   transition: transform 0.2s ease-in-out;
 }
 
+.dark [role="switch"].app-switch .app-switch-thumb {
+  background-color: hsl(0 0% 11%);
+  box-shadow:
+    0 1px 2px hsl(0 0% 0% / 0.45),
+    0 2px 6px hsl(0 0% 0% / 0.35);
+}
+
 [role="switch"].app-switch[aria-checked="true"] .app-switch-thumb {
-  transform: translateX(1rem);
+  transform: translateX(1.25rem);
 }
 
 /* Rule book sliders — v4 track (secondary) + primary fill + bordered thumb */
@@ -509,25 +561,38 @@ input.app-numeric-input {
   right: 0;
   bottom: 0;
   left: 0;
-  z-index: 100;
+  z-index: 260;
   border: 0;
   padding: 0;
   cursor: default;
-  background: rgb(0 0 0 / 0.8);
+  /* Light mode: softer overlay */
+  background: hsl(var(--foreground) / 0.16);
   opacity: 0;
   transition: opacity 300ms ease-in-out;
 }
 
+.dark .invoice-drawer-backdrop {
+  background: rgb(0 0 0 / 0.8);
+}
+
 @media (min-width: 768px) {
   .invoice-drawer-backdrop {
-    /* Align with md:grid-cols-[248px_1fr] — dim main workspace only */
-    left: 248px;
+    left: 0;
   }
 
+  .app-shell--primary-collapsed .invoice-drawer-backdrop {
+    left: 0;
+  }
+
+  .primary-sidebar,
   .app-sidebar {
     position: relative;
     z-index: 110;
   }
+}
+
+.invoice-drawer-backdrop::before {
+  content: none;
 }
 
 .invoice-drawer-backdrop[data-state="open"] {
@@ -539,9 +604,11 @@ input.app-numeric-input {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 101;
+  z-index: 261;
   width: 100%;
   max-width: 100%;
+  /* Match main workspace card (--card), not shell canvas */
+  background-color: hsl(var(--card));
   transform: translateX(100%);
   transition: transform 500ms ease-in-out;
 }
@@ -573,13 +640,13 @@ input.app-numeric-input {
 /* Wider on desktop: ~88% of main workspace, capped for readability */
 @media (min-width: 768px) {
   .invoice-drawer-panel:not(.invoice-drawer-panel--sheet) {
-    max-width: min(68rem, calc((100vw - 248px) * 0.88));
+    max-width: min(68rem, calc((100vw - var(--shell-nav-offset, 25rem)) * 0.88));
   }
 }
 
 @media (min-width: 1280px) {
   .invoice-drawer-panel:not(.invoice-drawer-panel--sheet) {
-    max-width: min(72rem, calc((100vw - 248px) * 0.9));
+    max-width: min(72rem, calc((100vw - var(--shell-nav-offset, 25rem)) * 0.9));
   }
 }
 
@@ -1106,6 +1173,21 @@ input.app-numeric-input {
   min-width: 11rem;
 }
 
+/* Line items: keep a visible/stable horizontal scrollbar and let inputs breathe */
+.invoice-drawer-lines-scroll {
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+  padding-bottom: 6px; /* keep scrollbar visible, not clipped */
+}
+
+.invoice-line-input--desc {
+  min-width: 26rem;
+}
+
+.invoice-line-input--num {
+  min-width: 7.5rem;
+}
+
 .invoice-drawer-gl-select {
   width: 100%;
   max-width: 13rem;
@@ -1307,9 +1389,85 @@ input.app-numeric-input {
   }
 }
 
+/* Vault folder icons — KPI dashboard palette by tree depth (cycles) */
+.vault-folder-icon--d0 {
+  color: #5b3a7d; /* violet — main */
+}
+
+.vault-folder-icon--d1 {
+  color: #245e8d; /* blue — subfield */
+}
+
+.vault-folder-icon--d2 {
+  color: #9c4e2a; /* rust — tertiary */
+}
+
+.vault-folder-icon--d3 {
+  color: #356344; /* green */
+}
+
+.vault-folder-icon--d4 {
+  color: #8b4560; /* rose */
+}
+
+.vault-folder-icon--d5 {
+  color: #337362; /* sage */
+}
+
+.vault-folder-icon--d6 {
+  color: #3b6f73; /* cyan */
+}
+
+.vault-folder-icon--d7 {
+  color: #275c70; /* teal */
+}
+
+.dark .vault-folder-icon--d0 {
+  color: #cfb8ec;
+}
+
+.dark .vault-folder-icon--d1 {
+  color: #a8d9f3;
+}
+
+.dark .vault-folder-icon--d2 {
+  color: #edc0a6;
+}
+
+.dark .vault-folder-icon--d3 {
+  color: #b4ddbd;
+}
+
+.dark .vault-folder-icon--d4 {
+  color: #e7b6c3;
+}
+
+.dark .vault-folder-icon--d5 {
+  color: #b2dfd1;
+}
+
+.dark .vault-folder-icon--d6 {
+  color: #b9dee2;
+}
+
+.dark .vault-folder-icon--d7 {
+  color: #b6edf5;
+}
+
 .upload-drop-zone {
   border-color: hsl(var(--border));
   background: hsl(var(--card));
+}
+
+.mailbox-import-dialog__date {
+  accent-color: hsl(var(--nav-accent));
+}
+
+.mailbox-import-dialog__date::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.9;
+  filter: brightness(0) saturate(100%) invert(56%) sepia(86%) saturate(1752%) hue-rotate(153deg)
+    brightness(95%) contrast(92%);
 }
 
 .upload-drop-zone--active {

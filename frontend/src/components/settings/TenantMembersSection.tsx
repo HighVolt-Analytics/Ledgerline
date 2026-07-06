@@ -5,6 +5,7 @@ import type { PendingTenantInvite, TenantMember } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -107,7 +108,7 @@ function InviteMemberDialog({
                 Invitation email sent to {email.trim()}.
               </p>
             ) : (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
+              <p className="text-xs ds-warning-text">
                 {result.email_error ??
                   "Email could not be sent. Share the invite link manually:"}
               </p>
@@ -220,7 +221,7 @@ export function TenantMembersSection() {
         )}
       </div>
 
-      {loading && <p className="px-4 py-6 text-sm text-muted-foreground">Loading team…</p>}
+      {loading && <InlineTableSkeleton rows={5} columns={4} />}
       {error && <p className="px-4 py-3 text-sm text-destructive">{error}</p>}
 
       {!loading && !error && (

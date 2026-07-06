@@ -59,7 +59,7 @@ function normalizeAbn(value: string): string {
 function StatusDot({ status }: { status: string }) {
   const tone: Record<string, string> = {
     Active: "bg-[hsl(var(--chart-1))]",
-    "On hold": "bg-[hsl(43_74%_49%)]",
+    "On hold": "bg-[#9c4e2a] dark:bg-[#edc0a6]",
     "Pending registration": "bg-destructive",
     "Pending verification": "bg-destructive",
     Suspended: "bg-destructive",
@@ -459,7 +459,7 @@ export function VendorsTab({
                           <span className="font-medium">
                             {dirty ? draft.name : v.name}
                             {dirty && (
-                              <span className="ml-2 text-[10px] text-amber-600 dark:text-amber-400">
+                              <span className="ml-2 text-[10px] ds-warning-text">
                                 unsaved
                               </span>
                             )}

@@ -1,16 +1,18 @@
-import { useState } from "react";
-import { Coins, Crown, Mail, MessageCircle, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Coins, Mail, MessageCircle, X } from "lucide-react";
+import { ManagePlanDialog } from "@/components/billing/ManagePlanDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { useAuth } from "@/context/AuthContext";
 import { useBilling, useBillingMutations, useBillingUsage } from "@/hooks/useBilling";
+import { usePricingRegion } from "@/hooks/usePricingRegion";
+import { api } from "@/api/client";
 import { countryByCode } from "@/data/orgSetup";
 import { cn } from "@/lib/cn";
-import { studioMonthlyCredits } from "@/lib/billingUtils";
+import type { PlanId } from "@/lib/pricingPlans";
 
 function planLabel(plan: string) {
   if (plan === "studio") return "Studio";
@@ -28,6 +30,21 @@ export function BillingPage() {
   const [usagePage, setUsagePage] = useState(1);
   const { data: usage } = useBillingUsage(usagePage, Boolean(user && billing));
   const { topUp, upgradeToStudio } = useBillingMutations();
+  const [institutionCountry, setInstitutionCountry] = useState<string | null>(null);
+  const { region: pricingRegion } = usePricingRegion({
+    tenantCountry: billing?.plan_info?.region,
+    institutionCountry,
+  });
+
+  useEffect(() => {
+    if (!user) return;
+    api
+      .getInstitutionSettings()
+      .then((inst) => setInstitutionCountry(inst.country))
+      .catch(() => {
+        /* optional */
+      });
+  }, [user]);
 
   const [manageOpen, setManageOpen] = useState(false);
   const [topUpOpen, setTopUpOpen] = useState(false);
@@ -69,7 +86,6 @@ export function BillingPage() {
   const symbol = country.symbol;
   const topUpCredits =
     topUpAmount != null ? Math.floor(topUpAmount * planInfo.topup_factor) : 0;
-  const studioCredits = studioMonthlyCredits(planInfo.region);
 
   async function handleTopUp() {
     if (topUpAmount == null || topUpAmount <= 0) return;
@@ -100,6 +116,11 @@ export function BillingPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handlePlanSelect(plan: PlanId) {
+    if (plan !== "studio") return;
+    await handleUpgrade();
   }
 
   return (
@@ -253,53 +274,16 @@ export function BillingPage() {
         )}
       </Card>
 
-      {manageOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <Card className="w-full max-w-md p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Crown className="h-4 w-4 text-primary" />
-                Manage plan
-              </h3>
-              <button type="button" onClick={() => setManageOpen(false)} aria-label="Close">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Current plan: <Badge variant="outline">{planLabel(billing.plan)}</Badge>
-            </div>
-            {billing.plan === "free" && billing.can_upgrade_studio && (
-              <div className="rounded-md border border-border p-3 space-y-2">
-                <p className="font-medium">Studio</p>
-                <p className="text-sm text-muted-foreground">
-                  {symbol}
-                  {planInfo.studio_monthly_price.toLocaleString()}/month ·{" "}
-                  {studioCredits.toLocaleString()} credits · email & social integrations
-                </p>
-                <Button className="w-full" disabled={busy} onClick={() => void handleUpgrade()}>
-                  Upgrade to Studio
-                </Button>
-                <p className="text-[10px] text-muted-foreground text-center">
-                  Payment simulated — Stripe integration coming soon.
-                </p>
-              </div>
-            )}
-            {billing.is_enterprise && (
-              <p className="text-sm">
-                Enterprise plans are managed by our sales team. Contact sales for changes.
-              </p>
-            )}
-            {billing.plan === "studio" && (
-              <p className="text-sm text-muted-foreground">
-                You are on Studio. Need more? Use Top up or contact sales for Enterprise.
-              </p>
-            )}
-            <Button variant="outline" className="w-full" onClick={() => setManageOpen(false)}>
-              Close
-            </Button>
-          </Card>
-        </div>
-      )}
+      <ManagePlanDialog
+        open={manageOpen}
+        onClose={() => setManageOpen(false)}
+        currentPlan={billing.plan as PlanId}
+        currentPlanLabel={planLabel(billing.plan)}
+        region={pricingRegion}
+        canUpgradeStudio={billing.can_upgrade_studio}
+        busy={busy}
+        onSelectPlan={(plan) => void handlePlanSelect(plan)}
+      />
 
       {topUpOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

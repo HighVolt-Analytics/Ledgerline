@@ -1,3 +1,4 @@
+import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
 
@@ -21,15 +22,20 @@ export function InboxGlAccountBadge({
   if (!account) {
     return <span className="text-muted-foreground">—</span>;
   }
-  const suspense = account === "Suspense Account";
+  const isSuspense = account === "Suspense Account";
   return (
     <Badge
       variant="outline"
       className={cn(
-        "font-normal",
-        suspense ? "border-destructive/40 text-destructive" : "border-border text-foreground"
+        "font-normal inline-flex items-center gap-1",
+        isSuspense
+          ? "border-[rgb(var(--system-yellow-rgb)/0.35)] text-foreground"
+          : "border-border text-foreground"
       )}
     >
+      {isSuspense ? (
+        <AlertTriangle className="h-3 w-3 text-destructive shrink-0" aria-hidden />
+      ) : null}
       {account}
     </Badge>
   );

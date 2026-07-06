@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Mail } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, CircleDollarSign, GitCompareArrows, Mail, Timer, Upload, Users } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -11,8 +11,9 @@ import {
   YAxis,
 } from "recharts";
 import type { KpiSparklines, KpiTrend } from "@/api/types";
-import { KpiCard } from "@/components/KpiCard";
+import { KpiCard, type KpiModuleColor } from "@/components/KpiCard";
 import { ChartTooltip } from "@/components/ChartTooltip";
+import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { YearMonthPeriodPicker } from "@/components/YearMonthPeriodPicker";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,7 @@ import { useDashboardOverview } from "@/hooks/useDashboardOverview";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import { axisMoney, currencySymbol, formatDuration, money, toNumber } from "@/lib/format";
 import { toV3SparkSeries } from "@/lib/kpiSpark";
+import { activityLabel } from "@/lib/notifications";
 import { vaultInvoiceLink } from "@/lib/vault";
 import {
   buildMonthsForYear,
@@ -30,9 +32,13 @@ import {
   yearFromPeriod,
 } from "@/lib/reconciliation";
 import { defaultReportPeriod } from "@/lib/reportsData";
-import { activityLabel } from "@/lib/notifications";
 import { cn } from "@/lib/cn";
 import { API_PORT_HINT, formatTenantLoadError } from "@/lib/tenantSession";
+import {
+  approvalStatusChipClass,
+  kpiStatusChipClass,
+  needsReviewStatusChipClass,
+} from "@/lib/kpiModuleColors";
 
 const CHART_MARGIN = { top: 4, right: 4, left: -18, bottom: 0 };
 const EMAIL_BAR_FILL = "hsl(186 64% 34%)";
@@ -62,21 +68,14 @@ function relativePollTime(iso: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function anomalyBadgeClass(tag: string) {
-  if (tag === "Duplicate") return "border-destructive/40 text-destructive text-[10px]";
-  if (
-    tag === "Missing PO" ||
-    tag === "Missing SO" ||
-    tag === "Pending vendor" ||
-    tag === "Pending customer" ||
-    tag === "Needs review"
-  ) {
-    return "border-[hsl(43_74%_49%/0.5)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)] text-[10px]";
+function anomalyTagClass(tag: string) {
+  if (tag === "Needs review") return needsReviewStatusChipClass();
+  if (tag === "Missing PO") return kpiStatusChipClass("rose");
+  if (tag === "Pending vendor") return kpiStatusChipClass("rust");
+  if (tag === "Duplicate" || tag === "GST mismatch" || tag === "Team policy" || tag === "Validation") {
+    return approvalStatusChipClass("reject");
   }
-  if (tag === "GST mismatch" || tag === "Team policy" || tag === "Validation") {
-    return "border-destructive/30 text-destructive text-[10px]";
-  }
-  return "text-muted-foreground text-[10px]";
+  return approvalStatusChipClass("muted");
 }
 
 function mailboxNickname(email: string, displayName: string | null): string {
@@ -84,6 +83,43 @@ function mailboxNickname(email: string, displayName: string | null): string {
   if (label && !label.includes("@")) return label;
   const local = email.split("@")[0] ?? "Mailbox";
   return local.charAt(0).toUpperCase() + local.slice(1);
+}
+
+function dashboardSubtitle(user: { is_support_session?: boolean; tenant_name: string }) {
+  if (user.is_support_session) {
+    return `Support view for ${user.tenant_name}. Overview of document volume, processing, and cash forecast.`;
+  }
+  return "Overview of document volume, processing, and cash forecast.";
+}
+
+function DashboardWelcomeCard({
+  user,
+}: {
+  user: {
+    is_support_session?: boolean;
+    tenant_name: string;
+    full_name: string;
+    email: string;
+  };
+}) {
+  return (
+    <Card className="p-5 mb-6 border-border/55 shadow-none" data-testid="text-welcome">
+      <h2 className="text-xl font-semibold tracking-tight">
+        {user.is_support_session
+          ? `Support view — ${user.tenant_name}`
+          : `Welcome back, ${firstName(user.full_name)} — ${user.tenant_name}`}
+      </h2>
+      {!user.is_support_session && (
+        <Badge
+          variant="outline"
+          className="mt-2 text-xs font-normal text-muted-foreground tnum"
+          data-testid="chip-userid"
+        >
+          {user.email}
+        </Badge>
+      )}
+    </Card>
+  );
 }
 
 function trendToDelta(trend: KpiTrend | undefined) {
@@ -153,18 +189,31 @@ export function DashboardPage() {
     const message =
       error instanceof Error ? error.message : "Failed to load dashboard";
     return (
-      <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
-        {formatTenantLoadError(message, API_PORT_HINT)}
-      </Card>
+      <div>
+        {user && (
+          <PageHeader title="Dashboard" subtitle={dashboardSubtitle(user)} actions={periodSelector} />
+        )}
+        <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
+          {formatTenantLoadError(message, API_PORT_HINT)}
+        </Card>
+      </div>
     );
   }
 
-  if (isLoading || overviewBlocked || !overview) {
-    return <PageLoader label="Loading dashboard…" />;
-  }
-
-  if (!user) {
-    return <PageLoader label="Loading dashboard…" />;
+  if (isLoading || overviewBlocked || !overview || !user) {
+    return (
+      <div>
+        {user ? (
+          <PageHeader title="Dashboard" subtitle={dashboardSubtitle(user)} actions={periodSelector} />
+        ) : (
+          <PageHeader
+            title="Dashboard"
+            subtitle="Overview of document volume, processing, and cash forecast."
+          />
+        )}
+        <PageLoader variant="dashboard" />
+      </div>
+    );
   }
 
   const {
@@ -193,36 +242,15 @@ export function DashboardPage() {
     reconciliation_delta: [],
   };
 
-  const topCounterpartyLabels = new Set(
-    top_vendors.map((x) => x.counterparty_label ?? "Counterparty"),
-  );
-  const topCounterpartyColumn =
-    topCounterpartyLabels.size === 1
-      ? [...topCounterpartyLabels][0]
-      : "Counterparty";
-
   if (stats.total_invoices === 0) {
     return (
       <div>
-        <Card
-          className="p-5 mb-6 bg-gradient-to-r from-primary/5 to-transparent border-primary/15"
-          data-testid="text-welcome"
-        >
-          <h1 className="text-xl font-semibold tracking-tight">
-            {user.is_support_session
-              ? `Support view — ${user.tenant_name}`
-              : `Welcome back, ${firstName(user.full_name)} — ${user.tenant_name}`}
-          </h1>
-          {!user.is_support_session && (
-            <Badge variant="outline" className="mt-2 text-xs font-normal text-muted-foreground tnum" data-testid="chip-userid">
-              {user.email}
-            </Badge>
-          )}
-        </Card>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold">Overview</h2>
-          {periodSelector}
-        </div>
+        <PageHeader
+          title="Dashboard"
+          subtitle={dashboardSubtitle(user)}
+          actions={periodSelector}
+        />
+        <DashboardWelcomeCard user={user} />
         <Card className="p-8 flex flex-col items-center text-center max-w-lg mx-auto">
           <h3 className="text-sm font-semibold mb-2">No documents loaded yet</h3>
           <p className="text-sm text-muted-foreground mb-4">
@@ -263,6 +291,8 @@ export function DashboardPage() {
       value: stats.active_users,
       delta: trendToDelta(kpi_trends.active_users),
       spark: toV3SparkSeries(sparks.active_users, stats.active_users, "count"),
+      icon: Users,
+      moduleColor: "violet" as KpiModuleColor,
       testid: "kpi-active-users",
     },
     {
@@ -270,6 +300,8 @@ export function DashboardPage() {
       value: stats.mailboxes_mapped,
       delta: trendToDelta(kpi_trends.mailboxes_active),
       spark: toV3SparkSeries(sparks.mailboxes_active, mailboxActivity, "count"),
+      icon: Mail,
+      moduleColor: "blue" as KpiModuleColor,
       testid: "kpi-mailboxes-mapped",
     },
     {
@@ -277,6 +309,8 @@ export function DashboardPage() {
       value: stats.docs_via_email,
       delta: trendToDelta(kpi_trends.docs_via_email),
       spark: toV3SparkSeries(sparks.docs_via_email, stats.docs_via_email, "count"),
+      icon: Mail,
+      moduleColor: "teal" as KpiModuleColor,
       testid: "kpi-docs-email",
     },
     {
@@ -284,6 +318,8 @@ export function DashboardPage() {
       value: stats.docs_via_upload,
       delta: trendToDelta(kpi_trends.docs_via_upload),
       spark: toV3SparkSeries(sparks.docs_via_upload, stats.docs_via_upload, "count"),
+      icon: Upload,
+      moduleColor: "green" as KpiModuleColor,
       testid: "kpi-docs-upload",
     },
   ];
@@ -298,6 +334,8 @@ export function DashboardPage() {
         stats.avg_processing_seconds ?? 0,
         "seconds",
       ),
+      icon: Timer,
+      moduleColor: "sage" as KpiModuleColor,
       testid: "kpi-avg-processing",
     },
     {
@@ -305,6 +343,8 @@ export function DashboardPage() {
       value: fmt(stats.total_value ?? stats.total_value_aud),
       delta: trendToDelta(kpi_trends.total_value ?? kpi_trends.total_value_aud),
       spark: toV3SparkSeries(sparks.total_value, toNumber(stats.total_value ?? stats.total_value_aud), "money"),
+      icon: CircleDollarSign,
+      moduleColor: "cyan" as KpiModuleColor,
       testid: "kpi-total-value",
     },
     {
@@ -312,6 +352,8 @@ export function DashboardPage() {
       value: stats.distinct_vendors,
       delta: trendToDelta(kpi_trends.distinct_vendors),
       spark: toV3SparkSeries(sparks.distinct_vendors, stats.distinct_vendors, "count"),
+      icon: Building2,
+      moduleColor: "rust" as KpiModuleColor,
       testid: "kpi-distinct-vendors",
     },
     {
@@ -330,6 +372,8 @@ export function DashboardPage() {
               good: false,
             }
         : undefined,
+      icon: GitCompareArrows,
+      moduleColor: "rose" as KpiModuleColor,
       testid: "kpi-recon",
     },
   ];
@@ -360,29 +404,13 @@ export function DashboardPage() {
 
   return (
     <div>
-      <Card
-        className="p-5 mb-6 bg-gradient-to-r from-primary/5 to-transparent border-primary/15"
-      >
-        <h1 className="text-xl font-semibold tracking-tight" data-testid="text-welcome">
-          {user.is_support_session
-            ? `Support view — ${user.tenant_name}`
-            : `Welcome back, ${firstName(user.full_name)} — ${user.tenant_name}`}
-        </h1>
-        {!user.is_support_session && (
-          <Badge
-            variant="outline"
-            className="mt-2 text-xs font-normal text-muted-foreground tnum"
-            data-testid="chip-userid"
-          >
-            {user.email}
-          </Badge>
-        )}
-      </Card>
+      <PageHeader
+        title="Dashboard"
+        subtitle={dashboardSubtitle(user)}
+        actions={periodSelector}
+      />
 
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-base font-semibold">Overview</h2>
-        {periodSelector}
-      </div>
+      <DashboardWelcomeCard user={user} />
 
       {!period_has_data && (
         <Card className="p-4 mb-4 border-dashed border-border bg-muted/30 text-sm text-muted-foreground">
@@ -530,15 +558,15 @@ export function DashboardPage() {
 
       <div className="grid gap-4 lg:grid-cols-2 mb-6">
         <Card className="p-4">
-          <h3 className="text-sm font-semibold mb-3">Top counterparties</h3>
+          <h3 className="text-sm font-semibold mb-3">Top vendors</h3>
           {top_vendors.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No counterparty data for this period.</p>
+            <p className="text-sm text-muted-foreground">No vendor data for this period.</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground">
                   <th className="py-1.5 font-medium">#</th>
-                  <th className="py-1.5 font-medium">{topCounterpartyColumn}</th>
+                  <th className="py-1.5 font-medium">Vendor</th>
                   <th className="py-1.5 font-medium text-right">Docs</th>
                   <th className="py-1.5 font-medium text-right">Value</th>
                 </tr>
@@ -547,12 +575,7 @@ export function DashboardPage() {
                 {top_vendors.map((x, g) => (
                   <tr key={x.vendor} className="row-band border-t border-border/60">
                     <td className="py-1.5 tnum text-muted-foreground">{g + 1}</td>
-                    <td className="py-1.5 truncate max-w-[160px]">
-                      <div className="font-medium truncate">{x.vendor}</div>
-                      {topCounterpartyColumn === "Counterparty" && x.counterparty_label ? (
-                        <div className="text-[10px] text-muted-foreground">{x.counterparty_label}</div>
-                      ) : null}
-                    </td>
+                    <td className="py-1.5 truncate max-w-[160px]">{x.vendor}</td>
                     <td className="py-1.5 text-right tnum">{x.invoice_count}</td>
                     <td className="py-1.5 text-right tnum">{fmt(x.amount)}</td>
                   </tr>
@@ -564,7 +587,7 @@ export function DashboardPage() {
 
         <Card className="p-4">
           <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle className="h-4 w-4 text-[hsl(43_74%_49%)]" />
+            <AlertTriangle className="h-4 w-4 ds-warning-icon" />
             <h3 className="text-sm font-semibold">Anomalies</h3>
           </div>
           {anomalies.length === 0 ? (
@@ -573,23 +596,11 @@ export function DashboardPage() {
             <div className="space-y-2">
               {anomalies.map((a, i) => (
                 <div
-                  key={`${a.tag}-${a.document_ref ?? a.invoice_id ?? i}`}
+                  key={`${a.tag}-${a.invoice_id ?? i}`}
                   className="flex items-start gap-2 text-sm border-b border-border/60 pb-2"
                 >
-                  <Badge variant="outline" className={cn("shrink-0", anomalyBadgeClass(a.tag))}>
-                    {a.tag}
-                  </Badge>
-                  {a.invoice_id != null ? (
-                    <Link
-                      to={vaultInvoiceLink(a.invoice_id)}
-                      className="text-xs text-muted-foreground flex-1 hover:text-primary hover:underline"
-                      title="Open document in Vault"
-                    >
-                      {a.description}
-                    </Link>
-                  ) : (
-                    <span className="text-xs text-muted-foreground flex-1">{a.description}</span>
-                  )}
+                  <span className={cn("shrink-0", anomalyTagClass(a.tag))}>{a.tag}</span>
+                  <span className="text-xs text-muted-foreground flex-1">{a.description}</span>
                 </div>
               ))}
             </div>

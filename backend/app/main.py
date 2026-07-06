@@ -23,6 +23,7 @@ from app.api import (
     notifications,
     dossiers,
     employee_masters,
+    geo,
     invoices,
     mailboxes,
     tenants,
@@ -104,6 +105,7 @@ if _settings.root_path:
     app.add_middleware(ProxyPathPrefixMiddleware, prefix=_settings.root_path)
 
 app.include_router(auth.router, prefix="/api")
+app.include_router(geo.router, prefix="/api")
 # Stripe webhooks — no JWT.
 app.include_router(stripe_webhooks.router, prefix="/api")
 # OAuth Microsoft redirect — no JWT (must be before authenticated mailboxes router).

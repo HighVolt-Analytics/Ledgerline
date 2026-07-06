@@ -1,18 +1,26 @@
 import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/cn";
 
 export function EmptyState({
   title,
   hint,
   action,
+  className,
 }: {
   title: string;
   hint: string;
   action?: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <Card className="p-8 flex flex-col items-center text-center max-w-lg mx-auto mt-8">
-      <h3 className="text-sm font-semibold mb-2">{title}</h3>
-      <p className="text-sm text-muted-foreground mb-4">{hint}</p>
+    <Card
+      className={cn(
+        "empty-state flex flex-col items-center justify-center text-center w-full gap-3 p-5",
+        className
+      )}
+    >
+      <h3 className="empty-state__title">{title}</h3>
+      <p className="empty-state__hint">{hint}</p>
       {action}
     </Card>
   );

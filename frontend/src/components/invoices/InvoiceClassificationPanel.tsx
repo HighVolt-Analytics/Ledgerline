@@ -126,7 +126,7 @@ export function InvoiceClassificationPanel({
           ) : null}
           {onChangeDt ? (
             <select
-              className="rounded-md border border-border bg-background px-2 py-1 text-[11px]"
+              className="rounded-md border border-border bg-card px-2 py-1 text-[11px] text-foreground"
               defaultValue=""
               onChange={(e) => {
                 const code = e.target.value;

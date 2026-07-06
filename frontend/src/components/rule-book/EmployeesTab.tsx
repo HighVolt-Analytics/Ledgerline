@@ -264,7 +264,7 @@ export function EmployeesTab() {
                           <span className="font-medium">
                             {dirty ? draft.name : emp.name}
                             {dirty && (
-                              <span className="ml-2 text-[10px] text-amber-600 dark:text-amber-400">
+                              <span className="ml-2 text-[10px] ds-warning-text">
                                 unsaved
                               </span>
                             )}
@@ -410,7 +410,7 @@ export function EmployeesTab() {
                           <Check className="h-4 w-4 text-[hsl(var(--chart-1))]" />
                         )}
                         {claim.outcome === "warning" && (
-                          <AlertCircle className="h-4 w-4 text-[hsl(43_74%_49%)]" />
+                          <AlertCircle className="h-4 w-4 ds-warning-icon" />
                         )}
                         {claim.outcome === "rejected" && (
                           <X className="h-4 w-4 text-destructive" />

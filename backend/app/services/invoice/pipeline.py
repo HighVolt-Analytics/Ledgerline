@@ -1290,6 +1290,21 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.llm_suggested_dt = loaded.llm_suggested_dt
     invoice.llm_confidence = loaded.llm_confidence
 
+    from app.services.invoice.invoice_post_classification_phases import apply_policy_scorer_after_extract
+
+    await apply_policy_scorer_after_extract(
+        session,
+        invoice=invoice,
+        loaded=loaded,
+        parsed=parsed,
+        config=config,
+        llm_dt=(loaded.document_type_code or confirmed_dt or "").strip().upper(),
+        llm_confidence=float(
+            loaded.document_type_confidence
+            or (gate_result.confirmed_confidence if gate_result is not None else 0.0)
+        ),
+    )
+
     await apply_invoice_evaluation(session, loaded, config=config)
     from app.services.sales.counterparty_service import sync_invoice_counterparty
 
@@ -1374,12 +1389,22 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     if dt_definition is None:
         dt_definition = resolve_definition_for_invoice(loaded, list(config.document_types))
 
-    playbook = await evaluate_playbook_gates(
+    from app.services.invoice.invoice_post_classification_phases import evaluate_playbook_with_reextract
+
+    playbook = await evaluate_playbook_with_reextract(
         session,
-        invoice=loaded,
+        invoice=invoice,
+        loaded=loaded,
         parsed=parsed,
         definition=dt_definition,
         document_types=list(config.document_types),
+        ocr=ocr,
+        file_path=invoice.raw_file_path,
+        org=org,
+        config=config,
+        confirmed_dt=confirmed_dt,
+        few_shots=few_shots,
+        doc_provider=doc_provider,
     )
     await log_event(
         session,
@@ -1450,6 +1475,18 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         invoice.purchase_document_type = loaded.purchase_document_type
         invoice.po_reference = loaded.po_reference
         invoice.evaluation_status = loaded.evaluation_status
+        from app.services.invoice.invoice_post_classification_phases import log_match_phase_evaluated
+
+        await log_match_phase_evaluated(
+            session,
+            invoice_id=invoice.id,
+            detail={
+                "route": "purchase",
+                "evaluation_status": loaded.evaluation_status,
+                "po_reference": loaded.po_reference,
+                "purchase_document_type": loaded.purchase_document_type,
+            },
+        )
         if loaded.status == InvoiceStatus.EXCEPTION:
             purchase_hold_bypass = bypass_review_gates or override_bypasses_purchase_hold(invoice)
             if purchase_hold_bypass:
@@ -1474,6 +1511,18 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         invoice.sales_document_type = loaded.sales_document_type
         invoice.so_reference = loaded.so_reference
         invoice.evaluation_status = loaded.evaluation_status
+        from app.services.invoice.invoice_post_classification_phases import log_match_phase_evaluated
+
+        await log_match_phase_evaluated(
+            session,
+            invoice_id=invoice.id,
+            detail={
+                "route": "sales",
+                "evaluation_status": loaded.evaluation_status,
+                "so_reference": loaded.so_reference,
+                "sales_document_type": loaded.sales_document_type,
+            },
+        )
         if loaded.status == InvoiceStatus.EXCEPTION:
             sales_hold_bypass = bypass_review_gates
             if sales_hold_bypass:

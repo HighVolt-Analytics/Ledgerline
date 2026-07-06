@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { CalendarRange, Download, FileSpreadsheet, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PageTabs } from "@/components/PageTabs";
 import { cn } from "@/lib/cn";
 
 export type ExportWorkbookMode = "range" | "all";
@@ -123,35 +124,28 @@ export function ExportWorkbookDialog({
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-muted/50 border border-border/60">
-          <button
-            type="button"
-            className={cn(
-              "flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-all",
-              exportMode === "range"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-            onClick={() => onExportModeChange("range")}
-            data-testid="export-mode-range"
-          >
-            <CalendarRange className="h-3.5 w-3.5" />
-            Date range
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-all",
-              exportMode === "all"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-            onClick={() => onExportModeChange("all")}
-            data-testid="export-mode-all"
-          >
-            All dates
-          </button>
-        </div>
+        <PageTabs
+          className="w-full"
+          value={exportMode}
+          onChange={(v) => onExportModeChange(v as ExportWorkbookMode)}
+          tabs={[
+            {
+              value: "range",
+              testid: "export-mode-range",
+              label: (
+                <>
+                  <CalendarRange className="h-3.5 w-3.5" />
+                  Date range
+                </>
+              ),
+            },
+            {
+              value: "all",
+              testid: "export-mode-all",
+              label: "All dates",
+            },
+          ]}
+        />
 
         {exportMode === "range" ? (
           <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
@@ -168,7 +162,7 @@ export function ExportWorkbookDialog({
                   type="date"
                   value={dateFrom}
                   onChange={(e) => onDateFromChange(e.target.value)}
-                  className="h-9 bg-background"
+                  className="h-9"
                   data-testid="export-date-from"
                   disabled={busy}
                 />
@@ -182,7 +176,7 @@ export function ExportWorkbookDialog({
                   type="date"
                   value={dateTo}
                   onChange={(e) => onDateToChange(e.target.value)}
-                  className="h-9 bg-background"
+                  className="h-9"
                   data-testid="export-date-to"
                   disabled={busy}
                 />

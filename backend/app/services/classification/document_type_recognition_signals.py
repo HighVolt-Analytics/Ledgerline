@@ -737,6 +737,7 @@ def infer_document_metadata(playbook: str, *, bundle_role: str = "") -> tuple[st
     from app.services.classification.document_type_catalog import (
         ROUTE_EXPENSES,
         ROUTE_PURCHASE,
+        ROUTE_SALES,
         ROUTE_TEAM,
         ROUTE_VAULT,
     )
@@ -767,8 +768,8 @@ def infer_document_metadata(playbook: str, *, bundle_role: str = "") -> tuple[st
         "non_actionable": (KLASS_NON_TRANSACTIONAL, "No", ROUTE_VAULT),
         "compliance_route": (KLASS_NON_TRANSACTIONAL, "No", ROUTE_VAULT),
         "standard_transactional": (KLASS_TRANSACTIONAL, "Yes", ROUTE_PURCHASE),
-        "ar_goods": (KLASS_TRANSACTIONAL, "Yes", ROUTE_PURCHASE),
-        "ar_goods_2way": (KLASS_TRANSACTIONAL, "Yes", ROUTE_PURCHASE),
+        "ar_goods": (KLASS_TRANSACTIONAL, "Yes", ROUTE_SALES),
+        "ar_goods_2way": (KLASS_TRANSACTIONAL, "Yes", ROUTE_SALES),
     }
     return mapping.get(playbook, (KLASS_TRANSACTIONAL, "Yes", ROUTE_VAULT))
 

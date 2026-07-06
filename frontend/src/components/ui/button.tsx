@@ -1,7 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 
-type Variant = "default" | "outline" | "ghost" | "destructive";
+type Variant = "default" | "outline" | "surface" | "ghost" | "destructive";
 type Size = "default" | "sm" | "icon";
 
 const variants: Record<Variant, string> = {
@@ -9,6 +9,8 @@ const variants: Record<Variant, string> = {
     "bg-primary text-primary-foreground shadow-sm hover-elevate border border-primary-border",
   outline:
     "border border-input bg-background shadow-sm hover-elevate hover:bg-accent hover:text-accent-foreground",
+  surface:
+    "border border-border bg-card text-foreground shadow-sm hover-elevate hover:bg-accent/50",
   ghost: "hover-elevate hover:bg-accent hover:text-accent-foreground",
   destructive:
     "bg-destructive text-destructive-foreground shadow-sm hover-elevate border border-destructive-border",

@@ -39,7 +39,7 @@ function SeveritySelect({
       value={value}
       onChange={(e) => onChange(e.target.value === "warn" ? "warn" : "block")}
       disabled={disabled}
-      className="h-7 rounded-md border border-input bg-background px-2 text-[11px] disabled:opacity-50"
+      className="h-7 rounded-md border border-border bg-field px-2 text-[11px] disabled:opacity-50"
     >
       <option value="block">Block</option>
       <option value="warn">Warn</option>
@@ -58,7 +58,7 @@ function ToneBadge({
     tone === "primary"
       ? "border-primary/30 bg-primary/5 text-primary"
       : tone === "warn"
-        ? "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+        ? "ds-warning-panel-strong border ds-warning-text"
         : "border-border bg-muted/40 text-muted-foreground";
   return (
     <span
@@ -258,7 +258,7 @@ export function ValidationChecksEditor({
         document requirements. Duplicate check is always on org-wide.
       </p>
 
-      <div className="space-y-2 rounded-md border border-input bg-background p-3">
+      <div className="space-y-2 rounded-md border border-border bg-field p-3">
         {CONFIGURABLE_VALIDATION_CHECKS.map((meta) => {
           const row = rules.find((item) => item.code === meta.code) ?? {
             code: meta.code,
@@ -352,7 +352,7 @@ export function CustomValidationRulesEditor({
       ) : (
         <div className="space-y-3">
           {rules.map((row) => (
-            <div key={row.id} className="space-y-2 rounded-md border border-input p-3">
+            <div key={row.id} className="space-y-2 rounded-md border border-border bg-field p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Switch
@@ -399,7 +399,7 @@ export function CustomValidationRulesEditor({
                       operator: e.target.value as CustomValidationRule["operator"],
                     })
                   }
-                  className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                  className="h-8 rounded-md border border-border bg-field px-2 text-sm"
                 >
                   {CUSTOM_VALIDATION_OPERATORS.map((op) => (
                     <option key={op.value} value={op.value}>

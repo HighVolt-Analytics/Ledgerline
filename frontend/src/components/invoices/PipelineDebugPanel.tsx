@@ -3,7 +3,7 @@
  * Shows step-by-step pipeline audit output for one invoice.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
 import type { AuditLogEntry, InvoiceDetails } from "@/api/types";
@@ -80,8 +80,17 @@ const PIPELINE_STEPS: StepDef[] = [
   {
     id: "eval",
     label: "8 · Route / eval",
-    events: ["playbook_evaluated"],
+    events: ["playbook_evaluated", "field_reextract_attempted", "policy_after_extract_corrected"],
     liveFields: ["route_target", "evaluation_status"],
+  },
+  {
+    id: "match",
+    label: "8b · Match phase",
+    events: [
+      "match_phase_evaluated",
+      "three_way_match_evaluated",
+      "match_context_incomplete",
+    ],
   },
   {
     id: "validate",
@@ -126,8 +135,15 @@ function stepStatus(
       matched.event === "parsing_failed" ||
       matched.event === "classification_gate_failed" ||
       matched.event === "validation_failed" ||
+      matched.event === "match_context_incomplete" ||
       (matched.event === "routing_review_required" &&
-        (matched.detail?.gate as string | undefined) === "classification")
+        (matched.detail?.gate as string | undefined) !== "playbook")
+    ) {
+      return "fail";
+    }
+    if (
+      matched.event === "routing_review_required" &&
+      (matched.detail?.gate as string | undefined) === "classification"
     ) {
       return "fail";
     }
@@ -157,6 +173,32 @@ function JsonBlock({ value }: { value: unknown }) {
       {JSON.stringify(value, null, 2)}
     </pre>
   );
+}
+
+function phaseDurationMs(matches: AuditLogEntry[]): number | null {
+  if (matches.length < 2) return null;
+  const start = new Date(matches[0]!.created_at).getTime();
+  const end = new Date(matches[matches.length - 1]!.created_at).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
+  return end - start;
+}
+
+function holdReasonFromLog(matched: AuditLogEntry | null): string | null {
+  if (!matched?.detail) return null;
+  const d = matched.detail;
+  if (matched.event === "validation_failed") {
+    return String(d.message ?? d.reason ?? "validation_failed");
+  }
+  if (matched.event === "routing_review_required") {
+    const gate = String(d.gate ?? "");
+    const reasons = d.review_reasons;
+    if (Array.isArray(reasons) && reasons.length) return `${gate}: ${reasons.join(", ")}`;
+    return gate || "routing_review_required";
+  }
+  if (matched.event === "match_context_incomplete") {
+    return String(d.message ?? "Match context incomplete");
+  }
+  return null;
 }
 
 function liveSnapshot(inv: InvoiceDetails, fields: (keyof InvoiceDetails)[]): Record<string, unknown> {
@@ -249,11 +291,17 @@ export function PipelineDebugPanel({ invoice }: PipelineDebugPanelProps) {
     });
   }, [logs, invoice]);
 
+  const firstFailed = useMemo(
+    () => stepRows.find((row) => row.status === "fail") ?? null,
+    [stepRows]
+  );
+
   const chronology = logs;
+  const auditTableRef = useRef<HTMLDivElement | null>(null);
 
   return (
     <div className="mt-4 space-y-4">
-      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+      <div className="rounded-md border ds-warning-panel-strong px-3 py-2 text-xs ds-warning-text">
         <strong>Dev only.</strong> Temporary pipeline inspector — delete this tab when development
         is done.
       </div>
@@ -268,11 +316,40 @@ export function PipelineDebugPanel({ invoice }: PipelineDebugPanelProps) {
             </>
           ) : null}
         </div>
-        <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load()}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="bg-card"
+          disabled={loading}
+          onClick={() => void load()}
+        >
           <RefreshCw className={cn("h-3.5 w-3.5 mr-1", loading && "animate-spin")} />
           Refresh
         </Button>
       </div>
+
+      {firstFailed ? (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs">
+          <span className="font-medium text-destructive">First failed stage:</span>{" "}
+          {firstFailed.step.label}
+          {holdReasonFromLog(firstFailed.matched) ? (
+            <span className="text-muted-foreground"> — {holdReasonFromLog(firstFailed.matched)}</span>
+          ) : null}
+          {firstFailed.matched ? (
+            <button
+              type="button"
+              className="ml-2 text-primary hover:underline"
+              onClick={() => {
+                setExpanded(firstFailed.step.id);
+                auditTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
+              View audit log
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="rounded-md border border-border bg-muted/20 p-2">
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
@@ -299,13 +376,17 @@ export function PipelineDebugPanel({ invoice }: PipelineDebugPanelProps) {
         <ol className="space-y-2">
           {stepRows.map(({ step, matched, allMatches, status }) => {
             const open = expanded === step.id;
+            const duration = phaseDurationMs(allMatches);
+            const holdReason = holdReasonFromLog(matched);
+            const isFirstFail = firstFailed?.step.id === step.id;
             return (
               <li
                 key={step.id}
                 className={cn(
                   "rounded-md border border-border overflow-hidden",
                   status === "fail" && "border-destructive/40",
-                  status === "done" && "border-emerald-500/20"
+                  status === "done" && "border-emerald-500/20",
+                  isFirstFail && "ring-2 ring-destructive/50"
                 )}
               >
                 <button
@@ -317,8 +398,9 @@ export function PipelineDebugPanel({ invoice }: PipelineDebugPanelProps) {
                   <span className="min-w-0 flex-1">
                     <div className="text-sm font-medium">{step.label}</div>
                     <div className="text-xs text-muted-foreground truncate">
-                      {summaryLine(step, matched)}
+                      {holdReason ?? summaryLine(step, matched)}
                       {matched ? ` · ${fmtTime(matched.created_at)}` : ""}
+                      {duration != null ? ` · ${duration}ms` : ""}
                     </div>
                   </span>
                   <span className="text-xs text-muted-foreground shrink-0">{open ? "▾" : "▸"}</span>
@@ -371,7 +453,7 @@ export function PipelineDebugPanel({ invoice }: PipelineDebugPanelProps) {
         </ol>
       )}
 
-      <div>
+      <div ref={auditTableRef}>
         <div className="text-xs font-semibold mb-2">Full audit chronology ({chronology.length})</div>
         <div className="max-h-72 overflow-auto rounded-md border border-border">
           <table className="w-full text-left text-[11px]">

@@ -1,27 +1,43 @@
 import type { Invoice } from "@/api/types";
 import { Loader2 } from "lucide-react";
+import type { KpiModuleColor } from "@/lib/kpiModuleColors";
+import { approvalStatusChipClass, kpiStatusChipClass } from "@/lib/kpiModuleColors";
 import { cn } from "@/lib/cn";
 
 export type PipelineStageState = "done" | "pending" | "fail" | "skipped";
 
-const stylesByState: Record<PipelineStageState, string> = {
-  done: "bg-primary/15 text-primary",
-  pending: "bg-[hsl(43_74%_49%/0.18)] text-[hsl(36_80%_38%)] dark:text-[hsl(43_74%_62%)]",
-  fail: "bg-destructive/15 text-destructive",
-  skipped: "bg-muted text-muted-foreground",
+const stageToneByName: Record<string, KpiModuleColor> = {
+  Received: "blue",
+  Parsed: "teal",
+  Validated: "violet",
+  Mapped: "green",
+  Approved: "sage",
+  Processed: "green",
+  Posted: "blue",
+  Rejected: "rose",
+  Duplicate: "rust",
 };
 
-const stylesByStage: Record<string, string> = {
-  Received: "bg-muted text-muted-foreground",
-  Parsed: "bg-[hsl(var(--chart-3)/0.15)] text-[hsl(var(--chart-3))]",
-  Validated: "bg-[hsl(var(--chart-3)/0.15)] text-[hsl(var(--chart-3))]",
-  Mapped: "bg-accent text-accent-foreground",
-  Approved: "bg-primary/15 text-primary",
-  Processed: "bg-primary/15 text-primary",
-  Posted: "bg-primary text-primary-foreground",
-  Rejected: "bg-destructive/15 text-destructive",
-  Duplicate: "bg-destructive/15 text-destructive",
-};
+function stageChipClass(stage: string, state?: PipelineStageState): string {
+  if (/awaiting/i.test(stage)) {
+    return kpiStatusChipClass("rose");
+  }
+
+  if (state === "skipped") {
+    return approvalStatusChipClass("muted");
+  }
+
+  const tone = stageToneByName[stage];
+  if (tone) {
+    return kpiStatusChipClass(tone);
+  }
+
+  if (state === "fail") {
+    return kpiStatusChipClass("rose");
+  }
+
+  return approvalStatusChipClass("muted");
+}
 
 export function invoiceCurrentStage(inv: Pick<Invoice, "current_stage">): string {
   return inv.current_stage?.trim() || "Received";
@@ -46,18 +62,8 @@ export function StageBadge({
   state?: PipelineStageState;
   processing?: boolean;
 }) {
-  const className =
-    (state && stylesByState[state]) ||
-    stylesByStage[stage] ||
-    "bg-muted text-muted-foreground";
-
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap",
-        className
-      )}
-    >
+    <span className={cn(stageChipClass(stage, state), "inline-flex items-center gap-1")}>
       {processing ? (
         <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
       ) : null}

@@ -13,6 +13,7 @@ type UploadDropZoneProps = {
   progress?: { completed: number; total: number } | null;
   onFiles: (files: File[]) => void;
   onBrowse: () => void;
+  compact?: boolean;
   className?: string;
 };
 
@@ -22,6 +23,7 @@ export function UploadDropZone({
   progress,
   onFiles,
   onBrowse,
+  compact = false,
   className,
 }: UploadDropZoneProps) {
   const [dragActive, setDragActive] = useState(false);
@@ -100,7 +102,7 @@ export function UploadDropZone({
         ) : null}
       </div>
 
-      <div className="p-4">
+      <div className="p-5">
         <div
           role="button"
           tabIndex={inactive ? -1 : 0}
@@ -109,7 +111,7 @@ export function UploadDropZone({
           className={cn(
             "upload-drop-zone group relative rounded-xl border-2 border-dashed transition-all outline-none",
             "focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2",
-            "px-6 py-8",
+            compact ? "upload-drop-zone--compact px-4 py-3" : "px-6 py-6",
             dragActive && !inactive && "upload-drop-zone--active",
             !inactive && !uploading && "cursor-pointer hover:border-primary/40 hover:bg-muted/30",
             inactive && "opacity-70 pointer-events-none"
@@ -128,75 +130,86 @@ export function UploadDropZone({
           }}
           data-testid="upload-drop-zone"
         >
-          <div className="flex flex-col items-center text-center gap-5">
+          <div
+            className={cn(
+              "flex items-center",
+              compact ? "flex-row gap-4 text-left" : "flex-col gap-3 text-center"
+            )}
+          >
             <div
               className={cn(
-                "upload-drop-zone__icon flex h-14 w-14 shrink-0 items-center justify-center rounded-full border transition-colors",
+                "upload-drop-zone__icon flex shrink-0 items-center justify-center rounded-lg border transition-colors",
+                compact ? "h-10 w-10" : "h-12 w-12",
                 dragActive && !inactive
                   ? "border-primary bg-primary/10 text-primary"
                   : "border-border bg-muted/50 text-muted-foreground group-hover:border-primary/30 group-hover:text-primary"
               )}
             >
               {dragActive && !inactive ? (
-                <FileUp className="h-6 w-6" aria-hidden />
+                <FileUp className={cn(compact ? "h-5 w-5" : "h-6 w-6")} aria-hidden />
               ) : (
-                <Upload className="h-6 w-6" aria-hidden />
+                <Upload className={cn(compact ? "h-5 w-5" : "h-6 w-6")} aria-hidden />
               )}
             </div>
 
-            {uploading && progress ? (
-              <div className="flex w-full max-w-md flex-col items-center gap-3">
-                <div className="space-y-1">
-                  <p className="text-base font-medium text-foreground">Uploading documents…</p>
-                  <p className="text-xs text-muted-foreground">
+            <div className={cn("min-w-0", compact && "flex-1")}>
+              {uploading && progress ? (
+                <>
+                  <p className={cn("font-medium text-foreground", compact ? "text-sm" : "text-base")}>
+                    Uploading documents…
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     Processing starts automatically when the batch finishes
                   </p>
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="flex max-w-md flex-col items-center gap-1">
-                  <p className="text-base font-medium text-foreground">
+                  <div className={cn("mt-3", compact ? "max-w-full" : "max-w-md mx-auto")}>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className={cn("font-medium text-foreground", compact ? "text-sm" : "text-base")}>
                     {dragActive ? "Release to upload" : "Drop files here"}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground mt-1">
                     {dragActive
                       ? "Files will upload and enter the capture pipeline"
                       : "Drag invoices from your desktop, or choose files below"}
                   </p>
-                </div>
+                  {!compact ? (
+                    <div className="flex flex-wrap justify-center gap-1.5 mt-3">
+                      {FORMAT_TAGS.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-md border border-border bg-card px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
 
-                <div className="flex flex-wrap items-center justify-center gap-1.5">
-                  {FORMAT_TAGS.map((tag) => (
-                    <span
-                      key={tag}
-                      className="rounded-md border border-border bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-
-                <Button
-                  type="button"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openBrowse();
-                  }}
-                  data-testid="button-upload-doc"
-                >
-                  Choose files
-                </Button>
-              </>
-            )}
+            {!uploading ? (
+              <Button
+                type="button"
+                size="sm"
+                className="shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openBrowse();
+                }}
+                data-testid="button-upload-doc"
+              >
+                Choose files
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>

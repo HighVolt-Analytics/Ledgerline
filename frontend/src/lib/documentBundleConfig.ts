@@ -2,6 +2,7 @@
 
 import {
   effectivePlaybookProfile,
+  matchTabLabel,
   playbookPresetForProfile,
   type PlaybookProfile,
 } from "@/lib/documentPlaybookConfig";
@@ -39,11 +40,14 @@ export function dossierCompletenessStageLabel(): string {
   return "Supporting documents";
 }
 
-/** Invoice drawer tab — separates dossier completeness from generic “bundle”. */
+/** Invoice drawer tab — legacy default assumes 3-way when match mode is unknown. */
 export function threeWayMatchTabLabel(routeTarget?: string | null): string {
-  if (isSalesManagementRoute(routeTarget)) return "3-way match (SO · DN · Invoice)";
-  if (isPurchaseManagementRoute(routeTarget)) return "3-way match (PO · GRN · Invoice)";
-  return "3-way match";
+  const defaultMode = isSalesManagementRoute(routeTarget)
+    ? "three_way_so_dn"
+    : isPurchaseManagementRoute(routeTarget)
+      ? "three_way_po_grn"
+      : "three_way_po_grn";
+  return matchTabLabel(routeTarget, defaultMode);
 }
 
 /** Finance book name for dossier copy. */

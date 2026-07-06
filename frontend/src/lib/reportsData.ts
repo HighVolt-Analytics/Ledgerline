@@ -2,6 +2,7 @@
 
 import type { GlAccountSpendRow, ReportDocumentRow, VendorSpendRow } from "@/api/types";
 import { toNumber } from "@/lib/format";
+import { KPI_MODULE_CHART_COLORS } from "@/lib/kpiModuleColors";
 import { tenantMonthKey } from "@/lib/tenantTime";
 
 export type ReportInvoice = {
@@ -72,16 +73,8 @@ export function buildReportsCsv(invoices: ReportInvoice[]): string {
   return [header.join(","), ...rows].join("\n");
 }
 
-export const REPORT_CHART_COLORS = [
-  "hsl(186 64% 34%)",
-  "hsl(186 56% 44%)",
-  "hsl(186 48% 54%)",
-  "hsl(43 74% 49%)",
-  "hsl(200 50% 50%)",
-  "hsl(160 50% 42%)",
-  "hsl(20 60% 55%)",
-  "hsl(280 40% 55%)",
-] as const;
+/** Same accent palette as dashboard KPI module icons (see kpi.css). */
+export const REPORT_CHART_COLORS = KPI_MODULE_CHART_COLORS;
 
 export function defaultReportPeriod(timeZone: string): string {
   return tenantMonthKey(timeZone);

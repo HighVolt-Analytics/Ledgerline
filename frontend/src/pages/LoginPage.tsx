@@ -1,11 +1,9 @@
 import { useState } from "react";
-import { Navigate } from "react-router-dom";
-import { LogoBlock } from "@/components/Logo";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Link, Navigate } from "react-router-dom";
+import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
 import { useAuth } from "@/context/AuthContext";
 import { homePathForRole } from "@/lib/roles";
+import { Eye, EyeOff } from "lucide-react";
 
 type Step = "credentials" | "otp" | "pick-tenant";
 
@@ -26,6 +24,7 @@ export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   if (!loading && user && user.id > 0) {
     return <Navigate to={homePathForRole(user.role)} replace />;
@@ -72,112 +71,140 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md p-6 space-y-6">
-        <div className="flex justify-center">
-          <LogoBlock />
+    <AuthCenteredCard
+      title={
+        step === "credentials"
+          ? "Sign in to Ledgerline"
+          : step === "otp"
+            ? "Verify your email"
+            : "Choose organisation"
+      }
+      subtitle={
+        step === "credentials"
+          ? "Welcome to a workspace that's secure, powerful, and totally private."
+          : step === "otp"
+            ? "Enter the verification code sent to your email (dev: 123456)"
+            : "Select which organisation to open"
+      }
+    >
+      {loading && (
+        <div className="auth-form" aria-busy="true" aria-label="Loading">
+          <div className="auth-skeleton auth-skeleton-title" />
+          <div className="auth-skeleton auth-skeleton-subtitle" />
+          <div className="auth-skeleton auth-skeleton-input" />
+          <div className="auth-skeleton auth-skeleton-input" />
+          <div className="auth-skeleton auth-skeleton-button" />
+          <div className="flex flex-col gap-3 mt-6">
+            <div className="auth-skeleton auth-skeleton-line w-32" />
+            <div className="auth-skeleton auth-skeleton-line w-48" />
+          </div>
         </div>
-        <div className="text-center space-y-1">
-          <h1 className="text-xl font-semibold">
-            {step === "credentials"
-              ? "Sign in"
-              : step === "otp"
-                ? "Verify your email"
-                : "Choose organisation"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {step === "credentials"
-              ? "Access your invoice pipeline dashboard"
-              : step === "otp"
-                ? "Enter the verification code sent to your email (dev: 123456)"
-                : "Select which organisation to open"}
-          </p>
-        </div>
+      )}
 
-        {step === "credentials" && (
-          <form onSubmit={onCredentials} className="space-y-3">
-            <Input
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              autoComplete="email"
-            />
-            <Input
-              type="password"
+      {!loading && step === "credentials" && (
+        <form onSubmit={onCredentials} className="auth-form">
+          <input
+            type="email"
+            className="auth-input"
+            placeholder="Email or username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+          />
+          <div className="auth-input-wrap">
+            <input
+              type={showPassword ? "text" : "password"}
+              className="auth-input"
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete="current-password"
             />
-            {error && (
-              <p className="text-sm text-destructive" role="alert">
-                {error}
-              </p>
-            )}
-            <Button type="submit" className="w-full" disabled={busy}>
-              {busy ? "Please wait…" : "Continue"}
-            </Button>
-          </form>
-        )}
-
-        {step === "otp" && (
-          <form onSubmit={onOtp} className="space-y-3">
-            <Input
-              placeholder="6-digit code"
-              value={otp}
-              onChange={(e) => setOtp(e.target.value)}
-              required
-              inputMode="numeric"
-              autoComplete="one-time-code"
-            />
-            {error && (
-              <p className="text-sm text-destructive" role="alert">
-                {error}
-              </p>
-            )}
-            <Button type="submit" className="w-full" disabled={busy}>
-              {busy ? "Verifying…" : "Verify"}
-            </Button>
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              className="w-full"
-              disabled={busy}
-              onClick={() => void resendOtp().catch((e) => setError(String(e)))}
+              className="auth-input-toggle"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              onClick={() => setShowPassword((v) => !v)}
             >
-              Resend code
-            </Button>
-          </form>
-        )}
-
-        {step === "pick-tenant" && (
-          <div className="space-y-2">
-            {tenantPicker.map((t) => (
-              <Button
-                key={t.tenant_id}
-                type="button"
-                variant="outline"
-                className="w-full justify-between"
-                disabled={busy}
-                onClick={() => void onPickTenant(t.tenant_id)}
-              >
-                <span>{t.tenant_name}</span>
-                <span className="text-xs text-muted-foreground capitalize">
-                  {t.role.replace(/_/g, " ")}
-                </span>
-              </Button>
-            ))}
-            {error && (
-              <p className="text-sm text-destructive" role="alert">
-                {error}
-              </p>
-            )}
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
           </div>
-        )}
-      </Card>
-    </div>
+          {error ? (
+            <p className="auth-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <button type="submit" className="auth-submit" disabled={busy}>
+            {busy ? "Please wait…" : "Log in"}
+          </button>
+
+          <div className="auth-footer">
+            <a href="mailto:support@ledgerline.app?subject=Forgot%20password" className="auth-link">
+              Forgot password?
+            </a>
+            <p>
+              Don&apos;t have an account?{" "}
+              <Link to="/accept-invite" className="auth-link-accent">
+                Sign up
+              </Link>
+            </p>
+          </div>
+        </form>
+      )}
+
+      {!loading && step === "otp" && (
+        <form onSubmit={onOtp} className="auth-form">
+          <input
+            className="auth-input"
+            placeholder="6-digit code"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value)}
+            required
+            inputMode="numeric"
+            autoComplete="one-time-code"
+          />
+          {error ? (
+            <p className="auth-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <button type="submit" className="auth-submit" disabled={busy}>
+            {busy ? "Verifying…" : "Verify"}
+          </button>
+          <button
+            type="button"
+            className="auth-secondary-btn"
+            disabled={busy}
+            onClick={() => void resendOtp().catch((e) => setError(String(e)))}
+          >
+            Resend code
+          </button>
+        </form>
+      )}
+
+      {!loading && step === "pick-tenant" && (
+        <div className="auth-form">
+          {tenantPicker.map((t) => (
+            <button
+              key={t.tenant_id}
+              type="button"
+              className="auth-tenant-btn"
+              disabled={busy}
+              onClick={() => void onPickTenant(t.tenant_id)}
+            >
+              <span>{t.tenant_name}</span>
+              <span className="auth-tenant-role">{t.role.replace(/_/g, " ")}</span>
+            </button>
+          ))}
+          {error ? (
+            <p className="auth-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </AuthCenteredCard>
   );
 }

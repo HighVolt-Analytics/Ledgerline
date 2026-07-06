@@ -9,7 +9,7 @@ export function PageTabs({
   variant = "underline",
   "data-testid": testId,
 }: {
-  tabs: { value: string; label: ReactNode; testid?: string }[];
+  tabs: { value: string; label: ReactNode; testid?: string; secondary?: boolean }[];
   value: string;
   onChange: (value: string) => void;
   className?: string;
@@ -20,22 +20,21 @@ export function PageTabs({
     return (
       <div
         data-testid={testId}
-        className={cn(
-          "flex h-auto min-h-10 w-full max-w-full flex-wrap items-center gap-1 rounded-md bg-muted p-1 text-muted-foreground",
-          className
-        )}
+        className={cn("app-pill-tabs", className)}
+        role="tablist"
       >
         {tabs.map((tab) => (
           <button
             key={tab.value}
             type="button"
+            role="tab"
+            aria-selected={value === tab.value}
             data-testid={tab.testid}
             onClick={() => onChange(tab.value)}
             className={cn(
-              "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-              value === tab.value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
+              "app-pill-tabs__tab",
+              tab.secondary && "app-pill-tabs__tab--secondary",
+              value === tab.value && "app-pill-tabs__tab--active"
             )}
           >
             {tab.label}
@@ -45,27 +44,50 @@ export function PageTabs({
     );
   }
 
+  const primaryTabs = tabs.filter((tab) => !tab.secondary);
+  const secondaryTabs = tabs.filter((tab) => tab.secondary);
+  const hasSecondaryRow = secondaryTabs.length > 0 && primaryTabs.length > 0;
+
+  const renderTab = (tab: (typeof tabs)[number], secondary = false) => (
+    <button
+      key={tab.value}
+      type="button"
+      role="tab"
+      aria-selected={value === tab.value}
+      data-testid={tab.testid}
+      onClick={() => onChange(tab.value)}
+      className={cn(
+        "app-underline-tabs__tab",
+        secondary && "app-underline-tabs__tab--secondary",
+        value === tab.value && "app-underline-tabs__tab--active"
+      )}
+    >
+      {tab.label}
+    </button>
+  );
+
+  if (!hasSecondaryRow) {
+    return (
+      <div
+        data-testid={testId}
+        className={cn("app-underline-tabs", className)}
+        role="tablist"
+      >
+        {tabs.map((tab) => renderTab(tab, Boolean(tab.secondary)))}
+      </div>
+    );
+  }
+
   return (
     <div
       data-testid={testId}
-      className={cn("flex flex-wrap gap-1 border-b border-border", className)}
+      className={cn("app-underline-tabs-stack", className)}
+      role="tablist"
     >
-      {tabs.map((tab) => (
-        <button
-          key={tab.value}
-          type="button"
-          data-testid={tab.testid}
-          onClick={() => onChange(tab.value)}
-          className={cn(
-            "relative px-3 py-2 text-sm font-medium transition-colors -mb-px",
-            value === tab.value
-              ? "text-foreground border-b-2 border-primary"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          {tab.label}
-        </button>
-      ))}
+      <div className="app-underline-tabs">{primaryTabs.map((tab) => renderTab(tab))}</div>
+      <div className="app-underline-tabs app-underline-tabs--secondary">
+        {secondaryTabs.map((tab) => renderTab(tab, true))}
+      </div>
     </div>
   );
 }

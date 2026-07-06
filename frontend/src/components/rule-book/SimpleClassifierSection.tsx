@@ -127,7 +127,7 @@ export function SimpleClassifierSection({
               </ul>
             )}
             {selectedSignals.length === 0 && template.signals.length > 0 ? (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
+              <p className="text-xs ds-warning-text">
                 Select at least one signal or this type will never match.
               </p>
             ) : null}

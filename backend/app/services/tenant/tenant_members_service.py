@@ -20,6 +20,11 @@ from app.models.user_tenant_mapping import UserTenantMapping
 from app.services.auth.auth_service import hash_password
 from app.services.auth.membership_service import ensure_membership
 from app.services.shared.public_app_url import build_public_app_path
+from app.tenant_rls import (
+    apply_platform_lookup_session,
+    apply_rls_session_context,
+    clear_platform_lookup_session,
+)
 from app.tenant_roles import TenantRole, normalize_tenant_role, tenant_role_to_user_role
 
 
@@ -357,15 +362,25 @@ async def revoke_invite(
     return revoked
 
 
-async def preview_invite(session: AsyncSession, *, token: str) -> InvitePreview:
+async def _load_invite_by_token(session: AsyncSession, token: str) -> TenantMemberInvite:
+    """Resolve invite by token hash; bypass RLS for cross-tenant public accept links."""
     token_hash = _hash_token(token.strip())
-    invite = (
-        await session.execute(
-            select(TenantMemberInvite).where(TenantMemberInvite.token_hash == token_hash)
-        )
-    ).scalar_one_or_none()
+    await apply_platform_lookup_session(session)
+    try:
+        invite = (
+            await session.execute(
+                select(TenantMemberInvite).where(TenantMemberInvite.token_hash == token_hash)
+            )
+        ).scalar_one_or_none()
+    finally:
+        await clear_platform_lookup_session(session)
     if not invite:
         raise HTTPException(404, "Invite not found")
+    return invite
+
+
+async def preview_invite(session: AsyncSession, *, token: str) -> InvitePreview:
+    invite = await _load_invite_by_token(session, token)
 
     tenant = await session.get(Tenant, invite.tenant_id)
     if not tenant:
@@ -393,20 +408,15 @@ async def accept_invite(
     if len(password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
 
-    token_hash = _hash_token(token.strip())
-    invite = (
-        await session.execute(
-            select(TenantMemberInvite).where(TenantMemberInvite.token_hash == token_hash)
-        )
-    ).scalar_one_or_none()
-    if not invite:
-        raise HTTPException(404, "Invite not found")
+    invite = await _load_invite_by_token(session, token)
     if invite.accepted_at is not None:
         raise HTTPException(410, "Invite already accepted")
 
     now = _utc_now()
     if _as_utc(invite.expires_at) <= now:
         raise HTTPException(410, "Invite expired")
+
+    await apply_rls_session_context(session, invite.tenant_id)
 
     tenant = await session.get(Tenant, invite.tenant_id)
     if not tenant or not tenant.is_active:

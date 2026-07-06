@@ -143,7 +143,7 @@ export function SalesManagementPage() {
 
       <PageHeader
         title="Sales Management"
-        subtitle="SO → DN → Invoice three-way matching. Variances route for tiered approval before collections."
+        subtitle="SO → DN → Invoice matching (3-way or 2-way per playbook). Variances route for tiered approval before collections."
       />
 
       <SalesCaptureStrip activeRuleCount={activeRuleCount} />

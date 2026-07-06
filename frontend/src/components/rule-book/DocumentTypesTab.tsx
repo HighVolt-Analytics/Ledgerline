@@ -14,6 +14,7 @@ import {
   type DocumentTypeDefinition,
 } from "@/lib/v5DocumentTypes";
 import { derivePostingFromKlassAndProfile } from "@/lib/documentTypeKlass";
+import { applyRoutePlaybookDefaults } from "@/lib/documentPlaybookConfig";
 import { DocumentTypeTemplateDialog } from "@/components/rule-book/DocumentTypeTemplateDialog";
 import {
   ValidationDetailSection,
@@ -796,7 +797,15 @@ function DocumentTypeEditDialog({
                     <select
                       id="dt-route"
                       value={draft.routeTarget}
-                      onChange={(e) => onChange({ ...draft, routeTarget: e.target.value })}
+                      onChange={(e) => {
+                        const next = applyRoutePlaybookDefaults(draft, e.target.value);
+                        const posting = derivePostingFromKlassAndProfile(
+                          next.klass,
+                          next.playbookProfile,
+                          next.posting
+                        );
+                        onChange({ ...next, posting });
+                      }}
                       className={selectClass}
                     >
                       {ROUTE_TARGETS.map((route) => (

@@ -17,6 +17,7 @@ import {
   reconcileSubLedgerOnLedgerChange,
   SubLedgerField,
 } from "./SubLedgerField";
+import { RuleBookEmptyPanel } from "./RuleBookEmptyPanel";
 
 function MatchChip({ children }: { children: ReactNode }) {
   return (
@@ -251,9 +252,7 @@ export function ExpensesRulesTab({
           );
         })}
         {rules.length === 0 && (
-          <Card className="p-6 text-center text-sm text-muted-foreground">
-            No expense rules yet.
-          </Card>
+          <RuleBookEmptyPanel icon={Receipt} title="No expense rules yet." />
         )}
       </div>
     </div>

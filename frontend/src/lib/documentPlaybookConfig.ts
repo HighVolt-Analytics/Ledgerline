@@ -293,3 +293,102 @@ export function emptyMatchPolicy(): MatchPolicy {
 export function emptyApprovalPolicy(): ApprovalPolicy {
   return { mode: "touchless_on_clean_match" };
 }
+
+const ROUTE_PURCHASE = "Purchase Management";
+const ROUTE_SALES = "Sales Management";
+
+const TWO_WAY_MATCH_MODES = new Set<MatchMode>(["two_way_po_ses", "two_way_dn_invoice"]);
+const THREE_WAY_MATCH_MODES = new Set<MatchMode>(["three_way_po_grn", "three_way_so_dn"]);
+
+export function isTwoWayMatchMode(matchMode?: string | null): boolean {
+  return TWO_WAY_MATCH_MODES.has((matchMode ?? "").trim().toLowerCase() as MatchMode);
+}
+
+export function isThreeWayMatchMode(matchMode?: string | null): boolean {
+  return THREE_WAY_MATCH_MODES.has((matchMode ?? "").trim().toLowerCase() as MatchMode);
+}
+
+export function isSalesManagementRoute(routeTarget?: string | null): boolean {
+  return (routeTarget ?? "").trim() === ROUTE_SALES;
+}
+
+export function isPurchaseManagementRoute(routeTarget?: string | null): boolean {
+  return (routeTarget ?? "").trim() === ROUTE_PURCHASE;
+}
+
+/** Match modes valid for the workspace route (sales/purchase restrict PO vs SO matching). */
+export function matchModesForRoute(routeTarget?: string | null): MatchMode[] {
+  if (isPurchaseManagementRoute(routeTarget)) {
+    return ["none", "three_way_po_grn", "two_way_po_ses"];
+  }
+  if (isSalesManagementRoute(routeTarget)) {
+    return ["none", "three_way_so_dn", "two_way_dn_invoice"];
+  }
+  return MATCH_MODE_OPTIONS.map((row) => row.value);
+}
+
+export function matchModeAllowedForRoute(
+  routeTarget: string | undefined | null,
+  matchMode: string | undefined | null
+): boolean {
+  const token = (matchMode ?? "").trim().toLowerCase() as MatchMode;
+  return matchModesForRoute(routeTarget).includes(token);
+}
+
+export function suggestedPlaybookForRoute(routeTarget?: string | null): PlaybookProfile {
+  if (isSalesManagementRoute(routeTarget)) return "ar_goods";
+  if (isPurchaseManagementRoute(routeTarget)) return "po_goods";
+  return "standard_transactional";
+}
+
+/** Playbook profiles whose preset match mode is valid on this workspace route. */
+export function playbookProfilesForRoute(routeTarget?: string | null): PlaybookProfile[] {
+  const allowed = new Set(matchModesForRoute(routeTarget));
+  return PLAYBOOK_PROFILE_OPTIONS.map((row) => row.value).filter((profile) =>
+    allowed.has(playbookPresetForProfile(profile).matchMode)
+  );
+}
+
+export function matchModeOptionsForRoute(routeTarget?: string | null) {
+  const allowed = new Set(matchModesForRoute(routeTarget));
+  return MATCH_MODE_OPTIONS.filter((row) => allowed.has(row.value));
+}
+
+/** Invoice drawer / dossier tab label from route + effective match mode. */
+export function matchTabLabel(
+  routeTarget?: string | null,
+  matchMode?: string | null
+): string {
+  const twoWay = isTwoWayMatchMode(matchMode);
+  if (isSalesManagementRoute(routeTarget)) {
+    return twoWay
+      ? "2-way match (DN · Invoice)"
+      : "3-way match (SO · DN · Invoice)";
+  }
+  if (isPurchaseManagementRoute(routeTarget)) {
+    return twoWay
+      ? "2-way match (PO · service entry)"
+      : "3-way match (PO · GRN · Invoice)";
+  }
+  return twoWay ? "2-way match" : "3-way match";
+}
+
+/** When workspace route changes, align playbook if current match mode is incompatible. */
+export function applyRoutePlaybookDefaults(
+  draft: DocumentTypeDefinition,
+  nextRoute: string
+): DocumentTypeDefinition {
+  const currentMode = effectiveMatchPolicy({ ...draft, routeTarget: nextRoute }).mode;
+  if (matchModeAllowedForRoute(nextRoute, currentMode)) {
+    return { ...draft, routeTarget: nextRoute };
+  }
+  const profile = suggestedPlaybookForRoute(nextRoute);
+  const preset = playbookPresetForProfile(profile);
+  return {
+    ...draft,
+    routeTarget: nextRoute,
+    playbookProfile: profile,
+    matchPolicy: { mode: preset.matchMode },
+    approvalPolicy: { mode: preset.approvalMode },
+  };
+}

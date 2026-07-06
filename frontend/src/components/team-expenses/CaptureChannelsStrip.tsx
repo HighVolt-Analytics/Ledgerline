@@ -3,6 +3,7 @@ import { CheckCircle2, Mail, MessageCircle, Smartphone, Upload } from "lucide-re
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ClaimChannel } from "@/lib/v4MockData";
+import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
 
 export type CaptureChannelItem = ClaimChannel & {
   connectionId?: number;
@@ -36,6 +37,8 @@ export function CaptureChannelsStrip({
       {channels.map((ch) => {
         const Icon = channelIcon(ch.id);
         const busy = actionBusyId === ch.id;
+        const brand =
+          ch.id === "wa" ? "whatsapp" : ch.id === "vb" ? "viber" : null;
         return (
           <div key={ch.id} className="relative">
             <button
@@ -44,7 +47,11 @@ export function CaptureChannelsStrip({
               data-testid={`${testIdPrefix}-${ch.id}`}
               className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs hover-elevate"
             >
-              <Icon className="h-3.5 w-3.5 text-primary" />
+              {brand ? (
+                <IntegrationBrandIcon id={brand} size={14} />
+              ) : (
+                <Icon className="h-3.5 w-3.5 text-primary" />
+              )}
               <span className="font-medium">{ch.name}</span>
               <span className="text-muted-foreground hidden md:inline">· {ch.detail}</span>
               {ch.connected && (

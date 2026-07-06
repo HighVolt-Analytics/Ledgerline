@@ -922,10 +922,20 @@ async def execute_ar_document_match(
 
     from app.services.classification.document_type_match_service import DocumentMatchOutcome
 
+    await log_event(
+        session,
+        "match_context_incomplete",
+        invoice_id=invoice.id,
+        detail={
+            "requested_mode": requested,
+            "effective_mode": ctx.effective_mode,
+            "message": "AR match context incomplete",
+        },
+    )
     return DocumentMatchOutcome(
-        passed=True,
-        status="Skipped",
-        message="AR match context incomplete — match skipped",
-        match_mode="none",
-        detail={},
+        passed=False,
+        status="Match context incomplete",
+        message="AR match context incomplete — link SO/DN or upload supporting documents",
+        match_mode=requested,
+        detail={"effective_mode": ctx.effective_mode},
     )

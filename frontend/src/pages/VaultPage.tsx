@@ -14,8 +14,10 @@ import { EmptyState } from "@/components/EmptyState";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
+import { PageTabs } from "@/components/PageTabs";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { VaultPageSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
@@ -106,6 +108,11 @@ function VaultTreeItem({
   const hasChildren = node.children.length > 0;
   const isOpen = expanded.has(node.id);
   const isSelected = selectedId === node.id;
+  const folderTone = depth % 8;
+  const folderIconClass = cn(
+    "h-4 w-4 shrink-0",
+    `vault-folder-icon vault-folder-icon--d${folderTone}`
+  );
 
   return (
     <div className="min-w-0" style={{ paddingLeft: depth > 0 ? `${depth * 10}px` : undefined }}>
@@ -139,9 +146,9 @@ function VaultTreeItem({
           data-testid={`folder-${node.id.replace(/[/\s&]+/g, "-")}`}
         >
           {isSelected || isOpen ? (
-            <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+            <FolderOpen className={folderIconClass} />
           ) : (
-            <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <Folder className={folderIconClass} />
           )}
           <span className="flex-1 text-left truncate">{node.label}</span>
           <Badge variant="outline" className="tnum text-[10px] shrink-0">
@@ -432,7 +439,7 @@ export function VaultPage() {
     return (
       <div>
         <PageHeader title="Vault" subtitle={`Document vault for ${orgLabel}.`} />
-        <Card className="p-8 text-center text-sm text-muted-foreground">Loading vault…</Card>
+        <VaultPageSkeleton />
       </div>
     );
   }
@@ -459,7 +466,7 @@ export function VaultPage() {
       <PageHeader title="Vault" subtitle={`Document vault for ${orgLabel}.`} />
 
       {deepLinkNotice && (
-        <Card className="mb-4 border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+        <Card className="mb-4 ds-warning-panel border px-4 py-3 text-sm ds-warning-text">
           {deepLinkNotice}
         </Card>
       )}
@@ -476,41 +483,30 @@ export function VaultPage() {
         </Card>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 mb-4 border-b border-border">
-        {(
-          [
-            { id: "files" as const, label: "Files" },
-            { id: "sets" as const, label: "Document sets" },
-          ] as const
-        ).map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            data-testid={`tab-${t.id}`}
-            onClick={() => setTab(t.id)}
-            className={cn(
-              "px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              tab === t.id
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <PageTabs
+          className="min-w-0 flex-1"
+          value={tab}
+          onChange={(value) => setTab(value as "files" | "sets")}
+          data-testid="vault-tabs"
+          tabs={[
+            { value: "files", label: "Files", testid: "tab-files" },
+            { value: "sets", label: "Document sets", testid: "tab-sets" },
+          ]}
+        />
         {vaultFiles.length > 0 ? (
           <ListSearchInput
             value={searchQuery}
             onChange={setSearchQuery}
             placeholder="Search this list…"
             testId="input-vault-search"
-            className="ml-auto mb-1"
+            className="mb-1 ml-auto"
           />
         ) : null}
       </div>
 
       {loading && vaultFiles.length === 0 ? (
-        <Card className="p-8 text-center text-sm text-muted-foreground">Loading vault…</Card>
+        <VaultPageSkeleton />
       ) : vaultFiles.length === 0 ? (
         <EmptyState
           title="Vault is empty"
@@ -527,10 +523,12 @@ export function VaultPage() {
         />
       ) : tab === "sets" ? (
         filteredDocumentSetCards.length === 0 ? (
-          <Card className="p-8 text-center text-sm text-muted-foreground">
-            {searchQuery.trim()
-              ? "No documents match your search."
-              : "No document set rules defined. Add sets in the Rule Book."}
+          <Card className="px-8 py-14 text-center text-sm text-muted-foreground">
+            <p className="py-2">
+              {searchQuery.trim()
+                ? "No documents match your search."
+                : "No document set rules defined. Add sets in the Rule Book."}
+            </p>
           </Card>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">

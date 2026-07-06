@@ -33,7 +33,7 @@ export function MailboxImportDialog({
       aria-modal="true"
       aria-labelledby="mailbox-import-title"
     >
-      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-lg">
+      <div className="w-full max-w-md rounded-[0.875rem] border border-border/50 bg-card text-card-foreground p-5 shadow-float">
         <h2 id="mailbox-import-title" className="text-sm font-semibold mb-1">
           Import historical mail
         </h2>
@@ -51,6 +51,7 @@ export function MailboxImportDialog({
             value={fromDate}
             max={today}
             onChange={(e) => setFromDate(e.target.value)}
+            className="mailbox-import-dialog__date"
             data-testid="input-import-from-date"
           />
         </label>
@@ -70,7 +71,7 @@ export function MailboxImportDialog({
         </label>
 
         <div className="flex flex-wrap gap-2 justify-end">
-          <Button variant="outline" size="sm" disabled={busy} onClick={onClose}>
+          <Button variant="surface" size="sm" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
           <Button
@@ -84,7 +85,12 @@ export function MailboxImportDialog({
               })
             }
           >
-            <Calendar className={cn("h-3.5 w-3.5 mr-1", busy && "animate-pulse")} />
+            <Calendar
+              className={cn(
+                "h-3.5 w-3.5 mr-1 text-[hsl(var(--nav-accent))]",
+                busy && "animate-pulse"
+              )}
+            />
             {busy ? "Importing…" : "Start import"}
           </Button>
         </div>

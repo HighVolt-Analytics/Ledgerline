@@ -88,7 +88,7 @@ export function AiClassificationSettingsPanel({
                   <div className="text-sm font-medium text-foreground">{provider.title}</div>
                   <div className="mt-0.5 text-xs text-muted-foreground">{provider.description}</div>
                   {!available && status?.reason ? (
-                    <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                    <div className="mt-1 text-[11px] ds-warning-text">
                       {status.reason}
                     </div>
                   ) : null}

@@ -50,7 +50,7 @@ export function LedgerLinkPage() {
           title="Ledger Link"
           subtitle="Reconcile double-entry postings, then export or push to your accounting system."
         />
-        <PageLoader label="Loading ledger link…" />
+        <PageLoader variant="table" />
       </div>
     );
   }
@@ -74,9 +74,9 @@ export function LedgerLinkPage() {
       <PageHeader
         title="Ledger Link"
         subtitle="Reconcile double-entry postings, then export or push to your accounting system."
-      />
-
-      <PageTabs value={tab} onChange={setTab} className="flex-wrap h-auto" tabs={LL_TABS} />
+      >
+        <PageTabs value={tab} onChange={setTab} className="flex-wrap h-auto" tabs={LL_TABS} />
+      </PageHeader>
 
       <PageTabPanel value="overview" active={tab} className="mt-4">
         <LedgerOverview recon={recon} loading={isLoading} currency={currency} />
