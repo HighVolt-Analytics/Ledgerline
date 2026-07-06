@@ -593,13 +593,21 @@ def _resolve_ingest(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
     return _step("ingest", state="pending", detail="—")
 
 
+def _duplicate_pass_step(inv: Invoice, logs: list[AuditLog]) -> DossierPipelineStepResponse:
+    ingest_log = _latest_log(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
+    return _step(
+        "duplicate",
+        state="pass",
+        detail="File hash unique",
+        at=ingest_log.created_at if ingest_log else inv.created_at,
+    )
+
+
 def _resolve_duplicate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
     dup_log = _latest_log(
         logs, "duplicate_skipped", "duplicate_in_progress", "duplicate_reingest_rejected"
     )
-    if inv.status == InvoiceStatus.DUPLICATE_SKIPPED or (
-        dup_log and dup_log.event == "duplicate_skipped"
-    ):
+    if inv.status == InvoiceStatus.DUPLICATE_SKIPPED:
         reason = _detail_from_log(dup_log, fallback="Duplicate file skipped")
         return _step(
             "duplicate",
@@ -611,20 +619,20 @@ def _resolve_duplicate(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPi
             remediation=_REMEDIATION["DUPLICATE_FILE"],
         )
     if dup_log and dup_log.event == "duplicate_in_progress":
+        # Logged on the canonical row when a concurrent re-submit was blocked — not a failure.
+        if wm >= 2:
+            return _duplicate_pass_step(inv, logs)
         return _step(
             "duplicate",
             state="pending",
             detail=_detail_from_log(dup_log),
             at=dup_log.created_at,
         )
-    if wm >= 3:
-        ingest_log = _latest_log(logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
-        return _step(
-            "duplicate",
-            state="pass",
-            detail="File hash unique",
-            at=ingest_log.created_at if ingest_log else inv.created_at,
-        )
+    if dup_log and dup_log.event in {"duplicate_skipped", "duplicate_reingest_rejected"}:
+        # Informational repeat-submission or controlled re-ingest on the canonical row.
+        return _duplicate_pass_step(inv, logs)
+    if wm >= 2:
+        return _duplicate_pass_step(inv, logs)
     return _step("duplicate", state="pending", detail="—")
 
 
