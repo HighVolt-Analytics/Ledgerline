@@ -119,6 +119,28 @@ async def test_pipeline_duplicate_in_progress_does_not_block_canonical_row() -> 
 
 
 @pytest.mark.asyncio
+async def test_pipeline_requeued_passes_storage_when_file_on_record() -> None:
+    """After requeue, storage_verified is outside the cycle but the PDF is still on record."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        file_hash="stored-hash",
+        raw_file_path="blob://invoices/tenant/acme/inv-1.pdf",
+    )
+    logs = [
+        _log_id("invoice_requeued", 1, 1),
+        _log_id("ocr_completed", 1, 2, text_length=1200),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    storage = next(s for s in pipeline if s.stage_id == "storage")
+    ocr = next(s for s in pipeline if s.stage_id == "ocr")
+    assert storage.state == "pass"
+    assert storage.blocked_reason is None
+    assert ocr.state == "pass"
+
+
+@pytest.mark.asyncio
 async def test_pipeline_duplicate_blocks_downstream(db_session: AsyncSession) -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
