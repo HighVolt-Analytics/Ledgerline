@@ -779,3 +779,110 @@ async def test_pipeline_image_quality_routing_review_fails_quality_stage() -> No
     assert quality.state == "fail"
     assert quality.exception_code == "IMAGE_QUALITY"
     assert first_pipeline_failure(pipeline) is not None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_approve_pending_does_not_downgrade_map_gl_pass() -> None:
+    """Team expense approval runs after mapping — map_gl must stay pass."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        account_name="5100 Food inventory",
+        account_code="5100",
+    )
+    logs = [
+        _log("invoice_uploaded", 1),
+        _log("parse_completed", 1),
+        _log("validation_passed", 1),
+        _log("mapping_applied", 1, account_name="5100 Food inventory"),
+        _log("approval_requested", 1, reason="Over threshold"),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    approve = next(s for s in pipeline if s.stage_id == "approve")
+    map_gl = next(s for s in pipeline if s.stage_id == "map_gl")
+    journal = next(s for s in pipeline if s.stage_id == "journal")
+    assert approve.state == "pending"
+    assert map_gl.state == "pass"
+    assert map_gl.blocked_reason is None
+    assert journal.state == "pending"
+    assert journal.blocked_reason and journal.blocked_reason.startswith("Blocked —")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_vendor_cleared_passes_despite_stale_eval_status() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="pending_vendor",
+    )
+    logs = [
+        _log("invoice_uploaded", 1),
+        _log("vendor_registration_hold", 1),
+        _log("vendor_registration_cleared", 1, reason="vendor_in_master"),
+        _log("validation_passed", 1),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    vendor_hold = next(s for s in pipeline if s.stage_id == "vendor_hold")
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert vendor_hold.state == "pass"
+    assert validate.state == "pass"
+    assert validate.blocked_reason is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_field_confidence_routing_fails_extract_not_validate() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PARSING,
+        document_type_code="DT-01",
+    )
+    logs = [
+        _log("invoice_uploaded", 1),
+        _log("parse_completed", 1, confidence=0.9),
+        _log(
+            "routing_review_required",
+            1,
+            gate="field_confidence",
+            review_reasons=["FIELD_CONFIDENCE_LOW"],
+            low_confidence_fields=["gst"],
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    extract = next(s for s in pipeline if s.stage_id == "extract")
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert extract.state == "fail"
+    assert extract.exception_code == "EXTRACTION_INCOMPLETE"
+    assert validate.state == "pending"
+    assert first_pipeline_failure(pipeline) is not None
+    assert first_pipeline_failure(pipeline).stage_id == "extract"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_vendor_drift_routing_fails_llm_classify_not_validate() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.PARSING,
+        llm_suggested_dt="DT-03",
+    )
+    logs = [
+        _log("invoice_uploaded", 1),
+        _log("llm_classified", 1, llm_suggested_dt="DT-08", llm_confidence=0.9),
+        _log(
+            "routing_review_required",
+            1,
+            gate="vendor_classification_drift",
+            review_reasons=["VENDOR_CLASSIFICATION_DRIFT"],
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    llm = next(s for s in pipeline if s.stage_id == "llm_classify")
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert llm.state == "fail"
+    assert llm.exception_code == "CLASSIFICATION_GATE"
+    assert validate.state == "pending"
+    assert first_pipeline_failure(pipeline) is not None
+    assert first_pipeline_failure(pipeline).stage_id == "llm_classify"

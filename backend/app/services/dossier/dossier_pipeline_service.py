@@ -38,6 +38,8 @@ def _is_vault_route(inv: Invoice) -> bool:
     return (inv.route_target or "").strip().lower() == _VAULT_ROUTE
 
 
+# Approve is listed before map_gl for UI catalogue order; team-expense flows may log
+# mapping_applied before approval_requested in the audit trail (see process_invoice).
 STAGE_IDS: tuple[str, ...] = (
     "ingest",
     "duplicate",
@@ -225,9 +227,10 @@ def _routing_review_fail_for_stage(
     stage_id: str,
     exception_code: str,
     remediation: str,
+    require_exception: bool = True,
 ) -> DossierPipelineStepResponse | None:
     """Fail a stage when routing_review_required blocks on a specific gate."""
-    if inv.status != InvoiceStatus.EXCEPTION:
+    if require_exception and inv.status != InvoiceStatus.EXCEPTION:
         return None
     routing = _latest_log(logs, "routing_review_required")
     if routing is None or _routing_review_gate(routing) != gate:
@@ -774,6 +777,18 @@ def _resolve_quality(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 
 
 def _resolve_llm_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    routing_fail = _routing_review_fail_for_stage(
+        logs,
+        inv,
+        gate="vendor_classification_drift",
+        stage_id="llm_classify",
+        exception_code="CLASSIFICATION_GATE",
+        remediation=_REMEDIATION["CLASSIFICATION_GATE"],
+        require_exception=False,
+    )
+    if routing_fail is not None:
+        return routing_fail
+
     classify_log = _latest_log(logs, "llm_classified")
     if classify_log:
         detail_dict = classify_log.detail if isinstance(classify_log.detail, dict) else {}
@@ -893,6 +908,18 @@ def _resolve_document_type(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossi
 
 
 def _resolve_extract(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
+    routing_fail = _routing_review_fail_for_stage(
+        logs,
+        inv,
+        gate="field_confidence",
+        stage_id="extract",
+        exception_code="EXTRACTION_INCOMPLETE",
+        remediation=_REMEDIATION["EXTRACTION_INCOMPLETE"],
+        require_exception=False,
+    )
+    if routing_fail is not None:
+        return routing_fail
+
     parse_completed = _latest_log(logs, "parse_completed", "invoice_parsed")
     parse_failed = _latest_log(logs, "parsing_failed")
     parse_log = parse_completed
@@ -1003,6 +1030,24 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
     waived_log = _latest_log(logs, "vendor_registration_waived")
     validate_pass = _latest_log(logs, "validation_passed")
 
+    if waived_log and (hold_log is None or _is_after(waived_log, hold_log)):
+        reason = _detail_from_log(waived_log, fallback="vendor_registration_waived")
+        return _step(
+            "vendor_hold",
+            state="waived",
+            detail=reason,
+            at=waived_log.created_at,
+        )
+
+    if cleared_log and (hold_log is None or _is_after(cleared_log, hold_log)):
+        reason = _detail_from_log(cleared_log, fallback="vendor_registration_cleared")
+        return _step(
+            "vendor_hold",
+            state="pass",
+            detail=reason,
+            at=cleared_log.created_at,
+        )
+
     if inv.evaluation_status == EVAL_PENDING_VENDOR:
         reason = "Vendor not registered — pending vendor registration"
         hold_at = hold_log.created_at if hold_log else None
@@ -1033,24 +1078,6 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
             remediation=_remediation_for("VENDOR_HOLD", inv),
         )
 
-    if waived_log:
-        reason = _detail_from_log(waived_log, fallback="vendor_registration_waived")
-        return _step(
-            "vendor_hold",
-            state="waived",
-            detail=reason,
-            at=waived_log.created_at,
-        )
-
-    if cleared_log:
-        reason = _detail_from_log(cleared_log, fallback="vendor_registration_cleared")
-        return _step(
-            "vendor_hold",
-            state="pass",
-            detail=reason,
-            at=cleared_log.created_at,
-        )
-
     if wm >= 11 and cleared_log is None and waived_log is None and hold_log is None:
         if inv.evaluation_status == EVAL_PENDING_VENDOR:
             return _step("vendor_hold", state="pending", detail="—")
@@ -1075,7 +1102,12 @@ def _resolve_validate(
     routing_review = _latest_log(logs, "routing_review_required")
     failed_checks = [c for c in checks if c.state == "fail"]
 
-    if routing_review and _classification_routing_review(logs) is None and _playbook_routing_review(logs) is None and (
+    upstream_gate = _routing_review_gate(routing_review) if routing_review else ""
+    if routing_review and _classification_routing_review(logs) is None and _playbook_routing_review(logs) is None and upstream_gate not in {
+        "image_quality",
+        "field_confidence",
+        "vendor_classification_drift",
+    } and (
         inv.status == InvoiceStatus.EXCEPTION
         or validate_pass is None
         or routing_review.created_at >= (validate_pass.created_at if validate_pass else routing_review.created_at)
@@ -1526,6 +1558,9 @@ def _apply_blocked_downstream(steps: list[DossierPipelineStepResponse]) -> list[
             out.append(step)
             continue
         if step.state in ("fail", "waived"):
+            out.append(step)
+            continue
+        if fail_idx is None and step.state in ("pass", "waived"):
             out.append(step)
             continue
         if step.state == "pending" and step.blocked_reason:
