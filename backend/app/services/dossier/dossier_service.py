@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -152,14 +154,87 @@ def _linked_doc_dt_label(code: str, document_types) -> str:
     return token or "Document"
 
 
+@dataclass
+class LinkageSiblingCache:
+    """Prefetched tenant invoices keyed by linkage fields (bundle export batching)."""
+
+    by_invoice_no: dict[str, list[Invoice]] = field(default_factory=dict)
+    by_po_reference: dict[str, list[Invoice]] = field(default_factory=dict)
+    by_so_reference: dict[str, list[Invoice]] = field(default_factory=dict)
+
+
+def _index_linkage_sibling(
+    bucket: dict[str, list[Invoice]],
+    key: str | None,
+    row: Invoice,
+) -> None:
+    token = (key or "").strip()
+    if not token:
+        return
+    bucket.setdefault(token, []).append(row)
+
+
+async def build_linkage_sibling_cache(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    anchors: list[Invoice],
+) -> LinkageSiblingCache:
+    """Load all invoices that may link to any anchor via invoice_no or PO/SO reference."""
+    invoice_nos: set[str] = set()
+    po_refs: set[str] = set()
+    so_refs: set[str] = set()
+
+    for anchor in anchors:
+        inv_no = (anchor.invoice_no or "").strip()
+        if inv_no:
+            invoice_nos.add(inv_no)
+        po_ref = effective_po_reference(anchor.po_reference)
+        if po_ref and is_plausible_po_reference(po_ref):
+            po_refs.add(po_ref)
+        so_ref = resolve_so_reference_from_invoice(anchor)
+        if so_ref and is_plausible_so_reference(so_ref):
+            so_refs.add(so_ref)
+
+    if not invoice_nos and not po_refs and not so_refs:
+        return LinkageSiblingCache()
+
+    clauses = []
+    if invoice_nos:
+        clauses.append(Invoice.invoice_no.in_(invoice_nos))
+    if po_refs:
+        clauses.append(Invoice.po_reference.in_(po_refs))
+    if so_refs:
+        clauses.append(Invoice.so_reference.in_(so_refs))
+
+    rows = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.tenant_id == tenant_id, or_(*clauses))
+            .order_by(Invoice.id.asc())
+        )
+    ).scalars().all()
+
+    cache = LinkageSiblingCache()
+    for row in rows:
+        _index_linkage_sibling(cache.by_invoice_no, row.invoice_no, row)
+        _index_linkage_sibling(cache.by_po_reference, row.po_reference, row)
+        _index_linkage_sibling(cache.by_so_reference, row.so_reference, row)
+    return cache
+
+
 async def fetch_linked_invoices_by_invoice_no(
     session: AsyncSession,
     anchor: Invoice,
+    *,
+    linkage_cache: LinkageSiblingCache | None = None,
 ) -> list[Invoice]:
     """Sibling invoices sharing the same invoice_no as the anchor dossier."""
     token = (anchor.invoice_no or "").strip()
     if not token:
         return []
+    if linkage_cache is not None:
+        return [row for row in linkage_cache.by_invoice_no.get(token, []) if row.id != anchor.id]
     rows = (
         await session.execute(
             select(Invoice)
@@ -177,11 +252,15 @@ async def fetch_linked_invoices_by_invoice_no(
 async def fetch_linked_invoices_by_po_reference(
     session: AsyncSession,
     anchor: Invoice,
+    *,
+    linkage_cache: LinkageSiblingCache | None = None,
 ) -> list[Invoice]:
     """Sibling invoices sharing the same plausible PO reference as the anchor."""
     po_ref = effective_po_reference(anchor.po_reference)
     if not po_ref or not is_plausible_po_reference(po_ref):
         return []
+    if linkage_cache is not None:
+        return [row for row in linkage_cache.by_po_reference.get(po_ref, []) if row.id != anchor.id]
     rows = (
         await session.execute(
             select(Invoice)
@@ -199,11 +278,15 @@ async def fetch_linked_invoices_by_po_reference(
 async def fetch_linked_invoices_by_so_reference(
     session: AsyncSession,
     anchor: Invoice,
+    *,
+    linkage_cache: LinkageSiblingCache | None = None,
 ) -> list[Invoice]:
     """Sibling invoices sharing the same plausible SO reference as the anchor."""
     so_ref = resolve_so_reference_from_invoice(anchor)
     if not so_ref or not is_plausible_so_reference(so_ref):
         return []
+    if linkage_cache is not None:
+        return [row for row in linkage_cache.by_so_reference.get(so_ref, []) if row.id != anchor.id]
     rows = (
         await session.execute(
             select(Invoice)
@@ -283,6 +366,7 @@ async def append_invoice_no_linked_documents(
     response: DossierLinkedDocumentsResponse,
     *,
     document_types=None,
+    linkage_cache: LinkageSiblingCache | None = None,
 ) -> DossierLinkedDocumentsResponse:
     """
     Append invoices that share anchor.invoice_no (additive; dedupe by invoice id).
@@ -298,7 +382,9 @@ async def append_invoice_no_linked_documents(
             await load_posting_config_for_tenant(session, anchor.tenant_id)
         ).document_types
 
-    siblings = await fetch_linked_invoices_by_invoice_no(session, anchor)
+    siblings = await fetch_linked_invoices_by_invoice_no(
+        session, anchor, linkage_cache=linkage_cache
+    )
     if not siblings:
         return response
 
@@ -342,6 +428,7 @@ async def append_reference_linked_documents(
     response: DossierLinkedDocumentsResponse,
     *,
     document_types=None,
+    linkage_cache: LinkageSiblingCache | None = None,
 ) -> DossierLinkedDocumentsResponse:
     """
     Append invoices linked by PO or SO reference (additive; dedupe by invoice id).
@@ -359,7 +446,9 @@ async def append_reference_linked_documents(
 
     po_ref = effective_po_reference(anchor.po_reference)
     if po_ref and is_plausible_po_reference(po_ref):
-        for row in await fetch_linked_invoices_by_po_reference(session, anchor):
+        for row in await fetch_linked_invoices_by_po_reference(
+            session, anchor, linkage_cache=linkage_cache
+        ):
             if row.id in seen:
                 continue
             extra.append(
@@ -374,7 +463,9 @@ async def append_reference_linked_documents(
 
     so_ref = resolve_so_reference_from_invoice(anchor)
     if so_ref and is_plausible_so_reference(so_ref):
-        for row in await fetch_linked_invoices_by_so_reference(session, anchor):
+        for row in await fetch_linked_invoices_by_so_reference(
+            session, anchor, linkage_cache=linkage_cache
+        ):
             if row.id in seen:
                 continue
             extra.append(

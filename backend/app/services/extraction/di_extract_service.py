@@ -67,6 +67,9 @@ def _artifact_from_layout(
         payload["invoice_fields"] = invoice_data_to_payload_fields(invoice_data)
         if invoice_data.line_items:
             payload["di_line_items"] = serialize_line_items(invoice_data.line_items)
+        from app.services.extraction.extraction_field_values import attach_di_metadata_to_payload
+
+        attach_di_metadata_to_payload(payload, invoice_data)
 
     if layout is not None:
         table_items = extract_line_items_from_tables(layout)
@@ -138,6 +141,9 @@ def enrich_ocr_with_invoice_model(
     payload["invoice_fields"] = invoice_data_to_payload_fields(invoice_data)
     if invoice_data.line_items:
         payload["di_line_items"] = serialize_line_items(invoice_data.line_items)
+    from app.services.extraction.extraction_field_values import attach_di_metadata_to_payload
+
+    attach_di_metadata_to_payload(payload, invoice_data)
     payload["di_model"] = settings.azure_di_model_id or "prebuilt-invoice"
     payload["provider"] = "azure_di"
 

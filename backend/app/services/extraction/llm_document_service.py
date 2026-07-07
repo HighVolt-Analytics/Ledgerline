@@ -21,15 +21,29 @@ from app.services.extraction.line_item_skip_patterns import should_skip_line_row
 from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
 from app.services.extraction.extraction_field_values import (
     _BANK_DETAILS_LLM_KEYS,
+    build_extraction_field_manifest,
+    build_finance_field_manifest,
+    build_scalar_fields_presentation_prompt,
+    build_smart_ocr_excerpt,
     custom_extraction_field_descriptors,
     custom_extraction_field_keys,
     custom_extraction_fields_prompt_lines,
     effective_extraction_field_keys_for_dt,
     effective_extraction_field_keys_union,
     expand_extraction_keys_for_llm,
+    extraction_field_manifest_prompt_lines,
+    finance_field_manifest_prompt_lines,
+    filter_invoice_fields_for_keys,
     harvest_custom_fields_from_llm_raw,
     non_canonical_extraction_keys,
+    normalize_di_party_fields_for_prompt,
+    normalize_di_scalars_for_prompt,
     normalize_extracted_fields_map,
+    prebuilt_invoice_scalars_active,
+    di_party_field_keys,
+    di_party_fields_populated,
+    di_scalar_fields_populated,
+    field_di_authoritative,
 )
 from app.services.extraction.party_field_service import PARTY_LLM_RULES, apply_party_normalization_to_llm
 from app.services.shared.flexible_date import parse_flexible_date
@@ -115,46 +129,61 @@ def _bank_details_llm_keys() -> tuple[str, ...]:
     return _BANK_DETAILS_LLM_KEYS
 
 
-def build_llm_extract_rule_lines(selected_keys: Sequence[str]) -> str:
+def build_llm_extract_rule_lines(
+    selected_keys: Sequence[str],
+    *,
+    di_line_items_present: bool = False,
+    ocr_table_present: bool = False,
+    di_scalars_active: bool = False,
+    di_populated_keys: set[str] | None = None,
+    charge_lines_present: bool = False,
+) -> str:
     selected = {str(key or "").strip().lower() for key in selected_keys if str(key or "").strip()}
     lines: list[str] = []
-    if "line_items" in selected:
+    scalar_keys = {k for k in selected if k not in ("line_items",)} | {
+        k for k in expand_extraction_keys_for_llm(selected_keys) if k != "line_items"
+    }
+    if scalar_keys - {"line_items"}:
         lines.extend(
-            [
-                "- line_items is a list of {{description, amount, qty, unit_price}}.",
-                "- Map each table row using column headers visible in OCR (Description, Qty, Unit Price, "
-                "Amount, Rate, etc.) — never assume a fixed column order.",
-                "- Each row must be one product/service line from an OCR table — copy description, "
-                "qty, unit_price, and amount exactly as printed under the matching header.",
-                "- line_items must be product/service rows only — never header metadata "
-                "(Customer, Ship Date, Invoice No, BSB, Subtotal, GST, Total, etc.).",
-                "- If a row is a field label ending with \":\" it is NOT a line item.",
-                "- Leave line_items empty when the document has no product table.",
-            ]
+            build_scalar_fields_presentation_prompt(
+                di_active=di_scalars_active,
+                di_populated_keys=di_populated_keys or set(),
+            )
         )
-    if "po_reference" in selected:
-        lines.append("- po_reference: purchase order number when labeled PO / Purchase Order.")
-    if "so_reference" in selected:
-        lines.append(
-            "- so_reference: sales order number when labeled SO / Sales Order "
-            "(common on AR invoices and delivery notes)."
+    if "line_items" in selected:
+        from app.services.extraction.line_items_parser import build_line_items_presentation_prompt
+
+        lines.extend(
+            build_line_items_presentation_prompt(
+                di_rows_present=di_line_items_present,
+                ocr_table_present=ocr_table_present,
+                charge_lines_present=charge_lines_present,
+            )
         )
-    if "cost_centre" in selected:
-        lines.append("- cost_centre: department or cost centre code when explicitly labeled.")
+    if not di_scalars_active:
+        if "po_reference" in selected:
+            lines.append("- po_reference: purchase order number when labeled PO / Purchase Order.")
+        if "so_reference" in selected:
+            lines.append(
+                "- so_reference: sales order number when labeled SO / Sales Order "
+                "(common on AR invoices and delivery notes)."
+            )
+        if "cost_centre" in selected:
+            lines.append("- cost_centre: department or cost centre code when explicitly labeled.")
+        if "currency" in selected or {"subtotal", "gst", "total"} & selected:
+            lines.append(
+                "- currency: ISO 4217 code from the document (e.g. AUD, USD, SGD). "
+                "Leave empty when no currency is shown."
+            )
     if "bank_details" in selected or any(key in selected for key in _bank_details_llm_keys()):
         lines.append(
             "- bank_bsb, bank_account, bank_name: extract only when explicitly labeled "
             "(BSB, Account No, IBAN, SWIFT, Bank Name). Leave empty if absent. "
             "Never use phone numbers, invoice numbers, or tax IDs as bank details."
         )
-    lines.append("- field_confidence maps field names to 0.0-1.0.")
+    lines.append("- field_confidence maps every key in finance_field_manifest to 0.0-1.0 (use 0.0 when empty).")
     if "gst_rate" in selected:
         lines.append("- gst_rate is the tax percentage as a number (e.g. 10 for 10%), not a fraction.")
-    if "currency" in selected or {"subtotal", "gst", "total"} & selected:
-        lines.append(
-            "- currency: ISO 4217 code from the document (e.g. AUD, USD, SGD). "
-            "Leave empty when no currency is shown."
-        )
     if non_canonical_extraction_keys(selected_keys):
         lines.append(
             "- extracted_fields is an optional object for keys listed in custom_extraction_fields; "
@@ -169,17 +198,21 @@ Return JSON only with keys:
 {json_keys}.
 
 Rules:
-- Structure values from ocr.text_excerpt, ocr.layout_kv, and invoice_fields in the user payload.
+- Extract ONLY fields listed in extraction_fields / finance_field_manifest in the user payload.
+- When ocr.scalar_fields_source is azure_di, canonical scalars come ONLY from ocr.azure_di_scalar_fields.
+- Structure other values from ocr.text_excerpt and ocr.layout_kv only.
+- NEVER use tenant legal_name, catalogue rows, or few_shot_examples as field values.
 - Copy values verbatim from the OCR payload. Do not round, calculate, infer, or normalize amounts.
 - Leave any field empty/null when it is not explicitly present in the OCR payload.
 - Do not derive subtotal, gst, or total from line items (or vice versa) unless that exact value appears in OCR.
-- Do not invent amounts, parties, or dates absent from that OCR payload.
+- Do not invent amounts, parties, dates, or placeholder tax IDs (e.g. 45123456789).
+- Do not default currency — leave empty when no currency symbol or ISO code appears in OCR.
 - suggested_dt must match confirmed_dt from the user payload.
 - confidence is 0.0-1.0 for the document type choice.
 - perspective is purchase | sales | unknown.
 {{party_rules}}
 {rule_lines}
-- invoice_date and due_date must be ISO YYYY-MM-DD strings when a date is present."""
+- invoice_date and due_date must be ISO YYYY-MM-DD strings when a date is present in OCR."""
 
 
 def _build_llm_combined_system_text(json_keys: str, rule_lines: str) -> str:
@@ -252,13 +285,42 @@ def build_extract_system_prompt(
     *,
     playbook_profile: str | None = None,
     selected_keys: Sequence[str] | None = None,
+    ocr: OcrArtifact | None = None,
 ) -> str:
     keys = list(selected_keys or ())
+    di_line_items_present = False
+    ocr_table_present = False
+    di_scalars_active = False
+    di_populated_keys: set[str] = set()
+    charge_lines_present = False
+    if ocr is not None:
+        from app.services.extraction.line_items_parser import (
+            document_has_charge_lines,
+            document_has_product_table,
+            resolve_line_items_from_ocr_payload,
+        )
+
+        payload = ocr.payload_json or {}
+        di_line_items_present = bool(resolve_line_items_from_ocr_payload(payload))
+        ocr_table_present = document_has_product_table(ocr.text, payload) and not di_line_items_present
+        charge_lines_present = document_has_charge_lines(ocr.text) and not di_line_items_present
+        di_scalars_active = prebuilt_invoice_scalars_active(payload)
+        di_populated_keys = di_scalar_fields_populated(payload) if di_scalars_active else set()
     json_keys = build_llm_extract_json_keys(keys)
-    rule_lines = build_llm_extract_rule_lines(keys)
+    rule_lines = build_llm_extract_rule_lines(
+        keys,
+        di_line_items_present=di_line_items_present,
+        ocr_table_present=ocr_table_present,
+        di_scalars_active=di_scalars_active,
+        di_populated_keys=di_populated_keys,
+        charge_lines_present=charge_lines_present,
+    )
     base = _build_llm_extract_system_text(json_keys, rule_lines).format(party_rules=PARTY_LLM_RULES)
     parts = [base, "", "Tenant context:"]
     parts.extend(f"- {line}" for line in _org_role_lines(org))
+    finance_manifest = build_finance_field_manifest(keys)
+    if finance_manifest:
+        parts.extend(finance_field_manifest_prompt_lines(finance_manifest))
     profile = (playbook_profile or "").strip().lower()
     selected = {str(key or "").strip().lower() for key in keys}
     if profile == "supporting":
@@ -292,9 +354,6 @@ def build_extract_system_prompt(
                 "Document profile: credit note — extract credit reference and amounts (may be negative).",
             ]
         )
-    custom_keys = non_canonical_extraction_keys(keys)
-    if custom_keys:
-        parts.extend(custom_extraction_fields_prompt_lines(custom_extraction_field_descriptors(custom_keys)))
     return "\n".join(parts)
 
 
@@ -336,7 +395,7 @@ def build_llm_user_payload(
     selected_keys: Sequence[str] | None = None,
     confirmed_dt: str | None = None,
 ) -> str:
-    excerpt = (ocr.text or "")[:12000]
+    excerpt = build_smart_ocr_excerpt(ocr.text)
     keys = (
         list(selected_keys)
         if selected_keys is not None
@@ -344,6 +403,38 @@ def build_llm_user_payload(
     )
     custom_keys = non_canonical_extraction_keys(keys)
     descriptors = custom_extraction_field_descriptors(custom_keys)
+    finance_manifest = build_finance_field_manifest(keys)
+    payload_json = ocr.payload_json or {}
+    di_scalars_active = prebuilt_invoice_scalars_active(payload_json)
+    ocr_block: dict[str, Any] = {
+        "text_excerpt": excerpt,
+        "layout_kv": ocr.layout_kv,
+        "text_length": ocr.text_length,
+        "document_heading": payload_json.get("document_heading"),
+    }
+    if di_scalars_active:
+        ocr_block["scalar_fields_source"] = "azure_di"
+        scalar_fields = normalize_di_scalars_for_prompt(payload_json, keys)
+        if scalar_fields:
+            ocr_block["azure_di_scalar_fields"] = scalar_fields
+        party_fields = normalize_di_party_fields_for_prompt(payload_json, keys)
+        if party_fields:
+            ocr_block["azure_di_party_fields"] = party_fields
+    if "line_items" in {str(k).strip().lower() for k in keys}:
+        from app.services.extraction.line_items_parser import (
+            document_has_product_table,
+            line_items_source_from_payload,
+            normalize_di_line_items_for_prompt,
+            resolve_line_items_from_ocr_payload,
+        )
+
+        di_rows = resolve_line_items_from_ocr_payload(payload_json)
+        ocr_block["line_items_source"] = line_items_source_from_payload(payload_json)
+        if di_rows:
+            ocr_block["azure_di_line_items"] = normalize_di_line_items_for_prompt(di_rows)
+            ocr_block["line_items_row_count"] = len(di_rows)
+        elif document_has_product_table(ocr.text, payload_json) and payload_json.get("table_line_items"):
+            ocr_block["table_line_items"] = payload_json.get("table_line_items")
     payload: dict[str, Any] = {
         "tenant": {
             "legal_name": org.legal_name,
@@ -356,19 +447,20 @@ def build_llm_user_payload(
         "catalogue": _catalogue_rows(document_types),
         "few_shot_examples": _few_shot_rows(few_shots or ()),
         "extraction_fields": keys,
+        "extraction_field_manifest": build_extraction_field_manifest(keys),
+        "finance_field_manifest": finance_manifest,
         "custom_extraction_fields": custom_keys,
         "custom_extraction_field_descriptors": descriptors,
         "canonical_extraction_fields": sorted(CANONICAL_EXTRACTION_FIELD_KEYS),
-        "ocr": {
-            "text_excerpt": excerpt,
-            "layout_kv": ocr.layout_kv,
-            "text_length": ocr.text_length,
-            "document_heading": (ocr.payload_json or {}).get("document_heading"),
-        },
+        "ocr": ocr_block,
     }
-    invoice_fields = (ocr.payload_json or {}).get("invoice_fields")
-    if isinstance(invoice_fields, dict) and invoice_fields:
-        payload["invoice_fields"] = invoice_fields
+    if not di_scalars_active:
+        invoice_fields = filter_invoice_fields_for_keys(
+            payload_json.get("invoice_fields") if isinstance(payload_json.get("invoice_fields"), dict) else None,
+            keys,
+        )
+        if invoice_fields:
+            payload["invoice_fields"] = invoice_fields
     if confirmed_dt:
         payload["confirmed_dt"] = confirmed_dt.strip().upper()
     return json.dumps(payload, default=str)
@@ -412,7 +504,12 @@ def build_structure_extract_prompts(
     profile = playbook_profile if playbook_profile is not None else _playbook_profile_for_dt(
         document_types, dt_token
     )
-    system = build_extract_system_prompt(org, playbook_profile=profile, selected_keys=keys)
+    system = build_extract_system_prompt(
+        org,
+        playbook_profile=profile,
+        selected_keys=keys,
+        ocr=ocr,
+    )
     if sparse:
         system = f"{system}{_SPARSE_IMAGE_EXTRACT_HINT}"
     user = build_llm_user_payload(
@@ -479,13 +576,9 @@ def _normalize_llm_raw(
 
 
 def _resolved_currency(llm: LlmDocumentResult) -> str:
-    """Use LLM currency when present; default AUD only when monetary amounts were extracted."""
+    """Use LLM currency when present; never default when absent."""
     token = (llm.currency or "").strip().upper()
-    if token:
-        return token
-    if llm.subtotal is not None or llm.gst is not None or llm.total is not None:
-        return "AUD"
-    return "AUD"
+    return token
 
 
 def _bank_extracted_fields(llm: LlmDocumentResult) -> dict[str, str]:
@@ -685,7 +778,6 @@ def llm_result_to_invoice_data(
         org=org_ctx,
     )
 
-    line_items: list[ParsedLineItem] = []
     extracted = harvest_custom_fields_from_llm_raw(llm.raw, custom_keys=custom_keys)
     extracted = {
         **party_fields,
@@ -694,31 +786,79 @@ def llm_result_to_invoice_data(
         **(llm.extracted_fields or {}),
         **extracted,
     }
-    line_items = _parsed_line_items_from_llm(
-        llm,
-        vendor=finance.get("vendor"),
-        invoice_no=(llm.invoice_no or "").strip() or None,
-        po_reference=(llm.po_reference or "").strip() or None,
-        so_reference=(llm.so_reference or "").strip() or extracted.get("so_reference"),
-        cost_centre=(llm.cost_centre or "").strip() or None,
-        extracted_fields=extracted,
-    )
+    from app.services.extraction.line_items_parser import resolve_line_items_from_ocr_payload
+
+    payload = ocr.payload_json or {}
+    di_scalars_active = prebuilt_invoice_scalars_active(payload)
+    di_populated = di_scalar_fields_populated(payload) if di_scalars_active else set()
+    party_populated = di_party_fields_populated(payload) if di_scalars_active else set()
+    if party_populated:
+        for key in di_party_field_keys():
+            if key in party_populated:
+                extracted.pop(key, None)
+    if resolve_line_items_from_ocr_payload(payload):
+        line_items = []
+    else:
+        line_items = _parsed_line_items_from_llm(
+            llm,
+            vendor=finance.get("vendor") if not field_di_authoritative(payload, "vendor") else None,
+            invoice_no=(llm.invoice_no or "").strip() or None
+            if not field_di_authoritative(payload, "invoice_no")
+            else None,
+            po_reference=(llm.po_reference or "").strip() or None
+            if not field_di_authoritative(payload, "po_reference")
+            else None,
+            so_reference=(llm.so_reference or "").strip() or extracted.get("so_reference"),
+            cost_centre=(llm.cost_centre or "").strip() or None
+            if not field_di_authoritative(payload, "cost_centre")
+            else None,
+            extracted_fields=extracted,
+        )
     from app.services.extraction.gst_rate import parse_gst_rate_percent, resolve_gst_rate_percent
 
+    vendor = finance.get("vendor") if not field_di_authoritative(payload, "vendor") else None
+    abn = finance.get("abn") if not field_di_authoritative(payload, "abn") else None
+    billing_address = (
+        finance.get("billing_address") if not field_di_authoritative(payload, "billing_address") else None
+    )
+    invoice_no = (
+        (llm.invoice_no or "").strip() or None
+        if not field_di_authoritative(payload, "invoice_no")
+        else None
+    )
+    invoice_date = (
+        _parse_date(llm.invoice_date) if not field_di_authoritative(payload, "invoice_date") else None
+    )
+    due_date = _parse_date(llm.due_date) if not field_di_authoritative(payload, "due_date") else None
+    currency = _resolved_currency(llm) if not field_di_authoritative(payload, "currency") else ""
+    subtotal = llm.subtotal if not field_di_authoritative(payload, "subtotal") else None
+    gst = llm.gst if not field_di_authoritative(payload, "gst") else None
+    total = llm.total if not field_di_authoritative(payload, "total") else None
+    po_reference = (
+        (llm.po_reference or "").strip() or None
+        if not field_di_authoritative(payload, "po_reference")
+        else None
+    )
+    cost_centre = (
+        (llm.cost_centre or "").strip() or None
+        if not field_di_authoritative(payload, "cost_centre")
+        else None
+    )
+
     parsed = InvoiceData(
-        vendor=finance.get("vendor"),
-        abn=finance.get("abn"),
-        billing_address=finance.get("billing_address"),
-        invoice_no=(llm.invoice_no or "").strip() or None,
-        invoice_date=_parse_date(llm.invoice_date),
-        due_date=_parse_date(llm.due_date),
-        currency=_resolved_currency(llm),
-        subtotal=llm.subtotal,
-        gst=llm.gst,
+        vendor=vendor,
+        abn=abn,
+        billing_address=billing_address,
+        invoice_no=invoice_no,
+        invoice_date=invoice_date,
+        due_date=due_date,
+        currency=currency,
+        subtotal=subtotal,
+        gst=gst,
         gst_rate=parse_gst_rate_percent(llm.gst_rate),
-        total=llm.total,
-        po_reference=(llm.po_reference or "").strip() or None,
-        cost_centre=(llm.cost_centre or "").strip() or None,
+        total=total,
+        po_reference=po_reference,
+        cost_centre=cost_centre,
         bank_bsb=(llm.bank_bsb or "").strip() or None,
         bank_account=(llm.bank_account or "").strip() or None,
         line_items=line_items,
@@ -736,7 +876,7 @@ def llm_result_to_invoice_data(
             "extracted_fields": extracted,
         },
     )
-    parsed.gst_rate = resolve_gst_rate_percent(parsed)
+    parsed.gst_rate = resolve_gst_rate_percent(parsed, ocr_text=ocr_text, allow_inference=False)
     return parsed
 
 

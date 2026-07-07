@@ -9,3 +9,19 @@ export function useReconciliationOverview(enabled = true) {
     enabled,
   });
 }
+
+export function useReconciliationDaily(enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.reconciliationDaily(),
+    queryFn: () => api.listReconciliation(),
+    enabled,
+  });
+}
+
+export function useReconciliationDayDetail(reconDate: string | null, enabled = true) {
+  return useTenantQuery({
+    queryKey: queryKeys.reconciliationDayDetail(reconDate ?? ""),
+    queryFn: () => api.getReconciliationDayDetail(reconDate!),
+    enabled: enabled && Boolean(reconDate),
+  });
+}

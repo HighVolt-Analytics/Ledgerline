@@ -25,6 +25,7 @@ from app.services.purchase.purchase_match_service import sync_purchase_order_fro
 from app.services.reports.documents_bundle_export_service import (
     _match_flags,
     build_documents_bundle_export,
+    bundle_dt_cells_by_code,
 )
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.test_audit_export_api import assert_csv_hyperlink
@@ -34,6 +35,21 @@ def _read_csv(text: str) -> tuple[list[str], list[list[str]]]:
     rows = list(csv.reader(io.StringIO(text)))
     assert rows
     return rows[0], rows[1:]
+
+
+def _invoice_no_from_cell(cell: str) -> str:
+    if cell.startswith("=HYPERLINK("):
+        label_start = cell.rfind(',"')
+        if label_start >= 0:
+            return cell[label_start + 2 : -2]
+    if " | " in cell:
+        return cell.split(" | ", 1)[0]
+    return cell
+
+
+def _invoice_nos_from_rows(header: list[str], data: list[list[str]]) -> set[str]:
+    col = header.index("Invoice no.")
+    return {_invoice_no_from_cell(row[col]) for row in data}
 
 
 def test_match_flags_yes_no_only() -> None:
@@ -92,14 +108,19 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
     assert "2 way match" in header
     assert "3 way match" in header
     assert "Universal match" in header
+    assert "Invoice date" in header
+    assert "Counterparty" in header
+    assert "Linkage" in header
     assert "PO goods invoice" in header
     assert "GRN (supporting)" in header
 
-    invoice_nos = {row[header.index("Invoice no.")] for row in data}
+    invoice_nos = _invoice_nos_from_rows(header, data)
     assert "INV-POST-1" in invoice_nos
     assert "PO-SUPPORT-1" not in invoice_nos
 
-    posting_row = next(row for row in data if row[header.index("Invoice no.")] == "INV-POST-1")
+    posting_row = next(
+        row for row in data if _invoice_no_from_cell(row[header.index("Invoice no.")]) == "INV-POST-1"
+    )
     assert posting_row[header.index("Class")] == "Transactional"
     assert posting_row[header.index("Posting")] == "Yes"
     assert posting_row[header.index("2 way match")] == "No"
@@ -185,7 +206,9 @@ async def test_documents_bundle_export_three_way_and_linked_po_hyperlink(
     assert "documents_bundle_2026-05.csv" in res.headers.get("content-disposition", "")
 
     header, data = _read_csv(res.text)
-    row = next(r for r in data if r[header.index("Invoice no.")] == "INV-BUNDLE-1")
+    row = next(
+        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-BUNDLE-1"
+    )
     assert row[header.index("3 way match")] == "Yes"
     assert row[header.index("2 way match")] == "No"
     assert row[header.index("Universal match")] == "No"
@@ -226,7 +249,9 @@ async def test_documents_bundle_export_universal_match_yes(
         date_to=date(2026, 6, 30),
     )
     header, data = _read_csv(payload.csv_text)
-    row = next(r for r in data if r[header.index("Invoice no.")] == "SHARED-INV-77")
+    row = next(
+        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "SHARED-INV-77"
+    )
     assert row[header.index("Universal match")] == "Yes"
     assert row[header.index("3 way match")] == "No"
     assert row[header.index("2 way match")] == "No"
@@ -265,7 +290,7 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
     )
     assert res.status_code == 200
     header, data = _read_csv(res.text)
-    invoice_nos = {r[header.index("Invoice no.")] for r in data}
+    invoice_nos = _invoice_nos_from_rows(header, data)
     assert "INV-CATALOG-FALLBACK" in invoice_nos
 
 
@@ -316,7 +341,9 @@ async def test_documents_bundle_export_dual_linkage_invoice_no_and_po_reference(
     )
     assert res.status_code == 200
     header, data = _read_csv(res.text)
-    row = next(r for r in data if r[header.index("Invoice no.")] == "INV-DUAL-100")
+    row = next(
+        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-DUAL-100"
+    )
 
     customer_col = header.index("Customer invoice")
     po_col = header.index("PO (supporting)")
@@ -363,3 +390,168 @@ def test_linked_docs_helpers_still_support_audit_export() -> None:
     by_dt = linked_docs_by_dt_code(1, linked, label_fn="bundle")
     assert "DT-26" in by_dt
     assert "DOC-9" in by_dt["DT-26"]
+
+
+def test_bundle_dt_cells_marks_missing_mandatory_slots() -> None:
+    from app.schemas.dossier import DossierLinkedDocumentResponse
+
+    linked = DossierLinkedDocumentsResponse(
+        linkage_kind="po_reference",
+        linkage_label="PO reference",
+        enforce_bundle=True,
+        documents=[
+            DossierLinkedDocumentResponse(
+                id="anchor",
+                document_type_code="DT-01",
+                label="Anchor",
+                present=True,
+                requirement="mandatory",
+                is_anchor=True,
+                invoice_id=1,
+            ),
+            DossierLinkedDocumentResponse(
+                id="po-slot",
+                document_type_code="DT-02",
+                label="PO",
+                present=False,
+                requirement="mandatory",
+            ),
+            DossierLinkedDocumentResponse(
+                id="grn-slot",
+                document_type_code="DT-03",
+                label="GRN",
+                present=False,
+                requirement="mandatory",
+            ),
+        ],
+    )
+    cells = bundle_dt_cells_by_code(1, linked, ["DT-02", "DT-03", "DT-26"])
+    assert cells["DT-02"] == "Missing"
+    assert cells["DT-03"] == "Missing"
+    assert cells["DT-26"] == ""
+
+
+def test_bundle_dt_cells_marks_advisory_slots() -> None:
+    from app.schemas.dossier import DossierLinkedDocumentResponse
+
+    linked = DossierLinkedDocumentsResponse(
+        linkage_kind="invoice_no",
+        linkage_label="Invoice no.",
+        enforce_bundle=False,
+        documents=[
+            DossierLinkedDocumentResponse(
+                id="anchor",
+                document_type_code="DT-01",
+                label="Anchor",
+                present=True,
+                requirement="mandatory",
+                is_anchor=True,
+                invoice_id=1,
+            ),
+            DossierLinkedDocumentResponse(
+                id="advisory",
+                document_type_code="DT-26",
+                label="Customer invoice",
+                present=False,
+                requirement="advisory",
+            ),
+        ],
+    )
+    cells = bundle_dt_cells_by_code(1, linked, ["DT-26"])
+    assert cells["DT-26"] == "Advisory"
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_missing_mandatory_in_csv(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Supplier",
+            document_type_code="DT-01",
+            invoice_no="INV-MISSING-BUNDLE",
+            invoice_date=date(2026, 8, 1),
+            status=InvoiceStatus.PROCESSED,
+            file_hash="bundle-missing-mandatory",
+        )
+    )
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-08-01&date_to=2026-08-31"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    row = next(
+        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-MISSING-BUNDLE"
+    )
+    assert row[header.index("PO (supporting)")] == "Missing"
+    assert row[header.index("GRN (supporting)")] == "Missing"
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_plain_format(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Plain Vendor",
+        document_type_code="DT-01",
+        invoice_no="INV-PLAIN-1",
+        invoice_date=date(2026, 8, 5),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-plain-format",
+    )
+    db_session.add(inv)
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-08-01&date_to=2026-08-31&format=plain"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    row = next(
+        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-PLAIN-1"
+    )
+    inv_cell = row[header.index("Invoice no.")]
+    assert not inv_cell.startswith("=HYPERLINK(")
+    assert "INV-PLAIN-1 |" in inv_cell
+    assert "/vault?invoice=" in inv_cell
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_scoped_columns_not_full_catalogue(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    from app.services.classification.document_type_catalog import load_shipped_default_document_types
+
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Supplier",
+            document_type_code="DT-01",
+            invoice_no="INV-SCOPED-COLS",
+            invoice_date=date(2026, 8, 10),
+            status=InvoiceStatus.PROCESSED,
+            file_hash="bundle-scoped-cols",
+        )
+    )
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-08-01&date_to=2026-08-31"
+    )
+    assert res.status_code == 200
+    header, _ = _read_csv(res.text)
+    fixed_count = 14
+    dt_column_count = len(header) - fixed_count
+    shipped_count = len(load_shipped_default_document_types())
+    assert dt_column_count < shipped_count
+    assert dt_column_count >= 3

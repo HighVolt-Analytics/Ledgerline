@@ -109,7 +109,7 @@ from app.services.ingest.email_ingestion import RawEmail, mark_message_read
 from app.services.shared.file_storage import open_pdf_for_reading
 from app.services.vault.vault_blob_sync import sync_invoice_blob_path
 from app.services.ingest.graph_mail_folders import folder_moves_enabled
-from app.services.payments.journal_generator import generate_entries
+from app.services.payments.journal_generator import generate_entries, is_balanced
 from app.services.shared.notifier import send_notification
 from app.services.reconciliation.reconciliation_service import reconcile_daily, save_reconciliation
 from app.services.rule_book.validator import all_passed, results_to_json, run_all_validations
@@ -729,7 +729,7 @@ async def _apply_parsed_to_invoice(
         _apply_parsed_scalar(invoice, "total", plausible_money(parsed.total))
         from app.services.extraction.gst_rate import resolve_gst_rate_percent
 
-        _apply_parsed_scalar(invoice, "gst_rate", resolve_gst_rate_percent(parsed))
+        _apply_parsed_scalar(invoice, "gst_rate", resolve_gst_rate_percent(parsed, allow_inference=False))
         if _scalar_field_empty(invoice.currency):
             invoice.currency = parsed.currency
         if _scalar_field_empty(invoice.document_text):
@@ -775,7 +775,11 @@ async def _apply_parsed_to_invoice(
     invoice.billing_address = parsed.billing_address
     invoice.bank_bsb = parsed.bank_bsb
     invoice.bank_account = parsed.bank_account
-    invoice.invoice_no = parsed.invoice_no
+    from app.services.extraction.invoice_no_sanitizer import extract_invoice_no_from_text, sanitize_invoice_no
+
+    invoice.invoice_no = sanitize_invoice_no(parsed.invoice_no) or extract_invoice_no_from_text(
+        parsed.document_text or ""
+    )
     invoice.po_reference = parsed.po_reference
     invoice.cost_centre = parsed.cost_centre
     invoice.invoice_date = parsed.invoice_date
@@ -785,7 +789,7 @@ async def _apply_parsed_to_invoice(
     invoice.total = plausible_money(parsed.total)
     from app.services.extraction.gst_rate import resolve_gst_rate_percent
 
-    invoice.gst_rate = resolve_gst_rate_percent(parsed)
+    invoice.gst_rate = resolve_gst_rate_percent(parsed, allow_inference=False)
     invoice.currency = parsed.currency
     from app.services.extraction.document_text import cap_document_text
     from app.services.purchase.po_reference import effective_po_reference, extract_po_reference_from_text
@@ -1175,6 +1179,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         ensure_extraction_baseline,
         non_canonical_extraction_keys,
     )
+    from app.services.extraction.field_grounding_service import ground_parsed_fields
     from app.services.extraction.pdf_parser import parse_local_text
 
     selected_keys = effective_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
@@ -1195,6 +1200,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     else:
         local = parse_local_text(ocr.text or "")
         parsed = replace(local, document_text=ocr.text or local.document_text)
+    parsed = ground_parsed_fields(parsed, ocr.text, selected_keys, ocr.payload_json)
     parsed = enrich_parsed_from_ocr(parsed, ocr, dt_definition=dt_definition)
 
     field_conf_result = evaluate_field_confidence_gate(
@@ -1814,7 +1820,22 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     for entry in existing_entries:
         await session.delete(entry)
     await session.flush()
-    for line in generate_entries(invoice, mapping, config=config, sales_order=linked_so):
+    journal_lines = generate_entries(invoice, mapping, config=config, sales_order=linked_so)
+    if not is_balanced(journal_lines):
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "journal_unbalanced",
+            invoice_id=invoice.id,
+            detail={
+                "subtotal": float(invoice.subtotal or 0),
+                "gst": float(invoice.gst or 0),
+                "total": float(invoice.total or 0),
+            },
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+    for line in journal_lines:
         session.add(
             JournalEntry(
                 tenant_id=invoice.tenant_id,
@@ -1832,7 +1853,11 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     await session.flush()
     recon_date = invoice.invoice_date or date.today()
     recon = await reconcile_daily(
-        session, recon_date, tenant_id=invoice.tenant_id, current_invoice=invoice
+        session,
+        recon_date,
+        tenant_id=invoice.tenant_id,
+        current_invoice=invoice,
+        config=config,
     )
     await save_reconciliation(session, recon, tenant_id=invoice.tenant_id)
     if recon.halted:

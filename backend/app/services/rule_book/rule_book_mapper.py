@@ -180,3 +180,7 @@ def get_tax_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
 
 def get_payable_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
     return resolve_category_for_config(config.posting_defaults.payable_account, config)
+
+
+def get_receivable_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
+    return resolve_category_for_config("Accounts Receivable", config)

@@ -112,8 +112,21 @@ def extract_key_value_fields(
                     break
 
     if text:
+        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+
         for field_key, pattern in _KV_LABELS:
             if field_key in found:
+                continue
+            if field_key == "invoice_no":
+                match = re.search(
+                    pattern.pattern + r"\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/_]{2,})",
+                    text,
+                    re.I | re.M,
+                )
+                if match:
+                    value = sanitize_invoice_no(match.group(1))
+                    if value:
+                        found[field_key] = value
                 continue
             match = re.search(
                 pattern.pattern + r"\s*[:\-]?\s*(.+)",
@@ -124,6 +137,14 @@ def extract_key_value_fields(
                 value = match.group(1).strip().splitlines()[0].strip()
                 if value:
                     found[field_key] = value
+        if "total" not in found:
+            freight = re.search(
+                r"FREIGHT\s*[:\-]?\s*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)",
+                text,
+                re.I,
+            )
+            if freight:
+                found["total"] = freight.group(1).strip()
 
     return found
 

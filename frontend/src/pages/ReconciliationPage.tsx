@@ -4,11 +4,17 @@ import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
+import { ReconciliationDetailDrawer } from "@/components/ReconciliationDetailDrawer";
 import { YearMonthPeriodPicker } from "@/components/YearMonthPeriodPicker";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
-import { useReconciliationOverview } from "@/hooks/useReconciliationOverview";
+import {
+  useReconciliationDaily,
+  useReconciliationDayDetail,
+  useReconciliationOverview,
+} from "@/hooks/useReconciliationOverview";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import { money } from "@/lib/format";
 import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
@@ -37,13 +43,24 @@ export function ReconciliationPage() {
     error,
     blocked,
   } = useReconciliationOverview(Boolean(user));
+  const { data: dailyRows } = useReconciliationDaily(Boolean(user));
 
   const [postingDefaults, setPostingDefaults] = useState<PostingDefaults>({
     ...DEFAULT_POSTING_DEFAULTS,
   });
   const [period, setPeriod] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [detailDate, setDetailDate] = useState<string | null>(null);
+  const { data: dayDetail } = useReconciliationDayDetail(detailDate, Boolean(user));
   const tenantScope = user?.tenant_id ?? null;
+
+  const dailyByDate = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof dailyRows>[number]>();
+    for (const row of dailyRows ?? []) {
+      map.set(row.date, row);
+    }
+    return map;
+  }, [dailyRows]);
 
   const currency = overview?.base_currency ?? "AUD";
   const fmt = (v: number) => money(v, currency);
@@ -255,38 +272,75 @@ export function ReconciliationPage() {
         <div className="space-y-3">
           {e.byDate.map((day) => {
             const open = expanded[day.date] ?? false;
+            const daily = dailyByDate.get(day.date);
             return (
               <Card key={day.date} className="overflow-hidden" data-testid={`recon-date-${day.date}`}>
-                <button
-                  type="button"
-                  onClick={() => setExpanded((prev) => ({ ...prev, [day.date]: !open }))}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover-elevate text-left"
-                  data-testid={`recon-toggle-${day.date}`}
-                >
-                  {open ? (
-                    <ChevronDown className="h-4 w-4 shrink-0" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4 shrink-0" />
-                  )}
-                  <span className="font-medium tnum">{day.date}</span>
-                  <Badge variant="outline" className="tnum">
-                    {day.count} docs
-                  </Badge>
-                  <div className="flex-1" />
-                  <span className="text-sm text-muted-foreground tnum hidden sm:inline">
-                    Dr {fmt(day.sumDr)} · Cr {fmt(day.sumCr)}
-                  </span>
-                  <Badge
-                    variant="outline"
-                    className={
-                      day.delta === 0
-                        ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
-                        : "border-destructive/40 text-destructive"
-                    }
+                <div className="flex items-center gap-2 px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((prev) => ({ ...prev, [day.date]: !open }))}
+                    className="flex flex-1 items-center gap-3 hover-elevate text-left min-w-0"
+                    data-testid={`recon-toggle-${day.date}`}
                   >
-                    Δ {fmt(day.delta)}
-                  </Badge>
-                </button>
+                    {open ? (
+                      <ChevronDown className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0" />
+                    )}
+                    <span className="font-medium tnum">{day.date}</span>
+                    <Badge variant="outline" className="tnum">
+                      {day.count} docs
+                    </Badge>
+                    {daily ? (
+                      <>
+                        <Badge
+                          variant="outline"
+                          className={
+                            daily.rc1_passed
+                              ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
+                              : "border-destructive/40 text-destructive"
+                          }
+                        >
+                          RC1 {daily.rc1_passed ? "Pass" : "Fail"}
+                        </Badge>
+                        <Badge
+                          variant="outline"
+                          className={
+                            daily.rc2_passed
+                              ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
+                              : "border-destructive/40 text-destructive"
+                          }
+                        >
+                          RC2 {daily.rc2_passed ? "Pass" : "Fail"}
+                        </Badge>
+                      </>
+                    ) : null}
+                    <div className="flex-1" />
+                    <span className="text-sm text-muted-foreground tnum hidden sm:inline">
+                      Dr {fmt(day.sumDr)} · Cr {fmt(day.sumCr)}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={
+                        day.delta === 0
+                          ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
+                          : "border-destructive/40 text-destructive"
+                      }
+                    >
+                      Δ {fmt(day.delta)}
+                    </Badge>
+                  </button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => setDetailDate(day.date)}
+                    data-testid={`recon-detail-${day.date}`}
+                  >
+                    RC detail
+                  </Button>
+                </div>
 
                 {open && (
                   <div className="border-t border-border px-4 py-3 space-y-4">
@@ -333,8 +387,16 @@ export function ReconciliationPage() {
 
       <p className="text-xs text-muted-foreground mt-4">
         Postings: each line subtotal debits its GL account, total {postingDefaults.taxAccount} debits the
-        tax account, and the document total credits {postingDefaults.payableAccount}.
+        tax account, and the document total credits {postingDefaults.payableAccount}. RC1 checks invoice
+        totals against payable/receivable control accounts; RC2 checks debits equal credits.
       </p>
+
+      <ReconciliationDetailDrawer
+        detail={dayDetail ?? null}
+        open={detailDate != null}
+        onClose={() => setDetailDate(null)}
+        currency={currency}
+      />
     </div>
   );
 }

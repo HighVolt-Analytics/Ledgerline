@@ -29,6 +29,7 @@ type TenantUseQueryOptions<TQueryFnData, TError = Error> = {
   staleTime?: number;
   gcTime?: number;
   refetchInterval?: number | false;
+  refetchIntervalInBackground?: boolean;
   refetchOnMount?: boolean | "always";
   retry?: boolean | number | ((failureCount: number, error: TError) => boolean);
 };

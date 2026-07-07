@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthContext, get_auth_context, get_db
 from app.api.http_errors import http_bad_request
 from app.schemas.common import ApiEnvelope
-from app.schemas.reconciliation import ReconciliationOverview, ReconciliationResponse
+from app.schemas.reconciliation import ReconciliationDayDetail, ReconciliationOverview, ReconciliationResponse
 from app.services.reconciliation.reconciliation_api_service import (
+    build_reconciliation_day_detail,
     get_daily_reconciliation,
     list_daily_reconciliations,
 )
@@ -51,3 +52,17 @@ async def get_daily(
     if not row:
         raise HTTPException(404, "Reconciliation not found")
     return ApiEnvelope(data=row)
+
+
+@router.get("/daily/{recon_date}/detail", response_model=ApiEnvelope[ReconciliationDayDetail])
+async def get_daily_detail(
+    recon_date: date,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[ReconciliationDayDetail]:
+    """RC1/RC2 drill-down with journal lines for a single day."""
+    return ApiEnvelope(
+        data=await build_reconciliation_day_detail(
+            db, tenant_id=ctx.tenant_id, recon_date=recon_date
+        )
+    )

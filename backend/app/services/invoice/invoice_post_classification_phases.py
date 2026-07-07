@@ -190,6 +190,7 @@ async def try_targeted_field_reextract(
         enrich_parsed_from_ocr,
         non_canonical_extraction_keys,
     )
+    from app.services.extraction.field_grounding_service import ground_parsed_fields
 
     selected_keys = effective_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
     custom_keys = non_canonical_extraction_keys(selected_keys)
@@ -203,6 +204,12 @@ async def try_targeted_field_reextract(
         ocr=extract_result.ocr,
         custom_keys=custom_keys or None,
         org=org,
+    )
+    retry_parsed = ground_parsed_fields(
+        retry_parsed,
+        extract_result.ocr.text,
+        selected_keys,
+        extract_result.ocr.payload_json,
     )
     retry_parsed = enrich_parsed_from_ocr(retry_parsed, extract_result.ocr, dt_definition=dt_definition)
 

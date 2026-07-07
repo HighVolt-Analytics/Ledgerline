@@ -103,7 +103,11 @@ def test_llm_result_to_invoice_data_prefers_seller_for_vendor() -> None:
     )
     parsed = llm_result_to_invoice_data(
         llm,
-        ocr=OcrArtifact(success=True, text="Permit", text_length=6),
+        ocr=OcrArtifact(
+            success=True,
+            text="SPECTRA INNOVATIONS PTE LTD\nPermit",
+            text_length=30,
+        ),
     )
     assert parsed.vendor == "SPECTRA INNOVATIONS PTE LTD"
 

@@ -240,9 +240,10 @@ def parse_text_fields(text: str) -> dict[str, Any]:
     amount_patterns = [
         (r"Sub\s*Total(?:\s*AUD)?[:\s]*\$?\s*([\d,]+\.?\d*)", "subtotal"),
         (r"GST(?:\s*\d+%)?[:\s]*\$?\s*([\d,]+\.\d{2})\b", "gst"),
+        (r"FREIGHT\s*[:\-]?\s*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)", "total"),
         (r"Invoice\s*Total[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
         (r"Amount\s*Due[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
-        (r"(?<!Sub\s)TOTAL(?:\s*AUD)?(?:\s*Due)?[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
+        (r"(?<!Sub\s)TOTAL(?:\s*AUD)?(?:\s*Due)?[:\s]*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)", "total"),
     ]
     for pattern, key in amount_patterns:
         if key in fields and fields[key] is not None:
@@ -392,6 +393,7 @@ def post_process_parsed_data(
     from dataclasses import replace
 
     from app.schemas.document_type import DocumentTypeDefinition
+    from app.services.extraction.field_grounding_service import value_grounded_in_ocr
 
     body = (text or data.document_text or "").strip()
     if not body:
@@ -399,24 +401,34 @@ def post_process_parsed_data(
 
     signals = extract_document_heading_signals(body)
     if not data.document_heading and signals.primary_label:
-        data = replace(data, document_heading=signals.primary_label)
+        if value_grounded_in_ocr(signals.primary_label, body):
+            data = replace(data, document_heading=signals.primary_label)
 
+    vendor = data.vendor
     if signals.has_heading_grn:
-        vendor = pick_best_vendor_name(
+        candidate = pick_best_vendor_name(
             extract_supplier_party_from_text(body),
             data.vendor,
         )
-    else:
-        vendor = pick_best_vendor_name(
+        if candidate and value_grounded_in_ocr(candidate, body):
+            vendor = candidate
+    elif not vendor:
+        candidate = pick_best_vendor_name(
             extract_supplier_party_from_text(body) if signals.has_heading_po else None,
             data.vendor,
             extract_header_vendor(body),
         )
+        if candidate and value_grounded_in_ocr(candidate, body):
+            vendor = candidate
 
     invoice_no = data.invoice_no
     if signals.has_heading_po or signals.has_heading_grn:
         invoice_no = None
-    elif invoice_no and not _invoice_no_sane(invoice_no):
+    elif invoice_no:
+        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+
+        invoice_no = sanitize_invoice_no(invoice_no)
+    if invoice_no and not _invoice_no_sane(invoice_no):
         invoice_no = None
 
     due_date = data.due_date
@@ -434,19 +446,29 @@ def post_process_parsed_data(
     if not po_reference and "po_reference" in configured:
         from app.services.purchase.po_reference import extract_po_reference_from_text
 
-        po_reference = extract_po_reference_from_text(body)
+        candidate = extract_po_reference_from_text(body)
+        if candidate and value_grounded_in_ocr(candidate, body):
+            po_reference = candidate
 
     local_fields = parse_text_fields(body)
     raw_fields = dict(data.raw_fields or {})
     if local_fields.get("gstin") and not raw_fields.get("gstin"):
-        raw_fields["gstin"] = local_fields["gstin"]
+        gstin = str(local_fields["gstin"])
+        if value_grounded_in_ocr(gstin, body):
+            raw_fields["gstin"] = gstin
     if local_fields.get("grn_reference"):
-        raw_fields["grn_reference"] = local_fields["grn_reference"]
+        grn_ref = str(local_fields["grn_reference"])
+        if value_grounded_in_ocr(grn_ref, body):
+            raw_fields["grn_reference"] = grn_ref
 
     if not invoice_no and local_fields.get("invoice_no") and "invoice_no" in configured:
-        invoice_no = local_fields["invoice_no"]
+        candidate = local_fields["invoice_no"]
+        if value_grounded_in_ocr(candidate, body):
+            invoice_no = candidate
     if not po_reference and local_fields.get("po_reference") and "po_reference" in configured:
-        po_reference = local_fields["po_reference"]
+        candidate = local_fields["po_reference"]
+        if value_grounded_in_ocr(candidate, body):
+            po_reference = candidate
 
     if dt_def is not None:
         absent = {str(f).strip().lower() for f in (dt_def.absent_fields or []) if str(f).strip()}
@@ -489,7 +511,7 @@ def _fields_to_invoice_data(fields: dict[str, Any], *, source: str) -> InvoiceDa
         invoice_no=fields.get("invoice_no"),
         invoice_date=fields.get("invoice_date"),
         due_date=fields.get("due_date"),
-        currency=fields.get("currency") or "AUD",
+        currency=(fields.get("currency") or "").strip().upper() if fields.get("currency") else "",
         subtotal=fields.get("subtotal"),
         gst=fields.get("gst"),
         gst_rate=fields.get("gst_rate"),

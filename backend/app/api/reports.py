@@ -11,6 +11,7 @@ from app.api.http_errors import http_bad_request
 from app.schemas.common import ApiEnvelope
 from app.schemas.reports import ReportDocumentRow, ReportsAnalytics
 from app.schemas.reports_api import (
+    DocumentsBundleExportRequest,
     ReportsAnalyticsRequest,
     ReportsDocumentsRequest,
     ReportsWorkbookRequest,
@@ -62,7 +63,7 @@ async def reports_documents(
 
 @router.get("/documents-bundle/export")
 async def export_documents_bundle_csv(
-    params: Annotated[ReportsDocumentsRequest, Query()],
+    params: Annotated[DocumentsBundleExportRequest, Query()],
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> Response:
@@ -73,6 +74,7 @@ async def export_documents_bundle_csv(
             tenant_id=ctx.tenant_id,
             date_from=params.date_from,
             date_to=params.date_to,
+            cell_format=params.format,
         )
     except ValueError as exc:
         raise http_bad_request(exc) from exc
