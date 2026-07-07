@@ -17,9 +17,23 @@ from app.services.shared.amount_sanity import (
     sanitize_parsed_line_item,
 )
 
-_LINE_ROW = re.compile(
-    r"^(.{4,80}?)\s+(\d+(?:\.\d+)?)\s+\$?\s*([\d,]+\.?\d*)\s+\$?\s*([\d,]+\.?\d*)\s*$",
-    re.M,
+_MONEY_TOKEN = rf"{OPTIONAL_CURRENCY_MONEY_PREFIX}([\d,]+\.?\d*)"
+_TAIL_ROW_5 = re.compile(
+    rf"(\d+(?:\.\d+)?)\s+{_MONEY_TOKEN}\s+{_MONEY_TOKEN}\s+{_MONEY_TOKEN}\s*$",
+    re.I,
+)
+_TAIL_ROW_4 = re.compile(
+    rf"(\d+(?:\.\d+)?)\s+{_MONEY_TOKEN}\s+{_MONEY_TOKEN}\s*$",
+    re.I,
+)
+_MONTH_TRAIL = re.compile(
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*$",
+    re.I,
+)
+_TABLE_HEADER_LINE = re.compile(
+    r"^(?:description|item|product|qty|quantity|unit\s*price|amount|gst|tax|rate|uom|sku)\b",
+    re.I,
 )
 _GRN_LINE_ROW = re.compile(
     r"^(.{4,80}?)\s+(\d+(?:\.\d+)?)\s+(?:Good|Damaged|Partial|[A-Za-z]{3,})\s*$",
@@ -55,48 +69,160 @@ def _skip_line_row(desc: str) -> bool:
     return should_skip_line_row(desc)
 
 
-_COLUMN_LINE_ROW = re.compile(
-    r"^(.{4,120}?)\s{2,}(\d+(?:\.\d+)?)\s{2,}([\d,]+\.?\d*)\s{2,}([\d,]+\.?\d*)\s*$",
-    re.M,
-)
+def _looks_like_money_token(token: str) -> bool:
+    cleaned = token.strip()
+    if not cleaned:
+        return False
+    if re.match(rf"^{OPTIONAL_CURRENCY_MONEY_PREFIX}[\d,]+\.?\d*\s*$", cleaned, re.I):
+        return True
+    return bool(re.match(r"^[\d,]+\.\d{2}$", cleaned))
+
+
+def _qty_looks_like_year_in_description(item: ParsedLineItem) -> bool:
+    qty = item.qty
+    desc = (item.description or "").strip()
+    if qty is None or not desc:
+        return False
+    if qty != qty.to_integral_value():
+        return False
+    year = int(qty)
+    if not (1900 <= year <= 2099):
+        return False
+    return bool(_MONTH_TRAIL.search(desc))
+
+
+def _repair_year_misplaced_as_qty(item: ParsedLineItem) -> ParsedLineItem:
+    if not _qty_looks_like_year_in_description(item):
+        return item
+    year = int(item.qty)
+    desc = (item.description or "").strip()
+    repaired_desc = desc if desc.endswith(str(year)) else f"{desc} {year}"
+    return ParsedLineItem(
+        description=repaired_desc,
+        qty=Decimal("1") if item.unit_price is not None or item.amount is not None else None,
+        unit_price=item.unit_price,
+        amount=item.amount,
+        tax_amount=item.tax_amount,
+    )
+
+
+def _line_item_row_score(item: ParsedLineItem) -> tuple[int, int, int, int]:
+    score = 0
+    if _qty_looks_like_year_in_description(item):
+        score -= 10
+    elif item.qty is not None and item.qty > Decimal("10000"):
+        score -= 5
+    money_signal = 0
+    if item.unit_price is not None or item.amount is not None:
+        score += 1
+        for value in (item.unit_price, item.amount):
+            if value is not None:
+                money_signal = max(money_signal, int(value))
+    return (score, money_signal, 1 if item.qty is not None else 0, len(item.description or ""))
+
+
+def _dedupe_prefix_fragment_rows(items: list[ParsedLineItem]) -> list[ParsedLineItem]:
+    if len(items) < 2:
+        return items
+    keep = [True] * len(items)
+    for i, left in enumerate(items):
+        if not keep[i]:
+            continue
+        left_key = _normalize_line_description(left.description)
+        if not left_key:
+            continue
+        for j in range(i + 1, len(items)):
+            if not keep[j]:
+                continue
+            right = items[j]
+            right_key = _normalize_line_description(right.description)
+            if not right_key:
+                continue
+            if left_key != right_key and not (left_key.startswith(right_key) or right_key.startswith(left_key)):
+                continue
+            if _line_item_row_score(left) >= _line_item_row_score(right):
+                keep[j] = False
+            else:
+                keep[i] = False
+                break
+    return [item for item, kept in zip(items, keep) if kept]
+
+
+def _parse_table_row_tail(line: str) -> ParsedLineItem | None:
+    """Parse one OCR table row by anchoring qty and money columns at the line end."""
+    raw = line.strip()
+    if not raw or len(raw) < 8 or _TABLE_HEADER_LINE.match(raw):
+        return None
+
+    cols = [part.strip() for part in re.split(r"\s{2,}|\t+", raw) if part.strip()]
+    if len(cols) >= 4 and not _looks_like_money_token(cols[1]):
+        desc = cols[0]
+        if _skip_line_row(desc):
+            return None
+        if len(cols) >= 5:
+            return ParsedLineItem(
+                description=desc,
+                qty=_qty(cols[1]),
+                unit_price=_money(cols[2]),
+                tax_amount=_money(cols[3]),
+                amount=_money(cols[4]),
+            )
+        return ParsedLineItem(
+            description=desc,
+            qty=_qty(cols[1]),
+            unit_price=_money(cols[2]),
+            amount=_money(cols[3]),
+        )
+
+    for pattern, with_gst in ((_TAIL_ROW_5, True), (_TAIL_ROW_4, False)):
+        match = pattern.search(raw)
+        if not match:
+            continue
+        desc = raw[: match.start()].strip()
+        if len(desc) < 4 or _skip_line_row(desc):
+            continue
+        groups = match.groups()
+        if with_gst:
+            return ParsedLineItem(
+                description=desc,
+                qty=_qty(groups[0]),
+                unit_price=_money(groups[1]),
+                tax_amount=_money(groups[2]),
+                amount=_money(groups[3]),
+            )
+        return ParsedLineItem(
+            description=desc,
+            qty=_qty(groups[0]),
+            unit_price=_money(groups[1]),
+            amount=_money(groups[2]),
+        )
+    return None
 
 
 def _parse_row_for_description(text: str, description: str) -> ParsedLineItem | None:
     needle = re.sub(r"\s+", " ", (description or "").strip())
     if not needle or _skip_line_row(needle):
         return None
-    escaped = re.escape(needle)
-
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or needle.lower() not in line.lower():
             continue
-
-        cols = [part.strip() for part in re.split(r"\s{2,}|\t+", line) if part.strip()]
-        if len(cols) >= 4 and cols[0].lower().startswith(needle.lower()[: min(len(needle), 20)]):
-            try:
-                qty = _qty(cols[1])
-            except Exception:
-                qty = None
-            return ParsedLineItem(
-                description=cols[0],
-                qty=qty,
-                unit_price=_money(cols[2]),
-                amount=_money(cols[3]),
-            )
-
-        m = re.search(
-            rf"{escaped}\s+(\d+(?:\.\d+)?)\s+{OPTIONAL_CURRENCY_MONEY_PREFIX}([\d,]+\.?\d*)\s+{OPTIONAL_CURRENCY_MONEY_PREFIX}([\d,]+\.?\d*)",
-            line,
-            re.I,
+        parsed = _parse_table_row_tail(line)
+        if parsed is None:
+            continue
+        parsed_desc = parsed.description or ""
+        if not (
+            parsed_desc.lower().startswith(needle.lower()[: min(len(needle), 24)])
+            or needle.lower().startswith(parsed_desc.lower()[: min(len(parsed_desc), 24)])
+        ):
+            continue
+        return ParsedLineItem(
+            description=needle if len(needle) >= len(parsed_desc) else parsed.description,
+            qty=parsed.qty,
+            unit_price=parsed.unit_price,
+            amount=parsed.amount,
+            tax_amount=parsed.tax_amount,
         )
-        if m:
-            return ParsedLineItem(
-                description=needle,
-                qty=_qty(m.group(1)),
-                unit_price=_money(m.group(2)),
-                amount=_money(m.group(3)),
-            )
     return None
 
 
@@ -131,33 +257,10 @@ def enrich_line_items_from_text(
 def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
     """Heuristic table rows: description qty unit_price amount (and GRN qty rows)."""
     items: list[ParsedLineItem] = []
-    for m in _LINE_ROW.finditer(text):
-        desc, qty_s, unit_s, amt_s = m.groups()
-        if _skip_line_row(desc):
-            continue
-        items.append(
-            ParsedLineItem(
-                description=desc.strip(),
-                qty=_qty(qty_s),
-                unit_price=_money(unit_s),
-                amount=_money(amt_s),
-            )
-        )
-    if items:
-        return enrich_parsed_line_items(items)
-
-    for m in _COLUMN_LINE_ROW.finditer(text):
-        desc, qty_s, unit_s, amt_s = m.groups()
-        if _skip_line_row(desc):
-            continue
-        items.append(
-            ParsedLineItem(
-                description=desc.strip(),
-                qty=_qty(qty_s),
-                unit_price=_money(unit_s),
-                amount=_money(amt_s),
-            )
-        )
+    for raw_line in text.splitlines():
+        parsed = _parse_table_row_tail(raw_line)
+        if parsed is not None:
+            items.append(parsed)
     if items:
         return enrich_parsed_line_items(items)
 
@@ -256,8 +359,10 @@ def _normalize_line_description(desc: str | None) -> str:
 
 
 def enrich_parsed_line_items(items: list[ParsedLineItem]) -> list[ParsedLineItem]:
+    repaired = [_repair_year_misplaced_as_qty(item) for item in items]
+    deduped = _dedupe_prefix_fragment_rows(repaired)
     enriched: list[ParsedLineItem] = []
-    for item in items:
+    for item in deduped:
         qty = item.qty
         unit_price = item.unit_price
         amount = item.amount

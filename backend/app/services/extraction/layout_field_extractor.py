@@ -144,29 +144,31 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
         qty_col = -1
         unit_price_col = -1
         amount_col = -1
+        headers_detected = False
         for col in range(table.column_count):
             header = grid.get((0, col), "").lower()
             if re.search(r"desc|item|product|service", header):
                 desc_col = col
+                headers_detected = True
             if re.search(r"qty|quantity", header):
                 qty_col = col
+                headers_detected = True
             if re.search(r"unit\s*price|rate|price\s*ea|price\s*excl|unit\s*cost|(?:^|\s)each(?:\s|$)", header):
                 unit_price_col = col
+                headers_detected = True
             elif re.search(r"amount|line\s*total|extended|line\s*amount|value|ex\s*gst", header) and not re.search(
                 r"subtotal|grand", header
             ):
                 amount_col = col
+                headers_detected = True
             elif re.search(r"^total$", header):
                 amount_col = col
+                headers_detected = True
             elif re.search(r"^price$|\bprice\b", header) and unit_price_col < 0 and amount_col < 0:
                 unit_price_col = col
-        if not header_row and table.column_count >= 3:
-            qty_col = 1
-            if table.column_count >= 4:
-                unit_price_col = 2
-                amount_col = table.column_count - 1
-            else:
-                amount_col = table.column_count - 1
+                headers_detected = True
+        if not headers_detected:
+            continue
 
         for row in range(1, table.row_count):
             desc = grid.get((row, desc_col), "").strip()

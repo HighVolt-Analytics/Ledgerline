@@ -45,7 +45,7 @@ export function PayableInvoiceRow({ invoice }: { invoice: Invoice }) {
       </div>
       <div className="mt-2.5 flex flex-wrap gap-2">
         <StageBadge {...invoiceStageBadgeProps(invoice)} />
-        <EvaluationStatusBadge status={invoice.evaluation_status} />
+        <EvaluationStatusBadge status={invoice.evaluation_status} invoice={invoice} />
       </div>
     </Card>
   );

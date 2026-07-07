@@ -4,7 +4,7 @@ import {
   invoiceCanAttemptReprocess,
   PIPELINE_STATUSES as PIPELINE_STATUS_LIST,
 } from "@/lib/invoiceActions";
-import { isNeedsReviewEvaluation } from "@/lib/invoice";
+import { isNeedsReviewEvaluation, isPendingApprovalEvaluation } from "@/lib/invoice";
 
 export type ApprovalBoardColumnApi = "review" | "processing" | "approved" | "rejected";
 
@@ -78,6 +78,10 @@ export function isNeedsReviewInvoice(inv: Invoice): boolean {
   return isNeedsReviewEvaluation(inv.evaluation_status);
 }
 
+export function isPendingApprovalInvoice(inv: Invoice): boolean {
+  return isPendingApprovalEvaluation(inv.evaluation_status);
+}
+
 export function filterNeedsReviewInvoices(invoices: Invoice[]): Invoice[] {
   return invoices.filter((inv) => isNeedsReviewInvoice(inv));
 }
@@ -112,7 +116,9 @@ function localApprovalBoardColumn(inv: Invoice): ApprovalBoardColumnApi {
 
   if (PIPELINE_STATUSES.has(inv.status)) return "processing";
 
-  if (inv.status === "exception" && isClassificationConfirmed(inv)) return "processing";
+  if (inv.status === "exception" && (isClassificationConfirmed(inv) || isPendingApprovalInvoice(inv))) {
+    return "processing";
+  }
 
   return "review";
 }

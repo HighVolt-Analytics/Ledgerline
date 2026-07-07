@@ -435,10 +435,16 @@ async def execute_document_match(
             detail={},
         )
 
-    if mode in {"three_way_so_dn", "two_way_dn_invoice"}:
+    if mode in {"three_way_so_dn", "two_way_so_invoice", "two_way_dn_invoice"}:
         from app.services.sales.sales_match_service import execute_ar_document_match
 
         result = await execute_ar_document_match(mode, session=session, invoice=invoice)
+        return result  # type: ignore[return-value]
+
+    if mode in {"three_way_po_grn", "two_way_po_ses", "two_way_grn_invoice"}:
+        from app.services.purchase.purchase_match_service import execute_purchase_document_match
+
+        result = await execute_purchase_document_match(mode, session=session, invoice=invoice)
         return result  # type: ignore[return-value]
 
     po = await load_purchase_order_for_invoice(session, invoice)

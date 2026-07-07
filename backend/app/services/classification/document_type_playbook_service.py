@@ -59,6 +59,8 @@ class PlaybookGateResult:
     linkage_book: str | None = None  # "purchase" | "sales"
     block_reason: str | None = None
     missing_bundle_mandatory_labels: dict[str, str] | None = None
+    effective_match_tier: str | None = None
+    missing_bundle_advisory: tuple[str, ...] = ()
 
     @property
     def blocks_posting(self) -> bool:
@@ -67,6 +69,7 @@ class PlaybookGateResult:
     def audit_detail(self) -> dict[str, object]:
         payload: dict[str, object] = {
             "missing_bundle_mandatory": list(self.missing_bundle_mandatory),
+            "missing_bundle_advisory": list(self.missing_bundle_advisory),
             "missing_bundle_conditional_dt": list(self.missing_bundle_conditional_dt),
             "conditional_advisories": list(self.conditional_advisories),
             "missing_extraction_fields": list(self.missing_extraction_fields),
@@ -76,6 +79,8 @@ class PlaybookGateResult:
             "linkage_key_missing": self.linkage_key_missing,
             "linkage_book": self.linkage_book,
             "block_reason": self.block_reason,
+            "effective_match_tier": self.effective_match_tier,
+            "dossier_completeness": _dossier_completeness_from_tier(self.effective_match_tier or "none"),
         }
         if self.missing_bundle_mandatory_labels:
             payload["missing_bundle_mandatory_labels"] = self.missing_bundle_mandatory_labels
@@ -228,11 +233,8 @@ def effective_document_type_code(
 
 
 def effective_required_fields(definition: DocumentTypeDefinition) -> list[str]:
-    """Compulsory field keys — subset of extraction_fields."""
-    explicit = list(definition.required_fields or [])
-    if explicit:
-        return explicit
-    return list(definition.extraction_fields or [])
+    """Compulsory field keys — explicit subset of extraction_fields (empty = none compulsory)."""
+    return list(definition.required_fields or [])
 
 
 def effective_playbook_required_fields(definition: DocumentTypeDefinition) -> list[str]:
@@ -285,10 +287,32 @@ def missing_extraction_fields(
     invoice: Invoice,
     parsed: InvoiceData,
 ) -> list[str]:
-    """Missing compulsory (required) fields."""
+    """Missing posting-critical compulsory fields."""
+    from app.services.classification.document_type_field_keys import posting_critical_field_keys
+
+    ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
+    missing: list[str] = []
+    for key in posting_critical_field_keys(effective_playbook_required_fields(definition)):
+        if not field_is_present(key, invoice=invoice, parsed=parsed, ctx=ctx):
+            missing.append(key)
+    return missing
+
+
+def missing_advisory_required_fields(
+    definition: DocumentTypeDefinition,
+    *,
+    invoice: Invoice,
+    parsed: InvoiceData,
+) -> list[str]:
+    """Missing compulsory fields that are advisory (do not block posting)."""
+    from app.services.classification.document_type_field_keys import posting_critical_field_keys
+
+    critical = set(posting_critical_field_keys(effective_playbook_required_fields(definition)))
     ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
     missing: list[str] = []
     for key in effective_playbook_required_fields(definition):
+        if key in critical:
+            continue
         if not field_is_present(key, invoice=invoice, parsed=parsed, ctx=ctx):
             missing.append(key)
     return missing
@@ -830,6 +854,108 @@ async def missing_bundle_dt_codes(
     return list(dt_codes)
 
 
+async def _effective_match_tier_for_bundle(
+    session: AsyncSession,
+    *,
+    invoice: Invoice,
+    definition: DocumentTypeDefinition,
+) -> str:
+    from app.services.classification.document_type_match_service import resolve_match_mode
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+
+    profile = effective_playbook_profile(definition)
+    requested = resolve_match_mode(
+        document_type_code=definition.code,
+        definition=definition,
+    )
+
+    if profile in {"ar_goods", "ar_goods_2way"}:
+        from app.services.sales.sales_match_service import resolve_ar_match_context
+
+        ctx = await resolve_ar_match_context(session, invoice, requested_mode=requested)
+        return ctx.effective_mode
+
+    if profile == "po_goods":
+        from app.services.purchase.purchase_match_service import resolve_purchase_match_context
+
+        ctx = await resolve_purchase_match_context(session, invoice, requested_mode=requested)
+        return ctx.effective_mode
+
+    return "none"
+
+
+def _relax_missing_mandatory_for_tier(
+    missing_mandatory: list[str],
+    *,
+    profile: str,
+    effective_tier: str,
+    document_types: list[DocumentTypeDefinition] | None,
+    invoice: Invoice,
+) -> list[str]:
+    if profile not in {"ar_goods", "ar_goods_2way", "po_goods"}:
+        return missing_mandatory
+    if effective_tier == "none":
+        if (invoice.invoice_no or "").strip():
+            return []
+        return missing_mandatory
+
+    if profile in {"ar_goods", "ar_goods_2way"}:
+        if effective_tier == "three_way_so_dn":
+            return missing_mandatory
+        if effective_tier == "two_way_so_invoice":
+            return [
+                code
+                for code in missing_mandatory
+                if _infer_sales_bundle_role(
+                    get_document_type_definition(code, document_types=document_types)
+                )
+                != "dn"
+            ]
+        if effective_tier == "two_way_dn_invoice":
+            return [
+                code
+                for code in missing_mandatory
+                if _infer_sales_bundle_role(
+                    get_document_type_definition(code, document_types=document_types)
+                )
+                != "so"
+            ]
+
+    if profile == "po_goods":
+        if effective_tier == "three_way_po_grn":
+            return missing_mandatory
+        if effective_tier == "two_way_po_ses":
+            return [
+                code
+                for code in missing_mandatory
+                if _infer_purchase_bundle_role(
+                    get_document_type_definition(code, document_types=document_types)
+                )
+                != "grn"
+            ]
+        if effective_tier == "two_way_grn_invoice":
+            return [
+                code
+                for code in missing_mandatory
+                if _infer_purchase_bundle_role(
+                    get_document_type_definition(code, document_types=document_types)
+                )
+                != "po"
+            ]
+
+    return missing_mandatory
+
+
+def _dossier_completeness_from_tier(effective_tier: str) -> str:
+    if effective_tier in {"three_way_so_dn", "three_way_po_grn"}:
+        return "complete"
+    if effective_tier == "none":
+        return "invoice_only"
+    return "partial"
+
+
 async def evaluate_playbook_gates(
     session: AsyncSession,
     *,
@@ -862,14 +988,19 @@ async def evaluate_playbook_gates(
     )
 
     profile = effective_playbook_profile(definition)
-    if profile in {"ar_goods", "ar_goods_2way"} and missing_mandatory:
-        relaxed: list[str] = []
-        for code in missing_mandatory:
-            member = get_document_type_definition(code, document_types=document_types)
-            if _infer_sales_bundle_role(member) == "so":
-                continue
-            relaxed.append(code)
-        missing_mandatory = relaxed
+    advisory_missing = list(missing_mandatory)
+    effective_tier = await _effective_match_tier_for_bundle(
+        session,
+        invoice=invoice,
+        definition=definition,
+    )
+    missing_mandatory = _relax_missing_mandatory_for_tier(
+        missing_mandatory,
+        profile=profile,
+        effective_tier=effective_tier,
+        document_types=document_types,
+        invoice=invoice,
+    )
 
     missing_conditional = await missing_bundle_dt_codes(
         session,
@@ -883,18 +1014,27 @@ async def evaluate_playbook_gates(
         invoice=invoice,
         parsed=parsed,
     )
+    missing_advisory = missing_advisory_required_fields(
+        definition,
+        invoice=invoice,
+        parsed=parsed,
+    )
+    missing_optional = sorted(set(missing_optional) | set(missing_advisory))
 
     po_reference = (invoice.po_reference or "").strip()
     enforce_bundle = should_enforce_bundle_mandatory(definition)
     _, linkage_key, linkage_plausible, linkage_book = _linkage_context(invoice, definition)
-    if profile in {"ar_goods", "ar_goods_2way"} and (invoice.invoice_no or "").strip():
+    if profile in {"ar_goods", "ar_goods_2way", "po_goods"} and (invoice.invoice_no or "").strip():
         linkage_plausible = True
         linkage_book = linkage_book or "invoice_no"
-    linkage_key_missing = bool(
-        enforce_bundle
-        and mandatory_dt
-        and not linkage_plausible
-    )
+    if effective_tier == "none" and (invoice.invoice_no or "").strip():
+        linkage_key_missing = False
+    else:
+        linkage_key_missing = bool(
+            enforce_bundle
+            and mandatory_dt
+            and not linkage_plausible
+        )
     block_reason = _resolve_playbook_block_reason(
         enforce_bundle=enforce_bundle,
         mandatory_dt=mandatory_dt,
@@ -915,6 +1055,8 @@ async def evaluate_playbook_gates(
         block_reason=block_reason,
         missing_bundle_mandatory_labels=_dt_display_labels(missing_mandatory, document_types)
         or None,
+        effective_match_tier=effective_tier,
+        missing_bundle_advisory=tuple(advisory_missing),
     )
     return result
 

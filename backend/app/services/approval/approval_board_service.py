@@ -36,6 +36,10 @@ def is_classification_confirmed(inv: Invoice) -> bool:
     return bool((inv.document_type_code or "").strip())
 
 
+def is_pending_approval(inv: Invoice) -> bool:
+    return (inv.evaluation_status or "").strip().lower() == EvaluationStatus.PENDING_APPROVAL.value
+
+
 def _parse_eval(raw: str | None) -> EvaluationStatus | None:
     if not raw:
         return None
@@ -69,7 +73,9 @@ def approval_board_column(inv: Invoice) -> ApprovalBoardColumn:
     if status in PIPELINE_STATUSES:
         return "processing"
 
-    if status == InvoiceStatus.EXCEPTION and is_classification_confirmed(inv):
+    if status == InvoiceStatus.EXCEPTION and (
+        is_classification_confirmed(inv) or is_pending_approval(inv)
+    ):
         return "processing"
 
     return "review"

@@ -7,13 +7,38 @@ type DefaultsRow = {
 
 const DEFAULTS_INDEX = shippedDefaults as Record<string, DefaultsRow>;
 
+/** Keys that block GL posting when absent (subset of compulsory). */
+export const POSTING_CRITICAL_FIELD_KEYS = new Set([
+  "vendor",
+  "invoice_no",
+  "invoice_date",
+  "due_date",
+  "total",
+  "subtotal",
+  "gst",
+  "gst_rate",
+  "abn",
+  "po_reference",
+  "so_reference",
+  "line_items",
+  "seller_name",
+  "seller_abn",
+  "buyer_name",
+  "buyer_abn",
+  "bank_details",
+]);
+
+export function isPostingCriticalField(key: string): boolean {
+  return POSTING_CRITICAL_FIELD_KEYS.has(key.trim().toLowerCase());
+}
+
 /** Keys filled by ingest/OCR — should not be starred compulsory for playbook blocking. */
 export const INFRASTRUCTURE_EXTRACTION_FIELD_KEYS = new Set([
   "attachment_name",
   "document_text",
 ]);
 
-/** Compulsory keys must be a subset of extraction keys. */
+/** Compulsory keys must be a subset of extraction keys. Preserves empty (all optional). */
 export function normalizeCompulsoryFields(
   required: string[] | null | undefined,
   extraction: string[] | null | undefined
@@ -23,10 +48,7 @@ export function normalizeCompulsoryFields(
   const req = normalizeExtractionFieldKeys(required ?? []).filter(
     (key) => !INFRASTRUCTURE_EXTRACTION_FIELD_KEYS.has(key)
   );
-  const clamped = req.filter((key) => extSet.has(key));
-  if (clamped.length) return clamped;
-  if (ext.length) return [...ext];
-  return [];
+  return req.filter((key) => extSet.has(key));
 }
 
 /** Ensure extraction list contains every compulsory key. */

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Layers, Pencil, Plus, Star, Trash2, X, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import {
   type DocumentTypeDefinition,
 } from "@/lib/v5DocumentTypes";
 import { derivePostingFromKlassAndProfile } from "@/lib/documentTypeKlass";
-import { applyRoutePlaybookDefaults } from "@/lib/documentPlaybookConfig";
+import { applyRoutePlaybookAndBundleDefaults } from "@/lib/documentPlaybookConfig";
 import { DocumentTypeTemplateDialog } from "@/components/rule-book/DocumentTypeTemplateDialog";
 import {
   ValidationDetailSection,
@@ -31,13 +31,16 @@ import {
   BundleRulesEditor,
 } from "@/components/rule-book/BundleRulesEditor";
 import {
-  EXTRACTION_FIELD_OPTIONS,
   extractionFieldKeyError,
   extractionFieldLabel,
   formatExtractionFieldKeyInput,
   isPresetExtractionFieldKey,
+  isStandardExtractionFieldKey,
   normalizeExtractionFieldKeys,
+  reconcileExtractionFieldsForRoute,
   sanitizeExtractionFieldKey,
+  splitExtractionFields,
+  standardExtractionFieldsForRoute,
 } from "@/lib/documentExtractionFields";
 import {
   ensureExtractionSuperset,
@@ -76,9 +79,21 @@ const TONE_CLASSES = {
 
 type Tone = keyof typeof TONE_CLASSES;
 
+const FIELD_SAVE_DEBOUNCE_MS = 500;
+
+type DocumentTypeFieldPatch = Pick<DocumentTypeDefinition, "extractionFields" | "requiredFields">;
+
 type DocumentTypesTabProps = {
   documentTypes: DocumentTypeDefinition[];
-  onChange: (documentTypes: DocumentTypeDefinition[]) => void;
+  onChange: (
+    documentTypes: DocumentTypeDefinition[],
+    options?: { immediate?: boolean }
+  ) => void;
+  onPatchDocumentType?: (
+    code: string,
+    partial: DocumentTypeFieldPatch,
+    options?: { immediate?: boolean }
+  ) => void;
   onDeleteType?: (code: string) => void | Promise<void>;
   canEdit?: boolean;
 };
@@ -216,15 +231,73 @@ function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor?: stri
   );
 }
 
+function ExtractionFieldChip({
+  fieldKey,
+  isCompulsory,
+  onToggleCompulsory,
+  onRemove,
+}: {
+  fieldKey: string;
+  isCompulsory: boolean;
+  onToggleCompulsory: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+        isCompulsory
+          ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+          : "border-primary/30 bg-primary/5 text-primary"
+      )}
+    >
+      <button
+        type="button"
+        onClick={onToggleCompulsory}
+        className={cn(
+          "rounded-full p-0.5 transition-colors",
+          isCompulsory
+            ? "text-amber-700 hover:bg-amber-500/20 dark:text-amber-200"
+            : "text-primary/50 hover:bg-primary/10 hover:text-primary"
+        )}
+        aria-label={
+          isCompulsory
+            ? `Mark ${extractionFieldLabel(fieldKey)} as optional`
+            : `Mark ${extractionFieldLabel(fieldKey)} as compulsory`
+        }
+        title={isCompulsory ? "Compulsory" : "Optional — click to require"}
+      >
+        <Star className={cn("h-3 w-3", isCompulsory && "fill-current")} />
+      </button>
+      <span>{extractionFieldLabel(fieldKey)}</span>
+      {!isPresetExtractionFieldKey(fieldKey) ? (
+        <span className="font-mono text-[10px] opacity-70">({fieldKey})</span>
+      ) : null}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="rounded-full p-0.5 opacity-70 transition-colors hover:bg-black/5 hover:opacity-100"
+        aria-label={`Remove ${extractionFieldLabel(fieldKey)}`}
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
 function ExtractionFieldsPicker({
   id,
+  routeTarget,
   extractionFields,
   requiredFields,
+  routePruneNotice,
   onChange,
 }: {
   id: string;
+  routeTarget: string;
   extractionFields: string[];
   requiredFields: string[];
+  routePruneNotice?: string | null;
   onChange: (next: { extractionFields: string[]; requiredFields: string[] }) => void;
 }) {
   const [customInput, setCustomInput] = useState("");
@@ -232,7 +305,12 @@ function ExtractionFieldsPicker({
   const normalized = normalizeExtractionFieldKeys(extractionFields);
   const compulsory = new Set(normalizeCompulsoryFields(requiredFields, normalized));
   const selected = new Set(normalized);
-  const availablePresets = EXTRACTION_FIELD_OPTIONS.filter((row) => !selected.has(row.key));
+  const { standard: selectedStandard, custom: selectedCustom } = splitExtractionFields(normalized);
+  const routeStandardKeys = standardExtractionFieldsForRoute(routeTarget);
+  const availableStandard = routeStandardKeys.filter((key) => !selected.has(key));
+  const standardLabelByKey = Object.fromEntries(
+    routeStandardKeys.map((key) => [key, extractionFieldLabel(key)])
+  );
 
   function emit(extraction: string[], required: string[]) {
     const extractionNorm = normalizeExtractionFieldKeys(extraction);
@@ -257,13 +335,13 @@ function ExtractionFieldsPicker({
     emit(normalized, nextRequired);
   }
 
-  function addPreset(key: string) {
+  function addStandardField(key: string) {
     if (selected.has(key)) return;
-    const presetOrder = EXTRACTION_FIELD_OPTIONS.map((row) => row.key).filter(
+    const standardOrder = routeStandardKeys.filter(
       (item) => selected.has(item) || item === key
     );
-    const customs = normalized.filter((item) => !isPresetExtractionFieldKey(item));
-    emit([...presetOrder, ...customs], [...compulsory]);
+    const customs = normalized.filter((item) => !isStandardExtractionFieldKey(item));
+    emit([...standardOrder, ...customs], [...compulsory]);
   }
 
   function addCustomField() {
@@ -286,97 +364,92 @@ function ExtractionFieldsPicker({
     setCustomInput("");
   }
 
+  const vaultEmptyHint =
+    routeTarget === "Vault"
+      ? " For Vault routes, document heading and attachment name are common standard fields."
+      : "";
+
   return (
-    <div className="space-y-3 sm:col-span-2">
-      <FieldLabel htmlFor={id}>Extraction fields</FieldLabel>
-      <p className="text-[11px] text-muted-foreground">
-        Choose fields to extract and show in the invoice drawer. Starred fields are{" "}
-        <span className="font-medium text-foreground">compulsory</span> — they drive VR03,
-        playbook blocking, and Approve. Unstarred fields are optional (warn-only if missing).
-      </p>
+    <div className="space-y-4 sm:col-span-2">
+      {routePruneNotice ? (
+        <p className="text-[11px] text-amber-800 dark:text-amber-200">{routePruneNotice}</p>
+      ) : null}
 
       <div className="space-y-2 rounded-md border border-input bg-background p-3">
-        <p className="text-[11px] font-medium text-foreground">Selected fields</p>
-        {normalized.length > 0 ? (
+        <div>
+          <p className="text-[11px] font-medium text-foreground">Standard fields (pipeline)</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            Workspace route controls which standard fields you can add. Starred fields are{" "}
+            <span className="font-medium text-foreground">compulsory</span> (your choice) — they
+            drive VR03, playbook blocking, and Approve. Unstarred fields stay extracted but optional.
+          </p>
+        </div>
+        {selectedStandard.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
-            {normalized.map((key) => {
-              const isCompulsory = compulsory.has(key);
-              return (
-                <span
-                  key={key}
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                    isCompulsory
-                      ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100"
-                      : "border-primary/30 bg-primary/5 text-primary"
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => toggleCompulsory(key)}
-                    className={cn(
-                      "rounded-full p-0.5 transition-colors",
-                      isCompulsory
-                        ? "text-amber-700 hover:bg-amber-500/20 dark:text-amber-200"
-                        : "text-primary/50 hover:bg-primary/10 hover:text-primary"
-                    )}
-                    aria-label={
-                      isCompulsory
-                        ? `Mark ${extractionFieldLabel(key)} as optional`
-                        : `Mark ${extractionFieldLabel(key)} as compulsory`
-                    }
-                    title={isCompulsory ? "Compulsory" : "Optional — click to require"}
-                  >
-                    <Star className={cn("h-3 w-3", isCompulsory && "fill-current")} />
-                  </button>
-                  <span>{extractionFieldLabel(key)}</span>
-                  {!isPresetExtractionFieldKey(key) ? (
-                    <span className="font-mono text-[10px] opacity-70">({key})</span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => removeField(key)}
-                    className="rounded-full p-0.5 opacity-70 transition-colors hover:bg-black/5 hover:opacity-100"
-                    aria-label={`Remove ${extractionFieldLabel(key)}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
-              );
-            })}
+            {selectedStandard.map((key) => (
+              <ExtractionFieldChip
+                key={key}
+                fieldKey={key}
+                isCompulsory={compulsory.has(key)}
+                onToggleCompulsory={() => toggleCompulsory(key)}
+                onRemove={() => removeField(key)}
+              />
+            ))}
           </div>
         ) : (
           <p className="text-[11px] text-muted-foreground">
-            No fields selected — drawer falls back to shipped defaults.
+            No standard fields selected — add fields this workspace route can validate and post on.
+            {vaultEmptyHint}
           </p>
         )}
-      </div>
-
-      <div className="space-y-2">
-        <p className="text-[11px] font-medium text-foreground">Add standard field</p>
-        <div
-          id={id}
-          className="flex flex-wrap gap-2 rounded-md border border-input bg-background p-3"
-        >
-          {availablePresets.length > 0 ? (
-            availablePresets.map((row) => (
-              <button
-                key={row.key}
-                type="button"
-                onClick={() => addPreset(row.key)}
-                className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-              >
-                + {row.label}
-              </button>
-            ))
-          ) : (
-            <p className="text-[11px] text-muted-foreground">All standard fields are selected.</p>
-          )}
+        <div className="space-y-2 pt-1">
+          <p className="text-[11px] font-medium text-foreground">Add standard field</p>
+          <div
+            id={id}
+            className="flex flex-wrap gap-2 rounded-md border border-dashed border-border bg-muted/20 p-3"
+          >
+            {availableStandard.length > 0 ? (
+              availableStandard.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => addStandardField(key)}
+                  className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                >
+                  + {standardLabelByKey[key] ?? extractionFieldLabel(key)}
+                </button>
+              ))
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                All standard fields for this route are selected.
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="space-y-2 rounded-md border border-dashed border-border p-3">
-        <FieldLabel htmlFor={`${id}-custom`}>Add custom field</FieldLabel>
+        <div>
+          <FieldLabel htmlFor={`${id}-custom`}>Custom extraction fields</FieldLabel>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            OCR + LLM only. Stored in extracted_fields; does not create invoice DB columns.
+          </p>
+        </div>
+        {selectedCustom.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {selectedCustom.map((key) => (
+              <ExtractionFieldChip
+                key={key}
+                fieldKey={key}
+                isCompulsory={compulsory.has(key)}
+                onToggleCompulsory={() => toggleCompulsory(key)}
+                onRemove={() => removeField(key)}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">No custom fields added.</p>
+        )}
         <div className="flex flex-wrap gap-2">
           <Input
             id={`${id}-custom`}
@@ -407,9 +480,6 @@ function ExtractionFieldsPicker({
             Will save as: <span className="font-mono">{customInput}</span>
           </p>
         ) : null}
-        <p className="text-[11px] text-muted-foreground">
-          Custom keys use snake_case and appear in the drawer when data is captured.
-        </p>
       </div>
     </div>
   );
@@ -529,13 +599,6 @@ function DocumentTypeDetailDialog({
         </div>
 
         <div className="detail-dialog-body">
-          <DetailCard
-            title="Supporting document requirements"
-            hint="Dossier members on the same PO or SO"
-          >
-            <BundleRulesDetailSection docType={docType} documentTypes={documentTypes} />
-          </DetailCard>
-
           <div className="grid gap-3 sm:grid-cols-2">
             <DetailCard title="Processing playbook" hint="Match and approval preset">
               <PlaybookDetailSection docType={docType} />
@@ -544,6 +607,13 @@ function DocumentTypeDetailDialog({
               <DocumentTypePostToDetail docType={docType} accounts={coaAccounts} />
             </DetailCard>
           </div>
+
+          <DetailCard
+            title="Supporting document requirements"
+            hint="Required when playbook enforces dossier completeness"
+          >
+            <BundleRulesDetailSection docType={docType} documentTypes={documentTypes} />
+          </DetailCard>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <DetailCard
@@ -566,7 +636,7 @@ function DocumentTypeDetailDialog({
                 <p className="text-[11px] font-medium text-foreground">Compulsory</p>
                 <DetailChipList
                   items={docType.requiredFields.map((key) => extractionFieldLabel(key))}
-                  emptyLabel="None — approve falls back to vendor, total, due date"
+                  emptyLabel="None — no fields required to approve"
                 />
               </div>
               <div>
@@ -605,6 +675,7 @@ function DocumentTypeEditDialog({
   onChange,
   onClose,
   onSave,
+  onPersistFields,
 }: {
   draft: DocumentTypeDefinition;
   documentTypes: DocumentTypeDefinition[];
@@ -613,9 +684,14 @@ function DocumentTypeEditDialog({
   onChange: (next: DocumentTypeDefinition) => void;
   onClose: () => void;
   onSave: () => void;
+  onPersistFields?: (next: {
+    extractionFields: string[];
+    requiredFields: string[];
+  }) => void;
 }) {
   useDialogLock();
   const [showAdvancedIdentity, setShowAdvancedIdentity] = useState(!isNew);
+  const [routePruneNotice, setRoutePruneNotice] = useState<string | null>(null);
   const { data: coaAccounts = [] } = useChartOfAccounts();
 
   const readiness = useMemo(
@@ -630,6 +706,8 @@ function DocumentTypeEditDialog({
           posting: derivedPostingForDraft(draft),
           postTo: draft.postTo,
           classifier: draft.classifier,
+          playbookProfile: draft.playbookProfile,
+          bundleMandatory: draft.bundleMandatory,
         },
         { coaAccounts }
       ),
@@ -644,6 +722,7 @@ function DocumentTypeEditDialog({
       draft.klass,
       draft.playbookProfile,
       draft.posting,
+      draft.bundleMandatory,
       coaAccounts,
     ]
   );
@@ -798,13 +877,38 @@ function DocumentTypeEditDialog({
                       id="dt-route"
                       value={draft.routeTarget}
                       onChange={(e) => {
-                        const next = applyRoutePlaybookDefaults(draft, e.target.value);
+                        const nextRoute = e.target.value;
+                        const next = applyRoutePlaybookAndBundleDefaults(
+                          draft,
+                          nextRoute,
+                          documentTypes
+                        );
                         const posting = derivePostingFromKlassAndProfile(
                           next.klass,
                           next.playbookProfile,
                           next.posting
                         );
-                        onChange({ ...next, posting });
+                        const reconciled = reconcileExtractionFieldsForRoute({
+                          extractionFields: next.extractionFields,
+                          requiredFields: next.requiredFields,
+                          nextRoute,
+                        });
+                        if (reconciled.removedStandardFields.length > 0) {
+                          const count = reconciled.removedStandardFields.length;
+                          setRoutePruneNotice(
+                            `${count} standard field${count === 1 ? "" : "s"} removed because ${
+                              count === 1 ? "it is" : "they are"
+                            } not valid on ${nextRoute}.`
+                          );
+                        } else {
+                          setRoutePruneNotice(null);
+                        }
+                        onChange({
+                          ...next,
+                          posting,
+                          extractionFields: reconciled.extractionFields,
+                          requiredFields: reconciled.requiredFields,
+                        });
                       }}
                       className={selectClass}
                     >
@@ -827,6 +931,7 @@ function DocumentTypeEditDialog({
           <DetailCard title="Processing playbook" hint="Match and approval preset">
             <PlaybookPolicyEditor
               draft={draft}
+              documentTypes={documentTypes}
               onChange={(next) => {
                 const posting = derivePostingFromKlassAndProfile(
                   next.klass,
@@ -838,6 +943,19 @@ function DocumentTypeEditDialog({
             />
           </DetailCard>
 
+          <DetailCard
+            title="Supporting document requirements"
+            hint="Required when playbook enforces dossier completeness"
+          >
+            <BundleRulesEditor
+              draft={draft}
+              documentTypes={documentTypes}
+              bundleWarnings={bundleWarnings}
+              onChange={onChange}
+              selectClass={selectClass}
+            />
+          </DetailCard>
+
           <DetailCard title="Post to" hint="GL account from Settings → Chart of accounts">
             <DocumentTypePostToEditor
               draft={draft}
@@ -845,14 +963,21 @@ function DocumentTypeEditDialog({
             />
           </DetailCard>
 
-          <DetailCard title="Extraction fields" hint="Star compulsory fields; drives VR03 and Approve">
+          <DetailCard
+            title="Extraction fields"
+            hint="Standard fields drive pipeline actions; custom fields are OCR + LLM only"
+          >
             <ExtractionFieldsPicker
               id="dt-extraction-fields"
+              routeTarget={draft.routeTarget}
               extractionFields={draft.extractionFields}
               requiredFields={draft.requiredFields}
-              onChange={({ extractionFields, requiredFields }) =>
-                onChange({ ...draft, extractionFields, requiredFields })
-              }
+              routePruneNotice={routePruneNotice}
+              onChange={({ extractionFields, requiredFields }) => {
+                setRoutePruneNotice(null);
+                onChange({ ...draft, extractionFields, requiredFields });
+                onPersistFields?.({ extractionFields, requiredFields });
+              }}
             />
           </DetailCard>
 
@@ -868,18 +993,6 @@ function DocumentTypeEditDialog({
             />
           </DetailCard>
 
-          <DetailCard
-            title="Supporting document requirements"
-            hint="Dossier members on the same PO or SO"
-          >
-            <BundleRulesEditor
-              draft={draft}
-              documentTypes={documentTypes}
-              bundleWarnings={bundleWarnings}
-              onChange={onChange}
-              selectClass={selectClass}
-            />
-          </DetailCard>
         </div>
 
         <div className="detail-dialog-footer flex-col items-stretch gap-3 sm:flex-row sm:items-center">
@@ -922,6 +1035,7 @@ function DocumentTypeEditDialog({
 export function DocumentTypesTab({
   documentTypes,
   onChange,
+  onPatchDocumentType,
   onDeleteType,
   canEdit = false,
 }: DocumentTypesTabProps) {
@@ -932,6 +1046,11 @@ export function DocumentTypesTab({
   const [editing, setEditing] = useState<DocumentTypeDefinition | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const fieldSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingFieldPatchRef = useRef<{
+    code: string;
+    fields: DocumentTypeFieldPatch;
+  } | null>(null);
   const { data: coaAccounts = [] } = useChartOfAccounts();
 
   const filtered = useMemo(
@@ -994,7 +1113,40 @@ export function DocumentTypesTab({
     );
   };
 
+  const flushPendingFieldPatch = () => {
+    const pending = pendingFieldPatchRef.current;
+    if (!pending || !onPatchDocumentType) return;
+    pendingFieldPatchRef.current = null;
+    onPatchDocumentType(pending.code, pending.fields);
+  };
+
+  const persistEditingFields = (fields: DocumentTypeFieldPatch) => {
+    if (isNew || !editing || !onPatchDocumentType) return;
+    const code = selectedCode ?? editing.code;
+    pendingFieldPatchRef.current = { code, fields };
+    if (fieldSaveTimerRef.current) clearTimeout(fieldSaveTimerRef.current);
+    fieldSaveTimerRef.current = setTimeout(() => {
+      fieldSaveTimerRef.current = null;
+      flushPendingFieldPatch();
+    }, FIELD_SAVE_DEBOUNCE_MS);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (fieldSaveTimerRef.current) {
+        clearTimeout(fieldSaveTimerRef.current);
+        fieldSaveTimerRef.current = null;
+      }
+      flushPendingFieldPatch();
+    };
+  }, []);
+
   const saveEdit = () => {
+    if (fieldSaveTimerRef.current) {
+      clearTimeout(fieldSaveTimerRef.current);
+      fieldSaveTimerRef.current = null;
+    }
+    pendingFieldPatchRef.current = null;
     if (!editing) return;
     const normalized = editing.code.trim().toUpperCase();
     const validationRules = mergeConfigurableRules(
@@ -1013,10 +1165,14 @@ export function DocumentTypesTab({
         (dt) => dt.code.trim().toUpperCase() === normalized
       );
       if (duplicate) return;
-      onChange([...documentTypes, next]);
+      onChange([...documentTypes, next], { immediate: true });
     } else {
+      const selectedToken = (selectedCode ?? "").trim().toUpperCase();
       onChange(
-        documentTypes.map((dt) => (dt.code === selectedCode ? next : dt))
+        documentTypes.map((dt) =>
+          dt.code.trim().toUpperCase() === selectedToken ? next : dt
+        ),
+        { immediate: true }
       );
       if (selectedCode !== normalized) {
         setSelectedCode(normalized);
@@ -1157,6 +1313,7 @@ export function DocumentTypesTab({
           existingCodes={existingCodesForEdit}
           isNew={isNew}
           onChange={setEditing}
+          onPersistFields={persistEditingFields}
           onClose={() => {
             setEditing(null);
             setIsNew(false);

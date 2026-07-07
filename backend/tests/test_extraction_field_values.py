@@ -15,8 +15,11 @@ from app.services.extraction.extraction_field_values import (
     custom_extraction_field_descriptors,
     custom_extraction_field_keys,
     custom_extraction_field_keys_for_dt,
+    effective_extraction_field_keys_for_dt,
     enrich_parsed_from_ocr,
+    expand_extraction_keys_for_llm,
     harvest_custom_fields_from_llm_raw,
+    non_canonical_extraction_keys,
     normalize_extracted_fields_map,
 )
 from app.services.invoice.invoice_data import InvoiceData
@@ -67,6 +70,51 @@ def test_custom_extraction_field_keys_for_dt_includes_required_custom() -> None:
     assert keys == ["permit_no", "consignment_ref"]
 
 
+def test_effective_extraction_field_keys_for_dt_merges_required() -> None:
+    permit = _definition(
+        code="DT-02",
+        extraction_fields=["vendor", "permit_no", "consignment_ref"],
+        required_fields=["consignment_ref"],
+    )
+    keys = effective_extraction_field_keys_for_dt([permit], "DT-02")
+    assert keys == ["vendor", "permit_no", "consignment_ref"]
+
+
+def test_effective_extraction_field_keys_empty_uses_shipped_template_defaults() -> None:
+    permit = _definition(
+        code="ORG-02",
+        matrix_template_code="DT-02",
+        extraction_fields=[],
+        required_fields=[],
+    )
+    keys = effective_extraction_field_keys_for_dt([permit], "ORG-02")
+    assert "permit_no" in keys
+    assert "vendor" in keys
+
+
+def test_effective_extraction_field_keys_custom_without_config_returns_empty() -> None:
+    custom = _definition(
+        code="ORG-99",
+        extraction_fields=[],
+        required_fields=[],
+    )
+    assert effective_extraction_field_keys_for_dt([custom], "ORG-99") == []
+
+
+def test_effective_extraction_field_keys_unknown_code_returns_empty() -> None:
+    assert effective_extraction_field_keys_for_dt([_definition()], "MISSING") == []
+
+
+def test_expand_extraction_keys_for_llm_expands_bank_details() -> None:
+    expanded = expand_extraction_keys_for_llm(["vendor", "bank_details"])
+    assert expanded == ["vendor", "bank_bsb", "bank_account", "bank_name"]
+
+
+def test_non_canonical_extraction_keys_filters_presets() -> None:
+    keys = non_canonical_extraction_keys(["vendor", "permit_no", "total"])
+    assert keys == ["permit_no"]
+
+
 def test_harvest_custom_fields_from_top_level_llm_raw() -> None:
     harvested = harvest_custom_fields_from_llm_raw(
         {
@@ -87,7 +135,11 @@ def test_enrich_parsed_from_ocr_fills_missing_invoice_no() -> None:
         text_length=60,
     )
     parsed = InvoiceData(document_text=ocr.text)
-    enriched = enrich_parsed_from_ocr(parsed, ocr)
+    invoice_dt = _definition(
+        code="DT-01",
+        extraction_fields=["vendor", "invoice_no"],
+    )
+    enriched = enrich_parsed_from_ocr(parsed, ocr, dt_definition=invoice_dt)
     assert enriched.invoice_no == "INV-2026-42"
 
 
@@ -123,8 +175,27 @@ def test_enrich_parsed_from_ocr_harvests_permit_no() -> None:
         text_length=40,
     )
     parsed = InvoiceData(document_text=ocr.text)
-    enriched = enrich_parsed_from_ocr(parsed, ocr)
+    permit_dt = _definition(
+        code="DT-02",
+        extraction_fields=["permit_no", "document_text"],
+    )
+    enriched = enrich_parsed_from_ocr(parsed, ocr, dt_definition=permit_dt)
     assert enriched.extracted_fields.get("permit_no") == "OD6E379991N"
+
+
+def test_enrich_parsed_from_ocr_skips_invoice_no_when_not_configured() -> None:
+    ocr = OcrArtifact(
+        success=True,
+        text="TAX INVOICE\nInvoice No: INV-2026-42\nVendor: Acme Pty Ltd",
+        text_length=60,
+    )
+    parsed = InvoiceData(document_text=ocr.text)
+    permit_dt = _definition(
+        code="DT-02",
+        extraction_fields=["vendor", "permit_no"],
+    )
+    enriched = enrich_parsed_from_ocr(parsed, ocr, dt_definition=permit_dt)
+    assert enriched.invoice_no is None
 
 
 def test_apply_parsed_extraction_fields_persists_on_invoice() -> None:
@@ -177,7 +248,7 @@ def test_build_llm_user_payload_includes_descriptors() -> None:
         ocr=OcrArtifact(success=True, text="Contract Party: Acme", text_length=20),
         org=OrgContext(),
         document_types=[_definition()],
-        custom_keys=["contract_party"],
+        selected_keys=["vendor", "contract_party"],
     )
     import json
 
@@ -243,6 +314,7 @@ def test_build_structure_extract_prompts_uses_ocr_payload() -> None:
 def test_normalize_llm_raw_harvests_custom_field_with_keys() -> None:
     normalized = _normalize_llm_raw(
         {"contract_party": "Buyer Co", "extracted_fields": {}},
+        selected_keys=["contract_party"],
         custom_keys=["contract_party"],
     )
     assert normalized["extracted_fields"]["contract_party"] == "Buyer Co"

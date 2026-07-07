@@ -124,7 +124,7 @@ export function UploadInvoiceMobileRow({
         </UploadColumnCell>
         <StageBadge {...stageProps} processing={stageProcessing} />
         <UploadColumnCell mode={modes.evaluation}>
-          <EvaluationStatusBadge status={inv.evaluation_status} />
+          <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
         </UploadColumnCell>
       </div>
       <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[11px] text-muted-foreground">
@@ -196,7 +196,7 @@ export function UploadInvoiceTableRow({
       </td>
       <td className="px-3 py-2.5">
         <UploadColumnCell mode={modes.evaluation}>
-          <EvaluationStatusBadge status={inv.evaluation_status} />
+          <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
         </UploadColumnCell>
       </td>
       <td className="px-3 py-2.5 text-right">

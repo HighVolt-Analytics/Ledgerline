@@ -7,11 +7,14 @@ import {
   canApproveClaim,
   canRejectClaim,
   canRequestInfo,
+  validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useExpenseClaimActions(routeTarget: string) {
   const queryClient = useQueryClient();
+  const { data: ruleBook } = useRuleBookConfig();
   const [busyId, setBusyId] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -32,6 +35,11 @@ export function useExpenseClaimActions(routeTarget: string) {
         setToast("Upload a receipt before approving this claim.");
         return false;
       }
+      const fieldCheck = validateInvoiceReadyForApproval(inv, ruleBook?.documentTypes);
+      if (!fieldCheck.ok) {
+        setToast(fieldCheck.message);
+        return false;
+      }
       setBusyId(inv.id);
       try {
         setToast("Claim queued for processing…");
@@ -45,7 +53,7 @@ export function useExpenseClaimActions(routeTarget: string) {
         setBusyId(null);
       }
     },
-    [refresh]
+    [refresh, ruleBook?.documentTypes]
   );
 
   const reject = useCallback(

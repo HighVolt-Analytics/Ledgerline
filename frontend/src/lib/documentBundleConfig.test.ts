@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   bundleEditorMode,
+  bundleMandatoryMatchesSuggested,
   bundleMemberCandidates,
   normalizeBundleConditional,
+  reconcileBundleDraft,
   suggestedMandatoryBundleMembers,
 } from "@/lib/documentBundleConfig";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
@@ -14,7 +16,9 @@ function dt(partial: Partial<DocumentTypeDefinition>): DocumentTypeDefinition {
     shortTitle: "Test",
     klass: "Transactional",
     posting: "Yes",
-    recognitionMode: "signals", recognitionSignals: ["heading_invoice"], llmPrompt: "",
+    recognitionMode: "signals",
+    recognitionSignals: ["heading_invoice"],
+    llmPrompt: "",
     routeTarget: "Purchase Management",
     enabled: true,
     playbookProfile: "po_goods",
@@ -53,6 +57,69 @@ describe("bundleEditorMode", () => {
         })
       )
     ).toBe("inactive");
+  });
+
+  it("uses inactive for payable purchase type without enforce playbook", () => {
+    expect(
+      bundleEditorMode(
+        dt({
+          playbookProfile: "standard_transactional",
+          posting: "Yes",
+          routeTarget: "Purchase Management",
+          bundleMandatory: ["DT-05"],
+        })
+      )
+    ).toBe("inactive");
+  });
+});
+
+describe("reconcileBundleDraft", () => {
+  it("auto-fills PO and GRN when consumer playbook has empty mandatory", () => {
+    const catalogue = [
+      dt({ code: "DT-01", playbookProfile: "po_goods" }),
+      dt({ code: "DT-05", klass: "Non-transactional", posting: "No", purchaseBundleRole: "po" }),
+      dt({ code: "DT-06", klass: "Non-transactional", posting: "No", purchaseBundleRole: "grn" }),
+    ];
+    const next = reconcileBundleDraft(dt({ playbookProfile: "po_goods" }), catalogue);
+    expect(next.bundleMandatory).toEqual(["DT-05", "DT-06"]);
+  });
+
+  it("clears mandatory when playbook does not enforce bundle", () => {
+    const next = reconcileBundleDraft(
+      dt({
+        playbookProfile: "direct_expense",
+        bundleMandatory: ["DT-05", "DT-06"],
+      })
+    );
+    expect(next.bundleMandatory).toEqual([]);
+  });
+
+  it("clears mandatory for bundle member types", () => {
+    const next = reconcileBundleDraft(
+      dt({
+        code: "DT-05",
+        purchaseBundleRole: "po",
+        playbookProfile: "supporting",
+        bundleMandatory: ["DT-06"],
+      })
+    );
+    expect(next.bundleMandatory).toEqual([]);
+  });
+});
+
+describe("bundleMandatoryMatchesSuggested", () => {
+  it("returns true when mandatory equals suggested pair", () => {
+    const catalogue = [
+      dt({ code: "DT-01" }),
+      dt({ code: "DT-05", klass: "Non-transactional", posting: "No", purchaseBundleRole: "po" }),
+      dt({ code: "DT-06", klass: "Non-transactional", posting: "No", purchaseBundleRole: "grn" }),
+    ];
+    expect(
+      bundleMandatoryMatchesSuggested(
+        dt({ bundleMandatory: ["DT-05", "DT-06"] }),
+        catalogue
+      )
+    ).toBe(true);
   });
 });
 

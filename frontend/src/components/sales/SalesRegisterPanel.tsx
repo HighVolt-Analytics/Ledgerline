@@ -634,7 +634,7 @@ export function SalesRegisterPanel({
                           <StageBadge {...invoiceStageBadgeProps(inv)} />
                         </td>
                         <td className="px-3 py-2.5">
-                          <EvaluationStatusBadge status={inv.evaluation_status} />
+                          <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
                         </td>
                         <td className="px-3 py-2.5 text-right">
                           <InboxConfidenceBadge value={invoiceValidationConfidence(inv)} />

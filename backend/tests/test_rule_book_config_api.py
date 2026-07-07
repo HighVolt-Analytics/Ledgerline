@@ -170,3 +170,55 @@ async def test_delete_document_type_persists(
     clear_rule_book_save_buffers()
     get_settings.cache_clear()
     clear_rule_book_cache()
+
+
+def test_document_type_required_fields_roundtrip() -> None:
+    """Partial and empty required_fields survive validate/save normalization."""
+    from app.schemas.rule_book_config import (
+        validate_rule_book_config_for_save,
+        validate_rule_book_config_payload,
+    )
+
+    minimal_classifier = {
+        "enabled": False,
+        "priority": 100,
+        "confidence": 0.85,
+        "root": {"type": "group", "operator": "AND", "children": []},
+    }
+    partial = {
+        "code": "DT-98",
+        "title": "Compulsory subset test",
+        "short_title": "Compulsory subset",
+        "klass": "Non-trans, non-posting",
+        "posting": "No",
+        "route_target": "Vault",
+        "enabled": False,
+        "recognition_mode": "signals",
+        "recognition_signals": [],
+        "llm_prompt": "",
+        "classifier": minimal_classifier,
+        "extraction_fields": ["vendor", "total", "invoice_no"],
+        "required_fields": ["vendor"],
+        "post_to": {"ledger": "", "sub_ledger": ""},
+    }
+    empty_required = {
+        **partial,
+        "code": "DT-97",
+        "title": "No compulsory test",
+        "short_title": "No compulsory",
+        "extraction_fields": ["vendor", "total"],
+        "required_fields": [],
+    }
+    body = {"schema_version": 1, "document_types": [partial, empty_required]}
+
+    saved = validate_rule_book_config_for_save(body)
+    by_code = {row.code: row for row in saved.document_types}
+    assert by_code["DT-98"].required_fields == ["vendor"]
+    assert by_code["DT-98"].extraction_fields == ["vendor", "total", "invoice_no"]
+    assert by_code["DT-97"].required_fields == []
+    assert by_code["DT-97"].extraction_fields == ["vendor", "total"]
+
+    reloaded = validate_rule_book_config_payload(saved.model_dump())
+    by_code = {row.code: row for row in reloaded.document_types}
+    assert by_code["DT-98"].required_fields == ["vendor"]
+    assert by_code["DT-97"].required_fields == []

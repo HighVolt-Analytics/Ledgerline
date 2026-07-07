@@ -94,7 +94,7 @@ async def test_approve_preserves_corrected_fields(db_session: AsyncSession, monk
     await db_session.flush()
 
     monkeypatch.setattr(
-        "app.services.approval_service.stored_file_available",
+        "app.services.approval.approval_service.stored_file_available",
         lambda *args, **kwargs: True,
     )
 
@@ -108,27 +108,30 @@ async def test_approve_preserves_corrected_fields(db_session: AsyncSession, monk
 
 
 @pytest.mark.asyncio
-async def test_approve_requires_vendor_total_due_date(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_approve_allows_missing_due_date_without_compulsory_fields(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
-        vendor=None,
-        total=None,
+        vendor="Acme",
+        total=Decimal("110.00"),
         due_date=None,
         status=InvoiceStatus.EXCEPTION,
         currency="AUD",
-        file_hash="approve-missing-1",
+        file_hash="approve-no-due-1",
         raw_file_path="/tmp/invoice.pdf",
+        document_type_code="DT-08",
     )
     db_session.add(inv)
     await db_session.flush()
 
     monkeypatch.setattr(
-        "app.services.approval_service.stored_file_available",
+        "app.services.approval.approval_service.stored_file_available",
         lambda *args, **kwargs: True,
     )
 
-    with pytest.raises(ValueError, match="missing required field"):
-        await approve_invoice_for_reprocess(db_session, inv)
+    await approve_invoice_for_reprocess(db_session, inv)
+    assert inv.status == InvoiceStatus.PENDING
 
 
 @pytest.mark.asyncio

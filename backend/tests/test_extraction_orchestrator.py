@@ -79,3 +79,35 @@ def test_merge_extraction_sources_enriches_partial_line_items() -> None:
     assert len(merged.line_items) == 1
     assert merged.line_items[0].unit_price == Decimal("50")
     assert merged.line_items[0].amount == Decimal("500")
+
+
+def test_merge_skips_regex_when_llm_line_items_trusted() -> None:
+    parsed = InvoiceData(
+        line_items=[
+            ParsedLineItem(
+                description="Catering package",
+                qty=Decimal("10"),
+                unit_price=Decimal("50"),
+                amount=Decimal("500"),
+            ),
+        ]
+    )
+    ocr = OcrArtifact(
+        success=True,
+        text="Wrong Product 99 1.00 99.00\n",
+        text_length=28,
+        payload_json={
+            "table_line_items": [
+                {
+                    "description": "Wrong Product",
+                    "qty": "99",
+                    "unit_price": "1",
+                    "amount": "99",
+                }
+            ]
+        },
+    )
+    merged = merge_extraction_sources(parsed, ocr)
+    assert len(merged.line_items) == 1
+    assert merged.line_items[0].description == "Catering package"
+    assert merged.line_items[0].amount == Decimal("500")

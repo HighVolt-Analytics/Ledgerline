@@ -44,7 +44,7 @@ def test_pre_classification_exception_review() -> None:
 
 
 def test_post_classification_exception_processing() -> None:
-    for eval_status in ("needs_review", "awaiting_po", "pending_vendor"):
+    for eval_status in ("needs_review", "awaiting_po", "pending_vendor", "pending_approval"):
         assert (
             approval_board_column(
                 _inv(
@@ -55,6 +55,19 @@ def test_post_classification_exception_processing() -> None:
             )
             == "processing"
         )
+
+
+def test_pending_approval_without_classification_still_processing() -> None:
+    assert (
+        approval_board_column(
+            _inv(
+                status=InvoiceStatus.EXCEPTION,
+                evaluation_status="pending_approval",
+                document_type_code="DT-26",
+            )
+        )
+        == "processing"
+    )
 
 
 def test_pipeline_processing() -> None:
