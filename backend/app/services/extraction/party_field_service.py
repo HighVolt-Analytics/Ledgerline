@@ -69,7 +69,12 @@ def normalize_party_fields(
     address: str | None = None,
     ocr_text: str | None = None,
 ) -> NormalizedParty:
+    from app.services.extraction.field_grounding_service import value_grounded_in_ocr
+
     addr = sanitize_address(address)
+    name = (name or "").strip()
+    if name and ocr_text and not value_grounded_in_ocr(name, ocr_text):
+        name = ""
     tid = str(tax_id or "").strip()
     if tid and not tax_id_grounded_in_ocr(tid, ocr_text):
         tid = ""
@@ -123,25 +128,40 @@ def enrich_parties_from_ocr_text(
     ocr_text: str | None,
 ) -> dict[str, NormalizedParty]:
     """Fill empty party fields from regex extractors on OCR text."""
+    from app.services.extraction.field_grounding_service import value_grounded_in_ocr
     from app.services.master_data.vendor_name_utils import (
         extract_buyer_address_from_text,
         extract_buyer_party_from_text,
+        extract_header_vendor,
         extract_seller_address_from_text,
     )
 
     if not ocr_text:
         return parties
+
     seller = parties.get("seller") or NormalizedParty()
     buyer = parties.get("buyer") or NormalizedParty()
 
-    from app.services.master_data.vendor_name_utils import (
-        extract_header_vendor,
-    )
-
-    seller_name = seller.name or extract_header_vendor(ocr_text) or seller.name
-    buyer_name = buyer.name or extract_buyer_party_from_text(ocr_text) or buyer.name
-    seller_address = seller.address or extract_seller_address_from_text(ocr_text) or seller.address
-    buyer_address = buyer.address or extract_buyer_address_from_text(ocr_text) or buyer.address
+    seller_name = seller.name
+    if not seller_name:
+        candidate = extract_header_vendor(ocr_text)
+        if candidate and value_grounded_in_ocr(candidate, ocr_text):
+            seller_name = candidate
+    buyer_name = buyer.name
+    if not buyer_name:
+        candidate = extract_buyer_party_from_text(ocr_text)
+        if candidate and value_grounded_in_ocr(candidate, ocr_text):
+            buyer_name = candidate
+    seller_address = seller.address
+    if not seller_address:
+        candidate = extract_seller_address_from_text(ocr_text)
+        if candidate and value_grounded_in_ocr(candidate, ocr_text):
+            seller_address = candidate
+    buyer_address = buyer.address
+    if not buyer_address:
+        candidate = extract_buyer_address_from_text(ocr_text)
+        if candidate and value_grounded_in_ocr(candidate, ocr_text):
+            buyer_address = candidate
 
     return {
         "seller": NormalizedParty(

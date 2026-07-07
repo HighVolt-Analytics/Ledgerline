@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
+from app.services.extraction.extraction_field_values import (
+    expand_extraction_keys_for_llm,
+    extracted_fields_from_parsed,
+    non_canonical_extraction_keys,
+)
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.shared.flexible_date import _NAME_FORMATS, _NUMERIC_FORMATS_DMY, _NUMERIC_FORMATS_MDY
 from app.utils.abn_validator import storage_abn
@@ -157,14 +163,38 @@ def merge_bank_fields(
     return bsb, account
 
 
+def ground_extracted_fields_map(
+    fields: dict[str, str] | None,
+    ocr_text: str | None,
+    *,
+    requested_keys: Sequence[str] | None = None,
+) -> dict[str, str]:
+    """Clear string field values that cannot be verified in OCR."""
+    if not fields:
+        return {}
+    allowed = {str(k).strip().lower() for k in (requested_keys or fields.keys())}
+    grounded: dict[str, str] = {}
+    for key, value in fields.items():
+        token = str(key or "").strip().lower()
+        if requested_keys is not None and token not in allowed:
+            continue
+        text = str(value or "").strip()
+        if text and value_grounded_in_ocr(text, ocr_text):
+            grounded[token] = text
+    return grounded
+
+
 def ground_invoice_scalars(data: InvoiceData, ocr_text: str | None) -> InvoiceData:
     """Clear scalar fields that cannot be verified in OCR."""
     updates: dict[str, object] = {}
 
-    for field in ("invoice_no", "po_reference"):
+    for field in ("invoice_no", "po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
         current = getattr(data, field, None)
         if current and not value_grounded_in_ocr(str(current), ocr_text):
             updates[field] = None
+
+    if data.invoice_date is not None and not _date_grounded_in_ocr(data.invoice_date, ocr_text):
+        updates["invoice_date"] = None
 
     for field in ("subtotal", "gst", "total"):
         current = getattr(data, field, None)
@@ -174,6 +204,10 @@ def ground_invoice_scalars(data: InvoiceData, ocr_text: str | None) -> InvoiceDa
 
     if data.due_date is not None and not _date_grounded_in_ocr(data.due_date, ocr_text):
         updates["due_date"] = None
+
+    currency = (data.currency or "").strip()
+    if currency and not value_grounded_in_ocr(currency, ocr_text):
+        updates["currency"] = ""
 
     abn_raw = (data.abn or "").strip()
     if abn_raw:
@@ -196,6 +230,56 @@ def ground_invoice_scalars(data: InvoiceData, ocr_text: str | None) -> InvoiceDa
     if (data.bank_account or "").strip() != (account or ""):
         updates["bank_account"] = account
 
+    extracted = ground_extracted_fields_map(
+        extracted_fields_from_parsed(data),
+        ocr_text,
+    )
+    if extracted != extracted_fields_from_parsed(data):
+        updates["extracted_fields"] = extracted
+
     if not updates:
         return data
     return replace(data, **updates)
+
+
+def ground_parsed_fields(
+    parsed: InvoiceData,
+    ocr_text: str | None,
+    selected_keys: Sequence[str],
+    ocr_payload: dict[str, object] | None = None,
+) -> InvoiceData:
+    """Filter and ground parsed extraction output before OCR backfill."""
+    from app.services.extraction.extraction_field_values import (
+        clear_llm_scalars_for_di_populated_fields,
+        filter_parsed_to_requested_keys,
+        prebuilt_invoice_scalars_active,
+    )
+    from app.services.extraction.line_items_parser import (
+        document_has_charge_lines,
+        document_has_product_table,
+        resolve_line_items_from_ocr_payload,
+    )
+
+    filtered = filter_parsed_to_requested_keys(parsed, selected_keys)
+    grounded = ground_invoice_scalars(filtered, ocr_text)
+    if prebuilt_invoice_scalars_active(ocr_payload):
+        grounded = clear_llm_scalars_for_di_populated_fields(grounded, selected_keys, ocr_payload)
+    selected = {str(key or "").strip().lower() for key in selected_keys if str(key or "").strip()}
+    if "line_items" in selected:
+        payload = ocr_payload or {}
+        if resolve_line_items_from_ocr_payload(payload):
+            grounded = replace(grounded, line_items=[])
+        elif not document_has_product_table(ocr_text, payload) and not document_has_charge_lines(
+            ocr_text
+        ):
+            grounded = replace(grounded, line_items=[])
+    custom_keys = non_canonical_extraction_keys(selected_keys)
+    if custom_keys:
+        extracted = ground_extracted_fields_map(
+            extracted_fields_from_parsed(grounded),
+            ocr_text,
+            requested_keys=list(expand_extraction_keys_for_llm(selected_keys)) + custom_keys,
+        )
+        if extracted != extracted_fields_from_parsed(grounded):
+            grounded = replace(grounded, extracted_fields=extracted)
+    return grounded

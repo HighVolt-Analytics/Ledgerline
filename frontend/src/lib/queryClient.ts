@@ -33,6 +33,8 @@ const baseKeys = {
   reportDocuments: (dateFrom?: string, dateTo?: string) =>
     ["reports", "documents", dateFrom ?? "all", dateTo ?? "all"] as const,
   reconciliationOverview: ["reconciliation", "overview"] as const,
+  reconciliationDaily: ["reconciliation", "daily"] as const,
+  reconciliationDayDetail: (date: string) => ["reconciliation", "daily", date, "detail"] as const,
   ruleBookConfig: ["rule-book", "config"] as const,
   orgAiBrief: ["tenants", "org-ai-brief"] as const,
   chartOfAccounts: ["tenants", "chart-of-accounts"] as const,
@@ -46,6 +48,13 @@ const baseKeys = {
   vendorPayoutMethods: (vendorId: number) => ["vendor-payout-methods", vendorId] as const,
   routedInvoices: (routeTarget: string) => ["invoices", "routed", routeTarget] as const,
   payablesQueue: ["invoices", "payables"] as const,
+  uploadDocuments: (
+    page: number,
+    pageSize: number,
+    source: string,
+    q: string,
+    mailboxId: number | null
+  ) => ["invoices", "upload", page, pageSize, source, q, mailboxId ?? "all"] as const,
   purchases: ["purchases"] as const,
   purchasesTwoWay: ["purchases", "two-way"] as const,
   sales: ["sales"] as const,
@@ -77,6 +86,9 @@ export const queryKeys = {
   reportDocuments: (dateFrom?: string, dateTo?: string) =>
     tenantQueryKey(baseKeys.reportDocuments(dateFrom, dateTo)),
   reconciliationOverview: () => tenantQueryKey(baseKeys.reconciliationOverview),
+  reconciliationDaily: () => tenantQueryKey(baseKeys.reconciliationDaily),
+  reconciliationDayDetail: (date: string) =>
+    tenantQueryKey(baseKeys.reconciliationDayDetail(date)),
   ruleBookConfig: () => tenantQueryKey(baseKeys.ruleBookConfig),
   orgAiBrief: () => tenantQueryKey(baseKeys.orgAiBrief),
   chartOfAccounts: () => tenantQueryKey(baseKeys.chartOfAccounts),
@@ -91,6 +103,13 @@ export const queryKeys = {
     tenantQueryKey(baseKeys.vendorPayoutMethods(vendorId)),
   routedInvoices: (routeTarget: string) => tenantQueryKey(baseKeys.routedInvoices(routeTarget)),
   payablesQueue: () => tenantQueryKey(baseKeys.payablesQueue),
+  uploadDocuments: (
+    page: number,
+    pageSize: number,
+    source: string,
+    q: string,
+    mailboxId: number | null
+  ) => tenantQueryKey(baseKeys.uploadDocuments(page, pageSize, source, q, mailboxId)),
   purchases: () => tenantQueryKey(baseKeys.purchases),
   purchasesTwoWay: () => tenantQueryKey(baseKeys.purchasesTwoWay),
   sales: () => tenantQueryKey(baseKeys.sales),

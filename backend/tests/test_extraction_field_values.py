@@ -12,6 +12,7 @@ from app.services.classification.document_type_field_checks import field_is_pres
 from app.services.classification.document_type_rule_engine import build_document_classifier_context
 from app.services.extraction.extraction_field_values import (
     apply_parsed_extraction_fields,
+    build_extraction_field_manifest,
     custom_extraction_field_descriptors,
     custom_extraction_field_keys,
     custom_extraction_field_keys_for_dt,
@@ -258,6 +259,14 @@ def test_build_llm_user_payload_includes_descriptors() -> None:
         {"key": "contract_party", "label": "Contract Party"}
     ]
     assert data["ocr"]["text_excerpt"] == "Contract Party: Acme"
+    assert data["extraction_field_manifest"]
+
+
+def test_build_extraction_field_manifest_includes_vendor_label() -> None:
+    manifest = build_extraction_field_manifest(["vendor", "contract_party"])
+    labels = {row["key"]: row["label"] for row in manifest}
+    assert labels["vendor"] == "Vendor"
+    assert labels["contract_party"] == "Contract Party"
 
 
 def test_build_llm_user_payload_includes_invoice_fields() -> None:
@@ -279,10 +288,14 @@ def test_build_llm_user_payload_includes_invoice_fields() -> None:
             ocr=ocr,
             org=OrgContext(),
             document_types=[_definition()],
-            confirmed_dt="DT-01",
+            confirmed_dt="DT-90",
+            selected_keys=["vendor", "invoice_no"],
         )
     )
-    assert data["invoice_fields"] == {"vendor": "Acme", "invoice_no": "INV-9"}
+    assert data["ocr"]["scalar_fields_source"] == "azure_di"
+    assert data["ocr"]["azure_di_scalar_fields"]["vendor"]["value"] == "Acme"
+    assert data["ocr"]["azure_di_scalar_fields"]["invoice_no"]["value"] == "INV-9"
+    assert "invoice_fields" not in data
     assert data["ocr"]["document_heading"] == "Tax Invoice"
 
 

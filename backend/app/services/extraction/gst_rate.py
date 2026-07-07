@@ -45,7 +45,7 @@ def parse_gst_rate_percent(raw: Any) -> Decimal | None:
     return plausible_gst_rate_percent(value.quantize(Decimal("0.01")))
 
 
-def _rate_from_object(obj: object) -> Decimal | None:
+def _rate_from_object(obj: object, *, allow_inference: bool = True) -> Decimal | None:
     direct = getattr(obj, "gst_rate", None)
     if direct is not None:
         parsed = parse_gst_rate_percent(direct)
@@ -64,6 +64,9 @@ def _rate_from_object(obj: object) -> Decimal | None:
         if parsed is not None:
             return parsed
 
+    if not allow_inference:
+        return None
+
     subtotal = getattr(obj, "subtotal", None)
     gst = getattr(obj, "gst", None)
     if subtotal is not None and gst is not None and subtotal > 0:
@@ -72,11 +75,25 @@ def _rate_from_object(obj: object) -> Decimal | None:
     return None
 
 
-def resolve_gst_rate_percent(data: InvoiceData | object) -> Decimal | None:
+def resolve_gst_rate_percent(
+    data: InvoiceData | object,
+    *,
+    ocr_text: str | None = None,
+    allow_inference: bool = True,
+) -> Decimal | None:
     """Resolve tax rate as a percentage (10 = 10%)."""
-    if isinstance(data, InvoiceData):
-        return _rate_from_object(data)
-    return _rate_from_object(data)
+    rate = _rate_from_object(data, allow_inference=allow_inference)
+    if rate is None or ocr_text is None or allow_inference:
+        return rate
+    from app.services.extraction.field_grounding_service import value_grounded_in_ocr
+
+    token = str(rate).strip()
+    if token and value_grounded_in_ocr(token, ocr_text):
+        return rate
+    percent_token = f"{token}%"
+    if value_grounded_in_ocr(percent_token, ocr_text):
+        return rate
+    return None
 
 
 def expected_gst_amount(subtotal: Decimal, rate_percent: Decimal) -> Decimal:

@@ -1,10 +1,11 @@
-
 from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 from datetime import date
 from decimal import Decimal
 
 from app.models.invoice import Invoice, InvoiceStatus
+from app.schemas.rule_book_config import ChartOfAccountEntry, PostingDefaults, RuleBookConfigPayload
 from app.services.rule_book.account_mapper import AccountMapping
+from app.services.rule_book.rule_book_mapper import ROUTE_SALES
 from app.services.payments.journal_generator import generate_entries, is_balanced
 
 
@@ -33,3 +34,34 @@ def test_ap_credit() -> None:
     )
     ap = [ln for ln in generate_entries(inv, AccountMapping("6200", "Supplies")) if ln.credit > 0]
     assert ap[0].credit == Decimal("550")
+
+
+def test_sales_route_journal() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_date=date(2026, 2, 1),
+        subtotal=Decimal("2000"),
+        gst=Decimal("200"),
+        total=Decimal("2200"),
+        status=InvoiceStatus.JOURNALING,
+        currency="AUD",
+        route_target=ROUTE_SALES,
+    )
+    config = RuleBookConfigPayload(
+        posting_defaults=PostingDefaults(),
+        chart_of_accounts=[
+            ChartOfAccountEntry(code="1200", name="Accounts Receivable", type="Asset"),
+            ChartOfAccountEntry(code="4100", name="Sales Revenue", type="Revenue"),
+            ChartOfAccountEntry(code="2300", name="GST Collected", type="Liability"),
+        ],
+    )
+    lines = generate_entries(
+        inv,
+        AccountMapping("4100", "Sales Revenue"),
+        config=config,
+    )
+    assert len(lines) == 3
+    assert is_balanced(lines)
+    receivable = [ln for ln in lines if ln.debit > 0]
+    assert receivable[0].account_code == "1200"
+    assert receivable[0].debit == Decimal("2200")

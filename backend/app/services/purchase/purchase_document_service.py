@@ -12,7 +12,7 @@ from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.models.purchase_order import PurchaseOrder
 from app.services.audit.audit_service import log_event
 from app.services.master_data.bundle_vendor_service import reconcile_dossier_vendor
-from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
+from app.services.invoice.invoice_evaluation_service import ROUTE_EXPENSES, ROUTE_PURCHASE
 from app.services.extraction.document_heading_utils import extract_document_heading_signals
 from app.services.purchase.po_reference import (
     effective_po_reference,
@@ -146,7 +146,13 @@ def resolve_purchase_document_type(
     return infer_purchase_document_type(invoice)
 
 
+_PAYABLE_ROUTES = frozenset({ROUTE_PURCHASE, ROUTE_EXPENSES})
+
+
 def is_commercial_purchase_invoice(invoice: Invoice) -> bool:
+    route = (invoice.route_target or "").strip()
+    if route not in _PAYABLE_ROUTES:
+        return False
     doc_type = normalize_purchase_document_type(invoice.purchase_document_type)
     return doc_type in (None, PurchaseDocumentType.INVOICE.value)
 

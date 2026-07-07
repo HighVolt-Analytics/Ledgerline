@@ -417,6 +417,7 @@ async def test_payment_created_for_processed_invoice(
         total=Decimal("1200.00"),
         due_date=__import__("datetime").date(2026, 7, 1),
         status=InvoiceStatus.PROCESSED,
+        route_target="Purchase Management",
     )
     db_session.add(inv)
     await db_session.flush()
@@ -438,6 +439,7 @@ async def test_payments_api_lists_queue(
         total=Decimal("800.00"),
         due_date=__import__("datetime").date(2026, 7, 1),
         status=InvoiceStatus.PROCESSED,
+        route_target="Purchase Management",
     )
     db_session.add(inv)
     await db_session.flush()

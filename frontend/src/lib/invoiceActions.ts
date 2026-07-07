@@ -1,5 +1,11 @@
 import { api } from "@/api/client";
-import type { Invoice, InvoiceDetails, InvoiceUpdatePayload, PaymentApi } from "@/api/types";
+import type {
+  CollectionApi,
+  Invoice,
+  InvoiceDetails,
+  InvoiceUpdatePayload,
+  PaymentApi,
+} from "@/api/types";
 import {
   compulsoryFieldsForDocumentType,
   validateCompulsoryFieldsForApproval,
@@ -233,9 +239,51 @@ export function invoiceCanAttemptReprocess(inv: {
   return Boolean(inv.has_stored_file || inv.raw_file_path?.trim());
 }
 
+export type PostApprovalSettlement = "payment" | "collection" | "none";
+
+/** Expected AR/AP side effect after a processed invoice, by route and doc shape. */
+export function postApprovalSettlement(
+  inv: Pick<
+    InvoiceDetails,
+    | "route_target"
+    | "vendor"
+    | "total"
+    | "due_date"
+    | "sales_document_type"
+    | "purchase_document_type"
+    | "gl_posting_applicable"
+  >
+): PostApprovalSettlement {
+  const route = (inv.route_target ?? "").trim();
+  if (route === "Vault" || route === "Team Expenses") return "none";
+  if (inv.gl_posting_applicable === false) return "none";
+
+  const hasAmount =
+    Boolean(inv.vendor?.trim()) &&
+    Boolean(inv.total?.trim()) &&
+    Number(inv.total) > 0;
+  const hasDue = Boolean(inv.due_date?.trim());
+  if (!hasAmount || !hasDue) return "none";
+
+  if (route === "Sales Management") {
+    const salesDoc = (inv.sales_document_type ?? "").trim().toLowerCase();
+    if (salesDoc === "so" || salesDoc === "dn") return "none";
+    return "collection";
+  }
+
+  if (route === "Purchase Management" || route === "Expenses Management") {
+    const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
+    if (purchaseDoc === "po" || purchaseDoc === "grn") return "none";
+    return "payment";
+  }
+
+  return "none";
+}
+
 export type ApproveAndProcessResult = {
   invoice: InvoiceDetails;
   payment?: PaymentApi;
+  collection?: CollectionApi;
 };
 
 export async function approveAndProcess(
@@ -256,14 +304,11 @@ export async function approveAndProcess(
     throw new Error(approvalFailureMessage(invoice));
   }
 
-  const payable =
-    Boolean(invoice.vendor?.trim()) &&
-    Boolean(invoice.total?.trim()) &&
-    Number(invoice.total) > 0 &&
-    Boolean(invoice.due_date?.trim());
-
+  const settlement = postApprovalSettlement(invoice);
   let payment: PaymentApi | undefined;
-  if (payable) {
+  let collection: CollectionApi | undefined;
+
+  if (settlement === "payment") {
     const payments = await api.listPayments(undefined, { fresh: true });
     payment = payments.find((row) => row.invoice_id === invoiceId);
     if (!payment) {
@@ -271,9 +316,17 @@ export async function approveAndProcess(
         "Invoice processed but no payment row was created. If this is a supplier invoice, confirm vendor, total, and due date are present."
       );
     }
+  } else if (settlement === "collection") {
+    const collections = await api.listCollections({ fresh: true });
+    collection = collections.find((row) => row.invoice_id === invoiceId);
+    if (!collection) {
+      throw new Error(
+        "Invoice processed but no collection row was created. Confirm customer, total, and due date are present."
+      );
+    }
   }
 
-  return { invoice, payment };
+  return { invoice, payment, collection };
 }
 
 /** Re-parse a stuck invoice (clears extracted fields, runs pipeline for this row). */
