@@ -57,6 +57,16 @@ def test_vr03_compulsory_fields_subset() -> None:
     assert not vr03_compulsory_fields(invoice, parsed, ["vendor", "invoice_no"]).passed
 
 
+def test_vr03_compulsory_fields_empty_is_skipped() -> None:
+    from app.tenant_ids import TESTING_TENANT_UUID
+
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID)
+    parsed = InvoiceData()
+    result = vr03_compulsory_fields(invoice, parsed, [])
+    assert result.passed
+    assert result.skipped
+
+
 def test_vr03_fail() -> None:
 
     assert not vr03_required(InvoiceData()).passed

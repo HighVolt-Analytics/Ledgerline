@@ -10,10 +10,11 @@ from typing import Any, TYPE_CHECKING
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.extraction.custom_field_ocr_extractors import extract_custom_fields_from_text
 from app.services.extraction.extraction_field_values import (
-    custom_extraction_field_keys_for_dt,
+    effective_extraction_field_keys_for_dt,
     extracted_fields_from_parsed,
     harvest_custom_fields_from_llm_raw,
     merge_extracted_field_maps,
+    non_canonical_extraction_keys,
 )
 from app.services.extraction.layout_field_extractor import extract_key_value_fields
 from app.services.extraction.pdf_parser import (
@@ -29,6 +30,7 @@ from app.services.extraction.line_items_parser import (
     merge_line_item_lists,
     serialize_line_items,
 )
+from app.services.extraction.line_item_skip_patterns import has_trusted_line_items
 from app.services.extraction.line_items_sanitizer import sanitize_line_items
 from app.services.extraction.field_grounding_service import (
     ground_invoice_scalars,
@@ -155,27 +157,75 @@ def invoice_data_from_payload_fields(raw: dict[str, Any] | None) -> InvoiceData 
     )
 
 
-def _apply_layout_kv(data: InvoiceData, kv: dict[str, str]) -> InvoiceData:
+_DI_MERGE_KEYS: frozenset[str] = frozenset(
+    {
+        "vendor",
+        "abn",
+        "invoice_no",
+        "invoice_date",
+        "due_date",
+        "po_reference",
+        "subtotal",
+        "gst",
+        "gst_rate",
+        "total",
+        "cost_centre",
+        "billing_address",
+        "line_items",
+        "bank_details",
+        "document_heading",
+    }
+)
+
+
+def _configured_key_set(
+    dt_definition: DocumentTypeDefinition | None,
+) -> set[str]:
+    if dt_definition is None:
+        return set()
+    return set(
+        effective_extraction_field_keys_for_dt([dt_definition], dt_definition.code)
+    )
+
+
+def _field_configured(field_name: str, configured: set[str]) -> bool:
+    if not configured:
+        return True
+    if field_name in configured:
+        return True
+    if field_name in ("bank_bsb", "bank_account", "bank_name") and "bank_details" in configured:
+        return True
+    return False
+
+
+def _apply_layout_kv(
+    data: InvoiceData,
+    kv: dict[str, str],
+    *,
+    configured: set[str],
+) -> InvoiceData:
     if not kv:
         return data
     updates: dict[str, object] = {}
-    if kv.get("vendor") and _scalar_empty(data.vendor):
+    if _field_configured("vendor", configured) and kv.get("vendor") and _scalar_empty(data.vendor):
         updates["vendor"] = normalize_vendor_name(kv["vendor"]) or kv["vendor"]
-    if kv.get("abn") and _scalar_empty(data.abn):
+    if _field_configured("abn", configured) and kv.get("abn") and _scalar_empty(data.abn):
         updates["abn"] = storage_abn(kv["abn"])
-    if kv.get("invoice_no") and _scalar_empty(data.invoice_no):
+    if _field_configured("invoice_no", configured) and kv.get("invoice_no") and _scalar_empty(data.invoice_no):
         updates["invoice_no"] = kv["invoice_no"].strip()
-    if kv.get("po_reference") and _scalar_empty(data.po_reference):
+    if _field_configured("po_reference", configured) and kv.get("po_reference") and _scalar_empty(data.po_reference):
         updates["po_reference"] = kv["po_reference"].strip()
-    if kv.get("invoice_date") and data.invoice_date is None:
+    if _field_configured("invoice_date", configured) and kv.get("invoice_date") and data.invoice_date is None:
         parsed = parse_flexible_date(kv["invoice_date"])
         if parsed:
             updates["invoice_date"] = parsed
-    if kv.get("due_date") and data.due_date is None:
+    if _field_configured("due_date", configured) and kv.get("due_date") and data.due_date is None:
         parsed = parse_flexible_date(kv["due_date"])
         if parsed:
             updates["due_date"] = parsed
     for money_key in ("subtotal", "gst", "gst_rate", "total"):
+        if not _field_configured(money_key, configured):
+            continue
         if kv.get(money_key) and getattr(data, money_key) is None:
             if money_key == "gst_rate":
                 from app.services.extraction.gst_rate import parse_gst_rate_percent
@@ -259,6 +309,19 @@ def _persist_auxiliary_fields(data: InvoiceData, local_raw: dict[str, Any]) -> I
     )
 
 
+def _configured_scalar_fill_fields(
+    dt_definition: DocumentTypeDefinition | None,
+) -> tuple[str, ...]:
+    if dt_definition is None:
+        return _SCALAR_FILL_FIELDS
+    configured = _configured_key_set(dt_definition)
+    allowed: list[str] = []
+    for field_name in _SCALAR_FILL_FIELDS:
+        if _field_configured(field_name, configured):
+            allowed.append(field_name)
+    return tuple(allowed)
+
+
 def merge_extraction_sources(
     parsed: InvoiceData,
     ocr: OcrArtifact,
@@ -269,13 +332,14 @@ def merge_extraction_sources(
     """Merge LLM/DI/layout/regex into one InvoiceData with DT-aware cleanup."""
     text = (ocr.text or parsed.document_text or "").strip()
     merged = parsed
+    configured_keys = _configured_key_set(dt_definition)
     if text and not (merged.document_text or "").strip():
         merged = replace(merged, document_text=text)
 
     payload = ocr.payload_json or {}
     di_from_payload = invoice_data_from_payload_fields(payload.get("invoice_fields"))
     di_candidate = di_data or di_from_payload
-    if di_candidate is not None:
+    if di_candidate is not None and (not configured_keys or configured_keys & _DI_MERGE_KEYS):
         merged = _merge_prefer_complete(merged, di_candidate)
 
     kv = dict(ocr.layout_kv or {})
@@ -283,43 +347,47 @@ def merge_extraction_sources(
         kv_from_text = extract_key_value_fields(None, text)
         for key, value in kv_from_text.items():
             kv.setdefault(key, value)
-    merged = _apply_layout_kv(merged, kv)
+    merged = _apply_layout_kv(merged, kv, configured=configured_keys)
 
     if text:
         local = parse_local_text(text)
         llm_bsb = merged.bank_bsb
         llm_account = merged.bank_account
         fill: dict[str, object] = {}
-        for field_name in _SCALAR_FILL_FIELDS:
+        for field_name in _configured_scalar_fill_fields(dt_definition):
             current = getattr(merged, field_name, None)
             fallback = getattr(local, field_name, None)
             if _scalar_empty(current) and not _scalar_empty(fallback):
                 fill[field_name] = fallback
         merged_items = list(merged.line_items)
-        if local.line_items:
-            merged_items = merge_line_item_lists(merged_items, local.line_items)
-        payload_items = line_items_from_ocr_payload(dict(ocr.payload_json or {}))
-        if payload_items:
-            merged_items = merge_line_item_lists(merged_items, payload_items)
-        if text.strip() and merged_items:
-            merged_items = enrich_line_items_from_text(merged_items, text)
-        merged_items = sanitize_line_items(
-            merged_items,
-            ocr_text=text,
-            extracted_fields=merged.extracted_fields,
-            vendor=merged.vendor,
-            invoice_no=merged.invoice_no,
-            po_reference=merged.po_reference,
-            so_reference=(merged.extracted_fields or {}).get("so_reference"),
-            cost_centre=merged.cost_centre,
-        )
-        if merged_items != merged.line_items:
-            fill["line_items"] = merged_items
+        merge_line_items = not configured_keys or "line_items" in configured_keys
+        if merge_line_items:
+            llm_items_trusted = has_trusted_line_items(merged_items)
+            if not llm_items_trusted:
+                if local.line_items:
+                    merged_items = merge_line_item_lists(merged_items, local.line_items)
+                payload_items = line_items_from_ocr_payload(dict(ocr.payload_json or {}))
+                if payload_items:
+                    merged_items = merge_line_item_lists(merged_items, payload_items)
+            if text.strip() and merged_items and not llm_items_trusted:
+                merged_items = enrich_line_items_from_text(merged_items, text)
+            merged_items = sanitize_line_items(
+                merged_items,
+                ocr_text=text,
+                extracted_fields=merged.extracted_fields,
+                vendor=merged.vendor,
+                invoice_no=merged.invoice_no,
+                po_reference=merged.po_reference,
+                so_reference=(merged.extracted_fields or {}).get("so_reference"),
+                cost_centre=merged.cost_centre,
+            )
+            if merged_items != merged.line_items:
+                fill["line_items"] = merged_items
         bank_bsb, bank_account = merge_bank_fields(
             llm_bsb=llm_bsb,
             llm_account=llm_account,
-            regex_bsb=local.bank_bsb,
-            regex_account=local.bank_account,
+            regex_bsb=local.bank_bsb if _field_configured("bank_bsb", configured_keys) else None,
+            regex_account=local.bank_account if _field_configured("bank_account", configured_keys) else None,
             ocr_text=text,
         )
         if bank_bsb != merged.bank_bsb:
@@ -330,10 +398,14 @@ def merge_extraction_sources(
             merged = replace(merged, **fill)
         merged = _persist_auxiliary_fields(merged, local.raw_fields)
 
-    permit_fields = extract_permit_fields_from_text(text) if text else {}
+    permit_fields = (
+        extract_permit_fields_from_text(text)
+        if text and configured_keys & {"permit_no", "consignment_ref"}
+        else {}
+    )
     dt_custom_keys: list[str] = []
     if dt_definition is not None:
-        dt_custom_keys = custom_extraction_field_keys_for_dt([dt_definition], dt_definition.code)
+        dt_custom_keys = non_canonical_extraction_keys(list(configured_keys))
     ocr_custom = extract_custom_fields_from_text(text, dt_custom_keys) if text else {}
     merged_extracted = merge_extracted_field_maps(
         extracted_fields_from_parsed(merged),

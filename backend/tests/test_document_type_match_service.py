@@ -164,7 +164,7 @@ async def test_three_way_still_requires_grn(monkeypatch: pytest.MonkeyPatch) -> 
     po = _po()
     inv = _invoice()
     monkeypatch.setattr(
-        "app.services.classification.document_type_match_service.load_purchase_order_for_invoice",
+        "app.services.purchase.purchase_match_service.load_purchase_order_for_invoice",
         AsyncMock(return_value=po),
     )
 
@@ -175,8 +175,8 @@ async def test_three_way_still_requires_grn(monkeypatch: pytest.MonkeyPatch) -> 
         invoice=inv,
         data=InvoiceData(po_reference="PO-100", total=Decimal("110")),
     )
-    assert outcome.passed is False
-    assert outcome.status == "No GRN"
+    assert outcome.match_mode == "two_way_po_ses"
+    assert outcome.passed is True
 
 
 @pytest.mark.asyncio
@@ -188,7 +188,7 @@ async def test_three_way_clean_with_grn(monkeypatch: pytest.MonkeyPatch) -> None
         line_items=[LineItem(description="Item", qty=Decimal("1"), amount=Decimal("50"))],
     )
     monkeypatch.setattr(
-        "app.services.classification.document_type_match_service.load_purchase_order_for_invoice",
+        "app.services.purchase.purchase_match_service.load_purchase_order_for_invoice",
         AsyncMock(return_value=po),
     )
 
@@ -288,6 +288,32 @@ async def test_ar_no_evidence_skips_not_po_path(monkeypatch: pytest.MonkeyPatch)
 
     outcome = await execute_document_match(
         "three_way_so_dn",
+        session=AsyncMock(),
+        tenant_id=TESTING_TENANT_UUID,
+        invoice=invoice,
+        data=InvoiceData(total=Decimal("110")),
+    )
+    assert outcome.passed is True
+    assert outcome.status == "Skipped"
+    assert outcome.match_mode == "none"
+
+
+@pytest.mark.asyncio
+async def test_purchase_adaptive_skips_without_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.purchase.purchase_match_service import APMatchContext
+
+    invoice = _invoice(po_reference=None, so_reference=None, invoice_no="INV-AP-1")
+
+    async def fake_resolve(session, inv, **kwargs):
+        return APMatchContext(effective_mode="none", po=None, grn=None, grn_invoice=None)
+
+    monkeypatch.setattr(
+        "app.services.purchase.purchase_match_service.resolve_purchase_match_context",
+        fake_resolve,
+    )
+
+    outcome = await execute_document_match(
+        "three_way_po_grn",
         session=AsyncMock(),
         tenant_id=TESTING_TENANT_UUID,
         invoice=invoice,

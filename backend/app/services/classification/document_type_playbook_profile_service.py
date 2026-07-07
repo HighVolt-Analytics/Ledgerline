@@ -40,11 +40,19 @@ def should_enforce_bundle_mandatory(definition: DocumentTypeDefinition) -> bool:
 
 
 def match_mode_requires_po(match_mode: str) -> bool:
-    return match_mode in {"three_way_po_grn", "two_way_po_ses"}
+    return match_mode in {
+        "three_way_po_grn",
+        "two_way_po_ses",
+        "two_way_grn_invoice",
+    }
 
 
 def match_mode_requires_sales(match_mode: str) -> bool:
-    return match_mode in {"three_way_so_dn", "two_way_dn_invoice"}
+    return match_mode in {
+        "three_way_so_dn",
+        "two_way_so_invoice",
+        "two_way_dn_invoice",
+    }
 
 
 def allows_posting_pipeline(definition: DocumentTypeDefinition) -> bool:

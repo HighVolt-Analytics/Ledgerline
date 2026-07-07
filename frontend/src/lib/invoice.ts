@@ -1,4 +1,5 @@
 import type { Invoice, InvoiceDetails } from "@/api/types";
+import { reviewReasonLabel } from "@/lib/classificationAuditDisplay";
 import { extractionFieldLabel } from "@/lib/documentExtractionFields";
 import {
   effectiveValidationRules,
@@ -392,16 +393,22 @@ export function isNeedsReviewEvaluation(status: string | null | undefined): bool
   return (status ?? "").trim() === "needs_review";
 }
 
+export function isPendingApprovalEvaluation(status: string | null | undefined): boolean {
+  return (status ?? "").trim() === "pending_approval";
+}
+
 export function evaluationStatusLabel(
   status: Invoice["evaluation_status"]
 ): string {
   if (status === "auto_coded") return "Auto coded";
   if (status === "needs_review") return "Needs review";
+  if (status === "pending_approval") return "Pending approval";
   if (status === "awaiting_classification") return "Awaiting classification";
   if (status === "needs_rescan") return "Needs rescan";
   if (status === "pending_vendor") return "Pending vendor";
   if (status === "unmatched_expense_vendor") return "Unmatched vendor";
   if (status === "awaiting_po") return "Awaiting PO";
+  if (status === "awaiting_so") return "Awaiting SO";
   return "—";
 }
 
@@ -414,6 +421,9 @@ export function evaluationStatusDescription(
   }
   if (status === "needs_review") {
     return "Document type, route, or GL mapping needs a human check before posting.";
+  }
+  if (status === "pending_approval") {
+    return "Validation passed — waiting for approver sign-off per document-type policy.";
   }
   if (status === "awaiting_classification") {
     return "LLM confidence was below the auto-route threshold — confirm document type on the document.";
@@ -430,7 +440,105 @@ export function evaluationStatusDescription(
   if (status === "awaiting_po") {
     return "Purchase invoice is waiting for a PO link.";
   }
+  if (status === "awaiting_so") {
+    return "Sales invoice is waiting for SO or delivery note linkage.";
+  }
   return "Not evaluated yet — still parsing or mapping.";
+}
+
+const STAGE_REVIEW_HINT: Record<string, string> = {
+  Received: "Fields tab — check the captured document",
+  Parsed: "Fields tab — confirm document type and extracted fields",
+  Validated: "Audit tab — fix failed validation rules",
+  Mapped: "Lines tab — review GL mapping on line items",
+  Approved: "Waiting for approver sign-off",
+};
+
+function isSuspenseGlAccount(
+  accountCode: string | null | undefined,
+  accountName: string | null | undefined
+): boolean {
+  const token = `${accountName ?? ""} ${accountCode ?? ""}`.trim().toLowerCase();
+  return /suspense|unmapped|unknown/.test(token);
+}
+
+function failedValidationHint(inv: Pick<Invoice, "validation_results">): string | null {
+  const failed = invoiceFailedValidations(inv as Invoice);
+  if (!failed.length) return null;
+  const parts = failed
+    .slice(0, 2)
+    .map((row) => {
+      const message = (row.message ?? "").trim();
+      const rule = (row.rule ?? "").trim();
+      if (rule && message) return `${rule} — ${message}`;
+      return rule || message;
+    })
+    .filter(Boolean);
+  if (!parts.length) return "Audit tab — fix failed validation rules";
+  return `Audit tab — ${parts.join("; ")}`;
+}
+
+/** Actionable hover text — where to review, not just that review is needed. */
+export function evaluationReviewTooltip(
+  inv: Pick<
+    Invoice,
+    | "evaluation_status"
+    | "validation_results"
+    | "current_stage"
+    | "current_stage_state"
+    | "document_type_code"
+    | "account_code"
+    | "account_name"
+    | "gl_posting_applicable"
+    | "route_target"
+    | "llm_suggested_dt"
+    | "status"
+  >,
+  reviewReasons?: string[]
+): string {
+  const status = inv.evaluation_status;
+  if (reviewReasons?.length) {
+    return reviewReasons.map((code) => reviewReasonLabel(code)).join("; ");
+  }
+
+  const validationHint = failedValidationHint(inv);
+  if (validationHint) return validationHint;
+
+  if (status === "awaiting_classification") {
+    const suggested = inv.llm_suggested_dt?.trim();
+    return suggested
+      ? `Fields tab — confirm document type (${suggested})`
+      : "Fields tab — confirm document type";
+  }
+
+  if (status === "needs_review") {
+    if (!inv.document_type_code?.trim()) {
+      const suggested = inv.llm_suggested_dt?.trim();
+      return suggested
+        ? `Fields tab — confirm document type (${suggested})`
+        : "Fields tab — confirm document type";
+    }
+    if (!inv.route_target?.trim()) {
+      return "Fields tab — confirm routing (purchase, sales, or expense)";
+    }
+    if (
+      inv.gl_posting_applicable !== false &&
+      (!inv.account_code?.trim() || isSuspenseGlAccount(inv.account_code, inv.account_name))
+    ) {
+      return "Lines tab — assign a GL account or clear suspense mapping";
+    }
+    if (inv.current_stage_state === "fail") {
+      const stage = inv.current_stage?.trim();
+      if (stage && STAGE_REVIEW_HINT[stage]) return STAGE_REVIEW_HINT[stage]!;
+      if (stage) return `Open document drawer — ${stage} step needs attention`;
+    }
+    if (inv.status === "exception") {
+      return "Open document drawer — check Fields, Audit, or Lines tabs";
+    }
+    return "Open document drawer — check classification, validation, or GL mapping";
+  }
+
+  return evaluationStatusDescription(status);
 }
 
 export function routeTargetShortLabel(route: string | null | undefined): string {

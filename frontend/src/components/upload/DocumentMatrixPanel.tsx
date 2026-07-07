@@ -20,9 +20,10 @@ import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
 import { cn } from "@/lib/cn";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
-import { approveAndProcess } from "@/lib/invoiceActions";
+import { approveAndProcess, validateInvoiceReadyForApproval } from "@/lib/invoiceActions";
 import { isInvoicePipelineActive } from "@/lib/uploadColumnState";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
@@ -120,6 +121,7 @@ export function DocumentMatrixPanel({
   refreshRef?: MutableRefObject<(() => void) | null>;
 }) {
   const { user } = useAuth();
+  const { data: ruleBook } = useRuleBookConfig();
   const tenantScope = user?.tenant_id ?? null;
   const loadSeq = useRef(0);
   const loadInFlightRef = useRef(false);
@@ -292,7 +294,18 @@ export function DocumentMatrixPanel({
     try {
       if (action === "unique") {
         if (QUEUE_STATUSES.has(inv.status)) {
-          await approveAndProcess(inv.id, () => load({ silent: true, fresh: true }));
+          if (!inv.has_stored_file) {
+            setToast("Upload a document file before approving.");
+            return;
+          }
+          const fieldCheck = validateInvoiceReadyForApproval(inv, ruleBook?.documentTypes);
+          if (!fieldCheck.ok) {
+            setToast(fieldCheck.message);
+            return;
+          }
+          await approveAndProcess(inv.id, async () => {
+            await load({ silent: true, fresh: true });
+          });
           setToast(`${documentDisplayRef(inv)} approved and processed`);
         } else {
           setToast(`${documentDisplayRef(inv)} — open the document to resolve routing or mapping`);

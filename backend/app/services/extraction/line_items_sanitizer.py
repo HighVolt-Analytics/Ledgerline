@@ -54,9 +54,10 @@ def _passes_minimum_product_row(item: ParsedLineItem) -> bool:
     if should_skip_line_row(desc):
         return False
     has_money = item.amount is not None or item.unit_price is not None
+    has_qty = item.qty is not None
     if has_money:
         return True
-    if item.qty is not None and len(desc) > 15:
+    if has_qty and (item.amount is not None or item.unit_price is not None):
         return True
     return False
 

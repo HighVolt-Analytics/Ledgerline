@@ -341,11 +341,13 @@ export interface Invoice {
   evaluation_status:
     | "auto_coded"
     | "needs_review"
+    | "pending_approval"
     | "awaiting_classification"
     | "needs_rescan"
     | "pending_vendor"
     | "unmatched_expense_vendor"
     | "awaiting_po"
+    | "awaiting_so"
     | null;
   validation_results: ValidationResult[] | null;
   validation_pass_rate?: number | null;

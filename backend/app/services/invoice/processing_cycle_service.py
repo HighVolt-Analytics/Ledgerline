@@ -69,3 +69,33 @@ async def has_audit_event_after_cycle_reset(
         await session.execute(select(AuditLog.id).where(*filters).limit(1))
     ).scalar_one_or_none()
     return row is not None
+
+
+async def latest_audit_detail_after_cycle_reset(
+    session: AsyncSession,
+    invoice_id: int,
+    *,
+    event: str,
+    tenant_id: uuid.UUID | None = None,
+) -> dict[str, object] | None:
+    """Latest audit detail for ``event`` after the most recent cycle reset."""
+    reset_id = await latest_cycle_reset_log_id(
+        session,
+        invoice_id,
+        tenant_id=tenant_id,
+    )
+    filters = [
+        AuditLog.invoice_id == invoice_id,
+        AuditLog.event == event,
+        AuditLog.id > reset_id,
+    ]
+    if tenant_id is not None:
+        filters.append(AuditLog.tenant_id == tenant_id)
+    row = (
+        await session.execute(
+            select(AuditLog).where(*filters).order_by(AuditLog.id.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None or not isinstance(row.detail, dict):
+        return None
+    return row.detail

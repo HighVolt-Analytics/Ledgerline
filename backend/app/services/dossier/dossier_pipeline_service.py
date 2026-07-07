@@ -1103,6 +1103,25 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
     return _step("vendor_hold", state="pending", detail="—")
 
 
+def _routing_review_superseded_for_validate(
+    logs: list[AuditLog],
+    routing: AuditLog,
+) -> bool:
+    """True when a later successful gate/validation makes routing_review stale for validate."""
+    gate = _routing_review_gate(routing)
+    if gate == "classification":
+        gate_pass = _latest_log(logs, "classification_gate_passed")
+        if gate_pass and _is_after(gate_pass, routing):
+            return True
+        resolved = _latest_log(logs, "classification_resolved")
+        if resolved and _is_after(resolved, routing):
+            return True
+    validate_pass = _latest_log(logs, "validation_passed")
+    if validate_pass and _is_after(validate_pass, routing):
+        return True
+    return False
+
+
 def _resolve_validate(
     inv: Invoice,
     logs: list[AuditLog],
@@ -1115,15 +1134,28 @@ def _resolve_validate(
     routing_review = _latest_log(logs, "routing_review_required")
     failed_checks = [c for c in checks if c.state == "fail"]
 
+    validation_passed_latest = validate_pass is not None and (
+        validate_fail is None or validate_pass.created_at >= validate_fail.created_at
+    )
+
     upstream_gate = _routing_review_gate(routing_review) if routing_review else ""
-    if routing_review and _classification_routing_review(logs) is None and _playbook_routing_review(logs) is None and upstream_gate not in {
-        "image_quality",
-        "field_confidence",
-        "vendor_classification_drift",
-    } and (
-        inv.status == InvoiceStatus.EXCEPTION
-        or validate_pass is None
-        or routing_review.created_at >= (validate_pass.created_at if validate_pass else routing_review.created_at)
+    if (
+        routing_review
+        and not validation_passed_latest
+        and not _routing_review_superseded_for_validate(logs, routing_review)
+        and _classification_routing_review(logs) is None
+        and _playbook_routing_review(logs) is None
+        and upstream_gate
+        not in {
+            "image_quality",
+            "field_confidence",
+            "vendor_classification_drift",
+        }
+        and (
+            validate_pass is None
+            or routing_review.created_at
+            >= (validate_pass.created_at if validate_pass else routing_review.created_at)
+        )
     ):
         reason = _detail_from_log(routing_review, fallback="routing_review_required")
         return _step(
@@ -1137,9 +1169,6 @@ def _resolve_validate(
             checks=checks,
         )
 
-    validation_passed_latest = validate_pass is not None and (
-        validate_fail is None or validate_pass.created_at >= validate_fail.created_at
-    )
     bypass_log = _latest_log(logs, "validation_bypassed_after_human_approval")
 
     if failed_checks:

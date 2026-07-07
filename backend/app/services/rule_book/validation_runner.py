@@ -187,8 +187,8 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
                 document_types=ctx.document_types,
                 tenant_id=ctx.tenant_id,
             )
-        compulsory = effective_required_fields(definition) if definition else []
-        if compulsory and ctx.invoice is not None:
+        compulsory = effective_required_fields(definition) if definition is not None else []
+        if definition is not None and ctx.invoice is not None:
             return vr03_compulsory_fields(ctx.invoice, data, compulsory)
 
         profile = ctx.validation_profile or resolve_validation_profile(

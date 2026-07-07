@@ -434,10 +434,36 @@ async def sync_sales_document(
     if doc_type == SalesDocumentType.SO.value:
         if not so_number:
             return None
-        return await _sync_so_document(db, invoice, so_number)
+        result = await _sync_so_document(db, invoice, so_number)
+        if result is not None:
+            from app.services.dossier.dossier_reprocess_service import (
+                reprocess_held_commercial_invoices_on_anchor,
+            )
+
+            await reprocess_held_commercial_invoices_on_anchor(
+                db,
+                tenant_id=invoice.tenant_id,
+                route_target=ROUTE_SALES,
+                anchor_ref=so_number,
+                triggering_invoice_id=invoice.id,
+            )
+        return result
     if doc_type == SalesDocumentType.DN.value:
         if dn_has_so_ref(invoice) and so_number:
-            return await _sync_dn_document(db, invoice, so_number)
+            result = await _sync_dn_document(db, invoice, so_number)
+            if result is not None:
+                from app.services.dossier.dossier_reprocess_service import (
+                    reprocess_held_commercial_invoices_on_anchor,
+                )
+
+                await reprocess_held_commercial_invoices_on_anchor(
+                    db,
+                    tenant_id=invoice.tenant_id,
+                    route_target=ROUTE_SALES,
+                    anchor_ref=so_number,
+                    triggering_invoice_id=invoice.id,
+                )
+            return result
         await _sync_orphan_dn_document(db, invoice)
         return None
     if doc_type == SalesDocumentType.INVOICE.value:

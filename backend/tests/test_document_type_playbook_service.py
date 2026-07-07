@@ -79,9 +79,10 @@ def test_effective_required_fields_uses_explicit_subset() -> None:
     assert effective_optional_extraction_fields(definition) == ["po_reference"]
 
 
-def test_effective_required_fields_falls_back_to_extraction() -> None:
+def test_effective_required_fields_honors_explicit_empty() -> None:
     definition = _definition(requiredFields=[], extractionFields=["vendor", "total"])
-    assert effective_required_fields(definition) == ["vendor", "total"]
+    assert effective_required_fields(definition) == []
+    assert effective_optional_extraction_fields(definition) == ["vendor", "total"]
 
 
 def test_confidence_gate_fields_respects_required_and_absent() -> None:
@@ -209,6 +210,56 @@ async def test_evaluate_playbook_gates_direct_expense_no_bundle_enforcement() ->
 
 
 @pytest.mark.asyncio
+async def test_evaluate_playbook_gates_invoice_only_progressive_po_goods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    definition = _definition(playbookProfile="po_goods")
+    invoice = Invoice(
+        id=1,
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.VALIDATING,
+        po_reference=None,
+        invoice_no="INV-1",
+        route_target="Purchase Management",
+        document_type_code="DT-01",
+    )
+    parsed = InvoiceData(
+        vendor="Acme",
+        invoice_no="INV-1",
+        total=Decimal("100"),
+        line_items=[ParsedLineItem(description="Item", qty=Decimal("1"), amount=Decimal("100"))],
+    )
+
+    async def fake_tier(session, *, invoice, definition):
+        return "none"
+
+    async def fake_missing(session, *, invoice, dt_codes, document_types=None):
+        return list(dt_codes)
+
+    monkeypatch.setattr(
+        "app.services.classification.document_type_playbook_service._effective_match_tier_for_bundle",
+        fake_tier,
+    )
+    monkeypatch.setattr(
+        "app.services.classification.document_type_playbook_service.missing_bundle_dt_codes",
+        fake_missing,
+    )
+
+    session = AsyncMock()
+    result = await evaluate_playbook_gates(
+        session,
+        invoice=invoice,
+        parsed=parsed,
+        definition=definition,
+    )
+    assert result.missing_bundle_advisory == ("DT-14", "DT-15")
+    assert result.missing_bundle_mandatory == ()
+    assert result.linkage_key_missing is False
+    assert result.blocks_posting is False
+    assert result.effective_match_tier == "none"
+
+
+@pytest.mark.asyncio
 async def test_evaluate_playbook_gates_no_po_reference() -> None:
     definition = _definition(playbookProfile="po_goods")
     invoice = Invoice(
@@ -220,7 +271,7 @@ async def test_evaluate_playbook_gates_no_po_reference() -> None:
     )
     parsed = InvoiceData(
         vendor="Acme",
-        invoice_no="INV-1",
+        invoice_no=None,
         total=Decimal("100"),
         line_items=[ParsedLineItem(description="Item", qty=Decimal("1"), amount=Decimal("100"))],
     )

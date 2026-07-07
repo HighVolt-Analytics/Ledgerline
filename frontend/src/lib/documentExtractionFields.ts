@@ -1,3 +1,9 @@
+import { ROUTE_TARGETS } from "@/lib/v4RuleBookTypes";
+import {
+  ensureExtractionSuperset,
+  normalizeCompulsoryFields,
+} from "@/lib/documentCompulsoryFields";
+
 /** Canonical extraction field presets — align with backend document_type_field_keys.py */
 
 export const EXTRACTION_FIELD_OPTIONS = [
@@ -7,7 +13,7 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "invoice_date", label: "Invoice date" },
   { key: "due_date", label: "Due date" },
   { key: "po_reference", label: "PO reference" },
-  { key: "cost_centre", label: "Cost centre" },
+  { key: "so_reference", label: "SO reference" },  { key: "cost_centre", label: "Cost centre" },
   { key: "subtotal", label: "Subtotal" },
   { key: "gst", label: "Tax (GST/VAT)" },
   { key: "gst_rate", label: "Tax rate (%)" },
@@ -31,8 +37,81 @@ export const EXTRACTION_FIELD_OPTIONS = [
 
 export type ExtractionFieldKey = (typeof EXTRACTION_FIELD_OPTIONS)[number]["key"];
 
+export type RouteTarget = (typeof ROUTE_TARGETS)[number];
+
+/** OCR ingest keys — not pipeline/accounting standard fields. */
+export const INFRASTRUCTURE_ONLY_EXTRACTION_FIELD_KEYS = new Set<ExtractionFieldKey>([
+  "document_text",
+]);
+
 const PRESET_KEYS = new Set(EXTRACTION_FIELD_OPTIONS.map((row) => row.key));
 
+const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKey[]> = {
+  "Purchase Management": [
+    "vendor",
+    "abn",
+    "invoice_no",
+    "invoice_date",
+    "due_date",
+    "po_reference",
+    "cost_centre",
+    "subtotal",
+    "gst",
+    "gst_rate",
+    "total",
+    "line_items",
+    "billing_address",
+    "bank_details",
+  ],
+  "Sales Management": [
+    "vendor",
+    "abn",
+    "invoice_no",
+    "invoice_date",
+    "due_date",
+    "so_reference",
+    "subtotal",
+    "gst",
+    "gst_rate",
+    "total",
+    "line_items",
+    "seller_name",
+    "seller_tax_id",
+    "seller_address",
+    "buyer_name",
+    "buyer_tax_id",
+    "buyer_address",
+    "billing_address",
+    "bank_details",
+  ],
+  "Expenses Management": [
+    "vendor",
+    "abn",
+    "invoice_no",
+    "invoice_date",
+    "due_date",
+    "cost_centre",
+    "subtotal",
+    "gst",
+    "gst_rate",
+    "total",
+  ],
+  "Team Expenses": [
+    "vendor",
+    "abn",
+    "invoice_no",
+    "invoice_date",
+    "due_date",
+    "cost_centre",
+    "subtotal",
+    "gst",
+    "gst_rate",
+    "total",
+  ],
+  Vault: ["document_heading", "attachment_name"],
+};
+
+const ROUTE_TARGET_SET = new Set<string>(ROUTE_TARGETS);
 const LABEL_BY_KEY = Object.fromEntries(
   EXTRACTION_FIELD_OPTIONS.map((row) => [row.key, row.label])
 ) as Record<ExtractionFieldKey, string>;
@@ -106,8 +185,66 @@ export function isPresetExtractionFieldKey(key: string): boolean {
   return PRESET_KEYS.has(key as ExtractionFieldKey);
 }
 
-export function extractionFieldsForDocumentType(
-  documentTypes: Array<{ code: string; extractionFields?: string[]; requiredFields?: string[] }>,
+export function isStandardExtractionFieldKey(key: string): boolean {
+  return (
+    isPresetExtractionFieldKey(key) &&
+    !INFRASTRUCTURE_ONLY_EXTRACTION_FIELD_KEYS.has(key as ExtractionFieldKey)
+  );
+}
+
+function normalizeRouteTarget(routeTarget?: string | null): RouteTarget {
+  const token = (routeTarget ?? "").trim();
+  if (ROUTE_TARGET_SET.has(token)) {
+    return token as RouteTarget;
+  }
+  return "Vault";
+}
+
+export function standardExtractionFieldsForRoute(
+  routeTarget?: string | null
+): ExtractionFieldKey[] {
+  return [...STANDARD_EXTRACTION_FIELDS_BY_ROUTE[normalizeRouteTarget(routeTarget)]];
+}
+
+export function splitExtractionFields(keys: string[] | null | undefined): {
+  standard: string[];
+  custom: string[];
+} {
+  const normalized = normalizeExtractionFieldKeys(keys);
+  const standard: string[] = [];
+  const custom: string[] = [];
+  for (const key of normalized) {
+    if (isStandardExtractionFieldKey(key)) {
+      standard.push(key);
+    } else {
+      custom.push(key);
+    }
+  }
+  return { standard, custom };
+}
+
+export function reconcileExtractionFieldsForRoute(input: {
+  extractionFields: string[];
+  requiredFields: string[];
+  nextRoute: string;
+}): {
+  extractionFields: string[];
+  requiredFields: string[];
+  removedStandardFields: string[];
+} {
+  const allowedStandard = new Set(standardExtractionFieldsForRoute(input.nextRoute));
+  const { standard, custom } = splitExtractionFields(input.extractionFields);
+  const keptStandard = standard.filter((key) => allowedStandard.has(key as ExtractionFieldKey));
+  const removedStandardFields = standard.filter(
+    (key) => !allowedStandard.has(key as ExtractionFieldKey)
+  );
+  const mergedExtraction = normalizeExtractionFieldKeys([...keptStandard, ...custom]);
+  const requiredFields = normalizeCompulsoryFields(input.requiredFields, mergedExtraction);
+  const extractionFields = ensureExtractionSuperset(requiredFields, mergedExtraction);
+  return { extractionFields, requiredFields, removedStandardFields };
+}
+
+export function extractionFieldsForDocumentType(  documentTypes: Array<{ code: string; extractionFields?: string[]; requiredFields?: string[] }>,
   documentTypeCode: string | null | undefined
 ): string[] {
   const code = (documentTypeCode ?? "").trim().toUpperCase();

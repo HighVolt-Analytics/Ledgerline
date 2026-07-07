@@ -29,11 +29,13 @@ class InvoiceStatus(str, Enum):
 class EvaluationStatus(str, Enum):
     AUTO_CODED = "auto_coded"
     NEEDS_REVIEW = "needs_review"
+    PENDING_APPROVAL = "pending_approval"
     AWAITING_CLASSIFICATION = "awaiting_classification"
     NEEDS_RESCAN = "needs_rescan"
     PENDING_VENDOR = "pending_vendor"
     UNMATCHED_EXPENSE_VENDOR = "unmatched_expense_vendor"
     AWAITING_PO = "awaiting_po"
+    AWAITING_SO = "awaiting_so"
 
 
 def parse_evaluation_status(raw: str | None) -> EvaluationStatus | None:

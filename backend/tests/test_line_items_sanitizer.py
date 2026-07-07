@@ -48,6 +48,35 @@ def test_sanitize_removes_phone_fragment_rows() -> None:
     assert cleaned[0].description == "TAMOXILON 20"
 
 
+def test_sanitize_keeps_gst_in_product_description() -> None:
+    items = [
+        ParsedLineItem(
+            description="GST consulting services",
+            qty=Decimal("1"),
+            unit_price=Decimal("350"),
+            amount=Decimal("350"),
+        ),
+    ]
+    cleaned = sanitize_line_items(items)
+    assert len(cleaned) == 1
+    assert cleaned[0].description == "GST consulting services"
+
+
+def test_has_trusted_line_items_requires_money_fields() -> None:
+    from app.services.extraction.line_item_skip_patterns import has_trusted_line_items
+    from app.services.invoice.invoice_data import ParsedLineItem
+
+    assert not has_trusted_line_items(
+        [ParsedLineItem(description="Widget", qty=Decimal("2"), unit_price=None, amount=None)]
+    )
+    assert has_trusted_line_items(
+        [ParsedLineItem(description="Widget", qty=Decimal("2"), unit_price=Decimal("50"), amount=None)]
+    )
+    assert has_trusted_line_items(
+        [ParsedLineItem(description="Widget", qty=None, unit_price=None, amount=Decimal("100"))]
+    )
+
+
 def test_sanitize_removes_vendor_and_so_reference_duplicates() -> None:
     items = [
         ParsedLineItem(description="High Volt Analytics Pty Ltd", qty=Decimal("1"), amount=Decimal("100")),

@@ -29,6 +29,11 @@ import { useRecognitionSignalCatalog } from "@/hooks/useRecognitionSignalCatalog
 import { useEmployeeMasters, useVendorMasters } from "@/hooks/useMasterData";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 import { removeDocumentTypeFromCatalog } from "@/lib/documentTypeLifecycle";
+import {
+  mergeDocumentTypePatch,
+  shouldApplyRuleBookSaveResponse,
+} from "@/lib/ruleBookSave";
+import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
 const RULEBOOK_TABS = [
   { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
@@ -58,6 +63,8 @@ export function RulesPage() {
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<RuleBookConfigState | null>(null);
+  const executeSaveRef = useRef<() => void>(() => {});
+  const saveGenerationRef = useRef(0);
 
   const tenantId = user?.tenant_id ?? null;
   const {
@@ -113,44 +120,81 @@ export function RulesPage() {
     }
   }, [blocked, isLoading, refetch]);
 
-  const flushSave = (next: RuleBookConfigState) => {
+  const runSave = () => {
+    const payload = pendingSaveRef.current;
+    if (!payload) return;
+    saveGenerationRef.current += 1;
+    const generation = saveGenerationRef.current;
+    saveMutation.mutate(payload, {
+      onSuccess: ({ config }) => {
+        if (!shouldApplyRuleBookSaveResponse(generation, saveGenerationRef.current)) {
+          return;
+        }
+        setRuleBook(config);
+        setSaveState("saved");
+      },
+      onError: (err) => {
+        setSaveState("error");
+        toast({
+          title: "Could not save rule book",
+          description: err instanceof Error ? err.message : "Save failed",
+          variant: "destructive",
+        });
+      },
+    });
+  };
+
+  executeSaveRef.current = runSave;
+
+  const flushSave = (next: RuleBookConfigState, options?: { immediate?: boolean }) => {
     pendingSaveRef.current = next;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaveState("pending");
+    if (options?.immediate) {
+      runSave();
+      return;
+    }
     saveTimerRef.current = setTimeout(() => {
-      const payload = pendingSaveRef.current;
-      if (!payload) return;
-      saveMutation.mutate(payload, {
-        onSuccess: ({ config }) => {
-          setRuleBook(config);
-          setSaveState("saved");
-        },
-        onError: (err) => {
-          setSaveState("error");
-          toast({
-            title: "Could not save rule book",
-            description: err instanceof Error ? err.message : "Save failed",
-            variant: "destructive",
-          });
-        },
-      });
+      saveTimerRef.current = null;
+      runSave();
     }, SAVE_DEBOUNCE_MS);
   };
 
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (pendingSaveRef.current) {
+        executeSaveRef.current();
+      }
     };
   }, []);
 
   const canEdit = user?.role === "admin";
 
-  const patch = (next: Partial<RuleBookConfigState>) => {
+  const patch = (next: Partial<RuleBookConfigState>, options?: { immediate?: boolean }) => {
     if (!canEdit) return;
     setRuleBook((prev) => {
       if (!prev) return prev;
       const merged = { ...prev, ...next };
-      flushSave(merged);
+      flushSave(merged, options);
+      return merged;
+    });
+  };
+
+  const patchDocumentType = (
+    code: string,
+    partial: Partial<DocumentTypeDefinition>,
+    options?: { immediate?: boolean }
+  ) => {
+    if (!canEdit) return;
+    setRuleBook((prev) => {
+      if (!prev) return prev;
+      const documentTypes = mergeDocumentTypePatch(prev.documentTypes, code, partial);
+      const merged = { ...prev, documentTypes };
+      flushSave(merged, options);
       return merged;
     });
   };
@@ -251,7 +295,8 @@ export function RulesPage() {
         />
         <DocumentTypesTab
           documentTypes={ruleBook.documentTypes}
-          onChange={(documentTypes) => patch({ documentTypes })}
+          onChange={(documentTypes, options) => patch({ documentTypes }, options)}
+          onPatchDocumentType={patchDocumentType}
           onDeleteType={(code) => {
             if (!canEdit) return;
             cancelPendingSave();

@@ -130,6 +130,42 @@ def test_validation_pass_not_applicable_for_vault_non_actionable() -> None:
     assert rate is None
 
 
+@pytest.mark.asyncio
+async def test_vr03_skips_when_document_type_has_no_compulsory_fields() -> None:
+    from app.services.rule_book.validation_runner import _run_core_rule
+
+    definition = _definition(
+        code="DT-99",
+        validationProfile="standard",
+        posting="Yes",
+        routeTarget="Purchase Management",
+        requiredFields=[],
+        extractionFields=["vendor", "total", "due_date"],
+    )
+    invoice = Invoice(
+        id=99,
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.VALIDATING,
+        currency="AUD",
+        document_type_code="DT-99",
+    )
+    data = InvoiceData()
+    ctx = ValidationRunContext(
+        data=data,
+        session=AsyncMock(),
+        tenant_id=TESTING_TENANT_UUID,
+        document_type_code="DT-99",
+        document_types=[definition],
+        invoice=invoice,
+        playbook_gates=None,
+    )
+
+    result = await _run_core_rule("VR03", ctx)
+    assert result.passed
+    assert result.skipped
+    assert "No compulsory fields configured" in result.message
+
+
 def test_validation_pass_applicable_for_payable_invoice() -> None:
     definition = _definition(
         validationProfile="standard",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -370,8 +371,11 @@ def purchase_order_to_response(
     grn = _latest_grn(po)
     match_cfg = config.purchase_match if config is not None else None
     match_mode = _resolve_purchase_match_mode(inv)
+    effective_mode = match_mode
+    if inv is not None and match_mode == "three_way_po_grn":
+        effective_mode = "three_way_po_grn" if grn is not None else "two_way_po_ses"
 
-    if match_mode == "two_way_po_ses" and inv is not None:
+    if effective_mode == "two_way_po_ses" and inv is not None:
         from app.services.classification.document_type_match_service import compute_two_way_po_match
 
         outcome = compute_two_way_po_match(po, inv)
@@ -526,7 +530,238 @@ async def list_purchase_orders(
 
 
 def filter_two_way_purchase_rows(rows: list[PurchaseOrderResponse]) -> list[PurchaseOrderResponse]:
-    return [row for row in rows if row.match_mode == "two_way_po_ses"]
+    return [
+        row
+        for row in rows
+        if row.match_mode in {"two_way_po_ses", "two_way_grn_invoice"}
+    ]
+
+
+@dataclass(frozen=True)
+class APMatchContext:
+    effective_mode: str
+    po: PurchaseOrder | None
+    grn: GoodsReceipt | None
+    grn_invoice: Invoice | None
+
+
+def compute_two_way_grn_match(
+    *,
+    grn_qty: Decimal,
+    inv: Invoice,
+    match_config: PurchaseMatchConfig | None = None,
+    qty_tolerance_pct: float | None = None,
+) -> ThreeWayMatchResult:
+    """Qty-only GRN ↔ invoice match when no purchase order baseline exists."""
+    cfg = match_config or PurchaseMatchConfig()
+    tolerance = cfg.qty_tolerance_pct if qty_tolerance_pct is None else qty_tolerance_pct
+    inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
+    invoice_value = _round2(inv_qty * inv_unit)
+    invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
+    invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
+
+    grn_value = _round2(float(grn_qty) * float(inv_unit))
+    qty_variance = _round2((float(inv_qty) - float(grn_qty)) * float(inv_unit))
+
+    if _qty_over_billing(inv_qty, grn_qty, tolerance_pct=tolerance):
+        status = "Qty Variance"
+    else:
+        status = "2-Way Match"
+
+    return ThreeWayMatchResult(
+        status=status,
+        qty_variance_value=qty_variance,
+        price_variance_value=0.0,
+        total_deviation=qty_variance,
+        po_value=grn_value,
+        invoice_value=invoice_value,
+        invoice_gst=invoice_gst,
+        invoice_total=invoice_total,
+    )
+
+
+async def _load_grn_invoice_qty(
+    session: AsyncSession,
+    grn_invoice: Invoice,
+) -> Decimal:
+    loaded = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.id == grn_invoice.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one_or_none()
+    row = loaded or grn_invoice
+    qty, _, _ = _invoice_qty_and_price(row)
+    return qty
+
+
+async def resolve_purchase_match_context(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    requested_mode: str = "three_way_po_grn",
+) -> APMatchContext:
+    """Pick 3-way PO path, 2-way PO or GRN path, or no automated match."""
+    from app.services.purchase.purchase_linking_service import find_grn_invoices_by_invoice_no
+
+    mode = (requested_mode or "three_way_po_grn").strip().lower()
+    adaptive_modes = {"three_way_po_grn", "two_way_po_ses", "two_way_grn_invoice"}
+    if mode not in adaptive_modes:
+        return APMatchContext(effective_mode="none", po=None, grn=None, grn_invoice=None)
+
+    po = await load_purchase_order_for_invoice(session, invoice)
+    if po is not None:
+        grn = _latest_grn(po)
+        if grn is not None:
+            return APMatchContext(
+                effective_mode="three_way_po_grn",
+                po=po,
+                grn=grn,
+                grn_invoice=None,
+            )
+        return APMatchContext(
+            effective_mode="two_way_po_ses",
+            po=po,
+            grn=None,
+            grn_invoice=None,
+        )
+
+    invoice_no = (invoice.invoice_no or "").strip()
+    grn_candidates: list[Invoice] = []
+    if invoice_no:
+        grn_candidates = await find_grn_invoices_by_invoice_no(
+            session,
+            tenant_id=invoice.tenant_id,
+            invoice_no=invoice_no,
+            include_linked=True,
+        )
+
+    if grn_candidates:
+        return APMatchContext(
+            effective_mode="two_way_grn_invoice",
+            po=None,
+            grn=None,
+            grn_invoice=grn_candidates[0],
+        )
+
+    return APMatchContext(effective_mode="none", po=None, grn=None, grn_invoice=None)
+
+
+def _purchase_match_result_to_outcome(
+    match: ThreeWayMatchResult,
+    *,
+    match_mode: str,
+) -> object:
+    from app.services.classification.document_type_match_service import DocumentMatchOutcome
+
+    if match.status == "No GRN":
+        return DocumentMatchOutcome(
+            passed=False,
+            status="No GRN",
+            message="GRN required before invoice can match PO",
+            match_mode=match_mode,
+            detail={},
+        )
+    if match.status == "Qty Variance":
+        return DocumentMatchOutcome(
+            passed=False,
+            status="Qty Variance",
+            message="Qty over-billing — invoice qty exceeds received quantity (0% tolerance)",
+            match_mode=match_mode,
+            detail={"qty_variance_value": match.qty_variance_value},
+        )
+    if match.status == "Price Variance":
+        return DocumentMatchOutcome(
+            passed=False,
+            status="Price Variance",
+            message=f"Price variance {match.price_variance_value} exceeds tolerance",
+            match_mode=match_mode,
+            detail={"price_variance_value": match.price_variance_value},
+        )
+    label = (
+        "2-Way Match"
+        if match_mode in {"two_way_po_ses", "two_way_grn_invoice"}
+        else match.status
+    )
+    return DocumentMatchOutcome(
+        passed=True,
+        status=label,
+        message=label,
+        match_mode=match_mode,
+        detail={
+            "qty_variance_value": match.qty_variance_value,
+            "price_variance_value": match.price_variance_value,
+        },
+    )
+
+
+async def execute_purchase_document_match(
+    match_mode: str,
+    *,
+    session: AsyncSession,
+    invoice: Invoice,
+) -> object:
+    """Run tiered AP match (3-way PO, 2-way PO, or 2-way GRN) for the invoice pipeline."""
+    from app.services.classification.document_type_match_service import compute_two_way_po_match
+
+    requested = (match_mode or "three_way_po_grn").strip().lower()
+    ctx = await resolve_purchase_match_context(session, invoice, requested_mode=requested)
+
+    if ctx.effective_mode == "none":
+        from app.services.classification.document_type_match_service import DocumentMatchOutcome
+
+        return DocumentMatchOutcome(
+            passed=True,
+            status="Skipped",
+            message="No PO or GRN fulfilment evidence — match skipped",
+            match_mode="none",
+            detail={},
+        )
+
+    if ctx.effective_mode == "three_way_po_grn" and ctx.po is not None:
+        match = compute_three_way_match(ctx.po, invoice)
+        if match.status == "No GRN":
+            return _purchase_match_result_to_outcome(match, match_mode="three_way_po_grn")
+        po_unit = float(ctx.po.po_unit_price)
+        from app.services.classification.document_type_match_service import _price_variance_exceeds_tolerance
+
+        if po_unit > 0 and _price_variance_exceeds_tolerance(
+            price_variance=match.price_variance_value,
+            po_unit=po_unit,
+            po_qty=float(ctx.po.po_qty),
+        ):
+            return _purchase_match_result_to_outcome(match, match_mode="three_way_po_grn")
+        return _purchase_match_result_to_outcome(match, match_mode="three_way_po_grn")
+
+    if ctx.effective_mode == "two_way_po_ses" and ctx.po is not None:
+        outcome = compute_two_way_po_match(ctx.po, invoice)
+        return outcome
+
+    if ctx.effective_mode == "two_way_grn_invoice" and ctx.grn_invoice is not None:
+        grn_qty = await _load_grn_invoice_qty(session, ctx.grn_invoice)
+        match = compute_two_way_grn_match(grn_qty=grn_qty, inv=invoice)
+        return _purchase_match_result_to_outcome(match, match_mode="two_way_grn_invoice")
+
+    from app.services.classification.document_type_match_service import DocumentMatchOutcome
+
+    await log_event(
+        session,
+        "match_context_incomplete",
+        invoice_id=invoice.id,
+        detail={
+            "requested_mode": requested,
+            "effective_mode": ctx.effective_mode,
+            "message": "AP match context incomplete",
+        },
+    )
+    return DocumentMatchOutcome(
+        passed=False,
+        status="Match context incomplete",
+        message="AP match context incomplete — link PO/GRN or upload supporting documents",
+        match_mode=requested,
+        detail={"effective_mode": ctx.effective_mode},
+    )
 
 
 async def sync_purchase_order_from_invoice(

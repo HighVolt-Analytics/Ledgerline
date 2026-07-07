@@ -11,7 +11,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.rule_book_config import RuleBookConfigPayload, TeamExpenseRule
 from app.services.audit.audit_service import log_event
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
-from app.services.invoice.invoice_evaluation_service import EVAL_NEEDS_REVIEW, ROUTE_TEAM, load_config_for_tenant
+from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_APPROVAL, ROUTE_TEAM, load_config_for_tenant
 from app.services.rule_book.rule_engine import match_team_expense_rule
 from app.services.purchase.team_expense_validator import (
     has_receipt_attachment,
@@ -130,7 +130,7 @@ async def apply_team_expense_approval_gate(
         return False
 
     invoice.status = InvoiceStatus.EXCEPTION
-    invoice.evaluation_status = EVAL_NEEDS_REVIEW
+    invoice.evaluation_status = EVAL_PENDING_APPROVAL
     await log_event(
         session,
         "team_expense_approval_required",

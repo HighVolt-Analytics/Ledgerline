@@ -10,6 +10,7 @@ import {
   counterpartyMatchLabel,
   counterpartyName,
   counterpartyUnknownLabel,
+  evaluationReviewTooltip,
   invoiceCounterpartyConfidence,
   invoiceSourceKind,
   invoiceSourceLabel,
@@ -213,5 +214,53 @@ describe("glPostingApplicable", () => {
         purchase_document_type: "po",
       } as Invoice),
     ).toBe(false);
+  });
+});
+
+describe("evaluationReviewTooltip", () => {
+  it("points to failed validation rules in the audit tab", () => {
+    expect(
+      evaluationReviewTooltip({
+        evaluation_status: "needs_review",
+        validation_results: [
+          { rule: "VR03", passed: false, message: "GST does not reconcile", skipped: false },
+        ],
+        status: "exception",
+      } as Invoice),
+    ).toBe("Audit tab — VR03 — GST does not reconcile");
+  });
+
+  it("points to classification when document type is missing", () => {
+    expect(
+      evaluationReviewTooltip({
+        evaluation_status: "needs_review",
+        validation_results: null,
+        document_type_code: null,
+        llm_suggested_dt: "DT-11",
+        route_target: "Purchase Management",
+        status: "exception",
+      } as Invoice),
+    ).toBe("Fields tab — confirm document type (DT-11)");
+  });
+
+  it("points to GL mapping for suspense accounts", () => {
+    expect(
+      evaluationReviewTooltip({
+        evaluation_status: "needs_review",
+        validation_results: null,
+        document_type_code: "DT-11",
+        route_target: "Purchase Management",
+        account_code: "9999",
+        account_name: "Suspense",
+        gl_posting_applicable: true,
+        status: "exception",
+      } as Invoice),
+    ).toBe("Lines tab — assign a GL account or clear suspense mapping");
+  });
+
+  it("maps review reason codes to readable labels", () => {
+    expect(
+      evaluationReviewTooltip({ evaluation_status: "needs_review" } as Invoice, ["LLM_LOW_CONF"]),
+    ).toBe("LLM confidence below auto-route threshold");
   });
 });

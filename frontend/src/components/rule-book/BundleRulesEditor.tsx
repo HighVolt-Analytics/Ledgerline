@@ -16,7 +16,7 @@ import {
   type PurchaseBundleRole,
   type SalesBundleRole,
 } from "@/lib/documentBundleConfig";
-import { effectivePlaybookProfile, playbookProfileLabel } from "@/lib/documentPlaybookConfig";
+import { effectivePlaybookProfile, playbookProfileLabel, reconcileDocumentTypeDraft } from "@/lib/documentPlaybookConfig";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import type { BundleConfigWarning } from "@/lib/documentTypeBundleValidation";
 
@@ -258,7 +258,8 @@ export function BundleRulesEditor({
       <div className="space-y-3">
         <BundleWarnings warnings={bundleWarnings} />
         <p className="text-sm text-muted-foreground">
-          Not used for {playbookProfileLabel(profile)}.
+          Not used — {playbookProfileLabel(profile)} does not require supporting documents on this
+          type.
         </p>
       </div>
     );
@@ -279,10 +280,15 @@ export function BundleRulesEditor({
               id="dt-bundle-role"
               value={draft.salesBundleRole}
               onChange={(e) =>
-                onChange({
-                  ...draft,
-                  salesBundleRole: e.target.value as SalesBundleRole,
-                })
+                onChange(
+                  reconcileDocumentTypeDraft(
+                    {
+                      ...draft,
+                      salesBundleRole: e.target.value as SalesBundleRole,
+                    },
+                    documentTypes
+                  )
+                )
               }
               className={selectClass}
             >
@@ -297,10 +303,15 @@ export function BundleRulesEditor({
               id="dt-bundle-role"
               value={draft.purchaseBundleRole}
               onChange={(e) =>
-                onChange({
-                  ...draft,
-                  purchaseBundleRole: e.target.value as PurchaseBundleRole,
-                })
+                onChange(
+                  reconcileDocumentTypeDraft(
+                    {
+                      ...draft,
+                      purchaseBundleRole: e.target.value as PurchaseBundleRole,
+                    },
+                    documentTypes
+                  )
+                )
               }
               className={selectClass}
             >
@@ -320,6 +331,8 @@ export function BundleRulesEditor({
     <div className="space-y-5">
       <BundleWarnings warnings={bundleWarnings} />
       <p className="text-[11px] text-muted-foreground">
+        Required because playbook: <span className="font-medium text-foreground">{playbookProfileLabel(profile)}</span>
+        {" · "}
         Same {linkageRef} as this document.
       </p>
 

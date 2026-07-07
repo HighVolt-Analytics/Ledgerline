@@ -397,10 +397,36 @@ async def sync_purchase_document(
     if doc_type == PurchaseDocumentType.PO.value:
         if not po_number:
             return None
-        return await _sync_po_document(db, invoice, po_number)
+        result = await _sync_po_document(db, invoice, po_number)
+        if result is not None:
+            from app.services.dossier.dossier_reprocess_service import (
+                reprocess_held_commercial_invoices_on_anchor,
+            )
+
+            await reprocess_held_commercial_invoices_on_anchor(
+                db,
+                tenant_id=invoice.tenant_id,
+                route_target=ROUTE_PURCHASE,
+                anchor_ref=po_number,
+                triggering_invoice_id=invoice.id,
+            )
+        return result
     if doc_type == PurchaseDocumentType.GRN.value:
         if grn_has_po_ref(invoice) and po_number:
-            return await _sync_grn_document(db, invoice, po_number)
+            result = await _sync_grn_document(db, invoice, po_number)
+            if result is not None:
+                from app.services.dossier.dossier_reprocess_service import (
+                    reprocess_held_commercial_invoices_on_anchor,
+                )
+
+                await reprocess_held_commercial_invoices_on_anchor(
+                    db,
+                    tenant_id=invoice.tenant_id,
+                    route_target=ROUTE_PURCHASE,
+                    anchor_ref=po_number,
+                    triggering_invoice_id=invoice.id,
+                )
+            return result
         await _sync_orphan_grn_document(db, invoice)
         return None
     if doc_type == PurchaseDocumentType.INVOICE.value:

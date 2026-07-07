@@ -1,8 +1,10 @@
 import { api } from "@/api/client";
-import type { InvoiceDetails, InvoiceUpdatePayload, PaymentApi } from "@/api/types";
+import type { Invoice, InvoiceDetails, InvoiceUpdatePayload, PaymentApi } from "@/api/types";
 import {
+  compulsoryFieldsForDocumentType,
   validateCompulsoryFieldsForApproval,
 } from "@/lib/documentCompulsoryFields";
+import { effectiveDocumentTypeCode } from "@/lib/documentTypeResolve";
 
 export const APPROVAL_QUEUE_STATUSES = ["exception", "duplicate_skipped", "rejected"] as const;
 
@@ -71,37 +73,75 @@ export function validateInvoiceFieldsForApproval(
   },
   compulsoryFields?: string[]
 ): { ok: true } | { ok: false; message: string } {
-  if (compulsoryFields?.length) {
-    return validateCompulsoryFieldsForApproval(fields, compulsoryFields);
+  if (!compulsoryFields?.length) {
+    return { ok: true };
   }
-  const missing: string[] = [];
-  if (!fields.vendor?.trim()) missing.push("vendor");
-  const total = fields.total?.trim();
-  if (!total || Number.isNaN(Number(total)) || Number(total) <= 0) missing.push("total");
-  if (!fields.due_date?.trim()) missing.push("due date");
-  if (missing.length) {
-    return {
-      ok: false,
-      message: `Cannot approve: missing required field(s): ${missing.join(", ")}. Save corrections before approving.`,
-    };
-  }
-  return { ok: true };
+  return validateCompulsoryFieldsForApproval(fields, compulsoryFields);
 }
 
-export function invoiceFieldsFromDetails(inv: {
+export function approvalFieldsFromInvoice(inv: {
   vendor?: string | null;
   total?: string | null;
   due_date?: string | null;
-}): {
-  vendor: string | null;
-  total: string | null;
-  due_date: string | null;
-} {
+  invoice_no?: string | null;
+  po_reference?: string | null;
+  invoice_date?: string | null;
+  subtotal?: string | null;
+  gst?: string | null;
+  abn?: string | null;
+  cost_centre?: string | null;
+  billing_address?: string | null;
+  line_items?: unknown[] | null;
+}) {
   return {
     vendor: inv.vendor ?? null,
     total: inv.total ?? null,
     due_date: inv.due_date ?? null,
+    invoice_no: inv.invoice_no ?? null,
+    po_reference: inv.po_reference ?? null,
+    invoice_date: inv.invoice_date ?? null,
+    subtotal: inv.subtotal ?? null,
+    gst: inv.gst ?? null,
+    abn: inv.abn ?? null,
+    cost_centre: inv.cost_centre ?? null,
+    billing_address: inv.billing_address ?? null,
+    line_items: inv.line_items ?? null,
   };
+}
+
+/** @deprecated Use approvalFieldsFromInvoice */
+export function invoiceFieldsFromDetails(inv: {
+  vendor?: string | null;
+  total?: string | null;
+  due_date?: string | null;
+}) {
+  return approvalFieldsFromInvoice(inv);
+}
+
+export type ApprovalFieldBag = Parameters<typeof approvalFieldsFromInvoice>[0];
+
+export function compulsoryFieldsForInvoice(
+  inv: Pick<Invoice, "document_type_code" | "purchase_document_type" | "sales_document_type">,
+  documentTypes: Array<{ code: string; requiredFields?: string[] }> | undefined
+): string[] {
+  if (!documentTypes?.length) return [];
+  const code = effectiveDocumentTypeCode(inv, documentTypes);
+  if (!code) return [];
+  return compulsoryFieldsForDocumentType(documentTypes, code);
+}
+
+/** Client-side approve gate — only starred compulsory fields from Rule Book. */
+export function validateInvoiceReadyForApproval(
+  inv: ApprovalFieldBag &
+    Pick<Invoice, "document_type_code" | "purchase_document_type" | "sales_document_type">,
+  documentTypes: Array<{ code: string; requiredFields?: string[] }> | undefined,
+  fieldsOverride?: ApprovalFieldBag
+): { ok: true } | { ok: false; message: string } {
+  const compulsory = compulsoryFieldsForInvoice(inv, documentTypes);
+  return validateInvoiceFieldsForApproval(
+    approvalFieldsFromInvoice(fieldsOverride ?? inv),
+    compulsory.length ? compulsory : undefined
+  );
 }
 
 function approvalFailureMessage(inv: InvoiceDetails): string {
@@ -114,6 +154,9 @@ function approvalFailureMessage(inv: InvoiceDetails): string {
     }
     if (inv.evaluation_status === "needs_review") {
       return "Approval blocked: document still requires review after processing.";
+    }
+    if (inv.evaluation_status === "pending_approval") {
+      return "Waiting for approver — use Approve when policy checks are satisfied.";
     }
     const failed = inv.validation_results?.find((row) => !row.passed && !row.skipped);
     if (failed?.message) {
@@ -215,8 +258,8 @@ export async function approveAndProcess(
   const payable =
     Boolean(invoice.vendor?.trim()) &&
     Boolean(invoice.total?.trim()) &&
-    Boolean(invoice.due_date?.trim()) &&
-    Number(invoice.total) > 0;
+    Number(invoice.total) > 0 &&
+    Boolean(invoice.due_date?.trim());
 
   let payment: PaymentApi | undefined;
   if (payable) {
@@ -224,7 +267,7 @@ export async function approveAndProcess(
     payment = payments.find((row) => row.invoice_id === invoiceId);
     if (!payment) {
       throw new Error(
-        "Invoice processed but no payment row was created. Confirm this is a supplier invoice with vendor, total, and due date."
+        "Invoice processed but no payment row was created. If this is a supplier invoice, confirm vendor, total, and due date are present."
       );
     }
   }

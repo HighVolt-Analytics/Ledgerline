@@ -165,7 +165,8 @@ function buildPartyBlock(
 export function buildPartyBlocks(
   inv: InvoiceDetails,
   absentFields: string[],
-  extractionFieldKeys: string[]
+  extractionFieldKeys: string[],
+  summaryMode = false
 ): PartyPreviewBlock[] {
   const headerCounterparty = counterpartyName(inv);
   const kind = counterpartyKind(inv);
@@ -201,7 +202,9 @@ export function buildPartyBlocks(
   const blocks: PartyPreviewBlock[] = [];
   const includeBlock = (block: PartyPreviewBlock | null) => {
     if (!block) return;
-    if (!shouldIncludeInSummary(block.key, extractionFieldKeys, absentFields, true)) return;
+    if (!shouldIncludeInSummary(block.key, extractionFieldKeys, absentFields, true, summaryMode)) {
+      return;
+    }
     blocks.push(block);
   };
 
@@ -301,11 +304,13 @@ export function shouldIncludeInSummary(
   key: string,
   _extractionFieldKeys: string[],
   absentFields: string[],
-  hasValue: boolean
+  hasValue: boolean,
+  summaryMode = false
 ): boolean {
+  if (!hasValue) return false;
+  if (summaryMode) return true;
   if (shouldSuppressField(key, absentFields)) return false;
-  if (hasValue) return true;
-  return false;
+  return true;
 }
 
 /** Whether document_text OCR excerpt should appear alongside structured summary. */
@@ -313,9 +318,14 @@ export function shouldShowDocumentTextExcerpt(
   extractionFieldKeys: string[],
   absentFields: string[],
   hasFinancialBody: boolean,
-  hasDocumentText: boolean
+  hasDocumentText: boolean,
+  summaryMode = false
 ): boolean {
-  if (!hasDocumentText || shouldSuppressField("document_text", absentFields)) return false;
+  if (!hasDocumentText) return false;
+  if (summaryMode) {
+    return !hasFinancialBody;
+  }
+  if (shouldSuppressField("document_text", absentFields)) return false;
   if (!hasFinancialBody) return true;
   return extractionFieldKeys.includes("document_text");
 }
@@ -359,10 +369,13 @@ function scalarIfPresent(
   inv: InvoiceDetails,
   key: string,
   absentFields: string[],
-  extractionFieldKeys: string[]
+  extractionFieldKeys: string[],
+  summaryMode = false
 ): string | null {
   const raw = invoiceScalarRaw(inv, key);
-  if (!shouldIncludeInSummary(key, extractionFieldKeys, absentFields, Boolean(raw))) return null;
+  if (!shouldIncludeInSummary(key, extractionFieldKeys, absentFields, Boolean(raw), summaryMode)) {
+    return null;
+  }
   return raw;
 }
 
@@ -375,11 +388,12 @@ function pushReference(
   key: string,
   value: string | null | undefined,
   absentFields: string[],
-  extractionFieldKeys: string[]
+  extractionFieldKeys: string[],
+  summaryMode = false
 ): void {
   const text = value?.trim();
   if (!text) return;
-  if (!shouldIncludeInSummary(key, extractionFieldKeys, absentFields, true)) return;
+  if (!shouldIncludeInSummary(key, extractionFieldKeys, absentFields, true, summaryMode)) return;
   refs.push({ key, label: referenceLabel(key), value: text });
 }
 
@@ -401,8 +415,14 @@ function hasDisplayValue(value: string | null | undefined): boolean {
 export function isSummaryLineDescription(description: string | null | undefined): boolean {
   const text = normalizeDescriptionKey(description);
   if (!text) return false;
-  if (/^(?:total|subtotal|grand total|gst|tax)\b/.test(text)) return true;
-  if (/\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet)\b/.test(text)) return true;
+  if (/^sub\s*total\s*:?\s*$/.test(text)) return true;
+  if (/^(?:grand\s+)?total\s*:?\s*$/.test(text)) return true;
+  if (/^(?:gst|tax)\s*:?\s*$/.test(text)) return true;
+  if (/\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet|pallet\s*:)\b/.test(text)) {
+    return true;
+  }
+  if (/\b(?:total\s*due|amount\s*due)\b/.test(text)) return true;
+  if (/^abn\s*:?\s*\d/.test(text)) return true;
   if (/^(?:customer|ship(?:ped)?(?:\s*(?:to|date|qty|ped))?|delivery\s*date|invoice\s*(?:no|number|#|date)|po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*(?:no|number|reference)?|bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number)?|payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|consignment|permit|cost\s*cent(?:er|re)|phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention)\s*:?\s*$/.test(text)) {
     return true;
   }
@@ -503,46 +523,24 @@ export function sanitizeLineItemValues(
   });
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function parseRowFromTextLine(description: string, line: string): ParsedTextLineRow | null {
   const needle = description.trim();
   if (!needle || !line.toLowerCase().includes(needle.toLowerCase())) return null;
 
-  const cols = line
-    .trim()
-    .split(/\s{2,}|\t+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (
-    cols.length >= 4 &&
-    cols[0].toLowerCase().startsWith(needle.toLowerCase().slice(0, Math.min(needle.length, 24)))
-  ) {
-    return {
-      descKey: normalizeDescriptionKey(cols[0]),
-      qty: cols[1] ?? null,
-      unitPrice: cleanMoneyToken(cols[2]),
-      amount: cleanMoneyToken(cols[3]),
-    };
+  const parsedRows = parseLineItemRowsFromDocumentText(line);
+  const descKey = normalizeDescriptionKey(needle);
+  const direct = descKey ? parsedRows.get(descKey) : null;
+  if (direct) return direct;
+
+  for (const row of parsedRows.values()) {
+    if (
+      row.descKey.startsWith(descKey.slice(0, Math.min(descKey.length, 24))) ||
+      descKey.startsWith(row.descKey.slice(0, Math.min(row.descKey.length, 24)))
+    ) {
+      return row;
+    }
   }
-
-  const escaped = escapeRegExp(needle);
-  const inline = line.match(
-    new RegExp(
-      `${escaped}\\s+(\\d+(?:\\.\\d+)?)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)`,
-      "i"
-    )
-  );
-  if (!inline) return null;
-
-  return {
-    descKey: normalizeDescriptionKey(needle),
-    qty: inline[1] ?? null,
-    unitPrice: cleanMoneyToken(inline[2]),
-    amount: cleanMoneyToken(inline[3]),
-  };
+  return null;
 }
 
 /** Fill missing qty/unit/amount on line rows from OCR text (helps already-processed invoices). */
@@ -600,8 +598,12 @@ type ParsedTextLineRow = {
 
 function parseLineItemRowsFromDocumentText(text: string): Map<string, ParsedTextLineRow> {
   const rows = new Map<string, ParsedTextLineRow>();
-  const fullRow = new RegExp(
-    `^(.{4,120}?)\\s+(\\d+(?:\\.\\d+)?)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s*$`,
+  const tailRow5 = new RegExp(
+    `(\\d+(?:\\.\\d+)?)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s*$`,
+    "i"
+  );
+  const tailRow4 = new RegExp(
+    `(\\d+(?:\\.\\d+)?)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s*$`,
     "i"
   );
 
@@ -612,50 +614,63 @@ function parseLineItemRowsFromDocumentText(text: string): Map<string, ParsedText
     }
 
     const cols = trimmed.split(/\s{2,}|\t+/).map((part) => part.trim()).filter(Boolean);
-    if (cols.length >= 4) {
+    if (cols.length >= 4 && !looksLikeMoneyToken(cols[1] ?? "")) {
       const descKey = normalizeDescriptionKey(cols[0]);
       if (!descKey || isSummaryLineDescription(descKey)) continue;
-      rows.set(descKey, {
-        descKey,
-        qty: cols[1] ?? null,
-        unitPrice: cleanMoneyToken(cols[2]),
-        amount: cleanMoneyToken(cols[3]),
-      });
+      if (cols.length >= 5) {
+        rows.set(descKey, {
+          descKey,
+          qty: cols[1] ?? null,
+          unitPrice: cleanMoneyToken(cols[2]),
+          amount: cleanMoneyToken(cols[4]),
+        });
+      } else {
+        rows.set(descKey, {
+          descKey,
+          qty: cols[1] ?? null,
+          unitPrice: cleanMoneyToken(cols[2]),
+          amount: cleanMoneyToken(cols[3]),
+        });
+      }
       continue;
     }
 
-    const match = trimmed.match(fullRow);
-    if (match) {
-      const descKey = normalizeDescriptionKey(match[1]);
+    const tail5 = trimmed.match(tailRow5);
+    if (tail5) {
+      const desc = trimmed.slice(0, trimmed.length - tail5[0].length).trim();
+      const descKey = normalizeDescriptionKey(desc);
       if (!descKey || isSummaryLineDescription(descKey)) continue;
       rows.set(descKey, {
         descKey,
-        qty: match[2] ?? null,
-        unitPrice: cleanMoneyToken(match[3]),
-        amount: cleanMoneyToken(match[4]),
+        qty: tail5[1] ?? null,
+        unitPrice: cleanMoneyToken(tail5[2]),
+        amount: cleanMoneyToken(tail5[4]),
       });
       continue;
     }
 
-    const tail = trimmed.match(
-      new RegExp(
-        `(\\d+(?:\\.\\d+)?)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s+${OPTIONAL_CURRENCY_MONEY_PREFIX}([\\d,]+\\.?\\d*)\\s*$`,
-        "i"
-      )
-    );
-    if (!tail) continue;
-    const desc = trimmed.slice(0, trimmed.length - tail[0].length).trim();
-    if (desc.length < 4 || isSummaryLineDescription(desc)) continue;
-    const descKey = normalizeDescriptionKey(desc);
-    rows.set(descKey, {
-      descKey,
-      qty: tail[1] ?? null,
-      unitPrice: cleanMoneyToken(tail[2]),
-      amount: cleanMoneyToken(tail[3]),
-    });
+    const tail4 = trimmed.match(tailRow4);
+    if (tail4) {
+      const desc = trimmed.slice(0, trimmed.length - tail4[0].length).trim();
+      const descKey = normalizeDescriptionKey(desc);
+      if (!descKey || isSummaryLineDescription(descKey)) continue;
+      rows.set(descKey, {
+        descKey,
+        qty: tail4[1] ?? null,
+        unitPrice: cleanMoneyToken(tail4[2]),
+        amount: cleanMoneyToken(tail4[3]),
+      });
+    }
   }
 
   return rows;
+}
+
+function looksLikeMoneyToken(raw: string): boolean {
+  const cleaned = raw.trim();
+  if (!cleaned) return false;
+  if (new RegExp(`^${OPTIONAL_CURRENCY_MONEY_PREFIX}[\\d,]+\\.?\\d*$`, "i").test(cleaned)) return true;
+  return /^[\d,]+\.\d{2}$/.test(cleaned);
 }
 
 function cleanMoneyToken(raw: string | null | undefined): string | null {
@@ -664,8 +679,23 @@ function cleanMoneyToken(raw: string | null | undefined): string | null {
   return cleaned || null;
 }
 
-export function enrichLineItemsForPreview(items: LineItem[]): PreviewLineItem[] {
+export function enrichLineItemsForPreview(
+  items: LineItem[],
+  options?: { exactOnly?: boolean }
+): PreviewLineItem[] {
+  const exactOnly = options?.exactOnly ?? false;
   return items.map((line) => {
+    if (exactOnly) {
+      const displayQty = line.qty != null && String(line.qty).trim() ? String(line.qty).trim() : null;
+      const displayUnitPrice =
+        line.unit_price != null && String(line.unit_price).trim()
+          ? String(line.unit_price).trim()
+          : null;
+      const displayAmount =
+        line.amount != null && String(line.amount).trim() ? String(line.amount).trim() : null;
+      return { ...line, displayQty, displayUnitPrice, displayAmount };
+    }
+
     const qty = parseNumeric(line.qty);
     const unitPrice = parseNumeric(line.unit_price);
     let amount = parseNumeric(line.amount);
@@ -783,33 +813,37 @@ export function buildDocumentContentProfile(
     extractionFieldKeys?: string[];
     sourceKind: string;
     lineItems?: LineItem[];
+    /** Summary tab: show all extracted values, no derived fields or DT field gating. */
+    summaryMode?: boolean;
   }
 ): DocumentContentProfile {
-  const absentFields = options.absentFields ?? [];
+  const summaryMode = options.summaryMode ?? false;
+  const absentFields = summaryMode ? [] : (options.absentFields ?? []);
   const extractionFieldKeys = options.extractionFieldKeys ?? [];
 
   const counterpartyRaw = counterpartyName(inv);
   const counterparty =
     counterpartyRaw && counterpartyRaw !== "—"
-      ? shouldIncludeInSummary("vendor", extractionFieldKeys, absentFields, true)
+      ? shouldIncludeInSummary("vendor", extractionFieldKeys, absentFields, true, summaryMode)
         ? counterpartyRaw
         : null
-      : scalarIfPresent(inv, "vendor", absentFields, extractionFieldKeys);
-  const abn = scalarIfPresent(inv, "abn", absentFields, extractionFieldKeys);
-  const invoiceNo = scalarIfPresent(inv, "invoice_no", absentFields, extractionFieldKeys);
+      : scalarIfPresent(inv, "vendor", absentFields, extractionFieldKeys, summaryMode);
+  const abn = scalarIfPresent(inv, "abn", absentFields, extractionFieldKeys, summaryMode);
+  const invoiceNo = scalarIfPresent(inv, "invoice_no", absentFields, extractionFieldKeys, summaryMode);
 
-  const headingRaw =
-    scalarIfPresent(inv, "document_heading", absentFields, extractionFieldKeys) ??
-    headingFromDocumentText(inv.document_text);
+  const headingRaw = summaryMode
+    ? scalarIfPresent(inv, "document_heading", absentFields, extractionFieldKeys, summaryMode)
+    : scalarIfPresent(inv, "document_heading", absentFields, extractionFieldKeys, summaryMode) ??
+      headingFromDocumentText(inv.document_text);
   const heading = headingRaw || options.documentTypeLabel?.trim() || null;
 
   const dates: DocumentContentProfile["dates"] = {};
-  const issued = scalarIfPresent(inv, "invoice_date", absentFields, extractionFieldKeys);
-  const due = scalarIfPresent(inv, "due_date", absentFields, extractionFieldKeys);
+  const issued = scalarIfPresent(inv, "invoice_date", absentFields, extractionFieldKeys, summaryMode);
+  const due = scalarIfPresent(inv, "due_date", absentFields, extractionFieldKeys, summaryMode);
   if (issued) dates.issued = issued;
   if (due) dates.due = due;
 
-  const parties = buildPartyBlocks(inv, absentFields, extractionFieldKeys);
+  const parties = buildPartyBlocks(inv, absentFields, extractionFieldKeys, summaryMode);
   const referenceDetails: ContentReference[] = [];
 
   pushReference(
@@ -817,21 +851,24 @@ export function buildDocumentContentProfile(
     "po_reference",
     inv.po_reference,
     absentFields,
-    extractionFieldKeys
+    extractionFieldKeys,
+    summaryMode
   );
   pushReference(
     referenceDetails,
     "so_reference",
     inv.so_reference,
     absentFields,
-    extractionFieldKeys
+    extractionFieldKeys,
+    summaryMode
   );
   pushReference(
     referenceDetails,
     "cost_centre",
     inv.cost_centre,
     absentFields,
-    extractionFieldKeys
+    extractionFieldKeys,
+    summaryMode
   );
   const billingAddress =
     invoiceScalarRaw(inv, "billing_address") ?? inv.billing_address ?? null;
@@ -841,7 +878,8 @@ export function buildDocumentContentProfile(
       "billing_address",
       billingAddress,
       absentFields,
-      extractionFieldKeys
+      extractionFieldKeys,
+      summaryMode
     );
   }
   pushReference(
@@ -849,21 +887,24 @@ export function buildDocumentContentProfile(
     "email_subject",
     inv.email_subject,
     absentFields,
-    extractionFieldKeys
+    extractionFieldKeys,
+    summaryMode
   );
   pushReference(
     referenceDetails,
     "account_code",
     inv.account_code,
     absentFields,
-    extractionFieldKeys
+    extractionFieldKeys,
+    summaryMode
   );
   pushReference(
     referenceDetails,
     "account_name",
     inv.account_name,
     absentFields,
-    extractionFieldKeys
+    extractionFieldKeys,
+    summaryMode
   );
 
   if (
@@ -871,7 +912,8 @@ export function buildDocumentContentProfile(
       "attachment_name",
       extractionFieldKeys,
       absentFields,
-      Boolean(inv.email_attachment_name?.trim())
+      Boolean(inv.email_attachment_name?.trim()),
+      summaryMode
     ) &&
     inv.email_attachment_name?.trim()
   ) {
@@ -890,24 +932,28 @@ export function buildDocumentContentProfile(
     const value = String(raw ?? "").trim();
     if (!value) continue;
     if (shouldSkipExtractedReference(token, value, headerCounterparty, extracted)) continue;
-    if (!shouldIncludeInSummary(token, extractionFieldKeys, absentFields, true)) continue;
+    if (!shouldIncludeInSummary(token, extractionFieldKeys, absentFields, true, summaryMode)) {
+      continue;
+    }
     if (referenceDetails.some((row) => row.key === token)) continue;
     referenceDetails.push({ key: token, label: referenceLabel(token), value });
   }
 
-  if (extractionFieldKeys.length) {
+  if (extractionFieldKeys.length && !summaryMode) {
     const order = new Map(extractionFieldKeys.map((key, index) => [key, index]));
     referenceDetails.sort(
       (a, b) => (order.get(a.key) ?? 999) - (order.get(b.key) ?? 999)
     );
+  } else {
+    referenceDetails.sort((a, b) => a.label.localeCompare(b.label));
   }
 
   const displayAbn = headerAbnVisible(abn, parties);
 
   const totals: DocumentContentProfile["totals"] = {};
-  const subtotal = scalarIfPresent(inv, "subtotal", absentFields, extractionFieldKeys);
-  const tax = scalarIfPresent(inv, "gst", absentFields, extractionFieldKeys);
-  const total = scalarIfPresent(inv, "total", absentFields, extractionFieldKeys);
+  const subtotal = scalarIfPresent(inv, "subtotal", absentFields, extractionFieldKeys, summaryMode);
+  const tax = scalarIfPresent(inv, "gst", absentFields, extractionFieldKeys, summaryMode);
+  const total = scalarIfPresent(inv, "total", absentFields, extractionFieldKeys, summaryMode);
   if (subtotal) totals.subtotal = subtotal;
   if (tax) totals.tax = tax;
   if (total) totals.total = total;
@@ -919,7 +965,7 @@ export function buildDocumentContentProfile(
     .filter(Boolean);
   if (
     bankParts.length &&
-    shouldIncludeInSummary("bank_details", extractionFieldKeys, absentFields, true)
+    shouldIncludeInSummary("bank_details", extractionFieldKeys, absentFields, true, summaryMode)
   ) {
     bankDetails = bankParts.join(" / ");
   }
@@ -929,24 +975,25 @@ export function buildDocumentContentProfile(
     buildLineItemHeaderValues(inv)
   );
   const sanitizedLineItems = sanitizeLineItemValues(rawLineItems, total);
-  const sourceLineItems = enrichLineItemsFromDocumentText(
-    sanitizedLineItems,
-    inv.document_text
-  );
+  const sourceLineItems = summaryMode
+    ? sanitizedLineItems
+    : enrichLineItemsFromDocumentText(sanitizedLineItems, inv.document_text);
   const visibleLineItems = shouldSuppressField("line_items", absentFields)
     ? []
-    : enrichLineItemsForPreview(sourceLineItems);
+    : enrichLineItemsForPreview(sourceLineItems, { exactOnly: summaryMode });
   const lineItemColumns = lineItemColumnsForPreview(visibleLineItems);
 
-  const derivedLineSum = !subtotal ? sumLineAmounts(visibleLineItems) : null;
-  if (derivedLineSum) {
-    const showDerivedSubtotal =
-      visibleLineItems.length > 1 || anyLineHasQtyOrUnitPrice(visibleLineItems);
-    if (showDerivedSubtotal) {
-      totals.subtotal = derivedLineSum;
-    }
-    if (!totals.total && !tax) {
-      totals.total = derivedLineSum;
+  if (!summaryMode) {
+    const derivedLineSum = !subtotal ? sumLineAmounts(visibleLineItems) : null;
+    if (derivedLineSum) {
+      const showDerivedSubtotal =
+        visibleLineItems.length > 1 || anyLineHasQtyOrUnitPrice(visibleLineItems);
+      if (showDerivedSubtotal) {
+        totals.subtotal = derivedLineSum;
+      }
+      if (!totals.total && !tax) {
+        totals.total = derivedLineSum;
+      }
     }
   }
 
@@ -973,9 +1020,13 @@ export function buildDocumentContentProfile(
     extractionFieldKeys,
     absentFields,
     contentHasFinancialBody(profileSoFar),
-    Boolean(inv.document_text?.trim())
+    Boolean(inv.document_text?.trim()),
+    summaryMode
   );
-  const textExcerpt = mayShowTextExcerpt ? excerptDocumentText(inv.document_text) : null;
+  const excerptMax = summaryMode ? 1200 : 320;
+  const textExcerpt = mayShowTextExcerpt
+    ? excerptDocumentText(inv.document_text, excerptMax)
+    : null;
 
   return { ...profileSoFar, textExcerpt };
 }

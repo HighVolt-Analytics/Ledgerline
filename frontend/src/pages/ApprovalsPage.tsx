@@ -15,8 +15,15 @@ import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { documentDisplayRef, money } from "@/lib/format";
 import { fetchApprovalsBoard } from "@/lib/invoices";
-import { approveAndProcess, invoiceCanAttemptReprocess, invoiceFieldsFromDetails, reprocessAndWatch, validateInvoiceFieldsForApproval, watchProcessingUntilIdle } from "@/lib/invoiceActions";
-import { invoiceCanPublishToLedger } from "@/lib/invoice";
+import {
+  approveAndProcess,
+  invoiceCanAttemptReprocess,
+  reprocessAndWatch,
+  validateInvoiceReadyForApproval,
+  watchProcessingUntilIdle,
+} from "@/lib/invoiceActions";
+import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
+import { invoiceCanPublishToLedger, evaluationReviewTooltip } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import {
   APPROVABLE_STATUSES,
@@ -63,6 +70,7 @@ function docNumber(inv: Invoice): string {
 
 export function ApprovalsPage() {
   const queryClient = useQueryClient();
+  const { data: ruleBook } = useRuleBookConfig();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -222,7 +230,7 @@ export function ApprovalsPage() {
       setToast("Upload a PDF before approving this invoice.");
       return;
     }
-    const fieldCheck = validateInvoiceFieldsForApproval(invoiceFieldsFromDetails(inv));
+    const fieldCheck = validateInvoiceReadyForApproval(inv, ruleBook?.documentTypes);
     if (!fieldCheck.ok) {
       setToast(fieldCheck.message);
       return;
@@ -559,8 +567,8 @@ export function ApprovalsPage() {
                       {inv.evaluation_status === "needs_review" && (
                         <span
                           className="approvals-kanban-card__review-pill"
-                          title="Needs review"
-                          aria-label="Needs review"
+                          title={evaluationReviewTooltip(inv)}
+                          aria-label={evaluationReviewTooltip(inv)}
                           data-testid={`needs-review-${inv.id}`}
                         >
                           <AlertTriangle aria-hidden />
@@ -572,15 +580,13 @@ export function ApprovalsPage() {
                       <div className="mt-1.5">
                         <EvaluationStatusBadge
                           status={inv.evaluation_status}
-                          reviewReasons={
-                            isNeedsReviewInvoice(inv) ? ["Flagged for manual review"] : undefined
-                          }
+                          invoice={inv}
                         />
                       </div>
                     ) : null}
                     {col.key === "pending" && inv.evaluation_status ? (
                       <div className="mt-1.5">
-                        <EvaluationStatusBadge status={inv.evaluation_status} />
+                        <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
                       </div>
                     ) : null}
                     <div

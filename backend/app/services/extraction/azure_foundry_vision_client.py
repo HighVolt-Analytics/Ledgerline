@@ -15,9 +15,10 @@ from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
 from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
 from app.services.extraction.party_field_service import PARTY_LLM_RULES
+from app.services.extraction.extraction_field_values import non_canonical_extraction_keys
 from app.services.extraction.llm_document_service import (
-    _custom_keys_for_dt,
     _normalize_llm_raw,
+    _selected_keys_for_dt,
     build_structure_extract_prompts,
 )
 from app.services.tenant.tenant_org_context import OrgContext
@@ -244,14 +245,15 @@ async def extract_fields_azure_foundry(
 ) -> LlmDocumentResult | None:
     settings = get_settings()
     dt_token = confirmed_dt.strip().upper()
-    custom_keys = _custom_keys_for_dt(document_types, dt_token)
+    selected_keys = _selected_keys_for_dt(document_types, dt_token)
+    custom_keys = non_canonical_extraction_keys(selected_keys)
     system, user_text = build_structure_extract_prompts(
         ocr=ocr,
         org=org,
         document_types=document_types,
         confirmed_dt=dt_token,
         few_shots=few_shots,
-        custom_keys=custom_keys,
+        selected_keys=selected_keys,
         sparse=ocr.sparse,
     )
 
@@ -269,7 +271,11 @@ async def extract_fields_azure_foundry(
     if raw is None:
         return None
     try:
-        normalized = _normalize_llm_raw(raw, custom_keys=custom_keys)
+        normalized = _normalize_llm_raw(
+            raw,
+            selected_keys=selected_keys,
+            custom_keys=custom_keys,
+        )
         normalized["suggested_dt"] = dt_token
         result = LlmDocumentResult.model_validate(normalized)
         result.raw = raw

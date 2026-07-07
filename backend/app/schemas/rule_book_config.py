@@ -607,10 +607,6 @@ def _merge_document_type_fields(data: dict[str, Any]) -> dict[str, Any]:
         updates: dict[str, Any] = {}
         if row.get("min_route_confidence") is None and row.get("minRouteConfidence") is None:
             updates["min_route_confidence"] = 0.65
-        extraction = row.get("extraction_fields") or row.get("extractionFields") or []
-        required = row.get("required_fields") or row.get("requiredFields") or []
-        if isinstance(extraction, list) and isinstance(required, list) and not required and extraction:
-            updates["required_fields"] = list(extraction)
         for legacy_key in ("extraction", "checks", "match", "approval", "accounting", "special"):
             if row.get(legacy_key):
                 updates[legacy_key] = []
@@ -665,8 +661,12 @@ def _sync_match_policy_with_playbook(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(types, list):
         return data
 
-    purchase_match_modes = frozenset({"three_way_po_grn", "two_way_po_ses"})
-    sales_match_modes = frozenset({"three_way_so_dn", "two_way_dn_invoice"})
+    purchase_match_modes = frozenset(
+        {"three_way_po_grn", "two_way_po_ses", "two_way_grn_invoice"}
+    )
+    sales_match_modes = frozenset(
+        {"three_way_so_dn", "two_way_so_invoice", "two_way_dn_invoice"}
+    )
     sales_profiles = frozenset({"ar_goods", "ar_goods_2way"})
     purchase_profiles = frozenset({"po_goods", "po_services"})
 

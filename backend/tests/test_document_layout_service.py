@@ -163,3 +163,29 @@ def test_extract_line_items_from_table_with_unit_price() -> None:
     assert items[0].qty == Decimal("10")
     assert items[0].unit_price == Decimal("50.00")
     assert items[0].amount == Decimal("500.00")
+
+
+def test_extract_line_items_skips_tables_without_headers() -> None:
+    from app.services.extraction.layout_field_extractor import extract_line_items_from_tables
+
+    layout = DocumentLayoutResult(
+        tables=(
+            LayoutTable(
+                page_index=0,
+                row_count=2,
+                column_count=4,
+                cells=(
+                    LayoutTableCell("Catering package", 0, 0),
+                    LayoutTableCell("10", 0, 1),
+                    LayoutTableCell("50.00", 0, 2),
+                    LayoutTableCell("500.00", 0, 3),
+                    LayoutTableCell("Paper", 1, 0),
+                    LayoutTableCell("2", 1, 1),
+                    LayoutTableCell("10.00", 1, 2),
+                    LayoutTableCell("20.00", 1, 3),
+                ),
+            ),
+        )
+    )
+    items = extract_line_items_from_tables(layout)
+    assert items == []

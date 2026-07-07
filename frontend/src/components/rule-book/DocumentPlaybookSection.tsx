@@ -1,15 +1,16 @@
 import {
   APPROVAL_MODE_OPTIONS,
-  PLAYBOOK_PROFILE_OPTIONS,
+  applyPlaybookChange,
   approvalModeLabel,
   effectiveApprovalPolicy,
   effectiveMatchPolicy,
   effectivePlaybookProfile,
+  isProfilePresetMatchRouteIncompatible,
   matchModeLabel,
-  matchModeOptionsForRoute,
-  playbookProfileLabel,
+  matchModeOptionsForEditor,
   playbookPresetForProfile,
-  playbookProfilesForRoute,
+  playbookProfileLabel,
+  playbookProfileOptionsForEditor,
   type ApprovalMode,
   type MatchMode,
   type PlaybookProfile,
@@ -41,37 +42,33 @@ export function PlaybookDetailSection({ docType }: { docType: DocumentTypeDefini
 
 export function PlaybookPolicyEditor({
   draft,
+  documentTypes,
   onChange,
   disabled,
 }: {
   draft: DocumentTypeDefinition;
+  documentTypes: DocumentTypeDefinition[];
   onChange: (next: DocumentTypeDefinition) => void;
   disabled?: boolean;
 }) {
   const profile = effectivePlaybookProfile(draft);
   const match = effectiveMatchPolicy(draft);
   const approval = effectiveApprovalPolicy(draft);
-  const profileOptions = PLAYBOOK_PROFILE_OPTIONS.filter((row) =>
-    playbookProfilesForRoute(draft.routeTarget).includes(row.value)
-  );
-  const matchOptions = matchModeOptionsForRoute(draft.routeTarget);
+  const profileOptions = playbookProfileOptionsForEditor(draft);
+  const matchOptions = matchModeOptionsForEditor(draft);
+  const presetMatch = playbookPresetForProfile(profile).matchMode;
+  const matchDiffersFromPreset = match.mode !== presetMatch;
+  const presetRouteIncompatible = isProfilePresetMatchRouteIncompatible(draft);
 
   return (
     <div className="space-y-3">
       <div className="space-y-1">
         <label className="text-[11px] font-medium text-muted-foreground">Playbook profile</label>
         <select
-          value={draft.playbookProfile || profile}
+          value={profile}
           disabled={disabled}
           onChange={(e) => {
-            const profile = e.target.value as PlaybookProfile;
-            const preset = playbookPresetForProfile(profile);
-            onChange({
-              ...draft,
-              playbookProfile: profile,
-              matchPolicy: { mode: preset.matchMode },
-              approvalPolicy: { mode: preset.approvalMode },
-            });
+            onChange(applyPlaybookChange(draft, e.target.value as PlaybookProfile, documentTypes));
           }}
           className="h-9 w-full rounded-md border border-border bg-field px-2 text-sm disabled:opacity-50"
         >
@@ -85,13 +82,19 @@ export function PlaybookPolicyEditor({
           Preset for match mode, approval, and supporting-document enforcement. Override below if
           needed.
         </p>
+        {presetRouteIncompatible ? (
+          <p className="text-[11px] text-amber-600 dark:text-amber-500">
+            This profile&apos;s default match mode is not valid on {draft.routeTarget}. Match was
+            clamped to {matchModeLabel(match.mode)}.
+          </p>
+        ) : null}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <label className="text-[11px] font-medium text-muted-foreground">Match mode</label>
           <select
-            value={draft.matchPolicy?.mode ?? match.mode}
+            value={match.mode}
             disabled={disabled}
             onChange={(e) =>
               onChange({
@@ -107,12 +110,17 @@ export function PlaybookPolicyEditor({
               </option>
             ))}
           </select>
+          {matchDiffersFromPreset ? (
+            <p className="text-[11px] text-muted-foreground">
+              Override: profile preset is {matchModeLabel(presetMatch)}.
+            </p>
+          ) : null}
         </div>
 
         <div className="space-y-1">
           <label className="text-[11px] font-medium text-muted-foreground">Approval mode</label>
           <select
-            value={draft.approvalPolicy?.mode ?? approval.mode}
+            value={approval.mode}
             disabled={disabled}
             onChange={(e) =>
               onChange({

@@ -25,8 +25,10 @@ import {
 import type { ApprovalMode, MatchMode, PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import {
   inferPlaybookProfileFromDefinition,
-  MATCH_MODE_OPTIONS,
+  normalizeApprovalMode,
+  normalizeMatchMode,
   playbookPresetForProfile,
+  reconcileDocumentTypeDraft,
 } from "@/lib/documentPlaybookConfig";
 import { normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
 import {
@@ -403,14 +405,6 @@ function mapSalesBundleRole(raw: Record<string, unknown>): SalesBundleRole {
   return (token === "so" || token === "dn" ? token : "") as SalesBundleRole;
 }
 
-function normalizeMatchMode(mode: string | undefined, fallback: MatchMode): MatchMode {
-  const token = (mode || "").trim().toLowerCase();
-  if (MATCH_MODE_OPTIONS.some((row) => row.value === token)) {
-    return token as MatchMode;
-  }
-  return fallback;
-}
-
 function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProfile {
   const explicit = String(raw.playbook_profile ?? raw.playbookProfile ?? "").trim().toLowerCase();
   if (explicit) return explicit as PlaybookProfile;
@@ -463,119 +457,125 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
     String(raw.playbook_profile ?? raw.playbookProfile ?? playbookProfile),
     String(raw.posting ?? "No")
   );
-  return hydrateRecognitionFromClassifier({
-    code: String(raw.code),
-    title: String(raw.title),
-    shortTitle: String(raw.short_title ?? raw.shortTitle ?? ""),
-    klass,
-    posting,
-    recognitionMode:
-      String(raw.recognition_mode ?? raw.recognitionMode ?? "signals").toLowerCase() === "prompt"
-        ? "prompt"
-        : "signals",
-    recognitionSignals: (() => {
-      const rawSignals = raw.recognition_signals ?? raw.recognitionSignals;
-      return Array.isArray(rawSignals)
-        ? rawSignals.map((item: unknown) => String(item))
-        : [];
-    })(),
-    llmPrompt: String(
-      raw.llm_prompt ??
-        raw.llmPrompt ??
-        raw.llm_hint ??
-        raw.llmHint ??
-        raw.one_line ??
-        raw.oneLine ??
-        ""
-    ),
-    routeTarget: String(raw.route_target ?? raw.routeTarget ?? ROUTE_TARGETS[3]),
-    enabled: raw.enabled !== false,
-    classifier: mapClassifier(raw.classifier as Record<string, unknown> | undefined),
-    requiredFields,
-    absentFields: (raw.absent_fields ?? raw.absentFields ?? []) as string[],
-    minRouteConfidence: Number(raw.min_route_confidence ?? raw.minRouteConfidence ?? 0.65),
-    validationProfile: String(raw.validation_profile ?? raw.validationProfile ?? ""),
-    playbookProfile: String(raw.playbook_profile ?? raw.playbookProfile ?? "") || playbookProfile,
-    matchPolicy: {
-      mode: normalizeMatchMode(rawMatchMode ? String(rawMatchMode) : undefined, preset.matchMode),
-    },
-    approvalPolicy: {
-      mode: (rawApprovalMode ? String(rawApprovalMode) : preset.approvalMode) as ApprovalMode,
-    },
-    validationRules: mergeConfigurableRules(
-      String(raw.code),
-      String(raw.validation_profile ?? raw.validationProfile ?? ""),
-      normalizeValidationRules(
-        (raw.validation_rules ?? raw.validationRules ?? []) as ValidationRuleConfig[]
-      )
-    ),
-    customValidationRules: normalizeCustomValidationRules(
-      (raw.custom_validation_rules ?? raw.customValidationRules ?? []) as CustomValidationRule[]
-    ),
-    extractionFields,
-    extraction: [],
-    checks: [],
-    match: [],
-    approval: [],
-    accounting: [],
-    special: [],
-    bundleMandatory: normalizeDtCodeList(
-      (raw.bundle_mandatory ?? raw.bundleMandatory ?? []) as string[]
-    ),
-    bundleConditional: (raw.bundle_conditional ?? raw.bundleConditional ?? []) as string[],
-    purchaseBundleRole: mapPurchaseBundleRole(raw),
-    salesBundleRole: mapSalesBundleRole(raw),
-    sampleAnalysis: mapSampleAnalysis(raw),
-    matrixTemplateCode: String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? ""),
-    postTo: mapDocumentTypePostTo(
-      (raw.post_to ?? raw.postTo) as Record<string, unknown> | undefined
-    ),
-  });
+  return reconcileDocumentTypeDraft(
+    hydrateRecognitionFromClassifier({
+      code: String(raw.code),
+      title: String(raw.title),
+      shortTitle: String(raw.short_title ?? raw.shortTitle ?? ""),
+      klass,
+      posting,
+      recognitionMode:
+        String(raw.recognition_mode ?? raw.recognitionMode ?? "signals").toLowerCase() === "prompt"
+          ? "prompt"
+          : "signals",
+      recognitionSignals: (() => {
+        const rawSignals = raw.recognition_signals ?? raw.recognitionSignals;
+        return Array.isArray(rawSignals)
+          ? rawSignals.map((item: unknown) => String(item))
+          : [];
+      })(),
+      llmPrompt: String(
+        raw.llm_prompt ??
+          raw.llmPrompt ??
+          raw.llm_hint ??
+          raw.llmHint ??
+          raw.one_line ??
+          raw.oneLine ??
+          ""
+      ),
+      routeTarget: String(raw.route_target ?? raw.routeTarget ?? ROUTE_TARGETS[3]),
+      enabled: raw.enabled !== false,
+      classifier: mapClassifier(raw.classifier as Record<string, unknown> | undefined),
+      requiredFields,
+      absentFields: (raw.absent_fields ?? raw.absentFields ?? []) as string[],
+      minRouteConfidence: Number(raw.min_route_confidence ?? raw.minRouteConfidence ?? 0.65),
+      validationProfile: String(raw.validation_profile ?? raw.validationProfile ?? ""),
+      playbookProfile: String(raw.playbook_profile ?? raw.playbookProfile ?? "") || playbookProfile,
+      matchPolicy: {
+        mode: normalizeMatchMode(rawMatchMode ? String(rawMatchMode) : undefined, preset.matchMode),
+      },
+      approvalPolicy: {
+        mode: normalizeApprovalMode(
+          rawApprovalMode ? String(rawApprovalMode) : undefined,
+          preset.approvalMode
+        ),
+      },
+      validationRules: mergeConfigurableRules(
+        String(raw.code),
+        String(raw.validation_profile ?? raw.validationProfile ?? ""),
+        normalizeValidationRules(
+          (raw.validation_rules ?? raw.validationRules ?? []) as ValidationRuleConfig[]
+        )
+      ),
+      customValidationRules: normalizeCustomValidationRules(
+        (raw.custom_validation_rules ?? raw.customValidationRules ?? []) as CustomValidationRule[]
+      ),
+      extractionFields,
+      extraction: [],
+      checks: [],
+      match: [],
+      approval: [],
+      accounting: [],
+      special: [],
+      bundleMandatory: normalizeDtCodeList(
+        (raw.bundle_mandatory ?? raw.bundleMandatory ?? []) as string[]
+      ),
+      bundleConditional: (raw.bundle_conditional ?? raw.bundleConditional ?? []) as string[],
+      purchaseBundleRole: mapPurchaseBundleRole(raw),
+      salesBundleRole: mapSalesBundleRole(raw),
+      sampleAnalysis: mapSampleAnalysis(raw),
+      matrixTemplateCode: String(raw.matrix_template_code ?? raw.matrixTemplateCode ?? ""),
+      postTo: mapDocumentTypePostTo(
+        (raw.post_to ?? raw.postTo) as Record<string, unknown> | undefined
+      ),
+    })
+  );
 }
 
 function documentTypeToApi(
   docType: DocumentTypeDefinition
 ): RuleBookRulesPayload["document_types"][number] {
+  const reconciled = reconcileDocumentTypeDraft(docType);
   const extractionFields = ensureExtractionSuperset(
-    docType.requiredFields,
-    docType.extractionFields
+    reconciled.requiredFields,
+    reconciled.extractionFields
   );
-  const requiredFields = normalizeCompulsoryFields(docType.requiredFields, extractionFields);
-  const identity = normalizeDocumentTypeIdentity(docType);
+  const requiredFields = normalizeCompulsoryFields(reconciled.requiredFields, extractionFields);
+  const identity = normalizeDocumentTypeIdentity(reconciled);
   return {
-    code: docType.code,
-    title: docType.title,
-    short_title: docType.shortTitle,
+    code: reconciled.code,
+    title: reconciled.title,
+    short_title: reconciled.shortTitle,
     klass: identity.klass,
     posting: identity.posting,
-    recognition_mode: docType.recognitionMode,
-    recognition_signals: docType.recognitionSignals,
-    llm_prompt: docType.llmPrompt,
-    route_target: docType.routeTarget,
-    enabled: docType.enabled,
+    recognition_mode: reconciled.recognitionMode,
+    recognition_signals: reconciled.recognitionSignals,
+    llm_prompt: reconciled.llmPrompt,
+    route_target: reconciled.routeTarget,
+    enabled: reconciled.enabled,
     classifier: {
-      enabled: docType.classifier.enabled,
-      priority: docType.classifier.priority,
-      confidence: docType.classifier.confidence,
+      enabled: reconciled.classifier.enabled,
+      priority: reconciled.classifier.priority,
+      confidence: reconciled.classifier.confidence,
       root: conditionGroupToApi(
-        docType.classifier.root as unknown as RuleConditionGroup
+        reconciled.classifier.root as unknown as RuleConditionGroup
       ),
     },
     required_fields: requiredFields,
-    absent_fields: docType.absentFields,
-    ...(docType.minRouteConfidence != null
-      ? { min_route_confidence: docType.minRouteConfidence }
+    absent_fields: reconciled.absentFields,
+    ...(reconciled.minRouteConfidence != null
+      ? { min_route_confidence: reconciled.minRouteConfidence }
       : {}),
-    validation_profile: docType.validationProfile || undefined,
-    playbook_profile: docType.playbookProfile || undefined,
-    match_policy: { mode: docType.matchPolicy.mode },
-    approval_policy: { mode: docType.approvalPolicy.mode },
-    validation_rules: docType.validationRules.map((row) => ({
+    validation_profile: reconciled.validationProfile || undefined,
+    playbook_profile: reconciled.playbookProfile || undefined,
+    match_policy: { mode: reconciled.matchPolicy.mode },
+    approval_policy: { mode: reconciled.approvalPolicy.mode },
+    validation_rules: reconciled.validationRules.map((row) => ({
       code: row.code,
       enabled: row.enabled,
       severity: row.severity,
     })),
-    custom_validation_rules: docType.customValidationRules.map((row) => ({
+    custom_validation_rules: reconciled.customValidationRules.map((row) => ({
       id: row.id,
       name: row.name,
       field: row.field,
@@ -591,29 +591,29 @@ function documentTypeToApi(
     approval: [],
     accounting: [],
     special: [],
-    bundle_mandatory: normalizeDtCodeList(docType.bundleMandatory),
-    bundle_conditional: docType.bundleConditional,
-    ...(docType.purchaseBundleRole
-      ? { purchase_bundle_role: docType.purchaseBundleRole }
+    bundle_mandatory: normalizeDtCodeList(reconciled.bundleMandatory),
+    bundle_conditional: reconciled.bundleConditional,
+    ...(reconciled.purchaseBundleRole
+      ? { purchase_bundle_role: reconciled.purchaseBundleRole }
       : {}),
-    ...(docType.salesBundleRole ? { sales_bundle_role: docType.salesBundleRole } : {}),
-    ...(docType.matrixTemplateCode
-      ? { matrix_template_code: docType.matrixTemplateCode }
+    ...(reconciled.salesBundleRole ? { sales_bundle_role: reconciled.salesBundleRole } : {}),
+    ...(reconciled.matrixTemplateCode
+      ? { matrix_template_code: reconciled.matrixTemplateCode }
       : {}),
-    ...(docType.sampleAnalysis
+    ...(reconciled.sampleAnalysis
       ? {
           sample_analysis: {
-            analyzed_at: docType.sampleAnalysis.analyzedAt,
-            filenames: docType.sampleAnalysis.filenames,
-            file_count: docType.sampleAnalysis.fileCount,
-            ...(docType.sampleAnalysis.appliedAt
-              ? { applied_at: docType.sampleAnalysis.appliedAt }
+            analyzed_at: reconciled.sampleAnalysis.analyzedAt,
+            filenames: reconciled.sampleAnalysis.filenames,
+            file_count: reconciled.sampleAnalysis.fileCount,
+            ...(reconciled.sampleAnalysis.appliedAt
+              ? { applied_at: reconciled.sampleAnalysis.appliedAt }
               : {}),
-            recognition_signals: docType.sampleAnalysis.recognitionSignals,
+            recognition_signals: reconciled.sampleAnalysis.recognitionSignals,
           },
         }
       : {}),
-    post_to: documentTypePostToToApi(docType.postTo),
+    post_to: documentTypePostToToApi(reconciled.postTo),
   };
 }
 
