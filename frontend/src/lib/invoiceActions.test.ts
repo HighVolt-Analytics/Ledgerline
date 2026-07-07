@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import {
   compulsoryFieldsForInvoice,
   validateInvoiceFieldsForApproval,
@@ -10,7 +11,7 @@ const documentTypes = [
     code: "DT-08",
     requiredFields: ["vendor", "total"],
   },
-];
+] as unknown as DocumentTypeDefinition[];
 
 describe("validateInvoiceFieldsForApproval", () => {
   it("allows approve when no compulsory fields are configured", () => {

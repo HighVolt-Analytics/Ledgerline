@@ -22,7 +22,7 @@ import {
   normalizeDocumentTypeIdentity,
   normalizeDocumentTypeKlass,
 } from "@/lib/documentTypeKlass";
-import type { ApprovalMode, MatchMode, PlaybookProfile } from "@/lib/documentPlaybookConfig";
+import type { PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import {
   inferPlaybookProfileFromDefinition,
   normalizeApprovalMode,

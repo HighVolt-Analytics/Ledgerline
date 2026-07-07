@@ -77,7 +77,6 @@ import {
   isPresetExtractionFieldKey,
   normalizeExtractionFieldKeys,
 } from "@/lib/documentExtractionFields";
-import { compulsoryFieldsForDocumentType } from "@/lib/documentCompulsoryFields";
 import {
   processingOverridesPatchFromDraft,
   processingOverridesPayload,
@@ -907,11 +906,6 @@ export function InvoiceDetailDrawer({
     }
     return [];
   }, [inv, ruleBook, resolvedDocumentTypeCode]);
-
-  const approvalCompulsoryFields = useMemo(() => {
-    if (!ruleBook || !resolvedDocumentTypeCode) return [];
-    return compulsoryFieldsForDocumentType(ruleBook.documentTypes, resolvedDocumentTypeCode);
-  }, [ruleBook, resolvedDocumentTypeCode]);
 
   const documentTypeInCatalogue = useMemo(() => {
     const code = resolvedDocumentTypeCode;

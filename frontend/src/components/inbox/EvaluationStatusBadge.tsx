@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { approvalStatusChipClass, kpiStatusChipClass, needsReviewStatusChipClass } from "@/lib/kpiModuleColors";
 import {
   evaluationReviewTooltip,
+  evaluationStatusDescription,
   evaluationStatusLabel,
 } from "@/lib/invoice";
 import { cn } from "@/lib/cn";
@@ -55,7 +56,9 @@ export function EvaluationStatusBadge({
   const label = status ? evaluationStatusLabel(status) : "—";
   const title = invoice
     ? evaluationReviewTooltip({ ...invoice, evaluation_status: status ?? invoice.evaluation_status }, reviewReasons)
-    : evaluationReviewTooltip({ evaluation_status: status }, reviewReasons);
+    : status
+      ? evaluationStatusDescription(status)
+      : "—";
 
   if (!status) {
     return (
