@@ -313,6 +313,24 @@ def excel_hyperlinks_joined(entries: list[tuple[str, str]]) -> str:
     return "=" + "&CHAR(10)&".join(parts)
 
 
+def plain_links_joined(entries: list[tuple[str, str]]) -> str:
+    """Plain-text links for non-Excel CSV consumers (label | url per line)."""
+    lines: list[str] = []
+    for url, label in entries:
+        url = _absolute_vault_url(url)
+        if not url:
+            continue
+        text = (label or "Open").strip() or "Open"
+        lines.append(f"{text} | {url}")
+    return "\n".join(lines)
+
+
+def format_vault_links(entries: list[tuple[str, str]], *, cell_format: str = "excel") -> str:
+    if cell_format == "plain":
+        return plain_links_joined(entries)
+    return excel_hyperlinks_joined(entries)
+
+
 def vault_csv_link(invoice_id: int | None, *, label: str = "View in Vault") -> str:
     return excel_hyperlink(vault_view_path(invoice_id), label)
 
@@ -395,8 +413,9 @@ def linked_docs_by_dt_code(
     *,
     label_fn: str = "bundle",
     invoice_dt_code_by_id: dict[int, str] | None = None,
+    cell_format: str = "excel",
 ) -> dict[str, str]:
-    """Group linked documents by DT code with Excel hyperlink cells per column."""
+    """Group linked documents by DT code with Excel hyperlink or plain-text cells per column."""
     pick_label = _bundle_export_label if label_fn == "bundle" else _audit_export_label
     by_dt: dict[str, list[tuple[str, str]]] = {}
     for entry in collect_linked_doc_entries(anchor_invoice_id, linked):
@@ -408,7 +427,7 @@ def linked_docs_by_dt_code(
         bucket = by_dt.setdefault(code, [])
         bucket.append((vault_view_path(entry.invoice_id), pick_label(entry)))
     return {
-        code: excel_hyperlinks_joined(links)
+        code: format_vault_links(links, cell_format=cell_format)
         for code, links in by_dt.items()
         if links
     }

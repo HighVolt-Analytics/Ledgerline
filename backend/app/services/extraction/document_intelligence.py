@@ -106,7 +106,17 @@ def _map_di_document(doc: Any) -> InvoiceData:
 
     from app.services.extraction.party_field_service import sanitize_address
 
+    vendor_tax_raw = get("VendorTaxId")
+    customer_tax_raw = get("CustomerTaxId")
+    vendor_tax_id = _normalize_abn(str(vendor_tax_raw) if vendor_tax_raw else None)
+    buyer_tax_id = _normalize_abn(str(customer_tax_raw) if customer_tax_raw else None)
+
     party_extracted: dict[str, str] = {}
+    if isinstance(vendor, str) and vendor:
+        party_extracted["seller_name"] = vendor
+    if vendor_tax_id:
+        party_extracted["seller_tax_id"] = vendor_tax_id
+        party_extracted["seller_abn"] = vendor_tax_id
     if isinstance(vendor_address, str) and vendor_address.strip():
         party_extracted["seller_address"] = sanitize_address(vendor_address)
     if isinstance(customer_address, str) and customer_address.strip():
@@ -115,20 +125,38 @@ def _map_di_document(doc: Any) -> InvoiceData:
         party_extracted["billing_address"] = sanitized_buyer
     if customer_name:
         party_extracted["buyer_name"] = customer_name
+    if buyer_tax_id:
+        party_extracted["buyer_tax_id"] = buyer_tax_id
+
+    di_scalar_sources: dict[str, str] = {}
+    if vendor:
+        di_scalar_sources["vendor"] = "VendorName" if get("VendorName") else "VendorAddressRecipient"
+    if vendor_tax_id:
+        di_scalar_sources["abn"] = "VendorTaxId"
 
     invoice_no = get("InvoiceId")
     if isinstance(invoice_no, str):
-        invoice_no = invoice_no.strip() or None
+        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+
+        invoice_no = sanitize_invoice_no(invoice_no.strip()) or None
 
     subtotal = _parse_decimal(get("SubTotal"))
     gst = _parse_decimal(get("TotalTax"))
-    total = _parse_decimal(get("InvoiceTotal") or get("AmountDue"))
+    invoice_total = get("InvoiceTotal")
+    amount_due = get("AmountDue")
+    total = _parse_decimal(invoice_total if invoice_total is not None else amount_due)
+    if subtotal is not None:
+        di_scalar_sources["subtotal"] = "SubTotal"
+    if gst is not None:
+        di_scalar_sources["gst"] = "TotalTax"
+    if total is not None:
+        di_scalar_sources["total"] = "InvoiceTotal" if invoice_total is not None else "AmountDue"
 
-    currency = get("CurrencyCode") or "AUD"
-    if isinstance(currency, str):
-        currency = currency.strip().upper() or "AUD"
-    else:
-        currency = "AUD"
+    currency_raw = get("CurrencyCode")
+    currency = ""
+    if isinstance(currency_raw, str) and currency_raw.strip():
+        currency = currency_raw.strip().upper()
+        di_scalar_sources["currency"] = "CurrencyCode"
 
     raw_snapshot = {
         k: str(_field_value(v))
@@ -141,31 +169,53 @@ def _map_di_document(doc: Any) -> InvoiceData:
         po_ref = po_ref.strip() or None
     else:
         po_ref = None
+    if po_ref:
+        di_scalar_sources["po_reference"] = "PurchaseOrder"
 
-    cost_centre = get("ProjectCode") or get("CostCenter")
-    if isinstance(cost_centre, str):
-        cost_centre = cost_centre.strip() or None
-    else:
-        cost_centre = None
+    project_code = get("ProjectCode")
+    cost_center = get("CostCenter")
+    cost_centre = None
+    if isinstance(project_code, str) and project_code.strip():
+        cost_centre = project_code.strip()
+        di_scalar_sources["cost_centre"] = "ProjectCode"
+    elif isinstance(cost_center, str) and cost_center.strip():
+        cost_centre = cost_center.strip()
+        di_scalar_sources["cost_centre"] = "CostCenter"
+
+    inv_date = _parse_date(get("InvoiceDate"))
+    due = _parse_date(get("DueDate"))
+    if invoice_no:
+        di_scalar_sources["invoice_no"] = "InvoiceId"
+    if inv_date:
+        di_scalar_sources["invoice_date"] = "InvoiceDate"
+    if due:
+        di_scalar_sources["due_date"] = "DueDate"
+    if party_extracted.get("billing_address"):
+        addr_source = "CustomerAddress"
+        if get("BillingAddress"):
+            addr_source = "BillingAddress"
+        elif get("ShippingAddress"):
+            addr_source = "ShippingAddress"
+        di_scalar_sources["billing_address"] = addr_source
 
     line_items = parse_line_items_from_di_items(fields.get("Items"))
 
     return InvoiceData(
         vendor=vendor if isinstance(vendor, str) else None,
-        abn=_normalize_abn(str(get("VendorTaxId") or get("CustomerTaxId") or "")),
+        abn=vendor_tax_id,
         billing_address=party_extracted.get("billing_address"),
         invoice_no=invoice_no if isinstance(invoice_no, str) else None,
-        invoice_date=_parse_date(get("InvoiceDate")),
-        due_date=_parse_date(get("DueDate")),
+        invoice_date=inv_date,
+        due_date=due,
         currency=currency,
         subtotal=subtotal,
         gst=gst,
         total=total,
         po_reference=po_ref if isinstance(po_ref, str) else None,
-        cost_centre=cost_centre if isinstance(cost_centre, str) else None,
+        cost_centre=cost_centre,
         line_items=line_items,
         extracted_fields=party_extracted,
-        raw_fields={"azure_di": raw_snapshot},
+        raw_fields={"azure_di": raw_snapshot, "di_scalar_sources": di_scalar_sources},
     )
 
 

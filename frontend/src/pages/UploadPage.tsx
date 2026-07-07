@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-react";
 import { api } from "@/api/client";
@@ -10,10 +10,7 @@ import { useMailboxes } from "@/hooks/useMailboxes";
 import {
   API_PORT_HINT,
   canRenderTenantOwnedUi,
-  captureTenantFetchScope,
   formatTenantLoadError,
-  handleTenantScopedLoadFailure,
-  isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
@@ -37,8 +34,11 @@ import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
 import { cn } from "@/lib/cn";
-import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useNavBadges } from "@/hooks/useNavBadges";
+import {
+  invalidateUploadInvoiceList,
+  useUploadInvoiceList,
+} from "@/hooks/useUploadInvoiceList";
 import { ActionChip } from "@/components/ActionChip";
 import { UploadDropZone } from "@/components/upload/UploadDropZone";
 import {
@@ -57,12 +57,9 @@ import {
   uploadFilesInBatch,
   watchInvoiceIdsForVendorHold,
 } from "@/lib/bulkUpload";
-import { uploadListHasActiveProcessing } from "@/lib/uploadColumnState";
 
 const UPLOAD_LOAD_HINT =
   `${API_PORT_HINT.trim()} and migrations are up to date `;
-const INBOX_POLL_MS = 15_000;
-const INBOX_POLL_FAST_MS = 4_000;
 const PROCESSING_WAIT_MS = 120_000;
 const PAGE_SIZE = 10;
 const NOTICE_AUTO_DISMISS_MS = 5000; // upload / mailbox notices (not in-progress fetch/import)
@@ -162,18 +159,13 @@ export function UploadPage() {
   const [matrixFlagged, setMatrixFlagged] = useState(0);
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const loadSeq = useRef(0);
-  const loadInFlightRef = useRef(false);
-  const mailboxesRef = useRef<ConnectedMailbox[]>([]);
-  const initialLoadDoneRef = useRef(false);
+  const prevMergedRef = useRef<Invoice[]>([]);
   const { data: ruleBook } = useRuleBookConfig();
   const {
     data: mailboxQueryData = [],
     blocked: mailboxesBlocked,
     refetch: refetchMailboxes,
   } = useMailboxes(Boolean(user) && workspaceTab === "upload");
-  const [all, setAll] = useState<Invoice[]>([]);
-  const [totalInvoices, setTotalInvoices] = useState(0);
   const [source, setSource] = useState("all");
   const [evalFilter, setEvalFilter] = useState<"all" | "needs_review">("all");
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get("q") ?? "");
@@ -183,8 +175,6 @@ export function UploadPage() {
     const q = searchParams.get("q") ?? "";
     setSearchQuery((current) => (current === q ? current : q));
   }, [searchParams]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [fetching, setFetching] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -198,133 +188,74 @@ export function UploadPage() {
   const [importBusy, setImportBusy] = useState(false);
   const [importJob, setImportJob] = useState<MailboxBackfillJob | null>(null);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
-  const processingIdsRef = useRef(processingIds);
   const tenantScope = user?.tenant_id ?? null;
   const mailboxes = canRenderTenantOwnedUi(tenantScope) && !mailboxesBlocked ? mailboxQueryData : [];
 
+  const selectedMailboxId = useMemo(() => {
+    if (source === "all") return null;
+    return mailboxes.find((mb) => mb.email === source)?.id ?? null;
+  }, [source, mailboxes]);
+
+  const {
+    data: listData,
+    isLoading: listLoading,
+    isError: listIsError,
+    error: listError,
+    refetch: refetchInvoiceList,
+  } = useUploadInvoiceList({
+    page,
+    pageSize: PAGE_SIZE,
+    source,
+    q: debouncedSearch,
+    mailboxId: selectedMailboxId,
+    enabled: canRenderTenantOwnedUi(tenantScope) && workspaceTab === "upload",
+    processingIds,
+  });
+
+  const rawRows = listData?.rows ?? [];
+  const all = useMemo(() => {
+    const prevById = new Map(prevMergedRef.current.map((inv) => [inv.id, inv]));
+    const merged = rawRows.map((row) =>
+      mergeBoardRowWithLocal(row, prevById.get(row.id), processingIds)
+    );
+    const next =
+      sameUploadListRows(prevMergedRef.current, merged) ? prevMergedRef.current : merged;
+    prevMergedRef.current = next;
+    return next;
+  }, [rawRows, processingIds]);
+
+  const totalInvoices = listData?.total ?? 0;
+  const totalPages = listData?.pages ?? 1;
+  const loading = listLoading && all.length === 0;
+  const error =
+    listIsError && listError instanceof Error ? listError.message : listIsError ? "Failed to load documents" : null;
+
   useLayoutEffect(() => {
-    mailboxesRef.current = [];
     if (source !== "all" && !mailboxes.some((mb) => mb.email === source)) {
       setSource("all");
     }
   }, [tenantScope, mailboxes, source]);
 
   useResetOnTenantChange(() => {
-    loadSeq.current += 1;
-    initialLoadDoneRef.current = false;
-    mailboxesRef.current = [];
-    setAll([]);
-    setTotalInvoices(0);
-    setTotalPages(1);
+    prevMergedRef.current = [];
     setPage(1);
     setSource("all");
-    setError(null);
     setDrawerId(null);
     setDrawerOpen(false);
-    setLoading(true);
     setImportMailbox(null);
     setImportJob(null);
     setFetchNotice(null);
     setProcessingIds(new Set());
   });
 
-  const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
-    if (!canRenderTenantOwnedUi(tenantScope)) return null;
-    if (options?.silent && loadInFlightRef.current) return null;
-    const scope = captureTenantFetchScope();
-    const seq = ++loadSeq.current;
-    if (!options?.silent) {
-      setLoading(true);
-      setError(null);
-    } else {
-      loadInFlightRef.current = true;
-    }
-    const fresh = options?.fresh ?? !options?.silent;
-    const refreshMailboxes = !options?.silent;
-    try {
-      // Prefer cached mailboxes for filter id (develop perf); never use them across tenants.
-      const cachedMailboxes = isTenantFetchScopeCurrent(scope) ? mailboxesRef.current : [];
-      const selectedMailboxId =
-        source === "all"
-          ? null
-          : (cachedMailboxes.find((m) => m.email === source)?.id ?? null);
-      const invoiceParams = {
-        page: String(page),
-        page_size: String(PAGE_SIZE),
-        ...(selectedMailboxId != null
-          ? { connected_mailbox_id: String(selectedMailboxId) }
-          : {}),
-        ...(debouncedSearch ? { q: debouncedSearch } : {}),
-      };
-      const invoiceRes = await api.listInvoicesWithMeta(invoiceParams, { fresh });
-      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return null;
-      const invoiceRows = invoiceRes.data;
-      const metaTotal = invoiceRes.meta?.total ?? invoiceRows.length;
-      const metaPages = invoiceRes.meta?.pages ?? 1;
-      setAll((prev) => {
-        const prevById = new Map(prev.map((inv) => [inv.id, inv]));
-        const merged = invoiceRows.map((row) =>
-          mergeBoardRowWithLocal(row, prevById.get(row.id), processingIdsRef.current)
-        );
-        return sameUploadListRows(prev, merged) ? prev : merged;
-      });
-      setTotalInvoices(metaTotal);
-      setTotalPages(Math.max(1, metaPages));
-      setError(null);
-      initialLoadDoneRef.current = true;
-
-      if (refreshMailboxes) {
-        void refetchMailboxes();
-      }
-
-      return {
-        total: metaTotal,
-        ids: invoiceRows.map((i) => i.id),
-      };
-    } catch (e) {
-      if (seq !== loadSeq.current || !isTenantFetchScopeCurrent(scope)) return null;
-      if (
-        handleTenantScopedLoadFailure(e, {
-          retry: () => {
-            void load({ silent: true, fresh: true });
-          },
-        })
-      ) {
-        return null;
-      }
-      if (!options?.silent) {
-        setError(e instanceof Error ? e.message : "Failed to load documents");
-        setAll([]);
-        mailboxesRef.current = [];
-      }
-      return null;
-    } finally {
-      if (options?.silent) {
-        loadInFlightRef.current = false;
-      }
-      if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
-        setLoading(false);
-      }
-    }
-  }, [page, source, debouncedSearch, tenantScope, refetchMailboxes]);
-
-  useEffect(() => {
-    mailboxesRef.current = mailboxes;
-  }, [mailboxes]);
-
-  useEffect(() => {
-    processingIdsRef.current = processingIds;
-  }, [processingIds]);
-
   useEffect(() => {
     setPage(1);
   }, [source, debouncedSearch]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    prevMergedRef.current = [];
+  }, [page, source, debouncedSearch]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -350,20 +281,6 @@ export function UploadPage() {
     }
     return captured;
   }, [captured, evalFilter]);
-
-  const inboxPollMs = useMemo(
-    () =>
-      uploadListHasActiveProcessing(filtered, processingIds)
-        ? INBOX_POLL_FAST_MS
-        : INBOX_POLL_MS,
-    [filtered, processingIds]
-  );
-
-  useVisibilityPolling(() => {
-    if (!initialLoadDoneRef.current) return;
-    const processing = uploadListHasActiveProcessing(filtered, processingIdsRef.current);
-    void load({ silent: true, fresh: processing });
-  }, inboxPollMs);
 
   useEffect(() => {
     setProcessingIds((prev) => {
@@ -446,7 +363,7 @@ export function UploadPage() {
         setSource("all");
         setPage(1);
       }
-      await load({ silent: true, fresh: true });
+      await invalidateUploadInvoiceList(queryClient);
     } catch (e) {
       setFetchNotice(e instanceof Error ? e.message : "Failed to remove mailbox");
     }
@@ -472,9 +389,10 @@ export function UploadPage() {
 
       let latestTotal = beforeTotal;
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        const snapshot = await load({ silent: true, fresh: true });
+        const result = await refetchInvoiceList();
+        const snapshot = result.data;
         if (snapshot != null) latestTotal = snapshot.total;
-        const hasNewDoc = snapshot?.ids.some((id) => !beforeIds.has(id)) ?? false;
+        const hasNewDoc = snapshot?.rows.some((row) => !beforeIds.has(row.id)) ?? false;
         if (latestTotal > beforeTotal || hasNewDoc) {
           setPage(1);
           break;
@@ -538,7 +456,7 @@ export function UploadPage() {
 
       await waitForProcessingIdle();
       setPage(1);
-      await load({ fresh: true });
+      await invalidateUploadInvoiceList(queryClient);
 
       if (job.status === "completed") {
         setFetchNotice(
@@ -587,7 +505,7 @@ export function UploadPage() {
       }
       setFetchNotice(notice);
       setPage(1);
-      await load({ silent: true, fresh: true });
+      await invalidateUploadInvoiceList(queryClient);
       const uploadedIds = summary.results
         .filter((row): row is Extract<BulkUploadItemResult, { ok: true }> => row.ok)
         .flatMap((row) => row.invoiceIds);
@@ -600,7 +518,7 @@ export function UploadPage() {
         void (async () => {
           const holdNotice = await watchInvoiceIdsForVendorHold(uploadedIds, {
             onPoll: async () => {
-              await load({ silent: true, fresh: true });
+              await refetchInvoiceList();
             },
           });
           if (holdNotice) {
@@ -610,7 +528,7 @@ export function UploadPage() {
           }
         })();
         window.setTimeout(() => {
-          void load({ silent: true, fresh: true });
+          void refetchInvoiceList();
         }, 3000);
       }
     } catch (err) {
@@ -702,7 +620,7 @@ export function UploadPage() {
         {formatTenantLoadError(error, UPLOAD_LOAD_HINT)}
         <code className="text-xs">(alembic upgrade head)</code>.
         <div className="mt-3">
-          <Button variant="outline" size="sm" onClick={() => void load({ fresh: true })}>
+          <Button variant="outline" size="sm" onClick={() => void refetchInvoiceList()}>
             Retry
           </Button>
         </div>
@@ -1077,7 +995,7 @@ export function UploadPage() {
         invoiceId={drawerId}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        onUpdated={() => load({ fresh: true })}
+        onUpdated={() => void invalidateUploadInvoiceList(queryClient)}
       />
       </>
     )

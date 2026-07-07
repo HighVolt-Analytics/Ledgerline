@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from typing import Any
+from typing import Any, Sequence
 
 from app.services.extraction.line_item_skip_patterns import (
     OPTIONAL_CURRENCY_MONEY_PREFIX,
@@ -490,20 +490,181 @@ def line_items_from_ocr_payload(payload: dict[str, object]) -> list[ParsedLineIt
     return items
 
 
-def ensure_line_items(data: InvoiceData) -> None:
-    """Guarantee at least one line when header amounts exist (brief §3)."""
-    if data.line_items:
-        return
-    if data.subtotal is None:
-        return
-    data.line_items.append(
-        sanitize_parsed_line_item(
-            ParsedLineItem(
-                description="General charges",
-                qty=Decimal("1"),
-                unit_price=data.subtotal,
-                amount=data.subtotal,
-                tax_amount=data.gst,
+def resolve_line_items_from_ocr_payload(payload: dict[str, object] | None) -> list[ParsedLineItem] | None:
+    """Prefer prebuilt-invoice rows; fall back to layout table rows."""
+    if not payload:
+        return None
+    di_items = deserialize_line_items(payload.get("di_line_items"))
+    if di_items:
+        return enrich_parsed_line_items(di_items)
+    table_items = deserialize_line_items(payload.get("table_line_items"))
+    if table_items:
+        return enrich_parsed_line_items(table_items)
+    return None
+
+
+def document_has_product_table(
+    ocr_text: str | None,
+    payload: dict[str, object] | None,
+) -> bool:
+    """True when DI/table rows exist or OCR shows a product line grid."""
+    if resolve_line_items_from_ocr_payload(payload):
+        return True
+    text = (ocr_text or "").strip()
+    if not text:
+        return False
+    has_header = any(_TABLE_HEADER_LINE.match(line.strip()) for line in text.splitlines())
+    data_rows = [
+        parsed
+        for line in text.splitlines()
+        if (parsed := _parse_table_row_tail(line)) is not None
+    ]
+    if has_header and data_rows:
+        return True
+    return len(data_rows) >= 2
+
+
+_CHARGE_FREIGHT = re.compile(
+    r"^\s*FREIGHT\s*[:\-]?\s*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)",
+    re.I | re.M,
+)
+_CHARGE_GOODS_DESC = re.compile(
+    r"DESCRIPTION\s+OF\s+GOODS(?:\s+AND/?\s+OR\s+SERVICES)?\s*[:\-]?\s*(.+)$",
+    re.I | re.M,
+)
+_CHARGE_TOTAL = re.compile(
+    r"^\s*TOTAL\s*[:\-]?\s*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)",
+    re.I | re.M,
+)
+
+
+def document_has_charge_lines(ocr_text: str | None) -> bool:
+    """True for freight/export charge blocks without a product grid."""
+    text = (ocr_text or "").strip()
+    if not text:
+        return False
+    if _CHARGE_FREIGHT.search(text):
+        return True
+    if _CHARGE_GOODS_DESC.search(text) and (_CHARGE_FREIGHT.search(text) or _CHARGE_TOTAL.search(text)):
+        return True
+    return False
+
+
+def parse_charge_lines_from_text(text: str | None) -> list[ParsedLineItem]:
+    """Parse freight / goods-description charge rows from commercial invoices."""
+    body = (text or "").strip()
+    if not body:
+        return []
+    items: list[ParsedLineItem] = []
+    goods = _CHARGE_GOODS_DESC.search(body)
+    if goods:
+        desc = goods.group(1).strip().rstrip(".,;")
+        if desc and len(desc) > 3:
+            items.append(
+                ParsedLineItem(description=desc[:200], qty=Decimal("1"), unit_price=None, amount=None)
             )
+    freight = _CHARGE_FREIGHT.search(body)
+    if freight:
+        amount = _money(freight.group(1))
+        if amount is not None:
+            items.append(
+                ParsedLineItem(
+                    description="Freight",
+                    qty=Decimal("1"),
+                    unit_price=amount,
+                    amount=amount,
+                )
+            )
+    if not items:
+        total_match = _CHARGE_TOTAL.search(body)
+        if total_match:
+            amount = _money(total_match.group(1))
+            if amount is not None:
+                items.append(
+                    ParsedLineItem(
+                        description="Total charges",
+                        qty=Decimal("1"),
+                        unit_price=amount,
+                        amount=amount,
+                    )
+                )
+    return enrich_parsed_line_items(items)
+
+
+def normalize_di_line_items_for_prompt(items: Sequence[ParsedLineItem]) -> list[dict[str, Any]]:
+    """Canonical Azure DI rows for LLM user payload (string values as printed)."""
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(items, start=1):
+        rows.append(
+            {
+                "row_index": index,
+                "description": (item.description or "").strip(),
+                "qty": str(item.qty) if item.qty is not None else None,
+                "unit_price": str(item.unit_price) if item.unit_price is not None else None,
+                "amount": str(item.amount) if item.amount is not None else None,
+            }
         )
-    )
+    return rows
+
+
+def line_items_source_from_payload(payload: dict[str, object] | None) -> str:
+    if not payload:
+        return "none"
+    if payload.get("di_line_items"):
+        return "azure_di"
+    if payload.get("table_line_items"):
+        return "azure_layout_table"
+    return "none"
+
+
+def build_line_items_presentation_prompt(
+    *,
+    di_rows_present: bool,
+    ocr_table_present: bool,
+    charge_lines_present: bool = False,
+) -> list[str]:
+    """Mode-specific LLM rules for line_items (DI copy / OCR table / charge / not applicable)."""
+    if di_rows_present:
+        return [
+            "",
+            "LINE ITEMS — AZURE DI (authoritative source):",
+            "- ocr.azure_di_line_items is pre-extracted by Azure Document Intelligence; it is the ONLY source for line_items.",
+            "- line_items MUST be a row-for-row copy of ocr.azure_di_line_items:",
+            "  same row count (line_items_row_count), same row order (row_index ascending),",
+            "  same description, qty, unit_price, amount strings — do not reformat, round, or calculate.",
+            "- Do NOT add, remove, merge, or split rows.",
+            "- Do NOT derive amount from qty × unit_price unless that exact value is in azure_di_line_items.",
+            "- Use null for qty, unit_price, or amount when the DI row has no value — never guess.",
+            "- field_confidence.line_items: 0.95 when copied from azure_di_line_items; 0.0 when line_items is [].",
+        ]
+    if ocr_table_present:
+        return [
+            "",
+            "LINE ITEMS — OCR TABLE (no Azure DI rows):",
+            "- Extract only from product table rows in ocr.text_excerpt.",
+            "- Each row: {description, qty, unit_price, amount} — copy verbatim from OCR.",
+            "- Never include header labels, party blocks, or summary totals as line items.",
+            "- field_confidence.line_items: per-row confidence; 0.0 when line_items is [].",
+        ]
+    if charge_lines_present:
+        return [
+            "",
+            "LINE ITEMS — CHARGE LINES (commercial/export, no product grid):",
+            "- Extract charge rows from ocr.text_excerpt: FREIGHT, DESCRIPTION OF GOODS, labeled totals.",
+            "- FREIGHT: USD 400.00 → {description: \"Freight\", qty: 1, unit_price: 400, amount: 400}.",
+            "- DESCRIPTION OF GOODS block → description row; pair with FREIGHT amount when separate.",
+            "- Do not invent rows beyond labeled charge blocks.",
+            "- field_confidence.line_items: per-row confidence; 0.0 when line_items is [].",
+        ]
+    return [
+        "",
+        "LINE ITEMS — NOT APPLICABLE:",
+        "- This document has no product line table. Return line_items: [].",
+        "- Do not invent a summary or 'General charges' row.",
+        "- field_confidence.line_items: 0.0.",
+    ]
+
+
+def ensure_line_items(data: InvoiceData) -> None:
+    """Line items must come from DI or OCR product tables — never synthesize rows."""
+    return

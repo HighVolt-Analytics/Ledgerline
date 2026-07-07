@@ -1,6 +1,7 @@
 """Reports API query parameters."""
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +21,15 @@ class ReportsDocumentsRequest(BaseModel):
 
     date_from: date | None = Field(None, description="Inclusive start of invoice date range")
     date_to: date | None = Field(None, description="Inclusive end of invoice date range")
+
+
+class DocumentsBundleExportRequest(ReportsDocumentsRequest):
+    model_config = ConfigDict(frozen=True)
+
+    format: Literal["excel", "plain"] = Field(
+        "excel",
+        description="Cell format: excel (HYPERLINK formulas) or plain (label | url)",
+    )
 
 
 class ReportsWorkbookRequest(BaseModel):

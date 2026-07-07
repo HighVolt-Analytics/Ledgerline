@@ -17,6 +17,41 @@ class ReconciliationResponse(BaseModel):
     halted: bool = False
     halt_reason: str | None = None
     run_at: datetime
+    rc1_passed: bool | None = None
+    rc2_passed: bool | None = None
+
+
+class ReconciliationJournalLine(BaseModel):
+    id: int
+    invoice_id: int
+    vendor: str | None = None
+    account_code: str
+    account_name: str
+    debit: Decimal
+    credit: Decimal
+    entry_type: str
+
+
+class ReconciliationDayInvoice(BaseModel):
+    id: int
+    vendor: str | None = None
+    invoice_no: str | None = None
+    total: Decimal | None = None
+
+
+class ReconciliationDayDetail(BaseModel):
+    date: date
+    invoices_total: Decimal
+    total_debits: Decimal
+    total_credits: Decimal
+    delta_dr_cr: Decimal
+    delta_vs_invoices: Decimal
+    rc1_passed: bool
+    rc2_passed: bool
+    is_balanced: bool
+    halt_reason: str | None = None
+    journal_lines: list[ReconciliationJournalLine]
+    invoices: list[ReconciliationDayInvoice]
 
 
 class ReconPostingRow(BaseModel):

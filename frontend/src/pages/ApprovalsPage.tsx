@@ -244,6 +244,8 @@ export function ApprovalsPage() {
       await invalidateAfterApproval();
       if (result.payment) {
         setToast(`Invoice approved — payment ${result.payment.id} queued for disbursement`);
+      } else if (result.collection) {
+        setToast(`Invoice approved — collection ${result.collection.id} queued for receipt`);
       } else {
         setToast("Invoice approved — processing complete");
       }

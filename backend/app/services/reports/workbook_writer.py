@@ -412,6 +412,7 @@ async def _write_daily_reconciliation_sheet(
     invoices: list[Invoice],
     *,
     tenant_id: int,
+    config: RuleBookConfigPayload,
 ) -> None:
     headers = [
         "Date",
@@ -427,14 +428,14 @@ async def _write_daily_reconciliation_sheet(
 
     dates = sorted({inv.invoice_date for inv in invoices if inv.invoice_date})
     for day in dates:
-        recon = await reconcile_daily(session, day, tenant_id=tenant_id)
-        inv_total = sum(
-            (inv.total or Decimal("0"))
-            for inv in invoices
-            if inv.invoice_date == day and inv.status == InvoiceStatus.PROCESSED
+        recon = await reconcile_daily(
+            session, day, tenant_id=tenant_id, config=config
         )
+        inv_total = recon.purchase_invoice_total + recon.sales_invoice_total
         dr_cr = recon.total_debits - recon.total_credits
-        inv_vs_cr = inv_total - recon.total_ap_credits
+        inv_vs_cr = (recon.purchase_invoice_total - recon.total_ap_credits) + (
+            recon.sales_invoice_total - recon.total_ar_debits
+        )
         status = "✓ Balanced" if recon.is_balanced and not recon.halted else "✗ Halted"
         ws.append(
             [
@@ -726,7 +727,9 @@ async def write_workbook(
         writer(ws)
 
     ws_recon = wb.create_sheet(SHEET_DAILY_RECON)
-    await _write_daily_reconciliation_sheet(ws_recon, session, invoices, tenant_id=tenant_id)
+    await _write_daily_reconciliation_sheet(
+        ws_recon, session, invoices, tenant_id=tenant_id, config=config
+    )
 
     ws_exp = wb.create_sheet(SHEET_EXPENSE_SUMMARY)
     _write_expense_summary_sheet(ws_exp, invoices, config)

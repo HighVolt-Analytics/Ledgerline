@@ -1,4 +1,3 @@
-
 from app.tenant_ids import PLATFORM_TENANT_UUID, TESTING_TENANT_UUID
 from datetime import date
 from decimal import Decimal
@@ -8,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
+from app.schemas.rule_book_config import ChartOfAccountEntry, PostingDefaults, RuleBookConfigPayload
+from app.services.rule_book.rule_book_mapper import ROUTE_SALES
 from app.services.reconciliation.reconciliation_service import reconcile_daily
 
 
@@ -190,6 +191,109 @@ async def test_reconciliation_scoped_per_org(db_session: AsyncSession) -> None:
     await db_session.flush()
 
     result = await reconcile_daily(db_session, d, tenant_id=PLATFORM_TENANT_UUID, current_invoice=org2)
+    assert result.rc1_passed
+    assert result.is_balanced
+    assert not result.halted
+
+
+@pytest.mark.asyncio
+async def test_rc1_uses_rule_book_payable_code(db_session: AsyncSession) -> None:
+    d = date(2026, 6, 1)
+    config = RuleBookConfigPayload(
+        posting_defaults=PostingDefaults(payable_account="Trade Creditors"),
+        chart_of_accounts=[
+            ChartOfAccountEntry(code="2100", name="Trade Creditors", type="Liability"),
+            ChartOfAccountEntry(code="6100", name="Expenses", type="Expense"),
+            ChartOfAccountEntry(code="1400", name="GST Paid", type="Asset"),
+        ],
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_no="INV-2100",
+        invoice_date=d,
+        subtotal=Decimal("300"),
+        gst=Decimal("30"),
+        total=Decimal("330"),
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="rc1-2100",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    for code, name, dr, cr, et in [
+        ("6100", "Expenses", Decimal("300"), Decimal("0"), EntryType.DEBIT),
+        ("1400", "GST Paid", Decimal("30"), Decimal("0"), EntryType.DEBIT),
+        ("2100", "Trade Creditors", Decimal("0"), Decimal("330"), EntryType.CREDIT),
+    ]:
+        db_session.add(
+            JournalEntry(
+                invoice_id=inv.id,
+                date=d,
+                account_code=code,
+                account_name=name,
+                debit=dr,
+                credit=cr,
+                entry_type=et,
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_daily(
+        db_session, d, tenant_id=TESTING_TENANT_UUID, config=config
+    )
+    assert result.rc1_passed
+    assert not result.halted
+
+
+@pytest.mark.asyncio
+async def test_rc1_sales_route_matches_receivable_debits(db_session: AsyncSession) -> None:
+    d = date(2026, 6, 2)
+    config = RuleBookConfigPayload(
+        chart_of_accounts=[
+            ChartOfAccountEntry(code="1200", name="Accounts Receivable", type="Asset"),
+            ChartOfAccountEntry(code="4100", name="Sales Revenue", type="Revenue"),
+            ChartOfAccountEntry(code="2300", name="GST Collected", type="Liability"),
+        ],
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_no="INV-SALES",
+        invoice_date=d,
+        subtotal=Decimal("1000"),
+        gst=Decimal("100"),
+        total=Decimal("1100"),
+        status=InvoiceStatus.RECONCILING,
+        currency="AUD",
+        file_hash="rc1-sales",
+        route_target=ROUTE_SALES,
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    for code, name, dr, cr, et in [
+        ("1200", "Accounts Receivable", Decimal("1100"), Decimal("0"), EntryType.DEBIT),
+        ("4100", "Sales Revenue", Decimal("0"), Decimal("1000"), EntryType.CREDIT),
+        ("2300", "GST Collected", Decimal("0"), Decimal("100"), EntryType.CREDIT),
+    ]:
+        db_session.add(
+            JournalEntry(
+                invoice_id=inv.id,
+                date=d,
+                account_code=code,
+                account_name=name,
+                debit=dr,
+                credit=cr,
+                entry_type=et,
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_daily(
+        db_session,
+        d,
+        tenant_id=TESTING_TENANT_UUID,
+        current_invoice=inv,
+        config=config,
+    )
     assert result.rc1_passed
     assert result.is_balanced
     assert not result.halted

@@ -111,6 +111,8 @@ async def _finalize_linked_documents(
     invoice: Invoice,
     response: DossierLinkedDocumentsResponse,
     document_types: list[DocumentTypeDefinition],
+    *,
+    linkage_cache=None,
 ) -> DossierLinkedDocumentsResponse:
     from app.services.dossier.dossier_service import (
         append_invoice_no_linked_documents,
@@ -122,12 +124,14 @@ async def _finalize_linked_documents(
         invoice,
         response,
         document_types=document_types,
+        linkage_cache=linkage_cache,
     )
     enriched = await append_reference_linked_documents(
         session,
         invoice,
         enriched,
         document_types=document_types,
+        linkage_cache=linkage_cache,
     )
     return await apply_manual_links(
         session,
@@ -194,6 +198,7 @@ async def build_dossier_linked_documents(
     *,
     definition: DocumentTypeDefinition | None,
     document_types: list[DocumentTypeDefinition] | None = None,
+    linkage_cache=None,
 ) -> DossierLinkedDocumentsResponse:
     if document_types is None:
         from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
@@ -259,6 +264,7 @@ async def build_dossier_linked_documents(
                 sales_order_id=sales.sales_order_id,
             ),
             document_types,
+            linkage_cache=linkage_cache,
         )
 
     if po_ref and is_plausible_po_reference(po_ref):
@@ -312,6 +318,7 @@ async def build_dossier_linked_documents(
                 purchase_order_id=purchase.purchase_order_id,
             ),
             document_types,
+            linkage_cache=linkage_cache,
         )
 
     enforce = should_enforce_bundle_mandatory(definition) if definition else False
@@ -381,6 +388,7 @@ async def build_dossier_linked_documents(
                 documents=documents,
             ),
             document_types,
+            linkage_cache=linkage_cache,
         )
 
     code, label = _anchor_document_type(invoice, document_types)
@@ -395,6 +403,7 @@ async def build_dossier_linked_documents(
             invoice,
             invoice_no_bundle,
             document_types,
+            linkage_cache=linkage_cache,
         )
 
     return await _finalize_linked_documents(
@@ -423,4 +432,5 @@ async def build_dossier_linked_documents(
             ],
         ),
         document_types,
+        linkage_cache=linkage_cache,
     )

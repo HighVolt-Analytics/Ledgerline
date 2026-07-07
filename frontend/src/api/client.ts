@@ -53,6 +53,7 @@ import type {
   RuleBookEvaluateRequest,
   RuleBookEvaluateResult,
   ReconciliationOverview,
+  ReconciliationDayDetail,
   TokenResponse,
   TenantMembersList,
   TenantMember,
@@ -1283,6 +1284,8 @@ export const api = {
     request<RuleBookChangelogEntry[]>(`/api/rule-book/changelog?limit=${limit}`),
   getSettings: () => request<AppSettings>("/api/settings"),
   listReconciliation: () => request<DailyReconciliation[]>("/api/reconciliation/daily"),
+  getReconciliationDayDetail: (reconDate: string) =>
+    request<ReconciliationDayDetail>(`/api/reconciliation/daily/${reconDate}/detail`),
   getReconciliationOverview: () =>
     request<ReconciliationOverview>("/api/reconciliation/overview"),
   getLedgerLink: (options?: FreshRequestOptions) => {
@@ -1370,11 +1373,18 @@ export const api = {
     );
     saveBlobAsFile(blob, filename);
   },
-  downloadDocumentsBundleCsv: async (dateFrom: string, dateTo: string) => {
+  downloadDocumentsBundleCsv: async (
+    dateFrom: string,
+    dateTo: string,
+    options?: { format?: "excel" | "plain" }
+  ) => {
     const params = new URLSearchParams({
       date_from: dateFrom,
       date_to: dateTo,
     });
+    if (options?.format) {
+      params.set("format", options.format);
+    }
     const { blob, filename } = await requestBlob(
       `/api/reports/documents-bundle/export?${params.toString()}`,
       undefined,
