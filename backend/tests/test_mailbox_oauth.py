@@ -40,6 +40,13 @@ def test_oauth_state_roundtrip() -> None:
     assert payload["typ"] == "mailbox_oauth"
 
 
+def test_invite_authorize_url_requests_consent() -> None:
+    from app.services.ingest.mailbox_oauth_service import build_invite_authorize_url
+
+    url = build_invite_authorize_url(tenant_id=TESTING_TENANT_UUID, invite_request_id=42)
+    assert "prompt=consent" in url
+
+
 def test_oauth_state_rejects_tampering() -> None:
     state = create_oauth_state(tenant_id=TESTING_TENANT_UUID, user_id=7)
     bad = f"{state}tampered"

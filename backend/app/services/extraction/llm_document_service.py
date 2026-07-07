@@ -17,13 +17,18 @@ from app.services.extraction.azure_openai_client import chat_json_async
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 from app.services.tenant.tenant_org_context import OrgContext
 from app.services.classification.document_type_field_keys import CANONICAL_EXTRACTION_FIELD_KEYS
+from app.services.extraction.line_item_skip_patterns import should_skip_line_row
 from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
 from app.services.extraction.extraction_field_values import (
+    _BANK_DETAILS_LLM_KEYS,
     custom_extraction_field_descriptors,
     custom_extraction_field_keys,
-    custom_extraction_field_keys_for_dt,
     custom_extraction_fields_prompt_lines,
+    effective_extraction_field_keys_for_dt,
+    effective_extraction_field_keys_union,
+    expand_extraction_keys_for_llm,
     harvest_custom_fields_from_llm_raw,
+    non_canonical_extraction_keys,
     normalize_extracted_fields_map,
 )
 from app.services.extraction.party_field_service import PARTY_LLM_RULES, apply_party_normalization_to_llm
@@ -32,7 +37,16 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Top-level scalar keys the LLM must return (keeps classify/extract prompts aligned).
+_LLM_METADATA_KEYS: tuple[str, ...] = (
+    "suggested_dt",
+    "confidence",
+    "reasoning",
+    "perspective",
+    "seller",
+    "buyer",
+    "field_confidence",
+)
+
 _LLM_EXTRACT_SCALAR_KEYS: tuple[str, ...] = (
     "invoice_no",
     "invoice_date",
@@ -53,44 +67,132 @@ _LLM_EXTRACT_SCALAR_KEYS: tuple[str, ...] = (
     "bank_name",
 )
 
-_LLM_EXTRACT_JSON_KEYS = ", ".join(
-    (
-        "suggested_dt",
-        "confidence",
+_LLM_STRING_SCALAR_KEYS: frozenset[str] = frozenset(
+    {
         "reasoning",
-        "perspective",
-        "seller",
-        "buyer",
-        *_LLM_EXTRACT_SCALAR_KEYS,
-        "line_items",
-        "field_confidence",
-        "extracted_fields",
-    )
+        "invoice_no",
+        "invoice_date",
+        "due_date",
+        "po_reference",
+        "so_reference",
+        "cost_centre",
+        "currency",
+        "abn",
+        "vendor",
+        "document_heading",
+        "bank_bsb",
+        "bank_account",
+        "bank_name",
+    }
 )
 
-_LLM_EXTRACT_RULES = """- line_items is a list of {{description, amount, qty, unit_price}}.
-- line_items must be product/service rows only — never header metadata (Customer, Ship Date, Invoice No, BSB, etc.).
-- If a row is a field label ending with ":" it is NOT a line item.
-- Leave line_items empty when the document has no product table.
-- po_reference: purchase order number when labeled PO / Purchase Order.
-- so_reference: sales order number when labeled SO / Sales Order (common on AR invoices and delivery notes).
-- cost_centre: department or cost centre code when explicitly labeled.
-- bank_bsb, bank_account, bank_name: extract only when explicitly labeled (BSB, Account No, IBAN, SWIFT, Bank Name). Leave empty if absent. Never use phone numbers, invoice numbers, or tax IDs as bank details.
-- field_confidence maps field names to 0.0-1.0.
-- gst_rate is the tax percentage as a number (e.g. 10 for 10%), not a fraction.
-- currency: ISO 4217 code from the document (e.g. AUD, USD, SGD). Leave empty when no currency is shown.
-- extracted_fields is an optional object for keys listed in custom_extraction_fields; use string values only."""
+_LLM_MONEY_SCALAR_KEYS: frozenset[str] = frozenset({"subtotal", "gst", "gst_rate", "total"})
 
-_LLM_SYSTEM = f"""You classify finance documents for accounts payable.
+
+def build_llm_extract_json_keys(selected_keys: Sequence[str]) -> str:
+    """Build comma-separated JSON key list for extract/classify+extract prompts."""
+    selected = {str(key or "").strip().lower() for key in selected_keys if str(key or "").strip()}
+    llm_keys = expand_extraction_keys_for_llm(selected_keys)
+    scalar_keys: list[str] = []
+    for key in llm_keys:
+        if key == "line_items":
+            continue
+        if key in ("attachment_name", "document_text", "bank_details"):
+            continue
+        if key in scalar_keys:
+            continue
+        scalar_keys.append(key)
+
+    parts = list(_LLM_METADATA_KEYS) + scalar_keys
+    if "line_items" in selected:
+        parts.append("line_items")
+    if non_canonical_extraction_keys(selected_keys):
+        parts.append("extracted_fields")
+    return ", ".join(parts)
+
+
+def _bank_details_llm_keys() -> tuple[str, ...]:
+    return _BANK_DETAILS_LLM_KEYS
+
+
+def build_llm_extract_rule_lines(selected_keys: Sequence[str]) -> str:
+    selected = {str(key or "").strip().lower() for key in selected_keys if str(key or "").strip()}
+    lines: list[str] = []
+    if "line_items" in selected:
+        lines.extend(
+            [
+                "- line_items is a list of {{description, amount, qty, unit_price}}.",
+                "- Map each table row using column headers visible in OCR (Description, Qty, Unit Price, "
+                "Amount, Rate, etc.) — never assume a fixed column order.",
+                "- Each row must be one product/service line from an OCR table — copy description, "
+                "qty, unit_price, and amount exactly as printed under the matching header.",
+                "- line_items must be product/service rows only — never header metadata "
+                "(Customer, Ship Date, Invoice No, BSB, Subtotal, GST, Total, etc.).",
+                "- If a row is a field label ending with \":\" it is NOT a line item.",
+                "- Leave line_items empty when the document has no product table.",
+            ]
+        )
+    if "po_reference" in selected:
+        lines.append("- po_reference: purchase order number when labeled PO / Purchase Order.")
+    if "so_reference" in selected:
+        lines.append(
+            "- so_reference: sales order number when labeled SO / Sales Order "
+            "(common on AR invoices and delivery notes)."
+        )
+    if "cost_centre" in selected:
+        lines.append("- cost_centre: department or cost centre code when explicitly labeled.")
+    if "bank_details" in selected or any(key in selected for key in _bank_details_llm_keys()):
+        lines.append(
+            "- bank_bsb, bank_account, bank_name: extract only when explicitly labeled "
+            "(BSB, Account No, IBAN, SWIFT, Bank Name). Leave empty if absent. "
+            "Never use phone numbers, invoice numbers, or tax IDs as bank details."
+        )
+    lines.append("- field_confidence maps field names to 0.0-1.0.")
+    if "gst_rate" in selected:
+        lines.append("- gst_rate is the tax percentage as a number (e.g. 10 for 10%), not a fraction.")
+    if "currency" in selected or {"subtotal", "gst", "total"} & selected:
+        lines.append(
+            "- currency: ISO 4217 code from the document (e.g. AUD, USD, SGD). "
+            "Leave empty when no currency is shown."
+        )
+    if non_canonical_extraction_keys(selected_keys):
+        lines.append(
+            "- extracted_fields is an optional object for keys listed in custom_extraction_fields; "
+            "use string values only."
+        )
+    return "\n".join(lines)
+
+
+def _build_llm_extract_system_text(json_keys: str, rule_lines: str) -> str:
+    return f"""You structure accounts-payable fields from the provided OCR payload into JSON.
 Return JSON only with keys:
-{_LLM_EXTRACT_JSON_KEYS}.
+{json_keys}.
+
+Rules:
+- Structure values from ocr.text_excerpt, ocr.layout_kv, and invoice_fields in the user payload.
+- Copy values verbatim from the OCR payload. Do not round, calculate, infer, or normalize amounts.
+- Leave any field empty/null when it is not explicitly present in the OCR payload.
+- Do not derive subtotal, gst, or total from line items (or vice versa) unless that exact value appears in OCR.
+- Do not invent amounts, parties, or dates absent from that OCR payload.
+- suggested_dt must match confirmed_dt from the user payload.
+- confidence is 0.0-1.0 for the document type choice.
+- perspective is purchase | sales | unknown.
+{{party_rules}}
+{rule_lines}
+- invoice_date and due_date must be ISO YYYY-MM-DD strings when a date is present."""
+
+
+def _build_llm_combined_system_text(json_keys: str, rule_lines: str) -> str:
+    return f"""You classify finance documents for accounts payable.
+Return JSON only with keys:
+{json_keys}.
 
 Rules:
 - suggested_dt must be one of the catalogue codes provided, or empty string if unsure.
 - confidence is 0.0-1.0 for the document type choice.
 - perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
 {{party_rules}}
-{_LLM_EXTRACT_RULES}
+{rule_lines}
 - Use OCR text faithfully; do not invent amounts or parties.
 - few_shot_examples are prior reviewer corrections for this tenant. When document_heading or text_excerpt
   closely matches a few-shot example, strongly prefer that example's human_confirmed_dt over catalogue defaults.
@@ -113,28 +215,11 @@ Rules:
 - When recognition_mode is signals, treat recognition_rules as deterministic match hints for that code.
 - When recognition_mode is prompt, treat llm_prompt as the authoritative description for that code."""
 
-_LLM_EXTRACT_SYSTEM = f"""You structure accounts-payable fields from the provided OCR payload into JSON.
-Return JSON only with keys:
-{_LLM_EXTRACT_JSON_KEYS}.
-
-Rules:
-- Structure values from ocr.text_excerpt, ocr.layout_kv, and invoice_fields in the user payload.
-- Do not invent amounts, parties, or dates absent from that OCR payload.
-- suggested_dt must match confirmed_dt from the user payload.
-- confidence is 0.0-1.0 for the document type choice.
-- perspective is purchase | sales | unknown.
-{{party_rules}}
-{_LLM_EXTRACT_RULES}
-- invoice_date and due_date must be ISO YYYY-MM-DD strings when a date is present."""
-
 _SPARSE_IMAGE_EXTRACT_HINT = """
 Sparse OCR: document images may be attached. Prefer ocr.text_excerpt and layout_kv.
 Use images only to fill fields still missing from OCR — do not override OCR with invented values."""
 
-_LLM_SYSTEM = _LLM_SYSTEM.format(party_rules=PARTY_LLM_RULES)
 _LLM_CLASSIFY_SYSTEM = _LLM_CLASSIFY_SYSTEM.format(party_rules=PARTY_LLM_RULES)
-_LLM_EXTRACT_SYSTEM = _LLM_EXTRACT_SYSTEM.format(party_rules=PARTY_LLM_RULES)
-
 
 def _org_role_lines(org: OrgContext) -> list[str]:
     perspective = (org.default_perspective or "buyer").strip().lower()
@@ -166,11 +251,16 @@ def build_extract_system_prompt(
     org: OrgContext,
     *,
     playbook_profile: str | None = None,
-    custom_keys: Sequence[str] | None = None,
+    selected_keys: Sequence[str] | None = None,
 ) -> str:
-    parts = [_LLM_EXTRACT_SYSTEM.strip(), "", "Tenant context:"]
+    keys = list(selected_keys or ())
+    json_keys = build_llm_extract_json_keys(keys)
+    rule_lines = build_llm_extract_rule_lines(keys)
+    base = _build_llm_extract_system_text(json_keys, rule_lines).format(party_rules=PARTY_LLM_RULES)
+    parts = [base, "", "Tenant context:"]
     parts.extend(f"- {line}" for line in _org_role_lines(org))
     profile = (playbook_profile or "").strip().lower()
+    selected = {str(key or "").strip().lower() for key in keys}
     if profile == "supporting":
         parts.extend(
             [
@@ -187,12 +277,14 @@ def build_extract_system_prompt(
             ]
         )
     elif profile in {"po_goods", "ar_goods"}:
-        parts.extend(
-            [
-                "",
-                "Document profile: goods invoice — extract po_reference, vendor, line_items, invoice_date, due_date.",
-            ]
-        )
+        hint_keys = [key for key in ("po_reference", "vendor", "line_items", "invoice_date", "due_date") if key in selected]
+        if hint_keys:
+            parts.extend(
+                [
+                    "",
+                    f"Document profile: goods invoice — extract {', '.join(hint_keys)}.",
+                ]
+            )
     elif profile == "credit_adjustment":
         parts.extend(
             [
@@ -200,6 +292,7 @@ def build_extract_system_prompt(
                 "Document profile: credit note — extract credit reference and amounts (may be negative).",
             ]
         )
+    custom_keys = non_canonical_extraction_keys(keys)
     if custom_keys:
         parts.extend(custom_extraction_fields_prompt_lines(custom_extraction_field_descriptors(custom_keys)))
     return "\n".join(parts)
@@ -208,14 +301,19 @@ def build_extract_system_prompt(
 def build_combined_system_prompt(
     org: OrgContext,
     *,
-    custom_keys: Sequence[str] | None = None,
+    selected_keys: Sequence[str] | None = None,
 ) -> str:
-    parts = [_LLM_SYSTEM.strip(), "", "Tenant context:"]
+    keys = list(selected_keys or ())
+    json_keys = build_llm_extract_json_keys(keys)
+    rule_lines = build_llm_extract_rule_lines(keys)
+    base = _build_llm_combined_system_text(json_keys, rule_lines).format(party_rules=PARTY_LLM_RULES)
+    parts = [base, "", "Tenant context:"]
     parts.extend(f"- {line}" for line in _org_role_lines(org))
     if org.intake_summary.strip():
         parts.extend(["", f"Typical intake: {org.intake_summary.strip()}"])
     if org.classification_hints.strip():
         parts.extend(["", f"Tenant classification guidance: {org.classification_hints.strip()}"])
+    custom_keys = non_canonical_extraction_keys(keys)
     if custom_keys:
         parts.extend(custom_extraction_fields_prompt_lines(custom_extraction_field_descriptors(custom_keys)))
     return "\n".join(parts)
@@ -235,16 +333,17 @@ def build_llm_user_payload(
     org: OrgContext,
     document_types: Sequence[DocumentTypeDefinition],
     few_shots: Sequence[dict[str, str]] | None = None,
-    custom_keys: Sequence[str] | None = None,
+    selected_keys: Sequence[str] | None = None,
     confirmed_dt: str | None = None,
 ) -> str:
     excerpt = (ocr.text or "")[:12000]
     keys = (
-        list(custom_keys)
-        if custom_keys is not None
-        else custom_extraction_field_keys(document_types)
+        list(selected_keys)
+        if selected_keys is not None
+        else effective_extraction_field_keys_union(document_types)
     )
-    descriptors = custom_extraction_field_descriptors(keys)
+    custom_keys = non_canonical_extraction_keys(keys)
+    descriptors = custom_extraction_field_descriptors(custom_keys)
     payload: dict[str, Any] = {
         "tenant": {
             "legal_name": org.legal_name,
@@ -256,7 +355,8 @@ def build_llm_user_payload(
         },
         "catalogue": _catalogue_rows(document_types),
         "few_shot_examples": _few_shot_rows(few_shots or ()),
-        "custom_extraction_fields": keys,
+        "extraction_fields": keys,
+        "custom_extraction_fields": custom_keys,
         "custom_extraction_field_descriptors": descriptors,
         "canonical_extraction_fields": sorted(CANONICAL_EXTRACTION_FIELD_KEYS),
         "ocr": {
@@ -284,14 +384,11 @@ def _playbook_profile_for_dt(
     return None
 
 
-def _custom_keys_for_dt(
+def _selected_keys_for_dt(
     document_types: Sequence[DocumentTypeDefinition],
     dt_token: str,
 ) -> list[str]:
-    custom_keys = custom_extraction_field_keys_for_dt(document_types, dt_token)
-    if not custom_keys:
-        custom_keys = custom_extraction_field_keys(document_types)
-    return list(custom_keys)
+    return effective_extraction_field_keys_for_dt(document_types, dt_token)
 
 
 def build_structure_extract_prompts(
@@ -302,16 +399,20 @@ def build_structure_extract_prompts(
     confirmed_dt: str,
     few_shots: Sequence[dict[str, str]] | None = None,
     playbook_profile: str | None = None,
-    custom_keys: Sequence[str] | None = None,
+    selected_keys: Sequence[str] | None = None,
     sparse: bool = False,
 ) -> tuple[str, str]:
     """Shared system + user prompts for OCR-first field structuring (all providers)."""
     dt_token = confirmed_dt.strip().upper()
-    keys = list(custom_keys) if custom_keys is not None else _custom_keys_for_dt(document_types, dt_token)
+    keys = (
+        list(selected_keys)
+        if selected_keys is not None
+        else _selected_keys_for_dt(document_types, dt_token)
+    )
     profile = playbook_profile if playbook_profile is not None else _playbook_profile_for_dt(
         document_types, dt_token
     )
-    system = build_extract_system_prompt(org, playbook_profile=profile, custom_keys=keys)
+    system = build_extract_system_prompt(org, playbook_profile=profile, selected_keys=keys)
     if sparse:
         system = f"{system}{_SPARSE_IMAGE_EXTRACT_HINT}"
     user = build_llm_user_payload(
@@ -319,7 +420,7 @@ def build_structure_extract_prompts(
         org=org,
         document_types=document_types,
         few_shots=few_shots,
-        custom_keys=keys,
+        selected_keys=keys,
         confirmed_dt=dt_token,
     )
     return system, user
@@ -328,6 +429,7 @@ def build_structure_extract_prompts(
 def _normalize_llm_raw(
     raw: dict[str, Any],
     *,
+    selected_keys: Sequence[str] | None = None,
     custom_keys: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Best-effort cleanup before Pydantic validation (LLMs often emit '' or nested vendor)."""
@@ -335,40 +437,36 @@ def _normalize_llm_raw(
     vendor = out.get("vendor")
     if isinstance(vendor, dict):
         out["vendor"] = vendor.get("name") or vendor.get("vendor") or ""
-    for key in (
-        "reasoning",
-        "invoice_no",
-        "invoice_date",
-        "due_date",
-        "po_reference",
-        "so_reference",
-        "cost_centre",
-        "currency",
-        "abn",
-        "vendor",
-        "document_heading",
-        "bank_bsb",
-        "bank_account",
-        "bank_name",
-    ):
+
+    llm_keys = expand_extraction_keys_for_llm(selected_keys or ())
+    requested_strings = {key for key in llm_keys if key in _LLM_STRING_SCALAR_KEYS}
+    requested_strings.add("reasoning")
+    for key in requested_strings:
         if out.get(key) is None:
             out[key] = ""
-    for money in ("subtotal", "gst", "gst_rate", "total"):
-        if out.get(money) == "":
+    for money in _LLM_MONEY_SCALAR_KEYS:
+        if money in llm_keys and out.get(money) == "":
             out[money] = None
-    items = out.get("line_items")
-    if isinstance(items, list):
-        cleaned: list[dict[str, Any]] = []
-        for row in items:
-            if not isinstance(row, dict):
-                continue
-            item = dict(row)
-            for key in ("amount", "qty", "unit_price"):
-                if item.get(key) == "":
-                    item[key] = None
-            cleaned.append(item)
-        out["line_items"] = cleaned
-    harvested = harvest_custom_fields_from_llm_raw(out, custom_keys=custom_keys)
+    if "line_items" in {str(k).strip().lower() for k in (selected_keys or ())}:
+        items = out.get("line_items")
+        if isinstance(items, list):
+            cleaned: list[dict[str, Any]] = []
+            for row in items:
+                if not isinstance(row, dict):
+                    continue
+                desc = str(row.get("description") or "").strip()
+                if not desc or should_skip_line_row(desc):
+                    continue
+                item = dict(row)
+                for key in ("amount", "qty", "unit_price"):
+                    if item.get(key) == "":
+                        item[key] = None
+                cleaned.append(item)
+            out["line_items"] = cleaned
+    harvest_keys = list(custom_keys) if custom_keys is not None else non_canonical_extraction_keys(
+        selected_keys or ()
+    )
+    harvested = harvest_custom_fields_from_llm_raw(out, custom_keys=harvest_keys)
     if harvested:
         out["extracted_fields"] = harvested
     else:
@@ -486,14 +584,15 @@ async def extract_document_fields(
 ) -> LlmDocumentResult | None:
     settings = get_settings()
     dt_token = confirmed_dt.strip().upper()
-    custom_keys = _custom_keys_for_dt(document_types, dt_token)
+    selected_keys = _selected_keys_for_dt(document_types, dt_token)
+    custom_keys = non_canonical_extraction_keys(selected_keys)
     system, user = build_structure_extract_prompts(
         ocr=ocr,
         org=org,
         document_types=document_types,
         confirmed_dt=dt_token,
         few_shots=few_shots,
-        custom_keys=custom_keys,
+        selected_keys=selected_keys,
     )
     raw = await chat_json_async(
         system=system,
@@ -504,7 +603,11 @@ async def extract_document_fields(
     if raw is None:
         return None
     try:
-        normalized = _normalize_llm_raw(raw, custom_keys=custom_keys)
+        normalized = _normalize_llm_raw(
+            raw,
+            selected_keys=selected_keys,
+            custom_keys=custom_keys,
+        )
         normalized["suggested_dt"] = dt_token
         result = LlmDocumentResult.model_validate(normalized)
         result.raw = raw
@@ -522,16 +625,17 @@ async def classify_and_extract(
     few_shots: Sequence[dict[str, str]] | None = None,
 ) -> LlmDocumentResult | None:
     settings = get_settings()
-    custom_keys = custom_extraction_field_keys(document_types)
+    selected_keys = effective_extraction_field_keys_union(document_types)
+    custom_keys = non_canonical_extraction_keys(selected_keys)
     user = build_llm_user_payload(
         ocr=ocr,
         org=org,
         document_types=document_types,
         few_shots=few_shots,
-        custom_keys=custom_keys,
+        selected_keys=selected_keys,
     )
     raw = await chat_json_async(
-        system=build_combined_system_prompt(org, custom_keys=custom_keys),
+        system=build_combined_system_prompt(org, selected_keys=selected_keys),
         user=user,
         timeout_seconds=settings.runtime_llm_timeout_seconds,
         require_runtime=True,
@@ -539,7 +643,13 @@ async def classify_and_extract(
     if raw is None:
         return None
     try:
-        result = LlmDocumentResult.model_validate(_normalize_llm_raw(raw, custom_keys=custom_keys))
+        result = LlmDocumentResult.model_validate(
+            _normalize_llm_raw(
+                raw,
+                selected_keys=selected_keys,
+                custom_keys=custom_keys,
+            )
+        )
         result.raw = raw
         return result
     except ValidationError as exc:

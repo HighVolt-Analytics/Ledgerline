@@ -684,6 +684,53 @@ async def test_pipeline_vr12_legacy_skip_shows_fail(db_session: AsyncSession) ->
 
 
 @pytest.mark.asyncio
+async def test_validate_ignores_stale_classification_routing_after_gate_pass() -> None:
+    """Stale routing_review must not fail validate once classification and validation succeeded."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-13",
+        document_type_confidence=0.95,
+        llm_confidence=0.95,
+        validation_results=(
+            '[{"rule":"VR-PB01","passed":true,'
+            '"message":"Optional extraction fields not yet captured: so_reference"}]'
+        ),
+    )
+    logs = [
+        _log_at("llm_classified", 1, 0, llm_suggested_dt="DT-08", llm_confidence=0.75),
+        _log_at("classification_gate_failed", 1, 1, review_reasons=["LLM_LOW_CONF"]),
+        _log_at(
+            "routing_review_required",
+            1,
+            2,
+            gate="classification",
+            review_reasons=["LLM_LOW_CONF"],
+        ),
+        _log_at("llm_classified", 1, 10, llm_suggested_dt="DT-13", llm_confidence=0.95),
+        _log_at("classification_gate_passed", 1, 11, llm_confidence=0.95),
+        _log_at("parse_completed", 1, 12, confidence=0.9),
+        _log_at(
+            "playbook_evaluated",
+            1,
+            13,
+            blocks_posting=False,
+            missing_optional_extraction_fields=["so_reference"],
+        ),
+        _log_at("validation_passed", 1, 14),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    gate = next(s for s in pipeline if s.stage_id == "confidence_gate")
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert gate.state == "pass"
+    assert validate.state == "pass"
+    assert validate.exception_code is None
+    vr_pb01 = next(c for c in validate.checks if c.rule_ref == "VR-PB01")
+    assert vr_pb01.state == "pass"
+
+
+@pytest.mark.asyncio
 async def test_pipeline_validate_fail_blocks_processed_downstream(
     db_session: AsyncSession,
 ) -> None:

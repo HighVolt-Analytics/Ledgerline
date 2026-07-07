@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-_ABN_ROW = re.compile(r"\babn\b", re.I)
-
 # Extracted-field keys whose values must not appear as product line descriptions.
 HEADER_DEDUP_EXTRACTED_FIELD_KEYS: tuple[str, ...] = (
     "seller_name",
@@ -62,17 +60,17 @@ def is_summary_line_description(desc: str | None) -> bool:
     text = re.sub(r"\s+", " ", (desc or "").strip())
     if not text:
         return True
-    if re.search(r"sub\s*total|gst|total\s*due|amount\s*due", text, re.I):
+    if re.match(r"^sub\s*total\s*:?\s*$", text, re.I):
         return True
-    if re.search(
-        r"\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet|pallet\s*:)\b",
-        text,
-        re.I,
-    ):
+    if re.match(r"^(?:grand\s+)?total\s*:?\s*$", text, re.I):
         return True
-    if re.search(r"^total\b", text, re.I):
+    if re.match(r"^(?:gst|tax)\s*:?\s*$", text, re.I):
         return True
-    if _ABN_ROW.search(text):
+    if re.search(r"\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet|pallet\s*:)\b", text, re.I):
+        return True
+    if re.search(r"\b(?:total\s*due|amount\s*due)\b", text, re.I):
+        return True
+    if re.match(r"^abn\s*:?\s*\d", text, re.I):
         return True
     return False
 
@@ -96,3 +94,16 @@ def is_metadata_line_description(desc: str | None) -> bool:
 def should_skip_line_row(desc: str | None) -> bool:
     """Combined skip check used by parser and sanitizer."""
     return is_summary_line_description(desc) or is_metadata_line_description(desc)
+
+
+def has_trusted_line_items(items: list) -> bool:
+    """True when LLM (or primary) rows already have product lines with money fields."""
+    for item in items:
+        desc = getattr(item, "description", None) or ""
+        if not str(desc).strip() or should_skip_line_row(str(desc)):
+            continue
+        amount = getattr(item, "amount", None)
+        unit_price = getattr(item, "unit_price", None)
+        if amount is not None or unit_price is not None:
+            return True
+    return False

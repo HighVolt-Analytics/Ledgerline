@@ -59,6 +59,7 @@ ROUTE_VAULT = "Vault"
 
 EVAL_AUTO_CODED = "auto_coded"
 EVAL_NEEDS_REVIEW = "needs_review"
+EVAL_PENDING_APPROVAL = "pending_approval"
 EVAL_AWAITING_CLASSIFICATION = "awaiting_classification"
 EVAL_NEEDS_RESCAN = "needs_rescan"
 EVAL_PENDING_VENDOR = "pending_vendor"

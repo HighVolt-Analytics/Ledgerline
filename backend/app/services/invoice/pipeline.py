@@ -1170,13 +1170,15 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     from app.services.extraction.extraction_field_values import (
         apply_parsed_extraction_fields,
-        custom_extraction_field_keys_for_dt,
+        effective_extraction_field_keys_for_dt,
         enrich_parsed_from_ocr,
         ensure_extraction_baseline,
+        non_canonical_extraction_keys,
     )
     from app.services.extraction.pdf_parser import parse_local_text
 
-    custom_keys = custom_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
+    selected_keys = effective_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
+    custom_keys = non_canonical_extraction_keys(selected_keys)
     dt_definition = get_document_type_definition(
         confirmed_dt,
         document_types=config.document_types,

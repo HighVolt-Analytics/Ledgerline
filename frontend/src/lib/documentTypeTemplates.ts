@@ -303,9 +303,7 @@ export function documentTypeFromTemplate(
       ? absentFieldsFromExcludeRules(matchForm.excludeRules)
       : [];
   const baseExtraction =
-    templateId === "custom"
-      ? ["document_heading", "document_text"]
-      : [...template.defaultExtractionFields];
+    templateId === "custom" ? [] : [...template.defaultExtractionFields];
   const extractionFields = ensureExtractionSuperset(requiredFields, baseExtraction);
   const payload: DocumentTypeDefinition = {
     ...base,

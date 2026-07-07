@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyPlaybookChange,
   applyRoutePlaybookDefaults,
   matchModeAllowedForRoute,
+  matchModeOptionsForEditor,
   matchModesForRoute,
   matchTabLabel,
+  playbookProfileOptionsForEditor,
+  playbookProfilesForRoute,
+  reconcilePlaybookDraft,
   suggestedPlaybookForRoute,
 } from "@/lib/documentPlaybookConfig";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
@@ -40,7 +45,19 @@ describe("matchTabLabel", () => {
 
   it("returns 2-way purchase label for po_services", () => {
     expect(matchTabLabel("Purchase Management", "two_way_po_ses")).toBe(
-      "2-way match (PO · service entry)"
+      "2-way match (PO · Invoice)"
+    );
+  });
+
+  it("returns 2-way SO invoice label", () => {
+    expect(matchTabLabel("Sales Management", "two_way_so_invoice")).toBe(
+      "2-way match (SO · Invoice)"
+    );
+  });
+
+  it("returns 2-way GRN invoice label", () => {
+    expect(matchTabLabel("Purchase Management", "two_way_grn_invoice")).toBe(
+      "2-way match (GRN · Invoice)"
     );
   });
 
@@ -58,20 +75,135 @@ describe("matchTabLabel", () => {
 });
 
 describe("matchModesForRoute", () => {
-  it("restricts purchase workspace to PO match modes", () => {
+  it("allows PO and route-agnostic match modes on purchase workspace", () => {
     expect(matchModesForRoute("Purchase Management")).toEqual([
       "none",
+      "reference_invoice",
+      "shipment",
+      "subledger_reconcile",
+      "receipt_line",
       "three_way_po_grn",
       "two_way_po_ses",
+      "two_way_grn_invoice",
     ]);
   });
 
-  it("restricts sales workspace to AR match modes", () => {
+  it("allows SO and route-agnostic match modes on sales workspace", () => {
     expect(matchModesForRoute("Sales Management")).toEqual([
       "none",
+      "reference_invoice",
+      "shipment",
+      "subledger_reconcile",
+      "receipt_line",
       "three_way_so_dn",
+      "two_way_so_invoice",
       "two_way_dn_invoice",
     ]);
+  });
+});
+
+describe("playbookProfilesForRoute", () => {
+  it("includes import_dossier and credit_adjustment on purchase route", () => {
+    const profiles = playbookProfilesForRoute("Purchase Management");
+    expect(profiles).toContain("import_dossier");
+    expect(profiles).toContain("credit_adjustment");
+    expect(profiles).not.toContain("ar_goods");
+  });
+});
+
+describe("playbookProfileOptionsForEditor", () => {
+  it("includes current profile when route filter would exclude it", () => {
+    const draft = dt({
+      routeTarget: "Purchase Management",
+      playbookProfile: "ar_goods",
+      matchPolicy: { mode: "three_way_so_dn" },
+    });
+    const options = playbookProfileOptionsForEditor(draft);
+    expect(options.some((row) => row.value === "ar_goods")).toBe(true);
+    expect(options.find((row) => row.value === "ar_goods")?.label).toContain("(current)");
+  });
+});
+
+describe("matchModeOptionsForEditor", () => {
+  it("includes current match mode when route filter would exclude it", () => {
+    const draft = dt({
+      routeTarget: "Purchase Management",
+      matchPolicy: { mode: "three_way_so_dn" },
+    });
+    const options = matchModeOptionsForEditor(draft);
+    expect(options.some((row) => row.value === "three_way_so_dn")).toBe(true);
+  });
+});
+
+describe("applyPlaybookChange", () => {
+  it("auto-fills mandatory members when switching to po_goods", () => {
+    const catalogue = [
+      dt({ code: "DT-01", playbookProfile: "direct_expense" }),
+      dt({ code: "DT-05", klass: "Non-transactional", posting: "No", purchaseBundleRole: "po" }),
+      dt({ code: "DT-06", klass: "Non-transactional", posting: "No", purchaseBundleRole: "grn" }),
+    ];
+    const next = applyPlaybookChange(
+      dt({ code: "DT-01", playbookProfile: "direct_expense" }),
+      "po_goods",
+      catalogue
+    );
+    expect(next.playbookProfile).toBe("po_goods");
+    expect(next.bundleMandatory).toEqual(["DT-05", "DT-06"]);
+  });
+
+  it("clears default mandatory pair when downgrading from enforce playbook", () => {
+    const catalogue = [
+      dt({ code: "DT-01", playbookProfile: "po_goods", bundleMandatory: ["DT-05", "DT-06"] }),
+      dt({ code: "DT-05", klass: "Non-transactional", posting: "No", purchaseBundleRole: "po" }),
+      dt({ code: "DT-06", klass: "Non-transactional", posting: "No", purchaseBundleRole: "grn" }),
+    ];
+    const next = applyPlaybookChange(
+      catalogue[0],
+      "direct_expense",
+      catalogue
+    );
+    expect(next.playbookProfile).toBe("direct_expense");
+    expect(next.bundleMandatory).toEqual([]);
+  });
+
+  it("preserves custom mandatory list when downgrading from enforce playbook", () => {
+    const catalogue = [
+      dt({
+        code: "DT-01",
+        playbookProfile: "po_goods",
+        bundleMandatory: ["DT-05", "DT-06", "DT-07"],
+      }),
+      dt({ code: "DT-05", klass: "Non-transactional", posting: "No", purchaseBundleRole: "po" }),
+      dt({ code: "DT-06", klass: "Non-transactional", posting: "No", purchaseBundleRole: "grn" }),
+    ];
+    const next = applyPlaybookChange(catalogue[0], "direct_expense", catalogue);
+    expect(next.bundleMandatory).toEqual(["DT-05", "DT-06", "DT-07"]);
+  });
+});
+
+describe("reconcilePlaybookDraft", () => {
+  it("sets supporting playbook when purchase bundle role is po", () => {
+    const next = reconcilePlaybookDraft(
+      dt({
+        playbookProfile: "po_goods",
+        matchPolicy: { mode: "three_way_po_grn" },
+        approvalPolicy: { mode: "touchless_on_clean_match" },
+        purchaseBundleRole: "po",
+      })
+    );
+    expect(next.playbookProfile).toBe("supporting");
+    expect(next.matchPolicy.mode).toBe("none");
+    expect(next.approvalPolicy.mode).toBe("no_posting");
+  });
+
+  it("clamps invalid match mode to none for route", () => {
+    const next = reconcilePlaybookDraft(
+      dt({
+        playbookProfile: "po_goods",
+        matchPolicy: { mode: "three_way_so_dn" },
+      })
+    );
+    expect(next.matchPolicy.mode).toBe("none");
   });
 });
 
@@ -85,6 +217,18 @@ describe("applyRoutePlaybookDefaults", () => {
     const next = applyRoutePlaybookDefaults(draft, "Purchase Management");
     expect(next.playbookProfile).toBe("po_services");
     expect(next.matchPolicy.mode).toBe("two_way_po_ses");
+  });
+
+  it("preserves credit_adjustment when switching vault to purchase", () => {
+    const draft = dt({
+      routeTarget: "Vault",
+      playbookProfile: "credit_adjustment",
+      matchPolicy: { mode: "reference_invoice" },
+      approvalPolicy: { mode: "supervisor_on_exception" },
+    });
+    const next = applyRoutePlaybookDefaults(draft, "Purchase Management");
+    expect(next.playbookProfile).toBe("credit_adjustment");
+    expect(next.matchPolicy.mode).toBe("reference_invoice");
   });
 
   it("resets playbook when switching to sales with purchase match mode", () => {
@@ -128,5 +272,9 @@ describe("matchModeAllowedForRoute", () => {
 
   it("allows purchase 2-way on purchase route", () => {
     expect(matchModeAllowedForRoute("Purchase Management", "two_way_po_ses")).toBe(true);
+  });
+
+  it("allows reference_invoice on purchase route", () => {
+    expect(matchModeAllowedForRoute("Purchase Management", "reference_invoice")).toBe(true);
   });
 });

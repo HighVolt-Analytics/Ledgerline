@@ -170,11 +170,6 @@ export function bundleMemberDetailLabel(
   return base;
 }
 
-function postingIsPayable(posting: string): boolean {
-  const token = posting.trim().toLowerCase();
-  return token === "yes" || token === "conditional" || token === "down-payment";
-}
-
 /** Supporting purchase documents (PO copy, GRN) that link on a dossier. */
 export function isPurchaseBundleMemberCandidate(
   docType: Pick<DocumentTypeDefinition, "code" | "klass" | "routeTarget" | "posting" | "purchaseBundleRole" | "enabled">
@@ -258,15 +253,70 @@ export function bundleEditorMode(
   }
 
   if (playbookEnforcesBundle(draft)) return "consumer";
-  if (normalizeDtCodeList(draft.bundleMandatory).length > 0) return "consumer";
-  if (postingIsPayable(draft.posting) && draft.routeTarget === "Purchase Management") {
-    return "consumer";
-  }
-  if (postingIsPayable(draft.posting) && draft.routeTarget === "Sales Management") {
-    return "consumer";
-  }
 
   return "inactive";
+}
+
+export function bundleMandatoryMatchesSuggested(
+  draft: DocumentTypeDefinition,
+  documentTypes: DocumentTypeDefinition[]
+): boolean {
+  const mandatory = normalizeDtCodeList(draft.bundleMandatory);
+  if (mandatory.length === 0) return false;
+  const suggested = suggestedMandatoryBundleMembers(
+    documentTypes,
+    draft.code,
+    draft.routeTarget
+  );
+  if (mandatory.length !== suggested.length) return false;
+  return mandatory.every((code, index) => code === suggested[index]);
+}
+
+/** Align bundle mandatory/conditional with playbook-driven editor mode. */
+export function reconcileBundleDraft(
+  draft: DocumentTypeDefinition,
+  documentTypes?: DocumentTypeDefinition[]
+): DocumentTypeDefinition {
+  const mode = bundleEditorMode(draft);
+  const conditional = normalizeBundleConditional(draft.bundleConditional);
+
+  if (mode === "inactive") {
+    return {
+      ...draft,
+      bundleMandatory: [],
+      bundleConditional: conditional,
+    };
+  }
+
+  if (mode === "member") {
+    return {
+      ...draft,
+      bundleMandatory: [],
+      bundleConditional: [],
+    };
+  }
+
+  const mandatory = normalizeDtCodeList(draft.bundleMandatory);
+  if (mandatory.length === 0 && documentTypes?.length) {
+    const suggested = suggestedMandatoryBundleMembers(
+      documentTypes,
+      draft.code,
+      draft.routeTarget
+    );
+    if (suggested.length > 0) {
+      return {
+        ...draft,
+        bundleMandatory: suggested,
+        bundleConditional: conditional,
+      };
+    }
+  }
+
+  return {
+    ...draft,
+    bundleMandatory: mandatory,
+    bundleConditional: conditional,
+  };
 }
 
 export function bundleMemberCandidates(

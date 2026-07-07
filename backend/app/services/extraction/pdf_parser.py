@@ -424,7 +424,14 @@ def post_process_parsed_data(
         due_date = None
 
     po_reference = data.po_reference
-    if not po_reference:
+    dt_def = dt_definition if isinstance(dt_definition, DocumentTypeDefinition) else None
+    configured: set[str] = set()
+    if dt_def is not None:
+        from app.services.extraction.extraction_field_values import effective_extraction_field_keys_for_dt
+
+        configured = set(effective_extraction_field_keys_for_dt([dt_def], dt_def.code))
+
+    if not po_reference and "po_reference" in configured:
         from app.services.purchase.po_reference import extract_po_reference_from_text
 
         po_reference = extract_po_reference_from_text(body)
@@ -435,10 +442,12 @@ def post_process_parsed_data(
         raw_fields["gstin"] = local_fields["gstin"]
     if local_fields.get("grn_reference"):
         raw_fields["grn_reference"] = local_fields["grn_reference"]
-    if not invoice_no and local_fields.get("invoice_no"):
-        invoice_no = local_fields["invoice_no"]
 
-    dt_def = dt_definition if isinstance(dt_definition, DocumentTypeDefinition) else None
+    if not invoice_no and local_fields.get("invoice_no") and "invoice_no" in configured:
+        invoice_no = local_fields["invoice_no"]
+    if not po_reference and local_fields.get("po_reference") and "po_reference" in configured:
+        po_reference = local_fields["po_reference"]
+
     if dt_def is not None:
         absent = {str(f).strip().lower() for f in (dt_def.absent_fields or []) if str(f).strip()}
         if "invoice_no" in absent:

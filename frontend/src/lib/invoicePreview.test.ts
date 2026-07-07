@@ -521,6 +521,26 @@ describe("enrichLineItemsFromDocumentText", () => {
     expect(items[0]?.unit_price).toBe("145.00");
     expect(items[0]?.amount).toBe("11600.00");
   });
+
+  it("parses month-year descriptions without treating the year as qty", () => {
+    const items = enrichLineItemsFromDocumentText(
+      [
+        {
+          id: 1,
+          invoice_id: 42,
+          description: "EC2 Compute - May 2026",
+          qty: "1",
+          unit_price: null,
+          amount: null,
+          tax_amount: null,
+        },
+      ],
+      "EC2 Compute - May 2026 1 $2,450.00 $245.00 $2,695.00"
+    );
+    expect(items[0]?.unit_price).toBe("2450.00");
+    expect(items[0]?.amount).toBe("2695.00");
+    expect(items[0]?.qty).toBe("1");
+  });
 });
 
 describe("sanitizeLineItemValues", () => {
@@ -621,6 +641,108 @@ describe("buildDocumentContentProfile summary line filtering", () => {
   });
 });
 
+describe("summaryMode", () => {
+  it("shows all extracted values regardless of absentFields and extractionFieldKeys", () => {
+    const inv = {
+      ...baseInvoice,
+      total: "1200.00",
+      subtotal: "1000.00",
+      gst: "200.00",
+      po_reference: "PO-99",
+    } as InvoiceDetails;
+
+    const profile = buildDocumentContentProfile(inv, {
+      sourceKind: "upload",
+      summaryMode: true,
+      absentFields: ["total", "subtotal", "gst", "po_reference"],
+      extractionFieldKeys: ["vendor"],
+    });
+
+    expect(profile.totals.total).toBe("1200.00");
+    expect(profile.totals.subtotal).toBe("1000.00");
+    expect(profile.totals.tax).toBe("200.00");
+    expect(profile.referenceDetails.some((row) => row.key === "po_reference")).toBe(true);
+  });
+
+  it("does not derive totals from line items in summaryMode", () => {
+    const profile = buildDocumentContentProfile(
+      {
+        ...baseInvoice,
+        line_items: [
+          {
+            id: 1,
+            invoice_id: 42,
+            description: "Item A",
+            qty: "2",
+            unit_price: "50",
+            amount: "100",
+            tax_amount: null,
+          },
+        ],
+      } as InvoiceDetails,
+      { sourceKind: "upload", summaryMode: true }
+    );
+    expect(profile.totals.subtotal).toBeUndefined();
+    expect(profile.totals.total).toBeUndefined();
+  });
+
+  it("shows OCR excerpt for non-financial documents in summaryMode", () => {
+    const profile = buildDocumentContentProfile(
+      {
+        ...baseInvoice,
+        document_text: "Permit application\nPermit No: P-100",
+        extracted_fields: { permit_no: "P-100" },
+      } as InvoiceDetails,
+      { sourceKind: "upload", summaryMode: true }
+    );
+    expect(profile.referenceDetails.some((row) => row.key === "permit_no")).toBe(true);
+    expect(profile.textExcerpt).toContain("Permit application");
+  });
+});
+
+describe("filterLineItemsForPreview", () => {
+  it("keeps product lines that mention gst in the description", () => {
+    const items = filterLineItemsForPreview([
+      {
+        id: 1,
+        invoice_id: 42,
+        description: "GST consulting services",
+        qty: "1",
+        unit_price: "350",
+        amount: "350",
+        tax_amount: null,
+      },
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.description).toBe("GST consulting services");
+  });
+
+  it("filters subtotal and metadata rows", () => {
+    const items = filterLineItemsForPreview([
+      {
+        id: 1,
+        invoice_id: 42,
+        description: "Sub Total",
+        qty: null,
+        unit_price: null,
+        amount: "500",
+        tax_amount: null,
+      },
+      {
+        id: 2,
+        invoice_id: 42,
+        description: "SEO Services",
+        qty: "1",
+        unit_price: "35000",
+        amount: "35000",
+        tax_amount: null,
+      },
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.description).toBe("SEO Services");
+  });
+});
+
 describe("derived totals from line items", () => {
   it("sets subtotal and total when all line amounts are present", () => {
     const profile = buildDocumentContentProfile(
@@ -662,6 +784,7 @@ describe("shouldIncludeInSummary", () => {
 
   it("respects absentFields even when a value exists", () => {
     expect(shouldIncludeInSummary("total", ["total"], ["total"], true)).toBe(false);
+    expect(shouldIncludeInSummary("total", ["total"], ["total"], true, true)).toBe(true);
   });
 });
 

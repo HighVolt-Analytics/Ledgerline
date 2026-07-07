@@ -90,7 +90,7 @@ function InvoiceTable({
                 <RouteTargetBadge route={inv.route_target} />
               </td>
               <td className="px-3 py-2.5">
-                <EvaluationStatusBadge status={inv.evaluation_status} />
+                <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
               </td>
               <td className="px-3 py-2.5">
                 <InboxGlAccountBadge

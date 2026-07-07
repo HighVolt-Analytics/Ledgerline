@@ -110,6 +110,7 @@ def build_invite_authorize_url(*, tenant_id: uuid.UUID | str | int, invite_reque
     return _build_authorize_url(
         tenant_id=tenant_id,
         state=create_oauth_state(tenant_id=tenant_id, invite_request_id=invite_request_id),
+        prompt="consent",
     )
 
 
@@ -128,7 +129,13 @@ def build_admin_consent_url() -> str:
     return f"{_authority(multi_tenant=False)}/v2.0/adminconsent?{urlencode(params)}"
 
 
-def _build_authorize_url(*, tenant_id: int, state: str, multi_tenant: bool | None = None) -> str:
+def _build_authorize_url(
+    *,
+    tenant_id: int,
+    state: str,
+    multi_tenant: bool | None = None,
+    prompt: str = "select_account",
+) -> str:
     settings = get_settings()
     if not oauth_configured():
         raise RuntimeError("Microsoft OAuth is not configured")
@@ -140,9 +147,9 @@ def _build_authorize_url(*, tenant_id: int, state: str, multi_tenant: bool | Non
         "response_mode": "query",
         "scope": " ".join(GRAPH_DELEGATED_SCOPES),
         "state": state,
-        # select_account — after IT grants admin consent once, users sign in without
-        # re-triggering the "Need admin approval" wall that prompt=consent can show.
-        "prompt": "select_account",
+        # Invite/reconnect flows use consent so Microsoft returns a refresh token.
+        # Direct admin connect keeps select_account to avoid the admin-approval wall.
+        "prompt": prompt,
     }
     return f"{_authority(multi_tenant=multi_tenant)}/oauth2/v2.0/authorize?{urlencode(params)}"
 
@@ -224,6 +231,17 @@ def _apply_token_response(mailbox: ConnectedMailbox, token_data: dict[str, Any])
     mailbox.last_error = None
     mailbox.auth_type = AUTH_DELEGATED
     mailbox.mail_provider = MAIL_PROVIDER_MICROSOFT
+
+
+def _require_refresh_token(mailbox: ConnectedMailbox) -> None:
+    """Delegated mailboxes need a refresh token for long-lived polling."""
+    if decrypt_secret(mailbox.refresh_token_encrypted):
+        return
+    mailbox.connection_status = STATUS_ERROR
+    mailbox.last_error = (
+        "Microsoft did not return a refresh token — reconnect the mailbox and accept all permissions"
+    )
+    raise RuntimeError(mailbox.last_error)
 
 
 async def complete_oauth_callback(
@@ -308,6 +326,7 @@ async def complete_oauth_callback(
     mailbox.oauth_user_id = oauth_user_id or None
     mailbox.oauth_connected_at = datetime.now(timezone.utc)
     _apply_token_response(mailbox, token_data)
+    _require_refresh_token(mailbox)
     await session.flush()
 
     if invite_row is not None:
@@ -345,7 +364,12 @@ async def resolve_delegated_access_token(mailbox: ConnectedMailbox) -> str:
     refresh = decrypt_secret(mailbox.refresh_token_encrypted)
     if not refresh:
         mailbox.connection_status = STATUS_DISCONNECTED
-        mailbox.last_error = "Refresh token missing — reconnect mailbox"
+        if mailbox.refresh_token_encrypted:
+            mailbox.last_error = (
+                "Stored refresh token could not be decrypted — reconnect mailbox"
+            )
+        else:
+            mailbox.last_error = "Refresh token missing — reconnect mailbox"
         raise RuntimeError(mailbox.last_error)
 
     token_data = await _refresh_tokens(refresh)

@@ -186,11 +186,13 @@ async def try_targeted_field_reextract(
         return playbook
 
     from app.services.extraction.extraction_field_values import (
-        custom_extraction_field_keys_for_dt,
+        effective_extraction_field_keys_for_dt,
         enrich_parsed_from_ocr,
+        non_canonical_extraction_keys,
     )
 
-    custom_keys = custom_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
+    selected_keys = effective_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
+    custom_keys = non_canonical_extraction_keys(selected_keys)
     dt_definition = get_document_type_definition(
         confirmed_dt,
         document_types=config.document_types,
@@ -225,6 +227,8 @@ async def try_targeted_field_reextract(
             setattr(parsed, field_name, value)
             setattr(loaded, field_name, value)
             setattr(invoice, field_name, value)
+
+    retried = await evaluate_playbook_gates(
         session,
         invoice=loaded,
         parsed=retry_parsed,
@@ -241,9 +245,7 @@ async def try_targeted_field_reextract(
             "blocks_posting": retried.blocks_posting,
         },
     )
-            setattr(invoice, field_name, value)
-
-    retried = await evaluate_playbook_gates(
+    return retried
 
 
 async def evaluate_playbook_with_reextract(

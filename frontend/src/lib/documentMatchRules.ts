@@ -4,6 +4,7 @@
 
 import type { ChartOfAccountRow } from "@/api/types";
 import { hasValidPostTo } from "@/lib/documentTypePostToValidation";
+import { normalizeDtCodeList, playbookEnforcesBundle } from "@/lib/documentBundleConfig";
 import type { ConditionOperator } from "@/lib/v4RuleBookTypes";
 import type {
   DocumentRuleCondition,
@@ -572,6 +573,8 @@ export function documentTypeReadiness(
     posting: string;
     postTo?: DocumentTypePostTo;
     classifier: { root: DocumentRuleConditionGroup };
+    playbookProfile?: string;
+    bundleMandatory?: string[];
   },
   options?: { coaAccounts?: ChartOfAccountRow[] }
 ): { ready: boolean; items: { label: string; done: boolean }[] } {
@@ -588,6 +591,11 @@ export function documentTypeReadiness(
     { posting: draft.posting, postTo: draft.postTo ?? emptyDocumentTypePostTo() },
     accounts
   );
+  const enforceBundle = playbookEnforcesBundle({
+    playbookProfile: draft.playbookProfile ?? "",
+  });
+  const hasSupportingDocs =
+    !enforceBundle || normalizeDtCodeList(draft.bundleMandatory).length > 0;
 
   const items = [
     { label: "Specific document name", done: hasName },
@@ -600,6 +608,7 @@ export function documentTypeReadiness(
     },
     { label: "Unique code", done: hasCode },
     { label: "Post to ledger (from chart of accounts)", done: hasPostTo },
+    { label: "Required supporting documents (playbook)", done: hasSupportingDocs },
   ];
   return { ready: items.every((i) => i.done), items };
 }

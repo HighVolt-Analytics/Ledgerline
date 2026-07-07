@@ -6,6 +6,7 @@ import {
   columnForInvoice,
   isPreClassificationReview,
   mergeBoardRowWithLocal,
+  needsReviewQueueCount,
   reviewQueueCount,
   shouldClearProcessingId,
 } from "@/lib/approvalsBoard";
@@ -161,6 +162,14 @@ describe("reviewQueueCount", () => {
       inv(3, "parsing"),
     ];
     expect(reviewQueueCount(rows)).toBe(1);
+  });
+
+  it("needsReviewQueueCount excludes pending_approval", () => {
+    const rows = [
+      inv(1, "exception", { evaluation_status: "needs_review", document_type_code: "DT-03" }),
+      inv(2, "exception", { evaluation_status: "pending_approval", document_type_code: "DT-26" }),
+    ];
+    expect(needsReviewQueueCount(rows)).toBe(1);
   });
 });
 

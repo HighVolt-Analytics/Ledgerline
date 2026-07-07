@@ -462,9 +462,9 @@ export function DocumentSummaryPreview({
 
   documentTypeLabel,
 
-  absentFields = [],
+  absentFields: _absentFields = [],
 
-  extractionFieldKeys = [],
+  extractionFieldKeys: _extractionFieldKeys = [],
 
   fmt,
 
@@ -482,17 +482,15 @@ export function DocumentSummaryPreview({
 
         documentTypeLabel,
 
-        absentFields,
-
-        extractionFieldKeys,
-
         sourceKind,
 
         lineItems,
 
+        summaryMode: true,
+
       }),
 
-    [inv, lineItems, documentTypeLabel, absentFields, extractionFieldKeys, sourceKind]
+    [inv, lineItems, documentTypeLabel, sourceKind]
 
   );
 
@@ -604,6 +602,12 @@ export function DocumentSummaryPreview({
 
           )}
 
+          {documentTypeLabel && documentTypeLabel !== heading && (
+
+            <div className="text-[10px] text-muted-foreground mt-1">{documentTypeLabel}</div>
+
+          )}
+
           <div className="invoice-preview-doc-ref tnum">{profile.docRef}</div>
 
         </div>
@@ -644,7 +648,13 @@ export function DocumentSummaryPreview({
 
         <div className="invoice-preview-excerpt invoice-preview-section">
 
-          {profile.textExcerpt}
+          <div className="invoice-preview-section-title">Document text</div>
+
+          <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground/90">
+
+            {profile.textExcerpt}
+
+          </p>
 
         </div>
 
@@ -656,7 +666,9 @@ export function DocumentSummaryPreview({
 
         <p className="invoice-preview-empty">
 
-          No extracted content yet — open Original to view the uploaded file.
+          No structured fields extracted yet — open Original to view the uploaded file, or check
+
+          Document text above if OCR is available.
 
         </p>
 

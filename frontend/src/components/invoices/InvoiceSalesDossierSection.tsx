@@ -44,8 +44,8 @@ export function InvoiceSalesDossierSection({
         <p className="text-sm font-medium">No sales order linked</p>
         <p className="text-xs text-muted-foreground mt-1">
           {twoWay
-            ? "2-way DN match needs an SO reference and a delivery note on the same order."
-            : "Upload SO and DN documents on the same SO reference for 3-way match."}
+            ? "2-way match links a delivery note and invoice on the same invoice number. An SO reference is optional."
+            : "Full 3-way match needs SO and DN on the same SO reference. The SO can be auto-registered from the commercial invoice."}
         </p>
         {isSalesManagementRoute(routeTarget) ? (
           <p className="text-xs text-muted-foreground mt-2">
@@ -67,7 +67,7 @@ export function InvoiceSalesDossierSection({
         <p className="text-sm font-medium">Sales register not linked yet</p>
         <p className="text-xs text-muted-foreground mt-1 tnum">{dossier.so_reference}</p>
         <p className="text-xs text-muted-foreground mt-2">
-          Upload a classified SO copy on this reference, or record a delivery note once the register exists.
+          Upload supporting documents on this SO reference, or reprocess the invoice after siblings arrive to upgrade the match tier.
         </p>
       </div>
     );

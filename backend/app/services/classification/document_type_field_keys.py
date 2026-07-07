@@ -12,6 +12,28 @@ INFRASTRUCTURE_EXTRACTION_FIELD_KEYS: frozenset[str] = frozenset(
     }
 )
 
+POSTING_CRITICAL_FIELD_KEYS: frozenset[str] = frozenset(
+    {
+        "vendor",
+        "invoice_no",
+        "invoice_date",
+        "due_date",
+        "total",
+        "subtotal",
+        "gst",
+        "gst_rate",
+        "abn",
+        "po_reference",
+        "so_reference",
+        "line_items",
+        "seller_name",
+        "seller_abn",
+        "buyer_name",
+        "buyer_abn",
+        "bank_details",
+    }
+)
+
 CANONICAL_EXTRACTION_FIELD_KEYS: frozenset[str] = frozenset(
     {
         "vendor",
@@ -64,6 +86,15 @@ def playbook_blockable_field_keys(keys: list[str] | None) -> list[str]:
         key
         for key in normalize_extraction_field_keys(keys)
         if key not in INFRASTRUCTURE_EXTRACTION_FIELD_KEYS
+    ]
+
+
+def posting_critical_field_keys(keys: list[str] | None) -> list[str]:
+    """Required keys that block GL posting when absent."""
+    return [
+        key
+        for key in playbook_blockable_field_keys(keys)
+        if key in POSTING_CRITICAL_FIELD_KEYS
     ]
 
 

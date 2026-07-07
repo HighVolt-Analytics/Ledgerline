@@ -65,3 +65,57 @@ def test_enrich_line_items_from_text_parses_sgd_rows() -> None:
     enriched = enrich_line_items_from_text(items, text)
     assert enriched[0].unit_price == Decimal("500")
     assert enriched[0].amount == Decimal("500")
+
+
+def test_parse_line_items_handles_month_year_in_description() -> None:
+    from app.services.extraction.line_items_parser import parse_line_items_from_text
+
+    text = """
+DESCRIPTION QTY UNIT PRICE GST AMOUNT
+EC2 Compute - May 2026 1 $2,450.00 $245.00 $2,695.00
+S3 Storage & Data Transfer 1 $380.00 $38.00 $418.00
+"""
+    items = parse_line_items_from_text(text)
+    assert len(items) == 2
+    assert items[0].description == "EC2 Compute - May 2026"
+    assert items[0].qty == Decimal("1")
+    assert items[0].unit_price == Decimal("2450.00")
+    assert items[0].amount == Decimal("2695.00")
+    assert items[1].description == "S3 Storage & Data Transfer"
+    assert items[1].qty == Decimal("1")
+
+
+def test_repair_year_misplaced_as_qty() -> None:
+    from app.services.extraction.line_items_parser import enrich_parsed_line_items
+
+    items = enrich_parsed_line_items(
+        [
+            ParsedLineItem(
+                description="EC2 Compute - May",
+                qty=Decimal("2026"),
+                unit_price=Decimal("1"),
+                amount=Decimal("1"),
+            ),
+            ParsedLineItem(
+                description="EC2 Compute - May 2026",
+                qty=Decimal("1"),
+                unit_price=Decimal("2450"),
+                amount=Decimal("2695"),
+            ),
+        ]
+    )
+    assert len(items) == 1
+    assert items[0].description == "EC2 Compute - May 2026"
+    assert items[0].qty == Decimal("1")
+    assert items[0].unit_price == Decimal("2450")
+
+
+def test_enrich_line_items_from_text_parses_month_year_description() -> None:
+    items = [
+        ParsedLineItem(description="EC2 Compute - May 2026", qty=Decimal("1"), unit_price=None, amount=None),
+    ]
+    text = "EC2 Compute - May 2026 1 $2,450.00 $245.00 $2,695.00"
+    enriched = enrich_line_items_from_text(items, text)
+    assert enriched[0].unit_price == Decimal("2450")
+    assert enriched[0].amount == Decimal("2695")
+

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from datetime import date
 from decimal import Decimal
 
 from app.services.invoice.invoice_data import InvoiceData
+from app.services.shared.flexible_date import _NAME_FORMATS, _NUMERIC_FORMATS_DMY, _NUMERIC_FORMATS_MDY
 from app.utils.abn_validator import storage_abn
 from app.utils.tax_id_validator import is_acceptable_tax_id
 
@@ -77,6 +79,22 @@ def value_grounded_in_ocr(value: str | None, ocr_text: str | None) -> bool:
     escaped = re.escape(token)
     if re.search(rf"(?<!\w){escaped}(?!\w)", ocr_text, re.I):
         return True
+    return False
+
+
+def _date_grounded_in_ocr(value: date | None, ocr_text: str | None) -> bool:
+    if value is None:
+        return True
+    if not ocr_text:
+        return False
+    formats = _NUMERIC_FORMATS_DMY + _NUMERIC_FORMATS_MDY + _NAME_FORMATS
+    for fmt in formats:
+        try:
+            token = value.strftime(fmt)
+        except ValueError:
+            continue
+        if value_grounded_in_ocr(token, ocr_text):
+            return True
     return False
 
 
@@ -154,11 +172,8 @@ def ground_invoice_scalars(data: InvoiceData, ocr_text: str | None) -> InvoiceDa
             if not _money_grounded_in_ocr(current, ocr_text):
                 updates[field] = None
 
-    if data.due_date is not None:
-        if not value_grounded_in_ocr(data.due_date.isoformat(), ocr_text):
-            iso = data.due_date.strftime("%d/%m/%Y")
-            if not value_grounded_in_ocr(iso, ocr_text):
-                updates["due_date"] = None
+    if data.due_date is not None and not _date_grounded_in_ocr(data.due_date, ocr_text):
+        updates["due_date"] = None
 
     abn_raw = (data.abn or "").strip()
     if abn_raw:

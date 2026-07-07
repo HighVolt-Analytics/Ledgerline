@@ -759,6 +759,98 @@ def compute_two_way_dn_match(
     )
 
 
+def compute_two_way_so_match(
+    so: SalesOrder,
+    inv: Invoice,
+    *,
+    match_config: PurchaseMatchConfig | None = None,
+) -> ThreeWayMatchResult:
+    """SO ↔ invoice match when no delivery note exists on the dossier."""
+    from app.services.classification.document_type_match_service import (
+        PRICE_MATCH_CAP_AUD,
+        PRICE_MATCH_PCT,
+        _price_variance_exceeds_tolerance,
+    )
+
+    inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
+    so_qty = Decimal(str(so.so_qty or 0))
+    so_unit = Decimal(str(so.so_unit_price or 0))
+    so_value = _round2(so_qty * so_unit)
+    invoice_value = _round2(inv_qty * inv_unit)
+    invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
+    invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
+
+    if so.variance_approved:
+        return ThreeWayMatchResult(
+            status="2-Way Match",
+            qty_variance_value=0.0,
+            price_variance_value=0.0,
+            total_deviation=0.0,
+            po_value=so_value,
+            invoice_value=invoice_value,
+            invoice_gst=invoice_gst,
+            invoice_total=invoice_total,
+        )
+
+    inv_qty_f = float(inv_qty)
+    inv_unit_f = float(inv_unit)
+    so_qty_f = float(so_qty)
+    so_unit_f = float(so_unit)
+    price_variance = _round2((inv_unit_f - so_unit_f) * inv_qty_f)
+
+    if _price_variance_exceeds_tolerance(
+        price_variance=price_variance,
+        po_unit=so_unit_f,
+        po_qty=so_qty_f,
+    ):
+        return ThreeWayMatchResult(
+            status="Price Variance",
+            qty_variance_value=0.0,
+            price_variance_value=price_variance,
+            total_deviation=price_variance,
+            po_value=so_value,
+            invoice_value=invoice_value,
+            invoice_gst=invoice_gst,
+            invoice_total=invoice_total,
+        )
+
+    if inv_qty_f > so_qty_f:
+        return ThreeWayMatchResult(
+            status="Qty Variance",
+            qty_variance_value=_round2((inv_qty_f - so_qty_f) * inv_unit_f),
+            price_variance_value=0.0,
+            total_deviation=_round2((inv_qty_f - so_qty_f) * inv_unit_f),
+            po_value=so_value,
+            invoice_value=invoice_value,
+            invoice_gst=invoice_gst,
+            invoice_total=invoice_total,
+        )
+
+    inv_total = float(inv.subtotal or inv.total or Decimal("0"))
+    if inv_total > 0 and so_value > 0 and inv_total > so_value * 1.02 + float(PRICE_MATCH_CAP_AUD):
+        return ThreeWayMatchResult(
+            status="Qty Variance",
+            qty_variance_value=_round2(inv_total - so_value),
+            price_variance_value=0.0,
+            total_deviation=_round2(inv_total - so_value),
+            po_value=so_value,
+            invoice_value=invoice_value,
+            invoice_gst=invoice_gst,
+            invoice_total=invoice_total,
+        )
+
+    return ThreeWayMatchResult(
+        status="2-Way Match",
+        qty_variance_value=0.0,
+        price_variance_value=price_variance,
+        total_deviation=price_variance,
+        po_value=so_value,
+        invoice_value=invoice_value,
+        invoice_gst=invoice_gst,
+        invoice_total=invoice_total,
+    )
+
+
 async def _load_dn_invoice_qty(
     session: AsyncSession,
     dn_invoice: Invoice,
@@ -787,19 +879,26 @@ async def resolve_ar_match_context(
     from app.services.sales.sales_linking_service import find_dn_invoices_by_invoice_no
 
     mode = (requested_mode or "three_way_so_dn").strip().lower()
-    if mode not in {"three_way_so_dn", "two_way_dn_invoice"}:
+    adaptive_modes = {"three_way_so_dn", "two_way_so_invoice", "two_way_dn_invoice"}
+    if mode not in adaptive_modes:
         return ARMatchContext(effective_mode="none", so=None, dn=None, dn_invoice=None)
 
     so = await load_sales_order_for_invoice(session, invoice)
     if so is not None:
         dn = _latest_dn(so)
-        if dn is not None or mode == "three_way_so_dn":
+        if dn is not None:
             return ARMatchContext(
                 effective_mode="three_way_so_dn",
                 so=so,
                 dn=dn,
                 dn_invoice=None,
             )
+        return ARMatchContext(
+            effective_mode="two_way_so_invoice",
+            so=so,
+            dn=None,
+            dn_invoice=None,
+        )
 
     invoice_no = (invoice.invoice_no or "").strip()
     dn_candidates: list[Invoice] = []
@@ -877,7 +976,11 @@ def _sales_match_result_to_outcome(
             match_mode=match_mode,
             detail={"price_variance_value": match.price_variance_value},
         )
-    label = "2-Way Match" if match_mode == "two_way_dn_invoice" else match.status
+    label = (
+        "2-Way Match"
+        if match_mode in {"two_way_dn_invoice", "two_way_so_invoice"}
+        else match.status
+    )
     return DocumentMatchOutcome(
         passed=True,
         status=label,
@@ -914,6 +1017,10 @@ async def execute_ar_document_match(
     if ctx.effective_mode == "three_way_so_dn" and ctx.so is not None:
         match = compute_three_way_match(ctx.so, invoice)
         return _sales_match_result_to_outcome(match, match_mode="three_way_so_dn")
+
+    if ctx.effective_mode == "two_way_so_invoice" and ctx.so is not None:
+        match = compute_two_way_so_match(ctx.so, invoice)
+        return _sales_match_result_to_outcome(match, match_mode="two_way_so_invoice")
 
     if ctx.effective_mode == "two_way_dn_invoice" and ctx.dn_invoice is not None:
         dn_qty, dn_uom = await _load_dn_invoice_qty(session, ctx.dn_invoice)

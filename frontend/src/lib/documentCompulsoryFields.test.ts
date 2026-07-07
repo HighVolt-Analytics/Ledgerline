@@ -13,11 +13,8 @@ describe("normalizeCompulsoryFields", () => {
     ).toEqual(["total"]);
   });
 
-  it("backfills from extraction when compulsory empty", () => {
-    expect(normalizeCompulsoryFields([], ["vendor", "total"])).toEqual([
-      "vendor",
-      "total",
-    ]);
+  it("keeps compulsory empty when none starred", () => {
+    expect(normalizeCompulsoryFields([], ["vendor", "total"])).toEqual([]);
   });
 
   it("drops infrastructure keys from compulsory", () => {
@@ -27,6 +24,16 @@ describe("normalizeCompulsoryFields", () => {
         ["attachment_name", "document_text", "permit_no", "vendor"]
       )
     ).toEqual(["permit_no"]);
+  });
+
+  it("supports starring a subset without forcing all extraction fields", () => {
+    const extraction = ["vendor", "total", "invoice_no"];
+    expect(normalizeCompulsoryFields(["vendor"], extraction)).toEqual(["vendor"]);
+    expect(normalizeCompulsoryFields([], extraction)).toEqual([]);
+    expect(normalizeCompulsoryFields(["vendor", "total"], extraction)).toEqual([
+      "vendor",
+      "total",
+    ]);
   });
 });
 

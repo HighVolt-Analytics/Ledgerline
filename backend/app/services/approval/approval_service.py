@@ -23,7 +23,7 @@ from app.services.approval.approval_pipeline_service import (
     apply_human_approval_processing_defaults,
     payable_fields_complete,
 )
-from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_APPROVAL, load_config_for_tenant
 from app.services.invoice.invoice_reset import (
     clear_invoice_posting_artifacts,
     reset_invoice_for_approval,
@@ -219,21 +219,6 @@ def _assert_invoice_ready_for_approval(
                 f"Cannot approve: missing compulsory field(s): {joined}. "
                 "Save corrections before approving."
             )
-        return
-
-    missing: list[str] = []
-    if not (inv.vendor or "").strip():
-        missing.append("vendor")
-    if inv.total is None or inv.total <= 0:
-        missing.append("total")
-    if inv.due_date is None:
-        missing.append("due date")
-    if missing:
-        joined = ", ".join(missing)
-        raise ValueError(
-            f"Cannot approve: missing required field(s): {joined}. "
-            "Save corrections for vendor, total, and due date before approving."
-        )
 
 
 async def approve_invoice_for_reprocess(
@@ -299,6 +284,7 @@ async def request_approval(
 
     previous_status = inv.status.value
     inv.status = InvoiceStatus.EXCEPTION
+    inv.evaluation_status = EVAL_PENDING_APPROVAL
     await session.flush()
     await log_event(
         session,

@@ -140,7 +140,7 @@ def test_llm_result_maps_so_reference_cost_centre_and_bank_name() -> None:
     assert parsed.bank_account == "12345678"
 
 
-def test_build_structure_extract_prompts_lists_all_scalar_keys() -> None:
+def test_build_structure_extract_prompts_lists_configured_scalar_keys() -> None:
     from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
     from app.services.extraction.llm_document_service import build_structure_extract_prompts
     from app.services.tenant.tenant_org_context import OrgContext
@@ -156,6 +156,13 @@ def test_build_structure_extract_prompts_lists_all_scalar_keys() -> None:
         llm_prompt="",
         routeTarget="Purchase Management",
         classifier=DocumentTypeClassifier(),
+        extraction_fields=[
+            "vendor",
+            "invoice_no",
+            "so_reference",
+            "cost_centre",
+            "bank_details",
+        ],
     )
     system, _user = build_structure_extract_prompts(
         ocr=OcrArtifact(success=True, text="Invoice", text_length=7),
@@ -166,6 +173,45 @@ def test_build_structure_extract_prompts_lists_all_scalar_keys() -> None:
     assert "so_reference" in system
     assert "cost_centre" in system
     assert "bank_name" in system
+    assert "po_reference" not in system
+    assert "line_items" not in system
+
+
+def test_build_structure_extract_prompts_requires_verbatim_ocr_values() -> None:
+    from app.services.extraction.llm_document_service import build_extract_system_prompt
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    system = build_extract_system_prompt(OrgContext(), selected_keys=["vendor", "total"])
+    assert "verbatim" in system.lower()
+    assert "do not derive subtotal" in system.lower()
+
+
+def test_build_structure_extract_prompts_omits_unconfigured_line_items() -> None:
+    from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
+    from app.services.extraction.llm_document_service import build_structure_extract_prompts
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    dt = DocumentTypeDefinition(
+        code="DT-08",
+        title="Expense",
+        shortTitle="Expense",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
+        routeTarget="Expenses Management",
+        classifier=DocumentTypeClassifier(),
+        extraction_fields=["vendor", "total", "due_date"],
+    )
+    system, _user = build_structure_extract_prompts(
+        ocr=OcrArtifact(success=True, text="Receipt", text_length=7),
+        org=OrgContext(),
+        document_types=[dt],
+        confirmed_dt="DT-08",
+    )
+    assert "vendor" in system
+    assert "line_items" not in system
 
 
 def test_llm_result_sanitizes_metadata_line_items() -> None:

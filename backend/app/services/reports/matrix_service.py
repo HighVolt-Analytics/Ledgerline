@@ -59,6 +59,12 @@ def derive_matrix_flag(inv: Invoice) -> tuple[str, str | None]:
     if inv.status == InvoiceStatus.REJECTED:
         return "Quarantined", "Invoice rejected and quarantined"
     if inv.status == InvoiceStatus.EXCEPTION:
+        eval_status = (inv.evaluation_status or "").strip().lower()
+        if eval_status == "pending_approval":
+            return "Awaiting approval", "Document-type policy requires approver sign-off"
+        if eval_status in {"awaiting_po", "awaiting_so"}:
+            label = "Awaiting PO linkage" if eval_status == "awaiting_po" else "Awaiting SO linkage"
+            return "Awaiting linkage", label
         return "Anomaly Detected", _first_validation_failure(inv) or "Routed to exception review"
     if inv.evaluation_status == "needs_rescan":
         return "Anomaly Detected", "Poor image quality — rescan required"
@@ -116,6 +122,9 @@ def derive_matrix_payment_status(inv: Invoice, payment: Payment | None) -> str:
         "awaiting_classification",
         "needs_rescan",
     ):
+        if inv.status != InvoiceStatus.PROCESSED:
+            return "On Hold"
+    if inv.evaluation_status in ("pending_approval", "awaiting_po", "awaiting_so"):
         if inv.status != InvoiceStatus.PROCESSED:
             return "On Hold"
     if inv.status == InvoiceStatus.PROCESSED and inv.due_date is not None:

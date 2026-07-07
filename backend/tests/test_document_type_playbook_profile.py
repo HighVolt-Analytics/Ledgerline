@@ -79,6 +79,8 @@ def test_playbook_review_skipped_when_bundle_not_enforced() -> None:
 
 @pytest.mark.asyncio
 async def test_direct_expense_approval_gate_holds_without_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_APPROVAL
+
     definition = _definition(code="DT-03", playbookProfile="direct_expense")
     invoice = MagicMock()
     invoice.id = 42
@@ -89,6 +91,10 @@ async def test_direct_expense_approval_gate_holds_without_approval(monkeypatch: 
 
     session = AsyncMock()
     session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.has_document_approval",
+        AsyncMock(return_value=False),
+    )
     monkeypatch.setattr(
         "app.services.classification.document_type_approval_service.log_event",
         AsyncMock(),
@@ -101,16 +107,54 @@ async def test_direct_expense_approval_gate_holds_without_approval(monkeypatch: 
         validation_results=[ValidationResult("VR03", True, "ok")],
     )
     assert held is True
+    assert invoice.evaluation_status == EVAL_PENDING_APPROVAL
 
 
 @pytest.mark.asyncio
-async def test_ar_goods_touchless_passes_clean_match() -> None:
+async def test_ar_goods_touchless_passes_audit_match_without_clean_vr15_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    definition = _definition(code="DT-26", playbookProfile="ar_goods", routeTarget="Sales Management")
+    invoice = MagicMock()
+    invoice.id = 8
+    invoice.tenant_id = None
+    invoice.route_target = "Sales Management"
+
+    session = AsyncMock()
+
+    async def _fake_audit(*_args, **_kwargs):
+        return {"status": "3-Way Match"}
+
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.has_document_approval",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.latest_audit_detail_after_cycle_reset",
+        _fake_audit,
+    )
+
+    held = await apply_document_type_approval_gate(
+        session,
+        invoice,
+        definition=definition,
+        validation_results=[ValidationResult("VR15", True, "Matched within tolerance")],
+    )
+    assert held is False
+
+
+@pytest.mark.asyncio
+async def test_ar_goods_touchless_passes_clean_match(monkeypatch: pytest.MonkeyPatch) -> None:
     definition = _definition(code="DT-26", playbookProfile="ar_goods", routeTarget="Sales Management")
     invoice = MagicMock()
     invoice.id = 8
     invoice.route_target = "Sales Management"
 
     session = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.has_document_approval",
+        AsyncMock(return_value=False),
+    )
     held = await apply_document_type_approval_gate(
         session,
         invoice,
@@ -135,13 +179,17 @@ async def test_packing_list_attachment_classified_as_dn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_po_goods_touchless_passes_clean_match() -> None:
+async def test_po_goods_touchless_passes_clean_match(monkeypatch: pytest.MonkeyPatch) -> None:
     definition = _definition(playbookProfile="po_goods")
     invoice = MagicMock()
     invoice.id = 7
     invoice.route_target = "Purchase Management"
 
     session = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.has_document_approval",
+        AsyncMock(return_value=False),
+    )
     held = await apply_document_type_approval_gate(
         session,
         invoice,

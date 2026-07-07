@@ -279,9 +279,6 @@ class DocumentTypeDefinition(BaseModel):
     def _align_compulsory_with_extraction(self) -> DocumentTypeDefinition:
         extraction = list(self.extraction_fields or [])
         required = list(self.required_fields or [])
-        if not required and extraction:
-            object.__setattr__(self, "required_fields", list(extraction))
-            return self
         if not extraction:
             return self
         extraction_set = set(extraction)

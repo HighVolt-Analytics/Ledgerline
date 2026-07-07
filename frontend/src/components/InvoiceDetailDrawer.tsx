@@ -51,7 +51,7 @@ import {
   canRequestInfo,
   invoiceCanAttemptReprocess,
   reprocessAndWatch,
-  validateInvoiceFieldsForApproval,
+  validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
 import {
   counterpartyName,
@@ -1178,9 +1178,10 @@ export function InvoiceDetailDrawer({
       return;
     }
 
-    const fieldCheck = validateInvoiceFieldsForApproval(
-      approvalFieldsFromDraftOrInvoice(),
-      approvalCompulsoryFields.length ? approvalCompulsoryFields : undefined
+    const fieldCheck = validateInvoiceReadyForApproval(
+      inv,
+      ruleBook?.documentTypes,
+      approvalFieldsFromDraftOrInvoice()
     );
     if (!fieldCheck.ok) {
       alert(fieldCheck.message);

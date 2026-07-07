@@ -18,6 +18,116 @@ if TYPE_CHECKING:
 
     from app.schemas.ocr_artifact import OcrArtifact
 
+_BANK_DETAILS_LLM_KEYS: tuple[str, ...] = ("bank_bsb", "bank_account", "bank_name")
+
+
+def _normalized_keys_from_definition(defn: DocumentTypeDefinition) -> list[str]:
+    seen: set[str] = set()
+    keys: list[str] = []
+    for source in (defn.extraction_fields, defn.required_fields):
+        for raw in source or []:
+            token = str(raw or "").strip().lower()
+            if not token or token in seen:
+                continue
+            if not is_valid_extraction_field_key(token):
+                continue
+            seen.add(token)
+            keys.append(token)
+    return keys
+
+
+def _shipped_defaults_for_definition(defn: DocumentTypeDefinition) -> list[str]:
+    """Shipped matrix defaults for a document type (by template code or DT code)."""
+    from app.services.classification.document_type_field_defaults import default_extraction_fields
+    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
+
+    for candidate in (defn.matrix_template_code, defn.code):
+        token = (candidate or "").strip().upper()
+        if not token:
+            continue
+        defaults = default_extraction_fields(token)
+        if defaults:
+            return normalize_extraction_field_keys(defaults)
+    return []
+
+
+def effective_extraction_field_keys_for_dt(
+    document_types: Sequence[DocumentTypeDefinition],
+    dt_code: str,
+) -> list[str]:
+    """Configured extraction keys for one document type — never a generic invoice fallback."""
+    code = (dt_code or "").strip().upper()
+    if not code:
+        return []
+    for defn in document_types:
+        if not defn.enabled:
+            continue
+        if (defn.code or "").strip().upper() != code:
+            continue
+        keys = _normalized_keys_from_definition(defn)
+        if keys:
+            return keys
+        return _shipped_defaults_for_definition(defn)
+    return []
+
+
+def effective_extraction_field_keys_union(
+    document_types: Sequence[DocumentTypeDefinition],
+) -> list[str]:
+    """Union of configured extraction keys across enabled document types."""
+    seen: set[str] = set()
+    keys: list[str] = []
+    for defn in document_types:
+        if not defn.enabled:
+            continue
+        code = (defn.code or "").strip().upper()
+        if not code:
+            continue
+        for token in effective_extraction_field_keys_for_dt(document_types, code):
+            if token in seen:
+                continue
+            seen.add(token)
+            keys.append(token)
+    return keys
+
+
+def non_canonical_extraction_keys(keys: Sequence[str]) -> list[str]:
+    """Custom (non-catalogue) keys from a selected extraction list."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in keys:
+        token = str(raw or "").strip().lower()
+        if not token or token in seen:
+            continue
+        if token in CANONICAL_EXTRACTION_FIELD_KEYS:
+            continue
+        if not is_valid_extraction_field_key(token):
+            continue
+        seen.add(token)
+        out.append(token)
+    return out
+
+
+def expand_extraction_keys_for_llm(keys: Sequence[str]) -> list[str]:
+    """Map configured keys to top-level LLM scalar keys (expands bank_details)."""
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for raw in keys:
+        token = str(raw or "").strip().lower()
+        if not token or not is_valid_extraction_field_key(token):
+            continue
+        if token == "bank_details":
+            for sub in _BANK_DETAILS_LLM_KEYS:
+                if sub not in seen:
+                    seen.add(sub)
+                    expanded.append(sub)
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        expanded.append(token)
+    return expanded
+
 
 def custom_extraction_field_keys(
     document_types: list[DocumentTypeDefinition] | tuple[DocumentTypeDefinition, ...],

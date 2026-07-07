@@ -4,7 +4,11 @@ from app.models.delivery_note import DeliveryNote
 from app.models.invoice import Invoice
 from app.models.line_item import LineItem
 from app.models.sales_order import SalesOrder
-from app.services.sales.sales_match_service import compute_three_way_match, compute_two_way_dn_match
+from app.services.sales.sales_match_service import (
+    compute_three_way_match,
+    compute_two_way_dn_match,
+    compute_two_way_so_match,
+)
 from app.tenant_ids import TESTING_TENANT_UUID
 
 
@@ -106,3 +110,31 @@ def test_compute_two_way_dn_match_qty_variance() -> None:
     ]
     match = compute_two_way_dn_match(dn_qty=Decimal("5"), dn_uom=None, inv=inv)
     assert match.status == "Qty Variance"
+
+
+def test_compute_two_way_so_match_clean() -> None:
+    so = SalesOrder(
+        tenant_id=TESTING_TENANT_UUID,
+        so_number="SO-300",
+        customer="Gamma Ltd",
+        so_qty=Decimal("5"),
+        so_unit_price=Decimal("20"),
+    )
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Gamma Ltd",
+        subtotal=Decimal("100"),
+        gst=Decimal("10"),
+        total=Decimal("110"),
+    )
+    inv.line_items = [
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=0,
+            description="Item",
+            qty=Decimal("5"),
+            unit_price=Decimal("20"),
+        ),
+    ]
+    match = compute_two_way_so_match(so, inv)
+    assert match.status == "2-Way Match"
