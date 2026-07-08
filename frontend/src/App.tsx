@@ -14,7 +14,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { SuperAdminEmbedPage } from "@/pages/SuperAdminEmbedPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
 import { OnboardingPage } from "@/pages/OnboardingPage";
-import { SetupPage } from "@/pages/SetupPage";
+import { SignupPage } from "@/pages/SignupPage";
 
 const ApprovalsPage = lazy(() =>
   import("@/pages/ApprovalsPage").then((m) => ({ default: m.ApprovalsPage }))
@@ -121,7 +121,8 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/platform/embed" element={<SuperAdminEmbedPage />} />
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
-        <Route path="/setup" element={<SetupPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/setup" element={<SignupPage />} />
         <Route
           path="/connect-mailbox"
           element={

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
 import { useAuth } from "@/context/AuthContext";
+import { PUBLIC_SIGNUP_PATH } from "@/lib/publicSignupRoutes";
 import { homePathForRole } from "@/lib/roles";
 import { Eye, EyeOff } from "lucide-react";
 
@@ -146,8 +147,8 @@ export function LoginPage() {
             </a>
             <p>
               Don&apos;t have an account?{" "}
-              <Link to="/accept-invite" className="auth-link-accent">
-                Sign up
+              <Link to={PUBLIC_SIGNUP_PATH} className="auth-link-accent">
+                Create an account
               </Link>
             </p>
           </div>

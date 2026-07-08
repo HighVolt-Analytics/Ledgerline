@@ -1711,6 +1711,8 @@ export interface BillingSignupCheckoutBody {
   plan_code: "free" | "studio";
   industry?: string;
   full_name?: string;
+  signup_token?: string;
+  signup_source?: "public" | "invite";
 }
 
 export interface BillingUsageHistory {

@@ -100,6 +100,7 @@ export function SetupPage() {
         plan_code: selectedPlan === "studio" ? "studio" : "free",
         industry,
         full_name: businessName.trim(),
+        signup_source: "public",
       });
 
       if (result.checkout_url) {
@@ -127,9 +128,9 @@ export function SetupPage() {
 
       <div className="w-full max-w-3xl rounded-xl border border-border bg-card p-8 shadow-lg">
         <div className="mb-6">
-          <h1 className="text-xl font-semibold tracking-tight">Set up your organisation</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Create your account</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Choose your country and plan. Pricing and credits are set from your business country.
+            Set up your organisation — choose country and plan. No invite required.
           </p>
         </div>
 

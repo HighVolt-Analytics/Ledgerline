@@ -36,6 +36,7 @@ class PendingSignupBillingSession(Base):
         nullable=True,
     )
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
+    signup_source: Mapped[str] = mapped_column(String(20), default="public", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

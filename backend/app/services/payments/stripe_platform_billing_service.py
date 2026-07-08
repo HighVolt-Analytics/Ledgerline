@@ -60,6 +60,9 @@ SIGNUP_STATUS_COMPLETED = "completed"
 SIGNUP_STATUS_EXPIRED = "expired"
 SIGNUP_STATUS_FAILED = "failed"
 
+SIGNUP_SOURCE_PUBLIC = "public"
+SIGNUP_SOURCE_INVITE = "invite"
+
 EVENT_CREDIT_TOPUP = "credit_topup"
 EVENT_PLAN_UPGRADE = "plan_upgrade"
 
@@ -287,6 +290,35 @@ async def _create_admin_user(
     return user
 
 
+def _validate_signup_request(
+    *,
+    email: str,
+    password: str,
+    organisation_name: str,
+    country: str,
+    plan_code: str,
+    signup_source: str,
+    signup_token: str | None,
+) -> None:
+    if signup_source == SIGNUP_SOURCE_INVITE and not (signup_token or "").strip():
+        raise HTTPException(400, "signup_token is required for invite signup")
+    if signup_source == SIGNUP_SOURCE_PUBLIC and signup_token:
+        raise HTTPException(400, "signup_token must not be sent for public signup")
+    if len(password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    if not organisation_name.strip():
+        raise HTTPException(400, "Organisation name is required")
+    country_code = country.strip().upper()
+    if len(country_code) != 2 or not country_code.isalpha():
+        raise HTTPException(400, "Country must be a 2-letter code")
+    pricing_region_for_country(country_code)
+    normalized_plan = plan_code.strip().lower()
+    if normalized_plan not in {PLAN_FREE, PLAN_STUDIO}:
+        raise HTTPException(400, "Only Free or Studio signup is supported")
+    if not str(email).strip():
+        raise HTTPException(400, "Email is required")
+
+
 def _plan_snapshot(country: str, plan_code: str) -> dict[str, Any]:
     region = pricing_region_for_country(country)
     normalized = plan_code.strip().lower()
@@ -314,14 +346,21 @@ async def complete_free_signup(
     country: str,
     industry: str | None = None,
     full_name: str | None = None,
+    signup_source: str = SIGNUP_SOURCE_PUBLIC,
+    signup_token: str | None = None,
 ) -> SignupFreeResult:
-    if len(password) < 8:
-        raise HTTPException(400, "Password must be at least 8 characters")
-    if not organisation_name.strip():
-        raise HTTPException(400, "Organisation name is required")
+    _validate_signup_request(
+        email=email,
+        password=password,
+        organisation_name=organisation_name,
+        country=country,
+        plan_code=PLAN_FREE,
+        signup_source=signup_source,
+        signup_token=signup_token,
+    )
 
     snapshot = _plan_snapshot(country, PLAN_FREE)
-    signup_token = secrets.token_urlsafe(32)
+    token = signup_token or secrets.token_urlsafe(32)
 
     await apply_platform_lookup_session(session)
     try:
@@ -340,7 +379,7 @@ async def complete_free_signup(
             billing.user_limit = snapshot["user_limit"]
 
         pending = PendingSignupBillingSession(
-            signup_token=signup_token,
+            signup_token=token,
             email=email.strip().lower(),
             organisation_name=organisation_name.strip(),
             organisation_slug=tenant.slug,
@@ -354,6 +393,7 @@ async def complete_free_signup(
             industry=industry,
             tenant_id=tenant.id,
             status=SIGNUP_STATUS_COMPLETED,
+            signup_source=signup_source,
             completed_at=_utc_now(),
         )
         session.add(pending)
@@ -366,7 +406,7 @@ async def complete_free_signup(
             full_name=full_name,
         )
         await session.flush()
-        return SignupFreeResult(tenant_id=tenant.id, signup_token=signup_token)
+        return SignupFreeResult(tenant_id=tenant.id, signup_token=token)
     finally:
         await clear_platform_lookup_session(session)
 
@@ -382,8 +422,19 @@ async def create_signup_checkout_session(
     industry: str | None = None,
     full_name: str | None = None,
     signup_token: str | None = None,
+    signup_source: str = SIGNUP_SOURCE_PUBLIC,
 ) -> CheckoutSessionResult | SignupFreeResult:
     normalized_plan = plan_code.strip().lower()
+    _validate_signup_request(
+        email=email,
+        password=password,
+        organisation_name=organisation_name,
+        country=country,
+        plan_code=normalized_plan,
+        signup_source=signup_source,
+        signup_token=signup_token,
+    )
+
     if normalized_plan == PLAN_FREE:
         return await complete_free_signup(
             session,
@@ -393,12 +444,11 @@ async def create_signup_checkout_session(
             country=country,
             industry=industry,
             full_name=full_name,
+            signup_source=signup_source,
+            signup_token=signup_token,
         )
     if normalized_plan != PLAN_STUDIO:
         raise HTTPException(400, "Only Free or Studio signup is supported")
-
-    if len(password) < 8:
-        raise HTTPException(400, "Password must be at least 8 characters")
 
     cfg = _require_platform_billing()
     snapshot = _plan_snapshot(country, PLAN_STUDIO)
@@ -427,14 +477,15 @@ async def create_signup_checkout_session(
             full_name=full_name,
             industry=industry,
             status=SIGNUP_STATUS_PENDING,
+            signup_source=signup_source,
         )
         session.add(pending)
         await session.flush()
 
         success_url = _checkout_return_url(
-            build_public_app_path("/setup?checkout=success")
+            build_public_app_path("/signup?checkout=success")
         )
-        cancel_url = build_public_app_path("/setup?checkout=cancelled")
+        cancel_url = build_public_app_path("/signup?checkout=cancelled")
 
         checkout = await _run_stripe(
             stripe.checkout.Session.create,
@@ -454,6 +505,7 @@ async def create_signup_checkout_session(
                 "monthly_credits": str(pending.monthly_credits),
                 "user_limit": str(pending.user_limit),
                 "event_type": "signup_subscription",
+                "signup_source": signup_source,
             },
             subscription_data={
                 "metadata": {
