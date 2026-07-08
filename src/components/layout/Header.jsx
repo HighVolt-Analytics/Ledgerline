@@ -40,11 +40,11 @@ export default function Header() {
           <button
             onClick={() => goTo('top')}
             className="hover-elevate inline-flex shrink-0 items-center gap-2 rounded-md px-1"
-            aria-label="Ledgerline home"
+            aria-label="Quantum Ledgerlink home"
           >
             <Logo className="h-7 sm:h-8" />
             <span className="hidden text-base font-semibold tracking-tight text-foreground sm:inline-flex">
-              Ledgerline
+              Quantum Ledgerlink
             </span>
           </button>
 
@@ -91,10 +91,10 @@ export default function Header() {
             <button
               onClick={() => goTo('top')}
               className="inline-flex items-center gap-2"
-              aria-label="Ledgerline home"
+              aria-label="Quantum Ledgerlink home"
             >
               <Logo className="h-7 sm:h-8" />
-              <span className="text-base font-semibold tracking-tight text-foreground">Ledgerlink</span>
+              <span className="text-base font-semibold tracking-tight text-foreground">Quantum Ledgerlink</span>
             </button>
             <button
               onClick={() => setMenuOpen(false)}
