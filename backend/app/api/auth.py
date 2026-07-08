@@ -462,6 +462,17 @@ async def resend_otp(
     return ApiEnvelope(data=LoginChallengeResponse(challenge_token=token))
 
 
+@router.get("/tenant-select/accounts", response_model=ApiEnvelope[list[TenantAccountSummary]])
+async def tenant_select_accounts(
+    db: AsyncSession = Depends(get_preauth_db),
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> ApiEnvelope[list[TenantAccountSummary]]:
+    payload = _require_token_type(creds, TOKEN_TYPE_TENANT_SELECT)
+    auth_account_id = int(payload["sub"])
+    accounts = await _membership_summaries_for_account(db, auth_account_id=auth_account_id)
+    return ApiEnvelope(data=accounts)
+
+
 @router.post("/select-tenant", response_model=ApiEnvelope[TokenResponse])
 async def select_tenant(
     body: SelectTenantRequest,

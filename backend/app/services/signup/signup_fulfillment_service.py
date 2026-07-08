@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.auth_account import AuthAccount
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
-from app.services.auth.auth_service import hash_password
+from app.services.auth.auth_service import hash_password, verify_password
 from app.services.auth.membership_service import ensure_membership
 from app.services.credit_catalog import PLAN_FREE, PLAN_STUDIO
 from app.services.credit_service import ensure_tenant_billing, upgrade_to_studio
@@ -33,6 +33,16 @@ def oauth_placeholder_password_hash() -> str:
     if _PLACEHOLDER_HASH is None:
         _PLACEHOLDER_HASH = hash_password(_OAUTH_ONLY_PASSWORD_SALT)
     return _PLACEHOLDER_HASH
+
+
+def is_oauth_only_auth_account(password_hash: str | None) -> bool:
+    """True when the account was created via OAuth (no user-chosen password)."""
+    if not password_hash:
+        return False
+    try:
+        return verify_password(_OAUTH_ONLY_PASSWORD_SALT, password_hash)
+    except Exception:
+        return False
 
 
 def slugify_organization_name(name: str) -> str:
@@ -66,7 +76,7 @@ async def ensure_pending_auth_account(
         await session.execute(select(AuthAccount).where(AuthAccount.email == normalized))
     ).scalar_one_or_none()
     if account:
-        if account.password_hash == oauth_placeholder_password_hash():
+        if is_oauth_only_auth_account(account.password_hash):
             account.password_hash = password_hash
         return account
     account = AuthAccount(email=normalized, password_hash=password_hash)

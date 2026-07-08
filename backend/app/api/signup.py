@@ -36,6 +36,7 @@ from app.services.credit_catalog import (
 )
 from app.services.signup.signup_fulfillment_service import (
     ensure_pending_auth_account,
+    is_oauth_only_auth_account,
     oauth_placeholder_password_hash,
     slugify_organization_name,
 )
@@ -108,7 +109,7 @@ async def signup_register(
 ) -> ApiEnvelope[dict]:
     email = body.email.lower().strip()
     existing = await resolve_login_account(db, email)
-    if existing and existing.password_hash != oauth_placeholder_password_hash():
+    if existing and not is_oauth_only_auth_account(existing.password_hash):
         raise HTTPException(409, "An account with this email already exists. Sign in instead.")
 
     settings = get_settings()

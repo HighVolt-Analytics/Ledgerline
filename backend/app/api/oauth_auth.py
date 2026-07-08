@@ -45,6 +45,7 @@ from app.services.auth.oauth_login_service import (
 from app.services.shared.public_app_url import build_oauth_frontend_path
 from app.services.signup.signup_fulfillment_service import (
     ensure_pending_auth_account,
+    is_oauth_only_auth_account,
     oauth_placeholder_password_hash,
 )
 from app.services.signup.signup_session_service import (
@@ -129,18 +130,15 @@ async def _resolve_oauth_identity(
             accounts=accounts,
         )
 
-    # signup
+    # signup — always allow creating another organization for this email.
+    if account and account.is_blocked:
+        return OAuthFlowResult(result="error", error="no_account")
+
     password_hash = oauth_placeholder_password_hash()
     if not account:
         account = await ensure_pending_auth_account(
             db, email=email, password_hash=password_hash
         )
-    elif account.password_hash != oauth_placeholder_password_hash():
-        existing_memberships = await list_memberships_for_auth_account(
-            db, auth_account_id=account.id, log_source="oauth_signup"
-        )
-        if existing_memberships:
-            return OAuthFlowResult(result="error", error="account_exists")
 
     session_id = new_session_id()
     signup = SignupSession(

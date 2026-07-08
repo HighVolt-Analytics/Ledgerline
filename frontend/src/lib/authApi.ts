@@ -85,6 +85,17 @@ export async function apiResendOtp(challengeToken: string): Promise<LoginChallen
   return json.data as LoginChallengeResponse;
 }
 
+export async function apiFetchTenantSelectAccounts(
+  tenantSelectToken: string
+): Promise<TenantAccountSummary[]> {
+  const res = await fetch(`${BASE}/api/auth/tenant-select/accounts`, {
+    headers: { Authorization: `Bearer ${tenantSelectToken}` },
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const json = await res.json();
+  return json.data as TenantAccountSummary[];
+}
+
 export async function apiSelectTenant(
   tenantSelectToken: string,
   tenantId: string

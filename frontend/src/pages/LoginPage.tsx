@@ -4,7 +4,7 @@ import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
 import { useAuth } from "@/context/AuthContext";
 import { homePathForRole } from "@/lib/roles";
 import { fetchOAuthProviders, startGoogleOAuth, startMicrosoftOAuth } from "@/lib/oauthApi";
-import { apiSelectTenant, type TenantAccountSummary } from "@/lib/authApi";
+import { apiFetchTenantSelectAccounts, apiSelectTenant, type TenantAccountSummary } from "@/lib/authApi";
 import { persistAuthSuccess } from "@/lib/authSession";
 import { setAuthToken, setAuthUser } from "@/api/client";
 import { Eye, EyeOff } from "lucide-react";
@@ -33,6 +33,7 @@ export function LoginPage() {
   const [oauthTenantSelect, setOauthTenantSelect] = useState(false);
   const [oauthAccounts, setOauthAccounts] = useState<TenantAccountSummary[]>([]);
   const [oauthSelectToken, setOauthSelectToken] = useState<string | null>(null);
+  const [oauthAccountsLoading, setOauthAccountsLoading] = useState(false);
   const location = useLocation();
 
   useEffect(() => {
@@ -43,16 +44,39 @@ export function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get("oauth_tenant_select") === "1") {
-      setStep("pick-tenant");
-      setOauthTenantSelect(true);
-      const state = location.state as {
-        tenantSelectToken?: string;
-        accounts?: TenantAccountSummary[];
-      } | null;
-      if (state?.tenantSelectToken) setOauthSelectToken(state.tenantSelectToken);
-      if (state?.accounts) setOauthAccounts(state.accounts);
+    if (params.get("oauth_tenant_select") !== "1") return;
+
+    setStep("pick-tenant");
+    setOauthTenantSelect(true);
+    const state = location.state as {
+      tenantSelectToken?: string;
+      accounts?: TenantAccountSummary[];
+    } | null;
+    const token = state?.tenantSelectToken ?? null;
+    if (token) setOauthSelectToken(token);
+    if (state?.accounts?.length) {
+      setOauthAccounts(state.accounts);
+      return;
     }
+    if (!token) return;
+
+    let cancelled = false;
+    setOauthAccountsLoading(true);
+    void apiFetchTenantSelectAccounts(token)
+      .then((accounts) => {
+        if (!cancelled) setOauthAccounts(accounts);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load organisations");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOauthAccountsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [location]);
 
   if (!loading && user && user.id > 0) {
@@ -257,6 +281,9 @@ export function LoginPage() {
 
       {!loading && step === "pick-tenant" && (
         <div className="auth-form">
+          {oauthAccountsLoading ? (
+            <p className="text-sm text-muted-foreground text-center">Loading organisations…</p>
+          ) : null}
           {pickerAccounts.map((t) => (
             <button
               key={t.tenant_id}

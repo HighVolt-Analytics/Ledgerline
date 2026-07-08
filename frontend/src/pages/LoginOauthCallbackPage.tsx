@@ -7,6 +7,7 @@ import { setAuthToken, setAuthUser } from "@/api/client";
 import { useAuth } from "@/context/AuthContext";
 import { hydrateUserAndMemberships } from "@/lib/authHydrate";
 import { persistAuthSuccess } from "@/lib/authSession";
+import { apiFetchTenantSelectAccounts, type TenantAccountSummary } from "@/lib/authApi";
 import { completeMicrosoftOAuthInBrowser, loadMicrosoftOAuthConfig } from "@/lib/oauthApi";
 import { withRouterBasename } from "@/lib/routerBasename";
 import { persistSignupToken } from "@/lib/signupApi";
@@ -31,7 +32,9 @@ export function LoginOauthCallbackPage() {
       setError(
         err === "no_account"
           ? "No account found for this email. Please sign up first."
-          : "Sign-in failed. Please try again."
+          : err === "account_exists"
+            ? "An account with this email already exists. Sign in to access it, or use a different email to sign up."
+            : "Sign-in failed. Please try again."
       );
       return;
     }
@@ -57,10 +60,9 @@ export function LoginOauthCallbackPage() {
     const tenantSelectToken = searchParams.get("tenant_select_token");
     if (tenantSelectToken) {
       handled.current = true;
-      navigate(`/login?oauth_tenant_select=1`, {
-        replace: true,
-        state: { tenantSelectToken },
-      });
+      void navigateToTenantSelect(navigate, tenantSelectToken).catch(() =>
+        setError("Could not load organisations. Please try signing in again.")
+      );
       return;
     }
 
@@ -97,19 +99,15 @@ export function LoginOauthCallbackPage() {
             return;
           }
           if (result.result === "tenant_select" && result.tenant_select_token) {
-            navigate(`/login?oauth_tenant_select=1`, {
-              replace: true,
-              state: {
-                tenantSelectToken: result.tenant_select_token,
-                accounts: result.accounts,
-              },
-            });
+            await navigateToTenantSelect(navigate, result.tenant_select_token, result.accounts);
             return;
           }
           setError(
             result.error === "no_account"
               ? "No account found for this email. Please sign up first."
-              : "Sign-in failed. Please try again."
+              : result.error === "account_exists"
+                ? "An account with this email already exists. Sign in to access it, or use a different email to sign up."
+                : "Sign-in failed. Please try again."
           );
         })
         .catch((err) => {
@@ -143,9 +141,18 @@ export function LoginOauthCallbackPage() {
         {error ? (
           <>
             <p className="text-sm text-destructive">{error}</p>
-            <Link to="/login" className="text-sm text-primary hover:underline">
-              Back to sign in
-            </Link>
+            <div className="flex flex-col gap-2 text-sm">
+              <Link to="/login" className="text-primary hover:underline">
+                {searchParams.get("error") === "account_exists"
+                  ? "Sign in to your existing account"
+                  : "Back to sign in"}
+              </Link>
+              {searchParams.get("error") === "account_exists" ? (
+                <Link to="/signup" className="text-muted-foreground hover:underline">
+                  Create another organization with a different email
+                </Link>
+              ) : null}
+            </div>
           </>
         ) : (
           <PageLoader label="Completing sign-in…" />
@@ -170,6 +177,21 @@ async function finishOAuthSession(accessToken: string, refreshToken: string) {
   });
   setAuthUser(user);
   window.location.replace(withRouterBasename("/settings"));
+}
+
+async function navigateToTenantSelect(
+  navigate: ReturnType<typeof useNavigate>,
+  tenantSelectToken: string,
+  accounts?: TenantAccountSummary[]
+) {
+  const resolvedAccounts =
+    accounts && accounts.length > 0
+      ? accounts
+      : await apiFetchTenantSelectAccounts(tenantSelectToken);
+  navigate(`/login?oauth_tenant_select=1`, {
+    replace: true,
+    state: { tenantSelectToken, accounts: resolvedAccounts },
+  });
 }
 
 function oauthProviderFromState(state: string): string | null {
