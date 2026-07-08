@@ -638,7 +638,7 @@ export function VendorsTab({
                   {linkMasterByPendingId[item.id] ? (
                     <Button
                       size="sm"
-                      variant="secondary"
+                      variant="outline"
                       disabled={promoteMutation.isPending}
                       onClick={() =>
                         completePendingRegistration(
