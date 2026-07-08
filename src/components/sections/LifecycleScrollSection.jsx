@@ -151,7 +151,60 @@ function ScrollingTimeline({ progress }) {
   );
 }
 
-export default function LifecycleScrollSection() {
+function LifecycleHeading() {
+  return (
+    <div>
+      <h3 className="text-2xl font-medium leading-tight tracking-[-0.03em] text-foreground sm:text-3xl lg:text-4xl">
+        From schedule to reconciliation
+      </h3>
+      <p className="mt-4 max-w-md text-base leading-relaxed text-muted-foreground">
+        Once approved, payments execute on your timeline — then post to your ledger and reconcile automatically. No
+        manual journal entries. No end-of-month surprises.
+      </p>
+    </div>
+  );
+}
+
+function StaticTimelineRow({ step }) {
+  const Icon = timelineIcons[step.title] || CheckCircle2;
+
+  return (
+    <div className="rounded-xl border border-card-border bg-card p-4 shadow-[0_8px_32px_rgba(0,0,0,0.35)]">
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/40 bg-primary text-primary-foreground">
+          <Icon className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="font-mono text-xs text-primary">{step.n}</span>
+            <h3 className="text-base font-medium text-foreground">{step.title}</h3>
+          </div>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{step.desc}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MobileLifecycle() {
+  return (
+    <div className="mx-auto w-full max-w-[600px] px-5">
+      <LifecycleHeading />
+
+      <div className="mt-8 flex flex-col gap-3">
+        {timelineSteps.map((step) => (
+          <StaticTimelineRow key={step.n} step={step} />
+        ))}
+      </div>
+
+      <div className="mt-8">
+        <LeftTrustCard />
+      </div>
+    </div>
+  );
+}
+
+function DesktopLifecycleScroll() {
   const containerRef = useRef(null);
 
   const { scrollYProgress } = useScroll({
@@ -168,19 +221,11 @@ export default function LifecycleScrollSection() {
       style={{ height: `${scrollHeightVh}vh` }}
     >
       <div className="sticky top-0 flex h-screen items-center">
-        <div className="mx-auto grid w-full max-w-[1200px] grid-cols-1 items-stretch gap-10 px-5 sm:px-8 lg:grid-cols-2 lg:gap-16">
+        <div className="mx-auto grid w-full max-w-[1200px] grid-cols-2 items-stretch gap-16 px-8">
           <div className={`flex flex-col justify-between ${COLUMN_HEIGHT}`}>
-            <div>
-              <h3 className="text-2xl font-medium leading-tight tracking-[-0.03em] text-foreground sm:text-3xl lg:text-4xl">
-                From schedule to reconciliation
-              </h3>
-              <p className="mt-4 max-w-md text-base leading-relaxed text-muted-foreground">
-                Once approved, payments execute on your timeline — then post to your ledger and reconcile automatically.
-                No manual journal entries. No end-of-month surprises.
-              </p>
-            </div>
+            <LifecycleHeading />
 
-            <div className="mt-8 lg:mt-0">
+            <div>
               <LeftTrustCard />
             </div>
           </div>
@@ -189,5 +234,18 @@ export default function LifecycleScrollSection() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LifecycleScrollSection() {
+  return (
+    <>
+      <div className="lg:hidden">
+        <MobileLifecycle />
+      </div>
+      <div className="hidden lg:block">
+        <DesktopLifecycleScroll />
+      </div>
+    </>
   );
 }

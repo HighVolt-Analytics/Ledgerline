@@ -33,10 +33,13 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    overflow-x: clip;
+    max-width: 100%;
   }
 
   html {
     scroll-behavior: smooth;
+    overflow-x: clip;
   }
 }
 

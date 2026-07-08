@@ -15,6 +15,13 @@ export default function Header() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  useEffect(() => {
+    document.body.style.overflow = menuOpen ? 'hidden' : '';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [menuOpen]);
+
   const goTo = (id) => {
     scrollToSection(id);
     setMenuOpen(false);
@@ -76,29 +83,47 @@ export default function Header() {
             </button>
           </div>
         </nav>
-
-        {menuOpen && (
-          <div className="border-t border-border lg:hidden">
-            <div className="flex flex-col gap-1 px-4 py-3">
-              {navLinks.map((link, i) => (
-                <button
-                  key={`mobile-${link.label}-${i}`}
-                  onClick={() => goTo(link.id)}
-                  className="rounded-lg px-3 py-2.5 text-left text-sm text-muted-foreground hover-elevate"
-                >
-                  {link.label}
-                </button>
-              ))}
-              <button
-                onClick={() => goTo('pricing')}
-                className="mt-2 rounded-full bg-primary px-4 py-2.5 text-center text-sm font-medium text-primary-foreground"
-              >
-                Start free
-              </button>
-            </div>
-          </div>
-        )}
       </div>
+
+      {menuOpen && (
+        <div className="fixed inset-0 z-[60] flex flex-col bg-background lg:hidden">
+          <div className="flex h-14 items-center justify-between px-6 sm:h-[3.75rem]">
+            <button
+              onClick={() => goTo('top')}
+              className="inline-flex items-center gap-2"
+              aria-label="Ledgerline home"
+            >
+              <Logo className="h-7 sm:h-8" />
+              <span className="text-base font-semibold tracking-tight text-foreground">Ledgerlink</span>
+            </button>
+            <button
+              onClick={() => setMenuOpen(false)}
+              aria-label="Close menu"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-foreground hover-elevate"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-6 pb-8 pt-4">
+            {navLinks.map((link, i) => (
+              <button
+                key={`mobile-${link.label}-${i}`}
+                onClick={() => goTo(link.id)}
+                className="rounded-xl px-4 py-4 text-left text-lg font-medium text-foreground hover-elevate"
+              >
+                {link.label}
+              </button>
+            ))}
+            <button
+              onClick={() => goTo('pricing')}
+              className="mt-auto rounded-full bg-primary px-4 py-3.5 text-center text-base font-medium text-primary-foreground"
+            >
+              Start free
+            </button>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

@@ -6,7 +6,10 @@ const EASE = [0.16, 1, 0.3, 1];
 
 export default function HeroSection() {
   return (
-    <section id="top" className="relative overflow-x-hidden pb-8 pt-28 sm:pb-12 sm:pt-36">
+    <section
+      id="top"
+      className="relative flex min-h-[100svh] flex-col justify-center overflow-x-hidden pb-10 pt-32 sm:min-h-0 sm:justify-start sm:pb-12 sm:pt-36"
+    >
       <div className="relative z-10">
         <div className="hero-copy relative">
           <div className="hero-copy__grid pointer-events-none absolute inset-0" aria-hidden="true" />
@@ -46,14 +49,14 @@ export default function HeroSection() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.7, ease: EASE, delay: 0.22 }}
-              className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
+              className="mx-auto mt-7 flex w-full max-w-[300px] flex-col items-center justify-center gap-2.5 sm:mt-8 sm:max-w-none sm:flex-row sm:gap-3"
             >
-              <button className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3.5 text-sm font-medium text-primary-foreground shadow-md transition-transform duration-200 hover:scale-[1.02] active:scale-100 sm:w-auto">
+              <button className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground shadow-md transition-transform duration-200 hover:scale-[1.02] active:scale-100 sm:w-auto sm:px-6 sm:py-3.5 sm:text-sm">
                 Start free — 500 documents + wallet
-                <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+                <ArrowRight className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5 sm:h-4 sm:w-4" />
               </button>
-              <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card/40 px-6 py-3.5 text-sm text-foreground hover-elevate active-elevate-2 sm:w-auto">
-                <Play className="h-3.5 w-3.5 fill-current" />
+              <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card/40 px-4 py-2.5 text-[13px] text-foreground hover-elevate active-elevate-2 sm:w-auto sm:px-6 sm:py-3.5 sm:text-sm">
+                <Play className="h-3 w-3 fill-current sm:h-3.5 sm:w-3.5" />
                 Watch 60s demo
               </button>
             </motion.div>
