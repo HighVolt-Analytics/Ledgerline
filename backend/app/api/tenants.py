@@ -24,11 +24,14 @@ from app.services.tenant.org_ai_brief_service import (
 )
 from app.schemas.chart_of_accounts import ChartOfAccountsResponse, UpdateChartOfAccountsRequest
 from app.services.master_data.chart_of_accounts_service import load_chart_of_accounts, save_chart_of_accounts
+from app.schemas.setup_checklist import SetupChecklistStateResponse
+from app.services.tenant.tenant_setup_checklist_service import build_setup_checklist_state
 from app.tenant_settings import (
     default_institution_settings,
     institution_settings_view,
     merge_institution_settings,
     merge_onboarding_settings,
+    set_setup_checklist_complete,
     tenant_industry,
     tenant_onboarding_completed,
 )
@@ -257,3 +260,42 @@ async def update_institution_settings(
     await db.commit()
     await db.refresh(tenant)
     return ApiEnvelope(data=_institution_response(tenant))
+
+
+@router.get("/current/setup-checklist", response_model=ApiEnvelope[SetupChecklistStateResponse])
+async def get_setup_checklist(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[SetupChecklistStateResponse]:
+    tenant = await db.get(Tenant, ctx.tenant_id)
+    if not tenant:
+        raise HTTPException(404, "Tenant not found")
+    state = await build_setup_checklist_state(
+        db,
+        tenant=tenant,
+        user_role=ctx.role,
+        is_support_session=ctx.is_support_session,
+    )
+    return ApiEnvelope(data=state)
+
+
+@router.post("/current/setup-checklist/complete", response_model=ApiEnvelope[SetupChecklistStateResponse])
+async def complete_setup_checklist(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[SetupChecklistStateResponse]:
+    if ctx.is_support_session:
+        raise HTTPException(403, "Support sessions cannot complete setup checklist")
+    tenant = await db.get(Tenant, ctx.tenant_id)
+    if not tenant:
+        raise HTTPException(404, "Tenant not found")
+    tenant.settings_json = set_setup_checklist_complete(tenant.settings_json)
+    await db.commit()
+    await db.refresh(tenant)
+    state = await build_setup_checklist_state(
+        db,
+        tenant=tenant,
+        user_role=ctx.role,
+        is_support_session=ctx.is_support_session,
+    )
+    return ApiEnvelope(data=state)

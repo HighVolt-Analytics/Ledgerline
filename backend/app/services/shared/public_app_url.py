@@ -50,6 +50,20 @@ def _base_with_root_path(base: str) -> str:
     return f"{base}{prefix}"
 
 
+def resolve_oauth_frontend_base_url() -> str:
+    """Frontend origin for OAuth return redirects — never the API/ngrok tunnel."""
+    settings = get_settings()
+    return settings.frontend_url_resolved
+
+
+def build_oauth_frontend_path(path: str) -> str:
+    """Absolute URL for a frontend OAuth/signup route (never hits the API server)."""
+    if not path.startswith("/"):
+        path = f"/{path}"
+    base = resolve_oauth_frontend_base_url()
+    return f"{_base_with_root_path(base)}{path}"
+
+
 def build_public_app_path(path: str) -> str:
     """Absolute URL for a frontend route (path must start with /)."""
     if not path.startswith("/"):

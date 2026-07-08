@@ -352,6 +352,51 @@ class Settings(BaseSettings):
     )
     otp_expire_minutes: int = Field(default=5, validation_alias="OTP_EXPIRE_MINUTES")
     dev_otp_code: str = Field(default="123456", validation_alias="DEV_OTP_CODE")
+
+    # OAuth login / signup (separate redirect URIs from mailbox integrations)
+    microsoft_oauth_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "MICROSOFT_OAUTH_CLIENT_ID",
+            "AZURE_CLIENT_ID",
+        ),
+    )
+    microsoft_oauth_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "MICROSOFT_OAUTH_CLIENT_SECRET",
+            "AZURE_CLIENT_SECRET",
+        ),
+    )
+    microsoft_oauth_redirect_uri: str = Field(
+        default="http://localhost:5173/login/oauth/callback",
+        validation_alias="MICROSOFT_OAUTH_REDIRECT_URI",
+    )
+    microsoft_oauth_public_client: bool = Field(
+        default=True,
+        validation_alias="MICROSOFT_OAUTH_PUBLIC_CLIENT",
+        description="SPA flow: browser redeems auth code (no client_secret)",
+    )
+    microsoft_oauth_authority_tenant: str = Field(
+        default="common",
+        validation_alias=AliasChoices(
+            "MICROSOFT_OAUTH_AUTHORITY_TENANT",
+            "AZURE_TENANT_ID",
+        ),
+        description="Entra tenant id or 'common' for multi-tenant login",
+    )
+    google_oauth_login_redirect_uri: str = Field(
+        default="http://localhost:8001/api/auth/oauth/google/callback",
+        validation_alias=AliasChoices(
+            "GOOGLE_OAUTH_REDIRECT_URI",
+            "GOOGLE_OAUTH_LOGIN_REDIRECT_URI",
+        ),
+    )
+    frontend_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("FRONTEND_URL", "PUBLIC_APP_URL"),
+    )
+
     super_admin_portal_embed_token: str = Field(
         default="",
         validation_alias="SUPER_ADMIN_PORTAL_EMBED_TOKEN",
@@ -904,6 +949,38 @@ class Settings(BaseSettings):
     @property
     def stripe_payment_execution_enabled(self) -> bool:
         return bool(self.stripe_payments_execution_enabled)
+
+    @property
+    def frontend_url_resolved(self) -> str:
+        frontend = self.frontend_url.strip().rstrip("/")
+        if frontend:
+            return frontend
+        tunnel = self.public_tunnel_url.strip().rstrip("/")
+        public = self.public_app_url.strip().rstrip("/")
+        if public and public != tunnel and "localhost" not in public and "127.0.0.1" not in public:
+            return public
+        for origin in self.cors_origin_list:
+            cleaned = origin.strip().rstrip("/")
+            if cleaned and ("localhost" in cleaned or "127.0.0.1" in cleaned):
+                return cleaned
+        if self.cors_origin_list:
+            return self.cors_origin_list[0].rstrip("/")
+        return "http://localhost:5173"
+
+    @property
+    def google_oauth_login_configured(self) -> bool:
+        return bool(
+            self.google_client_id.strip()
+            and self.google_client_secret.strip()
+            and self.google_oauth_login_redirect_uri.strip()
+        )
+
+    @property
+    def microsoft_oauth_login_configured(self) -> bool:
+        return bool(
+            self.microsoft_oauth_client_id.strip()
+            and self.microsoft_oauth_redirect_uri.strip()
+        )
 
     @property
     def application_insights_runtime_enabled(self) -> bool:

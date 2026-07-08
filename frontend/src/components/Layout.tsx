@@ -36,6 +36,11 @@ import type { FlatNavItem } from "@/lib/appNavigation";
 import { collectionsOpenCount } from "@/lib/collectionsQueue";
 import { canAccessModulePath } from "@/lib/tenantModules";
 import { queryClient, queryKeys } from "@/lib/queryClient";
+import {
+  OnboardingChecklistProvider,
+  OnboardingChecklistWidget,
+} from "@/components/onboarding/OnboardingChecklist";
+import { getAccessToken } from "@/lib/authSession";
 import { cn } from "@/lib/cn";
 
 type NavItem = {
@@ -282,6 +287,7 @@ export function Layout() {
   });
   const sidebarCollapsed = !primaryPinned;
   const prevPathname = useRef(pathname);
+  const accessToken = getAccessToken();
 
   useEffect(() => {
     try {
@@ -548,6 +554,7 @@ export function Layout() {
   );
 
   return (
+    <OnboardingChecklistProvider accessToken={accessToken}>
     <div
       className={cn(
         "app-shell app-shell--basic-sidebar grid-cols-1",
@@ -627,6 +634,8 @@ export function Layout() {
         <div className="app-workspace__portal" data-app-workspace-portal />
       </div>
       </div>
+      <OnboardingChecklistWidget />
     </div>
+    </OnboardingChecklistProvider>
   );
 }

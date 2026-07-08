@@ -1,4 +1,5 @@
 import { resolveApiBase } from "@/lib/apiBase";
+import { getScopedAuthHeadersForToken } from "@/api/client";
 import type { AuthUser } from "@/api/types";
 
 const BASE = resolveApiBase();
@@ -114,7 +115,7 @@ export async function apiRefreshSession(refreshToken: string): Promise<TokenPair
 
 export async function fetchMyMemberships(accessToken: string): Promise<TenantAccountSummary[]> {
   const res = await fetch(`${BASE}/api/auth/me/memberships`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: getScopedAuthHeadersForToken(accessToken),
   });
   if (!res.ok) throw new Error(await parseError(res));
   const json = await res.json();
@@ -127,10 +128,9 @@ export async function apiSwitchTenant(
 ): Promise<TokenPairResponse> {
   const res = await fetch(`${BASE}/api/auth/switch-tenant`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: getScopedAuthHeadersForToken(accessToken, {
+      headers: { "Content-Type": "application/json" },
+    }),
     body: JSON.stringify({ tenant_id: tenantId }),
   });
   if (!res.ok) throw new Error(await parseError(res));

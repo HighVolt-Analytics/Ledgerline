@@ -24,6 +24,7 @@ async def ensure_membership(
     user_id: int,
     tenant_id: uuid.UUID,
     role: str = "approver",
+    default_tenant: bool = False,
 ) -> None:
     existing = (
         await session.execute(
@@ -34,6 +35,9 @@ async def ensure_membership(
         )
     ).scalar_one_or_none()
     if existing:
+        if default_tenant and not existing.default_tenant:
+            existing.default_tenant = True
+            await session.flush()
         return
     session.add(
         UserTenantMapping(
@@ -42,6 +46,7 @@ async def ensure_membership(
             role=role,
             status="active",
             is_active=True,
+            default_tenant=default_tenant,
         )
     )
     await session.flush()

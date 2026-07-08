@@ -266,6 +266,20 @@ function getScopedAuthHeaders(init?: RequestInit): Headers {
   return headers;
 }
 
+/** Bearer + X-Tenant-Id for raw fetch calls outside the api client (e.g. during OAuth hydrate). */
+export function getScopedAuthHeadersForToken(
+  accessToken: string,
+  init?: RequestInit
+): Headers {
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${accessToken}`);
+  const tid = tenantIdFromToken(accessToken);
+  if (tid) {
+    headers.set("X-Tenant-Id", tid);
+  }
+  return headers;
+}
+
 export function clearGetCache() {
   getCacheGeneration += 1;
   getCache.clear();

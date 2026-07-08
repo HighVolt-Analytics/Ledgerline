@@ -2,8 +2,6 @@ name: LedgerLink Staging Deploy
 
 on:
   push:
-    branches:
-      - develop
   workflow_dispatch:
 
 env:

@@ -122,6 +122,17 @@ def tenant_onboarding_completed(tenant: Tenant | None) -> bool:
     return bool(settings.get("onboarding_completed"))
 
 
+def tenant_setup_checklist_complete(tenant: Tenant | None) -> bool:
+    settings = _settings(tenant)
+    return bool(settings.get("setup_checklist_complete"))
+
+
+def set_setup_checklist_complete(settings_json: dict[str, Any] | None) -> dict[str, Any]:
+    merged = dict(settings_json or {})
+    merged["setup_checklist_complete"] = True
+    return merged
+
+
 def build_tenant_settings(
     *,
     country: str = DEFAULT_COUNTRY,

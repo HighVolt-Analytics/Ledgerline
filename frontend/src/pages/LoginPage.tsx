@@ -1,8 +1,12 @@
-import { useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
 import { useAuth } from "@/context/AuthContext";
 import { homePathForRole } from "@/lib/roles";
+import { fetchOAuthProviders, startGoogleOAuth, startMicrosoftOAuth } from "@/lib/oauthApi";
+import { apiSelectTenant, type TenantAccountSummary } from "@/lib/authApi";
+import { persistAuthSuccess } from "@/lib/authSession";
+import { setAuthToken, setAuthUser } from "@/api/client";
 import { Eye, EyeOff } from "lucide-react";
 
 type Step = "credentials" | "otp" | "pick-tenant";
@@ -25,6 +29,31 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [oauthProviders, setOauthProviders] = useState({ google: false, microsoft: false });
+  const [oauthTenantSelect, setOauthTenantSelect] = useState(false);
+  const [oauthAccounts, setOauthAccounts] = useState<TenantAccountSummary[]>([]);
+  const [oauthSelectToken, setOauthSelectToken] = useState<string | null>(null);
+  const location = useLocation();
+
+  useEffect(() => {
+    void fetchOAuthProviders()
+      .then((p) => setOauthProviders({ google: p.google, microsoft: p.microsoft }))
+      .catch(() => setOauthProviders({ google: false, microsoft: false }));
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("oauth_tenant_select") === "1") {
+      setStep("pick-tenant");
+      setOauthTenantSelect(true);
+      const state = location.state as {
+        tenantSelectToken?: string;
+        accounts?: TenantAccountSummary[];
+      } | null;
+      if (state?.tenantSelectToken) setOauthSelectToken(state.tenantSelectToken);
+      if (state?.accounts) setOauthAccounts(state.accounts);
+    }
+  }, [location]);
 
   if (!loading && user && user.id > 0) {
     return <Navigate to={homePathForRole(user.role)} replace />;
@@ -62,6 +91,19 @@ export function LoginPage() {
     setError(null);
     setBusy(true);
     try {
+      if (oauthTenantSelect && oauthSelectToken) {
+        const result = await apiSelectTenant(oauthSelectToken, tenantId);
+        persistAuthSuccess({
+          access_token: result.access_token,
+          refresh_token: result.refresh_token,
+          user: result.user,
+          memberships: result.memberships,
+        });
+        setAuthToken(result.access_token);
+        setAuthUser(result.user);
+        window.location.replace("/settings");
+        return;
+      }
       await selectTenant(tenantId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not select tenant");
@@ -69,6 +111,9 @@ export function LoginPage() {
       setBusy(false);
     }
   }
+
+  const pickerAccounts =
+    oauthTenantSelect && oauthAccounts.length > 0 ? oauthAccounts : tenantPicker;
 
   return (
     <AuthCenteredCard
@@ -140,14 +185,40 @@ export function LoginPage() {
             {busy ? "Please wait…" : "Log in"}
           </button>
 
+          {(oauthProviders.google || oauthProviders.microsoft) && (
+            <div className="space-y-2 pt-2">
+              <p className="text-center text-xs text-muted-foreground">or continue with</p>
+              {oauthProviders.microsoft && (
+                <button
+                  type="button"
+                  className="auth-secondary-btn w-full"
+                  disabled={busy}
+                  onClick={() => void startMicrosoftOAuth("login")}
+                >
+                  Microsoft
+                </button>
+              )}
+              {oauthProviders.google && (
+                <button
+                  type="button"
+                  className="auth-secondary-btn w-full"
+                  disabled={busy}
+                  onClick={() => startGoogleOAuth("login")}
+                >
+                  Google
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="auth-footer">
             <a href="mailto:support@ledgerline.app?subject=Forgot%20password" className="auth-link">
               Forgot password?
             </a>
             <p>
               Don&apos;t have an account?{" "}
-              <Link to="/accept-invite" className="auth-link-accent">
-                Sign up
+              <Link to="/signup" className="auth-link-accent">
+                Create an account
               </Link>
             </p>
           </div>
@@ -186,7 +257,7 @@ export function LoginPage() {
 
       {!loading && step === "pick-tenant" && (
         <div className="auth-form">
-          {tenantPicker.map((t) => (
+          {pickerAccounts.map((t) => (
             <button
               key={t.tenant_id}
               type="button"

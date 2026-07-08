@@ -22,7 +22,6 @@ export function SetupPage() {
   const [countryCode, setCountryCode] = useState("AU");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const country = countryByCode(countryCode);
@@ -37,17 +36,7 @@ export function SetupPage() {
       setError("Business name is required.");
       return;
     }
-    setBusy(true);
-    setError(null);
-    navigate("/login", {
-      replace: true,
-      state: {
-        mode: "register",
-        tenant_name: businessName.trim(),
-        tenant_slug: businessName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-        email: email.trim() || undefined,
-      },
-    });
+    navigate("/signup", { replace: true });
   }
 
   return (
@@ -182,9 +171,9 @@ export function SetupPage() {
             <Button
               data-testid="button-create-org"
               onClick={createOrg}
-              disabled={busy || !businessName.trim()}
+              disabled={!businessName.trim()}
             >
-              {busy ? "Creating…" : "Create organisation"}
+              Create organisation
             </Button>
           </div>
         </div>

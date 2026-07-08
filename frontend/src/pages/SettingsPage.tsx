@@ -14,6 +14,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import { notifyOnboardingStatusRefresh } from "@/components/onboarding/OnboardingChecklist";
 import { cn } from "@/lib/cn";
 import {
   COUNTRIES,
@@ -127,11 +128,13 @@ export function SettingsPage() {
         name: trimmedName,
         country,
       });
+      await api.updateOnboarding({ industry });
       setBusinessName(inst.name);
       setCountry(inst.country);
       setTimezone(inst.timezone);
       await refreshUser();
       setSaved(true);
+      notifyOnboardingStatusRefresh();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Could not save profile settings";

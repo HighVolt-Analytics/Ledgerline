@@ -15,6 +15,8 @@ TOKEN_TYPE_ACCESS = "access"
 TOKEN_TYPE_REFRESH = "refresh"
 TOKEN_TYPE_CHALLENGE = "challenge"
 TOKEN_TYPE_TENANT_SELECT = "tenant_select"
+TOKEN_TYPE_SIGNUP_EMAIL_CHALLENGE = "signup_email_challenge"
+TOKEN_TYPE_SIGNUP_SESSION = "signup_session"
 
 
 def hash_password(password: str) -> str:
@@ -57,6 +59,27 @@ def create_tenant_select_token(*, auth_account_id: int, email: str) -> str:
             "type": TOKEN_TYPE_TENANT_SELECT,
         },
         minutes=5,
+    )
+
+
+def create_signup_email_challenge_token(*, email: str) -> str:
+    return _encode(
+        {
+            "sub": email.lower(),
+            "email": email.lower(),
+            "type": TOKEN_TYPE_SIGNUP_EMAIL_CHALLENGE,
+        },
+        minutes=15,
+    )
+
+
+def create_signup_session_token(*, session_id: str) -> str:
+    return _encode(
+        {
+            "sub": session_id,
+            "type": TOKEN_TYPE_SIGNUP_SESSION,
+        },
+        days=2,
     )
 
 
