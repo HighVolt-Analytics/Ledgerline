@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getSignupDisabledReason,
   isSignupFormComplete,
+  isValidEmail,
   signupPrimaryCtaLabel,
   validateSignupForm,
 } from "@/lib/signupForm";
@@ -14,22 +16,62 @@ const validFields = {
   confirmPassword: "password123",
 };
 
+const validInput = {
+  fields: validFields,
+  industry: "Technology",
+  countryCode: "SG",
+  selectedPlan: "studio" as const,
+  platformBillingEnabled: true,
+  billingPlansLoading: false,
+  billingPlansError: null,
+  busy: false,
+};
+
 describe("signupForm", () => {
   it("accepts complete signup fields", () => {
     expect(validateSignupForm(validFields)).toBeNull();
-    expect(isSignupFormComplete(validFields)).toBe(true);
+    expect(isSignupFormComplete(validInput)).toBe(true);
   });
 
   it("rejects missing business name", () => {
     expect(
-      validateSignupForm({ ...validFields, businessName: "  " })
+      getSignupDisabledReason({
+        ...validInput,
+        fields: { ...validFields, businessName: "  " },
+      })
     ).toMatch(/Business name/);
+  });
+
+  it("rejects invalid email", () => {
+    expect(isValidEmail("not-an-email")).toBe(false);
+    expect(
+      getSignupDisabledReason({
+        ...validInput,
+        fields: { ...validFields, email: "not-an-email" },
+      })
+    ).toBe("Enter a valid email.");
   });
 
   it("rejects password mismatch", () => {
     expect(
-      validateSignupForm({ ...validFields, confirmPassword: "other" })
-    ).toMatch(/do not match/);
+      getSignupDisabledReason({
+        ...validInput,
+        fields: { ...validFields, confirmPassword: "other" },
+      })
+    ).toBe("Passwords do not match.");
+  });
+
+  it("blocks studio when platform billing is disabled", () => {
+    expect(
+      getSignupDisabledReason({
+        ...validInput,
+        platformBillingEnabled: false,
+      })
+    ).toBe("Stripe billing is not enabled in staging.");
+  });
+
+  it("allows studio when platform billing is enabled and form is valid", () => {
+    expect(getSignupDisabledReason(validInput)).toBeNull();
   });
 
   it("uses signup wording for primary CTA labels", () => {
