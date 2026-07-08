@@ -128,6 +128,7 @@ _EVENT_STAGE.update(
         "team_expense_approval_required": 13,
         "mapping_applied": 14,
         "mapping_review_required": 14,
+        "journal_unbalanced": 15,
         "reconciliation_halted": 16,
         "reconciliation_skipped": 16,
         "invoice_processed": 17,
@@ -168,6 +169,7 @@ _REMEDIATION: dict[str, str] = {
     "APPROVAL_REQUIRED": "Route to the approver named in the playbook policy.",
     "MAP_SUSPENSE": "Map to a real GL account in the rule book or approve suspense mapping.",
     "MAP_CONFIG": "Set Post to ledger for this document type in Rule Book → Document types.",
+    "JOURNAL_UNBALANCED": "Correct subtotal, GST, and total on the invoice or reprocess after extraction fixes.",
     "PIPELINE_ERROR": "Fix the reported issue and reprocess the dossier from the exception queue.",
     "RECON_HALTED": "Clear the daily reconciliation halt before posting.",
     "PAY_FAILED": "Review payment details and re-release from the payments queue.",
@@ -1056,13 +1058,22 @@ def _resolve_bundle(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipel
 
 
 def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
-    hold_log = _latest_log(logs, "vendor_registration_hold")
-    cleared_log = _latest_log(logs, "vendor_registration_cleared", "vendor_registration_released")
-    waived_log = _latest_log(logs, "vendor_registration_waived")
+    is_sales = (inv.route_target or "").strip() == ROUTE_SALES
+    hold_event = "customer_registration_hold" if is_sales else "vendor_registration_hold"
+    cleared_events = (
+        ("customer_registration_cleared",)
+        if is_sales
+        else ("vendor_registration_cleared", "vendor_registration_released")
+    )
+    waived_event = "customer_registration_waived" if is_sales else "vendor_registration_waived"
+
+    hold_log = _latest_log(logs, hold_event)
+    cleared_log = _latest_log(logs, *cleared_events)
+    waived_log = _latest_log(logs, waived_event)
     validate_pass = _latest_log(logs, "validation_passed")
 
     if waived_log and (hold_log is None or _is_after(waived_log, hold_log)):
-        reason = _detail_from_log(waived_log, fallback="vendor_registration_waived")
+        reason = _detail_from_log(waived_log, fallback=waived_event)
         return _step(
             "vendor_hold",
             state="waived",
@@ -1071,7 +1082,7 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
         )
 
     if cleared_log and (hold_log is None or _is_after(cleared_log, hold_log)):
-        reason = _detail_from_log(cleared_log, fallback="vendor_registration_cleared")
+        reason = _detail_from_log(cleared_log, fallback=cleared_events[0])
         return _step(
             "vendor_hold",
             state="pass",
@@ -1080,16 +1091,21 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
         )
 
     if inv.evaluation_status == EVAL_PENDING_VENDOR:
-        reason = "Vendor not registered — pending vendor registration"
+        reason = (
+            "Customer not registered — pending customer registration"
+            if is_sales
+            else "Vendor not registered — pending vendor registration"
+        )
         hold_at = hold_log.created_at if hold_log else None
+        exception_code = "VENDOR_HOLD"
         return _step(
             "vendor_hold",
             state="fail",
             detail=reason,
             at=hold_at,
-            exception_code="VENDOR_HOLD",
+            exception_code=exception_code,
             failure_reason=reason,
-            remediation=_remediation_for("VENDOR_HOLD", inv),
+            remediation=_remediation_for(exception_code, inv),
         )
 
     if hold_log and (
@@ -1098,24 +1114,30 @@ def _resolve_vendor_hold(inv: Invoice, logs: list[AuditLog], wm: int) -> Dossier
         or validate_pass is None
         or hold_log.created_at > validate_pass.created_at
     ):
-        reason = _detail_from_log(hold_log, fallback="vendor_registration_hold")
+        reason = _detail_from_log(hold_log, fallback=hold_event)
+        exception_code = "VENDOR_HOLD"
         return _step(
             "vendor_hold",
             state="fail",
             detail=reason,
             at=hold_log.created_at,
-            exception_code="VENDOR_HOLD",
+            exception_code=exception_code,
             failure_reason=reason,
-            remediation=_remediation_for("VENDOR_HOLD", inv),
+            remediation=_remediation_for(exception_code, inv),
         )
 
     if wm >= 11 and cleared_log is None and waived_log is None and hold_log is None:
         if inv.evaluation_status == EVAL_PENDING_VENDOR:
             return _step("vendor_hold", state="pending", detail="—")
+        legacy = (
+            "Customer approved — no hold (legacy run, no customer audit)"
+            if is_sales
+            else "Vendor approved — no hold (legacy run, no vendor audit)"
+        )
         return _step(
             "vendor_hold",
             state="pass",
-            detail="Vendor approved — no hold (legacy run, no vendor audit)",
+            detail=legacy,
             at=None,
         )
     return _step("vendor_hold", state="pending", detail="—")
@@ -1406,6 +1428,19 @@ def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 
     if not _map_gl_complete(inv, logs):
         return _step("journal", state="pending", detail="—")
+
+    journal_fail = _latest_log(logs, "journal_unbalanced")
+    if journal_fail and inv.status == InvoiceStatus.EXCEPTION:
+        reason = _detail_from_log(journal_fail, fallback="journal_unbalanced")
+        return _step(
+            "journal",
+            state="fail",
+            detail=reason,
+            at=journal_fail.created_at,
+            exception_code="JOURNAL_UNBALANCED",
+            failure_reason=reason,
+            remediation=_REMEDIATION["JOURNAL_UNBALANCED"],
+        )
 
     processed = _latest_log(logs, "invoice_processed", "purchase_document_processed")
     if inv.status in (InvoiceStatus.JOURNALING, InvoiceStatus.RECONCILING, InvoiceStatus.PROCESSED) or wm >= 15:

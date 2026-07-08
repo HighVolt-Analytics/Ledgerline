@@ -24,6 +24,20 @@ class JournalLine:
     entry_type: EntryType
 
 
+def _resolve_amounts(invoice: Invoice) -> tuple[Decimal, Decimal, Decimal]:
+    """Normalize subtotal/gst/total so journal lines balance when only total was extracted."""
+    gst = invoice.gst if invoice.gst is not None else Decimal("0")
+    subtotal = invoice.subtotal
+    total = invoice.total
+
+    if total is None:
+        total = (subtotal or Decimal("0")) + gst
+    if subtotal is None:
+        subtotal = max(total - gst, Decimal("0"))
+
+    return subtotal, gst, total
+
+
 def generate_entries(
     invoice: Invoice,
     mapping: AccountMapping,
@@ -35,9 +49,7 @@ def generate_entries(
 
     cfg = config or ConfigPayload()
     entry_date = invoice.invoice_date or date.today()
-    subtotal = invoice.subtotal or Decimal("0")
-    gst = invoice.gst or Decimal("0")
-    total = invoice.total or subtotal + gst
+    subtotal, gst, total = _resolve_amounts(invoice)
 
     if (invoice.route_target or "").strip() == ROUTE_SALES:
         recv_label, tax_label = resolve_sales_post_accounts(

@@ -936,6 +936,9 @@ def validate_rule_book_config_for_save(data: dict[str, Any]) -> RuleBookConfigPa
     )
 
     synced_types = [sync_classifier_from_recognition(defn) for defn in payload.document_types]
+    from app.services.classification.route_compulsory_fields import merge_route_compulsory_into_config
+
+    synced_types = merge_route_compulsory_into_config(synced_types)
     payload = payload.model_copy(update={"document_types": synced_types})
     _validate_transactional_document_type_post_to(payload)
     return payload

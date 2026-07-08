@@ -63,7 +63,7 @@ const PIPELINE_STEPS: StepDef[] = [
   {
     id: "extract",
     label: "6 · Field extract",
-    events: ["parse_completed"],
+    events: ["parse_completed", "di_invoice_enrich", "extraction_gap_fill"],
     liveFields: ["vendor", "invoice_no", "total", "subtotal", "gst", "abn"],
   },
   {

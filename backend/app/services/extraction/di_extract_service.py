@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.schemas.ocr_artifact import OcrArtifact
 from app.services.extraction.document_intelligence import is_di_enabled, parse_with_document_intelligence
 from app.services.extraction.document_layout_service import analyze_layout_via_di
+from app.services.extraction.extraction_field_values import di_scalar_fields_populated, prebuilt_invoice_scalars_active
 from app.services.extraction.extraction_orchestrator import (
     invoice_data_to_payload_fields,
     should_run_prebuilt_invoice_di,
@@ -75,6 +76,11 @@ def _artifact_from_layout(
         table_items = extract_line_items_from_tables(layout)
         if table_items:
             payload["table_line_items"] = serialize_line_items(table_items)
+        from app.services.extraction.money_scalar_resolver import serialize_layout_table_grids
+
+        grids = serialize_layout_table_grids(layout)
+        if grids:
+            payload["layout_table_grids"] = grids
 
     return OcrArtifact(
         success=True,
@@ -112,25 +118,77 @@ def read_layout_for_classification(file_path: str | Path) -> OcrArtifact:
     return artifact
 
 
+def build_di_enrich_audit_detail(
+    before: OcrArtifact,
+    after: OcrArtifact,
+    *,
+    confirmed_dt: str = "",
+    dt_definition=None,
+    failure_reason: str | None = None,
+) -> dict[str, object]:
+    """Audit payload for prebuilt-invoice enrich attempt."""
+    from app.services.extraction.extraction_field_values import di_scalar_fields_populated
+
+    settings = get_settings()
+    attempted = True
+    if not is_di_enabled():
+        return {
+            "attempted": False,
+            "success": False,
+            "failure_reason": "not_configured",
+            "di_model": before.di_model,
+            "fields_populated": [],
+        }
+    if not should_run_prebuilt_invoice_di(confirmed_dt, dt_definition):
+        return {
+            "attempted": False,
+            "success": False,
+            "failure_reason": "skipped_profile",
+            "di_model": before.di_model,
+            "fields_populated": [],
+        }
+    after_payload = after.payload_json or {}
+    before_payload = before.payload_json or {}
+    enriched = "invoice_fields" in after_payload and "invoice_fields" not in before_payload
+    if not enriched and after.di_model != before.di_model:
+        enriched = prebuilt_invoice_scalars_active(after_payload)
+    populated = sorted(di_scalar_fields_populated(after_payload)) if enriched else []
+    success = bool(populated) or enriched
+    return {
+        "attempted": attempted,
+        "success": success,
+        "failure_reason": failure_reason,
+        "di_model": after.di_model or settings.azure_di_model_id or "prebuilt-invoice",
+        "fields_populated": populated,
+        "confirmed_dt": (confirmed_dt or "").strip().upper(),
+    }
+
+
 def enrich_ocr_with_invoice_model(
     ocr: OcrArtifact,
     file_path: str | Path,
     *,
     confirmed_dt: str = "",
     dt_definition=None,
-) -> OcrArtifact:
+) -> tuple[OcrArtifact, dict[str, object]]:
     """Run prebuilt-invoice DI after document type is confirmed (extract phase)."""
     settings = get_settings()
     path = Path(file_path)
     if not path.is_file() or not is_di_enabled():
-        return ocr
+        return ocr, build_di_enrich_audit_detail(
+            ocr, ocr, confirmed_dt=confirmed_dt, dt_definition=dt_definition, failure_reason="not_configured"
+        )
     if not should_run_prebuilt_invoice_di(confirmed_dt, dt_definition):
-        return ocr
+        return ocr, build_di_enrich_audit_detail(
+            ocr, ocr, confirmed_dt=confirmed_dt, dt_definition=dt_definition, failure_reason="skipped_profile"
+        )
 
     content_type = _content_type_for_path(path)
     invoice_data = parse_with_document_intelligence(path, content_type=content_type)
     if invoice_data is None:
-        return ocr
+        return ocr, build_di_enrich_audit_detail(
+            ocr, ocr, confirmed_dt=confirmed_dt, dt_definition=dt_definition, failure_reason="no_documents"
+        )
 
     text = ocr.text or ""
     if not text.strip() and invoice_data.document_text:
@@ -149,7 +207,7 @@ def enrich_ocr_with_invoice_model(
 
     text_length = len(text)
     sparse = text_length < settings.ocr_min_text_chars
-    return OcrArtifact(
+    enriched = OcrArtifact(
         success=True,
         sparse=sparse,
         text=text,
@@ -157,6 +215,9 @@ def enrich_ocr_with_invoice_model(
         di_model=str(payload["di_model"]),
         layout_kv=layout_kv,
         payload_json=payload,
+    )
+    return enriched, build_di_enrich_audit_detail(
+        ocr, enriched, confirmed_dt=confirmed_dt, dt_definition=dt_definition
     )
 
 

@@ -14,6 +14,7 @@ from app.models.tenant import Tenant
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.vendor import VendorRegistry
+from app.models.customer import CustomerRegistry
 from app.services.rule_book.account_mapper import AccountMapping, MappingDetail
 from app.services.dossier.document_duplicate_service import (
     find_existing_ingest_duplicate,
@@ -37,6 +38,7 @@ from app.services.invoice.invoice_evaluation_service import (
     EVAL_AWAITING_CLASSIFICATION,
     EVAL_NEEDS_RESCAN,
     EVAL_NEEDS_REVIEW,
+    EVAL_PENDING_VENDOR,
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
     ROUTE_SALES,
@@ -117,8 +119,8 @@ from app.services.master_data.vendor_resolver import (
     UNKNOWN_SLUG,
     is_valid_storage_slug,
     resolve_storage_slug_for_parsed_vendor,
-    resolve_vendor_slug,
 )
+from app.services.master_data.customer_resolver import resolve_capture_slug
 from app.utils.hashing import compute_sha256_bytes
 
 
@@ -133,6 +135,11 @@ async def _log_processing_override_skip(
         invoice_id=invoice.id,
         detail={"step_id": step_id, "source": "processing_override"},
     )
+
+
+def _counterparty_registration_pending(invoice: Invoice) -> bool:
+    """True when evaluation already flagged unknown vendor/customer registration."""
+    return (invoice.evaluation_status or "").strip() == EVAL_PENDING_VENDOR
 
 
 async def _vendor_hold_unless_skipped(
@@ -349,6 +356,49 @@ async def _auto_learn_sender(session: AsyncSession, invoice: Invoice) -> None:
     )
 
 
+async def _auto_learn_customer_sender(session: AsyncSession, invoice: Invoice) -> None:
+    settings = get_settings()
+    if not settings.blob_auto_learn_sender:
+        return
+    if (invoice.route_target or "").strip() != ROUTE_SALES:
+        return
+    if not invoice.email_sender or not invoice.storage_vendor_slug:
+        return
+    if invoice.storage_vendor_slug == UNKNOWN_SLUG:
+        return
+
+    rows = (
+        await session.execute(
+            select(CustomerRegistry).where(CustomerRegistry.tenant_id == invoice.tenant_id)
+        )
+    ).scalars().all()
+    for row in rows:
+        if row.sender_pattern.lower() == invoice.email_sender.lower():
+            return
+        if row.customer_slug == invoice.storage_vendor_slug:
+            return
+
+    session.add(
+        CustomerRegistry(
+            tenant_id=invoice.tenant_id,
+            customer_slug=invoice.storage_vendor_slug,
+            customer_name=invoice.vendor or invoice.storage_vendor_slug,
+            sender_pattern=invoice.email_sender,
+            abn=invoice.abn,
+            approved=False,
+        )
+    )
+    await log_event(
+        session,
+        "customer_sender_learned",
+        invoice_id=invoice.id,
+        detail={
+            "sender": invoice.email_sender,
+            "customer_slug": invoice.storage_vendor_slug,
+        },
+    )
+
+
 def _finish_email_message(
     message_id: str,
     mailbox_email: str,
@@ -545,7 +595,7 @@ async def ingest_email_attachments(
                             result.ingested_count += 1
                     continue
 
-            vendor_slug = await resolve_vendor_slug(
+            vendor_slug = await resolve_capture_slug(
                 session, email.sender, tenant_id=tenant_id
             )
             fanout = await ingest_file_with_fanout(
@@ -647,6 +697,7 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
         detail={"purchase_document_type": invoice.purchase_document_type},
     )
     await _auto_learn_sender(session, invoice)
+    await _auto_learn_customer_sender(session, invoice)
 
 
 async def _finish_sales_supporting_document(session: AsyncSession, invoice: Invoice) -> None:
@@ -685,6 +736,7 @@ async def _finish_sales_supporting_document(session: AsyncSession, invoice: Invo
         detail={"sales_document_type": invoice.sales_document_type},
     )
     await _auto_learn_sender(session, invoice)
+    await _auto_learn_customer_sender(session, invoice)
 
 
 async def _apply_parsed_to_invoice(
@@ -1159,15 +1211,23 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         loaded.llm_suggested_dt = invoice.llm_suggested_dt
         loaded.llm_confidence = invoice.llm_confidence
 
-    extract_result = await extract_fields(
-        ocr,
-        file_path=invoice.raw_file_path,
-        org=org,
-        document_types=config.document_types,
-        confirmed_dt=confirmed_dt,
-        few_shots=few_shots,
-        provider=doc_provider,
-    )
+    with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as local_path:
+        extract_result = await extract_fields(
+            ocr,
+            file_path=local_path,
+            org=org,
+            document_types=config.document_types,
+            confirmed_dt=confirmed_dt,
+            few_shots=few_shots,
+            provider=doc_provider,
+        )
+    if extract_result.di_enrich_detail:
+        await log_event(
+            session,
+            "di_invoice_enrich",
+            invoice_id=invoice.id,
+            detail=extract_result.di_enrich_detail,
+        )
     llm_result = extract_result.llm
     ocr = extract_result.ocr
     from dataclasses import replace
@@ -1180,6 +1240,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         non_canonical_extraction_keys,
     )
     from app.services.extraction.field_grounding_service import ground_parsed_fields
+    from app.services.extraction.gap_fill_extraction_service import apply_extraction_gap_fill
     from app.services.extraction.pdf_parser import parse_local_text
 
     selected_keys = effective_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
@@ -1194,6 +1255,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             llm_result,
             ocr=ocr,
             custom_keys=custom_keys or None,
+            selected_keys=selected_keys,
             org=org,
         )
         persist_llm_party_context(invoice, llm_result, org)
@@ -1202,6 +1264,21 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         parsed = replace(local, document_text=ocr.text or local.document_text)
     parsed = ground_parsed_fields(parsed, ocr.text, selected_keys, ocr.payload_json)
     parsed = enrich_parsed_from_ocr(parsed, ocr, dt_definition=dt_definition)
+    parsed, gap_fill_detail = await apply_extraction_gap_fill(
+        parsed,
+        ocr=ocr,
+        selected_keys=selected_keys,
+        org=org,
+        dt_definition=dt_definition,
+        invoice=loaded,
+    )
+    if gap_fill_detail.get("gap_fill_attempted"):
+        await log_event(
+            session,
+            "extraction_gap_fill",
+            invoice_id=invoice.id,
+            detail=gap_fill_detail,
+        )
 
     field_conf_result = evaluate_field_confidence_gate(
         llm_result,
@@ -1229,6 +1306,14 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             "di_model": ocr.di_model,
             "document_ai_provider": provider_token,
             "confirmed_dt": confirmed_dt,
+            "extracted_snapshot": {
+                "vendor": parsed.vendor,
+                "invoice_no": parsed.invoice_no,
+                "total": str(parsed.total) if parsed.total is not None else None,
+                "subtotal": str(parsed.subtotal) if parsed.subtotal is not None else None,
+                "gst": str(parsed.gst) if parsed.gst is not None else None,
+                "abn": parsed.abn,
+            },
         },
     )
 
@@ -1337,6 +1422,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         and not bypass_review_gates
         and not skip_field_conf_review
         and not should_skip(invoice, "field_confidence")
+        and not _counterparty_registration_pending(loaded)
     ):
         loaded.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
@@ -1356,7 +1442,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         and should_skip(invoice, "field_confidence")
     ):
         await _log_processing_override_skip(session, invoice, "field_confidence")
-    elif vendor_drift_result is not None and vendor_drift_result.detected and not bypass_review_gates and not should_skip(invoice, "vendor_drift"):
+    elif vendor_drift_result is not None and vendor_drift_result.detected and not bypass_review_gates and not should_skip(invoice, "vendor_drift") and not _counterparty_registration_pending(loaded):
         loaded.evaluation_status = EVAL_NEEDS_REVIEW
         invoice.evaluation_status = EVAL_NEEDS_REVIEW
         await log_event(
@@ -1695,6 +1781,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             },
         )
         await _auto_learn_sender(session, invoice)
+        await _auto_learn_customer_sender(session, invoice)
         return
 
     post_validate = (
@@ -1897,7 +1984,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     _mark_invoice_processed(invoice)
     await session.flush()
     await record_team_expense_processed(session, invoice)
-    from app.services.payments.payment_service import ensure_payment_for_invoice
     from app.services.purchase.purchase_document_service import (
         is_commercial_purchase_invoice,
         sync_purchase_document,
@@ -1917,18 +2003,22 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
     if is_commercial_purchase_invoice(invoice):
-        await ensure_payment_for_invoice(session, invoice)
+        from app.services.payments.settlement_service import ensure_payment_with_audit
+
+        await ensure_payment_with_audit(session, invoice)
 
     from app.services.sales.sales_document_service import (
         is_commercial_sales_invoice,
         sync_sales_document,
     )
-    from app.services.integration.collection_service import ensure_receivable_for_invoice
 
     await sync_sales_document(session, invoice)
     if is_commercial_sales_invoice(invoice):
-        await ensure_receivable_for_invoice(session, invoice)
+        from app.services.payments.settlement_service import ensure_receivable_with_audit
+
+        await ensure_receivable_with_audit(session, invoice)
     await _auto_learn_sender(session, invoice)
+    await _auto_learn_customer_sender(session, invoice)
     await log_event(
         session,
         "invoice_processed",

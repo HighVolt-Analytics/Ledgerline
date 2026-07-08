@@ -13,6 +13,7 @@ from app.services.classification.document_type_rule_engine import build_document
 from app.services.extraction.extraction_field_values import (
     apply_parsed_extraction_fields,
     build_extraction_field_manifest,
+    build_field_ocr_snippets,
     custom_extraction_field_descriptors,
     custom_extraction_field_keys,
     custom_extraction_field_keys_for_dt,
@@ -20,6 +21,8 @@ from app.services.extraction.extraction_field_values import (
     enrich_parsed_from_ocr,
     expand_extraction_keys_for_llm,
     harvest_custom_fields_from_llm_raw,
+    merge_gap_fill_into_parsed,
+    missing_configured_extraction_keys,
     non_canonical_extraction_keys,
     normalize_extracted_fields_map,
 )
@@ -127,6 +130,53 @@ def test_harvest_custom_fields_from_top_level_llm_raw() -> None:
     )
     assert harvested["contract_party"] == "Permagen Planting Land Pty Ltd"
     assert harvested["project_code"] == "PO-MKT"
+
+
+def test_harvest_configured_canonical_account_code_from_llm_raw() -> None:
+    harvested = harvest_custom_fields_from_llm_raw(
+        {
+            "account_code": "6100",
+            "vendor": "Acme Pty Ltd",
+            "extracted_fields": {"account_name": "Travel Expense"},
+        },
+        selected_keys=["vendor", "account_code", "account_name"],
+    )
+    assert harvested["account_code"] == "6100"
+    assert harvested["account_name"] == "Travel Expense"
+    assert "vendor" not in harvested
+
+
+def test_enrich_parsed_from_ocr_fills_configured_account_code_and_custom() -> None:
+    ocr = OcrArtifact(
+        success=True,
+        text=(
+            "Vendor: Acme Pty Ltd\nTAX INVOICE\n"
+            "PO: 12345\nAccount Code: 6100\nProject Code: PRJ-42\n"
+        ),
+        text_length=80,
+    )
+    parsed = InvoiceData(document_text=ocr.text)
+    invoice_dt = _definition(
+        code="DT-01",
+        extraction_fields=["vendor", "po_reference", "account_code", "project_code"],
+    )
+    enriched = enrich_parsed_from_ocr(parsed, ocr, dt_definition=invoice_dt)
+    assert enriched.po_reference == "12345"
+    assert enriched.extracted_fields.get("account_code") == "6100"
+    assert enriched.extracted_fields.get("project_code") == "PRJ-42"
+
+
+def test_effective_extraction_fields_merges_required_fields() -> None:
+    from app.services.classification.document_type_playbook_service import effective_extraction_fields
+
+    permit = _definition(
+        code="DT-02",
+        extraction_fields=["vendor", "permit_no", "consignment_ref"],
+        required_fields=["consignment_ref"],
+    )
+    keys = effective_extraction_fields(permit)
+    assert "consignment_ref" in keys
+    assert "permit_no" in keys
 
 
 def test_enrich_parsed_from_ocr_fills_missing_invoice_no() -> None:
@@ -342,3 +392,43 @@ def test_enrich_parsed_from_ocr_harvests_contract_party() -> None:
     parsed = InvoiceData(document_text=ocr.text)
     enriched = enrich_parsed_from_ocr(parsed, ocr, dt_definition=_definition())
     assert enriched.extracted_fields.get("contract_party") == "Permagen Planting Land Pty Ltd"
+
+
+def test_build_field_ocr_snippets_finds_account_code_context() -> None:
+    text = "Header line\nVendor: Acme\nAccount Code: 4100\nFooter"
+    snippets = build_field_ocr_snippets(text, ["account_code"])
+    assert "4100" in snippets["account_code"]
+    assert "Account Code" in snippets["account_code"]
+
+
+def test_build_field_ocr_snippets_money_uses_footer_tail() -> None:
+    padding = "intro " * 200
+    text = f"{padding}\nBalance due\n1,234.56"
+    snippets = build_field_ocr_snippets(text, ["total"])
+    assert "Balance due" in snippets["total"]
+    assert "1,234.56" in snippets["total"]
+
+
+def test_missing_configured_extraction_keys_returns_empty_fields() -> None:
+    parsed = InvoiceData(vendor="Acme", document_text="Vendor: Acme")
+    missing = missing_configured_extraction_keys(
+        ["vendor", "invoice_no", "account_code"],
+        parsed=parsed,
+    )
+    assert "vendor" not in missing
+    assert "invoice_no" in missing
+    assert "account_code" in missing
+
+
+def test_merge_gap_fill_preserves_existing_invoice_no() -> None:
+    ocr_text = "Invoice No: INV-100\nVendor: Acme"
+    parsed = InvoiceData(invoice_no="INV-100", document_text=ocr_text)
+    gap = InvoiceData(invoice_no="INV-999", document_text=ocr_text)
+    result = merge_gap_fill_into_parsed(
+        parsed,
+        gap,
+        missing_keys=["invoice_no"],
+        ocr_text=ocr_text,
+    )
+    assert result.parsed.invoice_no == "INV-100"
+    assert result.filled == ()

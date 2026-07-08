@@ -44,11 +44,69 @@ def _is_placeholder(value: str) -> bool:
     return False
 
 
-def _money_grounded_in_ocr(value: Decimal | str | None, ocr_text: str | None) -> bool:
+def _normalize_money_for_grounding(value: Decimal | str) -> str:
+    token = str(value).strip()
+    cleaned = re.sub(r"[^\d.\-]", "", token.replace(",", ""))
+    if not cleaned:
+        return ""
+    try:
+        return format(Decimal(cleaned).normalize(), "f").rstrip("0").rstrip(".")
+    except Exception:
+        return cleaned
+
+
+def _ocr_money_forms(ocr_text: str) -> set[str]:
+    forms: set[str] = set()
+    compact = re.sub(r"[^\d.\-]", "", ocr_text.replace(",", ""))
+    for match in re.finditer(r"-?\d+\.?\d*", compact):
+        normalized = _normalize_money_for_grounding(match.group(0))
+        if normalized:
+            forms.add(normalized)
+    return forms
+
+
+def _money_grounded_adjacent_line(
+    value: Decimal | str,
+    ocr_text: str | None,
+    *,
+    field_key: str | None = None,
+) -> bool:
+    if not ocr_text or value is None:
+        return False
+    target = _normalize_money_for_grounding(value)
+    if not target:
+        return False
+    lines = ocr_text.splitlines()
+    from app.services.extraction.finance_field_labels import label_matches_field
+
+    keys = [field_key] if field_key else ("subtotal", "gst", "total")
+    for index, line in enumerate(lines):
+        for key in keys:
+            if not key or not label_matches_field(line, key):
+                continue
+            for offset in (0, 1, 2):
+                next_index = index + offset
+                if next_index >= len(lines):
+                    break
+                candidate = _normalize_money_for_grounding(lines[next_index])
+                if candidate == target:
+                    return True
+    return False
+
+
+def _money_grounded_in_ocr(
+    value: Decimal | str | None,
+    ocr_text: str | None,
+    *,
+    field_key: str | None = None,
+) -> bool:
     if value is None or not ocr_text:
         return value is None
     token = str(value).strip()
     if not token:
+        return True
+    normalized = _normalize_money_for_grounding(value)
+    if normalized and normalized in _ocr_money_forms(ocr_text):
         return True
     compact = token.replace(",", "")
     ocr_compact = ocr_text.replace(",", "")
@@ -57,7 +115,7 @@ def _money_grounded_in_ocr(value: Decimal | str | None, ocr_text: str | None) ->
     digits = "".join(c for c in token if c.isdigit())
     if digits and re.search(rf"(?<!\d){re.escape(digits)}(?!\d)", ocr_compact):
         return True
-    return False
+    return _money_grounded_adjacent_line(value, ocr_text, field_key=field_key)
 
 
 def value_grounded_in_ocr(value: str | None, ocr_text: str | None) -> bool:
@@ -184,33 +242,47 @@ def ground_extracted_fields_map(
     return grounded
 
 
-def ground_invoice_scalars(data: InvoiceData, ocr_text: str | None) -> InvoiceData:
+def ground_invoice_scalars(
+    data: InvoiceData,
+    ocr_text: str | None,
+    *,
+    skip_keys: frozenset[str] | None = None,
+) -> InvoiceData:
     """Clear scalar fields that cannot be verified in OCR."""
+    skip = skip_keys or frozenset()
     updates: dict[str, object] = {}
 
     for field in ("invoice_no", "po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
+        if field in skip:
+            continue
         current = getattr(data, field, None)
         if current and not value_grounded_in_ocr(str(current), ocr_text):
             updates[field] = None
 
-    if data.invoice_date is not None and not _date_grounded_in_ocr(data.invoice_date, ocr_text):
+    if "invoice_date" not in skip and data.invoice_date is not None and not _date_grounded_in_ocr(
+        data.invoice_date, ocr_text
+    ):
         updates["invoice_date"] = None
 
     for field in ("subtotal", "gst", "total"):
+        if field in skip:
+            continue
         current = getattr(data, field, None)
         if current is not None:
-            if not _money_grounded_in_ocr(current, ocr_text):
+            if not _money_grounded_in_ocr(current, ocr_text, field_key=field):
                 updates[field] = None
 
-    if data.due_date is not None and not _date_grounded_in_ocr(data.due_date, ocr_text):
+    if "due_date" not in skip and data.due_date is not None and not _date_grounded_in_ocr(
+        data.due_date, ocr_text
+    ):
         updates["due_date"] = None
 
     currency = (data.currency or "").strip()
-    if currency and not value_grounded_in_ocr(currency, ocr_text):
+    if "currency" not in skip and currency and not value_grounded_in_ocr(currency, ocr_text):
         updates["currency"] = ""
 
     abn_raw = (data.abn or "").strip()
-    if abn_raw:
+    if abn_raw and "abn" not in skip:
         if not value_grounded_in_ocr(abn_raw, ocr_text):
             updates["abn"] = None
         else:

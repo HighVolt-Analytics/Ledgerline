@@ -3,6 +3,8 @@ import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import {
   compulsoryFieldsForInvoice,
   postApprovalSettlement,
+  settlementApprovalHint,
+  settlementFieldsForApproval,
   validateInvoiceFieldsForApproval,
   validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
@@ -10,7 +12,7 @@ import {
 const documentTypes = [
   {
     code: "DT-08",
-    requiredFields: ["vendor", "total"],
+    requiredFields: ["vendor", "total", "due_date"],
   },
 ] as unknown as DocumentTypeDefinition[];
 
@@ -42,7 +44,7 @@ describe("validateInvoiceReadyForApproval", () => {
         document_type_code: "DT-08",
         vendor: "Acme",
         total: "100",
-        due_date: null,
+        due_date: "2026-08-01",
       },
       documentTypes
     );
@@ -106,5 +108,73 @@ describe("postApprovalSettlement", () => {
         due_date: null,
       })
     ).toBe("none");
+  });
+});
+
+describe("settlementFieldsForApproval", () => {
+  it("requires vendor total due_date for purchase route", () => {
+    expect(
+      settlementFieldsForApproval({
+        route_target: "Purchase Management",
+        vendor: "Acme",
+        total: "100",
+        due_date: "2026-08-01",
+        purchase_document_type: null,
+        sales_document_type: null,
+        gl_posting_applicable: true,
+      })
+    ).toEqual(["vendor", "total", "due_date"]);
+  });
+});
+
+describe("validateInvoiceReadyForApproval settlement", () => {
+  it("blocks when document type requires due_date", () => {
+    const result = validateInvoiceReadyForApproval(
+      {
+        document_type_code: "DT-08",
+        route_target: "Purchase Management",
+        vendor: "Acme",
+        total: "100",
+        due_date: null,
+        purchase_document_type: null,
+        sales_document_type: null,
+        gl_posting_applicable: true,
+      },
+      documentTypes
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("allows approve when route has no starred compulsory fields", () => {
+    const result = validateInvoiceReadyForApproval(
+      {
+        document_type_code: null,
+        route_target: "Purchase Management",
+        vendor: "Acme",
+        total: "100",
+        due_date: null,
+        purchase_document_type: null,
+        sales_document_type: null,
+        gl_posting_applicable: true,
+      },
+      undefined
+    );
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("settlementApprovalHint", () => {
+  it("returns payment hint for purchase", () => {
+    expect(
+      settlementApprovalHint({
+        route_target: "Purchase Management",
+        vendor: "Acme",
+        total: "100",
+        due_date: "2026-08-01",
+        purchase_document_type: null,
+        sales_document_type: null,
+        gl_posting_applicable: true,
+      })
+    ).toContain("Payments queue");
   });
 });

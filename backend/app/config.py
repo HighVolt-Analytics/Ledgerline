@@ -244,6 +244,10 @@ class Settings(BaseSettings):
         le=180,
         validation_alias="RUNTIME_LLM_TIMEOUT_SECONDS",
     )
+    extraction_gap_fill_enabled: bool = Field(
+        default=True,
+        validation_alias="EXTRACTION_GAP_FILL_ENABLED",
+    )
     runtime_llm_min_confidence: float = Field(
         default=0.85,
         ge=0.0,

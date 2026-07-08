@@ -24,3 +24,11 @@ def test_extract_skips_unknown_keys() -> None:
 def test_extract_empty_input() -> None:
     assert extract_custom_fields_from_text("", ["contract_party"]) == {}
     assert extract_custom_fields_from_text("Contract Party: X", []) == {}
+
+
+def test_extract_account_code_from_labeled_line() -> None:
+    from app.services.extraction.custom_field_ocr_extractors import extract_label_value_fields_from_text
+
+    text = "TAX INVOICE\nAccount Code: 6100\nVendor: Acme"
+    found = extract_label_value_fields_from_text(text, ["account_code"])
+    assert found["account_code"] == "6100"

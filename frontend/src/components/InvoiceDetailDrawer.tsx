@@ -51,6 +51,7 @@ import {
   canRequestInfo,
   invoiceCanAttemptReprocess,
   reprocessAndWatch,
+  settlementApprovalHint,
   validateInvoiceReadyForApproval,
 } from "@/lib/invoiceActions";
 import {
@@ -698,6 +699,11 @@ export function InvoiceDetailDrawer({
         .filter((dt) => dt.enabled)
         .map((dt) => dt.code),
     [ruleBook?.documentTypes]
+  );
+
+  const settlementHint = useMemo(
+    () => (inv ? settlementApprovalHint(inv) : null),
+    [inv]
   );
 
   const resolveClassification = async (confirmedDt: string) => {
@@ -1575,7 +1581,16 @@ export function InvoiceDetailDrawer({
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-border shrink-0">
+            <div className="shrink-0 border-t border-border">
+              {inv && settlementHint && canApproveFromDrawer(inv.status) ? (
+                <p
+                  className="px-5 pt-2.5 text-xs text-muted-foreground"
+                  data-testid="settlement-approval-hint"
+                >
+                  {settlementHint}
+                </p>
+              ) : null}
+            <div className="flex items-center justify-between gap-2 px-5 py-3">
               {editing ? (
                 <>
                   <Button
@@ -1691,6 +1706,7 @@ export function InvoiceDetailDrawer({
                   </div>
                 </>
               )}
+            </div>
             </div>
           </>
         )}

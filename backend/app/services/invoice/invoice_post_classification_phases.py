@@ -19,11 +19,8 @@ from app.services.classification.document_type_playbook_service import (
     evaluate_playbook_gates,
 )
 from app.services.classification.finance_dt_policy_scorer import score_all_enabled_dts
-from app.services.extraction.document_ai_provider import DocumentAiProvider, extract_fields
-from app.services.extraction.llm_document_service import (
-    apply_document_type_to_invoice,
-    llm_result_to_invoice_data,
-)
+from app.services.extraction.document_ai_provider import DocumentAiProvider
+from app.services.extraction.llm_document_service import apply_document_type_to_invoice
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_NEEDS_REVIEW,
@@ -166,70 +163,60 @@ async def try_targeted_field_reextract(
     few_shots: Sequence[dict[str, str]],
     doc_provider: DocumentAiProvider,
 ) -> PlaybookGateResult:
-    """Retry extract once when only extraction fields are missing (no bundle gap)."""
+    """Retry gap-fill once when only extraction fields are missing (no bundle gap)."""
     if playbook.missing_bundle_mandatory or playbook.linkage_key_missing:
         return playbook
-    if not playbook.missing_extraction_fields:
-        return playbook
 
-    extract_result = await extract_fields(
-        ocr,
-        file_path=file_path,
-        org=org,
-        document_types=config.document_types,
-        confirmed_dt=confirmed_dt,
-        few_shots=few_shots,
-        provider=doc_provider,
-    )
-    llm_result = extract_result.llm
-    if llm_result is None:
-        return playbook
-
-    from app.services.extraction.extraction_field_values import (
-        effective_extraction_field_keys_for_dt,
-        enrich_parsed_from_ocr,
-        non_canonical_extraction_keys,
-    )
-    from app.services.extraction.field_grounding_service import ground_parsed_fields
-
-    selected_keys = effective_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
-    custom_keys = non_canonical_extraction_keys(selected_keys)
     dt_definition = get_document_type_definition(
         confirmed_dt,
         document_types=config.document_types,
         tenant_id=invoice.tenant_id,
     )
-    retry_parsed = llm_result_to_invoice_data(
-        llm_result,
-        ocr=extract_result.ocr,
-        custom_keys=custom_keys or None,
-        org=org,
-    )
-    retry_parsed = ground_parsed_fields(
-        retry_parsed,
-        extract_result.ocr.text,
-        selected_keys,
-        extract_result.ocr.payload_json,
-    )
-    retry_parsed = enrich_parsed_from_ocr(retry_parsed, extract_result.ocr, dt_definition=dt_definition)
+    if dt_definition is None:
+        return playbook
 
-    from app.services.extraction.extraction_field_values import apply_parsed_extraction_fields
+    from app.services.classification.document_type_field_checks import field_is_present
+    from app.services.classification.document_type_playbook_service import effective_playbook_required_fields
+    from app.services.classification.document_type_rule_engine import build_document_classifier_context
+
+    ctx = build_document_classifier_context(invoice=loaded, parsed=parsed)
+    missing_required = [
+        key
+        for key in effective_playbook_required_fields(dt_definition)
+        if not field_is_present(key, invoice=loaded, parsed=parsed, ctx=ctx)
+    ]
+    if not missing_required and not playbook.missing_extraction_fields:
+        return playbook
+
+    from app.services.extraction.extraction_field_values import (
+        INVOICE_SCALAR_ATTRS,
+        apply_parsed_extraction_fields,
+        effective_extraction_field_keys_for_dt,
+    )
+    from app.services.extraction.gap_fill_extraction_service import apply_extraction_gap_fill
+
+    selected_keys = effective_extraction_field_keys_for_dt(config.document_types, confirmed_dt)
+    retry_parsed, gap_detail = await apply_extraction_gap_fill(
+        parsed,
+        ocr=ocr,
+        selected_keys=selected_keys,
+        org=org,
+        dt_definition=dt_definition,
+        invoice=loaded,
+    )
+    if not gap_detail.get("gap_fill_attempted"):
+        return playbook
 
     apply_parsed_extraction_fields(loaded, retry_parsed)
     invoice.extracted_fields = loaded.extracted_fields
-    for field_name in (
-        "vendor",
-        "invoice_no",
-        "invoice_date",
-        "due_date",
-        "po_reference",
-        "so_reference",
-        "subtotal",
-        "gst",
-        "total",
-        "abn",
-    ):
+    for field_name in INVOICE_SCALAR_ATTRS:
         value = getattr(retry_parsed, field_name, None)
+        if field_name == "currency":
+            if value is not None and str(value).strip():
+                setattr(parsed, field_name, value)
+                setattr(loaded, field_name, value)
+                setattr(invoice, field_name, value)
+            continue
         if value is not None and str(value).strip():
             setattr(parsed, field_name, value)
             setattr(loaded, field_name, value)
@@ -247,9 +234,11 @@ async def try_targeted_field_reextract(
         "field_reextract_attempted",
         invoice_id=invoice.id,
         detail={
+            "missing_required_before": missing_required,
             "missing_before": list(playbook.missing_extraction_fields),
             "missing_after": list(retried.missing_extraction_fields),
             "blocks_posting": retried.blocks_posting,
+            "gap_fill": gap_detail,
         },
     )
     return retried
@@ -280,7 +269,7 @@ async def evaluate_playbook_with_reextract(
         document_types=document_types,
     )
     if (
-        playbook.missing_extraction_fields
+        (playbook.missing_extraction_fields or playbook.missing_optional_extraction_fields)
         and not playbook.missing_bundle_mandatory
         and not playbook.linkage_key_missing
     ):

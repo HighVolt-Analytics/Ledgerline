@@ -303,6 +303,17 @@ async def promote_pending_customer(
             customer_name=existing.name,
             source_invoice_id=row.source_invoice_id,
         )
+        from app.services.master_data.registry_promotion_service import (
+            sync_customer_registry_after_promotion,
+        )
+
+        await sync_customer_registry_after_promotion(
+            db,
+            tenant_id=tid,
+            name=existing.name,
+            abn=existing.abn,
+            source_invoice_id=row.source_invoice_id,
+        )
         return existing
 
     name = body.name or row.detected_name
@@ -331,6 +342,17 @@ async def promote_pending_customer(
         db,
         tid,
         customer_name=name,
+        source_invoice_id=row.source_invoice_id,
+    )
+    from app.services.master_data.registry_promotion_service import (
+        sync_customer_registry_after_promotion,
+    )
+
+    await sync_customer_registry_after_promotion(
+        db,
+        tenant_id=tid,
+        name=name,
+        abn=customer.abn,
         source_invoice_id=row.source_invoice_id,
     )
     return customer

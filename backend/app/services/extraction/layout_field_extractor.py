@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from app.schemas.document_layout import DocumentLayoutResult, LayoutParagraph
 from app.services.shared.amount_sanity import plausible_money, plausible_qty, sanitize_parsed_line_item
 from app.services.extraction.document_heading_utils import extract_document_heading_signals, is_doc_title_line
+from app.services.extraction.finance_field_labels import money_kv_label_patterns
 from app.services.invoice.invoice_data import ParsedLineItem
 
 DocFamilyHint = str
@@ -19,11 +20,12 @@ _KV_LABELS: list[tuple[str, re.Pattern[str]]] = [
     ("vendor", re.compile(r"(?i)^(?:vendor|supplier|from|bill\s*from|exporter)\.?$")),
     ("billing_address", re.compile(r"(?i)^(?:bill\s*to|ship\s*to|sold\s*to|billing\s*address|applicant|consignee)\.?$")),
     ("buyer_name", re.compile(r"(?i)^(?:customer|client|buyer|consignee|applicant(?:'?s?\s+name)?)\.?$")),
+    ("seller_name", re.compile(r"(?i)^(?:seller|supplier|from|exporter|vendor)\.?$")),
+    ("so_reference", re.compile(r"(?i)^(?:so|sales\s*order)\s*(?:no|number|#)?\.?$")),
+    ("account_code", re.compile(r"(?i)^(?:account\s*code|gl\s*code|a/?c\s*code)\.?$")),
     ("invoice_date", re.compile(r"(?i)^(?:invoice\s*date|date\s*of\s*issue|issue\s*date|document\s*date|date)\.?$")),
     ("due_date", re.compile(r"(?i)^(?:due\s*date|date\s*due|payment\s*due(?:\s*date)?)\.?$")),
-    ("total", re.compile(r"(?i)^(?:total|amount\s*due|grand\s*total)\.?$")),
-    ("subtotal", re.compile(r"(?i)^(?:sub\s*total|subtotal)\.?$")),
-    ("gst", re.compile(r"(?i)^(?:gst|tax|vat)\.?$")),
+    *money_kv_label_patterns(),
     ("grn_reference", re.compile(r"(?i)^(?:grn|goods\s*receipt|delivery\s*note)\s*(?:no|number|#)?\.?$")),
 ]
 
