@@ -17,8 +17,47 @@ from app.services.extraction.gap_fill_extraction_service import (
     build_gap_fill_user_payload,
     gap_fill_missing_fields,
 )
+from app.services.extraction.llm_document_service import _normalize_llm_raw
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.tenant.tenant_org_context import OrgContext
+
+
+def test_normalize_llm_raw_coerces_scalar_field_confidence() -> None:
+    normalized = _normalize_llm_raw(
+        {"vendor": "Acme Pty Ltd", "field_confidence": 0.0},
+        selected_keys=["vendor"],
+    )
+    assert normalized["field_confidence"] == {}
+    assert normalized["vendor"] == "Acme Pty Ltd"
+
+
+@pytest.mark.asyncio
+async def test_gap_fill_missing_fields_accepts_scalar_field_confidence() -> None:
+    ocr = OcrArtifact(
+        success=True,
+        text="Vendor: Acme Pty Ltd\nAccount Code: 4100",
+        text_length=40,
+    )
+    raw = {
+        "vendor": "Acme Pty Ltd",
+        "field_confidence": 0.0,
+        "suggested_dt": "",
+        "confidence": 0.9,
+        "reasoning": "",
+        "perspective": "purchase",
+    }
+    with patch(
+        "app.services.extraction.gap_fill_extraction_service.chat_json_async",
+        new_callable=AsyncMock,
+        return_value=raw,
+    ):
+        gap = await gap_fill_missing_fields(
+            ocr,
+            missing_keys=["vendor"],
+            org=OrgContext(),
+        )
+    assert gap is not None
+    assert gap.vendor == "Acme Pty Ltd"
 
 
 def test_build_gap_fill_system_prompt_includes_accuracy_contract() -> None:
@@ -175,3 +214,23 @@ async def test_apply_extraction_gap_fill_leaves_absent_field_empty() -> None:
     assert detail["gap_fill_attempted"] is True
     assert "project_code" in detail["gap_fill_rejected"]
     assert "project_code" not in updated.extracted_fields
+
+
+@pytest.mark.asyncio
+async def test_chat_json_retries_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.extraction import azure_openai_client
+
+    calls = {"count": 0}
+
+    def _flaky_chat(*_args, **_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise TimeoutError("The read operation timed out")
+        return {"vendor": "Acme", "field_confidence": {"vendor": 0.95}}
+
+    monkeypatch.setattr(azure_openai_client, "_chat_json_once", _flaky_chat)
+    monkeypatch.setattr(azure_openai_client, "is_azure_openai_enabled", lambda: True)
+
+    result = azure_openai_client.chat_json(system="s", user="u")
+    assert result == {"vendor": "Acme", "field_confidence": {"vendor": 0.95}}
+    assert calls["count"] == 2

@@ -45,9 +45,10 @@ Rules:
 2. If a field is not explicitly present in OCR, return empty ("" or omit). Do NOT guess.
 3. Never infer, calculate, or assume (no currency default, no date math, no vendor from email domain).
 4. Never swap semantically similar fields (invoice_no ≠ po_reference, vendor ≠ buyer).
-5. field_confidence: 0.0 when empty; 0.95+ only for verbatim OCR copies.
-6. Put custom (non-canonical) string values in extracted_fields.{key}.
-7. invoice_date and due_date must be ISO YYYY-MM-DD when present in OCR.
+5. field_confidence must be a JSON object mapping field names to 0.0-1.0 scores — never a bare number.
+6. field_confidence: 0.0 when empty; 0.95+ only for verbatim OCR copies.
+7. Put custom (non-canonical) string values in extracted_fields.{key}.
+8. invoice_date and due_date must be ISO YYYY-MM-DD when present in OCR.
 """
 
 
@@ -57,6 +58,18 @@ def build_gap_fill_system_prompt(*, missing_keys: Sequence[str]) -> str:
         _GAP_FILL_SYSTEM_HEADER.strip(),
         f"\nReturn JSON only with keys:\n{json_keys}.",
     ]
+    normalized_missing = {str(k).strip().lower() for k in missing_keys if str(k or "").strip()}
+    if "line_items" in normalized_missing:
+        parts.extend(
+            [
+                "",
+                "LINE ITEMS (when missing_fields includes line_items):",
+                "- line_items: array of {description, qty, unit_price, amount} copied verbatim from OCR.",
+                "- field_confidence must be a JSON object map (e.g. {\"line_items\": 0.95}), never a bare number.",
+                "- field_confidence.line_items: 0.95 when rows are verbatim OCR copies; 0.0 when line_items is [].",
+                "- Return [] when no product/charge table exists — do not invent rows.",
+            ]
+        )
     parts.extend(extraction_accuracy_prompt_lines())
     return "\n".join(parts)
 

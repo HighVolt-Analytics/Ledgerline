@@ -207,6 +207,7 @@ def resolve_finance_scalars(
         counterparty_side_for_perspective,
         resolve_counterparty_name,
     )
+    from app.services.master_data.vendor_resolver import is_plausible_vendor_name
     from app.utils.abn_validator import storage_abn
 
     seller = parties.get("seller") or NormalizedParty()
@@ -228,6 +229,12 @@ def resolve_finance_scalars(
         generic_name=llm.vendor,
         document_text=ocr_text,
     )
+    if not is_plausible_vendor_name(vendor):
+        for candidate in (seller.name, buyer.name, llm.vendor):
+            token = (candidate or "").strip()
+            if is_plausible_vendor_name(token):
+                vendor = token
+                break
 
     counterparty_tax_id = ""
     if perspective == "sales":

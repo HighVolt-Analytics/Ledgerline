@@ -479,3 +479,47 @@ def test_confidence_gate_uses_higher_org_and_dt_thresholds() -> None:
     assert detail["org_auto_route_min_confidence"] == pytest.approx(0.85)
     assert detail["dt_min_route_confidence"] == pytest.approx(0.65)
     assert detail["compare_passed"] is False
+
+
+def test_backfill_llm_dt_from_policy_fills_empty_suggested_dt(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.schemas.rule_book_config import AiClassificationConfig
+    from app.services.classification.document_type_classifier import DocumentTypeClassification
+    from app.services.invoice.invoice_pipeline_phases import (
+        backfill_llm_dt_from_policy,
+        evaluate_confidence_gate,
+    )
+
+    monkeypatch.setattr(
+        "app.services.classification.document_type_classifier.rank_document_type_candidates",
+        lambda **_kwargs: [DocumentTypeClassification("DT-03", 0.95, "Rule book classifier matched")],
+    )
+
+    llm = LlmDocumentResult(
+        suggested_dt="",
+        confidence=0.95,
+        reasoning="",
+        perspective="purchase",
+        seller=LlmParty(name="Acme"),
+        document_heading="TAX INVOICE",
+    )
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING)
+    updated, detail = backfill_llm_dt_from_policy(
+        llm,
+        invoice=invoice,
+        ocr=_ocr(),
+        document_types=[_dt03()],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.85),
+    )
+    assert detail is not None
+    assert detail["policy_winner_dt"] == "DT-03"
+    assert updated is not None
+    assert updated.suggested_dt == "DT-03"
+
+    gate = evaluate_confidence_gate(
+        updated,
+        document_types=[_dt03()],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.85),
+        provider_token="azure_di",
+    )
+    assert gate.passed is True
+    assert "DT_NOT_IN_CATALOGUE" not in gate.review_reasons

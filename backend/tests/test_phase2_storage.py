@@ -32,6 +32,8 @@ def test_is_plausible_vendor_name_rejects_boilerplate() -> None:
     assert not is_plausible_vendor_name(
         "Invoice Date: Please reference the invoice number with payment"
     )
+    assert not is_plausible_vendor_name("Pre-carriage by")
+    assert not is_plausible_vendor_name("Port of Loading")
     assert is_plausible_vendor_name("Atlassian Pty Ltd")
 
 

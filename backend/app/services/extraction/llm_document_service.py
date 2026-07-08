@@ -235,7 +235,8 @@ Return JSON only with keys:
 {json_keys}.
 
 Rules:
-- suggested_dt must be one of the catalogue codes provided, or empty string if unsure.
+- suggested_dt is REQUIRED: pick exactly one DT-xx code from the catalogue codes provided.
+- Use empty string only when the document is clearly not in the catalogue.
 - confidence is 0.0-1.0 for the document type choice.
 - perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
 {{party_rules}}
@@ -250,7 +251,8 @@ Return JSON only with keys:
 suggested_dt, confidence, reasoning, perspective, seller, buyer, document_heading.
 
 Rules:
-- suggested_dt must be one of the catalogue codes provided, or empty string if unsure.
+- suggested_dt is REQUIRED: pick exactly one DT-xx code from the catalogue codes provided.
+- Use empty string only when the document is clearly not in the catalogue.
 - confidence is 0.0-1.0 for the document type choice.
 - perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
 {party_rules}
@@ -543,6 +545,24 @@ def build_structure_extract_prompts(
     return system, user
 
 
+def _coerce_field_confidence_map(value: Any) -> dict[str, float]:
+    """LLMs sometimes emit field_confidence as a scalar (e.g. 0.0) instead of a per-field map."""
+    if value is None or isinstance(value, (int, float)):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key, score in value.items():
+        token = str(key or "").strip().lower()
+        if not token:
+            continue
+        try:
+            out[token] = float(score)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _normalize_llm_raw(
     raw: dict[str, Any],
     *,
@@ -551,6 +571,7 @@ def _normalize_llm_raw(
 ) -> dict[str, Any]:
     """Best-effort cleanup before Pydantic validation (LLMs often emit '' or nested vendor)."""
     out = dict(raw)
+    out["field_confidence"] = _coerce_field_confidence_map(out.get("field_confidence"))
     vendor = out.get("vendor")
     if isinstance(vendor, dict):
         out["vendor"] = vendor.get("name") or vendor.get("vendor") or ""
@@ -855,6 +876,10 @@ def llm_result_to_invoice_data(
         if not field_di_authoritative(payload, "invoice_no")
         else None
     )
+    if invoice_no:
+        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+
+        invoice_no = sanitize_invoice_no(invoice_no)
     invoice_date = (
         _parse_date(llm.invoice_date) if not field_di_authoritative(payload, "invoice_date") else None
     )
