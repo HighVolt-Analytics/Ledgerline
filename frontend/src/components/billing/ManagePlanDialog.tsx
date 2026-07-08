@@ -14,6 +14,7 @@ type ManagePlanDialogProps = {
   region: PricingRegion;
   canUpgradeStudio?: boolean;
   busy?: boolean;
+  platformBillingEnabled?: boolean;
   onSelectPlan: (plan: PlanId) => void;
 };
 
@@ -31,6 +32,7 @@ export function ManagePlanDialog({
   region,
   canUpgradeStudio = false,
   busy = false,
+  platformBillingEnabled = false,
   onSelectPlan,
 }: ManagePlanDialogProps) {
   useEffect(() => {
@@ -99,7 +101,9 @@ export function ManagePlanDialog({
 
         <footer className="billing-plan-dialog__footer">
           <p className="billing-plan-dialog__note">
-            Payment is simulated for now — Stripe integration coming soon.
+            {platformBillingEnabled
+              ? "Studio upgrades use Stripe Checkout. Credits apply after payment is confirmed."
+              : "Payment is simulated for now — Stripe integration coming soon."}
           </p>
         </footer>
       </div>

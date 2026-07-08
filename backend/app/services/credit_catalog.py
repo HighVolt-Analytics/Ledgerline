@@ -156,3 +156,26 @@ def monthly_credits_for_plan(
 
 def tenant_pricing_region(tenant) -> str:
     return pricing_region_for_country(tenant_country(tenant))
+
+
+def list_country_plans(*, country_code: str | None) -> list[dict[str, object]]:
+    """Public plan catalogue for a country (server-side source of truth)."""
+    region = pricing_region_for_country(country_code)
+    currency = region_currency(region)
+    plans: list[dict[str, object]] = []
+    for code in (PLAN_FREE, PLAN_STUDIO, PLAN_ENTERPRISE):
+        definition = _PLANS[region][code]
+        plans.append(
+            {
+                "plan_code": code,
+                "region": region,
+                "currency_code": currency,
+                "monthly_credits": definition.monthly_credits,
+                "max_users": definition.max_users,
+                "social_integration": definition.social_integration,
+                "email_integration": definition.email_integration,
+                "monthly_price": float(definition.monthly_price),
+                "credits_per_page": 5,
+            }
+        )
+    return plans

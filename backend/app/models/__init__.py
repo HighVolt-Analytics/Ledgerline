@@ -18,6 +18,8 @@ from app.models.line_item import LineItem
 from app.models.mailbox_connection_request import MailboxConnectionRequest
 from app.models.mailbox_sync_job import MailboxSyncJob
 from app.models.credit_ledger import CreditLedgerEntry
+from app.models.pending_signup_billing import PendingSignupBillingSession
+from app.models.platform_billing_webhook import PlatformBillingWebhookEvent
 from app.models.platform_credit_settings import PlatformCreditSettings
 from app.models.tenant_billing import TenantBilling
 from app.models.tenant import Tenant
@@ -82,6 +84,8 @@ __all__ = [
     "StripeTransaction",
     "StripeWebhookEvent",
     "CreditLedgerEntry",
+    "PendingSignupBillingSession",
+    "PlatformBillingWebhookEvent",
     "PlatformCreditSettings",
     "TenantBilling",
     "Tenant",

@@ -540,6 +540,43 @@ class Settings(BaseSettings):
         validation_alias="STRIPE_GLOBAL_PAYOUTS_SUPPORTED_CURRENCIES",
     )
 
+    # Platform subscription billing (LedgerLink → customer; not Connect / payouts)
+    stripe_platform_billing_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_PLATFORM_BILLING_ENABLED",
+    )
+    stripe_platform_billing_live_enabled: bool = Field(
+        default=False,
+        validation_alias="STRIPE_PLATFORM_BILLING_LIVE_ENABLED",
+    )
+    stripe_price_studio_inr: str = Field(
+        default="",
+        validation_alias="STRIPE_PRICE_STUDIO_INR",
+        description="Stripe Price for LedgerLink Studio (IN region). May match AUD/SGD when using one multi-currency price.",
+    )
+    stripe_price_studio_aud: str = Field(
+        default="",
+        validation_alias="STRIPE_PRICE_STUDIO_AUD",
+        description="Stripe Price for LedgerLink Studio (AU region). May match INR/SGD when using one multi-currency price.",
+    )
+    stripe_price_studio_sgd: str = Field(
+        default="",
+        validation_alias="STRIPE_PRICE_STUDIO_SGD",
+        description="Stripe Price for LedgerLink Studio (SG region). May match INR/AUD when using one multi-currency price.",
+    )
+    stripe_platform_billing_success_url: str = Field(
+        default="",
+        validation_alias="STRIPE_PLATFORM_BILLING_SUCCESS_URL",
+    )
+    stripe_platform_billing_cancel_url: str = Field(
+        default="",
+        validation_alias="STRIPE_PLATFORM_BILLING_CANCEL_URL",
+    )
+    stripe_platform_billing_webhook_secret: str = Field(
+        default="",
+        validation_alias="STRIPE_PLATFORM_BILLING_WEBHOOK_SECRET",
+    )
+
     # Viber Public Account Bot API
     viber_auth_token: str = Field(default="", validation_alias="VIBER_AUTH_TOKEN")
     viber_webhook_url: str = Field(default="", validation_alias="VIBER_WEBHOOK_URL")
@@ -904,6 +941,58 @@ class Settings(BaseSettings):
     @property
     def stripe_payment_execution_enabled(self) -> bool:
         return bool(self.stripe_payments_execution_enabled)
+
+    @property
+    def stripe_platform_billing_configured(self) -> bool:
+        return bool(
+            self.stripe_secret_key.strip()
+            and self.stripe_platform_billing_webhook_secret.strip()
+            and (
+                self.stripe_price_studio_inr.strip()
+                or self.stripe_price_studio_aud.strip()
+                or self.stripe_price_studio_sgd.strip()
+            )
+        )
+
+    @property
+    def stripe_platform_billing_active(self) -> bool:
+        if not self.stripe_platform_billing_enabled:
+            return False
+        if self.stripe_mode_normalized == "live" and not self.stripe_platform_billing_live_enabled:
+            return False
+        return self.stripe_platform_billing_configured
+
+    def stripe_studio_price_id_for_region(self, region: str) -> str:
+        """Resolve Stripe Price ID for Studio checkout (region env vars may share one multi-currency price)."""
+        mapping = {
+            "IN": self.stripe_price_studio_inr.strip(),
+            "AU": self.stripe_price_studio_aud.strip(),
+            "SG": self.stripe_price_studio_sgd.strip(),
+        }
+        regional = mapping.get(region.upper(), "")
+        if regional:
+            return regional
+        return (
+            self.stripe_price_studio_inr.strip()
+            or self.stripe_price_studio_aud.strip()
+            or self.stripe_price_studio_sgd.strip()
+        )
+
+    def stripe_platform_billing_success_url_resolved(self) -> str:
+        explicit = self.stripe_platform_billing_success_url.strip()
+        if explicit:
+            return explicit
+        from app.services.shared.public_app_url import build_public_app_path
+
+        return build_public_app_path("/billing?checkout=success")
+
+    def stripe_platform_billing_cancel_url_resolved(self) -> str:
+        explicit = self.stripe_platform_billing_cancel_url.strip()
+        if explicit:
+            return explicit
+        from app.services.shared.public_app_url import build_public_app_path
+
+        return build_public_app_path("/billing?checkout=cancelled")
 
     @property
     def application_insights_runtime_enabled(self) -> bool:

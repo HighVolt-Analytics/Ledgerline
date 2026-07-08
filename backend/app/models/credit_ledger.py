@@ -41,6 +41,9 @@ class CreditLedgerEntry(Base):
     azure_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
     azure_cost_breakdown_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    stripe_invoice_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
