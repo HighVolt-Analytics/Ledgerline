@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, EmailStr, Field
 
+from app.schemas.auth import UserResponse
+
 
 class PlanInfo(BaseModel):
     plan: str
@@ -113,6 +115,9 @@ class CheckoutSessionResponse(BaseModel):
     pending_signup_id: str | None = None
     tenant_id: str | None = None
     completed_without_checkout: bool = False
+    access_token: str | None = None
+    refresh_token: str | None = None
+    user: UserResponse | None = None
 
 
 class CheckoutStatusResponse(BaseModel):

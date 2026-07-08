@@ -18,6 +18,14 @@ from app.services.credit_catalog import PLAN_FREE, PLAN_STUDIO
 from app.services.payments.stripe_platform_billing_service import SIGNUP_STATUS_PENDING
 
 
+class FakeStripeObject:
+    """Minimal StripeObject stand-in for tests."""
+
+    def __init__(self, **kwargs: object) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
 @pytest.fixture(autouse=True)
 def _clear_settings_cache() -> None:
     get_settings.cache_clear()
@@ -51,6 +59,9 @@ async def test_public_signup_checkout_free_without_token(
     body = res.json()["data"]
     assert body["completed_without_checkout"] is True
     assert body["tenant_id"]
+    assert body["access_token"]
+    assert body["refresh_token"]
+    assert body["user"]["email"] == email
 
     tenant = await db_session.get(Tenant, uuid.UUID(body["tenant_id"]))
     assert tenant is not None
@@ -59,6 +70,53 @@ async def test_public_signup_checkout_free_without_token(
     assert billing is not None
     assert billing.plan == PLAN_FREE
     assert billing.credit_balance >= 50
+
+
+@pytest.mark.asyncio
+async def test_public_studio_signup_with_stripe_object_checkout(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_ENABLED", "true")
+    monkeypatch.setenv("STRIPE_PRICE_STUDIO_AUD", "price_test_studio")
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_WEBHOOK_SECRET", "whsec_test")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x")
+    get_settings.cache_clear()
+
+    slug = f"stripe-obj-{uuid.uuid4().hex[:8]}"
+    email = f"{slug}@example.com"
+    mock_checkout = FakeStripeObject(
+        id="cs_stripe_object_1",
+        url="https://checkout.stripe.test/stripe-object",
+    )
+
+    with (
+        patch(
+            "app.services.payments.stripe_platform_billing_service._unique_slug",
+            new=AsyncMock(return_value=slug),
+        ),
+        patch(
+            "app.services.payments.stripe_platform_billing_service._run_stripe",
+            new=AsyncMock(return_value=mock_checkout),
+        ),
+    ):
+        res = await client.post(
+            "/api/billing/signup/checkout",
+            json={
+                "email": email,
+                "password": "password123",
+                "organisation_name": "Stripe Object Org",
+                "country": "AU",
+                "plan_code": "studio",
+                "signup_source": "public",
+            },
+        )
+
+    assert res.status_code == 200
+    body = res.json()["data"]
+    assert body["checkout_url"] == "https://checkout.stripe.test/stripe-object"
+    assert body["session_id"] == "cs_stripe_object_1"
 
 
 @pytest.mark.asyncio
