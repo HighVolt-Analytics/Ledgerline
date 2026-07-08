@@ -576,6 +576,11 @@ class Settings(BaseSettings):
         default="",
         validation_alias="STRIPE_PLATFORM_BILLING_WEBHOOK_SECRET",
     )
+    stripe_platform_billing_secret_key: str = Field(
+        default="",
+        validation_alias="STRIPE_PLATFORM_BILLING_SECRET_KEY",
+        description="Optional dedicated Stripe secret for platform billing; falls back to STRIPE_SECRET_KEY.",
+    )
 
     # Viber Public Account Bot API
     viber_auth_token: str = Field(default="", validation_alias="VIBER_AUTH_TOKEN")
@@ -943,9 +948,16 @@ class Settings(BaseSettings):
         return bool(self.stripe_payments_execution_enabled)
 
     @property
+    def stripe_platform_billing_secret_key_resolved(self) -> str:
+        dedicated = self.stripe_platform_billing_secret_key.strip()
+        if dedicated:
+            return dedicated
+        return self.stripe_secret_key.strip()
+
+    @property
     def stripe_platform_billing_configured(self) -> bool:
         return bool(
-            self.stripe_secret_key.strip()
+            self.stripe_platform_billing_secret_key_resolved
             and self.stripe_platform_billing_webhook_secret.strip()
             and (
                 self.stripe_price_studio_inr.strip()

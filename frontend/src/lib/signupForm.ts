@@ -32,6 +32,47 @@ export function isValidEmail(value: string): boolean {
   return EMAIL_RE.test(value.trim());
 }
 
+export function getAccountDetailsDisabledReason(
+  fields: SignupFormFields,
+  industry: string,
+  countryCode: string,
+  busy: boolean
+): string | null {
+  if (busy) return null;
+  if (!fields.businessName.trim()) return "Business name is required.";
+  if (!industry.trim()) return "Select an industry.";
+  if (!countryCode.trim()) return "Select a country.";
+  if (!fields.email.trim()) return "Email is required.";
+  if (!isValidEmail(fields.email)) return "Enter a valid email.";
+  if (!fields.phone.trim()) return "Phone number is required.";
+  if (!fields.password) return "Password is required.";
+  if (fields.password.length < 8) return "Password must be at least 8 characters.";
+  if (fields.password !== fields.confirmPassword) return "Passwords do not match.";
+  return null;
+}
+
+export function getPlanActionDisabledReason(
+  plan: PlanId,
+  input: Omit<SignupValidationInput, "selectedPlan">
+): string | null {
+  const accountReason = getAccountDetailsDisabledReason(
+    input.fields,
+    input.industry,
+    input.countryCode,
+    input.busy
+  );
+  if (accountReason) return accountReason;
+
+  if (plan === "studio") {
+    if (input.billingPlansLoading) return "Loading billing options…";
+    if (input.platformBillingEnabled === false) {
+      return "Stripe billing is not enabled in staging.";
+    }
+  }
+
+  return null;
+}
+
 export function validateSignupForm(fields: SignupFormFields): string | null {
   return getSignupDisabledReason({
     fields,
@@ -45,53 +86,7 @@ export function validateSignupForm(fields: SignupFormFields): string | null {
 }
 
 export function getSignupDisabledReason(input: SignupValidationInput): string | null {
-  if (input.busy) {
-    return null;
-  }
-
-  const { fields } = input;
-
-  if (!fields.businessName.trim()) {
-    return "Business name is required.";
-  }
-  if (!input.industry.trim()) {
-    return "Select an industry.";
-  }
-  if (!input.countryCode.trim()) {
-    return "Select a country.";
-  }
-  if (!fields.email.trim()) {
-    return "Email is required.";
-  }
-  if (!isValidEmail(fields.email)) {
-    return "Enter a valid email.";
-  }
-  if (!fields.phone.trim()) {
-    return "Phone number is required.";
-  }
-  if (!fields.password) {
-    return "Password is required.";
-  }
-  if (fields.password.length < 8) {
-    return "Password must be at least 8 characters.";
-  }
-  if (fields.password !== fields.confirmPassword) {
-    return "Passwords do not match.";
-  }
-  if (!input.selectedPlan) {
-    return "Select a plan.";
-  }
-
-  if (input.selectedPlan === "studio") {
-    if (input.billingPlansLoading) {
-      return "Loading billing options…";
-    }
-    if (input.platformBillingEnabled === false) {
-      return "Stripe billing is not enabled in staging.";
-    }
-  }
-
-  return null;
+  return getPlanActionDisabledReason(input.selectedPlan, input);
 }
 
 export function isSignupFormComplete(input: SignupValidationInput): boolean {
@@ -110,7 +105,7 @@ export function signupPlanHint(plan: PlanId): string | null {
     return "Your free account is created immediately — no payment required.";
   }
   if (plan === "studio") {
-    return "You will complete subscription payment on Stripe Checkout. Your organisation is created after payment succeeds.";
+    return "Complete subscription payment on Stripe Checkout. Your organisation is created after payment succeeds.";
   }
   if (plan === "enterprise") {
     return "Enterprise plans are set up with our sales team.";

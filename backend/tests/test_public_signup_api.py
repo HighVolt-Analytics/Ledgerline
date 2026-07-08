@@ -148,3 +148,36 @@ async def test_public_signup_rejects_signup_token(client: AsyncClient) -> None:
 async def test_invite_preview_still_requires_valid_token(client: AsyncClient) -> None:
     res = await client.get("/api/auth/invite/preview", params={"token": "invalid-token"})
     assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_studio_signup_missing_stripe_key_returns_clean_error(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_ENABLED", "true")
+    monkeypatch.setenv("STRIPE_PRICE_STUDIO_AUD", "price_test_studio")
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_WEBHOOK_SECRET", "whsec_test")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "")
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_SECRET_KEY", "")
+    get_settings.cache_clear()
+
+    slug = f"no-key-{uuid.uuid4().hex[:8]}"
+    with patch(
+        "app.services.payments.stripe_platform_billing_service._unique_slug",
+        new=AsyncMock(return_value=slug),
+    ):
+        res = await client.post(
+            "/api/billing/signup/checkout",
+            json={
+                "email": f"{slug}@example.com",
+                "password": "password123",
+                "organisation_name": "Missing Key Org",
+                "country": "AU",
+                "plan_code": "studio",
+                "signup_source": "public",
+            },
+        )
+
+    assert res.status_code == 503
+    assert res.json()["detail"] == "Stripe platform billing is not configured"
