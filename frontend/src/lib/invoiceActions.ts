@@ -129,7 +129,7 @@ export type ApprovalFieldBag = Parameters<typeof approvalFieldsFromInvoice>[0];
 
 export function compulsoryFieldsForInvoice(
   inv: Pick<Invoice, "document_type_code" | "purchase_document_type" | "sales_document_type">,
-  documentTypes: Array<{ code: string; requiredFields?: string[] }> | undefined
+  documentTypes: DocumentTypeDefinition[] | undefined
 ): string[] {
   if (!documentTypes?.length) return [];
   const code = effectiveDocumentTypeCode(inv, documentTypes);

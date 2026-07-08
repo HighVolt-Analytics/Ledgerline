@@ -27,7 +27,7 @@ const TABS: { value: CollectionTab; label: string; testid: string }[] = [
 
 export function CollectionsPage() {
   const { timeZone } = useTenantTime();
-  const { data: collectionRows = [], isLoading, isError, refetch } = useCollections();
+  const { data: collectionRows = [], isLoading, isError, refetch, blocked: collectionsBlocked } = useCollections();
   const mutations = useCollectionMutations();
   const [tab, setTab] = useState<CollectionTab>("queue");
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);

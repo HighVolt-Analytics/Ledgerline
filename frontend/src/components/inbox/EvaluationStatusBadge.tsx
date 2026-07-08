@@ -55,7 +55,10 @@ export function EvaluationStatusBadge({
   const label = status ? evaluationStatusLabel(status, invoice?.route_target) : "—";
   const title = invoice
     ? evaluationReviewTooltip({ ...invoice, evaluation_status: status ?? invoice.evaluation_status }, reviewReasons)
-    : evaluationReviewTooltip({ evaluation_status: status }, reviewReasons);
+    : evaluationReviewTooltip(
+        { evaluation_status: status } as Parameters<typeof evaluationReviewTooltip>[0],
+        reviewReasons
+      );
 
   if (!status) {
     return (

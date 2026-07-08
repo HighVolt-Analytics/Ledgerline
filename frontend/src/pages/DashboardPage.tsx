@@ -141,6 +141,7 @@ export function DashboardPage() {
     data: overview,
     error,
     isLoading,
+    blocked: overviewBlocked,
   } = useDashboardOverview(period, 10);
 
   const yearOptions = useMemo(() => buildReconYears(null, timeZone), [timeZone]);

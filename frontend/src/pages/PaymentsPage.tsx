@@ -155,7 +155,7 @@ export function PaymentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const stripeReturnHandled = useRef(false);
   const { timeZone } = useTenantTime();
-  const { data: paymentRows = [], isLoading, isError } = usePayments();
+  const { data: paymentRows = [], isLoading, isError, blocked: paymentsBlocked } = usePayments();
   const { data: appSettings } = useAppSettings();
   const paymentsExecutionEnabled = appSettings?.stripe_payments_execution_enabled ?? false;
   const manualExecutionEnabled =

@@ -1036,6 +1036,46 @@ export interface AppSettings {
   payment_manual_execution_enabled: boolean;
   payment_manual_execution_limit_usd: number;
   payment_execution_disabled: boolean;
+  app_env: string;
+  payment_environment_label: string;
+  public_app_base_url?: string;
+  public_api_base_url?: string;
+  stripe_mode: string;
+  xero_configured: boolean;
+  quickbooks_configured: boolean;
+  stripe_global_payouts_enabled?: boolean;
+  stripe_global_payouts_access_status: string;
+}
+
+export interface AccountingIntegrationItem {
+  provider: string;
+  configured: boolean;
+  status: string;
+  display_name: string | null;
+  provider_tenant_id: string | null;
+  scopes: string | null;
+  connected_at: string | null;
+  last_error: string | null;
+}
+
+export interface AccountingIntegrationsStatus {
+  xero: AccountingIntegrationItem;
+  quickbooks_online: AccountingIntegrationItem;
+}
+
+export interface StripeGlobalPayoutsReadinessResponse {
+  enabled: boolean;
+  access_status: string;
+  financial_account_configured: boolean;
+  supported_countries: string[];
+  supported_currencies: string[];
+  max_amount_usd: number;
+  ready: boolean;
+  blocking_reason: string | null;
+  recommended_action: string | null;
+  environment: string;
+  stripe_mode: string;
+  live_execution_enabled: boolean;
 }
 
 export interface WhatsappConnection {

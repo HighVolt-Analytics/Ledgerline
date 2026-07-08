@@ -1,3 +1,4 @@
+import type { ChartOfAccountRow } from "@/api/types";
 import { useEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
 
@@ -232,7 +233,7 @@ export function DocumentTypePostToDetail({
   docType: DocumentTypeDefinition;
   accounts: { code: string; name: string; type: string }[];
 }) {
-  const warnings = postToConfigWarnings(docType, accounts);
+  const warnings = postToConfigWarnings(docType, accounts as ChartOfAccountRow[]);
   const ledger = docType.postTo?.ledger?.trim() ?? "";
   const isSales = docType.routeTarget === "Sales Management";
 

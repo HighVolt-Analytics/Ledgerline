@@ -22,7 +22,7 @@ import {
   normalizeDocumentTypeIdentity,
   normalizeDocumentTypeKlass,
 } from "@/lib/documentTypeKlass";
-import type { ApprovalMode, MatchMode, PlaybookProfile } from "@/lib/documentPlaybookConfig";
+import type { PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import {
   inferPlaybookProfileFromDefinition,
   normalizeApprovalMode,
@@ -195,8 +195,20 @@ function mapDocumentTypePostTo(raw: Record<string, unknown> | undefined): Docume
   };
 }
 
-function documentTypePostToToApi(postTo: DocumentTypePostTo): Record<string, string> {
-  const out: Record<string, string> = {
+function documentTypePostToToApi(postTo: DocumentTypePostTo): {
+  ledger: string;
+  sub_ledger: string;
+  tax_account?: string;
+  payable_account?: string;
+  receivable_account?: string;
+} {
+  const out: {
+    ledger: string;
+    sub_ledger: string;
+    tax_account?: string;
+    payable_account?: string;
+    receivable_account?: string;
+  } = {
     ledger: postTo.ledger,
     sub_ledger: postTo.subLedger,
   };
@@ -409,9 +421,11 @@ function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProf
   const explicit = String(raw.playbook_profile ?? raw.playbookProfile ?? "").trim().toLowerCase();
   if (explicit) return explicit as PlaybookProfile;
   return inferPlaybookProfileFromDefinition({
+    code: String(raw.code ?? ""),
     klass: raw.klass as DocumentTypeDefinition["klass"],
     posting: String(raw.posting ?? "No"),
     purchaseBundleRole: mapPurchaseBundleRole(raw),
+    salesBundleRole: mapSalesBundleRole(raw),
     playbookProfile: "",
   });
 }
