@@ -1715,6 +1715,14 @@ export interface BillingSignupCheckoutBody {
   signup_source?: "public" | "invite";
 }
 
+export interface BillingPlansCatalog {
+  country: string;
+  region: string;
+  currency_code: string;
+  plans: PlanInfo[];
+  platform_billing_enabled: boolean;
+}
+
 export interface BillingUsageHistory {
   items: CreditLedgerEntry[];
   total: number;

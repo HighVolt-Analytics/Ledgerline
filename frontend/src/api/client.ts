@@ -2,6 +2,7 @@ import type {
   ApprovalPolicy,
   BillingState,
   BillingSignupCheckoutBody,
+  BillingPlansCatalog,
   BillingUsageHistory,
   CheckoutSessionResult,
   CheckoutStatusResult,
@@ -1338,6 +1339,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  getPublicBillingPlans: (country: string) =>
+    request<BillingPlansCatalog>(
+      `/api/billing/plans?country=${encodeURIComponent(country)}`
+    ),
   getSignupCheckoutStatus: (sessionId: string) =>
     request<CheckoutStatusResult>(
       `/api/billing/signup/status/${encodeURIComponent(sessionId)}`
