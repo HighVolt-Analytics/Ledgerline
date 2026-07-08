@@ -52,6 +52,10 @@ def test_sanitize_invoice_no_strips_dated_bleed() -> None:
     assert sanitize_invoice_no(raw) == "RC-SIPL-AUG-INL-20250826-001"
 
 
+def test_sanitize_invoice_no_strips_trailing_slash() -> None:
+    assert sanitize_invoice_no("260371344/") == "260371344"
+
+
 def test_extract_invoice_no_from_proforma_line() -> None:
     assert (
         extract_invoice_no_from_text(

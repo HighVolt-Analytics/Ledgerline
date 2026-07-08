@@ -20,6 +20,7 @@ from app.services.vault.vault_paths import (
 )
 from app.services.master_data.vendor_resolver import (
     UNKNOWN_SLUG,
+    is_plausible_vendor_name,
     is_valid_storage_slug,
     resolve_storage_slug_for_parsed_vendor,
 )
@@ -63,14 +64,19 @@ async def sync_invoice_blob_path(
         return False
 
     settings = get_settings()
-    if settings.blob_auto_relocate_unknown:
+    candidate_vendor = (parsed_vendor or invoice.vendor or "").strip()
+    if settings.blob_auto_relocate_unknown and is_plausible_vendor_name(candidate_vendor):
         new_slug = await resolve_storage_slug_for_parsed_vendor(
-            session, parsed_vendor or invoice.vendor, tenant_id=invoice.tenant_id
+            session, candidate_vendor, tenant_id=invoice.tenant_id
         )
         old_slug = invoice.storage_vendor_slug or UNKNOWN_SLUG
         if new_slug != old_slug:
             if new_slug != UNKNOWN_SLUG or not is_valid_storage_slug(old_slug):
                 invoice.storage_vendor_slug = new_slug
+
+    display_vendor = invoice.vendor or parsed_vendor
+    if not is_plausible_vendor_name(display_vendor):
+        display_vendor = invoice.vendor if is_plausible_vendor_name(invoice.vendor) else None
 
     org = await session.get(Tenant, invoice.tenant_id)
     tenant_slug = org.slug if org else settings.default_tenant_slug
@@ -91,7 +97,7 @@ async def sync_invoice_blob_path(
         tenant_slug,
         tenant_name=tenant_name,
         route_target=invoice.route_target,
-        vendor_name=invoice.vendor or parsed_vendor,
+        vendor_name=display_vendor,
         storage_vendor_slug=invoice.storage_vendor_slug,
         invoice_id=invoice.id,
         invoice_no=invoice.invoice_no,
@@ -117,7 +123,7 @@ async def sync_invoice_blob_path(
         invoice.file_hash,
         filename,
         tenant_name=tenant_name,
-        vendor_name=invoice.vendor or parsed_vendor,
+        vendor_name=display_vendor,
         invoice_no=invoice.invoice_no,
         invoice_date=invoice.invoice_date,
         route_target=invoice.route_target,

@@ -67,6 +67,7 @@ from app.services.extraction.document_ai_provider import (
 )
 from app.services.invoice.invoice_pipeline_phases import (
     apply_user_defined_classifier_gate,
+    backfill_llm_dt_from_policy,
     evaluate_confidence_gate,
     evaluate_field_confidence_gate,
     evaluate_image_quality_gate,
@@ -313,6 +314,21 @@ async def _post_parse_relocate(
     parsed_vendor: str | None,
 ) -> None:
     await sync_invoice_blob_path(session, invoice, parsed_vendor=parsed_vendor)
+
+
+async def _safe_auto_learn(session: AsyncSession, invoice: Invoice) -> None:
+    """Post-process sender learning must not fail an otherwise successful pipeline."""
+    try:
+        await _auto_learn_sender(session, invoice)
+        await _auto_learn_customer_sender(session, invoice)
+    except Exception as exc:
+        from app.utils.logger import get_logger
+
+        get_logger(__name__).warning(
+            "auto_learn_failed",
+            invoice_id=invoice.id,
+            error=str(exc),
+        )
 
 
 async def _auto_learn_sender(session: AsyncSession, invoice: Invoice) -> None:
@@ -696,8 +712,7 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
         audit_event="purchase_document_processed",
         detail={"purchase_document_type": invoice.purchase_document_type},
     )
-    await _auto_learn_sender(session, invoice)
-    await _auto_learn_customer_sender(session, invoice)
+    await _safe_auto_learn(session, invoice)
 
 
 async def _finish_sales_supporting_document(session: AsyncSession, invoice: Invoice) -> None:
@@ -735,8 +750,7 @@ async def _finish_sales_supporting_document(session: AsyncSession, invoice: Invo
         audit_event="sales_document_processed",
         detail={"sales_document_type": invoice.sales_document_type},
     )
-    await _auto_learn_sender(session, invoice)
-    await _auto_learn_customer_sender(session, invoice)
+    await _safe_auto_learn(session, invoice)
 
 
 async def _apply_parsed_to_invoice(
@@ -1107,6 +1121,24 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 else "vendor_classification_baseline",
                 invoice_id=invoice.id,
                 detail=drift_audit_detail(vendor_drift_result),
+            )
+
+        classify_llm, policy_backfill_detail = backfill_llm_dt_from_policy(
+            classify_llm,
+            invoice=invoice,
+            ocr=ocr,
+            document_types=config.document_types,
+            ai_cfg=ai_cfg,
+        )
+        if policy_backfill_detail:
+            invoice.llm_suggested_dt = (classify_llm.suggested_dt if classify_llm else None) or None
+            if classify_llm is not None:
+                invoice.llm_confidence = round(classify_llm.confidence, 4)
+            await log_event(
+                session,
+                "classification_policy_backfill",
+                invoice_id=invoice.id,
+                detail=policy_backfill_detail,
             )
 
         gate_result = evaluate_confidence_gate(
@@ -1780,8 +1812,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 "route_target": invoice.route_target,
             },
         )
-        await _auto_learn_sender(session, invoice)
-        await _auto_learn_customer_sender(session, invoice)
+        await _safe_auto_learn(session, invoice)
         return
 
     post_validate = (
@@ -2017,8 +2048,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         from app.services.payments.settlement_service import ensure_receivable_with_audit
 
         await ensure_receivable_with_audit(session, invoice)
-    await _auto_learn_sender(session, invoice)
-    await _auto_learn_customer_sender(session, invoice)
+    await _safe_auto_learn(session, invoice)
     await log_event(
         session,
         "invoice_processed",

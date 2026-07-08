@@ -1379,6 +1379,29 @@ def merge_gap_fill_into_parsed(
             updates[key] = candidate
             filled.append(key)
             continue
+        if key == "line_items":
+            candidate_items = list(gap.line_items or [])
+            if not candidate_items:
+                continue
+            from app.services.extraction.line_items_sanitizer import sanitize_line_items
+
+            sanitized = sanitize_line_items(
+                candidate_items,
+                ocr_text=ocr_text,
+                extracted_fields=gap.extracted_fields,
+                vendor=gap.vendor or parsed.vendor,
+                invoice_no=gap.invoice_no or parsed.invoice_no,
+                po_reference=gap.po_reference or parsed.po_reference,
+                so_reference=(gap.extracted_fields or {}).get("so_reference")
+                or (parsed.extracted_fields or {}).get("so_reference"),
+                cost_centre=gap.cost_centre or parsed.cost_centre,
+            )
+            if not sanitized:
+                rejected.append(key)
+                continue
+            updates["line_items"] = sanitized
+            filled.append(key)
+            continue
         if key in PARTY_FIELD_KEYS or key in EXTRACTED_ONLY_ATTRS or key not in CANONICAL_EXTRACTION_FIELD_KEYS:
             candidate = gap_extracted.get(key)
             if not candidate:

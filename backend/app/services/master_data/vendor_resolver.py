@@ -30,6 +30,20 @@ _INSTRUCTION_MARKERS = (
     "amount due",
 )
 
+# Bill of lading / transport form labels — not company names.
+_FORM_LABEL_MARKERS = (
+    "pre-carriage",
+    "pre carriage",
+    "place of",
+    "port of",
+    "vessel",
+    "notify party",
+    "consignee",
+    "shipper",
+    "freight payable",
+    "marks and numbers",
+)
+
 
 def is_plausible_vendor_name(name: str | None) -> bool:
     if not name or not name.strip():
@@ -39,6 +53,8 @@ def is_plausible_vendor_name(name: str | None) -> bool:
         return False
     low = s.lower()
     if any(marker in low for marker in _INSTRUCTION_MARKERS):
+        return False
+    if any(low == marker or low.startswith(f"{marker} ") for marker in _FORM_LABEL_MARKERS):
         return False
     if len(s.split()) > 8:
         return False

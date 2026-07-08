@@ -40,7 +40,7 @@ def sanitize_invoice_no(value: str | None) -> str | None:
     token = str(value).strip()
     if not token:
         return None
-    trimmed = _INVOICE_NO_BLEED.sub("", token).strip(" ,;")
+    trimmed = _INVOICE_NO_BLEED.sub("", token).strip(" ,;/-")
     if not trimmed:
         return None
     if len(trimmed) > 48:
