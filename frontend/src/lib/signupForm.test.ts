@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSignupValidationInput,
   EMPTY_SIGNUP_FIELDS,
+  getPlanActionDisabledReason,
   getSignupDisabledReason,
   isSignupFormComplete,
   isValidEmail,
@@ -74,17 +75,15 @@ describe("signupForm", () => {
     let fields = { ...EMPTY_SIGNUP_FIELDS };
 
     expect(
-      isSignupFormComplete(
-        buildSignupValidationInput(fields, {
-          industry: "Technology",
-          countryCode: "SG",
-          selectedPlan: "studio",
-          platformBillingEnabled: true,
-          billingPlansLoading: false,
-          busy: false,
-        })
-      )
-    ).toBe(false);
+      getPlanActionDisabledReason("studio", {
+        fields,
+        industry: "Technology",
+        countryCode: "SG",
+        platformBillingEnabled: true,
+        billingPlansLoading: false,
+        busy: false,
+      })
+    ).toMatch(/Business name/);
 
     fields = { ...fields, businessName: "Typed Business" };
     fields = { ...fields, email: "typed@example.com" };
@@ -93,17 +92,15 @@ describe("signupForm", () => {
     fields = { ...fields, confirmPassword: "password123" };
 
     expect(
-      isSignupFormComplete(
-        buildSignupValidationInput(fields, {
-          industry: "Technology",
-          countryCode: "SG",
-          selectedPlan: "studio",
-          platformBillingEnabled: true,
-          billingPlansLoading: false,
-          busy: false,
-        })
-      )
-    ).toBe(true);
+      getPlanActionDisabledReason("studio", {
+        fields,
+        industry: "Technology",
+        countryCode: "SG",
+        platformBillingEnabled: true,
+        billingPlansLoading: false,
+        busy: false,
+      })
+    ).toBeNull();
   });
 
   it("uses signup wording for primary CTA labels", () => {

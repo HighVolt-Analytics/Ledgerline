@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.models.credit_ledger import CreditLedgerEntry
 from app.models.pending_signup_billing import PendingSignupBillingSession
 from app.models.tenant import Tenant
@@ -28,6 +29,7 @@ from app.services.payments.stripe_platform_billing_service import (
     SIGNUP_STATUS_PENDING,
     _handle_checkout_completed,
     _handle_invoice_paid,
+    _require_platform_stripe_secret,
     _validate_signup_request,
 )
 from tests.conftest import TESTING_TENANT_UUID
@@ -57,6 +59,20 @@ def test_validate_public_signup_rejects_token() -> None:
             signup_token="extra",
         )
     assert exc.value.status_code == 400
+
+
+def test_require_platform_stripe_secret_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "")
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_SECRET_KEY", "")
+    get_settings.cache_clear()
+
+    with pytest.raises(HTTPException) as exc:
+        _require_platform_stripe_secret()
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Stripe platform billing is not configured"
+
+    get_settings.cache_clear()
 
 
 def test_pricing_region_for_country_mapping() -> None:

@@ -93,11 +93,21 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _configure_stripe(settings: Settings | None = None) -> Settings:
+def _platform_stripe_secret_key(cfg: Settings) -> str:
+    return cfg.stripe_platform_billing_secret_key_resolved
+
+
+def _require_platform_stripe_secret(settings: Settings | None = None) -> tuple[Settings, str]:
     cfg = settings or get_settings()
-    if not cfg.stripe_secret_key.strip():
-        raise StripeServiceError("Stripe is not configured")
-    stripe.api_key = cfg.stripe_secret_key.strip()
+    api_key = _platform_stripe_secret_key(cfg)
+    if not api_key:
+        raise HTTPException(503, "Stripe platform billing is not configured")
+    return cfg, api_key
+
+
+def _configure_stripe(settings: Settings | None = None) -> Settings:
+    cfg, api_key = _require_platform_stripe_secret(settings)
+    stripe.api_key = api_key
     return cfg
 
 
@@ -130,14 +140,30 @@ def _slugify_org(name: str) -> str:
     return slug.strip("-")[:100] or "organisation"
 
 
-async def _run_stripe(callable_obj, *args, **kwargs):
-    return await asyncio.to_thread(callable_obj, *args, **kwargs)
+async def _run_stripe(callable_obj, *args, settings: Settings | None = None, **kwargs):
+    cfg, api_key = _require_platform_stripe_secret(settings)
+
+    def _invoke_with_key() -> Any:
+        stripe.api_key = api_key
+        return callable_obj(*args, **kwargs)
+
+    try:
+        return await asyncio.to_thread(_invoke_with_key)
+    except stripe.AuthenticationError as exc:
+        logger.warning("Stripe platform billing authentication failed: %s", exc.user_message or "auth error")
+        raise HTTPException(503, "Stripe platform billing is not configured") from exc
+    except stripe.StripeError as exc:
+        logger.warning("Stripe platform billing API error: %s", exc.user_message or str(exc))
+        raise HTTPException(502, "Stripe checkout is temporarily unavailable") from exc
 
 
 def _require_platform_billing(settings: Settings | None = None) -> Settings:
     cfg = settings or get_settings()
-    if not cfg.stripe_platform_billing_active:
+    if not cfg.stripe_platform_billing_enabled:
         raise HTTPException(503, "Platform billing is not enabled")
+    if cfg.stripe_mode_normalized == "live" and not cfg.stripe_platform_billing_live_enabled:
+        raise HTTPException(503, "Platform billing is not enabled")
+    _require_platform_stripe_secret(cfg)
     return cfg
 
 
@@ -489,6 +515,7 @@ async def create_signup_checkout_session(
 
         checkout = await _run_stripe(
             stripe.checkout.Session.create,
+            settings=cfg,
             mode="subscription",
             customer_email=pending.email,
             line_items=[{"price": price_id, "quantity": 1}],
@@ -557,6 +584,7 @@ async def create_topup_checkout_session(
 
     checkout = await _run_stripe(
         stripe.checkout.Session.create,
+        settings=cfg,
         mode="payment",
         customer=billing.stripe_customer_id or None,
         customer_email=None if billing.stripe_customer_id else user_email.strip().lower(),
@@ -619,6 +647,7 @@ async def create_subscription_upgrade_checkout(
 
     checkout = await _run_stripe(
         stripe.checkout.Session.create,
+        settings=cfg,
         mode="subscription",
         customer=billing.stripe_customer_id or None,
         customer_email=None if billing.stripe_customer_id else user_email.strip().lower(),
@@ -663,7 +692,11 @@ async def get_checkout_status(
 
     if cfg.stripe_platform_billing_active:
         try:
-            checkout = await _run_stripe(stripe.checkout.Session.retrieve, session_id)
+            checkout = await _run_stripe(
+                stripe.checkout.Session.retrieve,
+                session_id,
+                settings=cfg,
+            )
             meta = checkout.get("metadata") or {}
             if tenant_id is not None:
                 meta_tid = meta.get("tenant_id")
@@ -855,7 +888,11 @@ async def _handle_checkout_completed(session: AsyncSession, event_obj: dict[str,
                 subscription = None
                 if subscription_id:
                     subscription = _stripe_object_to_dict(
-                        await _run_stripe(stripe.Subscription.retrieve, subscription_id)
+                        await _run_stripe(
+                            stripe.Subscription.retrieve,
+                            subscription_id,
+                            settings=get_settings(),
+                        )
                     )
                 await _activate_pending_signup_from_checkout(
                     session,

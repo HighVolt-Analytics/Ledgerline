@@ -31,7 +31,7 @@ describe("SetupPage signup form", () => {
     cleanup();
   });
 
-  it("enables Continue to Stripe Checkout after valid fields and Studio selection", async () => {
+  it("enables Continue to Stripe Checkout on step 2 after valid account details", async () => {
     const user = userEvent.setup();
 
     render(
@@ -40,24 +40,24 @@ describe("SetupPage signup form", () => {
       </MemoryRouter>
     );
 
-    const submitButton = screen.getByTestId("button-create-org") as HTMLButtonElement;
-    expect(submitButton.disabled).toBe(true);
-
     await user.type(screen.getByTestId("input-business-name"), "Typed Business");
     await user.type(screen.getByTestId("input-email"), "typed@example.com");
     await user.type(screen.getByTestId("input-phone"), "91234567");
     await user.type(screen.getByLabelText("Password"), "password123");
     await user.type(screen.getByLabelText("Confirm password"), "password123");
-    await user.click(screen.getByTestId("signup-plan-studio"));
 
+    const continueButton = screen.getByTestId("button-continue-details") as HTMLButtonElement;
     await waitFor(() => {
-      expect((screen.getByTestId("button-create-org") as HTMLButtonElement).disabled).toBe(
-        false
-      );
+      expect(continueButton.disabled).toBe(false);
+    });
+    await user.click(continueButton);
+
+    const studioButton = await screen.findByTestId("signup-plan-cta-studio");
+    await waitFor(() => {
+      expect((studioButton as HTMLButtonElement).disabled).toBe(false);
     });
 
-    expect(submitButton.textContent).toBe("Continue to Stripe Checkout");
-    expect(screen.queryByTestId("signup-disabled-reason")).toBeNull();
+    expect(studioButton.textContent).toBe("Continue to Stripe Checkout");
   });
 
   it("keeps placeholders separate from field values", () => {

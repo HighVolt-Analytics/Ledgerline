@@ -343,6 +343,84 @@
   padding: 2.5rem 1.25rem 3rem;
 }
 
+.signup-page__inner--wizard {
+  width: min(100%, 40rem);
+}
+
+.signup-page__step-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--primary));
+}
+
+.signup-page__wizard-card {
+  padding: 1.75rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 1.25rem;
+  background: hsl(var(--card));
+  box-shadow: 0 10px 40px hsl(var(--foreground) / 0.04);
+}
+
+.signup-page__wizard-card--plans {
+  width: 100%;
+  padding: 1.5rem;
+}
+
+@media (min-width: 640px) {
+  .signup-page__inner--wizard:has(.signup-page__wizard-card--plans) {
+    width: min(100%, 56rem);
+  }
+
+  .signup-page__wizard-card {
+    padding: 2rem 2.25rem;
+  }
+}
+
+.signup-page__form--single {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.signup-page__wizard-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.signup-page__message--banner,
+.signup-page__error--banner {
+  margin: 0 auto 1rem;
+  text-align: center;
+}
+
+.signup-page__signin--footer {
+  margin-top: 1.5rem;
+  text-align: center;
+}
+
+.signup-plan-card--action {
+  cursor: default;
+}
+
+.signup-plan-card__cta {
+  margin-top: auto;
+  width: 100%;
+  min-height: 2.75rem;
+}
+
+.signup-plan-card__disabled-reason {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-align: center;
+  color: hsl(var(--muted-foreground));
+}
+
 .signup-page__brand {
   display: flex;
   justify-content: center;
@@ -485,7 +563,7 @@
   flex-direction: column;
   gap: 0.875rem;
   width: 100%;
-  max-width: 56rem;
+  max-width: 100%;
   margin: 0 auto;
 }
 

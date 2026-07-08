@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
-import { SignupPlanSelector } from "@/components/signup/SignupPlanSelector";
+import { SignupPlanStep } from "@/components/signup/SignupPlanStep";
 import { LogoBlock } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,9 +16,8 @@ import {
 import { pricingRegionForCountry, type PlanId } from "@/lib/pricingPlans";
 import {
   EMPTY_SIGNUP_FIELDS,
-  getSignupDisabledReason,
-  signupPlanHint,
-  signupPrimaryCtaLabel,
+  getAccountDetailsDisabledReason,
+  getPlanActionDisabledReason,
   type SignupFormFields,
 } from "@/lib/signupForm";
 import { cn } from "@/lib/cn";
@@ -26,14 +25,16 @@ import { cn } from "@/lib/cn";
 const ENTERPRISE_MAILTO =
   "mailto:sales@ledgerline.com?subject=Enterprise%20plan%20inquiry";
 
+type SignupStep = "details" | "plan";
+
 export function SetupPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  const [step, setStep] = useState<SignupStep>("details");
   const [form, setForm] = useState<SignupFormFields>(EMPTY_SIGNUP_FIELDS);
   const [industry, setIndustry] = useState<Industry>("Hospitality");
   const [countryCode, setCountryCode] = useState("AU");
-  const [selectedPlan, setSelectedPlan] = useState<PlanId>("free");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -50,30 +51,28 @@ export function SetupPage() {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
-  const validationInput = useMemo(
+  const planValidationBase = useMemo(
     () => ({
       fields: form,
       industry,
       countryCode,
-      selectedPlan,
       platformBillingEnabled,
       billingPlansLoading,
       busy,
     }),
-    [
-      billingPlansLoading,
-      busy,
-      countryCode,
-      form,
-      industry,
-      platformBillingEnabled,
-      selectedPlan,
-    ]
+    [billingPlansLoading, busy, countryCode, form, industry, platformBillingEnabled]
   );
 
-  const disabledReason = getSignupDisabledReason(validationInput);
-  const canSubmit = disabledReason === null;
-  const planHint = signupPlanHint(selectedPlan);
+  const detailsDisabledReason = getAccountDetailsDisabledReason(
+    form,
+    industry,
+    countryCode,
+    busy
+  );
+  const canContinueDetails = detailsDisabledReason === null;
+
+  const planDisabledReason = (plan: PlanId) =>
+    getPlanActionDisabledReason(plan, planValidationBase);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,14 +113,18 @@ export function SetupPage() {
           setMessage(
             "Payment successful — your organisation is ready. Sign in to continue."
           );
+          setStep("plan");
         } else if (checkout === "cancelled" || status.status === "expired") {
-          setError("Checkout was cancelled. Review your details and try again.");
+          setError("Checkout was cancelled. Choose a plan to try again.");
+          setStep("plan");
         } else if (checkout === "success") {
           setMessage("Payment received — finishing account setup…");
+          setStep("plan");
         }
       } catch {
         if (checkout === "success") {
           setMessage("Payment submitted — sign in shortly once setup completes.");
+          setStep("plan");
         }
       } finally {
         setSearchParams({}, { replace: true });
@@ -129,16 +132,25 @@ export function SetupPage() {
     })();
   }, [searchParams, setSearchParams]);
 
-  async function createOrg(event: React.FormEvent) {
+  function continueToPlans(event: React.FormEvent) {
     event.preventDefault();
+    const reason = getAccountDetailsDisabledReason(form, industry, countryCode, busy);
+    if (reason) {
+      setError(reason);
+      return;
+    }
+    setError(null);
+    setStep("plan");
+  }
 
-    const submitReason = getSignupDisabledReason(validationInput);
-    if (submitReason) {
-      setError(submitReason);
+  async function submitSignup(plan: PlanId) {
+    const reason = getPlanActionDisabledReason(plan, planValidationBase);
+    if (reason) {
+      setError(reason);
       return;
     }
 
-    if (selectedPlan === "enterprise") {
+    if (plan === "enterprise") {
       window.location.href = ENTERPRISE_MAILTO;
       return;
     }
@@ -152,7 +164,7 @@ export function SetupPage() {
         password: form.password,
         organisation_name: form.businessName.trim(),
         country: countryCode,
-        plan_code: selectedPlan === "studio" ? "studio" : "free",
+        plan_code: plan === "studio" ? "studio" : "free",
         industry,
         full_name: form.businessName.trim(),
         signup_source: "public",
@@ -180,222 +192,213 @@ export function SetupPage() {
 
   return (
     <div className="signup-page">
-      <div className="signup-page__inner">
+      <div className="signup-page__inner signup-page__inner--wizard">
         <div className="signup-page__brand">
           <LogoBlock />
         </div>
 
         <header className="signup-page__header">
-          <h1>Create your account</h1>
+          <p className="signup-page__step-label">Step {step === "details" ? 1 : 2} of 2</p>
+          <h1>{step === "details" ? "Create your account" : "Choose your plan"}</h1>
           <p>
-            Register your organisation and choose a plan. No invite required.
+            {step === "details"
+              ? "Enter your organisation and sign-in details."
+              : "Pick the plan that fits your team. No invite required."}
           </p>
         </header>
 
-        <form className="signup-page__layout" onSubmit={(event) => void createOrg(event)} noValidate>
-          <section
-            className="signup-page__section"
-            aria-labelledby="signup-details-heading"
+        {message ? (
+          <p className="signup-page__message signup-page__message--banner" role="status">
+            {message}
+          </p>
+        ) : null}
+
+        {error ? (
+          <p className="signup-page__error signup-page__error--banner" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {step === "details" ? (
+          <form
+            className="signup-page__wizard-card"
+            onSubmit={continueToPlans}
+            noValidate
           >
-            <div className="signup-page__card">
-              <h2 id="signup-details-heading" className="signup-page__card-title">
-                Organisation details
-              </h2>
+            <div className="signup-page__form signup-page__form--single">
+              <div className="signup-page__field">
+                <label className="signup-page__label" htmlFor="setup-business-name">
+                  Business name
+                </label>
+                <Input
+                  id="setup-business-name"
+                  data-testid="input-business-name"
+                  placeholder="Enter your business name"
+                  value={form.businessName}
+                  onChange={(event) => updateField("businessName", event.target.value)}
+                  autoComplete="organization"
+                />
+              </div>
 
-              <div className="signup-page__form">
-                <div className="signup-page__field signup-page__field--full">
-                  <label className="signup-page__label" htmlFor="setup-business-name">
-                    Business name
-                  </label>
-                  <Input
-                    id="setup-business-name"
-                    name="businessName"
-                    data-testid="input-business-name"
-                    placeholder="Enter your business name"
-                    value={form.businessName}
-                    onChange={(event) => updateField("businessName", event.target.value)}
-                    autoComplete="organization"
-                  />
-                </div>
+              <div className="signup-page__field">
+                <label className="signup-page__label" htmlFor="setup-industry">
+                  Industry
+                </label>
+                <Select
+                  id="setup-industry"
+                  data-testid="select-industry"
+                  value={industry}
+                  onValueChange={(value) => setIndustry(value as Industry)}
+                  size="md"
+                  options={INDUSTRIES.map((ind) => ({ value: ind, label: ind }))}
+                  className="w-full"
+                />
+              </div>
 
-                <div className="signup-page__field">
-                  <label className="signup-page__label" htmlFor="setup-industry">
-                    Industry
-                  </label>
-                  <Select
-                    id="setup-industry"
-                    data-testid="select-industry"
-                    value={industry}
-                    onValueChange={(value) => setIndustry(value as Industry)}
-                    size="md"
-                    options={INDUSTRIES.map((ind) => ({ value: ind, label: ind }))}
-                    className="w-full"
-                  />
-                </div>
+              <div className="signup-page__field">
+                <label className="signup-page__label" htmlFor="setup-country">
+                  Country
+                </label>
+                <Select
+                  id="setup-country"
+                  data-testid="select-country"
+                  value={countryCode}
+                  onValueChange={setCountryCode}
+                  size="md"
+                  options={COUNTRIES.map((c) => ({ value: c.code, label: c.name }))}
+                  className="w-full"
+                />
+                <p className="signup-page__hint tnum">
+                  {country.currency} {country.symbol} · {country.taxLabel}{" "}
+                  {country.taxRate}%
+                </p>
+              </div>
 
-                <div className="signup-page__field">
-                  <label className="signup-page__label" htmlFor="setup-country">
-                    Country
-                  </label>
-                  <Select
-                    id="setup-country"
-                    data-testid="select-country"
-                    value={countryCode}
-                    onValueChange={setCountryCode}
-                    size="md"
-                    options={COUNTRIES.map((c) => ({ value: c.code, label: c.name }))}
-                    className="w-full"
-                  />
-                  <p className="signup-page__hint tnum">
-                    {country.currency} {country.symbol} · {country.taxLabel}{" "}
-                    {country.taxRate}%
-                  </p>
-                </div>
+              <div className="signup-page__field">
+                <label className="signup-page__label" htmlFor="setup-email">
+                  Email
+                </label>
+                <Input
+                  id="setup-email"
+                  type="email"
+                  data-testid="input-email"
+                  placeholder="Enter your work email"
+                  value={form.email}
+                  onChange={(event) => updateField("email", event.target.value)}
+                  autoComplete="email"
+                />
+              </div>
 
-                <div className="signup-page__field">
-                  <label className="signup-page__label" htmlFor="setup-email">
-                    Email
-                  </label>
-                  <Input
-                    id="setup-email"
-                    name="email"
-                    type="email"
-                    data-testid="input-email"
-                    placeholder="Enter your work email"
-                    value={form.email}
-                    onChange={(event) => updateField("email", event.target.value)}
-                    autoComplete="email"
-                  />
-                </div>
-
-                <div className="signup-page__field">
-                  <label className="signup-page__label" htmlFor="setup-phone">
-                    Phone
-                  </label>
-                  <div className="signup-page__phone">
-                    <span
-                      className={cn(
-                        selectClassMd,
-                        "signup-page__dial-code text-muted-foreground"
-                      )}
-                    >
-                      {country.dialCode}
-                    </span>
-                    <Input
-                      id="setup-phone"
-                      name="phone"
-                      type="tel"
-                      data-testid="input-phone"
-                      placeholder="Enter phone number"
-                      value={form.phone}
-                      onChange={(event) => updateField("phone", event.target.value)}
-                      autoComplete="tel-national"
-                    />
-                  </div>
-                </div>
-
-                <div className="signup-page__field">
-                  <label className="signup-page__label" htmlFor="setup-password">
-                    Password
-                  </label>
-                  <Input
-                    id="setup-password"
-                    name="password"
-                    type="password"
-                    placeholder="At least 8 characters"
-                    value={form.password}
-                    onChange={(event) => updateField("password", event.target.value)}
-                    autoComplete="new-password"
-                  />
-                </div>
-
-                <div className="signup-page__field">
-                  <label
-                    className="signup-page__label"
-                    htmlFor="setup-confirm-password"
+              <div className="signup-page__field">
+                <label className="signup-page__label" htmlFor="setup-phone">
+                  Phone
+                </label>
+                <div className="signup-page__phone">
+                  <span
+                    className={cn(
+                      selectClassMd,
+                      "signup-page__dial-code text-muted-foreground"
+                    )}
                   >
-                    Confirm password
-                  </label>
+                    {country.dialCode}
+                  </span>
                   <Input
-                    id="setup-confirm-password"
-                    name="confirmPassword"
-                    type="password"
-                    placeholder="Re-enter password"
-                    value={form.confirmPassword}
-                    onChange={(event) => updateField("confirmPassword", event.target.value)}
-                    autoComplete="new-password"
+                    id="setup-phone"
+                    type="tel"
+                    data-testid="input-phone"
+                    placeholder="Enter phone number"
+                    value={form.phone}
+                    onChange={(event) => updateField("phone", event.target.value)}
+                    autoComplete="tel-national"
                   />
                 </div>
               </div>
-            </div>
-          </section>
 
-          <section
-            className="signup-page__section signup-page__section--plans"
-            aria-labelledby="signup-plan-heading"
-          >
-            <h2 id="signup-plan-heading" className="signup-page__section-title">
-              Choose your plan
-            </h2>
+              <div className="signup-page__field">
+                <label className="signup-page__label" htmlFor="setup-password">
+                  Password
+                </label>
+                <Input
+                  id="setup-password"
+                  type="password"
+                  placeholder="At least 8 characters"
+                  value={form.password}
+                  onChange={(event) => updateField("password", event.target.value)}
+                  autoComplete="new-password"
+                />
+              </div>
+
+              <div className="signup-page__field">
+                <label className="signup-page__label" htmlFor="setup-confirm-password">
+                  Confirm password
+                </label>
+                <Input
+                  id="setup-confirm-password"
+                  type="password"
+                  placeholder="Re-enter password"
+                  value={form.confirmPassword}
+                  onChange={(event) => updateField("confirmPassword", event.target.value)}
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+
+            <div className="signup-page__wizard-actions">
+              <Button
+                type="submit"
+                data-testid="button-continue-details"
+                className="signup-page__submit"
+                disabled={!canContinueDetails}
+              >
+                Continue
+              </Button>
+              {!canContinueDetails && detailsDisabledReason ? (
+                <p
+                  className="signup-page__disabled-reason"
+                  data-testid="signup-disabled-reason"
+                  role="status"
+                >
+                  {detailsDisabledReason}
+                </p>
+              ) : null}
+            </div>
+          </form>
+        ) : (
+          <section className="signup-page__wizard-card signup-page__wizard-card--plans">
             {billingPlansError ? (
               <p className="signup-page__billing-warning" role="status">
                 {billingPlansError}
               </p>
             ) : null}
-            <SignupPlanSelector
+            <SignupPlanStep
               region={pricingRegion}
-              selectedPlan={selectedPlan}
               busy={busy}
-              onSelectPlan={setSelectedPlan}
+              planDisabledReason={planDisabledReason}
+              onChoosePlan={(plan) => void submitSignup(plan)}
             />
-          </section>
-
-          <section className="signup-page__cta">
-            {planHint ? (
-              <p className="signup-page__plan-hint" data-testid="signup-plan-hint">
-                {planHint}
-              </p>
-            ) : null}
-
-            {message ? (
-              <p className="signup-page__message" role="status">
-                {message}
-              </p>
-            ) : null}
-
-            {error ? (
-              <p className="signup-page__error" role="alert">
-                {error}
-              </p>
-            ) : null}
-
-            <Button
-              type="submit"
-              data-testid="button-create-org"
-              className="signup-page__submit"
-              disabled={!canSubmit}
-            >
-              {signupPrimaryCtaLabel(selectedPlan, busy)}
-            </Button>
-
-            {!canSubmit && disabledReason ? (
-              <p
-                className="signup-page__disabled-reason"
-                data-testid="signup-disabled-reason"
-                role="status"
+            <div className="signup-page__wizard-actions">
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="button-back-details"
+                onClick={() => {
+                  setError(null);
+                  setStep("details");
+                }}
+                disabled={busy}
               >
-                {disabledReason}
-              </p>
-            ) : null}
-
-            <p className="signup-page__signin">
-              Already have an account?{" "}
-              <Link to="/login" className="signup-page__signin-link">
-                Sign in
-              </Link>
-            </p>
+                Back to account details
+              </Button>
+            </div>
           </section>
-        </form>
+        )}
+
+        <p className="signup-page__signin signup-page__signin--footer">
+          Already have an account?{" "}
+          <Link to="/login" className="signup-page__signin-link">
+            Sign in
+          </Link>
+        </p>
 
         <p className="signup-page__footer">
           SOC 2 Type II · ISO 27001 · Bank-level encryption
