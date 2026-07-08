@@ -433,6 +433,19 @@
   flex-direction: column;
   gap: 0.5rem;
   min-width: 0;
+  position: relative;
+  z-index: 0;
+}
+
+.signup-page__field input {
+  position: relative;
+  z-index: 1;
+  color: hsl(var(--foreground));
+}
+
+.signup-page__field input::placeholder {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.55;
 }
 
 .signup-page__field--full {
@@ -611,18 +624,6 @@
   color: hsl(var(--foreground));
   background: hsl(var(--muted) / 0.55);
   border: 1px solid hsl(var(--border));
-}
-
-.signup-page__debug {
-  margin: 0;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
-  font-family: ui-monospace, monospace;
-  font-size: 0.6875rem;
-  line-height: 1.4;
-  color: hsl(var(--muted-foreground));
-  background: hsl(var(--muted) / 0.35);
-  word-break: break-word;
 }
 
 .signup-page__signin {

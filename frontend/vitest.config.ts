@@ -38,6 +38,7 @@ export default defineConfig({
       "src/lib/pageTenantIsolation.test.ts",
       "src/lib/publicSignupRoutes.test.ts",
       "src/lib/signupForm.test.ts",
+      "src/pages/SetupPage.test.tsx",
       "src/api/client.test.ts",
       "src/api/clientInvitePaths.test.ts",
     ],

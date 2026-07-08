@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { SignupPlanSelector } from "@/components/signup/SignupPlanSelector";
@@ -15,11 +15,11 @@ import {
 } from "@/data/orgSetup.tsx";
 import { pricingRegionForCountry, type PlanId } from "@/lib/pricingPlans";
 import {
+  EMPTY_SIGNUP_FIELDS,
   getSignupDisabledReason,
-  readSignupFieldsFromForm,
-  signupDisabledDebugSummary,
   signupPlanHint,
   signupPrimaryCtaLabel,
+  type SignupFormFields,
 } from "@/lib/signupForm";
 import { cn } from "@/lib/cn";
 
@@ -29,20 +29,14 @@ const ENTERPRISE_MAILTO =
 export function SetupPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const formRef = useRef<HTMLFormElement>(null);
 
-  const [businessName, setBusinessName] = useState("");
+  const [form, setForm] = useState<SignupFormFields>(EMPTY_SIGNUP_FIELDS);
   const [industry, setIndustry] = useState<Industry>("Hospitality");
   const [countryCode, setCountryCode] = useState("AU");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [selectedPlan, setSelectedPlan] = useState<PlanId>("free");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [validationTick, setValidationTick] = useState(0);
   const [platformBillingEnabled, setPlatformBillingEnabled] = useState<boolean | null>(
     null
   );
@@ -52,39 +46,25 @@ export function SetupPage() {
   const country = countryByCode(countryCode);
   const pricingRegion = pricingRegionForCountry(countryCode);
 
-  const stateFields = useMemo(
-    () => ({
-      businessName,
-      email,
-      phone,
-      password,
-      confirmPassword,
-    }),
-    [businessName, confirmPassword, email, password, phone, validationTick]
-  );
-
-  const fields = useMemo(
-    () => readSignupFieldsFromForm(formRef.current, stateFields),
-    [stateFields]
-  );
+  const updateField = <K extends keyof SignupFormFields>(key: K, value: SignupFormFields[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
 
   const validationInput = useMemo(
     () => ({
-      fields,
+      fields: form,
       industry,
       countryCode,
       selectedPlan,
       platformBillingEnabled,
       billingPlansLoading,
-      billingPlansError,
       busy,
     }),
     [
-      billingPlansError,
       billingPlansLoading,
       busy,
       countryCode,
-      fields,
+      form,
       industry,
       platformBillingEnabled,
       selectedPlan,
@@ -94,29 +74,6 @@ export function SetupPage() {
   const disabledReason = getSignupDisabledReason(validationInput);
   const canSubmit = disabledReason === null;
   const planHint = signupPlanHint(selectedPlan);
-  const debugSummary = signupDisabledDebugSummary(validationInput);
-
-  const bumpValidation = useCallback(() => {
-    setValidationTick((tick) => tick + 1);
-  }, []);
-
-  useEffect(() => {
-    const form = formRef.current;
-    if (!form) return;
-
-    form.addEventListener("input", bumpValidation);
-    form.addEventListener("change", bumpValidation);
-
-    const interval = window.setInterval(bumpValidation, 500);
-    const stopPolling = window.setTimeout(() => window.clearInterval(interval), 10000);
-
-    return () => {
-      form.removeEventListener("input", bumpValidation);
-      form.removeEventListener("change", bumpValidation);
-      window.clearInterval(interval);
-      window.clearTimeout(stopPolling);
-    };
-  }, [bumpValidation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,15 +129,10 @@ export function SetupPage() {
     })();
   }, [searchParams, setSearchParams]);
 
-  async function createOrg(event?: React.FormEvent) {
-    event?.preventDefault();
-    bumpValidation();
+  async function createOrg(event: React.FormEvent) {
+    event.preventDefault();
 
-    const latestFields = readSignupFieldsFromForm(formRef.current, stateFields);
-    const submitReason = getSignupDisabledReason({
-      ...validationInput,
-      fields: latestFields,
-    });
+    const submitReason = getSignupDisabledReason(validationInput);
     if (submitReason) {
       setError(submitReason);
       return;
@@ -196,13 +148,13 @@ export function SetupPage() {
     setMessage(null);
     try {
       const result = await api.createSignupCheckout({
-        email: latestFields.email.trim(),
-        password: latestFields.password,
-        organisation_name: latestFields.businessName.trim(),
+        email: form.email.trim(),
+        password: form.password,
+        organisation_name: form.businessName.trim(),
         country: countryCode,
         plan_code: selectedPlan === "studio" ? "studio" : "free",
         industry,
-        full_name: latestFields.businessName.trim(),
+        full_name: form.businessName.trim(),
         signup_source: "public",
       });
 
@@ -214,7 +166,7 @@ export function SetupPage() {
       navigate("/login", {
         replace: true,
         state: {
-          email: latestFields.email.trim(),
+          email: form.email.trim(),
           fromSignup: true,
           signupMessage: "Your free account is ready. Sign in to get started.",
         },
@@ -240,12 +192,7 @@ export function SetupPage() {
           </p>
         </header>
 
-        <form
-          ref={formRef}
-          className="signup-page__layout"
-          onSubmit={(event) => void createOrg(event)}
-          noValidate
-        >
+        <form className="signup-page__layout" onSubmit={(event) => void createOrg(event)} noValidate>
           <section
             className="signup-page__section"
             aria-labelledby="signup-details-heading"
@@ -264,9 +211,9 @@ export function SetupPage() {
                     id="setup-business-name"
                     name="businessName"
                     data-testid="input-business-name"
-                    placeholder="Acme Pty Ltd"
-                    value={businessName}
-                    onChange={(e) => setBusinessName(e.target.value)}
+                    placeholder="Enter your business name"
+                    value={form.businessName}
+                    onChange={(event) => updateField("businessName", event.target.value)}
                     autoComplete="organization"
                   />
                 </div>
@@ -279,7 +226,7 @@ export function SetupPage() {
                     id="setup-industry"
                     data-testid="select-industry"
                     value={industry}
-                    onValueChange={(v) => setIndustry(v as Industry)}
+                    onValueChange={(value) => setIndustry(value as Industry)}
                     size="md"
                     options={INDUSTRIES.map((ind) => ({ value: ind, label: ind }))}
                     className="w-full"
@@ -314,9 +261,9 @@ export function SetupPage() {
                     name="email"
                     type="email"
                     data-testid="input-email"
-                    placeholder="accounts@acme.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Enter your work email"
+                    value={form.email}
+                    onChange={(event) => updateField("email", event.target.value)}
                     autoComplete="email"
                   />
                 </div>
@@ -339,9 +286,9 @@ export function SetupPage() {
                       name="phone"
                       type="tel"
                       data-testid="input-phone"
-                      placeholder="400 000 000"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="Enter phone number"
+                      value={form.phone}
+                      onChange={(event) => updateField("phone", event.target.value)}
                       autoComplete="tel-national"
                     />
                   </div>
@@ -355,8 +302,9 @@ export function SetupPage() {
                     id="setup-password"
                     name="password"
                     type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    value={form.password}
+                    onChange={(event) => updateField("password", event.target.value)}
                     autoComplete="new-password"
                   />
                 </div>
@@ -372,8 +320,9 @@ export function SetupPage() {
                     id="setup-confirm-password"
                     name="confirmPassword"
                     type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    value={form.confirmPassword}
+                    onChange={(event) => updateField("confirmPassword", event.target.value)}
                     autoComplete="new-password"
                   />
                 </div>
@@ -436,12 +385,6 @@ export function SetupPage() {
                 role="status"
               >
                 {disabledReason}
-              </p>
-            ) : null}
-
-            {!canSubmit ? (
-              <p className="signup-page__debug" data-testid="signup-disabled-debug">
-                {debugSummary}
               </p>
             ) : null}
 

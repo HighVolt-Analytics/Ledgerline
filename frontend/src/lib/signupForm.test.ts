@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSignupValidationInput,
+  EMPTY_SIGNUP_FIELDS,
   getSignupDisabledReason,
   isSignupFormComplete,
   isValidEmail,
@@ -9,34 +11,32 @@ import {
 } from "@/lib/signupForm";
 
 const validFields = {
-  businessName: "Acme Pty Ltd",
-  email: "accounts@acme.com",
+  businessName: "My Company",
+  email: "user@example.com",
   phone: "400 000 000",
   password: "password123",
   confirmPassword: "password123",
 };
 
-const validInput = {
-  fields: validFields,
+const validStudioInput = buildSignupValidationInput(validFields, {
   industry: "Technology",
   countryCode: "SG",
-  selectedPlan: "studio" as const,
+  selectedPlan: "studio",
   platformBillingEnabled: true,
   billingPlansLoading: false,
-  billingPlansError: null,
   busy: false,
-};
+});
 
 describe("signupForm", () => {
   it("accepts complete signup fields", () => {
     expect(validateSignupForm(validFields)).toBeNull();
-    expect(isSignupFormComplete(validInput)).toBe(true);
+    expect(isSignupFormComplete(validStudioInput)).toBe(true);
   });
 
   it("rejects missing business name", () => {
     expect(
       getSignupDisabledReason({
-        ...validInput,
+        ...validStudioInput,
         fields: { ...validFields, businessName: "  " },
       })
     ).toMatch(/Business name/);
@@ -46,7 +46,7 @@ describe("signupForm", () => {
     expect(isValidEmail("not-an-email")).toBe(false);
     expect(
       getSignupDisabledReason({
-        ...validInput,
+        ...validStudioInput,
         fields: { ...validFields, email: "not-an-email" },
       })
     ).toBe("Enter a valid email.");
@@ -55,7 +55,7 @@ describe("signupForm", () => {
   it("rejects password mismatch", () => {
     expect(
       getSignupDisabledReason({
-        ...validInput,
+        ...validStudioInput,
         fields: { ...validFields, confirmPassword: "other" },
       })
     ).toBe("Passwords do not match.");
@@ -64,14 +64,46 @@ describe("signupForm", () => {
   it("blocks studio when platform billing is disabled", () => {
     expect(
       getSignupDisabledReason({
-        ...validInput,
+        ...validStudioInput,
         platformBillingEnabled: false,
       })
     ).toBe("Stripe billing is not enabled in staging.");
   });
 
-  it("allows studio when platform billing is enabled and form is valid", () => {
-    expect(getSignupDisabledReason(validInput)).toBeNull();
+  it("enables studio checkout after user fills each field", () => {
+    let fields = { ...EMPTY_SIGNUP_FIELDS };
+
+    expect(
+      isSignupFormComplete(
+        buildSignupValidationInput(fields, {
+          industry: "Technology",
+          countryCode: "SG",
+          selectedPlan: "studio",
+          platformBillingEnabled: true,
+          billingPlansLoading: false,
+          busy: false,
+        })
+      )
+    ).toBe(false);
+
+    fields = { ...fields, businessName: "Typed Business" };
+    fields = { ...fields, email: "typed@example.com" };
+    fields = { ...fields, phone: "91234567" };
+    fields = { ...fields, password: "password123" };
+    fields = { ...fields, confirmPassword: "password123" };
+
+    expect(
+      isSignupFormComplete(
+        buildSignupValidationInput(fields, {
+          industry: "Technology",
+          countryCode: "SG",
+          selectedPlan: "studio",
+          platformBillingEnabled: true,
+          billingPlansLoading: false,
+          busy: false,
+        })
+      )
+    ).toBe(true);
   });
 
   it("uses signup wording for primary CTA labels", () => {
