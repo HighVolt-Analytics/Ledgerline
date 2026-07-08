@@ -12,12 +12,13 @@ type PricingPlanCardsProps = {
   currentPlan: PlanId;
   canUpgradeStudio?: boolean;
   busy?: boolean;
+  allowFreeSelect?: boolean;
   onSelectPlan: (plan: PlanId) => void;
 };
 
-function ctaLabel(plan: PlanId, currentPlan: PlanId): string {
-  if (plan === currentPlan) return "Current plan";
-  if (plan === "free") return "Downgrade";
+function ctaLabel(plan: PlanId, currentPlan: PlanId, allowFreeSelect: boolean): string {
+  if (plan === currentPlan && !allowFreeSelect) return "Current plan";
+  if (plan === "free") return allowFreeSelect ? "Choose Free" : "Downgrade";
   if (plan === "studio") return "Upgrade to Studio";
   return "Contact sales";
 }
@@ -27,6 +28,7 @@ export function PricingPlanCards({
   currentPlan,
   canUpgradeStudio = false,
   busy = false,
+  allowFreeSelect = false,
   onSelectPlan,
 }: PricingPlanCardsProps) {
   const plans = plansForRegion(region);
@@ -42,7 +44,7 @@ export function PricingPlanCards({
           const disabled =
             busy ||
             isCurrent ||
-            isFree ||
+            (isFree && !allowFreeSelect) ||
             (isStudio && (!canUpgradeStudio || currentPlan !== "free"));
 
           return (
@@ -95,7 +97,7 @@ export function PricingPlanCards({
                   onSelectPlan(plan.id);
                 }}
               >
-                {ctaLabel(plan.id, currentPlan)}
+                {ctaLabel(plan.id, currentPlan, allowFreeSelect)}
               </button>
             </article>
           );

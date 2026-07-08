@@ -1,7 +1,10 @@
 import type {
   ApprovalPolicy,
   BillingState,
+  BillingSignupCheckoutBody,
   BillingUsageHistory,
+  CheckoutSessionResult,
+  CheckoutStatusResult,
   PlatformCreditSettings,
   AuditLogEntry,
   ActivityItem,
@@ -1311,11 +1314,29 @@ export const api = {
       body: JSON.stringify({ amount }),
     }),
   upgradeBillingPlan: () =>
-    request<BillingState>("/api/billing/upgrade", {
+    request<BillingState | CheckoutSessionResult>("/api/billing/upgrade", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ plan: "studio" }),
     }),
+  createTopUpCheckout: (amount: number) =>
+    request<CheckoutSessionResult>("/api/billing/topup/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount }),
+    }),
+  getCheckoutStatus: (sessionId: string) =>
+    request<CheckoutStatusResult>(`/api/billing/checkout/status/${encodeURIComponent(sessionId)}`),
+  createSignupCheckout: (body: BillingSignupCheckoutBody) =>
+    request<CheckoutSessionResult>("/api/billing/signup/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getSignupCheckoutStatus: (sessionId: string) =>
+    request<CheckoutStatusResult>(
+      `/api/billing/signup/status/${encodeURIComponent(sessionId)}`
+    ),
   getPlatformCreditSettings: () =>
     request<PlatformCreditSettings>("/api/platform/credit-settings"),
   updatePlatformCreditSettings: (body: Partial<PlatformCreditSettings>) =>

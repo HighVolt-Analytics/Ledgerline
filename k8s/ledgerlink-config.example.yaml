@@ -42,6 +42,15 @@ data:
   STRIPE_GLOBAL_PAYOUTS_MAX_AMOUNT_USD: "1000"
   STRIPE_GLOBAL_PAYOUTS_SUPPORTED_COUNTRIES: "AU"
   STRIPE_GLOBAL_PAYOUTS_SUPPORTED_CURRENCIES: "AUD,USD"
+  # Platform subscription billing (LedgerLink → customer; not Connect / payouts)
+  STRIPE_PLATFORM_BILLING_ENABLED: "false"
+  STRIPE_PLATFORM_BILLING_LIVE_ENABLED: "false"
+  # LedgerLink Studio — one multi-currency monthly Stripe Price for all regions
+  STRIPE_PRICE_STUDIO_INR: "price_1Tr2y5Gvr4HvPvAZowfD0wKD"
+  STRIPE_PRICE_STUDIO_AUD: "price_1Tr2y5Gvr4HvPvAZowfD0wKD"
+  STRIPE_PRICE_STUDIO_SGD: "price_1Tr2y5Gvr4HvPvAZowfD0wKD"
+  STRIPE_PLATFORM_BILLING_SUCCESS_URL: "https://staging.highvolt.tech/ledgerlink/billing?checkout=success"
+  STRIPE_PLATFORM_BILLING_CANCEL_URL: "https://staging.highvolt.tech/ledgerlink/billing?checkout=cancelled"
   # Manual instruction orchestration for staging dry-run (no real Stripe payouts)
   PAYMENT_MANUAL_EXECUTION_ENABLED: "true"
   PAYMENT_MANUAL_EXECUTION_LIMIT_USD: "1000"
@@ -49,6 +58,7 @@ data:
   # app-secrets (not ConfigMap): META_APP_ID, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN,
   # SUPER_ADMIN_PORTAL_EMBED_TOKEN, SUPER_ADMIN_PORTAL_EMBED_EMAIL,
   # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_CLIENT_ID,
+  # STRIPE_PLATFORM_BILLING_WEBHOOK_SECRET,
   # WHATSAPP_OAUTH_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/auth/whatsapp/callback
   # WHATSAPP_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
   # XERO_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/xero/callback

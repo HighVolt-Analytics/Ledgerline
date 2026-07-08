@@ -1680,6 +1680,37 @@ export interface BillingState {
   can_upgrade_studio: boolean;
   can_top_up: boolean;
   is_enterprise: boolean;
+  platform_billing_enabled?: boolean;
+  subscription_status?: string | null;
+}
+
+export interface CheckoutSessionResult {
+  checkout_url?: string | null;
+  session_id?: string | null;
+  status: string;
+  pending_signup_id?: string | null;
+  tenant_id?: string | null;
+  completed_without_checkout?: boolean;
+}
+
+export interface CheckoutStatusResult {
+  session_id: string;
+  status?: string | null;
+  payment_status?: string | null;
+  mode?: string | null;
+  event_type?: string | null;
+  tenant_id?: string | null;
+  email?: string | null;
+}
+
+export interface BillingSignupCheckoutBody {
+  email: string;
+  password: string;
+  organisation_name: string;
+  country: string;
+  plan_code: "free" | "studio";
+  industry?: string;
+  full_name?: string;
 }
 
 export interface BillingUsageHistory {

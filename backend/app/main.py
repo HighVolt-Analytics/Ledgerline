@@ -114,6 +114,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(geo.router, prefix="/api")
 # Stripe webhooks — no JWT.
 app.include_router(stripe_webhooks.router, prefix="/api")
+app.include_router(billing.public_router, prefix="/api")
 # OAuth Microsoft redirect — no JWT (must be before authenticated mailboxes router).
 app.include_router(mailboxes.oauth_public_router, prefix="/api")
 # Stripe Connect OAuth callback — no JWT (must be before authenticated payments router).
