@@ -46,6 +46,44 @@ def _embedding_url() -> str:
     )
 
 
+def _is_retryable_openai_error(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException, httpx.ReadTimeout)):
+        return True
+    message = str(exc).lower()
+    return "timeout" in message or "timed out" in message
+
+
+def _chat_json_once(
+    *,
+    timeout: float,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    with httpx.Client(timeout=timeout) as client:
+        response = client.post(
+            _chat_url(),
+            headers={
+                "api-key": get_settings().azure_openai_key,
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+        body = response.json()
+
+    choices = body.get("choices") or []
+    if not choices:
+        return None
+    content = (choices[0].get("message") or {}).get("content") or ""
+    if not content.strip():
+        return None
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        logger.warning("azure_openai_chat_invalid_json")
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def chat_json(
     *,
     system: str,
@@ -70,34 +108,21 @@ def chat_json(
     if "gpt-5" not in deployment:
         payload["temperature"] = 0.1
     timeout = timeout_seconds or settings.sample_proposal_llm_timeout_seconds
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(
-                _chat_url(),
-                headers={
-                    "api-key": settings.azure_openai_key,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            response.raise_for_status()
-            body = response.json()
-    except Exception as exc:
-        logger.warning("azure_openai_chat_failed", error=str(exc))
-        return None
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            return _chat_json_once(timeout=timeout, payload=payload)
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2 and _is_retryable_openai_error(exc):
+                import time
 
-    choices = body.get("choices") or []
-    if not choices:
-        return None
-    content = (choices[0].get("message") or {}).get("content") or ""
-    if not content.strip():
-        return None
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        logger.warning("azure_openai_chat_invalid_json")
-        return None
-    return parsed if isinstance(parsed, dict) else None
+                time.sleep(0.5 * (2**attempt))
+                continue
+            break
+    if last_error is not None:
+        logger.warning("azure_openai_chat_failed", error=str(last_error))
+    return None
 
 
 async def chat_json_async(

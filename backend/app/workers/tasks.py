@@ -30,6 +30,14 @@ _PENDING_STATUSES = [
     InvoiceStatus.RECONCILING,
 ]
 
+_TERMINAL_STATUSES = frozenset(
+    {
+        InvoiceStatus.PROCESSED,
+        InvoiceStatus.DUPLICATE_SKIPPED,
+        InvoiceStatus.REJECTED,
+    }
+)
+
 
 def get_processing_status() -> dict[str, str | int | None]:
     celery_active = 0
@@ -94,7 +102,11 @@ async def process_invoice_by_id(
             logger.error("pipeline_error", error=str(exc), invoice_id=invoice_id)
             async with db_session_with_rls(resolved_tid) as err_session:
                 inv = await get_for_tenant(err_session, Invoice, invoice_id, resolved_tid)
-                if inv and inv.status in _PENDING_STATUSES:
+                if (
+                    inv
+                    and inv.status in _PENDING_STATUSES
+                    and inv.status not in _TERMINAL_STATUSES
+                ):
                     inv.status = InvoiceStatus.EXCEPTION
                     await log_event(
                         err_session,

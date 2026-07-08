@@ -290,8 +290,10 @@ def _apply_layout_kv(
         if candidate and _value_grounded_for_field("abn", candidate, ocr_text):
             updates["abn"] = candidate
     if _field_configured("invoice_no", configured) and "invoice_no" not in skip and kv.get("invoice_no") and _scalar_empty(data.invoice_no):
-        candidate = kv["invoice_no"].strip()
-        if _value_grounded_for_field("invoice_no", candidate, ocr_text):
+        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+
+        candidate = sanitize_invoice_no(kv["invoice_no"].strip())
+        if candidate and _value_grounded_for_field("invoice_no", candidate, ocr_text):
             updates["invoice_no"] = candidate
     if _field_configured("po_reference", configured) and "po_reference" not in skip and kv.get("po_reference") and _scalar_empty(data.po_reference):
         candidate = kv["po_reference"].strip()

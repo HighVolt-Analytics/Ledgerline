@@ -179,3 +179,21 @@ class LlmDocumentResult(BaseModel):
         if isinstance(value, (dict, str)):
             return _coerce_party_dict(value)
         return value
+
+    @field_validator("field_confidence", mode="before")
+    @classmethod
+    def _coerce_field_confidence(cls, value: Any) -> dict[str, float]:
+        if value is None or isinstance(value, (int, float)):
+            return {}
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, float] = {}
+        for key, score in value.items():
+            token = str(key or "").strip().lower()
+            if not token:
+                continue
+            try:
+                out[token] = float(score)
+            except (TypeError, ValueError):
+                continue
+        return out

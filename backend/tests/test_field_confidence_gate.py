@@ -82,3 +82,37 @@ def test_present_total_passes_gate() -> None:
     )
     assert result.passed is True
     assert result.missing_gate_fields == []
+
+
+def test_di_line_items_not_flagged_when_present_with_empty_llm_field_confidence() -> None:
+    from app.services.invoice.invoice_data import ParsedLineItem
+
+    llm = LlmDocumentResult(
+        suggested_dt="DT-12",
+        confidence=0.95,
+        vendor="Acme",
+        total=Decimal("100.00"),
+        field_confidence={},
+    )
+    parsed = InvoiceData(
+        vendor="Acme",
+        total=Decimal("100.00"),
+        line_items=[ParsedLineItem(description="Widget", amount=Decimal("50.00"))],
+        document_text="Widget 50.00 Total 100.00",
+    )
+    invoice = Invoice(vendor="Acme")
+    invoice.total = Decimal("100.00")
+    result = evaluate_field_confidence_gate(
+        llm,
+        ai_cfg=AiClassificationConfig(min_field_extract_confidence=0.65),
+        dt_definition=_dt_definition(
+            extractionFields=["vendor", "total", "line_items"],
+            requiredFields=["vendor", "total", "line_items"],
+        ),
+        parsed=parsed,
+        invoice=invoice,
+        confirmed_dt="DT-12",
+    )
+    assert result.passed is True
+    assert "line_items" not in result.missing_gate_fields
+    assert "line_items" in result.skipped_fields_present_after_merge
