@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
 import { useAuth } from "@/context/AuthContext";
 import { PUBLIC_SIGNUP_PATH } from "@/lib/publicSignupRoutes";
@@ -9,6 +9,15 @@ import { Eye, EyeOff } from "lucide-react";
 type Step = "credentials" | "otp" | "pick-tenant";
 
 export function LoginPage() {
+  const location = useLocation();
+  const signupMessage =
+    location.state &&
+    typeof location.state === "object" &&
+    "signupMessage" in location.state &&
+    typeof location.state.signupMessage === "string"
+      ? location.state.signupMessage
+      : null;
+
   const {
     user,
     loading,
@@ -22,7 +31,18 @@ export function LoginPage() {
   const [step, setStep] = useState<Step>("credentials");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => {
+    const state = location.state;
+    if (
+      state &&
+      typeof state === "object" &&
+      "email" in state &&
+      typeof state.email === "string"
+    ) {
+      return state.email;
+    }
+    return "";
+  });
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -104,6 +124,11 @@ export function LoginPage() {
 
       {!loading && step === "credentials" && (
         <form onSubmit={onCredentials} className="auth-form">
+          {signupMessage ? (
+            <p className="auth-success" role="status">
+              {signupMessage}
+            </p>
+          ) : null}
           <input
             type="email"
             className="auth-input"
