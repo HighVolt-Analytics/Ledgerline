@@ -25,6 +25,15 @@ describe("invite API path tenant exemption", () => {
     expect(isTenantScopedApiPath("/api/mailboxes/invites/authorize?token=abc")).toBe(false);
   });
 
+  it("does not require tenant scope for public billing signup checkout", () => {
+    expect(isTenantScopedApiPath("/api/billing/signup/checkout")).toBe(false);
+    expect(isTenantScopedApiPath("/api/billing/signup/status/cs_test_123")).toBe(false);
+  });
+
+  it("does not require tenant scope for public billing plans catalogue", () => {
+    expect(isTenantScopedApiPath("/api/billing/plans?country=AU")).toBe(false);
+  });
+
   it("still requires tenant scope for normal API paths", () => {
     expect(isTenantScopedApiPath("/api/invoices")).toBe(true);
     expect(isTenantScopedApiPath("/api/tenants/current/members/invite")).toBe(true);

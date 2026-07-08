@@ -167,6 +167,7 @@ async def post_signup_checkout(
         industry=body.industry,
         full_name=body.full_name,
         signup_token=body.signup_token,
+        signup_source=body.signup_source,
     )
     await db.commit()
     return ApiEnvelope(data=_checkout_response(result))

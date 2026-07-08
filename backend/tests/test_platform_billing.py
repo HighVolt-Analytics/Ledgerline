@@ -1,4 +1,4 @@
-"""Platform Stripe billing — plan catalogue and webhook idempotency."""
+"""Platform Stripe billing — plan catalogue, webhook idempotency, public signup validation."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models.credit_ledger import CreditLedgerEntry
@@ -22,12 +23,40 @@ from app.services.credit_catalog import (
 )
 from app.services.credit_service import grant_credits_idempotent
 from app.services.payments.stripe_platform_billing_service import (
+    SIGNUP_SOURCE_PUBLIC,
     SIGNUP_STATUS_COMPLETED,
     SIGNUP_STATUS_PENDING,
     _handle_checkout_completed,
     _handle_invoice_paid,
+    _validate_signup_request,
 )
 from tests.conftest import TESTING_TENANT_UUID
+
+
+def test_validate_public_signup_allows_no_token() -> None:
+    _validate_signup_request(
+        email="user@example.com",
+        password="password123",
+        organisation_name="Acme",
+        country="AU",
+        plan_code=PLAN_FREE,
+        signup_source=SIGNUP_SOURCE_PUBLIC,
+        signup_token=None,
+    )
+
+
+def test_validate_public_signup_rejects_token() -> None:
+    with pytest.raises(HTTPException) as exc:
+        _validate_signup_request(
+            email="user@example.com",
+            password="password123",
+            organisation_name="Acme",
+            country="AU",
+            plan_code=PLAN_FREE,
+            signup_source=SIGNUP_SOURCE_PUBLIC,
+            signup_token="extra",
+        )
+    assert exc.value.status_code == 400
 
 
 def test_pricing_region_for_country_mapping() -> None:

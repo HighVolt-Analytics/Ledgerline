@@ -175,8 +175,13 @@ const TENANT_EXEMPT_API_PATHS = new Set([
   "/api/auth/refresh",
 ]);
 
-/** Public invite accept flows (no tenant session). */
-const TENANT_EXEMPT_API_PREFIXES = ["/api/auth/invite/", "/api/mailboxes/invites/"];
+/** Public invite accept and billing signup flows (no tenant session). */
+const TENANT_EXEMPT_API_PREFIXES = [
+  "/api/auth/invite/",
+  "/api/mailboxes/invites/",
+  "/api/billing/signup/",
+  "/api/billing/plans",
+];
 
 export function apiPathWithoutQuery(path: string): string {
   return path.split("?")[0] ?? path;

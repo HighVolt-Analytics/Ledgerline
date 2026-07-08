@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class PlanInfo(BaseModel):
@@ -91,7 +91,7 @@ class BillingPlansResponse(BaseModel):
 
 
 class BillingSignupCheckoutRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
+    email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     organisation_name: str = Field(min_length=1, max_length=255)
     country: str = Field(min_length=2, max_length=2)
@@ -99,6 +99,7 @@ class BillingSignupCheckoutRequest(BaseModel):
     industry: str | None = Field(default=None, max_length=64)
     full_name: str | None = Field(default=None, max_length=255)
     signup_token: str | None = Field(default=None, max_length=128)
+    signup_source: str = Field(default="public", pattern=r"^(public|invite)$")
 
 
 class BillingTopUpCheckoutRequest(BaseModel):

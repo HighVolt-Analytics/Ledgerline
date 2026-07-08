@@ -36,6 +36,7 @@ export default defineConfig({
       "src/lib/tenantSession.test.ts",
       "src/lib/uploadColumnState.test.ts",
       "src/lib/pageTenantIsolation.test.ts",
+      "src/lib/publicSignupRoutes.test.ts",
       "src/api/client.test.ts",
       "src/api/clientInvitePaths.test.ts",
     ],
