@@ -52,7 +52,7 @@ export function EvaluationStatusBadge({
   reviewReasons?: string[];
   invoice?: EvaluationStatusBadgeInvoice;
 }) {
-  const label = status ? evaluationStatusLabel(status) : "—";
+  const label = status ? evaluationStatusLabel(status, invoice?.route_target) : "—";
   const title = invoice
     ? evaluationReviewTooltip({ ...invoice, evaluation_status: status ?? invoice.evaluation_status }, reviewReasons)
     : evaluationReviewTooltip({ evaluation_status: status }, reviewReasons);

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+import re
+from dataclasses import dataclass, replace
 from typing import Any, TYPE_CHECKING
 
 from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.classification.document_type_field_keys import (
     CANONICAL_EXTRACTION_FIELD_KEYS,
+    INFRASTRUCTURE_EXTRACTION_FIELD_KEYS,
     is_valid_extraction_field_key,
 )
 from app.services.invoice.invoice_data import InvoiceData
@@ -19,6 +21,68 @@ if TYPE_CHECKING:
     from app.schemas.ocr_artifact import OcrArtifact
 
 _BANK_DETAILS_LLM_KEYS: tuple[str, ...] = ("bank_bsb", "bank_account", "bank_name")
+
+# Top-level InvoiceData / invoice column attributes keyed by extraction field name.
+INVOICE_SCALAR_ATTRS: frozenset[str] = frozenset(
+    {
+        "vendor",
+        "abn",
+        "invoice_no",
+        "invoice_date",
+        "due_date",
+        "po_reference",
+        "cost_centre",
+        "subtotal",
+        "gst",
+        "gst_rate",
+        "total",
+        "currency",
+        "billing_address",
+        "bank_bsb",
+        "bank_account",
+        "document_heading",
+    }
+)
+
+# Canonical keys persisted in invoice.extracted_fields (not top-level InvoiceData attrs).
+EXTRACTED_ONLY_ATTRS: frozenset[str] = frozenset(
+    {
+        "seller_name",
+        "seller_tax_id",
+        "seller_address",
+        "seller_abn",
+        "buyer_name",
+        "buyer_tax_id",
+        "buyer_address",
+        "buyer_abn",
+        "so_reference",
+        "account_code",
+        "account_name",
+        "bank_name",
+        "bank_details",
+    }
+)
+
+INFRASTRUCTURE_ATTRS: frozenset[str] = INFRASTRUCTURE_EXTRACTION_FIELD_KEYS | frozenset(
+    {"email_subject"}
+)
+
+# Party fields the LLM should populate via seller/buyer objects, not bogus top-level keys.
+PARTY_FIELD_KEYS: frozenset[str] = frozenset(
+    {
+        "seller_name",
+        "seller_tax_id",
+        "seller_address",
+        "seller_abn",
+        "buyer_name",
+        "buyer_tax_id",
+        "buyer_address",
+        "buyer_abn",
+    }
+)
+
+# Backward-compatible alias used by filter_parsed_to_requested_keys.
+_SCALAR_INVOICE_ATTRS = INVOICE_SCALAR_ATTRS
 
 
 def _normalized_keys_from_definition(defn: DocumentTypeDefinition) -> list[str]:
@@ -51,6 +115,14 @@ def _shipped_defaults_for_definition(defn: DocumentTypeDefinition) -> list[str]:
     return []
 
 
+def configured_extraction_keys(defn: DocumentTypeDefinition) -> list[str]:
+    """Resolved extraction keys for one document type definition."""
+    keys = _normalized_keys_from_definition(defn)
+    if keys:
+        return keys
+    return _shipped_defaults_for_definition(defn)
+
+
 def effective_extraction_field_keys_for_dt(
     document_types: Sequence[DocumentTypeDefinition],
     dt_code: str,
@@ -64,11 +136,35 @@ def effective_extraction_field_keys_for_dt(
             continue
         if (defn.code or "").strip().upper() != code:
             continue
-        keys = _normalized_keys_from_definition(defn)
-        if keys:
-            return keys
-        return _shipped_defaults_for_definition(defn)
+        return configured_extraction_keys(defn)
     return []
+
+
+def label_value_backfill_keys(
+    selected_keys: Sequence[str],
+    *,
+    parsed: InvoiceData | None = None,
+) -> list[str]:
+    """Configured keys eligible for OCR label:value regex backfill."""
+    out: list[str] = []
+    seen: set[str] = set()
+    extracted = extracted_fields_from_parsed(parsed) if parsed is not None else {}
+    for raw in selected_keys:
+        token = str(raw or "").strip().lower()
+        if not token or token in seen or not is_valid_extraction_field_key(token):
+            continue
+        if token in INFRASTRUCTURE_ATTRS or token == "line_items":
+            continue
+        if token in INVOICE_SCALAR_ATTRS:
+            if parsed is not None:
+                current = getattr(parsed, token, None)
+                if current is not None and str(current).strip():
+                    continue
+        elif token in extracted and extracted[token]:
+            continue
+        seen.add(token)
+        out.append(token)
+    return out
 
 
 def effective_extraction_field_keys_union(
@@ -238,7 +334,9 @@ def custom_extraction_fields_prompt_lines(descriptors: list[dict[str, str]]) -> 
         "put string values in extracted_fields or as top-level keys; do not invent values):",
     ]
     for row in descriptors:
-        lines.append(f'- key `{row["key"]}` — label "{row["label"]}"')
+        hint = row.get("hint") or _field_hint_for_key(row["key"])
+        lines.append(f'- key `{row["key"]}` — label "{row["label"]}" — look for: {hint}')
+    lines.extend(extraction_accuracy_prompt_lines())
     return lines
 
 
@@ -276,28 +374,6 @@ _FIELD_HINT_PATTERNS: dict[str, str] = {
 
 _SMART_EXCERPT_HEAD = 8000
 _SMART_EXCERPT_TAIL = 4000
-
-# Top-level InvoiceData attributes keyed by extraction field name.
-_SCALAR_INVOICE_ATTRS: frozenset[str] = frozenset(
-    {
-        "vendor",
-        "abn",
-        "invoice_no",
-        "invoice_date",
-        "due_date",
-        "po_reference",
-        "cost_centre",
-        "subtotal",
-        "gst",
-        "gst_rate",
-        "total",
-        "currency",
-        "billing_address",
-        "bank_bsb",
-        "bank_account",
-        "document_heading",
-    }
-)
 
 
 def build_smart_ocr_excerpt(
@@ -363,13 +439,28 @@ def extraction_field_manifest_prompt_lines(manifest: list[dict[str, str]]) -> li
     ]
     for row in manifest:
         lines.append(f'- `{row["key"]}` ({row["label"]}) — look for: {row["hint"]}')
+    lines.extend(extraction_accuracy_prompt_lines())
     lines.extend(
         [
             "- Put custom (non-canonical) string values in extracted_fields.{key} or as a top-level key.",
-            "- field_confidence must include every manifest key; use 0.0 when the field is empty.",
         ]
     )
     return lines
+
+
+def extraction_accuracy_prompt_lines() -> list[str]:
+    """Shared conservative OCR-only rules for primary extract and gap-fill prompts."""
+    return [
+        "",
+        "Accuracy rules (mandatory):",
+        "- Copy values verbatim from OCR only; empty is correct when a field is absent — never invent to satisfy the manifest.",
+        "- If a value is not explicitly printed in ocr.text_excerpt or field_snippets, leave the field empty.",
+        "- Never default currency (e.g. AUD), assume tax rates, or calculate totals from other fields.",
+        "- Never swap semantically similar fields (invoice_no ≠ po_reference, vendor ≠ buyer).",
+        "- field_confidence: 0.0 when empty; 0.95+ only for verbatim OCR copies.",
+        "- Example: if you see 'Tax Invoice' but no invoice number label, invoice_no stays empty.",
+        "- Example: if project_code is not labeled in OCR, do not infer it from PO or line items.",
+    ]
 
 
 _DI_SCALAR_FIELD_KEYS: tuple[str, ...] = (
@@ -830,7 +921,9 @@ def filter_invoice_fields_for_keys(
 
 
 def _field_in_selected_keys(field_name: str, selected_keys: Sequence[str]) -> bool:
-    selected = {str(k).strip().lower() for k in selected_keys}
+    selected = {str(k).strip().lower() for k in selected_keys if str(k or "").strip()}
+    if not selected:
+        return True
     token = field_name.strip().lower()
     if token in selected:
         return True
@@ -1009,15 +1102,54 @@ _LLM_RESERVED_RAW_KEYS = frozenset(
 )
 
 
+def harvest_configured_fields_from_llm_raw(
+    raw: dict[str, Any] | None,
+    *,
+    selected_keys: Sequence[str],
+) -> dict[str, str]:
+    """Harvest configured extraction keys from LLM JSON into extracted_fields."""
+    if not isinstance(raw, dict) or not selected_keys:
+        return {}
+    nested = raw.get("extracted_fields")
+    nested_map = normalize_extracted_fields_map(nested) if isinstance(nested, dict) else {}
+    out: dict[str, str] = dict(nested_map)
+    selected = {str(k).strip().lower() for k in selected_keys if str(k or "").strip()}
+
+    for token in selected:
+        if not token or not is_valid_extraction_field_key(token):
+            continue
+        if token in INFRASTRUCTURE_ATTRS or token == "line_items":
+            continue
+        if token in out:
+            continue
+        if token in PARTY_FIELD_KEYS:
+            continue
+        if token in INVOICE_SCALAR_ATTRS:
+            continue
+        value: str | None = None
+        if isinstance(nested, dict) and nested.get(token) not in (None, "", {}):
+            value = str(nested.get(token)).strip()
+        elif token in raw and raw[token] not in (None, "", {}):
+            candidate = raw[token]
+            if not isinstance(candidate, (dict, list)):
+                value = str(candidate).strip()
+        if value:
+            out[token] = value
+    return {k: v for k, v in out.items() if k in selected}
+
+
 def harvest_custom_fields_from_llm_raw(
     raw: dict[str, Any] | None,
     *,
     custom_keys: Sequence[str] | None = None,
+    selected_keys: Sequence[str] | None = None,
 ) -> dict[str, str]:
     """Collect user-defined field values from LLM JSON (nested or top-level)."""
     if not isinstance(raw, dict):
         return {}
+    configured = harvest_configured_fields_from_llm_raw(raw, selected_keys=selected_keys or ())
     extracted = normalize_extracted_fields_map(raw.get("extracted_fields"))
+    extracted = merge_extracted_field_maps(extracted, configured)
     for key in custom_keys or []:
         token = key.strip().lower()
         if not token or token in extracted:
@@ -1028,17 +1160,23 @@ def harvest_custom_fields_from_llm_raw(
             continue
         if token in raw and raw[token] not in (None, "", {}):
             extracted[token] = str(raw[token]).strip()
+    selected = {str(k).strip().lower() for k in (selected_keys or ())}
     for key, value in raw.items():
         token = str(key or "").strip().lower()
         if not token or token in _LLM_RESERVED_RAW_KEYS:
             continue
         if token in CANONICAL_EXTRACTION_FIELD_KEYS:
-            continue
+            if not selected or token not in selected:
+                continue
+            if token in INVOICE_SCALAR_ATTRS or token in PARTY_FIELD_KEYS:
+                continue
         if not is_valid_extraction_field_key(token) or token in extracted:
             continue
         text = str(value or "").strip()
         if text:
             extracted[token] = text
+    if selected:
+        extracted = {k: v for k, v in extracted.items() if k in selected}
     return extracted
 
 
@@ -1048,6 +1186,223 @@ def _scalar_empty(value: object) -> bool:
     if isinstance(value, str):
         return not value.strip()
     return False
+
+
+def extraction_field_present_on_parsed(key: str, parsed: InvoiceData) -> bool:
+    """True when a configured extraction key has a non-empty value on parsed data."""
+    token = key.strip().lower()
+    if not token:
+        return False
+    if token == "line_items":
+        return bool(parsed.line_items)
+    if token in INVOICE_SCALAR_ATTRS:
+        val = getattr(parsed, token, None)
+        if token == "currency":
+            return bool(str(val or "").strip())
+        if token in ("invoice_date", "due_date", "subtotal", "gst", "gst_rate", "total"):
+            return val is not None
+        return val is not None and str(val).strip()
+    if token == "bank_details":
+        return bool((parsed.bank_bsb or "").strip() or (parsed.bank_account or "").strip())
+    custom = extracted_fields_from_parsed(parsed)
+    return bool(custom.get(token))
+
+
+def extraction_field_present(
+    key: str,
+    *,
+    parsed: InvoiceData,
+    invoice: Invoice | None = None,
+) -> bool:
+    """Presence check using invoice+parsed when available, else parsed only."""
+    if invoice is not None:
+        from app.services.classification.document_type_field_checks import field_is_present
+        from app.services.classification.document_type_rule_engine import build_document_classifier_context
+
+        ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
+        return field_is_present(key, invoice=invoice, parsed=parsed, ctx=ctx)
+    return extraction_field_present_on_parsed(key, parsed)
+
+
+def missing_configured_extraction_keys(
+    selected_keys: Sequence[str],
+    *,
+    parsed: InvoiceData,
+    invoice: Invoice | None = None,
+) -> list[str]:
+    """Configured extraction keys still empty after main extract + OCR enrich."""
+    missing: list[str] = []
+    for raw in selected_keys:
+        token = str(raw or "").strip().lower()
+        if not token or not is_valid_extraction_field_key(token):
+            continue
+        if token in INFRASTRUCTURE_ATTRS or token == "line_items":
+            continue
+        if not extraction_field_present(token, parsed=parsed, invoice=invoice):
+            missing.append(token)
+    return missing
+
+
+_SNIPPET_CONTEXT_LINES = 4
+
+
+def build_field_ocr_snippets(text: str | None, keys: Sequence[str]) -> dict[str, str]:
+    """Per-field OCR context windows for gap-fill prompts."""
+    body = (text or "").strip()
+    if not body or not keys:
+        return {}
+    lines = body.splitlines()
+    fallback = build_smart_ocr_excerpt(body)[:2000]
+    out: dict[str, str] = {}
+    for raw_key in keys:
+        token = str(raw_key or "").strip().lower()
+        if not token or token in out:
+            continue
+        from app.services.extraction.finance_field_labels import MONEY_SCALAR_KEYS
+
+        if token in MONEY_SCALAR_KEYS:
+            tail = body[-1500:] if len(body) > 1500 else body
+            label = extraction_field_label(token)
+            hint = _FIELD_HINT_PATTERNS.get(token, label)
+            search_terms = [label, token.replace("_", " ")]
+            if hint and hint not in search_terms:
+                search_terms.append(hint)
+            snippet_lines: list[str] = []
+            for index, line in enumerate(lines):
+                line_lower = line.lower()
+                if any(term.lower() in line_lower for term in search_terms if term):
+                    start = max(0, index - _SNIPPET_CONTEXT_LINES)
+                    end = min(len(lines), index + _SNIPPET_CONTEXT_LINES + 1)
+                    snippet_lines = lines[start:end]
+                    break
+            if snippet_lines:
+                out[token] = "\n".join(snippet_lines).strip()
+            else:
+                out[token] = tail.strip() or fallback
+            continue
+        label = extraction_field_label(token)
+        hint = _FIELD_HINT_PATTERNS.get(token, label)
+        search_terms = [label, token.replace("_", " ")]
+        if hint and hint not in search_terms:
+            search_terms.append(hint)
+        snippet_lines: list[str] = []
+        for index, line in enumerate(lines):
+            line_lower = line.lower()
+            if any(term.lower() in line_lower for term in search_terms if term):
+                start = max(0, index - _SNIPPET_CONTEXT_LINES)
+                end = min(len(lines), index + _SNIPPET_CONTEXT_LINES + 1)
+                snippet_lines = lines[start:end]
+                break
+        if not snippet_lines and token in _FIELD_HINT_PATTERNS:
+            for part in re.split(r",\s*", _FIELD_HINT_PATTERNS[token]):
+                part = part.strip()
+                if not part:
+                    continue
+                for index, line in enumerate(lines):
+                    if part.lower() in line.lower():
+                        start = max(0, index - _SNIPPET_CONTEXT_LINES)
+                        end = min(len(lines), index + _SNIPPET_CONTEXT_LINES + 1)
+                        snippet_lines = lines[start:end]
+                        break
+                if snippet_lines:
+                    break
+        out[token] = "\n".join(snippet_lines).strip() if snippet_lines else fallback
+    return out
+
+
+def gap_fill_field_descriptors(keys: Sequence[str]) -> list[dict[str, str]]:
+    """Per-field label/hint rows for gap-fill prompts."""
+    return build_extraction_field_manifest(keys)
+
+
+@dataclass(frozen=True)
+class GapFillMergeResult:
+    parsed: InvoiceData
+    filled: tuple[str, ...]
+    rejected: tuple[str, ...]
+
+
+def _scalar_grounded_for_gap_fill(key: str, value: object, ocr_text: str | None) -> bool:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.extraction.field_grounding_service import (
+        _date_grounded_in_ocr,
+        _money_grounded_in_ocr,
+        value_grounded_in_ocr,
+    )
+
+    if _scalar_empty(value):
+        return False
+    if key in ("invoice_date", "due_date"):
+        if isinstance(value, date):
+            return _date_grounded_in_ocr(value, ocr_text)
+        return False
+    if key in ("subtotal", "gst", "gst_rate", "total"):
+        amount = value if isinstance(value, Decimal) else value
+        return _money_grounded_in_ocr(amount, ocr_text, field_key=key)
+    if key == "currency":
+        return value_grounded_in_ocr(str(value), ocr_text)
+    return value_grounded_in_ocr(str(value), ocr_text)
+
+
+def merge_gap_fill_into_parsed(
+    parsed: InvoiceData,
+    gap: InvoiceData,
+    *,
+    missing_keys: Sequence[str],
+    ocr_text: str | None,
+) -> GapFillMergeResult:
+    """Merge gap-fill values into empty fields only; reject ungrounded values."""
+    from app.services.extraction.field_grounding_service import ground_extracted_fields_map
+
+    missing = [str(k).strip().lower() for k in missing_keys if str(k or "").strip()]
+    if not missing:
+        return GapFillMergeResult(parsed=parsed, filled=(), rejected=())
+
+    filled: list[str] = []
+    rejected: list[str] = []
+    updates: dict[str, object] = {}
+    extracted = dict(extracted_fields_from_parsed(parsed))
+    gap_extracted = dict(extracted_fields_from_parsed(gap))
+
+    for key in missing:
+        if extraction_field_present_on_parsed(key, parsed):
+            continue
+        if key in INVOICE_SCALAR_ATTRS:
+            candidate = getattr(gap, key, None)
+            if _scalar_empty(candidate):
+                continue
+            if not _scalar_grounded_for_gap_fill(key, candidate, ocr_text):
+                rejected.append(key)
+                continue
+            updates[key] = candidate
+            filled.append(key)
+            continue
+        if key in PARTY_FIELD_KEYS or key in EXTRACTED_ONLY_ATTRS or key not in CANONICAL_EXTRACTION_FIELD_KEYS:
+            candidate = gap_extracted.get(key)
+            if not candidate:
+                continue
+            grounded = ground_extracted_fields_map(
+                {key: candidate},
+                ocr_text,
+                requested_keys=[key],
+            )
+            if not grounded.get(key):
+                rejected.append(key)
+                continue
+            extracted[key] = grounded[key]
+            filled.append(key)
+
+    if extracted != extracted_fields_from_parsed(parsed):
+        updates["extracted_fields"] = extracted
+    if not updates:
+        return GapFillMergeResult(parsed=parsed, filled=tuple(filled), rejected=tuple(rejected))
+    return GapFillMergeResult(
+        parsed=replace(parsed, **updates),
+        filled=tuple(filled),
+        rejected=tuple(rejected),
+    )
 
 
 def enrich_parsed_from_ocr(

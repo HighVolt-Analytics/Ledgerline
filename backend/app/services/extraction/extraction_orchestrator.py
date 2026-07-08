@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, TYPE_CHECKING
 
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.extraction.custom_field_ocr_extractors import extract_custom_fields_from_text
+from app.services.extraction.custom_field_ocr_extractors import extract_label_value_fields_from_text
 from app.services.extraction.extraction_field_values import (
     apply_di_scalars_authoritative,
     clear_llm_scalars_for_di_populated_fields,
@@ -16,9 +16,10 @@ from app.services.extraction.extraction_field_values import (
     di_scalar_fields_populated,
     effective_extraction_field_keys_for_dt,
     extracted_fields_from_parsed,
+    EXTRACTED_ONLY_ATTRS,
     harvest_custom_fields_from_llm_raw,
+    label_value_backfill_keys,
     merge_extracted_field_maps,
-    non_canonical_extraction_keys,
     prebuilt_invoice_scalars_active,
 )
 from app.services.extraction.layout_field_extractor import extract_key_value_fields
@@ -62,6 +63,7 @@ _SCALAR_FILL_FIELDS = (
     "po_reference",
     "subtotal",
     "gst",
+    "gst_rate",
     "total",
     "currency",
     "billing_address",
@@ -217,7 +219,7 @@ def _value_grounded_for_field(field_name: str, value: object, ocr_text: str | No
         return False
     if field_name in ("subtotal", "gst", "total", "gst_rate"):
         amount = value if isinstance(value, Decimal) else _parse_decimal(value)
-        return _money_grounded_in_ocr(amount, ocr_text)
+        return _money_grounded_in_ocr(amount, ocr_text, field_key=field_name)
     if field_name in ("invoice_date", "due_date"):
         if isinstance(value, date):
             return _date_grounded_in_ocr(value, ocr_text)
@@ -328,6 +330,34 @@ def _apply_layout_kv(
     return data
 
 
+def _apply_configured_extracted_fields(
+    data: InvoiceData,
+    kv: dict[str, str],
+    *,
+    configured: set[str],
+    ocr_text: str | None = None,
+) -> InvoiceData:
+    """Merge layout/OCR KV values into extracted_fields for configured extracted-only keys."""
+    if not kv or not configured:
+        return data
+    extracted = dict(extracted_fields_from_parsed(data))
+    updates: dict[str, str] = {}
+    for key in EXTRACTED_ONLY_ATTRS:
+        if not _field_configured(key, configured):
+            continue
+        if extracted.get(key):
+            continue
+        candidate = (kv.get(key) or "").strip()
+        if not candidate:
+            continue
+        if ocr_text and not value_grounded_in_ocr(candidate, ocr_text):
+            continue
+        updates[key] = candidate
+    if not updates:
+        return data
+    return replace(data, extracted_fields=merge_extracted_field_maps(extracted, updates))
+
+
 def _apply_absent_fields(
     data: InvoiceData,
     dt_definition: DocumentTypeDefinition | None,
@@ -404,6 +434,50 @@ def _configured_scalar_fill_fields(
     return tuple(allowed)
 
 
+def _di_grounding_skip_keys(data: InvoiceData, ocr_text: str | None, di_populated: set[str]) -> frozenset[str]:
+    """DI-populated keys that survive OCR grounding — skip re-clearing those."""
+    skip: set[str] = set()
+    for key in di_populated:
+        if key in ("invoice_no", "po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
+            current = getattr(data, key, None)
+            if current and value_grounded_in_ocr(str(current), ocr_text):
+                skip.add(key)
+        elif key == "invoice_date" and data.invoice_date is not None and _date_grounded_in_ocr(
+            data.invoice_date, ocr_text
+        ):
+            skip.add(key)
+        elif key == "due_date" and data.due_date is not None and _date_grounded_in_ocr(
+            data.due_date, ocr_text
+        ):
+            skip.add(key)
+        elif key in ("subtotal", "gst", "total"):
+            current = getattr(data, key, None)
+            if current is not None and _money_grounded_in_ocr(current, ocr_text, field_key=key):
+                skip.add(key)
+        elif key == "currency":
+            currency = (data.currency or "").strip()
+            if currency and value_grounded_in_ocr(currency, ocr_text):
+                skip.add(key)
+        elif key == "abn":
+            abn_raw = (data.abn or "").strip()
+            if abn_raw and value_grounded_in_ocr(abn_raw, ocr_text):
+                skip.add(key)
+    return frozenset(skip)
+
+
+def _llm_line_items_trusted(items: list[ParsedLineItem], ocr_text: str | None) -> bool:
+    """True when every LLM line item has a full qty/price/amount (prefer over DI table)."""
+    _ = ocr_text
+    if not items:
+        return False
+    for item in items:
+        if not (item.description or "").strip():
+            return False
+        if item.qty is None or item.unit_price is None or item.amount is None:
+            return False
+    return True
+
+
 def merge_extraction_sources(
     parsed: InvoiceData,
     ocr: OcrArtifact,
@@ -451,6 +525,40 @@ def merge_extraction_sources(
         ocr_text=text,
         skip_fields=skip_layout,
     )
+    merged = _apply_configured_extracted_fields(
+        merged,
+        kv,
+        configured=configured_keys,
+        ocr_text=text,
+    )
+
+    from app.services.extraction.finance_field_labels import MONEY_SCALAR_KEYS
+    from app.services.extraction.money_scalar_resolver import (
+        extract_money_scalars_from_payload_tables,
+        extract_money_scalars_from_text,
+    )
+
+    if text:
+        money_keys = [
+            key
+            for key in MONEY_SCALAR_KEYS
+            if key != "gst_rate" and _field_configured(key, configured_keys)
+        ]
+        if money_keys:
+            money_candidates: dict[str, Decimal] = {}
+            money_candidates.update(extract_money_scalars_from_payload_tables(payload, keys=money_keys))
+            money_candidates.update(extract_money_scalars_from_text(text, keys=money_keys))
+            money_fill: dict[str, object] = {}
+            for key, amount in money_candidates.items():
+                if key in di_populated:
+                    continue
+                current = getattr(merged, key, None)
+                if not _scalar_empty(current):
+                    continue
+                if _value_grounded_for_field(key, amount, text):
+                    money_fill[key] = amount
+            if money_fill:
+                merged = replace(merged, **money_fill)
 
     if text:
         local = parse_local_text(text)
@@ -470,8 +578,10 @@ def merge_extraction_sources(
         if merge_line_items:
             payload_dict = dict(ocr.payload_json or {})
             di_rows = resolve_line_items_from_ocr_payload(payload_dict)
-            if di_rows is not None:
+            if di_rows is not None and not _llm_line_items_trusted(merged.line_items, text):
                 merged_items = list(di_rows)
+            elif di_rows is not None:
+                merged_items = list(merged.line_items)
             elif document_has_product_table(text, payload_dict):
                 merged_items = list(merged.line_items)
             elif document_has_charge_lines(text):
@@ -510,15 +620,17 @@ def merge_extraction_sources(
         if text and configured_keys & {"permit_no", "consignment_ref"}
         else {}
     )
-    dt_custom_keys: list[str] = []
-    if dt_definition is not None:
-        dt_custom_keys = non_canonical_extraction_keys(list(configured_keys))
-    ocr_custom = extract_custom_fields_from_text(text, dt_custom_keys) if text else {}
-    ocr_custom = ground_extracted_fields_map(ocr_custom, text, requested_keys=dt_custom_keys)
+    backfill_keys = label_value_backfill_keys(selected_keys_list, parsed=merged)
+    ocr_label_fields = extract_label_value_fields_from_text(text, backfill_keys) if text else {}
+    ocr_label_fields = ground_extracted_fields_map(
+        ocr_label_fields,
+        text,
+        requested_keys=backfill_keys,
+    )
     merged_extracted = merge_extracted_field_maps(
         extracted_fields_from_parsed(merged),
         permit_fields,
-        ocr_custom,
+        ocr_label_fields,
     )
     if merged_extracted:
         merged = replace(merged, extracted_fields=merged_extracted)
@@ -531,7 +643,11 @@ def merge_extraction_sources(
     merged = post_process_parsed_data(merged, text, dt_definition=dt_definition)
     if di_populated:
         merged = apply_di_scalars_authoritative(merged, payload, selected_keys_list)
-    merged = ground_invoice_scalars(merged, text)
+    merged = ground_invoice_scalars(
+        merged,
+        text,
+        skip_keys=_di_grounding_skip_keys(merged, text, di_populated),
+    )
     merged = _apply_absent_fields(merged, dt_definition)
 
     from app.services.extraction.party_field_service import sanitize_address

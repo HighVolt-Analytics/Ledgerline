@@ -189,3 +189,47 @@ def test_extract_line_items_skips_tables_without_headers() -> None:
     )
     items = extract_line_items_from_tables(layout)
     assert items == []
+
+
+def test_merge_extraction_fills_total_from_table_summary_row() -> None:
+    from decimal import Decimal
+
+    from app.schemas.ocr_artifact import OcrArtifact
+    from app.services.extraction.extraction_orchestrator import merge_extraction_sources
+    from app.services.invoice.invoice_data import InvoiceData
+
+    layout = DocumentLayoutResult(
+        tables=(
+            LayoutTable(
+                page_index=0,
+                row_count=3,
+                column_count=2,
+                cells=(
+                    LayoutTableCell("Description", 0, 0),
+                    LayoutTableCell("Amount", 0, 1),
+                    LayoutTableCell("Service fee", 1, 0),
+                    LayoutTableCell("100.00", 1, 1),
+                    LayoutTableCell("Balance due", 2, 0),
+                    LayoutTableCell("110.00", 2, 1),
+                ),
+            ),
+        )
+    )
+    text = "Vendor: Acme\nInvoice No: INV-1\nBalance due\n110.00"
+    ocr = OcrArtifact(
+        success=True,
+        text=text,
+        text_length=len(text),
+        payload_json={
+            "layout_table_grids": [
+                [
+                    ["Description", "Amount"],
+                    ["Service fee", "100.00"],
+                    ["Balance due", "110.00"],
+                ]
+            ],
+        },
+    )
+    parsed = InvoiceData(document_text=text)
+    merged = merge_extraction_sources(parsed, ocr)
+    assert merged.total == Decimal("110.00")

@@ -160,6 +160,27 @@ def _summarize_vendor_cleared(detail: dict[str, Any]) -> str:
     return label.capitalize() if label else "Vendor registration check passed"
 
 
+def _summarize_customer_cleared(detail: dict[str, Any]) -> str:
+    customer = str(detail.get("customer") or detail.get("vendor") or "").strip()
+    reason = str(detail.get("reason") or "").strip()
+    labels = {
+        "customer_in_master": "registered customer master match",
+        "confidence_above_threshold": "customer confidence above threshold",
+    }
+    label = labels.get(reason, reason.replace("_", " ") if reason else "customer check passed")
+    if customer:
+        return f"{customer}: {label}"
+    return label.capitalize() if label else "Customer registration check passed"
+
+
+def _summarize_customer_waived(detail: dict[str, Any]) -> str:
+    reason = str(detail.get("reason") or "").strip()
+    labels = {
+        "registration_not_required": "VR12 not required for this sales document",
+    }
+    return labels.get(reason, reason.replace("_", " ") if reason else "Customer hold not required")
+
+
 def _summarize_vendor_waived(detail: dict[str, Any]) -> str:
     reason = str(detail.get("reason") or "").strip()
     labels = {
@@ -314,6 +335,10 @@ def summarize_audit_change(
         return _summarize_vendor_hold(d)
     if event == "customer_registration_hold":
         return _summarize_customer_hold(d)
+    if event == "customer_registration_cleared":
+        return _summarize_customer_cleared(d)
+    if event == "customer_registration_waived":
+        return _summarize_customer_waived(d)
     if event == "vendor_registration_cleared":
         return _summarize_vendor_cleared(d)
     if event == "vendor_registration_waived":

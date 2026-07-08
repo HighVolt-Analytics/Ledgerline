@@ -27,9 +27,10 @@ export function CustomersTab({
   return (
     <div className="space-y-4" data-testid="customers-tab">
       <Card className="p-3 text-sm text-muted-foreground">
-        Customers are split into two layers: <strong>masters</strong> (GL, aliases, billing for
-        sales routing) and <strong>capture registry</strong> (email sender patterns for inbound
-        documents). Both are needed for full sales automation.
+        Customers use two layers: <strong>masters</strong> (GL, aliases, billing — drives VR12
+        registration holds) and <strong>capture registry</strong> (email sender patterns for blob
+        routing). Register unknown customers in masters; add capture registry rows manually or when
+        promoting from the pending queue (sender is copied from the source invoice).
       </Card>
 
       <PageTabs

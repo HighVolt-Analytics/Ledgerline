@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   extractionFieldKeyError,
   formatExtractionFieldKeyInput,
+  mergeRouteCompulsoryIntoConfig,
+  missingRouteRecommendations,
   reconcileExtractionFieldsForRoute,
+  routeCompulsoryBaseline,
   sanitizeExtractionFieldKey,
   splitExtractionFields,
   standardExtractionFieldsForRoute,
@@ -121,5 +124,50 @@ describe("reconcileExtractionFieldsForRoute", () => {
     expect(result.extractionFields).toEqual(["contract_party"]);
     expect(result.requiredFields).toEqual([]);
     expect(result.removedStandardFields).toEqual(["po_reference"]);
+  });
+});
+
+describe("routeCompulsoryBaseline", () => {
+  it("returns team money fields", () => {
+    expect(routeCompulsoryBaseline("Team Expenses")).toEqual(["subtotal", "gst", "total"]);
+  });
+
+  it("returns purchase baseline with subtotal and gst", () => {
+    expect(routeCompulsoryBaseline("Sales Management")).toEqual([
+      "vendor",
+      "subtotal",
+      "gst",
+      "total",
+      "due_date",
+    ]);
+  });
+
+  it("returns empty for vault", () => {
+    expect(routeCompulsoryBaseline("Vault")).toEqual([]);
+  });
+});
+
+describe("missingRouteRecommendations", () => {
+  it("lists route keys not yet starred", () => {
+    expect(
+      missingRouteRecommendations({
+        routeTarget: "Purchase Management",
+        requiredFields: ["vendor"],
+        extractionFields: ["vendor", "subtotal", "gst", "total", "due_date"],
+        transactional: true,
+      })
+    ).toEqual(["subtotal", "gst", "total", "due_date"]);
+  });
+});
+
+describe("mergeRouteCompulsoryIntoConfig", () => {
+  it("does not merge baseline for non-transactional drafts", () => {
+    const result = mergeRouteCompulsoryIntoConfig({
+      requiredFields: ["permit_no"],
+      extractionFields: ["vendor", "permit_no"],
+      routeTarget: "Purchase Management",
+      transactional: false,
+    });
+    expect(result.requiredFields).toEqual(["permit_no"]);
   });
 });

@@ -82,6 +82,86 @@ async def test_notifications_tenant_only_integration_error(
 
 
 @pytest.mark.asyncio
+async def test_notifications_vendor_registration_hold(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Unknown Supplier",
+        document_ref="INV-HOLD-1",
+        route_target="Purchase Management",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="pending_vendor",
+        currency="AUD",
+        file_hash="notif-vhold-1",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        AuditLog(
+            tenant_id=TESTING_TENANT_UUID,
+            event="vendor_registration_hold",
+            invoice_id=inv.id,
+            detail={
+                "vendor": "Unknown Supplier",
+                "vendor_confidence": 12.0,
+                "reason": "pending_vendor_registration",
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/notifications")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    row = next(item for item in data["items"] if item["event"] == "vendor_registration_hold")
+    assert row["severity"] == "action"
+    assert row["href"] == "/approvals"
+    assert "Unknown Supplier" in row["title"]
+
+
+@pytest.mark.asyncio
+async def test_notifications_customer_registration_hold(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Unknown Buyer",
+        document_ref="SO-HOLD-1",
+        route_target="Sales Management",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="pending_vendor",
+        currency="AUD",
+        file_hash="notif-chold-1",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        AuditLog(
+            tenant_id=TESTING_TENANT_UUID,
+            event="customer_registration_hold",
+            invoice_id=inv.id,
+            detail={
+                "customer": "Unknown Buyer",
+                "customer_confidence": 8.0,
+                "reason": "pending_customer_registration",
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/notifications")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    row = next(item for item in data["items"] if item["event"] == "customer_registration_hold")
+    assert row["severity"] == "action"
+    assert row["href"] == "/approvals"
+    assert "Unknown Buyer" in row["title"]
+
+
+@pytest.mark.asyncio
 async def test_notifications_mark_read(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

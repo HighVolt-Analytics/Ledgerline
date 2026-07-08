@@ -27,16 +27,16 @@ def _label_variants(key: str) -> list[str]:
     return out
 
 
-def extract_custom_fields_from_text(
+def extract_label_value_fields_from_text(
     text: str | None,
-    custom_keys: Sequence[str],
+    keys: Sequence[str],
 ) -> dict[str, str]:
-    """Best-effort label: value extraction for user-defined field keys."""
-    if not text or not str(text).strip() or not custom_keys:
+    """Best-effort label: value extraction for configured field keys."""
+    if not text or not str(text).strip() or not keys:
         return {}
     body = str(text)
     found: dict[str, str] = {}
-    for raw_key in custom_keys:
+    for raw_key in keys:
         key = str(raw_key or "").strip().lower()
         if not key or key in found:
             continue
@@ -50,3 +50,11 @@ def extract_custom_fields_from_text(
                 found[key] = value
                 break
     return found
+
+
+def extract_custom_fields_from_text(
+    text: str | None,
+    custom_keys: Sequence[str],
+) -> dict[str, str]:
+    """Best-effort label: value extraction for user-defined field keys."""
+    return extract_label_value_fields_from_text(text, custom_keys)

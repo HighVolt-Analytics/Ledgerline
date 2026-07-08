@@ -37,6 +37,7 @@ from app.services.tenant.tenant_org_context import OrgContext
 class ExtractFieldsResult:
     llm: LlmDocumentResult | None
     ocr: OcrArtifact
+    di_enrich_detail: dict[str, object] | None = None
 
 
 class DocumentAiProvider(str, Enum):
@@ -172,7 +173,7 @@ async def extract_fields(
             few_shots=few_shots,
         )
         return ExtractFieldsResult(llm=llm, ocr=ocr)
-    enriched = await asyncio.to_thread(
+    enriched, di_detail = await asyncio.to_thread(
         enrich_ocr_with_invoice_model,
         ocr,
         path,
@@ -186,4 +187,4 @@ async def extract_fields(
         confirmed_dt=confirmed_dt,
         few_shots=few_shots,
     )
-    return ExtractFieldsResult(llm=llm, ocr=enriched)
+    return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)

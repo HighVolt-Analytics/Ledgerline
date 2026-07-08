@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
+from app.tenant_ids import TESTING_TENANT_UUID
 
 
 @pytest.mark.asyncio
@@ -151,6 +152,57 @@ async def test_pending_vendor_promote(client: AsyncClient) -> None:
 
     res = await client.delete(f"/api/vendor-masters/{vendor_id}")
     assert res.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_pending_vendor_promote_syncs_capture_registry(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    from app.models.invoice import Invoice, InvoiceStatus
+    from app.models.vendor import VendorRegistry
+    from sqlalchemy import select
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Registry Sync Co",
+        email_sender="invoices@registrysync.test",
+        status=InvoiceStatus.EXCEPTION,
+        currency="AUD",
+        file_hash="promo-reg-sync",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    res = await client.post(
+        "/api/pending-vendors",
+        json={
+            "detected_name": "Registry Sync Co",
+            "confidence": 30,
+            "source_invoice_id": inv.id,
+        },
+    )
+    assert res.status_code == 201
+    pending_id = res.json()["data"]["id"]
+
+    res = await client.post(
+        f"/api/pending-vendors/{pending_id}/promote",
+        json={"name": "Registry Sync Co", "status": "Active", "default_ledger": "Office"},
+    )
+    assert res.status_code == 200
+    vendor_id = res.json()["data"]["id"]
+
+    row = (
+        await db_session.execute(
+            select(VendorRegistry).where(
+                VendorRegistry.tenant_id == TESTING_TENANT_UUID,
+                VendorRegistry.vendor_slug == "registry-sync-co",
+            )
+        )
+    ).scalar_one_or_none()
+    assert row is not None
+    assert row.sender_pattern == "invoices@registrysync.test"
+
+    await client.delete(f"/api/vendor-masters/{vendor_id}")
 
 
 @pytest.mark.asyncio

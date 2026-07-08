@@ -12,9 +12,11 @@ from app.services.extraction.extraction_field_values import (
     build_smart_ocr_excerpt,
     enrich_parsed_from_ocr,
     filter_invoice_fields_for_keys,
+    merge_gap_fill_into_parsed,
 )
 from app.services.extraction.extraction_orchestrator import merge_extraction_sources
 from app.services.extraction.field_grounding_service import (
+    _money_grounded_in_ocr,
     ground_invoice_scalars,
     ground_parsed_fields,
     value_grounded_in_ocr,
@@ -128,6 +130,19 @@ def test_ground_parsed_fields_filters_unrequested_keys() -> None:
     assert "contract_party" not in grounded.extracted_fields
 
 
+def test_ground_parsed_fields_keeps_configured_account_code() -> None:
+    parsed = InvoiceData(
+        vendor="Acme",
+        extracted_fields={"account_code": "6100"},
+    )
+    grounded = ground_parsed_fields(
+        parsed,
+        "Vendor: Acme\nAccount Code: 6100",
+        ["vendor", "account_code"],
+    )
+    assert grounded.extracted_fields.get("account_code") == "6100"
+
+
 def test_enrich_parsed_from_ocr_grounded_backfill_po_reference() -> None:
     ocr = OcrArtifact(
         success=True,
@@ -190,3 +205,46 @@ def test_resolve_gst_rate_keeps_explicit_rate_when_grounded() -> None:
 
 def test_value_grounded_rejects_placeholder_abn() -> None:
     assert not value_grounded_in_ocr("45123456789", "ABN 45123456789")
+
+
+def test_merge_gap_fill_keeps_grounded_po_reference() -> None:
+    ocr_text = "TAX INVOICE\nPO: 12345\nVendor: Acme"
+    parsed = InvoiceData(document_text=ocr_text)
+    gap = InvoiceData(po_reference="12345", document_text=ocr_text)
+    result = merge_gap_fill_into_parsed(
+        parsed,
+        gap,
+        missing_keys=["po_reference"],
+        ocr_text=ocr_text,
+    )
+    assert result.parsed.po_reference == "12345"
+    assert result.filled == ("po_reference",)
+
+
+def test_merge_gap_fill_clears_hallucinated_vendor() -> None:
+    ocr_text = "TAX INVOICE\nVendor: Real Co"
+    parsed = InvoiceData(document_text=ocr_text)
+    gap = InvoiceData(vendor="Invented Vendor", document_text=ocr_text)
+    result = merge_gap_fill_into_parsed(
+        parsed,
+        gap,
+        missing_keys=["vendor"],
+        ocr_text=ocr_text,
+    )
+    assert not result.parsed.vendor
+    assert result.rejected == ("vendor",)
+
+
+def test_money_grounded_currency_symbol_and_commas() -> None:
+    ocr = "Invoice total $1,234.56 due"
+    assert _money_grounded_in_ocr(Decimal("1234.56"), ocr, field_key="total")
+
+
+def test_money_grounded_adjacent_line_balance_due() -> None:
+    ocr = "Line items\nBalance due\n1,234.56"
+    assert _money_grounded_in_ocr(Decimal("1234.56"), ocr, field_key="total")
+
+
+def test_money_grounded_rejects_ungrounded_amount() -> None:
+    ocr = "Balance due\n500.00"
+    assert not _money_grounded_in_ocr(Decimal("999.99"), ocr, field_key="total")
