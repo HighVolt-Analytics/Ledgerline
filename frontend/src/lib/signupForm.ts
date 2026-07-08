@@ -15,8 +15,15 @@ export type SignupValidationInput = {
   selectedPlan: PlanId;
   platformBillingEnabled: boolean | null;
   billingPlansLoading: boolean;
-  billingPlansError: string | null;
   busy: boolean;
+};
+
+export const EMPTY_SIGNUP_FIELDS: SignupFormFields = {
+  businessName: "",
+  email: "",
+  phone: "",
+  password: "",
+  confirmPassword: "",
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -25,38 +32,14 @@ export function isValidEmail(value: string): boolean {
   return EMAIL_RE.test(value.trim());
 }
 
-/** Merge React state with live DOM values (handles browser autofill). */
-export function readSignupFieldsFromForm(
-  form: HTMLFormElement | null,
-  state: SignupFormFields
-): SignupFormFields {
-  if (!form) return state;
-
-  const read = (name: keyof SignupFormFields, fallback: string) => {
-    const el = form.elements.namedItem(name);
-    if (!(el instanceof HTMLInputElement)) return fallback;
-    const domValue = el.value;
-    return domValue.length > 0 ? domValue : fallback;
-  };
-
-  return {
-    businessName: read("businessName", state.businessName),
-    email: read("email", state.email),
-    phone: read("phone", state.phone),
-    password: read("password", state.password),
-    confirmPassword: read("confirmPassword", state.confirmPassword),
-  };
-}
-
 export function validateSignupForm(fields: SignupFormFields): string | null {
   return getSignupDisabledReason({
     fields,
-    industry: "placeholder",
+    industry: "Technology",
     countryCode: "AU",
     selectedPlan: "free",
     platformBillingEnabled: true,
     billingPlansLoading: false,
-    billingPlansError: null,
     busy: false,
   });
 }
@@ -135,20 +118,9 @@ export function signupPlanHint(plan: PlanId): string | null {
   return null;
 }
 
-/** Safe debug string for staging — never includes password values. */
-export function signupDisabledDebugSummary(input: SignupValidationInput): string {
-  const { fields } = input;
-  return [
-    `businessName=${fields.businessName.trim().length > 0}`,
-    `industry=${Boolean(input.industry.trim())}`,
-    `country=${Boolean(input.countryCode.trim())}`,
-    `email=${isValidEmail(fields.email)}`,
-    `phone=${fields.phone.trim().length > 0}`,
-    `passwordLen=${fields.password.length}`,
-    `passwordsMatch=${fields.password === fields.confirmPassword}`,
-    `plan=${input.selectedPlan}`,
-    `platformBilling=${String(input.platformBillingEnabled)}`,
-    `billingLoading=${input.billingPlansLoading}`,
-    `busy=${input.busy}`,
-  ].join(" · ");
+export function buildSignupValidationInput(
+  fields: SignupFormFields,
+  options: Omit<SignupValidationInput, "fields">
+): SignupValidationInput {
+  return { fields, ...options };
 }
