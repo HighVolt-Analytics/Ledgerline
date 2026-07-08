@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { PricingPlanCards } from "@/components/billing/PricingPlanCards";
 import { LogoBlock } from "@/components/Logo";
