@@ -68,6 +68,7 @@ from app.services.extraction.document_ai_provider import (
 from app.services.invoice.invoice_pipeline_phases import (
     apply_user_defined_classifier_gate,
     backfill_llm_dt_from_policy,
+    reconcile_llm_dt_with_heading,
     evaluate_confidence_gate,
     evaluate_field_confidence_gate,
     evaluate_image_quality_gate,
@@ -151,6 +152,85 @@ async def _vendor_hold_unless_skipped(
         await _log_processing_override_skip(session, invoice, "vendor_registration")
         return False
     return await apply_vendor_hold_if_needed(session, invoice)
+
+
+def _finalize_vendor_counterparty(
+    invoice: Invoice,
+    *,
+    parsed: object | None,
+    config: object,
+) -> None:
+    """Canonicalize AP vendor name on invoice.vendor after counterparty sync."""
+    from app.services.extraction.extraction_field_values import extracted_fields_from_invoice
+    from app.services.sales.counterparty_service import resolve_counterparty_side
+
+    fields = extracted_fields_from_invoice(invoice)
+    side = resolve_counterparty_side(
+        route_target=invoice.route_target,
+        perspective=fields.get("perspective") or fields.get("llm_perspective"),
+    )
+    if side != "vendor" or not invoice.vendor:
+        return
+
+    parsed_abn = getattr(parsed, "abn", None) if parsed is not None else invoice.abn
+    canonical = resolve_canonical_vendor_name(
+        invoice.tenant_id,
+        vendor_names=[invoice.vendor],
+        abns=[parsed_abn],
+        config=config,
+    )
+    if canonical:
+        invoice.vendor = canonical
+    elif not is_plausible_vendor_name(invoice.vendor):
+        invoice.vendor = None
+
+
+async def _sync_counterparty_and_evaluate(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    parsed: object | None,
+    config: object,
+    org: object,
+) -> None:
+    """Sync finance counterparty on invoice.vendor, then evaluate routing/match."""
+    from app.services.sales.counterparty_service import sync_invoice_counterparty
+
+    sync_invoice_counterparty(invoice, config=config, parsed=parsed, org=org)
+    _finalize_vendor_counterparty(invoice, parsed=parsed, config=config)
+    await apply_invoice_evaluation(session, invoice, config=config)
+    prior_vendor = invoice.vendor
+    sync_invoice_counterparty(invoice, config=config, parsed=parsed, org=org)
+    _finalize_vendor_counterparty(invoice, parsed=parsed, config=config)
+    if (invoice.vendor or "") != (prior_vendor or ""):
+        await apply_invoice_evaluation(session, invoice, config=config)
+
+
+async def _sync_and_evaluate_invoice(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    parsed: object | None = None,
+    config: object | None = None,
+    org: object | None = None,
+) -> None:
+    """Load pipeline context when needed, then sync counterparty and evaluate."""
+    if config is None:
+        config = await load_config_for_tenant(session, invoice.tenant_id)
+    if org is None:
+        tenant_row = await session.get(Tenant, invoice.tenant_id)
+        org = org_context_from_config(config, tenant_row)
+    if parsed is None:
+        from app.services.invoice.invoice_data import invoice_data_from_invoice
+
+        parsed = invoice_data_from_invoice(invoice)
+    await _sync_counterparty_and_evaluate(
+        session,
+        invoice,
+        parsed=parsed,
+        config=config,
+        org=org,
+    )
 
 
 async def _clear_purchase_awaiting_po_if_overridden(
@@ -684,7 +764,7 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
         )
     ).scalar_one()
     linked_po = await load_purchase_order_for_invoice(session, loaded)
-    await apply_invoice_evaluation(session, loaded)
+    await _sync_and_evaluate_invoice(session, loaded)
     await sync_invoice_blob_path(session, loaded, parsed_vendor=loaded.vendor)
     invoice.raw_file_path = loaded.raw_file_path
     invoice.route_target = loaded.route_target
@@ -730,7 +810,7 @@ async def _finish_sales_supporting_document(session: AsyncSession, invoice: Invo
         )
     ).scalar_one()
     await load_sales_order_for_invoice(session, loaded)
-    await apply_invoice_evaluation(session, loaded)
+    await _sync_and_evaluate_invoice(session, loaded)
     await sync_invoice_blob_path(session, loaded, parsed_vendor=loaded.vendor)
     invoice.raw_file_path = loaded.raw_file_path
     invoice.route_target = loaded.route_target
@@ -875,26 +955,10 @@ async def _apply_parsed_to_invoice(
     ensure_invoice_so_reference(invoice)
     sanitize_cross_book_linkage_references(invoice)
 
-    from app.services.sales.counterparty_service import resolve_counterparty_side, sync_invoice_counterparty
-    from app.services.extraction.extraction_field_values import extracted_fields_from_invoice
+    from app.services.sales.counterparty_service import sync_invoice_counterparty
 
     sync_invoice_counterparty(invoice, config=config, parsed=parsed, org=org)
-    fields = extracted_fields_from_invoice(invoice)
-    side = resolve_counterparty_side(
-        route_target=invoice.route_target,
-        perspective=fields.get("perspective") or fields.get("llm_perspective"),
-    )
-    if side == "vendor" and invoice.vendor:
-        canonical = resolve_canonical_vendor_name(
-            invoice.tenant_id,
-            vendor_names=[invoice.vendor],
-            abns=[parsed.abn],
-            config=config,
-        )
-        if canonical:
-            invoice.vendor = canonical
-        elif not is_plausible_vendor_name(invoice.vendor):
-            invoice.vendor = None
+    _finalize_vendor_counterparty(invoice, parsed=parsed, config=config)
 
     loaded.vendor = invoice.vendor
     loaded.abn = invoice.abn
@@ -1121,6 +1185,24 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 else "vendor_classification_baseline",
                 invoice_id=invoice.id,
                 detail=drift_audit_detail(vendor_drift_result),
+            )
+
+        classify_llm, heading_reconcile_detail = reconcile_llm_dt_with_heading(
+            classify_llm,
+            invoice=invoice,
+            ocr=ocr,
+            document_types=config.document_types,
+            ai_cfg=ai_cfg,
+        )
+        if heading_reconcile_detail:
+            invoice.llm_suggested_dt = (classify_llm.suggested_dt if classify_llm else None) or None
+            if classify_llm is not None:
+                invoice.llm_confidence = round(classify_llm.confidence, 4)
+            await log_event(
+                session,
+                "classification_heading_reconcile",
+                invoice_id=invoice.id,
+                detail=heading_reconcile_detail,
             )
 
         classify_llm, policy_backfill_detail = backfill_llm_dt_from_policy(
@@ -1431,10 +1513,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         ),
     )
 
-    await apply_invoice_evaluation(session, loaded, config=config)
-    from app.services.sales.counterparty_service import sync_invoice_counterparty
-
-    sync_invoice_counterparty(loaded, config=config, parsed=parsed, org=org)
+    await _sync_counterparty_and_evaluate(
+        session,
+        loaded,
+        parsed=parsed,
+        config=config,
+        org=org,
+    )
     invoice.vendor = loaded.vendor
     invoice.evaluation_status = loaded.evaluation_status
     invoice.route_target = loaded.route_target
@@ -1727,7 +1812,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 .options(selectinload(Invoice.line_items))
             )
             loaded = (await session.execute(stmt)).scalar_one()
-            await apply_invoice_evaluation(session, loaded)
+            await _sync_counterparty_and_evaluate(
+                session,
+                loaded,
+                parsed=parsed,
+                config=config,
+                org=org,
+            )
             await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
             invoice.raw_file_path = loaded.raw_file_path
             invoice.route_target = loaded.route_target
@@ -1849,7 +1940,13 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     )
     invoice.account_code = mapping.account_code
     invoice.account_name = mapping.account_name
-    await apply_invoice_evaluation(session, loaded)
+    await _sync_counterparty_and_evaluate(
+        session,
+        loaded,
+        parsed=parsed,
+        config=config,
+        org=org,
+    )
     await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
     invoice.raw_file_path = loaded.raw_file_path
     invoice.route_target = loaded.route_target

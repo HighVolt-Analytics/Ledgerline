@@ -1,9 +1,11 @@
-import { Fragment, useState } from "react";
-import { AlertCircle, ChevronDown, ChevronRight, ClipboardCheck, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import { AlertCircle, ChevronDown, ChevronRight, ClipboardCheck, ExternalLink, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { useToast } from "@/context/ToastContext";
 import {
   useCreateCustomerMaster,
@@ -42,6 +44,7 @@ export function CustomerMastersPanel() {
   const [drafts, setDrafts] = useState<Record<string, CustomerMaster>>({});
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [quickName, setQuickName] = useState("");
+  const [linkMasterByPendingId, setLinkMasterByPendingId] = useState<Record<number, string>>({});
 
   const { data: customers = [], isLoading } = useCustomerMasters();
   const { data: pendingQueue = [] } = usePendingCustomers();
@@ -52,6 +55,11 @@ export function CustomerMastersPanel() {
   const dismissMutation = useDismissPendingCustomer();
 
   const registrationPending = customers.filter((c) => c.status === "Pending registration");
+
+  const activeCustomers = useMemo(
+    () => customers.filter((customer) => customer.status !== "Pending registration"),
+    [customers],
+  );
 
   const getDraft = (customer: CustomerMaster) => drafts[customer.id] ?? customer;
 
@@ -119,13 +127,32 @@ export function CustomerMastersPanel() {
     }
   };
 
-  const completePendingRegistration = (pendingId: number, name: string) => {
+  const completePendingRegistration = (
+    pendingId: number,
+    name: string,
+    masterId?: string,
+  ) => {
     promoteMutation.mutate(
-      { pendingId, body: { name, status: "Pending registration" } },
+      {
+        pendingId,
+        body: masterId
+          ? { masterId, name }
+          : { name, status: "Pending registration" },
+      },
       {
         onSuccess: (customer) => {
           setExpandedId(customer.id);
-          toast({ title: "Customer created", description: "Complete GL and billing details." });
+          setLinkMasterByPendingId((prev) => {
+            const next = { ...prev };
+            delete next[pendingId];
+            return next;
+          });
+          toast({
+            title: masterId ? "Linked to existing customer" : "Customer created",
+            description: masterId
+              ? `${customer.name} is now registered for held sales documents.`
+              : "Complete GL and billing details.",
+          });
         },
         onError: (err) =>
           toast({
@@ -308,27 +335,73 @@ export function CustomerMastersPanel() {
                   <div className="text-xs text-muted-foreground">
                     Detected on sales document · match confidence {item.confidence}% (below threshold)
                     {item.detectedAbn ? ` · ABN ${item.detectedAbn}` : ""}
+                    {item.sourceInvoiceId ? (
+                      <>
+                        {" · "}
+                        <Link
+                          to={`/upload?doc=${item.sourceInvoiceId}`}
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                        >
+                          View source invoice
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </>
+                    ) : null}
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  disabled={promoteMutation.isPending}
-                  onClick={() => completePendingRegistration(item.id, item.detectedName)}
-                  data-testid={`complete-registration-pending-customer-${item.id}`}
-                >
-                  <ClipboardCheck className="h-4 w-4 mr-1" />
-                  Complete Registration
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={dismissMutation.isPending}
-                  onClick={() => dismissPending(item.id, item.detectedName)}
-                  data-testid={`dismiss-pending-customer-${item.id}`}
-                >
-                  <X className="h-4 w-4 mr-1" />
-                  Dismiss
-                </Button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {activeCustomers.length > 0 ? (
+                    <Select
+                      value={linkMasterByPendingId[item.id] ?? ""}
+                      onValueChange={(value) =>
+                        setLinkMasterByPendingId((prev) => ({ ...prev, [item.id]: value }))
+                      }
+                      options={activeCustomers.map((customer) => ({
+                        value: customer.id,
+                        label: customer.name,
+                      }))}
+                      placeholder="Link to existing…"
+                      size="sm"
+                      className="w-[200px] h-8 text-xs"
+                    />
+                  ) : null}
+                  {linkMasterByPendingId[item.id] ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={promoteMutation.isPending}
+                      onClick={() =>
+                        completePendingRegistration(
+                          item.id,
+                          item.detectedName,
+                          linkMasterByPendingId[item.id],
+                        )
+                      }
+                      data-testid={`link-existing-pending-customer-${item.id}`}
+                    >
+                      Link to master
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    disabled={promoteMutation.isPending}
+                    onClick={() => completePendingRegistration(item.id, item.detectedName)}
+                    data-testid={`complete-registration-pending-customer-${item.id}`}
+                  >
+                    <ClipboardCheck className="h-4 w-4 mr-1" />
+                    Complete Registration
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={dismissMutation.isPending}
+                    onClick={() => dismissPending(item.id, item.detectedName)}
+                    data-testid={`dismiss-pending-customer-${item.id}`}
+                  >
+                    <X className="h-4 w-4 mr-1" />
+                    Dismiss
+                  </Button>
+                </div>
               </div>
             ))}
             {registrationPending.map((customer) => (

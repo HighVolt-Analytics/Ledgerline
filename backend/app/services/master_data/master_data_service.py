@@ -559,6 +559,35 @@ async def promote_pending_vendor(
     from app.services.master_data.vendor_detection import find_matching_vendor_master
 
     masters = await list_vendor_masters(db, tid)
+    if body.master_id:
+        explicit_row = await get_vendor_master_by_id(db, tid, body.master_id)
+        if explicit_row is not None:
+            existing = vendor_record_to_schema(explicit_row)
+            row.status = "promoted"
+            row.promoted_master_id = existing.id
+            row.resolved_at = datetime.now(UTC)
+            await db.flush()
+            from app.services.master_data.vendor_hold_service import release_invoices_after_vendor_promotion
+
+            await release_invoices_after_vendor_promotion(
+                db,
+                tid,
+                vendor_name=existing.name,
+                source_invoice_id=row.source_invoice_id,
+            )
+            from app.services.master_data.registry_promotion_service import (
+                sync_vendor_registry_after_promotion,
+            )
+
+            await sync_vendor_registry_after_promotion(
+                db,
+                tenant_id=tid,
+                name=existing.name,
+                abn=existing.abn,
+                source_invoice_id=row.source_invoice_id,
+            )
+            return existing
+
     existing = find_matching_vendor_master(row.detected_name, row.detected_abn, masters)
     if existing is not None:
         row.status = "promoted"

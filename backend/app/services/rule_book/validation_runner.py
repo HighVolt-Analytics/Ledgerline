@@ -234,6 +234,7 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
         ctx.session,
         tenant_id=ctx.tenant_id,
         invoice=ctx.invoice,
+        route_target=ctx.route_target,
         document_type_code=ctx.document_type_code,
         document_types=ctx.document_types,
     )

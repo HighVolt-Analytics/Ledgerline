@@ -118,6 +118,16 @@ def merge_document_type_definitions(
     return sorted(by_code.values(), key=lambda row: row.code.upper())
 
 
+def org_document_types_for_bundle_export(
+    tenant_types: Sequence[DocumentTypeDefinition],
+) -> list[DocumentTypeDefinition]:
+    """Org-configured document types only — excludes shipped template defaults."""
+    return sorted(
+        [row for row in tenant_types if (row.code or "").strip()],
+        key=lambda row: (row.code or "").upper(),
+    )
+
+
 def effective_document_types_for_export(
     tenant_types: Sequence[DocumentTypeDefinition],
     *,

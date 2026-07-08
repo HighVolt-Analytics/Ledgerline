@@ -234,7 +234,7 @@ async def test_documents_bundle_export_universal_match_yes(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Carrier",
         status=InvoiceStatus.PROCESSED,
-        document_type_code="DT-26",
+        document_type_code="DT-06",
         invoice_no="SHARED-INV-77",
         invoice_date=date(2026, 6, 3),
         file_hash="bundle-universal-sibling",
@@ -290,8 +290,8 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
     )
     assert res.status_code == 200
     header, data = _read_csv(res.text)
-    invoice_nos = _invoice_nos_from_rows(header, data)
-    assert "INV-CATALOG-FALLBACK" in invoice_nos
+    assert len(header) == 15
+    assert data == []
 
 
 @pytest.mark.asyncio
@@ -314,7 +314,7 @@ async def test_documents_bundle_export_dual_linkage_invoice_no_and_po_reference(
     invoice_no_sibling = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Carrier",
-        document_type_code="DT-26",
+        document_type_code="DT-06",
         invoice_no="INV-DUAL-100",
         po_reference="OTHER-PO",
         invoice_date=date(2026, 7, 9),
@@ -345,9 +345,9 @@ async def test_documents_bundle_export_dual_linkage_invoice_no_and_po_reference(
         r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-DUAL-100"
     )
 
-    customer_col = header.index("Customer invoice")
+    proforma_col = header.index("Proforma / advance")
     po_col = header.index("PO (supporting)")
-    assert_csv_hyperlink(row[customer_col], url=vault_view_path(invoice_no_sibling.id))
+    assert_csv_hyperlink(row[proforma_col], url=vault_view_path(invoice_no_sibling.id))
     assert_csv_hyperlink(row[po_col], url=vault_view_path(po_sibling.id))
 
 
@@ -525,21 +525,23 @@ async def test_documents_bundle_export_plain_format(
 
 
 @pytest.mark.asyncio
-async def test_documents_bundle_export_scoped_columns_not_full_catalogue(
+async def test_documents_bundle_export_includes_all_org_document_types(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    from app.services.classification.document_type_catalog import load_shipped_default_document_types
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+
+    org_types = await load_config_for_tenant(db_session, TESTING_TENANT_UUID)
 
     db_session.add(
         Invoice(
             tenant_id=TESTING_TENANT_UUID,
             vendor="Supplier",
             document_type_code="DT-01",
-            invoice_no="INV-SCOPED-COLS",
+            invoice_no="INV-FULL-COLS",
             invoice_date=date(2026, 8, 10),
             status=InvoiceStatus.PROCESSED,
-            file_hash="bundle-scoped-cols",
+            file_hash="bundle-full-cols",
         )
     )
     await db_session.commit()
@@ -550,8 +552,203 @@ async def test_documents_bundle_export_scoped_columns_not_full_catalogue(
     )
     assert res.status_code == 200
     header, _ = _read_csv(res.text)
-    fixed_count = 14
+    fixed_count = 15
     dt_column_count = len(header) - fixed_count
-    shipped_count = len(load_shipped_default_document_types())
-    assert dt_column_count < shipped_count
-    assert dt_column_count >= 3
+    assert dt_column_count == len(org_types.document_types)
+    shipped_only_codes = {"DT-14", "DT-15", "DT-26", "DT-27", "DT-28"}
+    header_labels = set(header[fixed_count:])
+    for code in shipped_only_codes:
+        assert not any(code in label for label in header_labels)
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_includes_custom_tenant_document_type_column(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    from app.models.tenant_rule_book_config import TenantRuleBookConfig
+    from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
+    from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+    from app.services.rule_book.rule_book_config_io import clear_posting_config_cache
+
+    base_config = await load_config_for_tenant(db_session, TESTING_TENANT_UUID)
+    dt01 = next(dt for dt in base_config.document_types if dt.code == "DT-01")
+    custom_dt = DocumentTypeDefinition(
+        code="DT-99",
+        title="Custom freight note",
+        short_title="Freight note",
+        klass="Supporting",
+        posting="No",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
+        route_target="Vault",
+        classifier=DocumentTypeClassifier(enabled=False, priority=100, confidence=0.85),
+    )
+    row = await db_session.get(TenantRuleBookConfig, TESTING_TENANT_UUID)
+    assert row is not None
+    row.config = {
+        **row.config,
+        "document_types": [
+            dt01.model_dump(by_alias=True),
+            custom_dt.model_dump(by_alias=True),
+        ],
+    }
+    await db_session.flush()
+    clear_posting_config_cache()
+
+    db_session.add(
+        Invoice(
+            tenant_id=TESTING_TENANT_UUID,
+            vendor="Supplier",
+            document_type_code="DT-01",
+            invoice_no="INV-CUSTOM-DT-COL",
+            invoice_date=date(2026, 8, 11),
+            status=InvoiceStatus.PROCESSED,
+            file_hash="bundle-custom-dt-col",
+        )
+    )
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-08-01&date_to=2026-08-31"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    assert "Freight note" in header
+    bundle_row = next(
+        r
+        for r in data
+        if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-CUSTOM-DT-COL"
+    )
+    assert bundle_row[header.index("Freight note")] == ""
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_includes_exception_anchor_with_po_sibling(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    po_doc = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme Supplies",
+        document_type_code="DT-02",
+        po_reference="PO-EXC-BUNDLE",
+        invoice_no="PO-EXC-BUNDLE",
+        invoice_date=date(2026, 9, 5),
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.PO.value,
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-exc-po-sibling",
+    )
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme Supplies",
+        document_type_code="DT-01",
+        po_reference="PO-EXC-BUNDLE",
+        invoice_no="INV-EXC-BUNDLE",
+        invoice_date=date(2026, 9, 10),
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        status=InvoiceStatus.EXCEPTION,
+        file_hash="bundle-exc-anchor",
+    )
+    db_session.add_all([po_doc, anchor])
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-09-01&date_to=2026-09-30"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    assert "Status" in header
+    row = next(
+        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-EXC-BUNDLE"
+    )
+    assert row[header.index("Status")] == "exception"
+    po_col = header.index("PO (supporting)")
+    assert_csv_hyperlink(row[po_col], url=vault_view_path(po_doc.id))
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_excludes_pending_anchor(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    db_session.add_all(
+        [
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="Supplier",
+                document_type_code="DT-01",
+                invoice_no="INV-PENDING-BUNDLE",
+                invoice_date=date(2026, 9, 12),
+                status=InvoiceStatus.PENDING,
+                file_hash="bundle-pending-anchor",
+            ),
+            Invoice(
+                tenant_id=TESTING_TENANT_UUID,
+                vendor="Supplier",
+                document_type_code="DT-01",
+                invoice_no="INV-PARSING-BUNDLE",
+                invoice_date=date(2026, 9, 13),
+                status=InvoiceStatus.PARSING,
+                file_hash="bundle-parsing-anchor",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-09-01&date_to=2026-09-30"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    invoice_nos = _invoice_nos_from_rows(header, data)
+    assert "INV-PENDING-BUNDLE" not in invoice_nos
+    assert "INV-PARSING-BUNDLE" not in invoice_nos
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_status_column(
+    db_session: AsyncSession,
+) -> None:
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Importer",
+        status=InvoiceStatus.VALIDATING,
+        document_type_code="DT-01",
+        invoice_no="SHARED-VAL-88",
+        invoice_date=date(2026, 9, 20),
+        file_hash="bundle-validating-anchor",
+    )
+    sibling = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Carrier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-06",
+        invoice_no="SHARED-VAL-88",
+        invoice_date=date(2026, 9, 20),
+        file_hash="bundle-validating-sibling",
+    )
+    db_session.add_all([anchor, sibling])
+    await db_session.commit()
+
+    payload = await build_documents_bundle_export(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        date_from=date(2026, 9, 1),
+        date_to=date(2026, 9, 30),
+    )
+    header, data = _read_csv(payload.csv_text)
+    row = next(
+        r
+        for r in data
+        if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "SHARED-VAL-88"
+        and r[header.index("Status")] == "validating"
+    )
+    assert row[header.index("Status")] == "validating"
+    assert row[header.index("Universal match")] == "Yes"

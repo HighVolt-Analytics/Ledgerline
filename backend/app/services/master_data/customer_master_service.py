@@ -289,6 +289,35 @@ async def promote_pending_customer(
     from app.services.master_data.vendor_detection import find_matching_customer_master
 
     masters = await list_customer_masters(db, tid)
+    if body.master_id:
+        explicit = await get_customer_master_by_id(db, tid, body.master_id)
+        if explicit is not None:
+            existing = customer_record_to_schema(explicit)
+            row.status = "promoted"
+            row.promoted_master_id = existing.id
+            row.resolved_at = datetime.now(UTC)
+            await db.flush()
+            from app.services.master_data.customer_hold_service import release_invoices_after_customer_promotion
+
+            await release_invoices_after_customer_promotion(
+                db,
+                tid,
+                customer_name=existing.name,
+                source_invoice_id=row.source_invoice_id,
+            )
+            from app.services.master_data.registry_promotion_service import (
+                sync_customer_registry_after_promotion,
+            )
+
+            await sync_customer_registry_after_promotion(
+                db,
+                tenant_id=tid,
+                name=existing.name,
+                abn=existing.abn,
+                source_invoice_id=row.source_invoice_id,
+            )
+            return existing
+
     existing = find_matching_customer_master(row.detected_name, row.detected_abn, masters)
     if existing is not None:
         row.status = "promoted"

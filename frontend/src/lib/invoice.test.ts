@@ -18,6 +18,7 @@ import {
   invoiceSourceLabel,
   invoiceValidationConfidence,
   invoiceVendorConfidence,
+  vendorMatchApplicable,
   ROUTE_PURCHASE,
   ROUTE_SALES,
   validationPassApplicable,
@@ -135,21 +136,21 @@ describe("counterparty labels", () => {
     );
   });
 
-  it("hides master match on sales until customer scoring exists", () => {
+  it("shows customer match label and confidence on sales route", () => {
     expect(
       counterpartyMatchLabel({
         ...baseInvoice,
         route_target: ROUTE_SALES,
         document_type_code: "DT-28",
       }),
-    ).toBeNull();
+    ).toBe("Customer match");
     expect(
       invoiceCounterpartyConfidence({
         ...baseInvoice,
         route_target: ROUTE_SALES,
         vendor_confidence: 88,
       }),
-    ).toBeNull();
+    ).toBe(88);
   });
 });
 
@@ -181,6 +182,16 @@ describe("invoiceVendorConfidence", () => {
         [{ code: "DT-01", validationProfile: "standard", posting: "Yes" }],
       ),
     ).toBe(0);
+  });
+
+  it("does not treat sales pending_vendor as vendor match", () => {
+    expect(
+      vendorMatchApplicable({
+        ...baseInvoice,
+        route_target: ROUTE_SALES,
+        evaluation_status: "pending_vendor",
+      }),
+    ).toBe(false);
   });
 
   it("shows vendor confidence on payable routes with VR12", () => {

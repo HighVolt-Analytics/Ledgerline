@@ -6,6 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from decimal import Decimal
+
+from app.models.invoice import Invoice
+from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
+from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
 from app.services.extraction.extraction_field_values import (
     merge_gap_fill_into_parsed,
@@ -214,6 +219,115 @@ async def test_apply_extraction_gap_fill_leaves_absent_field_empty() -> None:
     assert detail["gap_fill_attempted"] is True
     assert "project_code" in detail["gap_fill_rejected"]
     assert "project_code" not in updated.extracted_fields
+
+
+SPECTRA_COMMERCIAL_OCR = """COMMERCIAL INVOICE
+Invoice No.: 260671582
+MODEL DESCRIPTION QTY UNIT PRICE AMOUNT
+ST20000NM002H 3.5" INTERNAL HDD 20TB 80 499.00 39920.00
+TOTAL 39,920.00"""
+
+
+@pytest.mark.asyncio
+async def test_gap_fill_line_items_spectra_commercial() -> None:
+    ocr = OcrArtifact(
+        success=True,
+        text=SPECTRA_COMMERCIAL_OCR,
+        text_length=len(SPECTRA_COMMERCIAL_OCR),
+    )
+    raw = {
+        "line_items": [
+            {
+                "description": 'ST20000NM002H 3.5" INTERNAL HDD 20TB',
+                "qty": 80,
+                "unit_price": 499.00,
+                "amount": 39920.00,
+            }
+        ],
+        "field_confidence": 0.0,
+        "suggested_dt": "",
+        "confidence": 0.9,
+        "reasoning": "",
+        "perspective": "purchase",
+    }
+    with patch(
+        "app.services.extraction.gap_fill_extraction_service.chat_json_async",
+        new_callable=AsyncMock,
+        return_value=raw,
+    ):
+        gap = await gap_fill_missing_fields(
+            ocr,
+            missing_keys=["line_items"],
+            org=OrgContext(),
+        )
+    assert gap is not None
+    assert len(gap.line_items) == 1
+    assert gap.line_items[0].qty == Decimal("80")
+
+    parsed = InvoiceData(
+        vendor="Spectra Innovations Pte Ltd",
+        document_text=SPECTRA_COMMERCIAL_OCR,
+    )
+    merged = merge_gap_fill_into_parsed(
+        parsed,
+        gap,
+        missing_keys=["line_items"],
+        ocr_text=SPECTRA_COMMERCIAL_OCR,
+    )
+    assert len(merged.parsed.line_items) == 1
+    assert merged.parsed.line_items[0].amount == Decimal("39920.00")
+
+
+def test_gap_fill_spectra_line_items_pass_field_confidence_gate() -> None:
+    from app.schemas.rule_book_config import AiClassificationConfig
+    from app.services.invoice.invoice_data import ParsedLineItem
+    from app.services.invoice.invoice_pipeline_phases import evaluate_field_confidence_gate
+
+    llm = LlmDocumentResult(
+        suggested_dt="DT-01",
+        confidence=0.95,
+        vendor="Spectra Innovations Pte Ltd",
+        field_confidence={},
+    )
+    parsed = InvoiceData(
+        vendor="Spectra Innovations Pte Ltd",
+        total=Decimal("39920.00"),
+        line_items=[
+            ParsedLineItem(
+                description='ST20000NM002H 3.5" INTERNAL HDD 20TB',
+                qty=Decimal("80"),
+                unit_price=Decimal("499.00"),
+                amount=Decimal("39920.00"),
+            )
+        ],
+        document_text=SPECTRA_COMMERCIAL_OCR,
+    )
+    invoice = Invoice(vendor="Spectra Innovations Pte Ltd")
+    invoice.total = Decimal("39920.00")
+    dt = DocumentTypeDefinition(
+        code="DT-01",
+        title="PO goods",
+        shortTitle="Goods",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=[],
+        llm_prompt="",
+        routeTarget="Purchase Management",
+        classifier=DocumentTypeClassifier(),
+        extractionFields=["vendor", "total", "line_items"],
+        requiredFields=["vendor", "total", "line_items"],
+    )
+    result = evaluate_field_confidence_gate(
+        llm,
+        ai_cfg=AiClassificationConfig(min_field_extract_confidence=0.65),
+        dt_definition=dt,
+        parsed=parsed,
+        invoice=invoice,
+        confirmed_dt="DT-01",
+    )
+    assert result.passed is True
+    assert "line_items" not in result.missing_gate_fields
 
 
 @pytest.mark.asyncio

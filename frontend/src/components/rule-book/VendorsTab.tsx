@@ -1,18 +1,21 @@
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  ExternalLink,
   Loader2,
   Plus,
   Settings,
   Trash2,
   X,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/context/ToastContext";
 import {
@@ -87,6 +90,7 @@ export function VendorsTab({
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [quickName, setQuickName] = useState("");
   const [quickAbn, setQuickAbn] = useState("");
+  const [linkMasterByPendingId, setLinkMasterByPendingId] = useState<Record<number, string>>({});
 
   const { data: vendors = [], isLoading } = useVendorMasters();
   const { data: pendingQueue = [] } = usePendingVendors();
@@ -100,6 +104,11 @@ export function VendorsTab({
     detection.weights.name + detection.weights.abn + detection.weights.bank + detection.weights.address;
 
   const registrationPending = vendors.filter((v) => v.status === "Pending registration");
+
+  const activeVendors = useMemo(
+    () => vendors.filter((vendor) => vendor.status !== "Pending registration"),
+    [vendors],
+  );
 
   const vendorById = (id: string) => vendors.find((v) => v.id === id);
 
@@ -205,13 +214,32 @@ export function VendorsTab({
     setQuickAbn("");
   };
 
-  const completePendingRegistration = (pendingId: number, name: string) => {
+  const completePendingRegistration = (
+    pendingId: number,
+    name: string,
+    masterId?: string,
+  ) => {
     promoteMutation.mutate(
-      { pendingId, body: { name, status: "Pending registration" } },
+      {
+        pendingId,
+        body: masterId
+          ? { masterId, name }
+          : { name, status: "Pending registration" },
+      },
       {
         onSuccess: (vendor) => {
           openVendor(vendor.id, true);
-          toast({ title: "Vendor created", description: "Complete bank and ledger details." });
+          setLinkMasterByPendingId((prev) => {
+            const next = { ...prev };
+            delete next[pendingId];
+            return next;
+          });
+          toast({
+            title: masterId ? "Linked to existing vendor" : "Vendor created",
+            description: masterId
+              ? `${vendor.name} is now registered for held invoices.`
+              : "Complete bank and ledger details.",
+          });
         },
         onError: (err) =>
           toast({
@@ -577,27 +605,73 @@ export function VendorsTab({
                   <div className="text-xs text-muted-foreground">
                     Detected on invoice · match confidence {item.confidence}% (below threshold)
                     {item.detectedAbn ? ` · ABN ${item.detectedAbn}` : ""}
+                    {item.sourceInvoiceId ? (
+                      <>
+                        {" · "}
+                        <Link
+                          to={`/upload?doc=${item.sourceInvoiceId}`}
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                        >
+                          View source invoice
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </>
+                    ) : null}
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  disabled={promoteMutation.isPending}
-                  onClick={() => completePendingRegistration(item.id, item.detectedName)}
-                  data-testid={`complete-registration-pending-${item.id}`}
-                >
-                  <ClipboardCheck className="h-4 w-4 mr-1" />
-                  Complete Registration
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={dismissMutation.isPending}
-                  onClick={() => dismissPending(item.id, item.detectedName)}
-                  data-testid={`dismiss-pending-${item.id}`}
-                >
-                  <X className="h-4 w-4 mr-1" />
-                  Dismiss
-                </Button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {activeVendors.length > 0 ? (
+                    <Select
+                      value={linkMasterByPendingId[item.id] ?? ""}
+                      onValueChange={(value) =>
+                        setLinkMasterByPendingId((prev) => ({ ...prev, [item.id]: value }))
+                      }
+                      options={activeVendors.map((vendor) => ({
+                        value: vendor.id,
+                        label: vendor.name,
+                      }))}
+                      placeholder="Link to existing…"
+                      size="sm"
+                      className="w-[200px] h-8 text-xs"
+                    />
+                  ) : null}
+                  {linkMasterByPendingId[item.id] ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={promoteMutation.isPending}
+                      onClick={() =>
+                        completePendingRegistration(
+                          item.id,
+                          item.detectedName,
+                          linkMasterByPendingId[item.id],
+                        )
+                      }
+                      data-testid={`link-existing-pending-vendor-${item.id}`}
+                    >
+                      Link to master
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    disabled={promoteMutation.isPending}
+                    onClick={() => completePendingRegistration(item.id, item.detectedName)}
+                    data-testid={`complete-registration-pending-${item.id}`}
+                  >
+                    <ClipboardCheck className="h-4 w-4 mr-1" />
+                    Complete Registration
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={dismissMutation.isPending}
+                    onClick={() => dismissPending(item.id, item.detectedName)}
+                    data-testid={`dismiss-pending-${item.id}`}
+                  >
+                    <X className="h-4 w-4 mr-1" />
+                    Dismiss
+                  </Button>
+                </div>
               </div>
             ))}
             {registrationPending.map((v) => (

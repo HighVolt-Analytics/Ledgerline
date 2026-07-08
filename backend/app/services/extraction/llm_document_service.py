@@ -238,6 +238,9 @@ Rules:
 - suggested_dt is REQUIRED: pick exactly one DT-xx code from the catalogue codes provided.
 - Use empty string only when the document is clearly not in the catalogue.
 - confidence is 0.0-1.0 for the document type choice.
+- Use document_heading and the first title lines of OCR as the primary classification signal.
+- Certificate of Origin, Cargo Clearance Permit, Packing List, and Bill of Lading / AWB are supporting import documents — never classify them as DT-01 or DT-02.
+- When the heading is unambiguous, suggested_dt must match the catalogue row whose short title best fits that heading.
 - perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
 {{party_rules}}
 {rule_lines}
@@ -254,6 +257,9 @@ Rules:
 - suggested_dt is REQUIRED: pick exactly one DT-xx code from the catalogue codes provided.
 - Use empty string only when the document is clearly not in the catalogue.
 - confidence is 0.0-1.0 for the document type choice.
+- Use document_heading and the first title lines of OCR as the primary classification signal.
+- Certificate of Origin, Cargo Clearance Permit, Packing List, and Bill of Lading / AWB are supporting import documents — never classify them as DT-01 or DT-02.
+- When the heading is unambiguous, suggested_dt must match the catalogue row whose short title best fits that heading.
 - perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
 {party_rules}
 - Do not extract invoice amounts, line items, or dates — classification only.

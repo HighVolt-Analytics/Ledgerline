@@ -274,6 +274,103 @@ async def phase_llm_classify(
     return result
 
 
+def reconcile_llm_dt_with_heading(
+    llm: LlmDocumentResult | None,
+    *,
+    invoice: Invoice,
+    ocr: OcrArtifact,
+    document_types: Sequence[DocumentTypeDefinition],
+    ai_cfg: AiClassificationConfig,
+) -> tuple[LlmDocumentResult | None, dict[str, object] | None]:
+    """Adopt a heading-aligned DT when LLM omits or contradicts OCR document title."""
+    from app.services.classification.segment_heading_classification import (
+        classify_from_segment_heading,
+        heading_conflicts_with_definition,
+        resolve_segment_heading_kind,
+    )
+
+    document_text = ocr.text or ""
+    heading_text = (llm.document_heading if llm is not None else "") or ""
+    heading_kind = resolve_segment_heading_kind(
+        document_text=f"{heading_text}\n{document_text}".strip(),
+    )
+    if heading_kind is None:
+        return llm, None
+
+    parsed = InvoiceData(
+        document_text=document_text,
+        document_heading=heading_text.strip(),
+    )
+    heading_match = classify_from_segment_heading(
+        heading_kind=heading_kind,
+        document_types=document_types,
+        invoice=invoice,
+        parsed=parsed,
+    )
+    if heading_match is None or heading_match.needs_review:
+        return llm, None
+
+    adopted_code = (heading_match.code or "").strip().upper()
+    if not adopted_code:
+        return llm, None
+
+    route_min = max(
+        ai_cfg.auto_route_min_confidence,
+        min_route_confidence_for_document_type(adopted_code, document_types),
+    )
+    if heading_match.confidence < route_min:
+        return llm, None
+
+    previous_dt = (llm.suggested_dt if llm is not None else "") or ""
+    previous_dt = previous_dt.strip().upper()
+    adopt_reason: str | None = None
+
+    if not previous_dt:
+        adopt_reason = "empty_llm_suggested_dt"
+    else:
+        llm_defn = get_document_type_definition(previous_dt, document_types=document_types)
+        if llm_defn is not None and heading_conflicts_with_definition(heading_kind, llm_defn):
+            adopt_reason = "heading_conflicts_with_llm_dt"
+        elif previous_dt != adopted_code:
+            heading_defn = get_document_type_definition(adopted_code, document_types=document_types)
+            if heading_defn is not None:
+                from app.services.classification.segment_heading_classification import (
+                    score_document_type_for_heading,
+                )
+
+                llm_score = (
+                    score_document_type_for_heading(llm_defn, heading_kind) if llm_defn else 0.0
+                )
+                heading_score = score_document_type_for_heading(heading_defn, heading_kind)
+                if heading_score >= 0.82 and heading_score > llm_score:
+                    adopt_reason = "heading_stronger_than_llm_dt"
+
+    if adopt_reason is None:
+        return llm, None
+
+    base = llm if llm is not None else LlmDocumentResult(
+        suggested_dt="",
+        confidence=0.0,
+        reasoning="",
+        perspective="purchase",
+    )
+    updated = base.model_copy(
+        update={
+            "suggested_dt": adopted_code,
+            "confidence": max(float(base.confidence or 0.0), float(heading_match.confidence)),
+            "reasoning": (heading_match.reason or base.reasoning or "").strip(),
+            "document_heading": (base.document_heading or heading_text or "").strip(),
+        }
+    )
+    return updated, {
+        "heading_kind": heading_kind,
+        "previous_dt": previous_dt or None,
+        "adopted_dt": adopted_code,
+        "heading_confidence": round(float(heading_match.confidence), 4),
+        "reason": adopt_reason,
+    }
+
+
 def backfill_llm_dt_from_policy(
     llm: LlmDocumentResult | None,
     *,

@@ -68,6 +68,7 @@ export function counterpartyMatchLabel(
   >,
   documentTypes?: ValidationPassDocumentType[] | null,
 ): string | null {
+  if (customerMatchApplicable(inv, documentTypes)) return "Customer match";
   if (vendorMatchApplicable(inv, documentTypes)) return "Vendor match";
   return null;
 }
@@ -321,7 +322,10 @@ export function vendorMatchApplicable(
   >,
   documentTypes?: ValidationPassDocumentType[] | null,
 ): boolean {
-  if (inv.evaluation_status === "pending_vendor") return true;
+  if (inv.evaluation_status === "pending_vendor") {
+    const route = (inv.route_target ?? "").trim();
+    return route === ROUTE_PURCHASE || route === ROUTE_EXPENSES;
+  }
 
   const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
   if (purchaseDoc === "po" || purchaseDoc === "grn") return false;
@@ -332,6 +336,33 @@ export function vendorMatchApplicable(
 
   const code = (inv.document_type_code ?? "").trim().toUpperCase();
     if (code && documentTypes?.length) {
+    const definition = documentTypes.find((row) => row.code.toUpperCase() === code);
+    if (definition) {
+      if (!postingPipelineAllowed(definition.posting)) return false;
+      return vendorMasterCheckEnabled(definition);
+    }
+  }
+
+  return true;
+}
+
+/** Whether customer master match % applies (mirrors backend customer_registration_required). */
+export function customerMatchApplicable(
+  inv: Pick<
+    Invoice,
+    "route_target" | "document_type_code" | "evaluation_status"
+  >,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): boolean {
+  if (inv.evaluation_status === "pending_vendor" && (inv.route_target ?? "").trim() === ROUTE_SALES) {
+    return true;
+  }
+
+  const route = (inv.route_target ?? "").trim();
+  if (route !== ROUTE_SALES) return false;
+
+  const code = (inv.document_type_code ?? "").trim().toUpperCase();
+  if (code && documentTypes?.length) {
     const definition = documentTypes.find((row) => row.code.toUpperCase() === code);
     if (definition) {
       if (!postingPipelineAllowed(definition.posting)) return false;
@@ -364,8 +395,26 @@ export function invoiceCounterpartyConfidence(
   inv: Invoice,
   documentTypes?: ValidationPassDocumentType[] | null,
 ): number | null {
-  if (counterpartyKind(inv) === "customer") return null;
+  if (counterpartyKind(inv) === "customer") {
+    return invoiceCustomerConfidence(inv, documentTypes);
+  }
   return invoiceVendorConfidence(inv, documentTypes);
+}
+
+/** Customer match confidence when master registration applies — null when not scored. */
+export function invoiceCustomerConfidence(
+  inv: Invoice,
+  documentTypes?: ValidationPassDocumentType[] | null,
+): number | null {
+  if (inv.evaluation_status === "pending_vendor") {
+    return inv.vendor_confidence != null ? Math.round(inv.vendor_confidence) : 0;
+  }
+  if (!customerMatchApplicable(inv, documentTypes)) return null;
+  if (inv.vendor_confidence != null) return Math.round(inv.vendor_confidence);
+  if (inv.vendor?.trim() && inv.evaluation_status === "needs_review") {
+    return 0;
+  }
+  return null;
 }
 
 /** Vendor match confidence when master registration applies — null when not scored. */

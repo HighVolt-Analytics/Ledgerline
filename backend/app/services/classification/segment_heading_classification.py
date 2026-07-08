@@ -169,6 +169,14 @@ def classifier_match_relies_on_invoice_number(
     return not still_matches
 
 
+_TRANSACTIONAL_PLAYBOOK_PROFILES = frozenset(
+    {"po_goods", "po_services", "direct_expense", "ar_goods"}
+)
+_SUPPORTING_DOC_HEADING_KINDS = frozenset(
+    {"certificate_of_origin", "customs_permit", "packing_list", "transport_doc"}
+)
+
+
 def heading_conflicts_with_definition(
     heading_kind: HeadingKind,
     definition: DocumentTypeDefinition,
@@ -176,6 +184,14 @@ def heading_conflicts_with_definition(
     metadata_score = score_document_type_for_heading(definition, heading_kind)
     if metadata_score >= 0.82:
         return False
+
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+
+    if heading_kind in _SUPPORTING_DOC_HEADING_KINDS:
+        if effective_playbook_profile(definition) in _TRANSACTIONAL_PLAYBOOK_PROFILES:
+            return True
 
     meta = _definition_metadata_blob(definition)
     if heading_kind == "transport_doc" and any(

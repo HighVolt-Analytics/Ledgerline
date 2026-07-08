@@ -10,15 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice
 from app.models.purchase_order import PurchaseOrderStatus
+from app.schemas.customer import CustomerMaster
 from app.schemas.rule_book_config import RuleBookConfigPayload, VendorMaster
 from app.services.invoice.invoice_data import InvoiceData
+from app.services.invoice.invoice_evaluation_service import ROUTE_SALES
 from app.services.purchase.purchase_match_service import load_purchase_order_for_invoice
 from app.services.rule_book.tax_invoice_policy import (
     document_has_tax_invoice_wording,
     tax_invoice_policy_for_country,
 )
 from app.services.rule_book.validator import ValidationResult
-from app.services.master_data.vendor_detection import find_matching_vendor_master, normalize_abn_digits
+from app.services.master_data.vendor_detection import (
+    find_matching_customer_master,
+    find_matching_vendor_master,
+    normalize_abn_digits,
+)
 
 LINE_TOLERANCE = Decimal("0.05")
 SUBTOTAL_TOLERANCE = Decimal("0.05")
@@ -171,6 +177,63 @@ def vr12_vendor_master(
     return ValidationResult("VR12", True, f"Vendor master OK ({master.name})")
 
 
+def vr12_customer_master(
+    data: InvoiceData,
+    *,
+    customer_masters: list[CustomerMaster],
+) -> ValidationResult:
+    customer_name = (data.vendor or "").strip()
+    if not customer_name:
+        return ValidationResult("VR12", False, "Customer name required for master check")
+
+    if not customer_masters:
+        return ValidationResult(
+            "VR12",
+            False,
+            "Customer not registered — add customer to master",
+        )
+
+    master = find_matching_customer_master(customer_name, data.abn, customer_masters)
+    if master is None:
+        return ValidationResult(
+            "VR12",
+            False,
+            "Customer not found in customer master",
+        )
+
+    status = (master.status or "").strip().lower()
+    if status in _BLOCKED_VENDOR_STATUSES:
+        return ValidationResult("VR12", False, f"Customer master status is {master.status}")
+
+    doc_abn = normalize_abn_digits(data.abn)
+    master_abn = normalize_abn_digits(master.abn)
+    if (
+        doc_abn
+        and master_abn
+        and master_abn != "PENDING"
+        and doc_abn != master_abn
+    ):
+        return ValidationResult(
+            "VR12",
+            False,
+            "Tax ID on invoice does not match customer master — possible fraud/wrong customer",
+        )
+
+    return ValidationResult("VR12", True, f"Customer master OK ({master.name})")
+
+
+def vr12_counterparty_master(
+    data: InvoiceData,
+    *,
+    route_target: str | None,
+    vendor_masters: list[VendorMaster],
+    customer_masters: list[CustomerMaster],
+) -> ValidationResult:
+    if (route_target or "").strip() == ROUTE_SALES:
+        return vr12_customer_master(data, customer_masters=customer_masters)
+    return vr12_vendor_master(data, vendor_masters=vendor_masters)
+
+
 async def vr14_po_status(
     data: InvoiceData,
     session: AsyncSession,
@@ -295,12 +358,16 @@ async def run_extended_validations(
     tenant_id: int,
     invoice: Invoice | None = None,
     config: RuleBookConfigPayload | None = None,
+    route_target: str | None = None,
     document_type_code: str | None = None,
     document_types: list | None = None,
 ) -> ValidationResult | None:
     from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
+    from app.services.master_data.customer_master_service import list_customer_masters
+    from app.services.master_data.master_data_service import classification_config_with_db_masters
 
     rule_config = await load_config_for_tenant(session, tenant_id) if config is None else config
+    rule_config = await classification_config_with_db_masters(session, tenant_id, rule_config)
 
     if code == "VR09":
         return vr09_line_arithmetic(data)
@@ -321,7 +388,14 @@ async def run_extended_validations(
         tenant = await session.get(Tenant, tenant_id)
         return vr11_date_sanity(data, today=tenant_today(tenant))
     if code == "VR12":
-        return vr12_vendor_master(data, vendor_masters=rule_config.vendor_masters)
+        customer_masters = await list_customer_masters(session, tenant_id)
+        effective_route = route_target or (invoice.route_target if invoice is not None else None)
+        return vr12_counterparty_master(
+            data,
+            route_target=effective_route,
+            vendor_masters=rule_config.vendor_masters,
+            customer_masters=customer_masters,
+        )
     if code == "VR14":
         from app.models.tenant import Tenant
         from app.tenant_settings import tenant_currency

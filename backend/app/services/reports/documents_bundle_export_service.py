@@ -4,18 +4,23 @@ Matrix layout (one row per transactional posting anchor invoice):
 
 Fixed columns
     Class, Posting, DT type, Invoice date, Counterparty, Total, Currency, Linkage,
-    PO reference, SO reference, Invoice no. (vault hyperlink), 2/3/Universal match flags.
+    PO reference, SO reference, Invoice no. (vault hyperlink), Status,
+    2/3/Universal match flags.
 
-Dynamic DT columns (scoped to anchors + playbook bundle + linked docs)
-    One column per relevant document type (DT code), sorted alphabetically.
+Dynamic DT columns (org-configured document types from rule book)
+    One column per document type the organisation has defined in rule book
+    (not the full shipped template catalogue), sorted alphabetically by DT code.
     Cell values:
         - Linked upload: Excel ``=HYPERLINK(url, label)`` (default) or ``label | url`` (plain)
         - Mandatory slot missing: ``Missing``
         - Advisory slot missing: ``Advisory``
         - Not applicable: empty
 
-Row filter: ``PROCESSED`` invoices where document type is Transactional with posting Yes.
-Supporting-only documents appear in DT columns, not as anchor rows.
+Row filter: active-workflow invoices (``PROCESSED``, ``EXCEPTION``, ``VALIDATING``,
+``MAPPING``, ``JOURNALING``, ``RECONCILING``) where document type is Transactional with
+posting Yes. Linked supporting docs match on PO/SO reference or invoice no as soon as
+uploaded — no need to wait for anchor posting. Supporting-only documents appear in DT
+columns, not as anchor rows.
 """
 
 from __future__ import annotations
@@ -27,33 +32,41 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.invoice import Invoice
+from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.dossier import DossierLinkedDocumentResponse, DossierLinkedDocumentsResponse
 from app.services.audit.audit_export_service import (
-    collect_linked_doc_entries,
     excel_hyperlink,
     linked_docs_by_dt_code,
     vault_view_path,
 )
-from app.services.classification.document_type_catalog import effective_document_types_for_export
+from app.services.classification.document_type_catalog import (
+    org_document_types_for_bundle_export,
+)
 from app.services.classification.document_type_klass import (
     is_trans_posting,
     normalize_document_type_identity,
 )
 from app.services.classification.document_type_playbook_service import (
     resolve_definition_for_invoice,
-    split_bundle_items,
 )
 from app.services.dossier.dossier_linked_documents_service import build_dossier_linked_documents
 from app.services.dossier.dossier_service import build_linkage_sibling_cache
 from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
-from app.services.reports.reports_service import _load_invoices
 
 BundleCellFormat = Literal["excel", "plain"]
+
+_BUNDLE_EXPORT_STATUSES = frozenset({
+    InvoiceStatus.PROCESSED,
+    InvoiceStatus.EXCEPTION,
+    InvoiceStatus.VALIDATING,
+    InvoiceStatus.MAPPING,
+    InvoiceStatus.JOURNALING,
+    InvoiceStatus.RECONCILING,
+})
 
 _FIXED_COLUMNS = [
     "Class",
@@ -67,6 +80,7 @@ _FIXED_COLUMNS = [
     "PO reference",
     "SO reference",
     "Invoice no.",
+    "Status",
     "2 way match",
     "3 way match",
     "Universal match",
@@ -85,6 +99,31 @@ class _AnchorExportContext:
     definition: DocumentTypeDefinition
     linked: DossierLinkedDocumentsResponse
     invoice_dt_code_by_id: dict[int, str]
+
+
+def _effective_invoice_date():
+    return func.coalesce(Invoice.invoice_date, func.date(Invoice.created_at))
+
+
+async def _load_bundle_export_invoices(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> list[Invoice]:
+    """Load anchor candidates: active workflow statuses within the date window."""
+    stmt = select(Invoice).where(
+        Invoice.tenant_id == tenant_id,
+        Invoice.status.in_(_BUNDLE_EXPORT_STATUSES),
+    )
+    effective = _effective_invoice_date()
+    if date_from is not None:
+        stmt = stmt.where(effective >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(effective <= date_to)
+    stmt = stmt.order_by(effective.desc(), Invoice.id.desc())
+    return list((await db.execute(stmt)).scalars().all())
 
 
 def documents_bundle_filename(*, date_from: date | None) -> str:
@@ -237,39 +276,6 @@ async def _invoice_dt_code_by_id(
     }
 
 
-def _document_types_for_codes(
-    catalogue: list[DocumentTypeDefinition],
-    codes: set[str],
-) -> list[DocumentTypeDefinition]:
-    by_code = {row.code.upper(): row for row in catalogue}
-    return [by_code[code] for code in sorted(codes) if code in by_code]
-
-
-def _scoped_dt_codes(
-    contexts: list[_AnchorExportContext],
-) -> list[str]:
-    codes: set[str] = set()
-    for ctx in contexts:
-        anchor_code = (ctx.invoice.document_type_code or "").strip().upper()
-        if anchor_code:
-            codes.add(anchor_code)
-        mandatory, _ = split_bundle_items(list(ctx.definition.bundle_mandatory or []))
-        conditional, _ = split_bundle_items(list(ctx.definition.bundle_conditional or []))
-        codes.update(mandatory)
-        codes.update(conditional)
-        for doc in ctx.linked.documents:
-            if doc.is_anchor:
-                continue
-            code = (doc.document_type_code or "").strip().upper()
-            if code:
-                codes.add(code)
-        for entry in collect_linked_doc_entries(ctx.invoice.id, ctx.linked):
-            code = (entry.document_type_code or "").strip().upper()
-            if code:
-                codes.add(code)
-    return sorted(codes)
-
-
 def _sorted_tenant_document_types(
     document_types: list[DocumentTypeDefinition],
 ) -> list[DocumentTypeDefinition]:
@@ -327,6 +333,7 @@ def build_documents_bundle_row(
         (invoice.po_reference or "").strip(),
         (invoice.so_reference or "").strip(),
         _invoice_no_cell(invoice, cell_format=cell_format),
+        (invoice.status.value if invoice.status is not None else "").strip(),
         two_way,
         three_way,
         universal,
@@ -359,22 +366,17 @@ async def build_documents_bundle_export(
         raise ValueError("date_from must be on or before date_to")
 
     config = await load_posting_config_for_tenant(db, tenant_id)
-    invoices = await _load_invoices(
+    invoices = await _load_bundle_export_invoices(
         db,
         tenant_id=tenant_id,
         date_from=date_from,
         date_to=date_to,
     )
 
-    invoice_codes = {
-        (inv.document_type_code or "").strip().upper()
-        for inv in invoices
-        if (inv.document_type_code or "").strip()
-    }
-    catalogue = effective_document_types_for_export(
-        config.document_types,
-        invoice_codes=invoice_codes,
-    )
+    catalogue = org_document_types_for_bundle_export(config.document_types)
+    export_dt_types = _sorted_tenant_document_types(catalogue)
+    dt_codes = _dt_codes_ordered(export_dt_types)
+    dt_headers = _dt_column_headers(export_dt_types)
 
     anchors: list[Invoice] = []
     anchor_definitions: dict[int, DocumentTypeDefinition] = {}
@@ -407,11 +409,6 @@ async def build_documents_bundle_export(
                 invoice_dt_code_by_id=invoice_dt_codes,
             )
         )
-
-    scoped_codes = _scoped_dt_codes(contexts)
-    scoped_types = _document_types_for_codes(catalogue, set(scoped_codes))
-    dt_codes = _dt_codes_ordered(scoped_types)
-    dt_headers = _dt_column_headers(scoped_types)
 
     csv_rows: list[list[str]] = []
     for ctx in contexts:

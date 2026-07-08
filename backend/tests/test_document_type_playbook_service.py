@@ -120,6 +120,31 @@ def test_playbook_required_fields_skip_infrastructure_and_soft_customs() -> None
     assert effective_playbook_required_fields(definition) == ["permit_no", "vendor"]
 
 
+def test_supporting_playbook_does_not_require_line_items_or_total() -> None:
+    definition = _definition(
+        playbookProfile="supporting",
+        validationProfile="non_actionable",
+        requiredFields=[],
+        extractionFields=["vendor", "permit_no", "line_items", "total"],
+    )
+    assert effective_playbook_required_fields(definition) == []
+    assert confidence_gate_fields(definition) == []
+
+    invoice = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        vendor="Spectra Innovations Pte Ltd",
+        currency="AUD",
+    )
+    parsed = InvoiceData(
+        vendor="Spectra Innovations Pte Ltd",
+        document_text="CERTIFICATE OF ORIGIN\nINVOICE NO. 260371344",
+    )
+    missing = missing_extraction_fields(definition, invoice=invoice, parsed=parsed)
+    assert "line_items" not in missing
+    assert "total" not in missing
+
+
 def test_missing_extraction_fields_uses_permit_regex() -> None:
     definition = _definition(
         playbookProfile="supporting",
