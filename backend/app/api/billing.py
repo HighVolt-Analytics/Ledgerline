@@ -5,8 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import _mint_session_tokens, _user_response
 from app.api.deps import AuthContext, get_auth_context, get_db
 from app.config import get_settings
+from app.models.tenant import Tenant
+from app.models.user import User
+from app.schemas.auth import UserResponse
 from app.schemas.billing import (
     BillingPlanCatalogItem,
     BillingPlansResponse,
@@ -73,7 +77,13 @@ def _ledger_row(row) -> CreditLedgerEntryResponse:
     )
 
 
-def _checkout_response(result: CheckoutSessionResult | SignupFreeResult) -> CheckoutSessionResponse:
+def _checkout_response(
+    result: CheckoutSessionResult | SignupFreeResult,
+    *,
+    access_token: str | None = None,
+    refresh_token: str | None = None,
+    user: UserResponse | None = None,
+) -> CheckoutSessionResponse:
     if isinstance(result, SignupFreeResult):
         return CheckoutSessionResponse(
             checkout_url=None,
@@ -81,6 +91,9 @@ def _checkout_response(result: CheckoutSessionResult | SignupFreeResult) -> Chec
             status="completed",
             tenant_id=str(result.tenant_id),
             completed_without_checkout=True,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user=user,
         )
     return CheckoutSessionResponse(
         checkout_url=result.checkout_url,
@@ -170,6 +183,27 @@ async def post_signup_checkout(
         signup_source=body.signup_source,
     )
     await db.commit()
+
+    if isinstance(result, SignupFreeResult):
+        user = await db.get(User, result.user_id)
+        tenant = await db.get(Tenant, result.tenant_id)
+        if not user or not tenant:
+            raise HTTPException(500, "Account was created but login could not be established")
+        access, refresh = await _mint_session_tokens(
+            db,
+            user=user,
+            tenant=tenant,
+            role=user.role.value,
+        )
+        return ApiEnvelope(
+            data=_checkout_response(
+                result,
+                access_token=access,
+                refresh_token=refresh,
+                user=_user_response(user, tenant),
+            )
+        )
+
     return ApiEnvelope(data=_checkout_response(result))
 
 

@@ -1691,6 +1691,9 @@ export interface CheckoutSessionResult {
   pending_signup_id?: string | null;
   tenant_id?: string | null;
   completed_without_checkout?: boolean;
+  access_token?: string | null;
+  refresh_token?: string | null;
+  user?: AuthUser | null;
 }
 
 export interface CheckoutStatusResult {

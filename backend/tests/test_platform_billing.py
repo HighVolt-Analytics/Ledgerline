@@ -29,7 +29,9 @@ from app.services.payments.stripe_platform_billing_service import (
     SIGNUP_STATUS_PENDING,
     _handle_checkout_completed,
     _handle_invoice_paid,
+    _require_checkout_session_urls,
     _require_platform_stripe_secret,
+    _stripe_value,
     _validate_signup_request,
 )
 from tests.conftest import TESTING_TENANT_UUID
@@ -316,3 +318,30 @@ async def test_free_signup_creates_tenant_without_stripe(db_session, monkeypatch
     assert pending.tenant_id == tenant.id
 
     get_settings.cache_clear()
+
+
+class _FakeStripeSession:
+    def __init__(self, **kwargs: object) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+def test_stripe_value_reads_dict_and_stripe_object() -> None:
+    assert _stripe_value({"id": "cs_dict"}, "id") == "cs_dict"
+    assert _stripe_value(_FakeStripeSession(id="cs_obj", url="https://stripe.test"), "url") == "https://stripe.test"
+    assert _stripe_value(None, "id", "fallback") == "fallback"
+
+
+def test_require_checkout_session_urls_accepts_stripe_object() -> None:
+    checkout_url, session_id = _require_checkout_session_urls(
+        _FakeStripeSession(id="cs_test", url="https://checkout.stripe.test/session")
+    )
+    assert checkout_url == "https://checkout.stripe.test/session"
+    assert session_id == "cs_test"
+
+
+def test_require_checkout_session_urls_rejects_missing_url() -> None:
+    with pytest.raises(HTTPException) as exc:
+        _require_checkout_session_urls(_FakeStripeSession(id="cs_test"))
+    assert exc.value.status_code == 502
+    assert "checkout URL" in exc.value.detail

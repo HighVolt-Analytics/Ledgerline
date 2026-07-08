@@ -80,6 +80,7 @@ class CheckoutSessionResult:
 class SignupFreeResult:
     tenant_id: uuid.UUID
     signup_token: str
+    user_id: int
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,35 @@ def _stripe_object_to_dict(obj: Any) -> dict[str, Any]:
     if callable(to_dict):
         return to_dict()
     return dict(obj)
+
+
+def _stripe_value(obj: Any, key: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _subscription_first_price_id(subscription: Any) -> str:
+    items = _stripe_value(_stripe_value(subscription, "items"), "data") or []
+    if not items:
+        return ""
+    price = _stripe_value(items[0], "price")
+    return str(_stripe_value(price, "id") or "")
+
+
+def _checkout_session_fields(checkout: Any) -> tuple[str, str]:
+    session_id = str(_stripe_value(checkout, "id") or "").strip()
+    checkout_url = str(_stripe_value(checkout, "url") or "").strip()
+    return checkout_url, session_id
+
+
+def _require_checkout_session_urls(checkout: Any) -> tuple[str, str]:
+    checkout_url, session_id = _checkout_session_fields(checkout)
+    if not checkout_url or not session_id:
+        raise HTTPException(502, "Stripe checkout session did not return a checkout URL")
+    return checkout_url, session_id
 
 
 def _unix_to_dt(value: Any) -> datetime | None:
@@ -424,7 +454,7 @@ async def complete_free_signup(
         )
         session.add(pending)
         await apply_rls_session_context(session, tenant.id)
-        await _create_admin_user(
+        user = await _create_admin_user(
             session,
             tenant_id=tenant.id,
             email=email,
@@ -432,7 +462,7 @@ async def complete_free_signup(
             full_name=full_name,
         )
         await session.flush()
-        return SignupFreeResult(tenant_id=tenant.id, signup_token=token)
+        return SignupFreeResult(tenant_id=tenant.id, signup_token=token, user_id=user.id)
     finally:
         await clear_platform_lookup_session(session)
 
@@ -541,11 +571,12 @@ async def create_signup_checkout_session(
                 }
             },
         )
-        pending.stripe_checkout_session_id = str(checkout.get("id") or "")
+        checkout_url, session_id = _require_checkout_session_urls(checkout)
+        pending.stripe_checkout_session_id = session_id
         await session.flush()
         return CheckoutSessionResult(
-            checkout_url=str(checkout.get("url") or ""),
-            session_id=pending.stripe_checkout_session_id,
+            checkout_url=checkout_url,
+            session_id=session_id,
             status=SIGNUP_STATUS_PENDING,
             pending_signup_id=str(pending.id),
         )
@@ -609,9 +640,10 @@ async def create_topup_checkout_session(
             "credits_to_add": str(credits),
         },
     )
+    checkout_url, session_id = _require_checkout_session_urls(checkout)
     return CheckoutSessionResult(
-        checkout_url=str(checkout.get("url") or ""),
-        session_id=str(checkout.get("id") or ""),
+        checkout_url=checkout_url,
+        session_id=session_id,
         status="pending",
         tenant_id=str(tenant_id),
     )
@@ -672,9 +704,10 @@ async def create_subscription_upgrade_checkout(
             }
         },
     )
+    checkout_url, session_id = _require_checkout_session_urls(checkout)
     return CheckoutSessionResult(
-        checkout_url=str(checkout.get("url") or ""),
-        session_id=str(checkout.get("id") or ""),
+        checkout_url=checkout_url,
+        session_id=session_id,
         status="pending",
         tenant_id=str(tenant_id),
     )
@@ -697,17 +730,17 @@ async def get_checkout_status(
                 session_id,
                 settings=cfg,
             )
-            meta = checkout.get("metadata") or {}
+            meta = _stripe_value(checkout, "metadata") or {}
             if tenant_id is not None:
-                meta_tid = meta.get("tenant_id")
+                meta_tid = _stripe_value(meta, "tenant_id")
                 if meta_tid and str(tenant_id) != str(meta_tid):
                     raise HTTPException(403, "Checkout session does not belong to this tenant")
             return {
                 "session_id": session_id,
-                "status": checkout.get("status"),
-                "payment_status": checkout.get("payment_status"),
-                "mode": checkout.get("mode"),
-                "event_type": meta.get("event_type"),
+                "status": _stripe_value(checkout, "status"),
+                "payment_status": _stripe_value(checkout, "payment_status"),
+                "mode": _stripe_value(checkout, "mode"),
+                "event_type": _stripe_value(meta, "event_type"),
             }
         except stripe.StripeError as exc:
             raise HTTPException(400, "Unable to retrieve checkout session") from exc
@@ -762,24 +795,22 @@ async def _activate_pending_signup_from_checkout(
     session: AsyncSession,
     *,
     pending: PendingSignupBillingSession,
-    checkout_session: dict[str, Any],
-    subscription: dict[str, Any] | None,
+    checkout_session: Any,
+    subscription: Any | None,
 ) -> uuid.UUID:
     if pending.status == SIGNUP_STATUS_COMPLETED and pending.tenant_id:
         return pending.tenant_id
 
-    customer_id = str(checkout_session.get("customer") or pending.stripe_customer_id or "")
+    customer_id = str(
+        _stripe_value(checkout_session, "customer") or pending.stripe_customer_id or ""
+    )
     subscription_id = str(
-        (subscription or {}).get("id")
-        or checkout_session.get("subscription")
+        _stripe_value(subscription, "id")
+        or _stripe_value(checkout_session, "subscription")
         or pending.stripe_subscription_id
         or ""
     )
-    price_id = ""
-    if subscription:
-        items = (subscription.get("items") or {}).get("data") or []
-        if items:
-            price_id = str((items[0].get("price") or {}).get("id") or "")
+    price_id = _subscription_first_price_id(subscription) if subscription else ""
 
     tenant = await _create_self_serve_tenant(
         session,
@@ -804,13 +835,13 @@ async def _activate_pending_signup_from_checkout(
         stripe_customer_id=customer_id or None,
         stripe_subscription_id=subscription_id or None,
         stripe_price_id=price_id or None,
-        subscription_status=(subscription or {}).get("status"),
-        current_period_start=_unix_to_dt((subscription or {}).get("current_period_start")),
-        current_period_end=_unix_to_dt((subscription or {}).get("current_period_end")),
-        cancel_at_period_end=bool((subscription or {}).get("cancel_at_period_end")),
+        subscription_status=_stripe_value(subscription, "status"),
+        current_period_start=_unix_to_dt(_stripe_value(subscription, "current_period_start")),
+        current_period_end=_unix_to_dt(_stripe_value(subscription, "current_period_end")),
+        cancel_at_period_end=bool(_stripe_value(subscription, "cancel_at_period_end")),
         grant_initial_credits=True,
-        idempotency_key=f"signup_subscription:{checkout_session.get('id')}",
-        stripe_checkout_session_id=str(checkout_session.get("id") or ""),
+        idempotency_key=f"signup_subscription:{_stripe_value(checkout_session, 'id')}",
+        stripe_checkout_session_id=str(_stripe_value(checkout_session, "id") or ""),
     )
 
     pending.tenant_id = tenant.id
@@ -826,41 +857,45 @@ async def _sync_subscription_to_billing(
     session: AsyncSession,
     *,
     tenant_id: uuid.UUID,
-    subscription: dict[str, Any],
+    subscription: Any,
 ) -> None:
     billing = await session.get(TenantBilling, tenant_id)
     if not billing:
         return
 
-    items = (subscription.get("items") or {}).get("data") or []
-    price_id = ""
-    if items:
-        price_id = str((items[0].get("price") or {}).get("id") or "")
+    price_id = _subscription_first_price_id(subscription)
 
-    billing.stripe_subscription_id = str(subscription.get("id") or billing.stripe_subscription_id or "")
-    billing.stripe_customer_id = str(subscription.get("customer") or billing.stripe_customer_id or "")
+    billing.stripe_subscription_id = str(
+        _stripe_value(subscription, "id") or billing.stripe_subscription_id or ""
+    )
+    billing.stripe_customer_id = str(
+        _stripe_value(subscription, "customer") or billing.stripe_customer_id or ""
+    )
     billing.stripe_price_id = price_id or billing.stripe_price_id
-    billing.subscription_status = str(subscription.get("status") or billing.subscription_status or "")
-    billing.current_period_start = _unix_to_dt(subscription.get("current_period_start"))
-    billing.current_period_end = _unix_to_dt(subscription.get("current_period_end"))
-    billing.cancel_at_period_end = bool(subscription.get("cancel_at_period_end"))
+    billing.subscription_status = str(
+        _stripe_value(subscription, "status") or billing.subscription_status or ""
+    )
+    billing.current_period_start = _unix_to_dt(_stripe_value(subscription, "current_period_start"))
+    billing.current_period_end = _unix_to_dt(_stripe_value(subscription, "current_period_end"))
+    billing.cancel_at_period_end = bool(_stripe_value(subscription, "cancel_at_period_end"))
     await session.flush()
 
 
 async def _handle_checkout_completed(session: AsyncSession, event_obj: dict[str, Any]) -> None:
-    checkout = event_obj.get("data", {}).get("object") or {}
-    if checkout.get("payment_status") not in {"paid", "no_payment_required"}:
+    checkout = _stripe_value(_stripe_value(event_obj, "data"), "object") or {}
+    payment_status = _stripe_value(checkout, "payment_status")
+    if payment_status not in {"paid", "no_payment_required"}:
         return
 
-    session_id = str(checkout.get("id") or "")
-    mode = str(checkout.get("mode") or "")
-    metadata = checkout.get("metadata") or {}
+    session_id = str(_stripe_value(checkout, "id") or "")
+    mode = str(_stripe_value(checkout, "mode") or "")
+    metadata = _stripe_value(checkout, "metadata") or {}
 
-    if mode == "payment" and metadata.get("event_type") == EVENT_CREDIT_TOPUP:
-        tenant_id = uuid.UUID(str(metadata["tenant_id"]))
-        credits = int(metadata.get("credits_to_add") or 0)
-        amount = Decimal(str(metadata.get("amount") or "0"))
-        currency = str(metadata.get("currency") or "").upper()
+    if mode == "payment" and _stripe_value(metadata, "event_type") == EVENT_CREDIT_TOPUP:
+        tenant_id = uuid.UUID(str(_stripe_value(metadata, "tenant_id")))
+        credits = int(_stripe_value(metadata, "credits_to_add") or 0)
+        amount = Decimal(str(_stripe_value(metadata, "amount") or "0"))
+        currency = str(_stripe_value(metadata, "currency") or "").upper()
         await apply_rls_session_context(session, tenant_id)
         await grant_credits_idempotent(
             session,
@@ -872,19 +907,19 @@ async def _handle_checkout_completed(session: AsyncSession, event_obj: dict[str,
             amount_paid=amount,
             currency_code=currency,
             stripe_checkout_session_id=session_id,
-            stripe_payment_intent_id=str(checkout.get("payment_intent") or "") or None,
+            stripe_payment_intent_id=str(_stripe_value(checkout, "payment_intent") or "") or None,
         )
         return
 
     if mode == "subscription":
-        pending_id = metadata.get("pending_signup_id")
+        pending_id = _stripe_value(metadata, "pending_signup_id")
         if pending_id:
             await apply_platform_lookup_session(session)
             try:
                 pending = await session.get(PendingSignupBillingSession, uuid.UUID(str(pending_id)))
                 if not pending:
                     return
-                subscription_id = str(checkout.get("subscription") or "")
+                subscription_id = str(_stripe_value(checkout, "subscription") or "")
                 subscription = None
                 if subscription_id:
                     subscription = _stripe_object_to_dict(
@@ -904,33 +939,31 @@ async def _handle_checkout_completed(session: AsyncSession, event_obj: dict[str,
                 await clear_platform_lookup_session(session)
             return
 
-        tenant_id_raw = metadata.get("tenant_id")
-        if tenant_id_raw and metadata.get("event_type") == EVENT_PLAN_UPGRADE:
+        tenant_id_raw = _stripe_value(metadata, "tenant_id")
+        if tenant_id_raw and _stripe_value(metadata, "event_type") == EVENT_PLAN_UPGRADE:
             tenant_id = uuid.UUID(str(tenant_id_raw))
             tenant = await session.get(Tenant, tenant_id)
-            subscription_id = str(checkout.get("subscription") or "")
+            subscription_id = str(_stripe_value(checkout, "subscription") or "")
             subscription = None
             if subscription_id:
                 subscription = _stripe_object_to_dict(
-                    await _run_stripe(stripe.Subscription.retrieve, subscription_id)
+                    await _run_stripe(
+                        stripe.Subscription.retrieve,
+                        subscription_id,
+                        settings=get_settings(),
+                    )
                 )
             await apply_rls_session_context(session, tenant_id)
             await apply_studio_subscription_to_billing(
                 session,
                 tenant_id,
-                country_code=tenant_country(tenant) if tenant else metadata.get("country"),
-                stripe_customer_id=str(checkout.get("customer") or "") or None,
+                country_code=tenant_country(tenant) if tenant else _stripe_value(metadata, "country"),
+                stripe_customer_id=str(_stripe_value(checkout, "customer") or "") or None,
                 stripe_subscription_id=subscription_id or None,
-                stripe_price_id=str(
-                    ((subscription or {}).get("items") or {}).get("data", [{}])[0]
-                    .get("price", {})
-                    .get("id")
-                    or ""
-                )
-                or None,
-                subscription_status=(subscription or {}).get("status"),
-                current_period_start=_unix_to_dt((subscription or {}).get("current_period_start")),
-                current_period_end=_unix_to_dt((subscription or {}).get("current_period_end")),
+                stripe_price_id=_subscription_first_price_id(subscription) or None,
+                subscription_status=_stripe_value(subscription, "status"),
+                current_period_start=_unix_to_dt(_stripe_value(subscription, "current_period_start")),
+                current_period_end=_unix_to_dt(_stripe_value(subscription, "current_period_end")),
                 grant_initial_credits=True,
                 idempotency_key=f"signup_subscription:{session_id}",
                 stripe_checkout_session_id=session_id,
@@ -938,8 +971,8 @@ async def _handle_checkout_completed(session: AsyncSession, event_obj: dict[str,
 
 
 async def _handle_checkout_expired(session: AsyncSession, event_obj: dict[str, Any]) -> None:
-    checkout = event_obj.get("data", {}).get("object") or {}
-    session_id = str(checkout.get("id") or "")
+    checkout = _stripe_value(_stripe_value(event_obj, "data"), "object") or {}
+    session_id = str(_stripe_value(checkout, "id") or "")
     if not session_id:
         return
     await apply_platform_lookup_session(session)
@@ -960,16 +993,16 @@ async def _handle_checkout_expired(session: AsyncSession, event_obj: dict[str, A
 
 
 async def _handle_invoice_paid(session: AsyncSession, event_obj: dict[str, Any]) -> None:
-    invoice = event_obj.get("data", {}).get("object") or {}
-    invoice_id = str(invoice.get("id") or "")
+    invoice = _stripe_value(_stripe_value(event_obj, "data"), "object") or {}
+    invoice_id = str(_stripe_value(invoice, "id") or "")
     if not invoice_id:
         return
 
-    billing_reason = str(invoice.get("billing_reason") or "")
+    billing_reason = str(_stripe_value(invoice, "billing_reason") or "")
     if billing_reason == "subscription_create":
         return
 
-    subscription_id = str(invoice.get("subscription") or "")
+    subscription_id = str(_stripe_value(invoice, "subscription") or "")
     if not subscription_id:
         return
 
@@ -989,8 +1022,8 @@ async def _handle_invoice_paid(session: AsyncSession, event_obj: dict[str, Any])
     if credits <= 0:
         return
 
-    period_start = _unix_to_dt(invoice.get("period_start"))
-    period_end = _unix_to_dt(invoice.get("period_end"))
+    period_start = _unix_to_dt(_stripe_value(invoice, "period_start"))
+    period_end = _unix_to_dt(_stripe_value(invoice, "period_end"))
     billing.subscription_status = "active"
     if period_start:
         billing.current_period_start = period_start
@@ -1005,8 +1038,11 @@ async def _handle_invoice_paid(session: AsyncSession, event_obj: dict[str, Any])
         idempotency_key=f"monthly_credits:{invoice_id}",
         event_type="monthly_grant",
         description="Studio subscription renewal — monthly credits",
-        amount_paid=Decimal(str((invoice.get("amount_paid") or 0))) / Decimal("100"),
-        currency_code=str(invoice.get("currency") or billing.billing_currency or "").upper() or None,
+        amount_paid=Decimal(str(_stripe_value(invoice, "amount_paid") or 0)) / Decimal("100"),
+        currency_code=str(
+            _stripe_value(invoice, "currency") or billing.billing_currency or ""
+        ).upper()
+        or None,
         stripe_invoice_id=invoice_id,
     )
     billing.last_monthly_grant_at = date.today()
@@ -1014,8 +1050,8 @@ async def _handle_invoice_paid(session: AsyncSession, event_obj: dict[str, Any])
 
 
 async def _handle_invoice_payment_failed(session: AsyncSession, event_obj: dict[str, Any]) -> None:
-    invoice = event_obj.get("data", {}).get("object") or {}
-    subscription_id = str(invoice.get("subscription") or "")
+    invoice = _stripe_value(_stripe_value(event_obj, "data"), "object") or {}
+    subscription_id = str(_stripe_value(invoice, "subscription") or "")
     if not subscription_id:
         return
     billing = (
@@ -1029,8 +1065,8 @@ async def _handle_invoice_payment_failed(session: AsyncSession, event_obj: dict[
 
 
 async def _handle_subscription_event(session: AsyncSession, event_obj: dict[str, Any]) -> None:
-    subscription = event_obj.get("data", {}).get("object") or {}
-    subscription_id = str(subscription.get("id") or "")
+    subscription = _stripe_value(_stripe_value(event_obj, "data"), "object") or {}
+    subscription_id = str(_stripe_value(subscription, "id") or "")
     if not subscription_id:
         return
 
@@ -1040,8 +1076,8 @@ async def _handle_subscription_event(session: AsyncSession, event_obj: dict[str,
         )
     ).scalar_one_or_none()
     if not billing:
-        meta = subscription.get("metadata") or {}
-        tenant_raw = meta.get("tenant_id")
+        meta = _stripe_value(subscription, "metadata") or {}
+        tenant_raw = _stripe_value(meta, "tenant_id")
         if tenant_raw:
             billing = await session.get(TenantBilling, uuid.UUID(str(tenant_raw)))
     if not billing:
@@ -1049,7 +1085,7 @@ async def _handle_subscription_event(session: AsyncSession, event_obj: dict[str,
 
     await apply_rls_session_context(session, billing.tenant_id)
     await _sync_subscription_to_billing(session, tenant_id=billing.tenant_id, subscription=subscription)
-    event_type = str(event_obj.get("type") or "")
+    event_type = str(_stripe_value(event_obj, "type") or "")
     if event_type == "customer.subscription.deleted":
         billing.subscription_status = "canceled"
         billing.plan = PLAN_FREE

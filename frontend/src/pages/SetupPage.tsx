@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api } from "@/api/client";
+import { api, setAuthToken, setAuthUser } from "@/api/client";
 import { SignupPlanStep } from "@/components/signup/SignupPlanStep";
 import { LogoBlock } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { selectClassMd } from "@/lib/selectClass";
+import { homePathForRole } from "@/lib/roles";
+import { persistAuthSuccess } from "@/lib/authSession";
 import {
   COUNTRIES,
   INDUSTRIES,
@@ -172,6 +174,18 @@ export function SetupPage() {
 
       if (result.checkout_url) {
         window.location.href = result.checkout_url;
+        return;
+      }
+
+      if (result.access_token && result.refresh_token && result.user) {
+        persistAuthSuccess({
+          access_token: result.access_token,
+          refresh_token: result.refresh_token,
+          user: result.user,
+        });
+        setAuthToken(result.access_token);
+        setAuthUser(result.user);
+        window.location.replace(homePathForRole(result.user.role));
         return;
       }
 
