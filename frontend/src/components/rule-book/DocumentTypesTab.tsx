@@ -320,7 +320,7 @@ function ExtractionFieldsPicker({
   const { standard: selectedStandard, custom: selectedCustom } = splitExtractionFields(normalized);
   const routeStandardKeys = standardExtractionFieldsForRoute(routeTarget);
   const routeBaselineHint = routeCompulsoryBaselineHint(routeTarget);
-  const routeRecommended = new Set(
+  const routeRecommended = new Set<string>(
     transactional ? routeCompulsoryBaseline(routeTarget) : []
   );
   const missingRecommended = missingRouteRecommendations({
