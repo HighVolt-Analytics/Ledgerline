@@ -100,6 +100,7 @@ class FieldConfidenceGateResult:
     gate_fields: list[str] = field(default_factory=list)
     confirmed_dt: str = ""
     skipped_fields_present_after_merge: list[str] = field(default_factory=list)
+    missing_gate_fields: list[str] = field(default_factory=list)
 
 
 async def phase_storage_verify(
@@ -437,17 +438,26 @@ def evaluate_field_confidence_gate(
     gate_fields = confidence_gate_fields(dt_definition)
     dt_code = (confirmed_dt or (dt_definition.code if dt_definition else "") or "").strip().upper()
 
-    if llm is None or not llm.field_confidence:
-        return FieldConfidenceGateResult(
-            passed=True,
-            min_confidence=floor,
-            gate_fields=gate_fields,
-            confirmed_dt=dt_code,
-        )
-
     ctx = None
     if parsed is not None and invoice is not None:
         ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
+
+    missing_gate_fields: list[str] = []
+    if ctx is not None:
+        for key in gate_fields:
+            if not field_is_present(key, invoice=invoice, parsed=parsed, ctx=ctx):
+                missing_gate_fields.append(key)
+
+    if llm is None or not llm.field_confidence:
+        reasons = [ReviewReason.EXTRACTION_GAP.value] if missing_gate_fields else []
+        return FieldConfidenceGateResult(
+            passed=not missing_gate_fields,
+            min_confidence=floor,
+            gate_fields=gate_fields,
+            confirmed_dt=dt_code,
+            missing_gate_fields=missing_gate_fields,
+            review_reasons=reasons,
+        )
 
     low: dict[str, float] = {}
     skipped_after_merge: list[str] = []
@@ -462,15 +472,20 @@ def evaluate_field_confidence_gate(
         if _llm_field_has_value(key, llm) and conf < floor:
             low[key] = round(conf, 4)
 
-    reasons = [ReviewReason.FIELD_CONFIDENCE_LOW.value] if low else []
+    reasons: list[str] = []
+    if low:
+        reasons.append(ReviewReason.FIELD_CONFIDENCE_LOW.value)
+    if missing_gate_fields:
+        reasons.append(ReviewReason.EXTRACTION_GAP.value)
     return FieldConfidenceGateResult(
-        passed=not low,
+        passed=not low and not missing_gate_fields,
         low_confidence_fields=low,
         min_confidence=floor,
         review_reasons=reasons,
         gate_fields=gate_fields,
         confirmed_dt=dt_code,
         skipped_fields_present_after_merge=skipped_after_merge,
+        missing_gate_fields=missing_gate_fields,
     )
 
 
@@ -484,4 +499,5 @@ def field_confidence_audit_detail(result: FieldConfidenceGateResult) -> dict[str
         "confirmed_dt": result.confirmed_dt,
         "gate_fields": result.gate_fields,
         "skipped_fields_present_after_merge": result.skipped_fields_present_after_merge,
+        "missing_gate_fields": result.missing_gate_fields,
     }

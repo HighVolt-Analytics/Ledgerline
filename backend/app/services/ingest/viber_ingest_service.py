@@ -23,7 +23,7 @@ from app.services.ingest.ingest_fanout_service import IngestSourceMetadata, inge
 from app.services.approval.approval_service import restore_rejected_invoice_file_if_needed
 from app.services.invoice.invoice_reset import reset_invoice_for_reprocess
 from app.services.purchase.team_expense_validator import resolve_employee_for_sender
-from app.services.master_data.vendor_resolver import resolve_vendor_slug
+from app.services.master_data.customer_resolver import resolve_capture_slug
 from app.services.ingest.viber_client import (
     ParsedViberMessage,
     ViberClient,
@@ -277,7 +277,7 @@ async def ingest_viber_message(
         )
         return result
 
-    vendor_slug = await resolve_vendor_slug(session, sender, tenant_id=connection.tenant_id)
+    vendor_slug = await resolve_capture_slug(session, sender, tenant_id=connection.tenant_id)
     fanout = await ingest_file_with_fanout(
         session,
         tenant_id=connection.tenant_id,

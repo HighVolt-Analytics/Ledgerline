@@ -30,7 +30,9 @@ from app.services.extraction.extraction_field_values import (
     custom_extraction_fields_prompt_lines,
     effective_extraction_field_keys_for_dt,
     effective_extraction_field_keys_union,
+    EXTRACTED_ONLY_ATTRS,
     expand_extraction_keys_for_llm,
+    extraction_accuracy_prompt_lines,
     extraction_field_manifest_prompt_lines,
     finance_field_manifest_prompt_lines,
     filter_invoice_fields_for_keys,
@@ -39,6 +41,7 @@ from app.services.extraction.extraction_field_values import (
     normalize_di_party_fields_for_prompt,
     normalize_di_scalars_for_prompt,
     normalize_extracted_fields_map,
+    PARTY_FIELD_KEYS,
     prebuilt_invoice_scalars_active,
     di_party_field_keys,
     di_party_fields_populated,
@@ -113,6 +116,8 @@ def build_llm_extract_json_keys(selected_keys: Sequence[str]) -> str:
             continue
         if key in ("attachment_name", "document_text", "bank_details"):
             continue
+        if key in PARTY_FIELD_KEYS or key in EXTRACTED_ONLY_ATTRS:
+            continue
         if key in scalar_keys:
             continue
         scalar_keys.append(key)
@@ -120,7 +125,10 @@ def build_llm_extract_json_keys(selected_keys: Sequence[str]) -> str:
     parts = list(_LLM_METADATA_KEYS) + scalar_keys
     if "line_items" in selected:
         parts.append("line_items")
-    if non_canonical_extraction_keys(selected_keys):
+    needs_extracted_bucket = bool(non_canonical_extraction_keys(selected_keys)) or bool(
+        selected & EXTRACTED_ONLY_ATTRS
+    )
+    if needs_extracted_bucket:
         parts.append("extracted_fields")
     return ", ".join(parts)
 
@@ -182,13 +190,19 @@ def build_llm_extract_rule_lines(
             "Never use phone numbers, invoice numbers, or tax IDs as bank details."
         )
     lines.append("- field_confidence maps every key in finance_field_manifest to 0.0-1.0 (use 0.0 when empty).")
+    lines.extend(extraction_accuracy_prompt_lines())
     if "gst_rate" in selected:
         lines.append("- gst_rate is the tax percentage as a number (e.g. 10 for 10%), not a fraction.")
-    if non_canonical_extraction_keys(selected_keys):
+    if non_canonical_extraction_keys(selected_keys) or (selected & EXTRACTED_ONLY_ATTRS):
         lines.append(
-            "- extracted_fields is an optional object for keys listed in custom_extraction_fields; "
-            "use string values only."
+            "- extracted_fields is an optional object for keys listed in custom_extraction_fields "
+            "and extracted-only manifest keys (account_code, seller_name, etc.); use string values only."
         )
+        if selected & PARTY_FIELD_KEYS:
+            lines.append(
+                "- Party fields (seller_name, buyer_name, etc.): populate seller/buyer objects "
+                "AND extracted_fields when configured."
+            )
     return "\n".join(lines)
 
 
@@ -321,6 +335,11 @@ def build_extract_system_prompt(
     finance_manifest = build_finance_field_manifest(keys)
     if finance_manifest:
         parts.extend(finance_field_manifest_prompt_lines(finance_manifest))
+    custom_keys = non_canonical_extraction_keys(keys)
+    extracted_only_keys = [key for key in keys if key in EXTRACTED_ONLY_ATTRS]
+    manifest_keys = list(dict.fromkeys([*custom_keys, *extracted_only_keys]))
+    if manifest_keys:
+        parts.extend(custom_extraction_fields_prompt_lines(custom_extraction_field_descriptors(manifest_keys)))
     profile = (playbook_profile or "").strip().lower()
     selected = {str(key or "").strip().lower() for key in keys}
     if profile == "supporting":
@@ -354,6 +373,7 @@ def build_extract_system_prompt(
                 "Document profile: credit note — extract credit reference and amounts (may be negative).",
             ]
         )
+    parts.extend(extraction_accuracy_prompt_lines())
     return "\n".join(parts)
 
 
@@ -563,7 +583,11 @@ def _normalize_llm_raw(
     harvest_keys = list(custom_keys) if custom_keys is not None else non_canonical_extraction_keys(
         selected_keys or ()
     )
-    harvested = harvest_custom_fields_from_llm_raw(out, custom_keys=harvest_keys)
+    harvested = harvest_custom_fields_from_llm_raw(
+        out,
+        custom_keys=harvest_keys,
+        selected_keys=selected_keys,
+    )
     if harvested:
         out["extracted_fields"] = harvested
     else:
@@ -768,6 +792,7 @@ def llm_result_to_invoice_data(
     *,
     ocr: OcrArtifact,
     custom_keys: Sequence[str] | None = None,
+    selected_keys: Sequence[str] | None = None,
     org: OrgContext | None = None,
 ) -> InvoiceData:
     org_ctx = org or OrgContext()
@@ -778,7 +803,11 @@ def llm_result_to_invoice_data(
         org=org_ctx,
     )
 
-    extracted = harvest_custom_fields_from_llm_raw(llm.raw, custom_keys=custom_keys)
+    extracted = harvest_custom_fields_from_llm_raw(
+        llm.raw,
+        custom_keys=custom_keys,
+        selected_keys=selected_keys,
+    )
     extracted = {
         **party_fields,
         **_canonical_scalar_extracted_fields(llm),

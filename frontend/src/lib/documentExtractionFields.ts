@@ -111,6 +111,15 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
   Vault: ["document_heading", "attachment_name"],
 };
 
+/** Route-level recommended compulsory fields — Rule Book UI guidance only (saved via required_fields). */
+export const ROUTE_COMPULSORY_BASELINE: Record<RouteTarget, ExtractionFieldKey[]> = {
+  "Purchase Management": ["vendor", "subtotal", "gst", "total", "due_date"],
+  "Expenses Management": ["vendor", "subtotal", "gst", "total", "due_date"],
+  "Sales Management": ["vendor", "subtotal", "gst", "total", "due_date"],
+  "Team Expenses": ["subtotal", "gst", "total"],
+  Vault: [],
+};
+
 const ROUTE_TARGET_SET = new Set<string>(ROUTE_TARGETS);
 const LABEL_BY_KEY = Object.fromEntries(
   EXTRACTION_FIELD_OPTIONS.map((row) => [row.key, row.label])
@@ -204,6 +213,86 @@ export function standardExtractionFieldsForRoute(
   routeTarget?: string | null
 ): ExtractionFieldKey[] {
   return [...STANDARD_EXTRACTION_FIELDS_BY_ROUTE[normalizeRouteTarget(routeTarget)]];
+}
+
+export function routeCompulsoryBaseline(routeTarget?: string | null): ExtractionFieldKey[] {
+  return [...ROUTE_COMPULSORY_BASELINE[normalizeRouteTarget(routeTarget)]];
+}
+
+/** User-facing hint for route compulsory baseline in Rule Book. */
+export function routeCompulsoryBaselineHint(routeTarget?: string | null): string | null {
+  const route = normalizeRouteTarget(routeTarget);
+  const labels = routeCompulsoryBaseline(route).map((key) => extractionFieldLabel(key));
+  if (!labels.length) {
+    return "Vault route uses only the compulsory fields you star below — no route extras.";
+  }
+  if (route === "Team Expenses") {
+    return `Team route recommends starring: ${labels.join(", ")}. Receipt attachment is enforced separately at approve.`;
+  }
+  return `This route recommends starring: ${labels.join(", ")}. Star them below (or use Apply route recommendations) so approve and settlement stay aligned.`;
+}
+
+/** Route-recommended keys not yet starred compulsory on this document type. */
+export function missingRouteRecommendations(input: {
+  routeTarget?: string | null;
+  requiredFields: string[];
+  extractionFields: string[];
+  transactional: boolean;
+}): string[] {
+  if (!input.transactional) return [];
+  const recommended = new Set(routeCompulsoryBaseline(input.routeTarget));
+  const starred = new Set(
+    normalizeCompulsoryFields(input.requiredFields, input.extractionFields)
+  );
+  return [...recommended].filter((key) => !starred.has(key));
+}
+
+export function formatRouteRecommendationList(routeTarget?: string | null): string {
+  return routeCompulsoryBaseline(routeTarget)
+    .map((key) => extractionFieldLabel(key))
+    .join(", ");
+}
+
+const NON_TRANSACTIONAL_PLAYBOOK_PROFILES = new Set([
+  "supporting",
+  "non_actionable",
+  "informational",
+  "reconciliation",
+  "master_data",
+  "compliance_route",
+]);
+
+/** True when route compulsory baseline should apply in Rule Book. */
+export function isTransactionalForRouteCompulsory(draft: {
+  posting?: string;
+  playbookProfile?: string;
+}): boolean {
+  if ((draft.posting ?? "").trim() === "No") return false;
+  const profile = (draft.playbookProfile ?? "").trim().toLowerCase();
+  if (NON_TRANSACTIONAL_PLAYBOOK_PROFILES.has(profile)) return false;
+  return true;
+}
+
+export function mergeRouteCompulsoryIntoConfig(input: {
+  requiredFields: string[];
+  extractionFields: string[];
+  routeTarget: string;
+  transactional: boolean;
+}): { requiredFields: string[]; extractionFields: string[] } {
+  const extractionBase = normalizeExtractionFieldKeys(input.extractionFields);
+  if (!input.transactional) {
+    const requiredFields = normalizeCompulsoryFields(input.requiredFields, extractionBase);
+    return {
+      requiredFields,
+      extractionFields: ensureExtractionSuperset(requiredFields, extractionBase),
+    };
+  }
+
+  const baseline = routeCompulsoryBaseline(input.routeTarget);
+  const mergedRequired = normalizeExtractionFieldKeys([...input.requiredFields, ...baseline]);
+  const extractionFields = ensureExtractionSuperset(mergedRequired, extractionBase);
+  const requiredFields = normalizeCompulsoryFields(mergedRequired, extractionFields);
+  return { requiredFields, extractionFields };
 }
 
 export function splitExtractionFields(keys: string[] | null | undefined): {

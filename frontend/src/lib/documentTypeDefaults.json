@@ -1,6 +1,6 @@
 {
   "DT-01": {
-    "required_fields": ["vendor", "invoice_no", "total", "po_reference"],
+    "required_fields": ["vendor", "invoice_no", "total", "due_date", "po_reference"],
     "absent_fields": [],
     "min_route_confidence": 0.65,
     "validation_profile": "",
@@ -29,14 +29,14 @@
     "playbook_profile": "supporting"
   },
   "DT-04": {
-    "required_fields": ["vendor", "invoice_no", "total"],
+    "required_fields": ["vendor", "invoice_no", "total", "due_date"],
     "absent_fields": [],
     "min_route_confidence": 0.65,
     "validation_profile": "",
     "playbook_profile": "credit_adjustment"
   },
   "DT-05": {
-    "required_fields": ["vendor", "invoice_no", "total"],
+    "required_fields": ["vendor", "invoice_no", "total", "due_date"],
     "absent_fields": [],
     "min_route_confidence": 0.65,
     "validation_profile": "",
@@ -57,7 +57,7 @@
     "playbook_profile": "direct_expense"
   },
   "DT-12": {
-    "required_fields": ["vendor", "total"],
+    "required_fields": ["vendor", "total", "due_date"],
     "absent_fields": [],
     "min_route_confidence": 0.65,
     "validation_profile": "",
@@ -92,7 +92,7 @@
     "playbook_profile": "supporting"
   },
   "DT-21": {
-    "required_fields": ["vendor", "invoice_no", "total"],
+    "required_fields": ["vendor", "invoice_no", "total", "due_date"],
     "absent_fields": [],
     "min_route_confidence": 0.65,
     "validation_profile": "direct_expense",

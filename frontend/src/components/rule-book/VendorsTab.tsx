@@ -269,6 +269,11 @@ export function VendorsTab({
 
   return (
     <div className="space-y-4">
+      <Card className="p-3 text-sm text-muted-foreground">
+        <strong>Vendor masters</strong> drive detection, VR12 registration holds, and GL defaults.
+        For email routing and payout methods, use the standalone{" "}
+        <strong>Vendors</strong> page (capture registry).
+      </Card>
       <p className="text-sm text-muted-foreground max-w-2xl">
         Auto-detect known vendors from inbound documents using four weighted signals. Unknown vendors
         are flagged for registration. Bank details power the Payments module.

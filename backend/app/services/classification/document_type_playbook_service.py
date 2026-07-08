@@ -184,7 +184,9 @@ def extraction_field_keys_from_playbook(definition: DocumentTypeDefinition) -> l
 
 def effective_extraction_fields(definition: DocumentTypeDefinition) -> list[str]:
     """User-defined extraction keys for drawer display and playbook completeness."""
-    return list(definition.extraction_fields or [])
+    from app.services.extraction.extraction_field_values import configured_extraction_keys
+
+    return configured_extraction_keys(definition)
 
 
 def extraction_fields_for_invoice_code(

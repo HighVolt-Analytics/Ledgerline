@@ -111,3 +111,27 @@ def test_merge_skips_regex_when_llm_line_items_trusted() -> None:
     assert len(merged.line_items) == 1
     assert merged.line_items[0].description == "Catering package"
     assert merged.line_items[0].amount == Decimal("500")
+
+
+def test_di_grounding_skip_keys_preserves_grounded_dates() -> None:
+    from app.services.extraction.extraction_orchestrator import _di_grounding_skip_keys
+
+    data = InvoiceData(invoice_date=date(2026, 4, 20), due_date=date(2026, 4, 20))
+    skip = _di_grounding_skip_keys(
+        data,
+        APOLLO_TEXT,
+        {"invoice_date", "due_date"},
+    )
+    assert skip == frozenset({"invoice_date", "due_date"})
+
+
+def test_di_grounding_skip_keys_excludes_ungrounded_vendor() -> None:
+    from app.services.extraction.extraction_orchestrator import _di_grounding_skip_keys
+
+    data = InvoiceData(vendor="Hallucinated Vendor")
+    skip = _di_grounding_skip_keys(
+        data,
+        "TAX INVOICE\nVendor: Real Co",
+        {"vendor"},
+    )
+    assert "vendor" not in skip

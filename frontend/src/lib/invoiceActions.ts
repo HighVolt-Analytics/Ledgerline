@@ -11,6 +11,7 @@ import {
   validateCompulsoryFieldsForApproval,
 } from "@/lib/documentCompulsoryFields";
 import { effectiveDocumentTypeCode } from "@/lib/documentTypeResolve";
+import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 
 export const APPROVAL_QUEUE_STATUSES = ["exception", "duplicate_skipped", "rejected"] as const;
 
@@ -136,18 +137,76 @@ export function compulsoryFieldsForInvoice(
   return compulsoryFieldsForDocumentType(documentTypes, code);
 }
 
-/** Client-side approve gate — only starred compulsory fields from Rule Book. */
+export const SETTLEMENT_FIELD_KEYS = ["vendor", "total", "due_date"] as const;
+
+export type PostApprovalSettlement = "payment" | "collection" | "none";
+
+type SettlementInvoiceShape = Pick<
+  InvoiceDetails,
+  | "route_target"
+  | "vendor"
+  | "total"
+  | "due_date"
+  | "sales_document_type"
+  | "purchase_document_type"
+  | "gl_posting_applicable"
+>;
+
+/** Route/doc shape that should produce payment or collection when amounts are present. */
+export function expectedSettlementKind(inv: SettlementInvoiceShape): PostApprovalSettlement {
+  const route = (inv.route_target ?? "").trim();
+  if (route === "Vault" || route === "Team Expenses") return "none";
+  if (inv.gl_posting_applicable === false) return "none";
+
+  if (route === "Sales Management") {
+    const salesDoc = (inv.sales_document_type ?? "").trim().toLowerCase();
+    if (salesDoc === "so" || salesDoc === "dn") return "none";
+    return "collection";
+  }
+
+  if (route === "Purchase Management" || route === "Expenses Management") {
+    const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
+    if (purchaseDoc === "po" || purchaseDoc === "grn") return "none";
+    return "payment";
+  }
+
+  return "none";
+}
+
+/** Fields still needed for settlement beyond what the document type already requires. */
+export function settlementFieldsForApproval(inv: SettlementInvoiceShape): readonly string[] {
+  return expectedSettlementKind(inv) === "none" ? [] : SETTLEMENT_FIELD_KEYS;
+}
+
+/** User-facing hint for what settlement needs before approve. */
+export function settlementApprovalHint(inv: SettlementInvoiceShape): string | null {
+  const settlement = expectedSettlementKind(inv);
+  if (settlement === "payment") {
+    return "Payments queue requires vendor, total, and due date before approve.";
+  }
+  if (settlement === "collection") {
+    return "Collections queue requires customer, total, and due date before approve.";
+  }
+  return null;
+}
+
+/** Client-side approve gate — document type compulsory fields saved in Rule Book. */
 export function validateInvoiceReadyForApproval(
   inv: ApprovalFieldBag &
-    Pick<Invoice, "document_type_code" | "purchase_document_type" | "sales_document_type">,
-  documentTypes: Array<{ code: string; requiredFields?: string[] }> | undefined,
+    Pick<
+      Invoice,
+      | "document_type_code"
+      | "purchase_document_type"
+      | "sales_document_type"
+      | "route_target"
+      | "gl_posting_applicable"
+    >,
+  documentTypes: DocumentTypeDefinition[] | undefined,
   fieldsOverride?: ApprovalFieldBag
 ): { ok: true } | { ok: false; message: string } {
+  const fields = approvalFieldsFromInvoice(fieldsOverride ?? inv);
   const compulsory = compulsoryFieldsForInvoice(inv, documentTypes);
-  return validateInvoiceFieldsForApproval(
-    approvalFieldsFromInvoice(fieldsOverride ?? inv),
-    compulsory.length ? compulsory : undefined
-  );
+  return validateInvoiceFieldsForApproval(fields, compulsory.length ? compulsory : undefined);
 }
 
 function approvalFailureMessage(inv: InvoiceDetails): string {
@@ -238,24 +297,10 @@ export function invoiceCanAttemptReprocess(inv: {
   return Boolean(inv.has_stored_file || inv.raw_file_path?.trim());
 }
 
-export type PostApprovalSettlement = "payment" | "collection" | "none";
-
-/** Expected AR/AP side effect after a processed invoice, by route and doc shape. */
-export function postApprovalSettlement(
-  inv: Pick<
-    InvoiceDetails,
-    | "route_target"
-    | "vendor"
-    | "total"
-    | "due_date"
-    | "sales_document_type"
-    | "purchase_document_type"
-    | "gl_posting_applicable"
-  >
-): PostApprovalSettlement {
-  const route = (inv.route_target ?? "").trim();
-  if (route === "Vault" || route === "Team Expenses") return "none";
-  if (inv.gl_posting_applicable === false) return "none";
+/** Expected AR/AP side effect after a processed invoice, by route and field completeness. */
+export function postApprovalSettlement(inv: SettlementInvoiceShape): PostApprovalSettlement {
+  const kind = expectedSettlementKind(inv);
+  if (kind === "none") return "none";
 
   const hasAmount =
     Boolean(inv.vendor?.trim()) &&
@@ -264,19 +309,7 @@ export function postApprovalSettlement(
   const hasDue = Boolean(inv.due_date?.trim());
   if (!hasAmount || !hasDue) return "none";
 
-  if (route === "Sales Management") {
-    const salesDoc = (inv.sales_document_type ?? "").trim().toLowerCase();
-    if (salesDoc === "so" || salesDoc === "dn") return "none";
-    return "collection";
-  }
-
-  if (route === "Purchase Management" || route === "Expenses Management") {
-    const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
-    if (purchaseDoc === "po" || purchaseDoc === "grn") return "none";
-    return "payment";
-  }
-
-  return "none";
+  return kind;
 }
 
 export type ApproveAndProcessResult = {

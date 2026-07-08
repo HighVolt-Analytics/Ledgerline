@@ -35,8 +35,11 @@ import {
 import { normalizeBundleConditional } from "@/lib/documentBundleConfig";
 import {
   defaultCompulsoryForTemplate,
-  ensureExtractionSuperset,
 } from "@/lib/documentCompulsoryFields";
+import {
+  isTransactionalForRouteCompulsory,
+  mergeRouteCompulsoryIntoConfig,
+} from "@/lib/documentExtractionFields";
 import { matchRulesFormForTemplate } from "@/lib/shippedTemplateMatchRules";
 import { syncClassifierFromRecognition } from "@/lib/documentTypeRecognition";
 
@@ -292,7 +295,7 @@ export function documentTypeFromTemplate(
   const code = orgCodeForNewType(existing);
   const matrixTemplateCode =
     templateId !== "custom" && template.shippedCode ? template.shippedCode.toUpperCase() : "";
-  const requiredFields = defaults.required_fields?.length
+  const baseRequired = defaults.required_fields?.length
     ? [...defaults.required_fields]
     : template.shippedCode
       ? defaultCompulsoryForTemplate(template.shippedCode)
@@ -304,7 +307,17 @@ export function documentTypeFromTemplate(
       : [];
   const baseExtraction =
     templateId === "custom" ? [] : [...template.defaultExtractionFields];
-  const extractionFields = ensureExtractionSuperset(requiredFields, baseExtraction);
+  const mergedFields = mergeRouteCompulsoryIntoConfig({
+    requiredFields: baseRequired,
+    extractionFields: baseExtraction,
+    routeTarget: template.routeTarget,
+    transactional: isTransactionalForRouteCompulsory({
+      posting: template.posting,
+      playbookProfile: template.playbookProfile,
+    }),
+  });
+  const extractionFields = mergedFields.extractionFields;
+  const requiredFields = mergedFields.requiredFields;
   const payload: DocumentTypeDefinition = {
     ...base,
     code,

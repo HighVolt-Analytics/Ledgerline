@@ -165,7 +165,7 @@ export function CustomerRegistryPanel() {
       {filtered.length === 0 ? (
         <EmptyState
           title="No capture registry entries"
-          hint="Add sender patterns manually or entries are created as sales documents are captured."
+          hint="Add sender patterns manually, or promote a pending customer (registry row is created when the source invoice has an email sender)."
           action={
             <Button
               size="sm"

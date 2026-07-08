@@ -11,6 +11,8 @@ import {
   counterpartyName,
   counterpartyUnknownLabel,
   evaluationReviewTooltip,
+  evaluationStatusDescription,
+  evaluationStatusLabel,
   invoiceCounterpartyConfidence,
   invoiceSourceKind,
   invoiceSourceLabel,
@@ -262,5 +264,19 @@ describe("evaluationReviewTooltip", () => {
     expect(
       evaluationReviewTooltip({ evaluation_status: "needs_review" } as Invoice, ["LLM_LOW_CONF"]),
     ).toBe("LLM confidence below auto-route threshold");
+  });
+});
+
+describe("evaluationStatusLabel", () => {
+  it("shows pending customer on sales route", () => {
+    expect(evaluationStatusLabel("pending_vendor", ROUTE_SALES)).toBe("Pending customer");
+    expect(evaluationStatusLabel("pending_vendor", ROUTE_PURCHASE)).toBe("Pending vendor");
+  });
+});
+
+describe("evaluationStatusDescription", () => {
+  it("points sales holds to customer masters", () => {
+    expect(evaluationStatusDescription("pending_vendor", ROUTE_SALES)).toContain("Customers");
+    expect(evaluationStatusDescription("pending_vendor", ROUTE_PURCHASE)).toContain("Vendors");
   });
 });

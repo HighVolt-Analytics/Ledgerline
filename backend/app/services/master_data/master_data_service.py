@@ -573,6 +573,17 @@ async def promote_pending_vendor(
             vendor_name=existing.name,
             source_invoice_id=row.source_invoice_id,
         )
+        from app.services.master_data.registry_promotion_service import (
+            sync_vendor_registry_after_promotion,
+        )
+
+        await sync_vendor_registry_after_promotion(
+            db,
+            tenant_id=tid,
+            name=existing.name,
+            abn=existing.abn,
+            source_invoice_id=row.source_invoice_id,
+        )
         return existing
 
     name = body.name or row.detected_name
@@ -601,6 +612,17 @@ async def promote_pending_vendor(
         db,
         tid,
         vendor_name=name,
+        source_invoice_id=row.source_invoice_id,
+    )
+    from app.services.master_data.registry_promotion_service import (
+        sync_vendor_registry_after_promotion,
+    )
+
+    await sync_vendor_registry_after_promotion(
+        db,
+        tenant_id=tid,
+        name=name,
+        abn=vendor.abn,
         source_invoice_id=row.source_invoice_id,
     )
     return vendor

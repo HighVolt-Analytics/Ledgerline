@@ -38,6 +38,11 @@ import {
   isStandardExtractionFieldKey,
   normalizeExtractionFieldKeys,
   reconcileExtractionFieldsForRoute,
+  routeCompulsoryBaseline,
+  routeCompulsoryBaselineHint,
+  missingRouteRecommendations,
+  mergeRouteCompulsoryIntoConfig,
+  isTransactionalForRouteCompulsory,
   sanitizeExtractionFieldKey,
   splitExtractionFields,
   standardExtractionFieldsForRoute,
@@ -234,11 +239,13 @@ function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor?: stri
 function ExtractionFieldChip({
   fieldKey,
   isCompulsory,
+  isRouteRecommended = false,
   onToggleCompulsory,
   onRemove,
 }: {
   fieldKey: string;
   isCompulsory: boolean;
+  isRouteRecommended?: boolean;
   onToggleCompulsory: () => void;
   onRemove: () => void;
 }) {
@@ -270,6 +277,9 @@ function ExtractionFieldChip({
         <Star className={cn("h-3 w-3", isCompulsory && "fill-current")} />
       </button>
       <span>{extractionFieldLabel(fieldKey)}</span>
+      {isRouteRecommended && !isCompulsory ? (
+        <span className="text-[10px] font-normal opacity-70">(route)</span>
+      ) : null}
       {!isPresetExtractionFieldKey(fieldKey) ? (
         <span className="font-mono text-[10px] opacity-70">({fieldKey})</span>
       ) : null}
@@ -291,6 +301,7 @@ function ExtractionFieldsPicker({
   extractionFields,
   requiredFields,
   routePruneNotice,
+  transactional,
   onChange,
 }: {
   id: string;
@@ -298,6 +309,7 @@ function ExtractionFieldsPicker({
   extractionFields: string[];
   requiredFields: string[];
   routePruneNotice?: string | null;
+  transactional: boolean;
   onChange: (next: { extractionFields: string[]; requiredFields: string[] }) => void;
 }) {
   const [customInput, setCustomInput] = useState("");
@@ -307,6 +319,16 @@ function ExtractionFieldsPicker({
   const selected = new Set(normalized);
   const { standard: selectedStandard, custom: selectedCustom } = splitExtractionFields(normalized);
   const routeStandardKeys = standardExtractionFieldsForRoute(routeTarget);
+  const routeBaselineHint = routeCompulsoryBaselineHint(routeTarget);
+  const routeRecommended = new Set(
+    transactional ? routeCompulsoryBaseline(routeTarget) : []
+  );
+  const missingRecommended = missingRouteRecommendations({
+    routeTarget,
+    requiredFields,
+    extractionFields,
+    transactional,
+  });
   const availableStandard = routeStandardKeys.filter((key) => !selected.has(key));
   const standardLabelByKey = Object.fromEntries(
     routeStandardKeys.map((key) => [key, extractionFieldLabel(key)])
@@ -364,6 +386,16 @@ function ExtractionFieldsPicker({
     setCustomInput("");
   }
 
+  function applyRouteRecommendations() {
+    const merged = mergeRouteCompulsoryIntoConfig({
+      requiredFields: [...compulsory],
+      extractionFields: normalized,
+      routeTarget,
+      transactional,
+    });
+    onChange(merged);
+  }
+
   const vaultEmptyHint =
     routeTarget === "Vault"
       ? " For Vault routes, document heading and attachment name are common standard fields."
@@ -383,6 +415,24 @@ function ExtractionFieldsPicker({
             <span className="font-medium text-foreground">compulsory</span> (your choice) — they
             drive VR03, playbook blocking, and Approve. Unstarred fields stay extracted but optional.
           </p>
+          {routeBaselineHint ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">{routeBaselineHint}</p>
+          ) : null}
+          {missingRecommended.length > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-[11px] text-amber-800 dark:text-amber-200">
+                Not yet starred for this route:{" "}
+                {missingRecommended.map((key) => extractionFieldLabel(key)).join(", ")}
+              </p>
+              <button
+                type="button"
+                onClick={applyRouteRecommendations}
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-900 transition-colors hover:bg-amber-500/20 dark:text-amber-100"
+              >
+                Apply route recommendations
+              </button>
+            </div>
+          ) : null}
         </div>
         {selectedStandard.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
@@ -391,6 +441,7 @@ function ExtractionFieldsPicker({
                 key={key}
                 fieldKey={key}
                 isCompulsory={compulsory.has(key)}
+                isRouteRecommended={routeRecommended.has(key)}
                 onToggleCompulsory={() => toggleCompulsory(key)}
                 onRemove={() => removeField(key)}
               />
@@ -414,9 +465,22 @@ function ExtractionFieldsPicker({
                   key={key}
                   type="button"
                   onClick={() => addStandardField(key)}
-                  className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                  className={cn(
+                    "rounded-full border bg-muted/40 px-2.5 py-1 text-[11px] font-medium transition-colors hover:border-primary/40 hover:text-foreground",
+                    routeRecommended.has(key)
+                      ? "border-amber-500/40 text-amber-900 dark:text-amber-100"
+                      : "border-border text-muted-foreground"
+                  )}
+                  title={
+                    routeRecommended.has(key)
+                      ? "Recommended for this workspace route"
+                      : undefined
+                  }
                 >
                   + {standardLabelByKey[key] ?? extractionFieldLabel(key)}
+                  {routeRecommended.has(key) ? (
+                    <span className="ml-1 text-[10px] opacity-80">(route)</span>
+                  ) : null}
                 </button>
               ))
             ) : (
@@ -893,12 +957,24 @@ function DocumentTypeEditDialog({
                           requiredFields: next.requiredFields,
                           nextRoute,
                         });
+                        const transactional = isTransactionalForRouteCompulsory({
+                          posting,
+                          playbookProfile: next.playbookProfile,
+                        });
+                        const fields = transactional
+                          ? mergeRouteCompulsoryIntoConfig({
+                              requiredFields: reconciled.requiredFields,
+                              extractionFields: reconciled.extractionFields,
+                              routeTarget: nextRoute,
+                              transactional: true,
+                            })
+                          : reconciled;
                         if (reconciled.removedStandardFields.length > 0) {
                           const count = reconciled.removedStandardFields.length;
                           setRoutePruneNotice(
                             `${count} standard field${count === 1 ? "" : "s"} removed because ${
                               count === 1 ? "it is" : "they are"
-                            } not valid on ${nextRoute}.`
+                            } not valid on ${nextRoute}. Route recommendations were applied where applicable.`
                           );
                         } else {
                           setRoutePruneNotice(null);
@@ -906,8 +982,8 @@ function DocumentTypeEditDialog({
                         onChange({
                           ...next,
                           posting,
-                          extractionFields: reconciled.extractionFields,
-                          requiredFields: reconciled.requiredFields,
+                          extractionFields: fields.extractionFields,
+                          requiredFields: fields.requiredFields,
                         });
                       }}
                       className={selectClass}
@@ -973,6 +1049,10 @@ function DocumentTypeEditDialog({
               extractionFields={draft.extractionFields}
               requiredFields={draft.requiredFields}
               routePruneNotice={routePruneNotice}
+              transactional={isTransactionalForRouteCompulsory({
+                posting: draft.posting,
+                playbookProfile: draft.playbookProfile,
+              })}
               onChange={({ extractionFields, requiredFields }) => {
                 setRoutePruneNotice(null);
                 onChange({ ...draft, extractionFields, requiredFields });

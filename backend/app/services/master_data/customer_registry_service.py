@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.customer import CustomerRegistry
 from app.schemas.customer import CustomerCreate, CustomerResponse, CustomerUpdate
+from app.services.master_data.vendor_resolver import slugify_vendor_name
 from app.tenant_scoped import get_for_tenant
 
 
@@ -116,14 +117,29 @@ async def resolve_customer_registry_id_for_invoice(
             return row.id
 
     name = (customer_name or "").strip().lower()
-    if not name:
-        return None
-    rows = (
-        await db.execute(
-            select(CustomerRegistry).where(CustomerRegistry.tenant_id == tenant_id)
-        )
-    ).scalars().all()
-    for row in rows:
-        if row.customer_name.strip().lower() == name:
-            return row.id
+    if name:
+        rows = (
+            await db.execute(
+                select(CustomerRegistry).where(CustomerRegistry.tenant_id == tenant_id)
+            )
+        ).scalars().all()
+        for row in rows:
+            row_name = row.customer_name.strip().lower()
+            if row_name == name:
+                return row.id
+            row_slug = row.customer_slug.replace("-", " ")
+            if row_slug == name or name in row_name or row_name in name:
+                return row.id
+        derived_slug = slugify_vendor_name(customer_name or "")
+        if derived_slug:
+            row = (
+                await db.execute(
+                    select(CustomerRegistry).where(
+                        CustomerRegistry.tenant_id == tenant_id,
+                        CustomerRegistry.customer_slug == derived_slug,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is not None:
+                return row.id
     return None

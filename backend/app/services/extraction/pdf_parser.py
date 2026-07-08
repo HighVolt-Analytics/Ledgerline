@@ -237,20 +237,11 @@ def parse_text_fields(text: str) -> dict[str, Any]:
     if vendor:
         fields["vendor"] = vendor
 
-    amount_patterns = [
-        (r"Sub\s*Total(?:\s*AUD)?[:\s]*\$?\s*([\d,]+\.?\d*)", "subtotal"),
-        (r"GST(?:\s*\d+%)?[:\s]*\$?\s*([\d,]+\.\d{2})\b", "gst"),
-        (r"FREIGHT\s*[:\-]?\s*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)", "total"),
-        (r"Invoice\s*Total[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
-        (r"Amount\s*Due[:\s]*\$?\s*([\d,]+\.?\d*)", "total"),
-        (r"(?<!Sub\s)TOTAL(?:\s*AUD)?(?:\s*Due)?[:\s]*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)", "total"),
-    ]
-    for pattern, key in amount_patterns:
-        if key in fields and fields[key] is not None:
-            continue
-        m = re.search(pattern, text, re.I)
-        if m:
-            fields[key] = _money(m.group(1))
+    from app.services.extraction.money_scalar_resolver import extract_money_scalars_from_text
+
+    for key, amount in extract_money_scalars_from_text(text).items():
+        if key not in fields or fields.get(key) is None:
+            fields[key] = amount
 
     from app.services.extraction.gst_rate import parse_gst_rate_percent
 

@@ -398,14 +398,17 @@ export function isPendingApprovalEvaluation(status: string | null | undefined): 
 }
 
 export function evaluationStatusLabel(
-  status: Invoice["evaluation_status"]
+  status: Invoice["evaluation_status"],
+  routeTarget?: string | null,
 ): string {
   if (status === "auto_coded") return "Auto coded";
   if (status === "needs_review") return "Needs review";
   if (status === "pending_approval") return "Pending approval";
   if (status === "awaiting_classification") return "Awaiting classification";
   if (status === "needs_rescan") return "Needs rescan";
-  if (status === "pending_vendor") return "Pending vendor";
+  if (status === "pending_vendor") {
+    return (routeTarget ?? "").trim() === ROUTE_SALES ? "Pending customer" : "Pending vendor";
+  }
   if (status === "unmatched_expense_vendor") return "Unmatched vendor";
   if (status === "awaiting_po") return "Awaiting PO";
   if (status === "awaiting_so") return "Awaiting SO";
@@ -414,8 +417,10 @@ export function evaluationStatusLabel(
 
 /** Short hint for inbox Evaluation column tooltips. */
 export function evaluationStatusDescription(
-  status: Invoice["evaluation_status"]
+  status: Invoice["evaluation_status"],
+  routeTarget?: string | null,
 ): string {
+  const isSales = (routeTarget ?? "").trim() === ROUTE_SALES;
   if (status === "auto_coded") {
     return "Route and coding rules matched — no manual routing step needed.";
   }
@@ -432,10 +437,12 @@ export function evaluationStatusDescription(
     return "Image or OCR quality was too poor — ask the sender for a flat, well-lit scan or PDF.";
   }
   if (status === "pending_vendor") {
-    return "Vendor is not in master (VR12 on) — register in Vendors before processing.";
+    return isSales
+      ? "Customer is not in master (VR12 on) — register in Rule Book → Customers before processing."
+      : "Vendor is not in master (VR12 on) — register in Rule Book → Vendors before processing.";
   }
   if (status === "unmatched_expense_vendor") {
-    return "Small expense from an unknown vendor — advisory only, not held.";
+    return "Small expense from an unknown vendor — advisory only, not held. Raise expense_vendor_hold_above to block.";
   }
   if (status === "awaiting_po") {
     return "Purchase invoice is waiting for a PO link.";
@@ -538,7 +545,7 @@ export function evaluationReviewTooltip(
     return "Open document drawer — check classification, validation, or GL mapping";
   }
 
-  return evaluationStatusDescription(status);
+  return evaluationStatusDescription(status, inv.route_target);
 }
 
 export function routeTargetShortLabel(route: string | null | undefined): string {
