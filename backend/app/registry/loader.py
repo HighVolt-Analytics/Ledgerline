@@ -52,6 +52,14 @@ def _parse_field(key: str, raw: dict[str, Any]) -> FieldDefinition:
     else:
         confuse = []
 
+    deprioritized = raw.get("deprioritized_label_qualifiers") or []
+    if isinstance(deprioritized, str):
+        deprioritized = [part.strip() for part in deprioritized.split(",") if part.strip()]
+    elif isinstance(deprioritized, list):
+        deprioritized = [str(part).strip() for part in deprioritized if str(part).strip()]
+    else:
+        deprioritized = []
+
     priority = raw.get("source_priority") or ["llm", "azure_di", "layout_kv", "regex"]
     if isinstance(priority, list):
         priority_tuple = tuple(str(p).strip() for p in priority if str(p).strip())
@@ -75,6 +83,7 @@ def _parse_field(key: str, raw: dict[str, Any]) -> FieldDefinition:
         extraction_hint=str(raw.get("extraction_hint") or "").strip(),
         finance_role=str(raw.get("finance_role") or "").strip(),
         do_not_confuse_with=tuple(confuse),
+        deprioritized_label_qualifiers=tuple(deprioritized),
         jurisdiction_variants=_parse_jurisdiction_variants(raw.get("jurisdiction_variants")),
         source_priority=priority_tuple,
         storage_aliases=alias_tuple,

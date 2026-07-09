@@ -51,3 +51,22 @@ def test_extract_qty_only_rows_with_merged_plt_cells() -> None:
     assert "81 X 61 X 97" in items[0].description
     assert items[4].qty == Decimal("10")
     assert all(item.amount is None and item.unit_price is None for item in items)
+
+
+def test_extract_headerless_money_table_rows() -> None:
+    cells = [
+        LayoutTableCell(row_index=0, column_index=0, text="Widget A", row_span=1, column_span=1),
+        LayoutTableCell(row_index=0, column_index=1, text="2", row_span=1, column_span=1),
+        LayoutTableCell(row_index=0, column_index=2, text="10.00", row_span=1, column_span=1),
+        LayoutTableCell(row_index=0, column_index=3, text="20.00", row_span=1, column_span=1),
+        LayoutTableCell(row_index=1, column_index=0, text="Widget B", row_span=1, column_span=1),
+        LayoutTableCell(row_index=1, column_index=1, text="1", row_span=1, column_span=1),
+        LayoutTableCell(row_index=1, column_index=2, text="5.00", row_span=1, column_span=1),
+        LayoutTableCell(row_index=1, column_index=3, text="5.00", row_span=1, column_span=1),
+    ]
+    layout = DocumentLayoutResult(tables=[_table(cells, row_count=2, column_count=4)])
+    items = extract_line_items_from_tables(layout)
+    assert len(items) == 2
+    assert items[0].description == "Widget A"
+    assert items[0].qty == Decimal("2")
+    assert items[0].amount == Decimal("20.00")

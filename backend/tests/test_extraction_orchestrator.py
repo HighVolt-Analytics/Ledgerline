@@ -113,6 +113,101 @@ def test_merge_skips_regex_when_llm_line_items_trusted() -> None:
     assert merged.line_items[0].amount == Decimal("500")
 
 
+def test_merge_unions_partial_llm_with_full_table() -> None:
+    table_rows = [
+        {"description": "Widget A", "qty": "2", "unit_price": "10", "amount": "20"},
+        {"description": "Widget B", "qty": "1", "unit_price": "5", "amount": "5"},
+        {"description": "Widget C", "qty": "3", "unit_price": "2", "amount": "6"},
+        {"description": "Widget D", "qty": "1", "unit_price": "8", "amount": "8"},
+        {"description": "Widget E", "qty": "2", "unit_price": "4", "amount": "8"},
+    ]
+    text = (
+        "DESCRIPTION QTY UNIT PRICE AMOUNT\n"
+        "Widget A 2 10.00 20.00\n"
+        "Widget B 1 5.00 5.00\n"
+        "Widget C 3 2.00 6.00\n"
+        "Widget D 1 8.00 8.00\n"
+        "Widget E 2 4.00 8.00\n"
+    )
+    parsed = InvoiceData(
+        line_items=[
+            ParsedLineItem(
+                description="Widget A",
+                qty=Decimal("2"),
+                unit_price=Decimal("10"),
+                amount=Decimal("20"),
+            ),
+            ParsedLineItem(
+                description="Widget B",
+                qty=Decimal("1"),
+                unit_price=Decimal("5"),
+                amount=Decimal("5"),
+            ),
+        ]
+    )
+    ocr = OcrArtifact(success=True, text=text, text_length=len(text), payload_json={"table_line_items": table_rows})
+    merged = merge_extraction_sources(parsed, ocr)
+    assert len(merged.line_items) == 5
+    descriptions = {item.description for item in merged.line_items}
+    assert "Widget C" in descriptions
+    assert "Widget E" in descriptions
+
+
+def test_trusted_llm_does_not_block_larger_table() -> None:
+    table_rows = [
+        {"description": f"Widget {label}", "qty": "1", "unit_price": "10", "amount": "10"}
+        for label in ("A", "B", "C", "D", "E")
+    ]
+    text = "DESCRIPTION QTY UNIT PRICE AMOUNT\n" + "\n".join(
+        f"Widget {label} 1 10.00 10.00" for label in ("A", "B", "C", "D", "E")
+    )
+    parsed = InvoiceData(
+        line_items=[
+            ParsedLineItem(
+                description="Widget A",
+                qty=Decimal("1"),
+                unit_price=Decimal("10"),
+                amount=Decimal("10"),
+            ),
+            ParsedLineItem(
+                description="Widget B",
+                qty=Decimal("1"),
+                unit_price=Decimal("10"),
+                amount=Decimal("10"),
+            ),
+        ]
+    )
+    ocr = OcrArtifact(success=True, text=text, text_length=len(text), payload_json={"table_line_items": table_rows})
+    merged = merge_extraction_sources(parsed, ocr)
+    assert len(merged.line_items) == 5
+
+
+def test_partial_di_unions_with_qty_only_table() -> None:
+    from pathlib import Path
+
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    text = (fixtures / "qty_only_table_ocr.txt").read_text(encoding="utf-8")
+    table_rows = [
+        {"description": "CPU CHIPS 14 Gen I3 14100", "qty": "150"},
+        {"description": "CPU CHIPS 14 Gen I5 14400", "qty": "70"},
+        {"description": "CPU CHIPS 14 Gen I5 14500", "qty": "130"},
+        {"description": "CPU CHIPS 14 Gen I7 14700", "qty": "200"},
+        {"description": "CPU CHIPS 14 Gen I9 14900", "qty": "10"},
+    ]
+    parsed = InvoiceData(line_items=[])
+    ocr = OcrArtifact(
+        success=True,
+        text=text,
+        text_length=len(text),
+        payload_json={
+            "di_line_items": [{"description": "PACKING LIST HEADER", "qty": "1"}],
+            "table_line_items": table_rows,
+        },
+    )
+    merged = merge_extraction_sources(parsed, ocr)
+    assert len(merged.line_items) >= 5
+
+
 def test_di_grounding_skip_keys_preserves_grounded_dates() -> None:
     from app.services.extraction.extraction_orchestrator import _di_grounding_skip_keys
 

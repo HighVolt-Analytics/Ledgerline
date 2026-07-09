@@ -12,6 +12,7 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.schemas.ocr_artifact import OcrArtifact
+from app.services.invoice.file_validity_gate import FileValidityResult
 from app.services.invoice.pipeline import process_invoice
 from tests.pipeline_test_helpers import patch_confidence_gate_pass
 from app.tenant_ids import TESTING_TENANT_UUID
@@ -65,32 +66,45 @@ async def test_pipeline_phase_audit_order_on_gate_pass(
             seller=LlmParty(name="Acme Pty Ltd"),
         )
 
-    async def _fake_extract(*_args, **_kwargs) -> LlmDocumentResult:
-        return LlmDocumentResult(
-            suggested_dt="DT-03",
-            confidence=0.91,
-            perspective="purchase",
-            vendor="Acme Pty Ltd",
-            total="120.00",
-            seller=LlmParty(name="Acme Pty Ltd"),
+    async def _fake_extract(*_args, **_kwargs):
+        from app.services.extraction.document_ai_provider import ExtractFieldsResult
+
+        return ExtractFieldsResult(
+            llm=LlmDocumentResult(
+                suggested_dt="DT-03",
+                confidence=0.91,
+                perspective="purchase",
+                vendor="Acme Pty Ltd",
+                total="120.00",
+                seller=LlmParty(name="Acme Pty Ltd"),
+            ),
+            ocr=ocr,
         )
 
     async def _noop_sync(*_args, **_kwargs) -> None:
         return None
 
+    def _passing_file_validity(_path: str) -> FileValidityResult:
+        return FileValidityResult(passed=True, file_size_bytes=128)
+
     patch_confidence_gate_pass(monkeypatch)
-    monkeypatch.setattr("app.services.pipeline.open_pdf_for_reading", _fake_open)
-    monkeypatch.setattr("app.services.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
     monkeypatch.setattr(
-        "app.services.invoice_pipeline_phases.read_for_classification",
+        "app.services.invoice.file_validity_gate.evaluate_file_validity",
+        _passing_file_validity,
+    )
+    monkeypatch.setattr("app.services.invoice.pipeline.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.invoice.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.shared.file_storage.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr(
+        "app.services.invoice.invoice_pipeline_phases.read_for_classification",
         _fake_read,
     )
     monkeypatch.setattr(
-        "app.services.invoice_pipeline_phases.classify_only",
+        "app.services.invoice.invoice_pipeline_phases.classify_only",
         _fake_classify,
     )
-    monkeypatch.setattr("app.services.pipeline.extract_fields", _fake_extract)
-    monkeypatch.setattr("app.services.pipeline.sync_invoice_blob_path", _noop_sync)
+    monkeypatch.setattr("app.services.invoice.pipeline.extract_fields", _fake_extract)
+    monkeypatch.setattr("app.services.invoice.pipeline.sync_invoice_blob_path", _noop_sync)
 
     await process_invoice(db_session, inv)
     await db_session.flush()
@@ -155,17 +169,25 @@ async def test_pipeline_phase_audit_order_on_gate_fail(
     async def _fake_extract(*_args, **_kwargs) -> LlmDocumentResult:
         raise AssertionError("extract must not run when gate fails")
 
-    monkeypatch.setattr("app.services.pipeline.open_pdf_for_reading", _fake_open)
-    monkeypatch.setattr("app.services.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
+    def _passing_file_validity(_path: str) -> FileValidityResult:
+        return FileValidityResult(passed=True, file_size_bytes=128)
+
     monkeypatch.setattr(
-        "app.services.invoice_pipeline_phases.read_for_classification",
+        "app.services.invoice.file_validity_gate.evaluate_file_validity",
+        _passing_file_validity,
+    )
+    monkeypatch.setattr("app.services.invoice.pipeline.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.invoice.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr("app.services.shared.file_storage.open_pdf_for_reading", _fake_open)
+    monkeypatch.setattr(
+        "app.services.invoice.invoice_pipeline_phases.read_for_classification",
         _fake_read,
     )
     monkeypatch.setattr(
-        "app.services.invoice_pipeline_phases.classify_only",
+        "app.services.invoice.invoice_pipeline_phases.classify_only",
         _fake_classify,
     )
-    monkeypatch.setattr("app.services.pipeline.extract_fields", _fake_extract)
+    monkeypatch.setattr("app.services.invoice.pipeline.extract_fields", _fake_extract)
 
     await process_invoice(db_session, inv)
     await db_session.flush()

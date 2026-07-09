@@ -230,11 +230,13 @@ def resolve_finance_scalars(
     org: OrgContext,
     llm: LlmDocumentResult,
     ocr_text: str | None,
+    counterparty_source: str = "letterhead",
+    route_target: str | None = None,
 ) -> dict[str, Any]:
     """Perspective-aware vendor, abn, and billing_address."""
     from app.services.sales.counterparty_service import (
-        counterparty_side_for_perspective,
         resolve_counterparty_name,
+        resolve_counterparty_side,
     )
     from app.services.master_data.vendor_resolver import is_plausible_vendor_name
     from app.utils.tax_id_validator import storage_tax_id
@@ -243,16 +245,26 @@ def resolve_finance_scalars(
     seller = parties.get("seller") or NormalizedParty()
     buyer = parties.get("buyer") or NormalizedParty()
 
-    side = counterparty_side_for_perspective(perspective)
-    if side == "party" and org.default_perspective == "seller":
+    source = (counterparty_source or "letterhead").strip().lower()
+    if source in {"consignee", "applicant", "bill_to"}:
         side = "customer"
-    elif side == "party":
-        side = "vendor"
+    else:
+        side = resolve_counterparty_side(route_target=route_target, perspective=perspective)
+
+    buyer_name = buyer.name
+    if source == "applicant" and ocr_text:
+        from app.services.master_data.vendor_name_utils import extract_buyer_party_from_text
+
+        applicant = extract_buyer_party_from_text(ocr_text)
+        if applicant:
+            buyer_name = applicant or buyer_name
+    elif source == "bill_to" and buyer.address and not buyer_name:
+        buyer_name = buyer.name
 
     vendor = resolve_counterparty_name(
         side=side,
         org=org,
-        buyer_name=buyer.name,
+        buyer_name=buyer_name,
         buyer_abn=buyer.tax_id,
         seller_name=seller.name,
         seller_abn=seller.tax_id,
@@ -298,6 +310,8 @@ def apply_party_normalization_to_llm(
     *,
     ocr_text: str | None,
     org: OrgContext | None = None,
+    counterparty_source: str = "letterhead",
+    route_target: str | None = None,
 ) -> tuple[dict[str, NormalizedParty], str, dict[str, Any], dict[str, str]]:
     """
     Full party pipeline: normalize, enrich from OCR, resolve perspective and scalars.
@@ -315,6 +329,8 @@ def apply_party_normalization_to_llm(
         org=org_ctx,
         llm=llm,
         ocr_text=ocr_text,
+        counterparty_source=counterparty_source,
+        route_target=route_target,
     )
     extracted = party_extracted_fields_dict(parties)
     if finance.get("billing_address"):

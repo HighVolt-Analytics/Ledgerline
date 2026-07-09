@@ -98,6 +98,19 @@ def _chat_json_once(
     return parsed if isinstance(parsed, dict) else None
 
 
+def _retry_sleep_seconds(exc: Exception, attempt: int) -> float:
+    """Backoff between retryable OpenAI errors; honour Retry-After on 429."""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        retry_after = exc.response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(float(retry_after), 1.0)
+            except ValueError:
+                pass
+        return min(30.0, 2.0 * (2**attempt))
+    return 0.5 * (2**attempt)
+
+
 def chat_json(
     *,
     system: str,
@@ -123,7 +136,7 @@ def chat_json(
         payload["temperature"] = 0.1
     if require_runtime:
         timeout = timeout_seconds or settings.runtime_llm_timeout_seconds
-        max_attempts = settings.runtime_llm_max_retries + 1
+        max_attempts = max(settings.runtime_llm_max_retries + 1, 3)
         retry_timeouts = False
     else:
         timeout = timeout_seconds or settings.sample_proposal_llm_timeout_seconds
@@ -141,7 +154,7 @@ def chat_json(
             ):
                 import time
 
-                time.sleep(0.5 * (2**attempt))
+                time.sleep(_retry_sleep_seconds(exc, attempt))
                 continue
             break
     if last_error is not None:

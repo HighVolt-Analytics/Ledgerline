@@ -226,6 +226,7 @@ class RegistryAdapter:
                     "key": token,
                     "finance_role": row.finance_role,
                     "do_not_use": ", ".join(row.do_not_confuse_with),
+                    "deprioritized_labels": list(row.deprioritized_label_qualifiers),
                 }
             )
         return out

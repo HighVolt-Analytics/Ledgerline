@@ -510,6 +510,20 @@ _DI_PARTY_FIELD_KEYS: tuple[str, ...] = (
     "buyer_address",
 )
 
+_GLOBAL_DEPRIORITIZED_LABEL_QUALIFIERS: tuple[str, ...] = (
+    "proforma",
+    "pro-forma",
+    "draft",
+    "quotation",
+    "estimate",
+)
+
+_FIELD_DEPRIORITIZED_LABELS: dict[str, tuple[str, ...]] = {
+    "invoice_no": _GLOBAL_DEPRIORITIZED_LABEL_QUALIFIERS,
+    "po_reference": _GLOBAL_DEPRIORITIZED_LABEL_QUALIFIERS,
+    "so_reference": _GLOBAL_DEPRIORITIZED_LABEL_QUALIFIERS,
+}
+
 _FINANCE_FIELD_DEFS: dict[str, dict[str, str]] = {
     "vendor": {
         "finance_role": "Creditor / supplier issuing the invoice (seller on a purchase invoice)",
@@ -837,6 +851,7 @@ def build_finance_field_manifest(selected_keys: Sequence[str]) -> list[dict[str,
                     **row,
                     "finance_role": defs.get("finance_role", row["label"]),
                     "do_not_use": defs.get("do_not_use", ""),
+                    "deprioritized_labels": defs.get("deprioritized_labels", []),
                 }
             )
         return enriched
@@ -844,11 +859,13 @@ def build_finance_field_manifest(selected_keys: Sequence[str]) -> list[dict[str,
     for row in base:
         key = row["key"]
         defs = _FINANCE_FIELD_DEFS.get(key, {})
+        deprioritized = _FIELD_DEPRIORITIZED_LABELS.get(key, ())
         enriched.append(
             {
                 **row,
                 "finance_role": defs.get("finance_role", row["label"]),
                 "do_not_use": defs.get("do_not_use", ""),
+                "deprioritized_labels": list(deprioritized),
             }
         )
     return enriched
@@ -865,6 +882,9 @@ def finance_field_manifest_prompt_lines(manifest: list[dict[str, str]]) -> list[
         line = f'- `{row["key"]}` ({row["label"]}) — {row.get("finance_role", row["label"])}'
         if row.get("do_not_use"):
             line += f"; do NOT use: {row['do_not_use']}"
+        deprioritized = row.get("deprioritized_labels") or []
+        if deprioritized:
+            line += f"; deprioritize labels containing: {', '.join(deprioritized)}"
         line += f"; OCR labels: {row.get('hint', '')}"
         lines.append(line)
     return lines
@@ -942,6 +962,73 @@ def apply_di_scalars_authoritative(
     if not updates:
         return parsed
     return replace(parsed, **updates)
+
+
+def _scalar_value_for_extracted_field(key: str, value: object) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    token = str(value).strip()
+    return token or None
+
+
+def merge_extracted_fields_with_authority(
+    *,
+    base: dict[str, str],
+    llm_extracted: dict[str, str] | None,
+    payload: dict[str, object] | None,
+    selected_keys: Sequence[str],
+    ocr_text: str | None,
+) -> dict[str, str]:
+    """Merge extracted_fields giving DI-trusted scalars authority over LLM guesses."""
+    merged = dict(base)
+    llm_map = llm_extracted or {}
+    keys = list(selected_keys or ())
+    for key, value in llm_map.items():
+        token = str(key or "").strip().lower()
+        if not token or not str(value or "").strip():
+            continue
+        if field_di_authoritative(payload, token, ocr_text=ocr_text, selected_keys=keys):
+            continue
+        merged[token] = str(value).strip()
+
+    di_data = resolve_scalars_from_ocr_payload(payload, keys)
+    if di_data is None:
+        return merged
+    trusted = di_trusted_scalar_fields(payload, ocr_text, keys)
+    for key in trusted:
+        if key not in INVOICE_SCALAR_ATTRS:
+            continue
+        scalar_val = _scalar_value_for_extracted_field(key, getattr(di_data, key, None))
+        if scalar_val:
+            merged[key] = scalar_val
+        else:
+            merged.pop(key, None)
+    return merged
+
+
+def sync_extracted_fields_with_di_authority(
+    parsed: InvoiceData,
+    payload: dict[str, object] | None,
+    selected_keys: Sequence[str],
+    *,
+    ocr_text: str | None = None,
+) -> InvoiceData:
+    """Align extracted_fields with DI-trusted scalar columns on parsed."""
+    trusted = di_trusted_scalar_fields(payload, ocr_text, selected_keys)
+    if not trusted:
+        return parsed
+    extracted = dict(extracted_fields_from_parsed(parsed))
+    for key in trusted:
+        if key not in INVOICE_SCALAR_ATTRS:
+            continue
+        scalar_val = _scalar_value_for_extracted_field(key, getattr(parsed, key, None))
+        if scalar_val:
+            extracted[key] = scalar_val
+        else:
+            extracted.pop(key, None)
+    return replace(parsed, extracted_fields=extracted)
 
 
 def clear_llm_scalars_for_di_populated_fields(

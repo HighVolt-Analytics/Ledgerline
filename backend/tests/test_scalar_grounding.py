@@ -132,8 +132,10 @@ def test_build_finance_field_manifest_includes_do_not_use() -> None:
     manifest = build_finance_field_manifest(["vendor", "subtotal"])
     by_key = {row["key"]: row for row in manifest}
     assert "do_not_use" in by_key["vendor"]
-    assert "CustomerName" in by_key["vendor"]["do_not_use"]
+    vendor_do_not_use = by_key["vendor"]["do_not_use"].lower()
+    assert "buyer" in vendor_do_not_use or "customer" in vendor_do_not_use
     assert "finance_role" in by_key["subtotal"]
+    assert by_key["vendor"].get("deprioritized_labels") is not None
 
 
 def test_build_scalar_fields_presentation_prompt_di_mode() -> None:
@@ -245,9 +247,11 @@ def test_llm_result_skips_scalars_when_di_trusted() -> None:
         ),
         selected_keys=["vendor", "invoice_no", "total"],
     )
-    assert parsed.vendor is None
+    assert parsed.vendor == "Acme"
     assert parsed.invoice_no == "INV-99"
-    assert parsed.total is None
+    assert parsed.total is not None
+    assert str(parsed.total) in {"100", "100.0"}
+    assert parsed.extracted_fields.get("vendor") == "Acme"
 
 
 def test_build_llm_user_payload_azure_di_scalar_fields() -> None:

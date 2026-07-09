@@ -1411,7 +1411,7 @@ export function InvoiceDetailDrawer({
                             >
                               {editing ? "Edit line items →" : "Open line items to edit →"}
                             </button>
-                          ) : key === "line_items" && inv.line_items.length > 0 ? (
+                          ) : key === "line_items" && drawerLineItems.previewItems.length > 0 ? (
                             <button
                               type="button"
                               onClick={() => setTab("lines")}

@@ -50,12 +50,13 @@ def test_resolve_line_items_prefers_di_over_table() -> None:
     }
     rows = resolve_line_items_from_ocr_payload(payload)
     assert rows is not None
-    assert len(rows) == 1
+    assert len(rows) == 2
     assert rows[0].description == "DI Widget"
+    assert any(row.description == "Table Widget" for row in rows)
 
 
 def test_document_has_product_table_from_di_payload() -> None:
-    payload = {"di_line_items": [{"description": "Item", "amount": "5"}]}
+    payload = {"di_line_items": [{"description": "Widget", "amount": "5"}]}
     assert document_has_product_table("", payload)
 
 

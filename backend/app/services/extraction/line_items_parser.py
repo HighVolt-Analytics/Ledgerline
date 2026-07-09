@@ -539,24 +539,29 @@ def resolve_usable_line_items_from_payload(
     *,
     allow_qty_only: bool = False,
 ) -> list[ParsedLineItem]:
-    """Prefer usable DI rows; fall back to usable layout table rows."""
+    """Merge usable DI and layout table rows; DI fills gaps, table appends missing rows."""
     if not payload:
         return []
     di_items = _usable_line_items(deserialize_line_items(payload.get("di_line_items")))
-    if di_items:
-        return enrich_parsed_line_items(di_items)
     table_items = deserialize_line_items(payload.get("table_line_items"))
     if allow_qty_only:
-        usable = _usable_line_items(table_items, allow_qty_only=True)
+        table_usable = _usable_line_items(table_items, allow_qty_only=True)
     else:
         money_rows = [
             item
             for item in table_items
             if item.amount is not None or item.unit_price is not None
         ]
-        usable = _usable_line_items(money_rows) or _usable_line_items(table_items)
-    if usable:
-        return enrich_parsed_line_items(usable)
+        table_usable = _usable_line_items(money_rows) or _usable_line_items(table_items)
+    if di_items and table_usable:
+        return merge_line_item_lists(
+            enrich_parsed_line_items(di_items),
+            enrich_parsed_line_items(table_usable),
+        )
+    if di_items:
+        return enrich_parsed_line_items(di_items)
+    if table_usable:
+        return enrich_parsed_line_items(table_usable)
     return []
 
 
@@ -799,7 +804,11 @@ def document_has_qty_only_table(
     """True when OCR/layout shows a qty table without money columns."""
     payload_dict = payload or {}
     if di_line_items_usable(payload_dict):
-        return False
+        di_rows = _usable_line_items(deserialize_line_items(payload_dict.get("di_line_items")))
+        table_rows = deserialize_line_items(payload_dict.get("table_line_items"))
+        table_usable = _usable_line_items(table_rows, allow_qty_only=True) if table_rows else []
+        if di_rows and len(di_rows) >= len(table_usable):
+            return False
     if _payload_has_qty_only_table_rows(payload_dict):
         return True
 
@@ -852,6 +861,8 @@ def document_has_product_table(
         if (parsed := _parse_table_row_tail(line)) is not None
     ]
     if has_header and data_rows:
+        return True
+    if len(data_rows) == 1 and data_rows[0].amount is not None:
         return True
     return len(data_rows) >= 2
 

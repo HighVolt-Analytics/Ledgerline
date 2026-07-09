@@ -141,6 +141,52 @@ async def store_ocr_artifact(
     return row
 
 
+async def upsert_ocr_artifact_enrichment(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    invoice_id: int,
+    file_hash: str,
+    ocr: OcrArtifact,
+) -> InvoiceOcrArtifact | None:
+    """Persist DI enrich fields onto the latest OCR artifact row (or create one)."""
+    payload = dict(ocr.payload_json or {})
+    if "invoice_fields" not in payload:
+        return None
+    row = await _latest_ocr_artifact(
+        session,
+        tenant_id=tenant_id,
+        invoice_id=invoice_id,
+        file_hash=file_hash,
+    )
+    if row is None:
+        return await store_ocr_artifact(
+            session,
+            tenant_id=tenant_id,
+            invoice_id=invoice_id,
+            file_hash=file_hash,
+            ocr=ocr,
+        )
+    merged_payload = dict(row.payload_json or {})
+    for key in (
+        "invoice_fields",
+        "di_line_items",
+        "di_scalar_sources",
+        "di_party_fields",
+        "di_party_sources",
+        "table_line_items",
+        "document_heading",
+    ):
+        if key in payload:
+            merged_payload[key] = payload[key]
+    row.payload_json = merged_payload
+    row.di_model = ocr.di_model or row.di_model
+    if ocr.text and not (row.text_excerpt or "").strip():
+        row.text_excerpt = (ocr.text or "")[:8000]
+    await session.flush()
+    return row
+
+
 async def load_cached_ocr(
     session: AsyncSession,
     *,

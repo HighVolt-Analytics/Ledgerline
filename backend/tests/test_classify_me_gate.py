@@ -523,3 +523,40 @@ def test_backfill_llm_dt_from_policy_fills_empty_suggested_dt(monkeypatch: pytes
     )
     assert gate.passed is True
     assert "DT_NOT_IN_CATALOGUE" not in gate.review_reasons
+
+
+def test_backfill_llm_dt_from_policy_when_llm_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.schemas.rule_book_config import AiClassificationConfig
+    from app.services.classification.document_type_classifier import DocumentTypeClassification
+    from app.services.invoice.invoice_pipeline_phases import (
+        backfill_llm_dt_from_policy,
+        evaluate_confidence_gate,
+    )
+
+    monkeypatch.setattr(
+        "app.services.classification.document_type_classifier.rank_document_type_candidates",
+        lambda **_kwargs: [DocumentTypeClassification("DT-03", 0.95, "Rule book classifier matched")],
+    )
+
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING)
+    updated, detail = backfill_llm_dt_from_policy(
+        None,
+        invoice=invoice,
+        ocr=_ocr(),
+        document_types=[_dt03()],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.85),
+    )
+    assert detail is not None
+    assert detail["policy_winner_dt"] == "DT-03"
+    assert detail["llm_unavailable"] is True
+    assert updated is not None
+    assert updated.suggested_dt == "DT-03"
+
+    gate = evaluate_confidence_gate(
+        updated,
+        document_types=[_dt03()],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.85),
+        provider_token="azure_di",
+    )
+    assert gate.passed is True
+    assert "LLM_INVALID" not in gate.review_reasons

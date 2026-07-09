@@ -406,15 +406,15 @@ def backfill_llm_dt_from_policy(
     document_types: Sequence[DocumentTypeDefinition],
     ai_cfg: AiClassificationConfig,
 ) -> tuple[LlmDocumentResult | None, dict[str, object] | None]:
-    """When LLM omits suggested_dt, adopt a confident Rule Book classifier winner."""
-    if llm is None or (llm.suggested_dt or "").strip():
+    """When LLM omits suggested_dt (or is unavailable), adopt a confident Rule Book classifier winner."""
+    if llm is not None and (llm.suggested_dt or "").strip():
         return llm, None
 
     from app.services.classification.document_type_classifier import rank_document_type_candidates
 
     parsed = InvoiceData(
         document_text=ocr.text or "",
-        document_heading=(llm.document_heading or "").strip(),
+        document_heading=(llm.document_heading if llm is not None else "").strip(),
     )
     candidates = rank_document_type_candidates(
         document_types=document_types,
@@ -437,18 +437,25 @@ def backfill_llm_dt_from_policy(
     if winner.confidence < route_min:
         return llm, None
 
-    updated = llm.model_copy(
+    base = llm if llm is not None else LlmDocumentResult(
+        suggested_dt="",
+        confidence=0.0,
+        reasoning="",
+        perspective="purchase",
+    )
+    updated = base.model_copy(
         update={
             "suggested_dt": code,
-            "confidence": max(float(llm.confidence or 0.0), float(winner.confidence)),
-            "reasoning": (llm.reasoning or winner.reason or "").strip(),
+            "confidence": max(float(base.confidence or 0.0), float(winner.confidence)),
+            "reasoning": (base.reasoning or winner.reason or "").strip(),
         }
     )
     return updated, {
         "policy_winner_dt": code,
         "policy_confidence": round(float(winner.confidence), 4),
-        "llm_confidence_before": round(float(llm.confidence or 0.0), 4),
+        "llm_confidence_before": round(float(base.confidence or 0.0), 4),
         "policy_reason": winner.reason,
+        "llm_unavailable": llm is None,
     }
 
 

@@ -326,6 +326,13 @@
     "min_route_confidence": 0.65,
     "validation_profile": "non_actionable",
     "playbook_profile": "reconciliation",
+    "counterparty_source": "consignee",
+    "extraction_fields": [
+      "invoice_no",
+      "invoice_date",
+      "so_reference",
+      "line_items"
+    ],
     "classification_hints": [
       "Vendor statement"
     ],

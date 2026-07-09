@@ -38,6 +38,7 @@ from app.services.extraction.line_items_parser import (
     document_has_qty_only_table,
     enrich_line_items_from_text,
     enrich_parsed_line_items,
+    merge_line_item_lists,
     parse_charge_lines_from_text,
     parse_line_items_from_text,
     parse_qty_only_line_items_from_text,
@@ -491,8 +492,13 @@ def _di_grounding_skip_keys(data: InvoiceData, ocr_text: str | None, di_populate
     return frozenset(skip)
 
 
-def _llm_line_items_trusted(items: list[ParsedLineItem], ocr_text: str | None) -> bool:
-    """True when every LLM line item has a full qty/price/amount (prefer over DI table)."""
+def _llm_line_items_trusted(
+    items: list[ParsedLineItem],
+    ocr_text: str | None,
+    *,
+    table_row_count: int = 0,
+) -> bool:
+    """True when every LLM line item is complete and covers at least as many rows as table/DI."""
     _ = ocr_text
     if not items:
         return False
@@ -501,6 +507,8 @@ def _llm_line_items_trusted(items: list[ParsedLineItem], ocr_text: str | None) -
             return False
         if item.qty is None or item.unit_price is None or item.amount is None:
             return False
+    if table_row_count > len(items):
+        return False
     return True
 
 
@@ -510,54 +518,125 @@ def _qty_only_llm_rows_usable(items: list[ParsedLineItem]) -> list[ParsedLineIte
     return [item for item in items if _passes_minimum_product_row(item, allow_qty_only=True)]
 
 
+def _union_line_item_sources(*sources: list[ParsedLineItem]) -> list[ParsedLineItem]:
+    """Merge multiple line-item sources; later sources fill gaps and append missing rows."""
+    merged: list[ParsedLineItem] = []
+    for source in sources:
+        if not source:
+            continue
+        merged = merge_line_item_lists(merged, list(source))
+    return merged
+
+
+def _qty_only_table_rows_from_payload(payload_dict: dict[str, object]) -> list[ParsedLineItem]:
+    table_rows = resolve_usable_line_items_from_payload(payload_dict, allow_qty_only=True)
+    if table_rows:
+        return table_rows
+    raw_rows = list(
+        enrich_parsed_line_items(deserialize_line_items(payload_dict.get("table_line_items")))
+    )
+    return _qty_only_llm_rows_usable(raw_rows)
+
+
+def _llm_rows_worth_merging(items: list[ParsedLineItem]) -> bool:
+    """True when LLM rows are complete or usefully partial (not hallucinated scalars)."""
+    if not items:
+        return False
+    for item in items:
+        if not (item.description or "").strip():
+            continue
+        missing = sum(1 for value in (item.qty, item.unit_price, item.amount) if value is None)
+        if missing == 0:
+            return True
+        if missing < 3 and item.qty is not None:
+            return True
+    return False
+
+
+def _authoritative_structured_line_items(
+    payload_dict: dict[str, object],
+) -> list[ParsedLineItem]:
+    """Usable rows from layout/DI tables — authoritative when non-empty."""
+    from app.services.extraction.line_items_sanitizer import _passes_minimum_product_row
+
+    table_rows = resolve_usable_line_items_from_payload(payload_dict, allow_qty_only=True)
+    usable = [row for row in table_rows if _passes_minimum_product_row(row, allow_qty_only=True)]
+    if usable:
+        return usable
+    if di_line_items_usable(payload_dict):
+        di_rows = resolve_usable_line_items_from_payload(payload_dict)
+        di_usable = [row for row in di_rows if _passes_minimum_product_row(row, allow_qty_only=True)]
+        if di_usable:
+            return di_usable
+    return []
+
+
 def _merge_line_items_from_sources(
     merged: InvoiceData,
     text: str,
     payload_dict: dict[str, object],
 ) -> list[ParsedLineItem]:
     """Resolve line items from DI, layout, OCR text, LLM, or charge blocks."""
+    llm_rows = list(merged.line_items)
     qty_only_table = document_has_qty_only_table(text, payload_dict)
-    usable_di = (
-        resolve_usable_line_items_from_payload(payload_dict)
-        if di_line_items_usable(payload_dict)
-        else []
-    )
-    if usable_di and not _llm_line_items_trusted(merged.line_items, text):
-        return list(usable_di)
 
     if qty_only_table:
-        llm_rows = _qty_only_llm_rows_usable(list(merged.line_items))
-        if llm_rows:
-            return llm_rows
-        table_rows = resolve_usable_line_items_from_payload(payload_dict, allow_qty_only=True)
-        if not table_rows:
-            table_rows = list(
-                enrich_parsed_line_items(
-                    deserialize_line_items(payload_dict.get("table_line_items"))
-                )
-            )
-            table_rows = _qty_only_llm_rows_usable(table_rows)
-        if table_rows:
-            return table_rows
-        text_rows = parse_qty_only_line_items_from_text(text)
-        return text_rows if text_rows else []
+        structured = _authoritative_structured_line_items(payload_dict)
+        if structured:
+            llm_qty = _qty_only_llm_rows_usable(llm_rows)
+            if llm_qty and _llm_line_items_trusted(
+                llm_qty,
+                text,
+                table_row_count=len(structured),
+            ):
+                return list(llm_qty)
+            return list(structured)
+
+        llm_qty = _qty_only_llm_rows_usable(llm_rows)
+        table_qty = _qty_only_table_rows_from_payload(payload_dict)
+        text_qty = parse_qty_only_line_items_from_text(text)
+        table_row_count = max(len(table_qty), len(text_qty))
+        if llm_qty and _llm_line_items_trusted(
+            llm_qty,
+            text,
+            table_row_count=table_row_count,
+        ):
+            return list(llm_qty)
+        return _union_line_item_sources(llm_qty, table_qty, text_qty)
 
     if document_has_product_table(text, payload_dict):
         llm_rows = list(merged.line_items)
-        if llm_rows:
-            enriched = enrich_line_items_from_text(llm_rows, text)
-            if enriched:
-                return list(enriched)
         table_rows = resolve_usable_line_items_from_payload(payload_dict)
-        if table_rows:
-            return list(table_rows)
-        text_rows = parse_line_items_from_text(text)
-        if text_rows:
-            return list(enrich_parsed_line_items(text_rows))
-        return []
+        use_text_fallback = not di_line_items_usable(payload_dict) or not table_rows
+        text_rows = (
+            list(enrich_parsed_line_items(parse_line_items_from_text(text)))
+            if use_text_fallback
+            else []
+        )
+        llm_enriched = enrich_line_items_from_text(llm_rows, text) if llm_rows else []
+        base = _union_line_item_sources(table_rows, text_rows)
+        table_row_count = len(base)
+        if llm_enriched and _llm_line_items_trusted(
+            llm_enriched,
+            text,
+            table_row_count=table_row_count,
+        ):
+            return list(llm_enriched)
+        if base:
+            if llm_enriched and _llm_line_items_trusted(
+                llm_enriched,
+                text,
+                table_row_count=table_row_count,
+            ):
+                return list(llm_enriched)
+            if llm_enriched and _llm_rows_worth_merging(llm_enriched):
+                return _union_line_item_sources(base, llm_enriched)
+            return base
+        return _union_line_item_sources(llm_enriched or llm_rows, table_rows, text_rows)
 
     if document_has_charge_lines(text):
-        return parse_charge_lines_from_text(text) or list(merged.line_items)
+        charge_rows = parse_charge_lines_from_text(text)
+        return charge_rows if charge_rows else list(llm_rows)
 
     return []
 
@@ -725,6 +804,13 @@ def merge_extraction_sources(
     merged = post_process_parsed_data(merged, text, dt_definition=dt_definition)
     if di_trusted:
         merged = apply_di_scalars_authoritative(
+            merged, payload, selected_keys_list, ocr_text=text
+        )
+        from app.services.extraction.extraction_field_values import (
+            sync_extracted_fields_with_di_authority,
+        )
+
+        merged = sync_extracted_fields_with_di_authority(
             merged, payload, selected_keys_list, ocr_text=text
         )
     merged = ground_invoice_scalars(

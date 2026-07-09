@@ -289,11 +289,11 @@ class Settings(BaseSettings):
         validation_alias="RUNTIME_LLM_TIMEOUT_SECONDS",
     )
     runtime_llm_max_retries: int = Field(
-        default=0,
+        default=2,
         ge=0,
         le=3,
         validation_alias="RUNTIME_LLM_MAX_RETRIES",
-        description="Extra attempts after the first runtime LLM call (0 = fail fast on timeout).",
+        description="Extra attempts after the first runtime LLM call (2 = up to 3 tries; min 3 for rate limits).",
     )
     extraction_gap_fill_enabled: bool = Field(
         default=True,

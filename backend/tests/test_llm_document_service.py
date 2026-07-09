@@ -11,6 +11,13 @@ from app.schemas.ocr_artifact import OcrArtifact
 from app.services.extraction.llm_document_service import llm_result_to_invoice_data
 
 
+def _extract_json_keys_line(system: str) -> str:
+    marker = "Return JSON only with keys:\n"
+    start = system.index(marker) + len(marker)
+    end = system.index(".", start)
+    return system[start:end]
+
+
 def test_llm_result_accepts_valid_payload() -> None:
     result = LlmDocumentResult.model_validate(
         {
@@ -177,8 +184,9 @@ def test_build_structure_extract_prompts_lists_configured_scalar_keys() -> None:
     assert "so_reference" in system
     assert "cost_centre" in system
     assert "bank_name" in system
-    assert "po_reference" not in system
-    assert "line_items" not in system
+    json_keys = _extract_json_keys_line(system)
+    assert "po_reference" not in json_keys
+    assert "line_items" not in json_keys
 
 
 def test_build_structure_extract_prompts_requires_verbatim_ocr_values() -> None:
@@ -187,7 +195,14 @@ def test_build_structure_extract_prompts_requires_verbatim_ocr_values() -> None:
 
     system = build_extract_system_prompt(OrgContext(), selected_keys=["vendor", "total"])
     assert "verbatim" in system.lower()
-    assert "do not derive subtotal" in system.lower()
+    assert "do not self-sum" in system.lower()
+    assert "CORE RULES" in system
+    assert "EDGE CASE RULES" in system
+    assert "OUTPUT DISCIPLINE" in system
+    assert "suggested_dt must match confirmed_dt" in system
+    assert "seller and buyer are objects" in system
+    assert "PROFORMA" in system
+    assert "counterparty_source" in system
 
 
 def test_build_structure_extract_prompts_omits_unconfigured_line_items() -> None:
@@ -215,7 +230,8 @@ def test_build_structure_extract_prompts_omits_unconfigured_line_items() -> None
         confirmed_dt="DT-08",
     )
     assert "vendor" in system
-    assert "line_items" not in system
+    json_keys = _extract_json_keys_line(system)
+    assert "line_items" not in json_keys
 
 
 def test_build_extract_system_prompt_qty_only_table_does_not_break_format() -> None:

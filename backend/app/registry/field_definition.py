@@ -24,6 +24,7 @@ class FieldDefinition:
     extraction_hint: str = ""
     finance_role: str = ""
     do_not_confuse_with: tuple[str, ...] = ()
+    deprioritized_label_qualifiers: tuple[str, ...] = ()
     jurisdiction_variants: dict[str, JurisdictionFieldVariant] = field(default_factory=dict)
     source_priority: tuple[str, ...] = ("llm", "azure_di", "layout_kv", "regex")
     storage_aliases: tuple[str, ...] = ()

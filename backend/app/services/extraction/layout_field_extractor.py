@@ -199,6 +199,56 @@ def _append_meta_suffix(description: str, meta_parts: list[str]) -> str:
     return f"{description} | {suffix}"
 
 
+_DESC_HEADER_RE = re.compile(
+    r"desc|item|product|service|part|component|cpu|material|goods|line|details|sku|uom|part\s*no",
+    re.I,
+)
+
+
+def _detect_headerless_line_item_columns(
+    grid: dict[tuple[int, int], str],
+    row_count: int,
+    column_count: int,
+) -> tuple[int, int, int, int] | None:
+    """Infer desc/qty/price/amount columns from data rows when headers are missing."""
+    if row_count < 2 or column_count < 2:
+        return None
+    sample_rows = min(row_count - 1, 4)
+    text_hits = 0
+    for row in range(1, 1 + sample_rows):
+        first = grid.get((row, 0), "").strip()
+        if first and not re.match(r"^[\d.,$€£¥-]+$", first):
+            text_hits += 1
+    if text_hits < max(1, sample_rows // 2):
+        return None
+
+    numeric_cols: list[int] = []
+    for col in range(1, column_count):
+        numeric_hits = 0
+        for row in range(1, min(row_count, 5)):
+            val = grid.get((row, col), "").strip()
+            if val and re.match(r"^[\d,.$€£¥-]+$", val.replace(" ", "")):
+                numeric_hits += 1
+        if numeric_hits >= 1:
+            numeric_cols.append(col)
+    if not numeric_cols:
+        return None
+
+    qty_col = -1
+    unit_price_col = -1
+    amount_col = -1
+    if len(numeric_cols) == 1:
+        amount_col = numeric_cols[0]
+    elif len(numeric_cols) == 2:
+        qty_col = numeric_cols[0]
+        amount_col = numeric_cols[1]
+    else:
+        qty_col = numeric_cols[0]
+        unit_price_col = numeric_cols[1]
+        amount_col = numeric_cols[-1]
+    return (0, qty_col, unit_price_col, amount_col)
+
+
 def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[ParsedLineItem]:
     if layout is None or not layout.tables:
         return []
@@ -217,7 +267,7 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
         headers_detected = False
         for col in range(table.column_count):
             header = grid.get((0, col), "").lower()
-            if re.search(r"desc|item|product|service|part|component|cpu", header):
+            if _DESC_HEADER_RE.search(header):
                 desc_cols.append(col)
                 desc_col = col
                 headers_detected = True
@@ -247,13 +297,18 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
                 meta_cols[col] = header
                 headers_detected = True
         if not headers_detected:
-            continue
+            inferred = _detect_headerless_line_item_columns(grid, table.row_count, table.column_count)
+            if inferred is None:
+                continue
+            desc_col, qty_col, unit_price_col, amount_col = inferred
+            desc_cols = [desc_col] if desc_col >= 0 else []
 
+        data_start_row = 1 if headers_detected else 0
         qty_only_table = qty_col >= 0 and unit_price_col < 0 and amount_col < 0
         carry_meta: dict[int, str] = {}
         prior_qtys: list[Decimal] = []
 
-        for row in range(1, table.row_count):
+        for row in range(data_start_row, table.row_count):
             row_cells = [
                 grid.get((row, col), "").strip()
                 for col in range(table.column_count)
@@ -271,7 +326,7 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
                 for col in range(table.column_count):
                     if col == qty_col:
                         continue
-                    if re.search(r"desc|item|product|part|component|model|cpu", grid.get((0, col), "").lower()):
+                    if re.search(r"desc|item|product|part|component|model|cpu|material|goods", grid.get((0, col), "").lower()):
                         candidate = grid.get((row, col), "").strip()
                         if candidate:
                             desc = candidate
@@ -310,7 +365,7 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
                 unit_price = _money_value(grid.get((row, unit_price_col), ""))
             if amount_col >= 0:
                 amount = _money_value(grid.get((row, amount_col), ""))
-            if qty is not None and prior_qtys and qty == sum(prior_qtys):
+            if qty is not None and prior_qtys and qty == sum(prior_qtys) and _is_layout_totals_row(desc, row_cells):
                 continue
             if qty_only_table and qty is None:
                 continue

@@ -107,6 +107,10 @@ def sanitize_line_items(
             continue
         if _duplicates_header_value(desc, header_values):
             continue
+        from app.services.extraction.line_item_noise_patterns import is_noise_line_item_row
+
+        if is_noise_line_item_row(desc, item.qty):
+            continue
         if not _passes_minimum_product_row(item, allow_qty_only=allow_qty_only):
             continue
         cleaned.append(item)

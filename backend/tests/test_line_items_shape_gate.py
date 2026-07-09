@@ -129,3 +129,12 @@ def test_money_table_line_items_merged_when_llm_empty() -> None:
     merged = merge_extraction_sources(parsed, ocr, dt_definition=None)
     assert len(merged.line_items) == 2
     assert merged.line_items[0].amount == Decimal("20.00")
+
+
+def test_single_row_money_table_detected() -> None:
+    text = "DESCRIPTION QTY UNIT PRICE AMOUNT\nWidget A 2 10.00 20.00\n"
+    assert document_has_product_table(text, {})
+    parsed = parse_local_text(text)
+    merged = merge_extraction_sources(parsed, _ocr(text), dt_definition=None)
+    assert len(merged.line_items) == 1
+    assert merged.line_items[0].description == "Widget A"

@@ -171,6 +171,25 @@ DEFAULT_PROFILE_BY_CODE: dict[str, PlaybookProfile] = {
     "DT-28": PROFILE_SUPPORTING,
 }
 
+DEFAULT_COUNTERPARTY_SOURCE_BY_PLAYBOOK: dict[str, str] = {
+    PROFILE_AR_GOODS: "consignee",
+    PROFILE_AR_GOODS_2WAY: "consignee",
+    PROFILE_FREIGHT_LOGISTICS: "consignee",
+    PROFILE_IMPORT_DOSSIER: "consignee",
+}
+
+
+def effective_counterparty_source(defn: DocumentTypeDefinition) -> str:
+    explicit = (defn.counterparty_source or "").strip().lower()
+    if explicit:
+        return explicit
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+
+    profile = effective_playbook_profile(defn)
+    return DEFAULT_COUNTERPARTY_SOURCE_BY_PLAYBOOK.get(profile, "letterhead")
+
 
 def default_playbook_profile_for_code(code: str) -> PlaybookProfile:
     normalized = code.strip().upper()

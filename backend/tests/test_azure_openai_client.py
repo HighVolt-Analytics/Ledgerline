@@ -65,3 +65,39 @@ def test_sample_proposal_retries_read_timeout(monkeypatch: pytest.MonkeyPatch) -
 
     assert result == {}
     assert calls["count"] == 3
+
+
+def test_runtime_retries_429_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    calls = {"count": 0}
+
+    def _fail_once(**_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            request = httpx.Request("POST", "https://example.test/chat")
+            response = httpx.Response(429, request=request, headers={"Retry-After": "0"})
+            raise httpx.HTTPStatusError("rate limited", request=request, response=response)
+        return {}
+
+    monkeypatch.setattr(client, "_chat_json_once", _fail_once)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        client,
+        "get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "runtime_llm_available": True,
+                "azure_openai_chat_deployment": "gpt-4o",
+                "runtime_llm_timeout_seconds": 45,
+                "runtime_llm_max_retries": 0,
+            },
+        )(),
+    )
+
+    result = client.chat_json(system="s", user="u", require_runtime=True)
+
+    assert result == {}
+    assert calls["count"] == 2

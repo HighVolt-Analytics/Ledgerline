@@ -1405,6 +1405,18 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
     llm_result = extract_result.llm
     ocr = extract_result.ocr
+    if invoice.file_hash and (ocr.payload_json or {}).get("invoice_fields"):
+        from app.services.classification.classification_learning_service import (
+            upsert_ocr_artifact_enrichment,
+        )
+
+        await upsert_ocr_artifact_enrichment(
+            session,
+            tenant_id=invoice.tenant_id,
+            invoice_id=invoice.id,
+            file_hash=invoice.file_hash,
+            ocr=ocr,
+        )
     from dataclasses import replace
 
     from app.services.extraction.extraction_field_values import (
@@ -1475,12 +1487,20 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                     detail={"fields": disagreements},
                 )
     if llm_result is not None:
+        from app.services.classification.playbook_profile_catalog import (
+            effective_counterparty_source,
+        )
+
         parsed = llm_result_to_invoice_data(
             llm_result,
             ocr=ocr,
             custom_keys=custom_keys or None,
             selected_keys=selected_keys,
             org=org,
+            counterparty_source=effective_counterparty_source(dt_definition)
+            if dt_definition
+            else "letterhead",
+            route_target=dt_definition.route_target if dt_definition else None,
         )
         persist_llm_party_context(invoice, llm_result, org)
     else:
@@ -1566,28 +1586,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         detail=field_confidence_audit_detail(field_conf_result),
     )
 
-    await log_event(
-        session,
-        "parse_completed",
-        invoice_id=invoice.id,
-        detail={
-            "source": provider_token,
-            "confidence": "high" if not ocr.sparse else "low",
-            "text_length": ocr.text_length,
-            "di_model": ocr.di_model,
-            "document_ai_provider": provider_token,
-            "confirmed_dt": confirmed_dt,
-            "extracted_snapshot": {
-                "vendor": parsed.vendor,
-                "invoice_no": parsed.invoice_no,
-                "total": str(parsed.total) if parsed.total is not None else None,
-                "subtotal": str(parsed.subtotal) if parsed.subtotal is not None else None,
-                "gst": str(parsed.gst) if parsed.gst is not None else None,
-                "abn": parsed.abn,
-            },
-        },
-    )
-
     resolved_vendor = await _apply_parsed_to_invoice(
         session,
         invoice=invoice,
@@ -1607,6 +1605,28 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         .options(selectinload(Invoice.line_items))
     )
     loaded = (await session.execute(stmt)).scalar_one()
+
+    await log_event(
+        session,
+        "parse_completed",
+        invoice_id=invoice.id,
+        detail={
+            "source": provider_token,
+            "confidence": "high" if not ocr.sparse else "low",
+            "text_length": ocr.text_length,
+            "di_model": ocr.di_model,
+            "document_ai_provider": provider_token,
+            "confirmed_dt": confirmed_dt,
+            "extracted_snapshot": {
+                "vendor": loaded.vendor,
+                "invoice_no": loaded.invoice_no,
+                "total": str(loaded.total) if loaded.total is not None else None,
+                "subtotal": str(loaded.subtotal) if loaded.subtotal is not None else None,
+                "gst": str(loaded.gst) if loaded.gst is not None else None,
+                "abn": loaded.abn,
+            },
+        },
+    )
 
     if human_locked_dt:
         apply_document_type_to_invoice(

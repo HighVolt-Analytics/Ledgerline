@@ -936,7 +936,11 @@ def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPay
         data = _backfill_validation_rules(data)
         data = _migrate_ai_classification(data)
         data = _normalize_ai_classification_provider(data)
-    return RuleBookConfigPayload.model_validate(data)
+    payload = RuleBookConfigPayload.model_validate(data)
+    from app.services.rule_book.extraction_field_config_audit import log_extraction_field_config_warnings
+
+    log_extraction_field_config_warnings(payload)
+    return payload
 
 
 def validate_rule_book_config_for_save(data: dict[str, Any]) -> RuleBookConfigPayload:

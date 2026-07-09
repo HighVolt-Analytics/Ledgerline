@@ -491,6 +491,13 @@
       "do_not_confuse_with": [
         "po_reference"
       ],
+      "deprioritized_label_qualifiers": [
+        "proforma",
+        "pro-forma",
+        "draft",
+        "quotation",
+        "estimate"
+      ],
       "source_priority": [
         "llm",
         "azure_di",

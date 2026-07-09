@@ -214,7 +214,6 @@ def build_llm_extract_rule_lines(
             "- field_citations maps every manifest key to {{snippet, page}}; snippet must be verbatim OCR text "
             "for non-empty fields, empty snippet when field is empty."
         )
-    lines.extend(extraction_accuracy_prompt_lines())
     if "gst_rate" in selected:
         rate_hint = (
             f"e.g. {pack.statutory_tax_rate} for {pack.statutory_tax_rate}%"
@@ -239,26 +238,168 @@ def build_llm_extract_rule_lines(
 
 def _build_llm_extract_system_text(json_keys: str, rule_lines: str, *, country: str | None = None) -> str:
     pack = jurisdiction_pack_for_country(country)
-    return f"""You structure accounts-payable fields from the provided OCR payload into JSON.
+    return f"""You structure accounts-payable/receivable fields from the provided OCR payload into JSON.
 Return JSON only with keys:
 {json_keys}.
 
-Rules:
-- Extract ONLY fields listed in extraction_fields / finance_field_manifest in the user payload.
-- When ocr.scalar_fields_source is azure_di, canonical scalars come ONLY from ocr.azure_di_scalar_fields.
-- Structure other values from ocr.text_excerpt and ocr.layout_kv only.
-- NEVER use tenant legal_name, catalogue rows, or few_shot_examples as field values.
-- Copy values verbatim from the OCR payload. Do not round, calculate, infer, or normalize amounts.
-- Leave any field empty/null when it is not explicitly present in the OCR payload.
-- Do not derive subtotal, gst, or total from line items (or vice versa) unless that exact value appears in OCR.
-- Do not invent amounts, parties, dates, or {pack.llm_tax_id_examples}.
-- Do not default currency — leave empty when no currency symbol or ISO code appears in OCR.
-- suggested_dt must match confirmed_dt from the user payload.
-- confidence is 0.0-1.0 for the document type choice.
-- perspective is purchase | sales | unknown.
+═══════════════════════════════════════════════
+CORE RULES (non-negotiable)
+═══════════════════════════════════════════════
+1. Extract ONLY fields listed in extraction_fields / finance_field_manifest in the user payload.
+   Do not add keys. Do not omit requested keys — use null if genuinely absent.
+2. When ocr.scalar_fields_source is azure_di, canonical scalar values (totals, dates, tax)
+   come ONLY from ocr.azure_di_scalar_fields. Never override a DI scalar with your own
+   read of ocr.text_excerpt unless the DI field is explicitly null or flagged low-confidence.
+3. Structure all other values strictly from ocr.text_excerpt and ocr.layout_kv.
+   Never use tenant.legal_name, catalogue rows, or few_shot_examples as field VALUES —
+   those are context for disambiguation only, never a source of truth for THIS document.
+4. Copy values verbatim from the OCR payload. Do NOT round, calculate, infer, reformat,
+   or normalize amounts, dates, or identifiers unless a specific rule below says otherwise.
+5. If a field cannot be found with reasonable confidence in the OCR payload, return null.
+   Never guess. Never fabricate a plausible-looking value to avoid returning null.
+
+═══════════════════════════════════════════════
+EDGE CASE RULES
+═══════════════════════════════════════════════
+
+## A. Identifier fields (invoice_no, po_no, grn_no, dn_no, so_no)
+- Extract ONLY the identifier token itself. STOP at the first delimiter that is not
+  part of the identifier: comma, "DATED", "OF", "/", newline, or a date pattern
+  (DD.MM.YYYY, DD/MM/YYYY, YYYY-MM-DD).
+  Example: "RC-SIPL-AUG-INL-20250826-001, DATED: 26.08.2025 OF THE BENEFICIARY"
+           → invoice_no = "RC-SIPL-AUG-INL-20250826-001"  (NOT the trailing text)
+- If multiple candidate numbers exist (e.g. "Invoice No" AND "Our Ref No" AND
+  "Order No"), pick the one whose label matches the target field name most closely.
+  Do not default to the first number seen top-to-bottom.
+- When multiple labels could map to the same field, deprioritize any label containing
+  qualifier words: PROFORMA, DRAFT, QUOTATION, ESTIMATE, PRO-FORMA (same rule for
+  po_reference vs PROFORMA PO NO, etc.). Prefer the unqualified canonical label.
+- If both "INVOICE NO" and "PROFORMA INVOICE NO" exist, use INVOICE NO for invoice_no.
+- Do not include prefixes/suffixes like "No:", "#", "Ref:" in the value.
+
+## B. Vendor / buyer / party names
+- The party name must appear verbatim in ocr.text_excerpt or ocr.layout_kv.
+  If a name only appears in tenant.legal_name, catalogue, or few_shot_examples and
+  NOT in this document's OCR text, treat it as absent — return null, do not borrow it.
+- For vendor/counterparty: follow document_type.counterparty_source in the user payload
+  (letterhead | consignee | applicant | bill_to) — do not always default to letterhead.
+- Distinguish seller vs buyer using layout position, letterhead, "Bill To" / "Ship To" /
+  "From" / "Remit To" labels, and the perspective hint in the payload — not assumption.
+- If the document has multiple entities with similar names (e.g. "ABC Pvt Ltd" vs
+  "ABC Global Pvt Ltd" vs "ABC Distributors"), copy the FULL name exactly as printed
+  next to the relevant role label. Do not truncate or merge similar-looking names.
+- If a registered/legal name differs from a trading/brand name shown elsewhere in the
+  document, prefer the name adjacent to the GSTIN/ABN/tax-ID block if present.
 {{party_rules}}
+
+## C. Amounts (total, subtotal, tax, freight, discount, line amounts)
+- If a document has a lump-sum total with NO line-item table, set total from the
+  clearly labeled total field and leave line_items as an empty array — do not
+  fabricate line items to "fill" the schema.
+- If freight, insurance, or other charges are listed SEPARATELY from the main total
+  (e.g. "FREIGHT: USD 400.00" as a standalone line, not inside a table), still
+  capture the grand total by reading the field explicitly labeled Total/Grand Total/
+  Amount Due — do NOT self-sum unless no total field is present anywhere in the
+  document, in which case sum only the explicitly labeled component amounts and note
+  in the internal field_citations that it was derived, not read directly.
+- If multiple totals appear (subtotal, tax, grand total, amount in words), map each
+  to its correct field — never confuse subtotal with grand total, or paid-to-date
+  with amount-due.
+- Preserve the sign: credit notes / debit notes / refunds may show negative amounts
+  or a "(-)" / parentheses convention — preserve that polarity in the value; do not
+  silently make everything positive.
+- Never convert currency. If the document states amounts in a foreign currency,
+  extract the currency code/symbol as printed alongside the amount fields, and do
+  not perform conversion math.
+- Numeric formatting: strip thousands separators (commas/periods per locale) only
+  when converting to a numeric type; preserve the original numeral characters
+  otherwise. If unsure whether "1.234,56" is European (1234.56) or a typo, prefer
+  the jurisdiction pack's decimal/thousands convention for {pack.country}.
+
+## D. Dates
+- Do not assume a date format. Check for explicit format hints in the document
+  (e.g. "DD/MM/YYYY" printed near the field, or a month name spelling out the month
+  unambiguously). If the format is genuinely ambiguous (e.g. "03/04/2025" with no
+  other clues) and the jurisdiction pack specifies a default convention for
+  {pack.country}, apply that convention; otherwise return the date exactly as
+  printed in a date-like string rather than guessing day/month order.
+- When the date format is unambiguous (month name, explicit DD/MM/YYYY hint, or
+  jurisdiction-default convention for {pack.country}), output ISO YYYY-MM-DD.
+- When genuinely ambiguous (e.g. "03/04/2025" with no label), return the date as
+  printed — do not guess day/month order.
+- Distinguish invoice_date, due_date, delivery_date, and PO date — these are often
+  printed close together. Match by the adjacent label, not proximity alone.
+- If a date appears embedded inside another field's text (as in the invoice_no
+  example above), do not let it bleed into that field, and separately check whether
+  it should populate a date field instead.
+
+## E. Tax / registration identifiers (GSTIN, ABN, VAT number, TIN)
+- Extract exactly as printed, including any embedded hyphens/spaces the document
+  uses, unless the finance_field_manifest specifies a canonical format to normalize to.
+- Do not confuse a tax ID with a bank account number, IBAN, SWIFT/BIC code, or an
+  internal reference number — verify against the expected format/length for
+  {pack.country} where the field manifest provides one.
+- If both seller and buyer tax IDs are present, attribute each to the correct party
+  using adjacent labels, not order of appearance.
+
+## F. Line items
+- Only extract rows that are genuinely part of the itemized table — skip subtotal
+  rows, tax summary rows, "continued on next page" rows, and blank/decorative rows
+  that DI or layout parsing may have picked up as table rows.
+- If a table spans multiple pages, treat it as one continuous list; do not duplicate
+  a repeated header row as a line item.
+- If quantity, unit price, and line total are present but one is missing or
+  illegible, leave that specific sub-field null rather than dropping the whole row
+  or inventing the missing number from the other two (no back-calculation unless a
+  rule elsewhere explicitly permits derived values).
+- Merged/spanning cells: attribute merged description cells to each row they visually
+  cover, not just the first row.
+
+## G. Untrustworthy or conflicting signals
+- If ocr.azure_di_scalar_fields and your own reading of ocr.text_excerpt disagree,
+  DI scalars win per rule 2 above — but if a DI value looks structurally implausible
+  for its field (e.g. a vendor name field containing only digits, a date field
+  containing an amount), treat it as a DI extraction error, return null for that
+  field, and do not attempt to silently correct it yourself.
+- If a value appears ONLY in a few_shot_example or catalogue entry and nowhere in
+  this document's OCR, it is contamination — never copy it into your output. Few-shot
+  examples show correction PATTERNS, not values to reuse.
+- If the OCR is sparse, garbled, or the document appears to be a low-quality scan,
+  extract what is legible and confidently return null for the rest — do not pad
+  in plausible-sounding values to make the JSON look complete.
+
+## H. Document-type mismatches
+- If confirmed_dt in the payload does not match what the document content actually
+  looks like (e.g. confirmed_dt is INVOICE but the document is clearly a delivery
+  note), still extract using the field manifest for confirmed_dt as instructed, but
+  return null for any field that has no genuine counterpart in this document rather
+  than force-mapping unrelated content into the wrong field.
+
+## I. Duplicates / multi-document artifacts
+- If the OCR text appears to contain more than one distinct document concatenated
+  (e.g. a PO followed by an invoice in the same payload), extract fields belonging
+  ONLY to the document type indicated by confirmed_dt, and ignore fields that belong
+  to the other embedded document.
+
+═══════════════════════════════════════════════
+JURISDICTION-SPECIFIC RULES
+═══════════════════════════════════════════════
 {rule_lines}
-- invoice_date and due_date must be ISO YYYY-MM-DD strings when a date is present in OCR."""
+
+═══════════════════════════════════════════════
+OUTPUT DISCIPLINE
+═══════════════════════════════════════════════
+- Return a single JSON object. No markdown, no commentary, no trailing text.
+- Every requested key must be present. Use null for genuinely unavailable values —
+  never an empty string as a substitute for null, and never a placeholder like
+  "N/A" or "Unknown".
+- Do not wrap the JSON in a code fence.
+- Metadata keys:
+  - suggested_dt must match confirmed_dt from the user payload.
+  - confidence is 0.0-1.0 for the document type choice.
+  - perspective is purchase | sales | unknown.
+  - field_confidence maps every manifest key to 0.0-1.0 (0.0 when absent).
+"""
 
 
 def _build_llm_combined_system_text(json_keys: str, rule_lines: str) -> str:
@@ -559,6 +700,19 @@ def build_llm_user_payload(
             payload["invoice_fields"] = invoice_fields
     if confirmed_dt:
         payload["confirmed_dt"] = confirmed_dt.strip().upper()
+        dt_token = confirmed_dt.strip().upper()
+        for defn in document_types:
+            if (defn.code or "").strip().upper() == dt_token:
+                from app.services.classification.playbook_profile_catalog import (
+                    effective_counterparty_source,
+                )
+
+                payload["document_type"] = {
+                    "code": defn.code,
+                    "counterparty_source": effective_counterparty_source(defn),
+                    "route_target": defn.route_target,
+                }
+                break
     return json.dumps(payload, default=str)
 
 
@@ -900,6 +1054,8 @@ def llm_result_to_invoice_data(
     custom_keys: Sequence[str] | None = None,
     selected_keys: Sequence[str] | None = None,
     org: OrgContext | None = None,
+    counterparty_source: str = "letterhead",
+    route_target: str | None = None,
 ) -> InvoiceData:
     org_ctx = org or OrgContext()
     ocr_text = ocr.text or None
@@ -907,6 +1063,8 @@ def llm_result_to_invoice_data(
         llm,
         ocr_text=ocr_text,
         org=org_ctx,
+        counterparty_source=counterparty_source,
+        route_target=route_target,
     )
 
     extracted = harvest_custom_fields_from_llm_raw(
@@ -914,18 +1072,25 @@ def llm_result_to_invoice_data(
         custom_keys=custom_keys,
         selected_keys=selected_keys,
     )
-    extracted = {
-        **party_fields,
-        **_canonical_scalar_extracted_fields(llm),
-        **_bank_extracted_fields(llm),
-        **(llm.extracted_fields or {}),
-        **extracted,
-    }
-    from app.services.extraction.line_items_parser import resolve_line_items_from_ocr_payload
+    from app.services.extraction.extraction_field_values import merge_extracted_fields_with_authority
 
     payload = ocr.payload_json or {}
-    di_scalars_active = prebuilt_invoice_scalars_active(payload)
     keys_list = list(selected_keys or ())
+    extracted = merge_extracted_fields_with_authority(
+        base={
+            **party_fields,
+            **_canonical_scalar_extracted_fields(llm),
+            **_bank_extracted_fields(llm),
+            **extracted,
+        },
+        llm_extracted=llm.extracted_fields,
+        payload=payload,
+        selected_keys=keys_list,
+        ocr_text=ocr_text,
+    )
+    from app.services.extraction.line_items_parser import resolve_line_items_from_ocr_payload
+
+    di_scalars_active = prebuilt_invoice_scalars_active(payload)
     party_keys = (
         di_trusted_party_fields(payload, ocr_text, keys_list)
         if di_scalars_active and ocr_text
@@ -1031,6 +1196,18 @@ def llm_result_to_invoice_data(
         },
     )
     parsed.gst_rate = resolve_gst_rate_percent(parsed, ocr_text=ocr_text, allow_inference=False)
+    if prebuilt_invoice_scalars_active(payload) and keys_list:
+        from app.services.extraction.extraction_field_values import (
+            apply_di_scalars_authoritative,
+            sync_extracted_fields_with_di_authority,
+        )
+
+        parsed = apply_di_scalars_authoritative(
+            parsed, payload, keys_list, ocr_text=ocr_text
+        )
+        parsed = sync_extracted_fields_with_di_authority(
+            parsed, payload, keys_list, ocr_text=ocr_text
+        )
     return parsed
 
 

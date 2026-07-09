@@ -56,6 +56,7 @@ DocumentTypeRouteTarget = Literal[
 PurchaseBundleRole = Literal["", "po", "grn"]
 SalesBundleRole = Literal["", "so", "dn"]
 RecognitionMode = Literal["signals", "prompt"]
+CounterpartySource = Literal["letterhead", "consignee", "applicant", "bill_to"]
 
 
 def _empty_classifier_root() -> dict[str, Any]:
@@ -144,6 +145,10 @@ class DocumentTypeDefinition(BaseModel):
     bundle_conditional: list[str] = Field(default_factory=list, alias="bundleConditional")
     purchase_bundle_role: PurchaseBundleRole = Field(default="", alias="purchaseBundleRole")
     sales_bundle_role: SalesBundleRole = Field(default="", alias="salesBundleRole")
+    counterparty_source: CounterpartySource = Field(
+        default="letterhead",
+        alias="counterpartySource",
+    )
     sample_analysis: DocumentTypeSampleAnalysis | None = Field(
         default=None,
         alias="sampleAnalysis",
@@ -217,6 +222,14 @@ class DocumentTypeDefinition(BaseModel):
         if token in {"so", "dn"}:
             return token
         return ""
+
+    @field_validator("counterparty_source", mode="before")
+    @classmethod
+    def _normalize_counterparty_source(cls, value: Any) -> str:
+        token = str(value or "letterhead").strip().lower()
+        if token in {"letterhead", "consignee", "applicant", "bill_to"}:
+            return token
+        return "letterhead"
 
     @field_validator("playbook_profile", mode="before")
     @classmethod

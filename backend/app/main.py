@@ -84,6 +84,16 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     async with async_session_factory() as session:
         tenant = await get_or_create_default_tenant(session)
         await sync_env_mailbox(session, tenant.id)
+        try:
+            from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
+            from app.services.rule_book.extraction_field_config_audit import (
+                log_extraction_field_config_warnings,
+            )
+
+            config = await load_posting_config_for_tenant(session, tenant.id)
+            log_extraction_field_config_warnings(config)
+        except Exception as exc:
+            logger.warning("extraction_field_config_startup_audit_failed", error=str(exc))
         await session.commit()
     logger.info("app_started")
     start_inline_mailbox_poller()
