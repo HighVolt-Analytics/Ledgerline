@@ -72,6 +72,12 @@ _settings = get_settings()
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     configure_logging(settings.log_level)
+    if not settings.auth_required:
+        logger.warning(
+            "auth_required_disabled",
+            msg="AUTH_REQUIRED=false — API will reject unauthenticated tenant requests; "
+            "do not disable in staging or production",
+        )
     if settings.application_insights_runtime_enabled:
         setup_application_insights(settings.applicationinsights_connection_string)
     async with async_session_factory() as session:
@@ -112,6 +118,7 @@ app.include_router(oauth_auth.router, prefix="/api")
 app.include_router(signup.router, prefix="/api")
 # Stripe webhooks — no JWT.
 app.include_router(stripe_webhooks.router, prefix="/api")
+app.include_router(billing.public_router, prefix="/api")
 # OAuth Microsoft redirect — no JWT (must be before authenticated mailboxes router).
 app.include_router(mailboxes.oauth_public_router, prefix="/api")
 # Stripe Connect OAuth callback — no JWT (must be before authenticated payments router).

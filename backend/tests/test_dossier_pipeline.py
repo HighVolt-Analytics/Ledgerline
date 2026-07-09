@@ -94,6 +94,34 @@ async def test_pipeline_processed_invoice_full_pass(db_session: AsyncSession) ->
 
 
 @pytest.mark.asyncio
+async def test_pipeline_requeued_pipeline_error_surfaces_on_map_gl() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        file_hash="stored-hash",
+    )
+    logs = [
+        _log_id("invoice_requeued", 1, 1),
+        _log_id(
+            "pipeline_error",
+            1,
+            2,
+            error="Document type DT-08 has no Post to ledger — configure it in Rule Book → Document types.",
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    duplicate = next(s for s in pipeline if s.stage_id == "duplicate")
+    map_gl = next(s for s in pipeline if s.stage_id == "map_gl")
+    assert duplicate.state == "pass"
+    assert map_gl.state == "fail"
+    assert map_gl.exception_code == "MAP_CONFIG"
+    assert "DT-08" in (map_gl.failure_reason or "")
+    journal = next(s for s in pipeline if s.stage_id == "journal")
+    assert journal.blocked_reason
+
+
+@pytest.mark.asyncio
 async def test_pipeline_duplicate_in_progress_does_not_block_canonical_row() -> None:
     """Concurrent re-submit logs duplicate_in_progress on the original — pipeline must not stall."""
     inv = Invoice(

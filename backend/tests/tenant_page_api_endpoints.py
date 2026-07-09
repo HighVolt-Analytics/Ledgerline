@@ -48,11 +48,10 @@ TENANT_PAGE_GET_PATHS: tuple[str, ...] = (
     "/api/tenants/current/onboarding",
     "/api/auth/me",
     "/api/auth/me/permissions",
-    # Integrations
+    # Integrations (settings is public — not tenant-scoped)
     "/api/integrations/status",
     "/api/integrations/whatsapp/status",
     "/api/integrations/viber/status",
-    "/api/settings",
     # Workspace modules
     "/api/purchases",
     "/api/sales",

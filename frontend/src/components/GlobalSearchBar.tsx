@@ -207,7 +207,7 @@ export function GlobalSearchDialog({
           setInvoiceRows(buildInvoiceRows(data));
         })
         .catch((err: unknown) => {
-          if (cancelled || isTenantFetchAbortError(err)) return;
+          if (cancelled || !isTenantFetchScopeCurrent(scope) || isTenantFetchAbortError(err)) return;
           setInvoiceRows([]);
           setInvoiceError(err instanceof Error ? err.message : "Invoice search failed");
         })

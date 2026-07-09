@@ -1,24 +1,21 @@
 import { QueryClient } from "@tanstack/react-query";
-import { getAccessToken } from "@/lib/authSession";
-import { decodeJwtPayload } from "@/lib/authToken";
+import { getActiveTenantId } from "@/api/client";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
+      staleTime: 60_000,
+      gcTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
       retry: 1,
+      structuralSharing: false,
     },
   },
 });
 
 /** Active tenant from JWT — prefixes every query key to prevent cross-tenant cache bleed. */
 export function tenantScope(): string {
-  const token = getAccessToken();
-  if (!token) return "signed-out";
-  const payload = decodeJwtPayload(token);
-  return payload?.tenant_id ?? payload?.org_id ?? "unknown";
+  return getActiveTenantId() ?? "signed-out";
 }
 
 export function tenantQueryKey<const T extends readonly unknown[]>(

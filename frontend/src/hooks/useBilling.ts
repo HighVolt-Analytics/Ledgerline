@@ -1,9 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
-import type { BillingState } from "@/api/types";
+import type { BillingState, CheckoutSessionResult } from "@/api/types";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { normalizeBillingState } from "@/lib/billingUtils";
 import { queryKeys } from "@/lib/queryClient";
+
+function isCheckoutSession(
+  value: BillingState | CheckoutSessionResult
+): value is CheckoutSessionResult {
+  return "session_id" in value || "checkout_url" in value || "completed_without_checkout" in value;
+}
 
 export function useBilling(enabled = true) {
   return useTenantQuery({
@@ -42,10 +48,17 @@ export function useBillingMutations() {
       await invalidate();
       return state;
     },
+    createTopUpCheckout: async (amount: number) => {
+      const session = await api.createTopUpCheckout(amount);
+      return session;
+    },
     upgradeToStudio: async () => {
-      const state = await api.upgradeBillingPlan();
+      const result = await api.upgradeBillingPlan();
+      if (isCheckoutSession(result)) {
+        return result;
+      }
       await invalidate();
-      return state;
+      return result;
     },
   };
 }

@@ -1,7 +1,11 @@
 import type {
   ApprovalPolicy,
   BillingState,
+  BillingSignupCheckoutBody,
+  BillingPlansCatalog,
   BillingUsageHistory,
+  CheckoutSessionResult,
+  CheckoutStatusResult,
   PlatformCreditSettings,
   AuditLogEntry,
   ActivityItem,
@@ -172,8 +176,13 @@ const TENANT_EXEMPT_API_PATHS = new Set([
   "/api/auth/refresh",
 ]);
 
-/** Public invite accept flows (no tenant session). */
-const TENANT_EXEMPT_API_PREFIXES = ["/api/auth/invite/", "/api/mailboxes/invites/"];
+/** Public invite accept and billing signup flows (no tenant session). */
+const TENANT_EXEMPT_API_PREFIXES = [
+  "/api/auth/invite/",
+  "/api/mailboxes/invites/",
+  "/api/billing/signup/",
+  "/api/billing/plans",
+];
 
 export function apiPathWithoutQuery(path: string): string {
   return path.split("?")[0] ?? path;
@@ -1325,11 +1334,33 @@ export const api = {
       body: JSON.stringify({ amount }),
     }),
   upgradeBillingPlan: () =>
-    request<BillingState>("/api/billing/upgrade", {
+    request<BillingState | CheckoutSessionResult>("/api/billing/upgrade", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ plan: "studio" }),
     }),
+  createTopUpCheckout: (amount: number) =>
+    request<CheckoutSessionResult>("/api/billing/topup/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount }),
+    }),
+  getCheckoutStatus: (sessionId: string) =>
+    request<CheckoutStatusResult>(`/api/billing/checkout/status/${encodeURIComponent(sessionId)}`),
+  createSignupCheckout: (body: BillingSignupCheckoutBody) =>
+    request<CheckoutSessionResult>("/api/billing/signup/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getPublicBillingPlans: (country: string) =>
+    request<BillingPlansCatalog>(
+      `/api/billing/plans?country=${encodeURIComponent(country)}`
+    ),
+  getSignupCheckoutStatus: (sessionId: string) =>
+    request<CheckoutStatusResult>(
+      `/api/billing/signup/status/${encodeURIComponent(sessionId)}`
+    ),
   getPlatformCreditSettings: () =>
     request<PlatformCreditSettings>("/api/platform/credit-settings"),
   updatePlatformCreditSettings: (body: Partial<PlatformCreditSettings>) =>

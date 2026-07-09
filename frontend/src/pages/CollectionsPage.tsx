@@ -27,12 +27,21 @@ const TABS: { value: CollectionTab; label: string; testid: string }[] = [
 
 export function CollectionsPage() {
   const { timeZone } = useTenantTime();
-  const { data: collectionRows = [], isLoading, isError, refetch, blocked: collectionsBlocked } = useCollections();
+  const {
+    data: collectionRows = [],
+    isLoading,
+    isError,
+    refetch,
+    blocked: collectionsBlocked,
+  } = useCollections();
   const mutations = useCollectionMutations();
   const [tab, setTab] = useState<CollectionTab>("queue");
   const [drawerInvoiceId, setDrawerInvoiceId] = useState<number | null>(null);
 
-  const collections = useMemo(() => collectionRows.map(apiCollectionToRecord), [collectionRows]);
+  const collections = useMemo(
+    () => (collectionsBlocked ? [] : collectionRows).map(apiCollectionToRecord),
+    [collectionRows, collectionsBlocked]
+  );
   const kpis = collectionsKpis(collections, timeZone);
   const tabRows = useMemo(() => collections.filter((c) => c.tab === tab), [collections, tab]);
 
@@ -60,7 +69,7 @@ export function CollectionsPage() {
       />
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
-        <KpiCard label="Open receivables" value={isLoading ? "…" : kpis.count} testid="kpi-collections-open" />
+        <KpiCard label="Open receivables" value={isLoading || collectionsBlocked ? "…" : kpis.count} testid="kpi-collections-open" />
         <KpiCard
           label="Outstanding"
           value={isLoading ? "…" : money(kpis.total)}
@@ -81,7 +90,7 @@ export function CollectionsPage() {
       />
 
       <PageTabPanel value={tab} active={tab} className="mt-4 space-y-2">
-        {isLoading ? (
+        {isLoading || collectionsBlocked ? (
           <Card className="p-2 space-y-1">
             {Array.from({ length: 5 }).map((_, i) => (
               <ListRowSkeleton key={i} actionWidth="w-20" />

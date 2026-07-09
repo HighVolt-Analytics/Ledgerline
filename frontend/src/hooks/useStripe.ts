@@ -22,7 +22,7 @@ async function invalidateStripeQueries(
   await queryClient.invalidateQueries({ queryKey: queryKeys.stripeBalance() });
   await queryClient.invalidateQueries({ queryKey: queryKeys.stripeReadiness() });
   await queryClient.invalidateQueries({
-    predicate: (query) => query.queryKey[0] === "stripeTransactions",
+    predicate: (query) => query.queryKey.includes("stripeTransactions"),
   });
 }
 

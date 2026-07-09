@@ -135,7 +135,7 @@ async def test_x_tenant_id_header_mismatch_rejected(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", TENANT_PAGE_GET_PATHS)
 async def test_page_get_endpoints_reject_missing_tenant_header(
-    client: AsyncClient,
+    anon_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     path: str,
@@ -147,14 +147,14 @@ async def test_page_get_endpoints_reject_missing_tenant_header(
     await db_session.commit()
     token = _token_for(user)
 
-    missing = await client.get(path, headers={"Authorization": f"Bearer {token}"})
+    missing = await anon_client.get(path, headers={"Authorization": f"Bearer {token}"})
     assert missing.status_code == 403, f"{path}: {missing.text}"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", TENANT_PAGE_GET_PATHS)
 async def test_page_get_endpoints_reject_spoofed_tenant_header(
-    client: AsyncClient,
+    anon_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     path: str,
@@ -167,7 +167,7 @@ async def test_page_get_endpoints_reject_spoofed_tenant_header(
     await db_session.commit()
     token = _token_for(user)
 
-    spoofed = await client.get(path, headers=tenant_auth_headers(token, other.id))
+    spoofed = await anon_client.get(path, headers=tenant_auth_headers(token, other.id))
     assert spoofed.status_code == 403, f"{path}: {spoofed.text}"
 
 
@@ -332,3 +332,34 @@ async def test_rule_book_config_isolated_per_tenant(
         headers=tenant_auth_headers(token, other.id),
     )
     assert spoof.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_invalid_token_with_tenant_header_does_not_fall_back_to_default_org(
+    anon_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Bad/missing JWT must never return default-tenant data on tenant APIs."""
+    user = await _seed_user(db_session, email="iso-auth-bypass@test.com")
+    await db_session.commit()
+
+    pactify_like = uuid.uuid4()
+    headers = {
+        "Authorization": "Bearer not-a-valid-jwt",
+        "X-Tenant-Id": str(pactify_like),
+    }
+    res = await anon_client.get("/api/mailboxes", headers=headers)
+    assert res.status_code == 401
+
+    res2 = await anon_client.get(
+        "/api/mailboxes",
+        headers={"X-Tenant-Id": str(TESTING_TENANT_UUID)},
+    )
+    assert res2.status_code == 401
+
+    res3 = await anon_client.get("/api/mailboxes")
+    assert res3.status_code == 401
+
+    token = _token_for(user)
+    ok = await anon_client.get("/api/mailboxes", headers=_headers(token))
+    assert ok.status_code == 200

@@ -195,20 +195,10 @@ function mapDocumentTypePostTo(raw: Record<string, unknown> | undefined): Docume
   };
 }
 
-function documentTypePostToToApi(postTo: DocumentTypePostTo): {
-  ledger: string;
-  sub_ledger: string;
-  tax_account?: string;
-  payable_account?: string;
-  receivable_account?: string;
-} {
-  const out: {
-    ledger: string;
-    sub_ledger: string;
-    tax_account?: string;
-    payable_account?: string;
-    receivable_account?: string;
-  } = {
+function documentTypePostToToApi(
+  postTo: DocumentTypePostTo
+): NonNullable<RuleBookRulesPayload["document_types"][number]["post_to"]> {
+  const out: NonNullable<RuleBookRulesPayload["document_types"][number]["post_to"]> = {
     ledger: postTo.ledger,
     sub_ledger: postTo.subLedger,
   };
@@ -421,7 +411,7 @@ function inferPlaybookProfileFromRaw(raw: Record<string, unknown>): PlaybookProf
   const explicit = String(raw.playbook_profile ?? raw.playbookProfile ?? "").trim().toLowerCase();
   if (explicit) return explicit as PlaybookProfile;
   return inferPlaybookProfileFromDefinition({
-    code: String(raw.code ?? ""),
+    code: String(raw.code ?? raw.dt_code ?? ""),
     klass: raw.klass as DocumentTypeDefinition["klass"],
     posting: String(raw.posting ?? "No"),
     purchaseBundleRole: mapPurchaseBundleRole(raw),

@@ -1,8 +1,8 @@
-import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { History } from "lucide-react";
 import { api } from "@/api/client";
 import type { RuleBookChangelogEntry } from "@/api/types";
 import { Card } from "@/components/ui/card";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { InlineListSkeleton } from "@/components/skeleton/PageSkeletons";
 import { queryKeys } from "@/lib/queryClient";
 
@@ -51,10 +51,11 @@ function describeEntry(entry: RuleBookChangelogEntry) {
 export function RuleChangeHistory() {
   const CHANGELOG_LIMIT = 10;
 
-  const { data = [], isLoading, isError } = useTenantQuery({
+  const { data = [], isLoading, isError, blocked } = useTenantQuery({
     queryKey: [...queryKeys.ruleBookChangelog(), CHANGELOG_LIMIT],
     queryFn: () => api.getRuleBookChangelog(CHANGELOG_LIMIT),
   });
+  const showLoading = isLoading || blocked;
 
   return (
     <Card className="mt-5 overflow-hidden" data-testid="rulebook-changelog">
@@ -62,7 +63,7 @@ export function RuleChangeHistory() {
         <History className="h-4 w-4 text-muted-foreground" />
         <h3 className="text-sm font-semibold">Rule change history</h3>
       </div>
-      {isLoading ? (
+      {showLoading ? (
         <InlineListSkeleton rows={4} />
       ) : isError ? (
         <div className="px-4 py-6 text-sm text-destructive">Could not load change history.</div>

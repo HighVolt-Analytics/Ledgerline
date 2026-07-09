@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Coins, Mail, MessageCircle, X } from "lucide-react";
 import { ManagePlanDialog } from "@/components/billing/ManagePlanDialog";
 import { PageHeader } from "@/components/PageHeader";
@@ -26,6 +27,7 @@ function formatEventType(type: string) {
 
 export function BillingPage() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: billing, isLoading, error, refetch } = useBilling(Boolean(user));
   const [usagePage, setUsagePage] = useState(1);
   const { data: usage } = useBillingUsage(usagePage, Boolean(user && billing));
@@ -51,6 +53,32 @@ export function BillingPage() {
   const [topUpAmount, setTopUpAmount] = useState<number | undefined>(50);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const checkout = searchParams.get("checkout");
+    const sessionId = searchParams.get("session_id");
+    if (!checkout || !sessionId || !user) return;
+
+    void (async () => {
+      try {
+        const status = await api.getCheckoutStatus(sessionId);
+        if (checkout === "success" && status.payment_status === "paid") {
+          setMessage("Payment successful — your credits will update shortly.");
+        } else if (checkout === "cancelled" || status.status === "expired") {
+          setMessage("Checkout was cancelled.");
+        } else if (checkout === "success") {
+          setMessage("Payment received — confirming with Stripe…");
+        }
+        await refetch();
+      } catch {
+        if (checkout === "success") {
+          setMessage("Payment submitted — refresh shortly if credits are not visible yet.");
+        }
+      } finally {
+        setSearchParams({}, { replace: true });
+      }
+    })();
+  }, [searchParams, setSearchParams, user, refetch]);
 
   if (!user) {
     return (
@@ -84,6 +112,7 @@ export function BillingPage() {
   const planInfo = billing.plan_info;
   const country = countryByCode(planInfo.region);
   const symbol = country.symbol;
+  const platformBilling = billing.platform_billing_enabled === true;
   const topUpCredits =
     topUpAmount != null ? Math.floor(topUpAmount * planInfo.topup_factor) : 0;
 
@@ -92,6 +121,14 @@ export function BillingPage() {
     setBusy(true);
     setMessage(null);
     try {
+      if (platformBilling) {
+        const session = await api.createTopUpCheckout(topUpAmount);
+        if (session.checkout_url) {
+          window.location.href = session.checkout_url;
+          return;
+        }
+        throw new Error("Stripe checkout URL was not returned");
+      }
       await topUp(topUpAmount);
       setMessage("Top-up successful — credits added to your balance.");
       setTopUpOpen(false);
@@ -107,7 +144,11 @@ export function BillingPage() {
     setBusy(true);
     setMessage(null);
     try {
-      await upgradeToStudio();
+      const result = await upgradeToStudio();
+      if (result && "checkout_url" in result && result.checkout_url) {
+        window.location.href = result.checkout_url;
+        return;
+      }
       setMessage("Upgraded to Studio — full monthly credits applied.");
       setManageOpen(false);
       await refetch();
@@ -282,6 +323,7 @@ export function BillingPage() {
         region={pricingRegion}
         canUpgradeStudio={billing.can_upgrade_studio}
         busy={busy}
+        platformBillingEnabled={platformBilling}
         onSelectPlan={(plan) => void handlePlanSelect(plan)}
       />
 
@@ -295,7 +337,10 @@ export function BillingPage() {
               </button>
             </div>
             <p className="text-sm text-muted-foreground">
-              Enter amount in {country.currency}. Credits are added instantly (demo payment).
+              Enter amount in {country.currency}.
+              {platformBilling
+                ? " You will be redirected to Stripe Checkout to complete payment."
+                : " Credits are added instantly (demo payment)."}
             </p>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{symbol}</span>
@@ -310,8 +355,9 @@ export function BillingPage() {
               <span className="font-semibold tnum">{topUpCredits.toLocaleString()}</span> credits
             </p>
             <Button className="w-full" disabled={busy || !topUpAmount} onClick={() => void handleTopUp()}>
-              Pay {symbol}
-              {topUpAmount?.toLocaleString() ?? "0"} (simulated)
+              {platformBilling
+                ? `Pay ${symbol}${topUpAmount?.toLocaleString() ?? "0"} with Stripe`
+                : `Pay ${symbol}${topUpAmount?.toLocaleString() ?? "0"} (simulated)`}
             </Button>
           </Card>
         </div>

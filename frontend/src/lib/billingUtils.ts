@@ -68,6 +68,8 @@ export function normalizeBillingState(raw: BillingState | null | undefined): Bil
     can_upgrade_studio: raw.can_upgrade_studio ?? plan === "free",
     can_top_up: raw.can_top_up ?? plan !== "enterprise",
     is_enterprise: raw.is_enterprise ?? plan === "enterprise",
+    platform_billing_enabled: raw.platform_billing_enabled ?? false,
+    subscription_status: raw.subscription_status ?? null,
   };
 }
 

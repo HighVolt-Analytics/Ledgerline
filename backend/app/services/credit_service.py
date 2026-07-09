@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -334,6 +334,149 @@ async def charge_upload_credits(
     session.add(entry)
     await session.flush()
     return entry
+
+
+async def grant_credits_idempotent(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    credits: int,
+    idempotency_key: str,
+    event_type: str,
+    description: str,
+    amount_paid: Decimal | None = None,
+    currency_code: str | None = None,
+    stripe_checkout_session_id: str | None = None,
+    stripe_payment_intent_id: str | None = None,
+    stripe_invoice_id: str | None = None,
+) -> CreditLedgerEntry | None:
+    """Grant credits once per idempotency key."""
+    if credits <= 0:
+        return None
+
+    existing = (
+        await session.execute(
+            select(CreditLedgerEntry).where(
+                CreditLedgerEntry.tenant_id == tenant_id,
+                CreditLedgerEntry.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    billing = await refresh_tenant_billing(session, tenant_id)
+    billing.credit_balance += credits
+    entry = CreditLedgerEntry(
+        tenant_id=tenant_id,
+        event_type=event_type,
+        description=description,
+        credits_delta=credits,
+        balance_after=billing.credit_balance,
+        plan_at_event=billing.plan,
+        idempotency_key=idempotency_key,
+        amount_paid=amount_paid,
+        currency_code=currency_code,
+        stripe_checkout_session_id=stripe_checkout_session_id,
+        stripe_payment_intent_id=stripe_payment_intent_id,
+        stripe_invoice_id=stripe_invoice_id,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
+async def apply_studio_subscription_to_billing(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    country_code: str | None,
+    stripe_customer_id: str | None = None,
+    stripe_subscription_id: str | None = None,
+    stripe_price_id: str | None = None,
+    subscription_status: str | None = None,
+    current_period_start: datetime | None = None,
+    current_period_end: datetime | None = None,
+    cancel_at_period_end: bool = False,
+    grant_initial_credits: bool = True,
+    idempotency_key: str | None = None,
+    stripe_checkout_session_id: str | None = None,
+    stripe_invoice_id: str | None = None,
+) -> TenantBilling:
+    """Activate Studio plan and optionally grant the first monthly allowance."""
+    from datetime import datetime as dt
+
+    tenant = await session.get(Tenant, tenant_id)
+    billing = await refresh_tenant_billing(session, tenant_id)
+    region = pricing_region_for_country(country_code or tenant_country(tenant))
+    studio_def = plan_definition(country_code=country_code or tenant_country(tenant), plan=PLAN_STUDIO)
+    old_balance = billing.credit_balance
+
+    billing.plan = PLAN_STUDIO
+    billing.billing_country = region
+    billing.billing_currency = region_currency(region)
+    billing.monthly_credits = studio_def.monthly_credits
+    billing.user_limit = studio_def.max_users
+    if stripe_customer_id:
+        billing.stripe_customer_id = stripe_customer_id
+    if stripe_subscription_id:
+        billing.stripe_subscription_id = stripe_subscription_id
+    if stripe_price_id:
+        billing.stripe_price_id = stripe_price_id
+    if subscription_status:
+        billing.subscription_status = subscription_status
+    if current_period_start:
+        billing.current_period_start = current_period_start
+    if current_period_end:
+        billing.current_period_end = current_period_end
+    billing.cancel_at_period_end = cancel_at_period_end
+
+    if grant_initial_credits:
+        credits = studio_def.monthly_credits
+        delta = credits - old_balance
+        billing.credit_balance = credits
+        billing.last_monthly_grant_at = date.today()
+        key = idempotency_key or f"studio_activation:{tenant_id}"
+        if delta != 0:
+            await grant_credits_idempotent(
+                session,
+                tenant_id,
+                credits=delta,
+                idempotency_key=key,
+                event_type="subscription_signup",
+                description="Studio subscription activated — monthly allowance applied",
+                amount_paid=studio_def.monthly_price,
+                currency_code=region_currency(region),
+                stripe_checkout_session_id=stripe_checkout_session_id,
+                stripe_invoice_id=stripe_invoice_id,
+            )
+        else:
+            existing = (
+                await session.execute(
+                    select(CreditLedgerEntry).where(
+                        CreditLedgerEntry.tenant_id == tenant_id,
+                        CreditLedgerEntry.idempotency_key == key,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(
+                    CreditLedgerEntry(
+                        tenant_id=tenant_id,
+                        event_type="subscription_signup",
+                        description="Studio subscription activated — monthly allowance applied",
+                        credits_delta=0,
+                        balance_after=billing.credit_balance,
+                        plan_at_event=PLAN_STUDIO,
+                        idempotency_key=key,
+                        amount_paid=studio_def.monthly_price,
+                        currency_code=region_currency(region),
+                        stripe_checkout_session_id=stripe_checkout_session_id,
+                        stripe_invoice_id=stripe_invoice_id,
+                    )
+                )
+    await session.flush()
+    return billing
 
 
 async def top_up_credits(

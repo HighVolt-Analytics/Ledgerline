@@ -2,8 +2,8 @@ import json
 import os
 from pathlib import Path
 
-# Force auth off for API tests (local .env often sets AUTH_REQUIRED=true).
-os.environ["AUTH_REQUIRED"] = "false"
+# Tenant-scoped API tests always authenticate (no silent default-org fallback).
+os.environ["AUTH_REQUIRED"] = "true"
 os.environ["DEFAULT_TENANT_SLUG"] = "hv-org"
 os.environ["DEFAULT_TENANT_NAME"] = "High Volt Analytics"
 # Prevent local ngrok/tunnel URLs from breaking URL builder tests.
@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config import get_settings
 from app.database import Base, get_db, get_preauth_db
 from tests.legacy_tenant_support import install_legacy_tenant_coercion
+from tests.auth_test_helpers import seed_admin_user, tenant_auth_headers
 
 install_legacy_tenant_coercion()
 from app.main import app
@@ -97,8 +98,8 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture(autouse=True)
-def _disable_auth_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AUTH_REQUIRED", "false")
+def _test_auth_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
     monkeypatch.setenv("DEFAULT_TENANT_SLUG", "hv-org")
     monkeypatch.setenv("DEFAULT_TENANT_NAME", "High Volt Analytics")
     monkeypatch.setenv("PUBLIC_TUNNEL_URL", "")
@@ -136,7 +137,8 @@ def _use_demo_rule_book_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path_factor
 
 
 @pytest_asyncio.fixture
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+async def anon_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client without default auth headers (for 401 / pre-login tests)."""
     get_settings.cache_clear()
 
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -152,6 +154,34 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+    ) as ac:
+        yield ac
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    get_settings.cache_clear()
+
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+        await db_session.commit()
+
+    async def override_get_preauth_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+        await db_session.commit()
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_preauth_db] = override_get_preauth_db
+
+    _, token = await seed_admin_user(db_session)
+    await db_session.commit()
+    headers = tenant_auth_headers(token, TESTING_TENANT_UUID)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=headers,
     ) as ac:
         yield ac
     app.dependency_overrides.clear()

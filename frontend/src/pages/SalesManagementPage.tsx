@@ -79,12 +79,16 @@ export function SalesManagementPage() {
     return [...registerTwoWay, ...orphans];
   }, [rows, twoWayData, tenantDataBlocked]);
   const actionRequired = useMemo(
-    () => salesActionRequiredInvoices(routed, salesRows),
-    [routed, salesRows]
+    () => (tenantDataBlocked ? [] : salesActionRequiredInvoices(routed, salesRows)),
+    [routed, salesRows, tenantDataBlocked]
   );
   const kpis = useMemo(
-    () => salesKpisFromRegister(salesRows, routed),
-    [salesRows, routed]
+    () =>
+      salesKpisFromRegister(
+        tenantDataBlocked ? [] : salesRows,
+        tenantDataBlocked ? [] : routed
+      ),
+    [salesRows, routed, tenantDataBlocked]
   );
   const selected =
     rows.find((r) => salesRowKey(r.salesId, r.invoiceId) === selectedKey) ?? null;

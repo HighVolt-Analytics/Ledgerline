@@ -1031,6 +1031,15 @@ export interface AppSettings {
   rule_book_config_path: string;
   cors_origins: string;
   whatsapp_configured: boolean;
+  app_env: string;
+  payment_environment_label: string;
+  public_app_base_url?: string;
+  public_api_base_url?: string;
+  stripe_mode: string;
+  xero_configured: boolean;
+  quickbooks_configured: boolean;
+  stripe_global_payouts_enabled?: boolean;
+  stripe_global_payouts_access_status: string;
   stripe_payments_execution_enabled: boolean;
   stripe_live_payments_enabled: boolean;
   payment_manual_execution_enabled: boolean;
@@ -1045,6 +1054,37 @@ export interface AppSettings {
   quickbooks_configured: boolean;
   stripe_global_payouts_enabled?: boolean;
   stripe_global_payouts_access_status: string;
+}
+
+export interface AccountingIntegrationItem {
+  provider: string;
+  configured: boolean;
+  status: string;
+  display_name: string | null;
+  provider_tenant_id: string | null;
+  scopes: string | null;
+  connected_at: string | null;
+  last_error: string | null;
+}
+
+export interface AccountingIntegrationsStatus {
+  xero: AccountingIntegrationItem;
+  quickbooks_online: AccountingIntegrationItem;
+}
+
+export interface StripeGlobalPayoutsReadinessResponse {
+  enabled: boolean;
+  access_status: string;
+  financial_account_configured: boolean;
+  supported_countries: string[];
+  supported_currencies: string[];
+  max_amount_usd: number;
+  ready: boolean;
+  blocking_reason: string | null;
+  recommended_action: string | null;
+  environment: string;
+  stripe_mode: string;
+  live_execution_enabled: boolean;
 }
 
 export interface AccountingIntegrationItem {
@@ -1680,6 +1720,50 @@ export interface BillingState {
   can_upgrade_studio: boolean;
   can_top_up: boolean;
   is_enterprise: boolean;
+  platform_billing_enabled?: boolean;
+  subscription_status?: string | null;
+}
+
+export interface CheckoutSessionResult {
+  checkout_url?: string | null;
+  session_id?: string | null;
+  status: string;
+  pending_signup_id?: string | null;
+  tenant_id?: string | null;
+  completed_without_checkout?: boolean;
+  access_token?: string | null;
+  refresh_token?: string | null;
+  user?: AuthUser | null;
+}
+
+export interface CheckoutStatusResult {
+  session_id: string;
+  status?: string | null;
+  payment_status?: string | null;
+  mode?: string | null;
+  event_type?: string | null;
+  tenant_id?: string | null;
+  email?: string | null;
+}
+
+export interface BillingSignupCheckoutBody {
+  email: string;
+  password: string;
+  organisation_name: string;
+  country: string;
+  plan_code: "free" | "studio";
+  industry?: string;
+  full_name?: string;
+  signup_token?: string;
+  signup_source?: "public" | "invite";
+}
+
+export interface BillingPlansCatalog {
+  country: string;
+  region: string;
+  currency_code: string;
+  plans: PlanInfo[];
+  platform_billing_enabled: boolean;
 }
 
 export interface BillingUsageHistory {

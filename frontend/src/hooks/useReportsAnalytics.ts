@@ -1,5 +1,5 @@
-import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { api } from "@/api/client";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { queryKeys } from "@/lib/queryClient";
 
 export function useReportsAnalytics(month: string) {

@@ -6,7 +6,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
+
+from app.schemas.auth import UserResponse
 
 
 class PlanInfo(BaseModel):
@@ -51,6 +53,8 @@ class BillingStateResponse(BaseModel):
     can_upgrade_studio: bool = True
     can_top_up: bool = True
     is_enterprise: bool = False
+    platform_billing_enabled: bool = False
+    subscription_status: str | None = None
 
 
 class BillingUsageHistoryResponse(BaseModel):
@@ -66,6 +70,64 @@ class BillingTopUpRequest(BaseModel):
 
 class BillingUpgradeRequest(BaseModel):
     plan: str = Field(default="studio", pattern=r"^(studio)$")
+
+
+class BillingPlanCatalogItem(BaseModel):
+    plan_code: str
+    region: str
+    currency_code: str
+    monthly_credits: int
+    max_users: int
+    social_integration: bool
+    email_integration: bool
+    monthly_price: float
+    credits_per_page: int = 5
+
+
+class BillingPlansResponse(BaseModel):
+    country: str
+    region: str
+    currency_code: str
+    plans: list[BillingPlanCatalogItem]
+    platform_billing_enabled: bool = False
+
+
+class BillingSignupCheckoutRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    organisation_name: str = Field(min_length=1, max_length=255)
+    country: str = Field(min_length=2, max_length=2)
+    plan_code: str = Field(pattern=r"^(free|studio)$")
+    industry: str | None = Field(default=None, max_length=64)
+    full_name: str | None = Field(default=None, max_length=255)
+    signup_token: str | None = Field(default=None, max_length=128)
+    signup_source: str = Field(default="public", pattern=r"^(public|invite)$")
+
+
+class BillingTopUpCheckoutRequest(BaseModel):
+    amount: Decimal = Field(gt=0, description="Amount in tenant regional currency")
+
+
+class CheckoutSessionResponse(BaseModel):
+    checkout_url: str | None = None
+    session_id: str | None = None
+    status: str
+    pending_signup_id: str | None = None
+    tenant_id: str | None = None
+    completed_without_checkout: bool = False
+    access_token: str | None = None
+    refresh_token: str | None = None
+    user: UserResponse | None = None
+
+
+class CheckoutStatusResponse(BaseModel):
+    session_id: str
+    status: str | None = None
+    payment_status: str | None = None
+    mode: str | None = None
+    event_type: str | None = None
+    tenant_id: str | None = None
+    email: str | None = None
 
 
 class PlatformCreditSettingsResponse(BaseModel):

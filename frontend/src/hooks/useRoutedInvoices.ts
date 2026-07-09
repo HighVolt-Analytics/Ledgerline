@@ -1,5 +1,5 @@
-import { useTenantQuery } from "@/hooks/useTenantQuery";
 import type { Invoice } from "@/api/types";
+import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { fetchAllInvoices } from "@/lib/invoices";
 import { queryKeys } from "@/lib/queryClient";
 

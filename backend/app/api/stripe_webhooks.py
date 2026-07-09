@@ -80,6 +80,71 @@ async def stripe_webhook_receive(
         await clear_platform_lookup_session(db)
 
 
+@router.post("/stripe/billing")
+async def stripe_platform_billing_webhook_receive(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
+    settings = get_settings()
+    if not settings.stripe_platform_billing_webhook_secret.strip():
+        raise HTTPException(503, "Platform billing webhook secret is not configured")
+
+    try:
+        payload = await request.body()
+    except ClientDisconnect:
+        logger.info("stripe_platform_billing_webhook_client_disconnect")
+        return {"received": True, "duplicate": False}
+
+    signature = request.headers.get("Stripe-Signature", "")
+    from app.services.payments.stripe_platform_billing_service import (
+        process_platform_billing_webhook_event,
+        record_platform_billing_webhook_once,
+        verify_platform_billing_webhook,
+    )
+
+    try:
+        event = verify_platform_billing_webhook(payload, signature)
+    except StripeServiceError as exc:
+        message = str(exc)
+        if "not configured" in message.lower():
+            raise HTTPException(503, message) from exc
+        raise HTTPException(400, message) from exc
+
+    await apply_platform_lookup_session(db)
+    try:
+        try:
+            result = await record_platform_billing_webhook_once(db, event)
+        except StripeServiceError as exc:
+            raise HTTPException(500, str(exc)) from exc
+
+        if not result.duplicate and not result.already_processed:
+            try:
+                await process_platform_billing_webhook_event(
+                    db, event, webhook_row=result.event
+                )
+                await db.commit()
+            except Exception as exc:
+                logger.exception(
+                    "stripe_platform_billing_webhook_processing_failed",
+                    stripe_event_id=result.event.stripe_event_id,
+                    event_type=result.event.event_type,
+                    error=str(exc),
+                )
+                raise HTTPException(500, "Unable to process platform billing webhook") from exc
+        else:
+            await db.commit()
+
+        logger.info(
+            "stripe_platform_billing_webhook_received",
+            stripe_event_id=result.event.stripe_event_id,
+            event_type=result.event.event_type,
+            duplicate=result.duplicate,
+        )
+        return {"received": True, "duplicate": result.duplicate}
+    finally:
+        await clear_platform_lookup_session(db)
+
+
 @router.post("/stripe/global-payouts")
 async def stripe_global_payouts_webhook_receive(
     request: Request,

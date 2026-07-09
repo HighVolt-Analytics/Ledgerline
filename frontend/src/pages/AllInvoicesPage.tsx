@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Invoice } from "@/api/types";
 import { useAuth } from "@/context/AuthContext";
@@ -74,7 +74,7 @@ export function AllInvoicesPage() {
         <ListSearchInput
           value={searchQuery}
           onChange={setSearchQuery}
-          placeholder="Search this list…"
+          placeholder="Search this listΓÇª"
           testId="input-all-invoices-search"
           className="ml-auto"
         />

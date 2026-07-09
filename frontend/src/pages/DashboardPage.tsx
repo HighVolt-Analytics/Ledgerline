@@ -200,7 +200,7 @@ export function DashboardPage() {
     );
   }
 
-  if (isLoading || !overview || !user) {
+  if (isLoading || overviewBlocked || !overview || !user) {
     return (
       <div>
         {user ? (
