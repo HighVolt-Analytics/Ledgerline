@@ -61,7 +61,7 @@ function formatBalanceLine(label: string, items: StripeBalanceAmount[]): string 
   if (!items.length) return `${label}: —`;
   const parts = items
     .filter((item) => item.amount != null)
-    .map((item) => money(item.amount, item.currency ?? "AUD"));
+    .map((item) => money(item.amount, item.currency ?? "SGD"));
   return `${label}: ${parts.length ? parts.join(" · ") : "—"}`;
 }
 
@@ -76,9 +76,9 @@ function sumStripeBalanceAmounts(
 ): { total: number; currency: string } {
   const withAmount = items.filter((item) => item.amount != null);
   if (!withAmount.length) {
-    return { total: 0, currency: "AUD" };
+    return { total: 0, currency: "SGD" };
   }
-  const currency = withAmount[0]?.currency ?? "AUD";
+  const currency = withAmount[0]?.currency ?? "SGD";
   const total = withAmount.reduce((sum, item) => sum + (item.amount ?? 0), 0);
   return { total, currency };
 }
@@ -570,7 +570,7 @@ export function PaymentsPage() {
                           </td>
                           <td className="px-3 py-2 text-xs text-right tnum whitespace-nowrap">
                             {txn.amount != null
-                              ? money(txn.amount, txn.currency ?? "AUD")
+                              ? money(txn.amount, txn.currency ?? "SGD")
                               : "—"}
                           </td>
                           <td className="px-3 py-2 text-xs text-muted-foreground">

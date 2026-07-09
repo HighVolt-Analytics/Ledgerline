@@ -9,9 +9,9 @@ import {
 
 const ACCESS_KEY = "ledgerline_access_token";
 
-function mockSessionStorage() {
+function mockLocalStorage() {
   const store = new Map<string, string>();
-  const sessionStorage = {
+  const localStorage = {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => {
       store.set(key, value);
@@ -23,8 +23,14 @@ function mockSessionStorage() {
       store.clear();
     },
   };
-  vi.stubGlobal("sessionStorage", sessionStorage);
-  return sessionStorage;
+  vi.stubGlobal("localStorage", localStorage);
+  vi.stubGlobal("sessionStorage", {
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined,
+    clear: () => undefined,
+  });
+  return localStorage;
 }
 
 const tenantA = "11111111-1111-1111-1111-111111111111";
@@ -46,7 +52,7 @@ function envelope<T>(data: T) {
 }
 
 beforeEach(() => {
-  mockSessionStorage();
+  mockLocalStorage();
   setAuthToken(jwtWithTenant(tenantA));
   clearGetCache();
 });
@@ -54,14 +60,14 @@ beforeEach(() => {
 afterEach(() => {
   setAuthToken(null);
   clearGetCache();
-  sessionStorage.clear();
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
 describe("tenant-scoped request guards", () => {
   it("rejects tenant API calls when tenant id cannot be resolved", async () => {
     setAuthToken(null);
-    sessionStorage.clear();
+    localStorage.clear();
 
     await expect(api.listMailboxes()).rejects.toMatchObject({
       message: "Tenant scope required",
@@ -71,7 +77,7 @@ describe("tenant-scoped request guards", () => {
 
   it("allows public tenant invite preview without a tenant session", async () => {
     setAuthToken(null);
-    sessionStorage.clear();
+    localStorage.clear();
 
     let requestedPath = "";
     vi.stubGlobal(
@@ -96,9 +102,9 @@ describe("tenant-scoped request guards", () => {
     expect(requestedPath).toContain("/api/auth/invite/preview?token=test-token");
   });
 
-  it("sends Authorization from sessionStorage when in-memory token is unset", async () => {
+  it("sends Authorization from localStorage when in-memory token is unset", async () => {
     setAuthToken(null);
-    sessionStorage.setItem(ACCESS_KEY, jwtWithTenant(tenantA));
+    localStorage.setItem(ACCESS_KEY, jwtWithTenant(tenantA));
 
     let authHeader: string | null = null;
     vi.stubGlobal(

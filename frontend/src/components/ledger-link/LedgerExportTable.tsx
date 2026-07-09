@@ -6,7 +6,7 @@ import { ExportStatusBadge } from "./ExportStatusBadge";
 export function LedgerExportTable({
   title,
   rows,
-  currency = "AUD",
+  currency = "SGD",
 }: {
   title: string;
   rows: LedgerExportRow[];

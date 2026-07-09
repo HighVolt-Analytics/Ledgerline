@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 
@@ -239,6 +240,19 @@ class InvoiceTenantScopeError(ValueError):
     """Invoice row tenant_id does not match the authenticated tenant scope."""
 
 
+async def _ensure_invoice_attached(db: AsyncSession, inv: Invoice) -> Invoice:
+    """Re-bind invoice rows after session.invalidate() from transient DB retries."""
+    from sqlalchemy import inspect as sa_inspect
+
+    if sa_inspect(inv).session is db:
+        return inv
+    if inv.id is not None:
+        attached = await db.get(Invoice, inv.id)
+        if attached is not None:
+            return attached
+    return await db.merge(inv)
+
+
 def assert_invoice_tenant_scope(rows: list[Invoice], tenant_id: uuid.UUID) -> None:
     for row in rows:
         if row.tenant_id != tenant_id:
@@ -257,6 +271,7 @@ async def _responses_for_invoices_once(
 ) -> list[InvoiceResponse]:
     if not rows:
         return []
+    rows = [await _ensure_invoice_attached(db, row) for row in rows]
     assert_invoice_tenant_scope(rows, tenant_id)
     invoice_ids = [row.id for row in rows]
     if for_list:
@@ -305,15 +320,61 @@ async def responses_for_invoices(
         return []
     from app.db_transient import run_with_transient_db_retry
 
-    return await run_with_transient_db_retry(
-        db,
-        lambda: _responses_for_invoices_once(
-            db, rows, tenant_id=tenant_id, published_ids=published_ids, for_list=for_list
-        ),
-    )
+    invoice_ids = [row.id for row in rows]
+
+    async def _run() -> list[InvoiceResponse]:
+        attached = []
+        for invoice_id in invoice_ids:
+            row = await db.get(Invoice, invoice_id)
+            if row is not None:
+                attached.append(row)
+        return await _responses_for_invoices_once(
+            db,
+            attached,
+            tenant_id=tenant_id,
+            published_ids=published_ids,
+            for_list=for_list,
+        )
+
+    return await run_with_transient_db_retry(db, _run)
 
 
-async def response_for_invoice(
+async def responses_for_approval_board(
+    db: AsyncSession,
+    rows: list[Invoice],
+    *,
+    tenant_id: uuid.UUID,
+) -> list[InvoiceResponse]:
+    """Lightweight kanban payload — no per-invoice audit hydration or refetch."""
+    if not rows:
+        return []
+    from app.db_transient import run_with_transient_db_retry
+    from app.services.integration.publish_service import published_invoice_ids
+    from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
+
+    invoice_ids = [row.id for row in rows]
+
+    async def _run() -> list[InvoiceResponse]:
+        attached = [await _ensure_invoice_attached(db, row) for row in rows]
+        assert_invoice_tenant_scope(attached, tenant_id)
+        published = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
+        config = await load_posting_config_for_tenant(db, tenant_id)
+        document_types = list(config.document_types)
+        return [
+            invoice_to_response(
+                row,
+                published_to_ledger=row.id in published,
+                audit_logs=[],
+                document_types=document_types,
+                for_list=True,
+            )
+            for row in attached
+        ]
+
+    return await run_with_transient_db_retry(db, _run)
+
+
+async def _response_for_invoice_once(
     db: AsyncSession,
     inv: Invoice,
     *,
@@ -322,12 +383,14 @@ async def response_for_invoice(
     repair_stored_path: bool = False,
     **kwargs,
 ) -> InvoiceResponse:
+    inv = await _ensure_invoice_attached(db, inv)
     assert_invoice_tenant_scope([inv], tenant_id)
     if repair_stored_path:
         await repair_invoice_stored_path(db, inv)
     if verify_stored_file or repair_stored_path:
         if "has_stored_file" not in kwargs:
-            kwargs["has_stored_file"] = stored_file_available(
+            kwargs["has_stored_file"] = await asyncio.to_thread(
+                stored_file_available,
                 inv.raw_file_path,
                 tenant_id=inv.tenant_id,
             )
@@ -356,3 +419,32 @@ async def response_for_invoice(
         document_types=list(config.document_types),
         **kwargs,
     )
+
+
+async def response_for_invoice(
+    db: AsyncSession,
+    inv: Invoice,
+    *,
+    tenant_id: uuid.UUID,
+    verify_stored_file: bool = False,
+    repair_stored_path: bool = False,
+    **kwargs,
+) -> InvoiceResponse:
+    from app.db_transient import run_with_transient_db_retry
+
+    invoice_id = inv.id
+
+    async def _run() -> InvoiceResponse:
+        row = await db.get(Invoice, invoice_id)
+        if row is None:
+            raise InvoiceTenantScopeError(f"Invoice {invoice_id} not found")
+        return await _response_for_invoice_once(
+            db,
+            row,
+            tenant_id=tenant_id,
+            verify_stored_file=verify_stored_file,
+            repair_stored_path=repair_stored_path,
+            **kwargs,
+        )
+
+    return await run_with_transient_db_retry(db, _run)

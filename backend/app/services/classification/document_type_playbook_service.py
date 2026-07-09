@@ -64,7 +64,16 @@ class PlaybookGateResult:
 
     @property
     def blocks_posting(self) -> bool:
-        return bool(self.missing_bundle_mandatory or self.missing_extraction_fields)
+        """Playbook no longer blocks routing for field/bundle gaps — see VR03 / VR-PB02."""
+        return False
+
+    @property
+    def has_validation_gaps(self) -> bool:
+        return bool(
+            self.missing_bundle_mandatory
+            or self.missing_extraction_fields
+            or self.linkage_key_missing
+        )
 
     def audit_detail(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -75,6 +84,7 @@ class PlaybookGateResult:
             "missing_extraction_fields": list(self.missing_extraction_fields),
             "missing_optional_extraction_fields": list(self.missing_optional_extraction_fields),
             "blocks_posting": self.blocks_posting,
+            "has_validation_gaps": self.has_validation_gaps,
             "linkage_key": self.linkage_key,
             "linkage_key_missing": self.linkage_key_missing,
             "linkage_book": self.linkage_book,
@@ -1164,13 +1174,23 @@ def suggest_reclassify_direct_expense_code(
 
 
 def playbook_validation_results(playbook: PlaybookGateResult | None) -> list[object]:
-    """Catalogue-driven validation rows (VR-PB*) for audit trail."""
+    """Validation rows (VR-PB02) — enforced at validation when the rule is enabled."""
     from app.services.rule_book.validator import ValidationResult
 
     if playbook is None:
         return []
 
     results: list[ValidationResult] = []
+    if playbook.linkage_key_missing:
+        book = (playbook.linkage_book or "purchase").strip().lower()
+        ref_label = "SO" if book == "sales" else "PO"
+        results.append(
+            ValidationResult(
+                "VR-PB02",
+                False,
+                f"Valid {ref_label} reference required to link supporting documents",
+            )
+        )
     if playbook.missing_bundle_mandatory:
         codes = ", ".join(playbook.missing_bundle_mandatory)
         book = (playbook.linkage_book or "purchase").strip().lower()
@@ -1180,33 +1200,6 @@ def playbook_validation_results(playbook: PlaybookGateResult | None) -> list[obj
                 "VR-PB02",
                 False,
                 f"Required supporting documents missing for {ref_label}: {codes}",
-            )
-        )
-    if playbook.missing_bundle_conditional_dt:
-        codes = ", ".join(playbook.missing_bundle_conditional_dt)
-        results.append(
-            ValidationResult(
-                "VR-PB04",
-                True,
-                f"Recommended supporting documents not yet present: {codes}",
-            )
-        )
-    if playbook.conditional_advisories:
-        notes = "; ".join(playbook.conditional_advisories[:3])
-        results.append(
-            ValidationResult(
-                "VR-PB04",
-                True,
-                f"Recommended supporting document advisories: {notes}",
-            )
-        )
-    if playbook.missing_optional_extraction_fields:
-        fields = ", ".join(playbook.missing_optional_extraction_fields)
-        results.append(
-            ValidationResult(
-                "VR-PB01",
-                True,
-                f"Optional extraction fields not yet captured: {fields}",
             )
         )
     return results

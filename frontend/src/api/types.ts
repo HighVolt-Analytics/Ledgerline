@@ -94,6 +94,12 @@ export interface InstitutionSettings {
   timezone: string;
   locale: string;
   currency: string;
+  tax_label: string;
+  statutory_tax_rate: number | null;
+  tax_id_kind: string;
+  tax_id_label: string;
+  bank_routing_label: string;
+  field_labels: Record<string, string>;
 }
 
 export interface OrgAiBrief {
@@ -1054,6 +1060,23 @@ export interface AppSettings {
   quickbooks_configured: boolean;
   stripe_global_payouts_enabled?: boolean;
   stripe_global_payouts_access_status: string;
+  use_field_registry?: boolean;
+}
+
+export interface RegistryFieldOption {
+  key: string;
+  label: string;
+  data_type?: string;
+  category?: string;
+  posting_critical?: boolean;
+  grounding_required?: boolean;
+  synonyms?: string[];
+}
+
+export interface RegistryFieldsResponse {
+  version: string;
+  use_field_registry: boolean;
+  fields: RegistryFieldOption[];
 }
 
 export interface AccountingIntegrationItem {
@@ -1831,4 +1854,6 @@ export interface InvoiceClassificationAudit {
   org_auto_route_min_confidence?: number;
   dt_min_route_confidence?: number;
   perspective?: string;
+  citation_failed?: string[];
+  citation_verified?: string[];
 }

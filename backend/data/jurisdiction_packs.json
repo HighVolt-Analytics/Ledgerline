@@ -1,0 +1,217 @@
+{
+  "default_country": "SG",
+  "packs": {
+    "AU": {
+      "currency": "AUD",
+      "timezone": "Australia/Sydney",
+      "locale": "en-AU",
+      "tax_label": "GST",
+      "statutory_tax_rate": 10,
+      "tax_id_kind": "abn",
+      "tax_id_label": "ABN",
+      "bank_routing_label": "BSB",
+      "llm_tax_id_examples": "placeholder ABNs (e.g. 45123456789)",
+      "match_cap_amount": 100,
+      "posting_defaults": {
+        "tax_account": "GST Paid",
+        "payable_account": "Accounts Payable",
+        "fallback_account": "Suspense Account",
+        "sales_tax_account": "GST Collected"
+      },
+      "tax_invoice": {
+        "enabled": true,
+        "phrase_patterns": ["tax\\s+invoice"],
+        "amount_threshold": 1000,
+        "enforce_when_tax_present": true
+      }
+    },
+    "NZ": {
+      "currency": "NZD",
+      "timezone": "Pacific/Auckland",
+      "locale": "en-NZ",
+      "tax_label": "GST",
+      "statutory_tax_rate": 15,
+      "tax_id_kind": "ird",
+      "tax_id_label": "NZBN / IRD",
+      "bank_routing_label": "Bank code",
+      "llm_tax_id_examples": "placeholder NZ tax IDs",
+      "match_cap_amount": 100,
+      "posting_defaults": {
+        "tax_account": "GST Paid",
+        "payable_account": "Accounts Payable",
+        "fallback_account": "Suspense Account",
+        "sales_tax_account": "GST Collected"
+      },
+      "tax_invoice": {
+        "enabled": true,
+        "phrase_patterns": ["tax\\s+invoice"],
+        "amount_threshold": 1000,
+        "enforce_when_tax_present": true
+      }
+    },
+    "SG": {
+      "currency": "SGD",
+      "timezone": "Asia/Singapore",
+      "locale": "en-SG",
+      "tax_label": "GST",
+      "statutory_tax_rate": 9,
+      "tax_id_kind": "uen",
+      "tax_id_label": "UEN / GST Reg",
+      "bank_routing_label": "Bank code",
+      "llm_tax_id_examples": "placeholder UEN/GST numbers",
+      "match_cap_amount": 100,
+      "posting_defaults": {
+        "tax_account": "GST Paid",
+        "payable_account": "Accounts Payable",
+        "fallback_account": "Suspense Account",
+        "sales_tax_account": "GST Collected"
+      },
+      "tax_invoice": {
+        "enabled": true,
+        "phrase_patterns": ["tax\\s+invoice"],
+        "amount_threshold": null,
+        "enforce_when_tax_present": true
+      }
+    },
+    "GB": {
+      "currency": "GBP",
+      "timezone": "Europe/London",
+      "locale": "en-GB",
+      "tax_label": "VAT",
+      "statutory_tax_rate": 20,
+      "tax_id_kind": "vat",
+      "tax_id_label": "VAT number",
+      "bank_routing_label": "Sort code",
+      "llm_tax_id_examples": "placeholder VAT numbers (e.g. GB123456789)",
+      "match_cap_amount": 100,
+      "posting_defaults": {
+        "tax_account": "VAT Input",
+        "payable_account": "Accounts Payable",
+        "fallback_account": "Suspense Account",
+        "sales_tax_account": "VAT Output"
+      },
+      "tax_invoice": {
+        "enabled": true,
+        "phrase_patterns": ["vat\\s+invoice", "tax\\s+invoice"],
+        "amount_threshold": null,
+        "enforce_when_tax_present": true
+      }
+    },
+    "IN": {
+      "currency": "INR",
+      "timezone": "Asia/Kolkata",
+      "locale": "en-IN",
+      "tax_label": "GST",
+      "statutory_tax_rate": 18,
+      "tax_id_kind": "gstin",
+      "tax_id_label": "GSTIN",
+      "bank_routing_label": "IFSC",
+      "llm_tax_id_examples": "placeholder GSTINs",
+      "match_cap_amount": 100,
+      "posting_defaults": {
+        "tax_account": "GST Paid",
+        "payable_account": "Accounts Payable",
+        "fallback_account": "Suspense Account",
+        "sales_tax_account": "GST Collected"
+      },
+      "tax_invoice": {
+        "enabled": true,
+        "phrase_patterns": ["tax\\s+invoice"],
+        "amount_threshold": null,
+        "enforce_when_tax_present": true
+      }
+    },
+    "AE": {
+      "currency": "AED",
+      "timezone": "Asia/Dubai",
+      "locale": "ar-AE",
+      "tax_label": "VAT",
+      "statutory_tax_rate": 5,
+      "tax_id_kind": "vat",
+      "tax_id_label": "TRN",
+      "bank_routing_label": "Bank code",
+      "llm_tax_id_examples": "placeholder TRN/VAT numbers",
+      "match_cap_amount": 100,
+      "posting_defaults": {
+        "tax_account": "VAT Input",
+        "payable_account": "Accounts Payable",
+        "fallback_account": "Suspense Account",
+        "sales_tax_account": "VAT Output"
+      },
+      "tax_invoice": {
+        "enabled": true,
+        "phrase_patterns": ["vat\\s+invoice", "tax\\s+invoice"],
+        "amount_threshold": null,
+        "enforce_when_tax_present": true
+      }
+    },
+    "DE": {
+      "currency": "EUR",
+      "timezone": "Europe/Berlin",
+      "locale": "de-DE",
+      "tax_label": "VAT",
+      "statutory_tax_rate": 19,
+      "tax_id_kind": "vat",
+      "tax_id_label": "USt-IdNr",
+      "bank_routing_label": "BLZ / BIC",
+      "llm_tax_id_examples": "placeholder VAT IDs (e.g. DE123456789)",
+      "match_cap_amount": 100,
+      "posting_defaults": {
+        "tax_account": "VAT Input",
+        "payable_account": "Accounts Payable",
+        "fallback_account": "Suspense Account",
+        "sales_tax_account": "VAT Output"
+      },
+      "tax_invoice": {
+        "enabled": true,
+        "phrase_patterns": ["rechnung", "\\bust\\b", "mwst", "tax\\s+invoice"],
+        "amount_threshold": null,
+        "enforce_when_tax_present": true
+      }
+    },
+    "US": {
+      "currency": "USD",
+      "timezone": "America/New_York",
+      "locale": "en-US",
+      "tax_label": "Sales Tax",
+      "statutory_tax_rate": null,
+      "tax_id_kind": "ein",
+      "tax_id_label": "EIN / Tax ID",
+      "bank_routing_label": "Routing number",
+      "llm_tax_id_examples": "placeholder EINs (e.g. 12-3456789)",
+      "match_cap_amount": 100,
+      "posting_defaults": {
+        "tax_account": "Sales Tax Payable",
+        "payable_account": "Accounts Payable",
+        "fallback_account": "Suspense Account",
+        "sales_tax_account": "Sales Tax Collected"
+      },
+      "tax_invoice": {
+        "enabled": false,
+        "phrase_patterns": [],
+        "amount_threshold": null,
+        "enforce_when_tax_present": false
+      }
+    }
+  },
+  "generic": {
+    "country": "XX",
+    "currency": "SGD",
+    "timezone": "Asia/Singapore",
+    "locale": "en-SG",
+    "tax_label": "Tax",
+    "statutory_tax_rate": null,
+    "tax_id_kind": "generic",
+    "tax_id_label": "Tax ID",
+    "bank_routing_label": "Bank code",
+    "llm_tax_id_examples": "placeholder tax IDs",
+    "match_cap_amount": 100,
+    "posting_defaults": {
+      "tax_account": "Tax Paid",
+      "payable_account": "Accounts Payable",
+      "fallback_account": "Suspense Account",
+      "sales_tax_account": "Tax Collected"
+    },
+    "tax_invoice": null
+  }
+}

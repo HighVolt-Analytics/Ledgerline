@@ -992,7 +992,7 @@ export function InvoiceDetailDrawer({
 
   if (!mounted) return null;
 
-  const tax = inv ? taxMeta(inv.currency) : { label: "GST", rate: 10 };
+  const tax = inv ? taxMeta(inv.currency) : { label: "Tax", rate: null };
   const fmt = (v: string | null | undefined) =>
     inv ? formatMoney(v, inv.currency) : "—";
   const sourceKind = inv?.email_sender ? "email" : "upload";
@@ -1511,7 +1511,7 @@ export function InvoiceDetailDrawer({
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">
-                        {tax.label} {tax.rate}%
+                        {tax.rate != null ? `${tax.label} ${tax.rate}%` : tax.label}
                       </span>
                       <span className="tnum">{fmt(inv.gst)}</span>
                     </div>

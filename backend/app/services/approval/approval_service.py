@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -104,7 +106,8 @@ async def reject_invoice(
 
     await repair_invoice_stored_path(session, inv)
     resolved = (
-        resolve_readable_stored(
+        await asyncio.to_thread(
+            resolve_readable_stored,
             inv.raw_file_path,
             tenant_id=inv.tenant_id,
             tenant_slug=tenant_slug,
@@ -116,14 +119,16 @@ async def reject_invoice(
     if resolved:
         inv.raw_file_path = resolved
 
-    if inv.raw_file_path and stored_file_available(
+    if inv.raw_file_path and await asyncio.to_thread(
+        stored_file_available,
         inv.raw_file_path,
         tenant_id=inv.tenant_id,
         tenant_slug=tenant_slug,
         tenant_name=tenant_name,
     ):
         filename = filename_from_stored(inv.raw_file_path)
-        new_path = relocate_invoice_to_rejected(
+        new_path = await asyncio.to_thread(
+            relocate_invoice_to_rejected,
             inv.raw_file_path,
             inv.tenant_id,
             tenant_slug,

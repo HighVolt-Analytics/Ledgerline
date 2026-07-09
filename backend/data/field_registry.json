@@ -1,0 +1,840 @@
+{
+  "version": "1",
+  "fields": [
+    {
+      "key": "abn",
+      "label": "Tax ID / ABN",
+      "data_type": "string",
+      "category": "party_identifier",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "ABN",
+        "GST",
+        "VAT",
+        "Tax ID",
+        "Company Reg"
+      ],
+      "extraction_hint": "ABN, GST, VAT, Tax ID, Company Reg",
+      "finance_role": "Supplier tax ID (ABN, GST, VAT of the vendor)",
+      "do_not_confuse_with": [
+        "buyer_tax_id",
+        "invoice_no"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ],
+      "jurisdiction_variants": {
+        "AU": {
+          "name": "ABN",
+          "regex": "^\\d{11}$",
+          "checksum": "abn_checksum"
+        },
+        "IN": {
+          "name": "GSTIN",
+          "regex": "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
+        },
+        "SG": {
+          "name": "UEN",
+          "regex": "^[0-9]{8,10}[A-Z]$|^[ST]\\d{2}[A-Z]{2}\\d{4}[A-Z]$"
+        },
+        "GB": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "EU": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "default": {
+          "name": "Tax ID",
+          "regex": null
+        }
+      }
+    },
+    {
+      "key": "account_code",
+      "label": "Account code",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Account Code",
+        "GL Code"
+      ],
+      "extraction_hint": "Account Code, GL Code",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "account_name",
+      "label": "Account name",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Account Name"
+      ],
+      "extraction_hint": "Account Name",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "attachment_name",
+      "label": "Attachment name",
+      "data_type": "text",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": false,
+      "synonyms": [
+        "File or attachment name when shown"
+      ],
+      "extraction_hint": "File or attachment name when shown",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "bank_details",
+      "label": "Bank details",
+      "data_type": "bank",
+      "category": "general",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "BSB",
+        "Account No",
+        "IBAN",
+        "SWIFT",
+        "Bank Name"
+      ],
+      "extraction_hint": "BSB, Account No, IBAN, SWIFT, Bank Name",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "billing_address",
+      "label": "Billing address",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Bill To",
+        "Billing Address"
+      ],
+      "extraction_hint": "Bill To, Billing Address",
+      "finance_role": "Bill-to / buyer address block",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "buyer_abn",
+      "label": "Buyer Abn",
+      "data_type": "string",
+      "category": "party_identifier",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for buyer abn in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ],
+      "jurisdiction_variants": {
+        "AU": {
+          "name": "ABN",
+          "regex": "^\\d{11}$",
+          "checksum": "abn_checksum"
+        },
+        "IN": {
+          "name": "GSTIN",
+          "regex": "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
+        },
+        "SG": {
+          "name": "UEN",
+          "regex": "^[0-9]{8,10}[A-Z]$|^[ST]\\d{2}[A-Z]{2}\\d{4}[A-Z]$"
+        },
+        "GB": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "EU": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "default": {
+          "name": "Tax ID",
+          "regex": null
+        }
+      }
+    },
+    {
+      "key": "buyer_address",
+      "label": "Buyer address",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Buyer",
+        "Bill To",
+        "Ship To address"
+      ],
+      "extraction_hint": "Buyer, Bill To, Ship To address",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "buyer_name",
+      "label": "Buyer name",
+      "data_type": "string",
+      "category": "party",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Buyer",
+        "Bill To",
+        "Customer name"
+      ],
+      "extraction_hint": "Buyer, Bill To, Customer name",
+      "finance_role": "Buyer / bill-to party name",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "buyer_tax_id",
+      "label": "Buyer tax ID",
+      "data_type": "string",
+      "category": "party_identifier",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Buyer tax ID / ABN"
+      ],
+      "extraction_hint": "Buyer tax ID / ABN",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ],
+      "jurisdiction_variants": {
+        "AU": {
+          "name": "ABN",
+          "regex": "^\\d{11}$",
+          "checksum": "abn_checksum"
+        },
+        "IN": {
+          "name": "GSTIN",
+          "regex": "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
+        },
+        "SG": {
+          "name": "UEN",
+          "regex": "^[0-9]{8,10}[A-Z]$|^[ST]\\d{2}[A-Z]{2}\\d{4}[A-Z]$"
+        },
+        "GB": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "EU": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "default": {
+          "name": "Tax ID",
+          "regex": null
+        }
+      }
+    },
+    {
+      "key": "cost_centre",
+      "label": "Cost centre",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Cost Centre",
+        "Cost Center",
+        "Department"
+      ],
+      "extraction_hint": "Cost Centre, Cost Center, Department",
+      "finance_role": "Cost centre or project code",
+      "do_not_confuse_with": [
+        "po_reference"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "document_heading",
+      "label": "Document heading",
+      "data_type": "text",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Document title (Tax Invoice",
+        "Credit Note",
+        "etc.)"
+      ],
+      "extraction_hint": "Document title (Tax Invoice, Credit Note, etc.)",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "document_text",
+      "label": "Document text (OCR body)",
+      "data_type": "text",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": false,
+      "synonyms": [],
+      "extraction_hint": "Look for document text in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "due_date",
+      "label": "Due date",
+      "data_type": "date",
+      "category": "general",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Due Date",
+        "Payment Due"
+      ],
+      "extraction_hint": "Due Date, Payment Due",
+      "finance_role": "Payment due date",
+      "do_not_confuse_with": [
+        "invoice_date"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "email_subject",
+      "label": "Email subject",
+      "data_type": "text",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": false,
+      "synonyms": [],
+      "extraction_hint": "Look for email subject in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "gst",
+      "label": "Tax (GST/VAT)",
+      "data_type": "money",
+      "category": "amount",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "GST",
+        "VAT",
+        "Tax"
+      ],
+      "extraction_hint": "GST, VAT, Tax",
+      "finance_role": "Tax amount (GST/VAT total)",
+      "do_not_confuse_with": [
+        "subtotal",
+        "total"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "gst_rate",
+      "label": "Tax rate (%)",
+      "data_type": "money",
+      "category": "amount",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "GST Rate",
+        "Tax Rate",
+        "VAT %"
+      ],
+      "extraction_hint": "GST Rate, Tax Rate, VAT %",
+      "finance_role": "Tax percentage as printed (e.g. 10 for 10%)",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "invoice_date",
+      "label": "Invoice date",
+      "data_type": "date",
+      "category": "general",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Invoice Date",
+        "Date",
+        "Tax Invoice Date"
+      ],
+      "extraction_hint": "Invoice Date, Date, Tax Invoice Date",
+      "finance_role": "Date the invoice was issued",
+      "do_not_confuse_with": [
+        "due_date"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "invoice_no",
+      "label": "Invoice number",
+      "data_type": "string",
+      "category": "document_reference",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Invoice No",
+        "Invoice Number",
+        "Inv #",
+        "Tax Invoice"
+      ],
+      "extraction_hint": "Invoice No, Invoice Number, Inv #, Tax Invoice",
+      "finance_role": "Unique invoice document number",
+      "do_not_confuse_with": [
+        "po_reference"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "line_items",
+      "label": "Line items",
+      "data_type": "line_items",
+      "category": "general",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Product/service table rows with description and amounts"
+      ],
+      "extraction_hint": "Product/service table rows with description and amounts",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "po_reference",
+      "label": "PO reference",
+      "data_type": "string",
+      "category": "document_reference",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "PO",
+        "Purchase Order",
+        "P.O."
+      ],
+      "extraction_hint": "PO, Purchase Order, P.O.",
+      "finance_role": "Buyer purchase order number referenced on the invoice",
+      "do_not_confuse_with": [
+        "invoice_no",
+        "so_reference"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "seller_abn",
+      "label": "Seller Abn",
+      "data_type": "string",
+      "category": "party_identifier",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [],
+      "extraction_hint": "Look for seller abn in document header or labeled fields",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ],
+      "jurisdiction_variants": {
+        "AU": {
+          "name": "ABN",
+          "regex": "^\\d{11}$",
+          "checksum": "abn_checksum"
+        },
+        "IN": {
+          "name": "GSTIN",
+          "regex": "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
+        },
+        "SG": {
+          "name": "UEN",
+          "regex": "^[0-9]{8,10}[A-Z]$|^[ST]\\d{2}[A-Z]{2}\\d{4}[A-Z]$"
+        },
+        "GB": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "EU": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "default": {
+          "name": "Tax ID",
+          "regex": null
+        }
+      }
+    },
+    {
+      "key": "seller_address",
+      "label": "Seller address",
+      "data_type": "string",
+      "category": "general",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Seller address"
+      ],
+      "extraction_hint": "Seller address",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "seller_name",
+      "label": "Seller name",
+      "data_type": "string",
+      "category": "party",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Seller",
+        "Supplier",
+        "From party name"
+      ],
+      "extraction_hint": "Seller, Supplier, From party name",
+      "finance_role": "Seller / supplier party name",
+      "do_not_confuse_with": [
+        "buyer_name"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "seller_tax_id",
+      "label": "Seller tax ID",
+      "data_type": "string",
+      "category": "party_identifier",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Seller tax ID / ABN"
+      ],
+      "extraction_hint": "Seller tax ID / ABN",
+      "finance_role": "",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ],
+      "jurisdiction_variants": {
+        "AU": {
+          "name": "ABN",
+          "regex": "^\\d{11}$",
+          "checksum": "abn_checksum"
+        },
+        "IN": {
+          "name": "GSTIN",
+          "regex": "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
+        },
+        "SG": {
+          "name": "UEN",
+          "regex": "^[0-9]{8,10}[A-Z]$|^[ST]\\d{2}[A-Z]{2}\\d{4}[A-Z]$"
+        },
+        "GB": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "EU": {
+          "name": "VAT Number",
+          "regex": "^[A-Z]{2}\\d{8,12}$"
+        },
+        "default": {
+          "name": "Tax ID",
+          "regex": null
+        }
+      }
+    },
+    {
+      "key": "so_reference",
+      "label": "SO reference",
+      "data_type": "string",
+      "category": "document_reference",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "SO",
+        "Sales Order",
+        "S.O."
+      ],
+      "extraction_hint": "SO, Sales Order, S.O.",
+      "finance_role": "Sales order number on AR invoices",
+      "do_not_confuse_with": [
+        "po_reference",
+        "invoice_no"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "subtotal",
+      "label": "Subtotal",
+      "data_type": "money",
+      "category": "amount",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Subtotal",
+        "Net Amount",
+        "Amount Ex GST"
+      ],
+      "extraction_hint": "Subtotal, Net Amount, Amount Ex GST",
+      "finance_role": "Amount before tax (ex-GST / ex-VAT)",
+      "do_not_confuse_with": [
+        "total",
+        "gst"
+      ],
+      "source_priority": [
+        "llm",
+        "azure_di",
+        "layout_kv",
+        "regex"
+      ]
+    },
+    {
+      "key": "total",
+      "label": "Total",
+      "data_type": "money",
+      "category": "amount",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Total",
+        "Amount Due",
+        "Balance Due"
+      ],
+      "extraction_hint": "Total, Amount Due, Balance Due",
+      "finance_role": "Grand total or amount due on the invoice",
+      "do_not_confuse_with": [
+        "subtotal"
+      ],
+      "source_priority": [
+        "azure_di",
+        "llm",
+        "regex"
+      ]
+    },
+    {
+      "key": "vendor",
+      "label": "Vendor",
+      "data_type": "string",
+      "category": "party",
+      "posting_critical": true,
+      "grounding_required": true,
+      "synonyms": [
+        "Vendor",
+        "Supplier",
+        "From",
+        "Seller",
+        "Bill From"
+      ],
+      "extraction_hint": "Vendor, Supplier, From, Seller, Bill From",
+      "finance_role": "Creditor / supplier issuing the invoice (seller on a purchase invoice)",
+      "do_not_confuse_with": [
+        "buyer_name"
+      ],
+      "source_priority": [
+        "llm",
+        "layout_kv",
+        "azure_di"
+      ]
+    },
+    {
+      "key": "bank_bsb",
+      "label": "Bank Bsb",
+      "data_type": "bank",
+      "category": "bank",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "BSB"
+      ],
+      "extraction_hint": "BSB",
+      "finance_role": "Bank BSB / routing code when explicitly labeled",
+      "do_not_confuse_with": [
+        "invoice_no"
+      ],
+      "source_priority": [
+        "llm",
+        "regex"
+      ]
+    },
+    {
+      "key": "bank_account",
+      "label": "Bank Account",
+      "data_type": "bank",
+      "category": "bank",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Account No"
+      ],
+      "extraction_hint": "Account No, Account Number",
+      "finance_role": "Bank account number when explicitly labeled",
+      "do_not_confuse_with": [
+        "invoice_no",
+        "abn"
+      ],
+      "source_priority": [
+        "llm",
+        "regex"
+      ]
+    },
+    {
+      "key": "bank_name",
+      "label": "Bank Name",
+      "data_type": "bank",
+      "category": "bank",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Bank Name"
+      ],
+      "extraction_hint": "Bank Name",
+      "finance_role": "Bank name when explicitly labeled",
+      "do_not_confuse_with": [],
+      "source_priority": [
+        "llm",
+        "regex"
+      ]
+    }
+  ]
+}

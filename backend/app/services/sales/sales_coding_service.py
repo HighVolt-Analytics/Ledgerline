@@ -31,7 +31,7 @@ def apply_post_to_to_so(
 ) -> None:
     so.ledger = post.ledger
     so.sub_ledger = (post.sub_ledger or "").strip() or None
-    so.tax_account = post.tax_account or "GST Collected"
+    so.tax_account = post.tax_account or "Tax Collected"
     so.receivable_account = post.receivable_account or "Accounts Receivable"
     so.sales_rule_id = (document_type_code or "").strip() or None
 

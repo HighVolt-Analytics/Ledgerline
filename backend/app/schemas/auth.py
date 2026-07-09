@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from app.tenant_settings import DEFAULT_LOCALE, DEFAULT_TIMEZONE
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -44,8 +46,8 @@ class UserResponse(BaseModel):
     tenant_id: UUID
     tenant_name: str
     tenant_slug: str
-    tenant_timezone: str = "Australia/Sydney"
-    tenant_locale: str = "en-AU"
+    tenant_timezone: str = DEFAULT_TIMEZONE
+    tenant_locale: str = DEFAULT_LOCALE
     is_support_session: bool = False
     onboarding_completed: bool = True
 

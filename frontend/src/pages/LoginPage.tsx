@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
 import { useAuth } from "@/context/AuthContext";
+import { postLoginPathForRole, readReturnTo, rememberOAuthReturnTo } from "@/lib/authReturnTo";
 import { PUBLIC_SIGNUP_PATH } from "@/lib/publicSignupRoutes";
-import { homePathForRole } from "@/lib/roles";
+import { withRouterBasename } from "@/lib/routerBasename";
 import { fetchOAuthProviders, startGoogleOAuth, startMicrosoftOAuth } from "@/lib/oauthApi";
 import { apiFetchTenantSelectAccounts, apiSelectTenant, type TenantAccountSummary } from "@/lib/authApi";
 import { persistAuthSuccess } from "@/lib/authSession";
@@ -55,6 +56,11 @@ export function LoginPage() {
   const [oauthAccounts, setOauthAccounts] = useState<TenantAccountSummary[]>([]);
   const [oauthSelectToken, setOauthSelectToken] = useState<string | null>(null);
   const [oauthAccountsLoading, setOauthAccountsLoading] = useState(false);
+  const returnTo = readReturnTo(new URLSearchParams(location.search));
+
+  useEffect(() => {
+    rememberOAuthReturnTo(returnTo);
+  }, [returnTo]);
 
   useEffect(() => {
     void fetchOAuthProviders()
@@ -100,7 +106,7 @@ export function LoginPage() {
   }, [location]);
 
   if (!loading && user && user.id > 0) {
-    return <Navigate to={homePathForRole(user.role)} replace />;
+    return <Navigate to={postLoginPathForRole(user.role, returnTo)} replace />;
   }
 
   async function onCredentials(e: React.FormEvent) {
@@ -145,7 +151,9 @@ export function LoginPage() {
         });
         setAuthToken(result.access_token);
         setAuthUser(result.user);
-        window.location.replace("/settings");
+        window.location.replace(
+          withRouterBasename(postLoginPathForRole(result.user.role, returnTo))
+        );
         return;
       }
       await selectTenant(tenantId);

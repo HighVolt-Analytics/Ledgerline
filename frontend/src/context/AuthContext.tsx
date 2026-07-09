@@ -44,7 +44,7 @@ import {
   endTenantTransition,
   tenantSessionWillChange,
 } from "@/lib/tenantSession";
-import { homePathForRole } from "@/lib/roles";
+import { postLoginPathForRole, readReturnToFromLocation } from "@/lib/authReturnTo";
 import { withRouterBasename } from "@/lib/routerBasename";
 import { queryClient } from "@/lib/queryClient";
 
@@ -192,7 +192,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         data.memberships
       );
       rememberLastTenant(tenantId);
-      window.location.replace(withRouterBasename(homePathForRole(data.user.role)));
+      window.location.replace(
+        withRouterBasename(postLoginPathForRole(data.user.role, readReturnToFromLocation()))
+      );
     },
     [applySession, tenantSelectToken]
   );
@@ -214,7 +216,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         data.memberships
       );
       rememberLastTenant(tenantId);
-      window.location.replace(withRouterBasename(homePathForRole(data.user.role)));
+      window.location.replace(
+        withRouterBasename(postLoginPathForRole(data.user.role, readReturnToFromLocation()))
+      );
     },
     [applySession]
   );

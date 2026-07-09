@@ -2,6 +2,8 @@ import type { Invoice, InvoiceDetails, LineItem } from "@/api/types";
 import { documentDisplayRef } from "@/lib/format";
 import { extractionFieldLabel } from "@/lib/documentExtractionFields";
 import { counterpartyKind, counterpartyName } from "@/lib/invoice";
+import { COUNTRIES } from "@/lib/settingsData";
+import { DEFAULT_TENANT_LOCALE } from "@/lib/tenantTime";
 
 export type ContentReference = {
   key: string;
@@ -1033,25 +1035,75 @@ export function buildDocumentContentProfile(
 
 export function formatPreviewMoney(
   value: string | null | undefined,
-  currency: string
+  currency: string,
+  locale?: string
 ): string {
   if (value == null || value === "") return "—";
   const n = parseFloat(value);
   if (Number.isNaN(n)) return value;
   try {
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat(locale || DEFAULT_TENANT_LOCALE, {
       style: "currency",
-      currency: currency || "AUD",
+      currency: currency || "SGD",
     }).format(n);
   } catch {
     return value;
   }
 }
 
-export function taxMetaForCurrency(currency: string): { label: string; rate: number } {
-  if (currency === "INR") return { label: "GST", rate: 18 };
-  if (currency === "GBP") return { label: "VAT", rate: 20 };
-  return { label: "GST", rate: 10 };
+export type TaxMeta = { label: string; rate: number | null };
+
+type JurisdictionTaxSource =
+  | string
+  | {
+      country?: string | null;
+      tax_label?: string | null;
+      statutory_tax_rate?: number | null;
+    };
+
+/** Resolve tax label/rate from country code or institution jurisdiction fields. */
+export function taxMetaForJurisdiction(countryOrInstitution: JurisdictionTaxSource): TaxMeta {
+  if (countryOrInstitution && typeof countryOrInstitution === "object") {
+    const countryCode = countryOrInstitution.country?.trim().toUpperCase() ?? "";
+    const fromCountry = countryCode
+      ? COUNTRIES.find((c) => c.code === countryCode)
+      : undefined;
+    const label =
+      countryOrInstitution.tax_label?.trim() ||
+      fromCountry?.taxLabel ||
+      (countryCode === "US" ? "Sales Tax" : "Tax");
+
+    if (
+      countryOrInstitution.statutory_tax_rate != null &&
+      !Number.isNaN(Number(countryOrInstitution.statutory_tax_rate))
+    ) {
+      return { label, rate: Number(countryOrInstitution.statutory_tax_rate) };
+    }
+    // US has no single statutory rate.
+    if (countryCode === "US" || fromCountry?.code === "US") {
+      return { label, rate: null };
+    }
+    if (fromCountry) {
+      return { label, rate: fromCountry.taxRate };
+    }
+    return { label, rate: null };
+  }
+
+  const code = String(countryOrInstitution ?? "").trim().toUpperCase();
+  if (!code) return { label: "Tax", rate: null };
+  const match = COUNTRIES.find((c) => c.code === code);
+  if (!match) return { label: "Tax", rate: null };
+  if (match.code === "US") return { label: match.taxLabel, rate: null };
+  return { label: match.taxLabel, rate: match.taxRate };
+}
+
+/** Thin currency→country lookup; falls back to generic Tax (no assumed rate). */
+export function taxMetaForCurrency(currency: string): TaxMeta {
+  const code = String(currency ?? "").trim().toUpperCase();
+  if (!code) return { label: "Tax", rate: null };
+  const match = COUNTRIES.find((c) => c.currency === code);
+  if (!match) return { label: "Tax", rate: null };
+  return taxMetaForJurisdiction(match.code);
 }
 
 export function previewFilename(inv: Invoice): string {

@@ -49,7 +49,7 @@ function flattenExports(exports?: LedgerLinkExports): ExportPreviewRow[] {
 
 export function JournalExportTab({
   exports,
-  currency = "AUD",
+  currency = "SGD",
 }: {
   exports?: LedgerLinkExports;
   currency?: string;

@@ -228,8 +228,8 @@ export function DashboardPage() {
     activity,
     period_has_data,
   } = overview;
-  const baseCurrency = stats.base_currency || "AUD";
-  const fmt = (v: string | number | null | undefined) => money(v, baseCurrency);
+  const baseCurrency = stats.base_currency || "SGD";
+  const fmt = (v: string | number | null | undefined) => money(v, baseCurrency, locale);
   const sparks: KpiSparklines = kpi_sparklines ?? {
     invoice_volume: invoice_volume_sparkline,
     docs_via_email: [],

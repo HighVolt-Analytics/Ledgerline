@@ -344,7 +344,7 @@ async def test_approvals_list_and_approve(
         raw_file_path=str(pdf),
         due_date=date(2026, 7, 1),
         validation_results=json.dumps(
-            [{"rule": "VR05", "passed": False, "message": "fail", "skipped": False}]
+            [{"rule": "VR12", "passed": False, "message": "fail", "skipped": False}]
         ),
         total=Decimal("100"),
     )

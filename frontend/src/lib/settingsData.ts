@@ -122,6 +122,6 @@ export const COUNTRIES: CountryOption[] = [
 ];
 
 export function countryByCode(code: string): CountryOption {
-  return COUNTRIES.find((c) => c.code === code) ?? COUNTRIES[0];
+  return COUNTRIES.find((c) => c.code === code) ?? COUNTRIES.find((c) => c.code === "SG") ?? COUNTRIES[0];
 }
 

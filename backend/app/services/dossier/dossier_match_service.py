@@ -58,7 +58,7 @@ def build_dossier_match_summary(
     total_deviation = _money(match.total_deviation)
     return DossierMatchSummaryResponse(
         status=match.status,
-        currency=(currency or "AUD").strip() or "AUD",
+        currency=(currency or "SGD").strip() or "SGD",
         po_number=(po_row.po_number or "").strip() or None,
         po_qty=_money(po_qty) if po_qty is not None else None,
         po_unit_price=_money(po_unit) if po_unit is not None else None,
@@ -107,7 +107,7 @@ def match_summary_from_audit_detail(
     total_deviation = _audit_money(detail, "total_deviation") or 0.0
     return DossierMatchSummaryResponse(
         status=status,
-        currency=(currency or "AUD").strip() or "AUD",
+        currency=(currency or "SGD").strip() or "SGD",
         po_number=str(detail.get("po_number") or "").strip() or None,
         po_qty=_audit_money(detail, "po_qty"),
         po_unit_price=_audit_money(detail, "po_unit_price"),
@@ -166,7 +166,7 @@ def match_checks_from_summary(summary: DossierMatchSummaryResponse) -> list[Doss
                 id="match-qty",
                 label="PO qty vs GRN qty vs invoice qty",
                 state=qty_state,
-                rule_ref="VR15",
+                rule_ref="MATCH",
                 expected="Received qty supports invoice qty",
                 actual=qty_actual,
             )
@@ -179,7 +179,7 @@ def match_checks_from_summary(summary: DossierMatchSummaryResponse) -> list[Doss
                 id="match-price",
                 label="Unit price variance",
                 state=price_state,
-                rule_ref="VR16",
+                rule_ref="MATCH",
                 expected=_fmt_money(summary.po_unit_price, currency),
                 actual=_fmt_money(summary.invoice_unit_price, currency),
                 detail=f"Variance {_fmt_money(summary.price_variance_value, currency)}",
@@ -192,7 +192,7 @@ def match_checks_from_summary(summary: DossierMatchSummaryResponse) -> list[Doss
             id="match-deviation",
             label="Total deviation",
             state=deviation_state,
-            rule_ref="VR15",
+            rule_ref="MATCH",
             expected=_fmt_money(0, currency),
             actual=_fmt_money(summary.total_deviation, currency),
         )
@@ -224,7 +224,7 @@ def enrich_match_pipeline_step(
     if match_summary is None and match_log_detail:
         match_summary = match_summary_from_audit_detail(
             match_log_detail,
-            currency=str(match_log_detail.get("currency") or "AUD"),
+            currency=str(match_log_detail.get("currency") or "SGD"),
         )
     if match_summary is None:
         return pipeline
@@ -232,10 +232,10 @@ def enrich_match_pipeline_step(
     checks = match_checks_from_summary(match_summary)
     status = match_summary.status
     if match_summary.total_deviation == 0:
-        detail = f"VR15 · {status} · within tolerance"
+        detail = f"Match · {status} · within tolerance"
     else:
         detail = (
-            f"VR15 · {status} · deviation "
+            f"Match · {status} · deviation "
             f"{_fmt_money(match_summary.total_deviation, match_summary.currency)}"
         )
 

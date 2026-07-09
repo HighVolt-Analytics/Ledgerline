@@ -30,7 +30,7 @@ class SalesOrderResponse(BaseModel):
     invoice_no: str | None = None
     invoice_qty: float = 0
     invoice_unit_price: float = 0
-    gst_rate: float = 0.1
+    gst_rate: float | None = None
     variance_approved: bool = False
     status: str
     three_way_match_status: str | None = None
@@ -84,7 +84,7 @@ class TwoWaySalesMatchResponse(BaseModel):
     dn_qty: float | None = None
     invoice_qty: float = 0
     invoice_unit_price: float = 0
-    gst_rate: float = 0.1
+    gst_rate: float | None = None
     match: ThreeWayMatchResult
     match_mode: str = "two_way_dn_invoice"
     route_target: str | None = None

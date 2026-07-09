@@ -31,7 +31,7 @@ def apply_post_to_to_po(
 ) -> None:
     po.ledger = post.ledger
     po.sub_ledger = (post.sub_ledger or "").strip() or None
-    po.tax_account = post.tax_account or "GST Paid"
+    po.tax_account = post.tax_account or "Tax Paid"
     po.payable_account = post.payable_account or "Accounts Payable"
     po.purchase_rule_id = (document_type_code or "").strip() or None
 

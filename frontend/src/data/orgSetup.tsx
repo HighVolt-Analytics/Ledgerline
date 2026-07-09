@@ -52,7 +52,7 @@ const VAULT_FOLDERS_BY_INDUSTRY: Record<Industry, string[]> = {
 };
 
 export function countryByCode(code: string): CountryOption {
-  return COUNTRIES.find((c) => c.code === code) ?? COUNTRIES[0];
+  return COUNTRIES.find((c) => c.code === code) ?? COUNTRIES.find((c) => c.code === "SG") ?? COUNTRIES[0];
 }
 
 export function vaultPreview(industry: Industry): string {

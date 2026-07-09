@@ -1,0 +1,5 @@
+TAX INVOICE
+Vendor: CLOUD SERVICES INC
+Invoice No: SaaS-8899
+Monthly subscription - no line item table
+Amount Due: $499.00

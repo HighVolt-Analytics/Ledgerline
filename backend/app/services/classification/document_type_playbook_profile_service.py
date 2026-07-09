@@ -12,9 +12,21 @@ from app.services.classification.playbook_profile_catalog import (
 
 
 def effective_playbook_profile(definition: DocumentTypeDefinition) -> PlaybookProfile:
+    from app.services.classification.document_type_catalog import (
+        _org_uses_shipped_classification_metadata,
+        _shipped_defaults_lookup_code,
+        playbook_profile_for_dt,
+    )
+
     explicit = (definition.playbook_profile or "").strip().lower()
     if explicit:
         return explicit  # type: ignore[return-value]
+    catalog_profile = playbook_profile_for_dt(definition)
+    if catalog_profile:
+        return catalog_profile  # type: ignore[return-value]
+    shipped_lookup = _shipped_defaults_lookup_code(definition.code, definition)
+    if not _org_uses_shipped_classification_metadata(definition, shipped_lookup):
+        return ""  # type: ignore[return-value]
     code = (definition.code or "").strip().upper()
     return default_playbook_profile_for_code(code) if code else "standard_transactional"
 

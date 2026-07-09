@@ -51,5 +51,6 @@ async def get_app_settings() -> ApiEnvelope[AppSettingsResponse]:
             payment_manual_execution_enabled=s.payment_manual_execution_enabled,
             payment_manual_execution_limit_usd=s.payment_manual_execution_limit_usd,
             payment_execution_disabled=s.payment_execution_disabled,
+            use_field_registry=s.use_field_registry,
         )
     )

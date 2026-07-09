@@ -624,7 +624,7 @@ async def build_dossier_summary(
         invoice_ref=(invoice.invoice_no or display_document_ref(invoice)).strip(),
         capture_channel=dossier_capture_channel(invoice),
         invoice_date=inv_date,
-        currency=(invoice.currency or "AUD").strip() or "AUD",
+        currency=(invoice.currency or "SGD").strip() or "SGD",
         subtotal=_money(invoice.subtotal),
         tax=_money(invoice.gst),
         total=_money(invoice.total),

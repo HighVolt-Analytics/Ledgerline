@@ -33,7 +33,7 @@ class InvoiceData:
     invoice_no: str | None = None
     invoice_date: date | None = None
     due_date: date | None = None
-    currency: str = "AUD"
+    currency: str = ""
     subtotal: Decimal | None = None
     gst: Decimal | None = None
     gst_rate: Decimal | None = None
@@ -96,7 +96,7 @@ def invoice_data_from_invoice(invoice: object) -> InvoiceData:
         invoice_no=getattr(invoice, "invoice_no", None),
         invoice_date=getattr(invoice, "invoice_date", None),
         due_date=getattr(invoice, "due_date", None),
-        currency=getattr(invoice, "currency", None) or "AUD",
+        currency=(getattr(invoice, "currency", None) or "").strip(),
         subtotal=getattr(invoice, "subtotal", None),
         gst=getattr(invoice, "gst", None),
         gst_rate=getattr(invoice, "gst_rate", None),

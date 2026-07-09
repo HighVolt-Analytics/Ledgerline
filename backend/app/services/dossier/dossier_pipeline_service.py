@@ -302,7 +302,6 @@ def _validation_checks(
         if (
             allowed is not None
             and rule not in allowed
-            and not rule.startswith("VR-PB")
             and not rule.startswith("VR-TE")
         ):
             continue
@@ -368,21 +367,6 @@ def _bundle_checks(detail: dict[str, object]) -> list[DossierPipelineCheckRespon
                     detail=f"{token} not captured",
                 )
             )
-    missing_optional = merged.get("missing_optional_extraction_fields") or []
-    if isinstance(missing_optional, list):
-        for field in missing_optional:
-            token = str(field).strip()
-            if not token:
-                continue
-            checks.append(
-                DossierPipelineCheckResponse(
-                    id=f"extract-opt-{token}",
-                    label=f"Optional field: {token}",
-                    state="warn",
-                    rule_ref="VR-PB01",
-                    detail=f"{token} not captured",
-                )
-            )
     if merged.get("linkage_key_missing"):
         checks.insert(
             0,
@@ -394,13 +378,13 @@ def _bundle_checks(detail: dict[str, object]) -> list[DossierPipelineCheckRespon
                 detail=f"Valid {ref_label} reference required to link supporting documents",
             ),
         )
-    if not checks and not merged.get("blocks_posting"):
+    if not checks and not merged.get("has_validation_gaps"):
         checks.append(
             DossierPipelineCheckResponse(
                 id="bundle-ok",
                 label="Supporting documents satisfied",
                 state="pass",
-                rule_ref="VR-PB01",
+                rule_ref="VR-PB02",
             )
         )
     return checks
@@ -1009,47 +993,17 @@ def _resolve_classify(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPip
 
 
 def _resolve_bundle(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipelineStepResponse:
-    from app.services.classification.document_type_playbook_service import resolve_playbook_exception
-
-    playbook_review = _playbook_routing_review(logs)
-    if playbook_review:
-        detail_dict = _routing_review_detail(playbook_review)
-        merged = _playbook_detail_dict(detail_dict)
-        reason = _detail_from_log(playbook_review, fallback="Playbook blocks posting")
-        exc_code, failure, remediation = resolve_playbook_exception(merged)
-        return _step(
-            "bundle",
-            state="fail",
-            detail=reason,
-            at=playbook_review.created_at,
-            exception_code=exc_code,
-            failure_reason=failure,
-            remediation=_remediation_for(exc_code, inv, remediation),
-            checks=_bundle_checks(merged),
-        )
-
     bundle_log = _latest_log(logs, "playbook_evaluated")
     if bundle_log:
         detail_dict = bundle_log.detail if isinstance(bundle_log.detail, dict) else {}
         merged = _playbook_detail_dict(detail_dict)
-        blocks = bool(merged.get("blocks_posting"))
-        state: DossierStageState = "fail" if blocks else "pass"
         detail = _detail_from_log(bundle_log, fallback="playbook_evaluated")
         checks = _bundle_checks(merged)
-        failure = None
-        remediation = None
-        exception_code = None
-        if state == "fail":
-            exception_code, failure, remediation = resolve_playbook_exception(merged)
-            remediation = _remediation_for(exception_code, inv, remediation)
         return _step(
             "bundle",
-            state=state,
+            state="pass",
             detail=detail,
             at=bundle_log.created_at,
-            exception_code=exception_code,
-            failure_reason=failure,
-            remediation=remediation,
             checks=checks,
         )
     if wm >= 9:
@@ -1283,7 +1237,7 @@ def _resolve_match(
     document_types: list | None = None,
 ) -> DossierPipelineStepResponse:
     checks = _validation_checks(inv, document_types)
-    vr15_fail = any(c.state == "fail" and c.rule_ref == "VR15" for c in checks)
+    match_fail = any(c.state == "fail" and c.rule_ref == "MATCH" for c in checks)
     match_log = _latest_log(logs, "three_way_match_evaluated")
     variance_log = _latest_log(logs, "purchase_variance_approved")
 
@@ -1291,7 +1245,7 @@ def _resolve_match(
         detail = _detail_from_log(match_log, fallback="three_way_match_evaluated")
         detail_dict = match_log.detail if isinstance(match_log.detail, dict) else {}
         status = str(detail_dict.get("status") or detail_dict.get("match_status") or "").lower()
-        state: DossierStageState = "fail" if vr15_fail or any(
+        state: DossierStageState = "fail" if match_fail or any(
             token in status for token in ("variance", "no grn", "routed")
         ) else "pass"
         failure = None
@@ -1317,14 +1271,14 @@ def _resolve_match(
             at=variance_log.created_at,
         )
 
-    if vr15_fail:
+    if match_fail:
         return _step(
             "match",
             state="fail",
-            detail="VR15 three-way match failed",
+            detail="Document match failed",
             at=match_log.created_at if match_log else None,
             exception_code="MATCH_FAILED",
-            failure_reason="VR15 three-way match failed",
+            failure_reason="Document match failed",
             remediation=_remediation_for("MATCH_FAILED", inv),
         )
 

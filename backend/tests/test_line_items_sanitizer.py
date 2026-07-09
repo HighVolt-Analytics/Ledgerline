@@ -48,6 +48,23 @@ def test_sanitize_removes_phone_fragment_rows() -> None:
     assert cleaned[0].description == "TAMOXILON 20"
 
 
+def test_sanitize_keeps_qty_only_rows_when_allowed() -> None:
+    items = [
+        ParsedLineItem(description="CPU CHIPS 14 Gen I3 14100", qty=Decimal("150"), unit_price=None, amount=None),
+    ]
+    cleaned = sanitize_line_items(items, allow_qty_only=True)
+    assert len(cleaned) == 1
+    assert cleaned[0].qty == Decimal("150")
+
+
+def test_sanitize_drops_qty_only_rows_without_flag() -> None:
+    items = [
+        ParsedLineItem(description="CPU CHIPS 14 Gen I3 14100", qty=Decimal("150"), unit_price=None, amount=None),
+    ]
+    cleaned = sanitize_line_items(items, allow_qty_only=False)
+    assert cleaned == []
+
+
 def test_sanitize_keeps_gst_in_product_description() -> None:
     items = [
         ParsedLineItem(

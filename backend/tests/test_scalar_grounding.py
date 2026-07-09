@@ -144,12 +144,27 @@ def test_build_scalar_fields_presentation_prompt_di_mode() -> None:
 
 
 def test_ground_parsed_fields_clears_llm_scalars_when_di_active() -> None:
+    ocr_text = "TAX INVOICE\nAcme\nInvoice No: INV-1\nTotal: 100.00"
     parsed = InvoiceData(vendor="LLM Wrong", invoice_no="FAKE", total=Decimal("999"))
     payload = {"invoice_fields": {"vendor": "Acme", "invoice_no": "INV-1", "total": "100"}}
-    grounded = ground_parsed_fields(parsed, "text", ["vendor", "invoice_no", "total"], payload)
+    grounded = ground_parsed_fields(
+        parsed, ocr_text, ["vendor", "invoice_no", "total"], payload
+    )
     assert grounded.vendor is None
     assert grounded.invoice_no is None
     assert grounded.total is None
+
+
+def test_ground_parsed_fields_keeps_llm_when_di_ungrounded() -> None:
+    ocr_text = "TAX INVOICE\nVendor: Real Co\nInvoice No: INV-1\nTotal: 100.00"
+    parsed = InvoiceData(vendor="Real Co", invoice_no="INV-1", total=Decimal("100"))
+    payload = {"invoice_fields": {"vendor": "Hallucinated Vendor", "total": "999"}}
+    grounded = ground_parsed_fields(
+        parsed, ocr_text, ["vendor", "invoice_no", "total"], payload
+    )
+    assert grounded.vendor == "Real Co"
+    assert grounded.invoice_no == "INV-1"
+    assert grounded.total == Decimal("100")
 
 
 def test_merge_extraction_sources_di_wins_over_llm() -> None:
@@ -209,14 +224,14 @@ def test_merge_di_empty_po_allows_ocr_fill() -> None:
     assert merged.po_reference == "99999"
 
 
-def test_llm_result_skips_scalars_when_di_active() -> None:
+def test_llm_result_skips_scalars_when_di_trusted() -> None:
     llm = LlmDocumentResult.model_validate(
         {
             "suggested_dt": "DT-01",
             "confidence": 0.9,
             "vendor": "LLM Wrong",
             "seller": {"name": "LLM Wrong"},
-            "invoice_no": "FAKE",
+            "invoice_no": "INV-99",
             "total": "999",
         }
     )
@@ -224,13 +239,14 @@ def test_llm_result_skips_scalars_when_di_active() -> None:
         llm,
         ocr=OcrArtifact(
             success=True,
-            text="Invoice",
-            text_length=7,
+            text="TAX INVOICE\nAcme\nInvoice No: INV-99\nTotal: 100",
+            text_length=40,
             payload_json={"invoice_fields": {"vendor": "Acme", "total": "100"}},
         ),
+        selected_keys=["vendor", "invoice_no", "total"],
     )
     assert parsed.vendor is None
-    assert parsed.invoice_no == "FAKE"
+    assert parsed.invoice_no == "INV-99"
     assert parsed.total is None
 
 
@@ -257,6 +273,7 @@ def test_build_llm_user_payload_azure_di_scalar_fields() -> None:
     payload = json.loads(raw)
     assert payload["ocr"]["scalar_fields_source"] == "azure_di"
     assert payload["ocr"]["azure_di_scalar_fields"]["vendor"]["value"] == "Acme"
+    assert "field_snippets" in payload["ocr"]
     assert "invoice_fields" not in payload
     assert payload["finance_field_manifest"]
 
@@ -282,7 +299,12 @@ def test_apply_di_scalars_authoritative_overwrites() -> None:
     payload = {
         "invoice_fields": {"vendor": "New Vendor", "total": "200.00"},
     }
-    merged = apply_di_scalars_authoritative(parsed, payload, ["vendor", "total"])
+    merged = apply_di_scalars_authoritative(
+        parsed,
+        payload,
+        ["vendor", "total"],
+        ocr_text="Vendor: New Vendor\nTotal: 200.00",
+    )
     assert merged.vendor == "New Vendor"
     assert merged.total == Decimal("200")
 
@@ -295,8 +317,13 @@ def test_clear_llm_scalars_for_di_populated_only() -> None:
         extracted_fields={"seller_name": "X"},
     )
     payload = {"invoice_fields": {"vendor": "DI Vendor", "currency": ""}}
-    cleared = clear_llm_scalars_for_di(parsed, ["vendor", "currency", "invoice_no", "seller_name"], payload)
+    ocr_text = "Vendor: DI Vendor\nInvoice No: KEEP"
+    cleared = clear_llm_scalars_for_di(
+        parsed,
+        ["vendor", "currency", "invoice_no", "seller_name"],
+        payload,
+        ocr_text=ocr_text,
+    )
     assert cleared.vendor is None
     assert cleared.currency == "USD"
     assert cleared.invoice_no == "KEEP"
-    assert "seller_name" not in cleared.extracted_fields

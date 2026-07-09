@@ -97,6 +97,20 @@ def test_missing_configured_extraction_keys_skips_present() -> None:
     assert missing == ["account_code"]
 
 
+def test_missing_configured_extraction_keys_includes_line_items_for_qty_table() -> None:
+    from pathlib import Path
+
+    text = Path("tests/fixtures/qty_only_table_ocr.txt").read_text(encoding="utf-8")
+    parsed = InvoiceData(document_text=text, line_items=[])
+    missing = missing_configured_extraction_keys(
+        ["line_items"],
+        parsed=parsed,
+        ocr_text=text,
+        ocr_payload={},
+    )
+    assert missing == ["line_items"]
+
+
 def test_merge_gap_fill_does_not_overwrite_existing_vendor() -> None:
     ocr_text = "Vendor: Acme Pty Ltd\nVendor: Other Co"
     parsed = InvoiceData(vendor="Acme Pty Ltd", document_text=ocr_text)
@@ -127,6 +141,48 @@ def test_merge_gap_fill_fills_grounded_account_code() -> None:
     assert result.parsed.extracted_fields.get("account_code") == "4100"
     assert result.filled == ("account_code",)
     assert result.rejected == ()
+
+
+@pytest.mark.asyncio
+async def test_gap_fill_recovers_vendor_when_di_ungrounded() -> None:
+    ocr_text = "TAX INVOICE\nVendor: Real Co"
+    ocr = OcrArtifact(
+        success=True,
+        text=ocr_text,
+        text_length=len(ocr_text),
+        payload_json={
+            "invoice_fields": {"vendor": "Hallucinated Vendor"},
+        },
+    )
+    parsed = InvoiceData(document_text=ocr_text)
+    raw = {
+        "vendor": "Real Co",
+        "field_confidence": {"vendor": 0.95},
+        "suggested_dt": "",
+        "confidence": 0.9,
+        "reasoning": "",
+        "perspective": "purchase",
+    }
+    with patch(
+        "app.services.extraction.gap_fill_extraction_service.chat_json_async",
+        new_callable=AsyncMock,
+        return_value=raw,
+    ):
+        gap = await gap_fill_missing_fields(
+            ocr,
+            missing_keys=["vendor"],
+            org=OrgContext(),
+        )
+    assert gap is not None
+    assert gap.vendor == "Real Co"
+    result = merge_gap_fill_into_parsed(
+        parsed,
+        gap,
+        missing_keys=["vendor"],
+        ocr_text=ocr_text,
+    )
+    assert result.parsed.vendor == "Real Co"
+    assert result.filled == ("vendor",)
 
 
 def test_merge_gap_fill_rejects_hallucinated_project_code() -> None:

@@ -185,15 +185,16 @@ def test_bundle_conditional_keeps_advisory_text() -> None:
     assert definition.bundle_conditional == ["DT-14", "Quality certificate", "Packing list"]
 
 
-def test_playbook_blocks_posting_when_bundle_missing() -> None:
+def test_playbook_does_not_block_routing_when_bundle_missing() -> None:
     playbook = PlaybookGateResult(
         missing_bundle_mandatory=("DT-14",),
         missing_bundle_conditional_dt=(),
         conditional_advisories=(),
         missing_extraction_fields=(),
     )
-    assert playbook.blocks_posting is True
-    assert requires_playbook_review(playbook) is True
+    assert playbook.has_validation_gaps is True
+    assert playbook.blocks_posting is False
+    assert requires_playbook_review(playbook) is False
 
 
 @pytest.mark.asyncio
@@ -308,12 +309,14 @@ async def test_evaluate_playbook_gates_no_po_reference() -> None:
         definition=definition,
     )
     assert result.missing_bundle_mandatory == ("DT-14", "DT-15")
-    assert result.blocks_posting is True
+    assert result.has_validation_gaps is True
+    assert result.blocks_posting is False
     assert result.linkage_key_missing is True
     assert result.block_reason == "linkage"
 
 
-def test_routing_review_includes_playbook_gate() -> None:
+def test_routing_review_skips_playbook_gate() -> None:
+    """Bundle/field gaps are enforced at validation (VR03 / VR-PB02), not routing."""
     inv = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.VALIDATING, route_target="Purchase Management")
     classification = DocumentTypeClassification(
         "DT-01",
@@ -327,7 +330,8 @@ def test_routing_review_includes_playbook_gate() -> None:
         conditional_advisories=(),
         missing_extraction_fields=(),
     )
-    assert requires_routing_review(inv, classification, playbook=playbook) is True
+    assert requires_playbook_review(playbook) is False
+    assert requires_routing_review(inv, classification, playbook=playbook) is False
 
 
 def test_resolve_playbook_exception_linkage() -> None:
@@ -374,21 +378,21 @@ def test_resolve_playbook_exception_bundle_labels() -> None:
     assert "PO (supporting)" in reason
 
 
-def test_playbook_validation_vr_pb01_optional_only() -> None:
+def test_playbook_validation_vr_pb02_linkage() -> None:
     from app.services.classification.document_type_playbook_service import playbook_validation_results
 
     playbook = PlaybookGateResult(
         missing_bundle_mandatory=(),
         missing_bundle_conditional_dt=(),
         conditional_advisories=(),
-        missing_extraction_fields=("vendor",),
-        missing_optional_extraction_fields=("invoice_no",),
+        missing_extraction_fields=(),
+        linkage_key_missing=True,
+        linkage_book="purchase",
     )
     results = playbook_validation_results(playbook)
     assert len(results) == 1
-    assert results[0].rule == "VR-PB01"
-    assert "invoice_no" in results[0].message
-    assert "vendor" not in results[0].message
+    assert results[0].rule == "VR-PB02"
+    assert "PO reference" in results[0].message
 
 
 def test_suggest_reclassify_direct_expense_when_linkage_missing() -> None:

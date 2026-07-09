@@ -21,14 +21,10 @@ from app.utils.tax_id_validator import is_acceptable_tax_id
 _VALIDATION_RULE_FIELDS: dict[str, tuple[str, ...]] = {
     "VR01": ("subtotal", "gst", "total"),
     "VR02": ("invoice_no",),
-    "VR05": ("abn",),
-    "VR07": ("currency",),
     "VR08": ("subtotal", "gst", "gst_rate", "total"),
     "VR09": ("line_items",),
     "VR11": ("invoice_date",),
     "VR12": ("vendor",),
-    "VR14": ("po_reference",),
-    "VR15": ("po_reference",),
 }
 
 _OPTIONAL_WHEN_EMPTY = frozenset(

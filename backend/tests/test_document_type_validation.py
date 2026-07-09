@@ -53,7 +53,6 @@ async def test_dt21_direct_expense_omits_abn_and_gst(
         document_types=list(capture_config.document_types),
     )
     assert all_passed(results)
-    assert not any(r.rule == "VR05" for r in results)
     assert not any(r.rule == "VR08" for r in results)
 
 

@@ -66,7 +66,7 @@ async def test_reject_moves_file_and_sets_status(
         raw_file_path=str(pdf),
         total=Decimal("100"),
         validation_results=json.dumps(
-            [{"rule": "VR05", "passed": False, "message": "fail", "skipped": False}]
+            [{"rule": "VR12", "passed": False, "message": "fail", "skipped": False}]
         ),
     )
     db_session.add(inv)

@@ -17,98 +17,85 @@ from app.services.classification.document_type_validation_service import (
 VALIDATION_CHECK_DESCRIPTIONS: dict[str, str] = {
     "VR02": "Exact, normalized, and fuzzy duplicate detection (always on for the organisation).",
     "VR03": "Compulsory fields for this document type must be present after OCR.",
-    "VR05": "ABN / tax ID format and checksum validation.",
-    "VR07": "Currency must match organisation country.",
     "VR08": "GST must match extracted tax rate × subtotal within tolerance.",
     "VR01": "Total must equal subtotal plus tax.",
     "VR09": "Line amounts must reconcile to subtotal; qty × price per line.",
-    "VR10": "Checks required tax-invoice wording on the document based on organisation country (e.g. AU/NZ ≥ threshold, or when tax is charged).",
     "VR11": "Invoice date cannot be future; over 12 months needs approval.",
     "VR12": "Vendor must exist in master; tax ID must match when present.",
-    "VR14": "PO must be open and invoice currency must match PO.",
-    "VR15": "PO, GRN, and invoice quantities and prices must match.",
-    "VR16": "Freight and surcharges must be within tolerance against PO.",
-    "VR-PB01": "Warns when optional (unstarred) extraction targets are missing. Compulsory gaps use VR03.",
     "VR-PB02": "Required supporting documents must exist on the same PO or SO reference.",
-    "VR-PB04": "Recommended supporting documents (advisory only).",
 }
 
 VALIDATION_CHECK_LABELS: dict[str, str] = {
     "VR03": "Compulsory fields",
-    "VR05": "ABN / tax ID",
-    "VR07": "Local currency",
     "VR08": "GST rate check",
     "VR01": "Total = subtotal + tax",
     "VR02": "Duplicate check (multi-layer)",
     "VR09": "Line arithmetic",
-    "VR10": "Tax invoice wording",
     "VR11": "Date sanity",
     "VR12": "Vendor master",
-    "VR14": "PO status & currency",
-    "VR15": "Document match",
-    "VR16": "Freight / surcharges",
-    "VR-PB01": "Optional extraction fields",
     "VR-PB02": "Required supporting documents",
-    "VR-PB04": "Recommended supporting documents",
 }
 
 VALIDATION_CHECK_GROUPS: dict[str, str] = {
     "VR03": "Completeness",
-    "VR05": "Tax",
-    "VR07": "Currency",
     "VR08": "Tax",
     "VR01": "Arithmetic",
     "VR02": "Duplicate",
     "VR09": "Arithmetic",
-    "VR10": "Tax",
     "VR11": "Dates",
     "VR12": "Vendor",
-    "VR14": "Purchase order",
-    "VR15": "Matching",
-    "VR16": "Purchase order",
-    "VR-PB01": "Playbook",
     "VR-PB02": "Playbook",
-    "VR-PB04": "Playbook",
 }
+
+CONFIGURABLE_RULE_ORDER: tuple[str, ...] = (
+    "VR03",
+    "VR08",
+    "VR01",
+    "VR09",
+    "VR11",
+    "VR12",
+    "VR-PB02",
+)
+
+# Backward-compatible alias.
+FINANCE_RULE_ORDER = CONFIGURABLE_RULE_ORDER
 
 
 def _rule(code: str, *, severity: str = "block", enabled: bool = True) -> ValidationRuleConfig:
     return ValidationRuleConfig(code=code, enabled=enabled, severity=severity)  # type: ignore[arg-type]
 
 
-PROFILE_STANDARD_RULES: list[ValidationRuleConfig] = [
+_PROFILE_CORE_RULES: list[ValidationRuleConfig] = [
     _rule("VR03"),
-    _rule("VR05"),
-    _rule("VR07"),
     _rule("VR08"),
     _rule("VR01"),
     _rule("VR09"),
-    _rule("VR10"),
     _rule("VR11"),
     _rule("VR12", severity="block"),
 ]
 
-PROFILE_PO_GOODS_RULES: list[ValidationRuleConfig] = list(PROFILE_STANDARD_RULES)
+_PROFILE_PLAYBOOK_OFF: list[ValidationRuleConfig] = [
+    _rule("VR-PB02", enabled=False),
+]
+
+PROFILE_STANDARD_RULES: list[ValidationRuleConfig] = [
+    *_PROFILE_CORE_RULES,
+    *_PROFILE_PLAYBOOK_OFF,
+]
+
+PROFILE_PO_GOODS_RULES: list[ValidationRuleConfig] = [
+    *_PROFILE_CORE_RULES,
+    _rule("VR-PB02"),
+]
 
 PROFILE_DIRECT_EXPENSE_RULES: list[ValidationRuleConfig] = [
     _rule("VR03"),
     _rule("VR09", severity="warn"),
     _rule("VR11", severity="warn"),
+    *_PROFILE_PLAYBOOK_OFF,
 ]
 
 PROFILE_NON_ACTIONABLE_RULES: list[ValidationRuleConfig] = []
-
-FINANCE_RULE_ORDER: tuple[str, ...] = (
-    "VR03",
-    "VR05",
-    "VR07",
-    "VR08",
-    "VR01",
-    "VR09",
-    "VR10",
-    "VR11",
-    "VR12",
-)
 
 
 def merge_configurable_validation_rules(
@@ -117,7 +104,7 @@ def merge_configurable_validation_rules(
     validation_profile: str,
     document_type_code: str = "",
 ) -> list[ValidationRuleConfig]:
-    """Fill missing finance rules — saved toggles win; gaps use profile defaults or disabled."""
+    """Fill missing rules — saved toggles win; gaps use profile defaults or disabled."""
     normalized = normalize_validation_rules(list(explicit))
     if not normalized:
         return []
@@ -128,7 +115,7 @@ def merge_configurable_validation_rules(
     by_code = {row.code: row for row in normalized}
     default_by_code = {row.code: row for row in defaults}
     out: list[ValidationRuleConfig] = []
-    for code in FINANCE_RULE_ORDER:
+    for code in CONFIGURABLE_RULE_ORDER:
         if code in by_code:
             out.append(by_code[code])
         elif code in default_by_code:
@@ -199,8 +186,12 @@ def enabled_rule_codes(rules: Sequence[ValidationRuleConfig]) -> set[str]:
     return {row.code for row in rules if row.enabled}
 
 
-def has_explicit_finance_validation_rules(definition: DocumentTypeDefinition | None) -> bool:
+def has_explicit_validation_rules(definition: DocumentTypeDefinition | None) -> bool:
     """True when the Validation tab has saved per-rule toggles (not profile defaults only)."""
     if definition is None:
         return False
     return bool(normalize_validation_rules(definition.validation_rules))
+
+
+# Backward-compatible alias.
+has_explicit_finance_validation_rules = has_explicit_validation_rules

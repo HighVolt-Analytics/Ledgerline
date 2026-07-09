@@ -28,7 +28,7 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
-  const [country, setCountry] = useState("AU");
+  const [country, setCountry] = useState("SG");
   const [industry, setIndustry] = useState<Industry>("Hospitality");
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
@@ -41,7 +41,7 @@ export function CreateTenantWizard({ open, onClose, onCreated }: CreateTenantWiz
     setName("");
     setSlug("");
     setSlugTouched(false);
-    setCountry("AU");
+    setCountry("SG");
     setIndustry("Hospitality");
     setAdminName("");
     setAdminEmail("");

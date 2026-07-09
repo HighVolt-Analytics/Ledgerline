@@ -62,8 +62,8 @@ export function ReconciliationPage() {
     return map;
   }, [dailyRows]);
 
-  const currency = overview?.base_currency ?? "AUD";
-  const fmt = (v: number) => money(v, currency);
+  const currency = overview?.base_currency ?? "SGD";
+  const fmt = (v: number) => money(v, currency, locale);
 
   useLayoutEffect(() => {
     setPostingDefaults({ ...DEFAULT_POSTING_DEFAULTS });

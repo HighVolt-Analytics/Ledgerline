@@ -36,6 +36,7 @@ const REVIEW_REASON_LABELS: Record<string, string> = {
   PROVIDER_UNAVAILABLE: "Document AI provider unavailable",
   VENDOR_CLASSIFICATION_DRIFT: "Vendor classification differs from recent history",
   FIELD_CONFIDENCE_LOW: "Extracted field confidence is too low",
+  citation_failed: "Citation grounding failed for one or more fields",
 };
 
 export function reviewReasonLabel(code: string): string {

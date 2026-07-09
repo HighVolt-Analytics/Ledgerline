@@ -14,6 +14,7 @@ from app.services.extraction.extraction_field_values import (
     clear_llm_scalars_for_di_populated_fields,
     di_scalar_field_keys,
     di_scalar_fields_populated,
+    di_trusted_scalar_fields,
     effective_extraction_field_keys_for_dt,
     extracted_fields_from_parsed,
     EXTRACTED_ONLY_ATTRS,
@@ -30,15 +31,24 @@ from app.services.extraction.pdf_parser import (
 from app.services.extraction.permit_ocr_extractors import extract_permit_fields_from_text
 from app.services.extraction.line_items_parser import (
     deserialize_line_items,
+    di_line_items_usable,
     document_has_charge_lines,
+    document_has_line_item_table,
     document_has_product_table,
+    document_has_qty_only_table,
+    enrich_line_items_from_text,
+    enrich_parsed_line_items,
     parse_charge_lines_from_text,
+    parse_line_items_from_text,
+    parse_qty_only_line_items_from_text,
     resolve_line_items_from_ocr_payload,
+    resolve_usable_line_items_from_payload,
     serialize_line_items,
 )
 from app.services.extraction.line_items_sanitizer import sanitize_line_items
 from app.services.extraction.field_grounding_service import (
     _date_grounded_in_ocr,
+    _invoice_no_grounded,
     _money_grounded_in_ocr,
     ground_extracted_fields_map,
     ground_invoice_scalars,
@@ -87,7 +97,17 @@ def should_run_prebuilt_invoice_di(
 ) -> bool:
     if dt_definition is None:
         return True
-    profile = (dt_definition.playbook_profile or "").strip().lower()
+    from app.services.classification.document_type_catalog import (
+        _org_uses_shipped_classification_metadata,
+        _shipped_defaults_lookup_code,
+        playbook_profile_for_dt,
+    )
+
+    profile = playbook_profile_for_dt(dt_definition)
+    shipped_lookup = _shipped_defaults_lookup_code(dt_definition.code, dt_definition)
+    repurposed = not _org_uses_shipped_classification_metadata(dt_definition, shipped_lookup)
+    if repurposed and (not profile or profile in _NON_INVOICE_DI_PROFILES):
+        return False
     if profile in _NON_INVOICE_DI_PROFILES:
         return False
     purchase_role = (dt_definition.purchase_bundle_role or "").strip().lower()
@@ -440,7 +460,11 @@ def _di_grounding_skip_keys(data: InvoiceData, ocr_text: str | None, di_populate
     """DI-populated keys that survive OCR grounding — skip re-clearing those."""
     skip: set[str] = set()
     for key in di_populated:
-        if key in ("invoice_no", "po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
+        if key == "invoice_no":
+            current = data.invoice_no
+            if current and _invoice_no_grounded(str(current), ocr_text):
+                skip.add(key)
+        elif key in ("po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
             current = getattr(data, key, None)
             if current and value_grounded_in_ocr(str(current), ocr_text):
                 skip.add(key)
@@ -480,6 +504,64 @@ def _llm_line_items_trusted(items: list[ParsedLineItem], ocr_text: str | None) -
     return True
 
 
+def _qty_only_llm_rows_usable(items: list[ParsedLineItem]) -> list[ParsedLineItem]:
+    from app.services.extraction.line_items_sanitizer import _passes_minimum_product_row
+
+    return [item for item in items if _passes_minimum_product_row(item, allow_qty_only=True)]
+
+
+def _merge_line_items_from_sources(
+    merged: InvoiceData,
+    text: str,
+    payload_dict: dict[str, object],
+) -> list[ParsedLineItem]:
+    """Resolve line items from DI, layout, OCR text, LLM, or charge blocks."""
+    qty_only_table = document_has_qty_only_table(text, payload_dict)
+    usable_di = (
+        resolve_usable_line_items_from_payload(payload_dict)
+        if di_line_items_usable(payload_dict)
+        else []
+    )
+    if usable_di and not _llm_line_items_trusted(merged.line_items, text):
+        return list(usable_di)
+
+    if qty_only_table:
+        llm_rows = _qty_only_llm_rows_usable(list(merged.line_items))
+        if llm_rows:
+            return llm_rows
+        table_rows = resolve_usable_line_items_from_payload(payload_dict, allow_qty_only=True)
+        if not table_rows:
+            table_rows = list(
+                enrich_parsed_line_items(
+                    deserialize_line_items(payload_dict.get("table_line_items"))
+                )
+            )
+            table_rows = _qty_only_llm_rows_usable(table_rows)
+        if table_rows:
+            return table_rows
+        text_rows = parse_qty_only_line_items_from_text(text)
+        return text_rows if text_rows else []
+
+    if document_has_product_table(text, payload_dict):
+        llm_rows = list(merged.line_items)
+        if llm_rows:
+            enriched = enrich_line_items_from_text(llm_rows, text)
+            if enriched:
+                return list(enriched)
+        table_rows = resolve_usable_line_items_from_payload(payload_dict)
+        if table_rows:
+            return list(table_rows)
+        text_rows = parse_line_items_from_text(text)
+        if text_rows:
+            return list(enrich_parsed_line_items(text_rows))
+        return []
+
+    if document_has_charge_lines(text):
+        return parse_charge_lines_from_text(text) or list(merged.line_items)
+
+    return []
+
+
 def merge_extraction_sources(
     parsed: InvoiceData,
     ocr: OcrArtifact,
@@ -504,6 +586,11 @@ def merge_extraction_sources(
         if dt_definition
         else []
     )
+    di_trusted = (
+        di_trusted_scalar_fields(payload, text, selected_keys_list)
+        if di_active and text
+        else set()
+    )
 
     if di_active and not di_populated:
         di_active = False
@@ -519,7 +606,7 @@ def merge_extraction_sources(
         kv_from_text = extract_key_value_fields(None, text)
         for key, value in kv_from_text.items():
             kv.setdefault(key, value)
-    skip_layout = frozenset(di_populated)
+    skip_layout = frozenset(di_trusted)
     merged = _apply_layout_kv(
         merged,
         kv,
@@ -552,7 +639,7 @@ def merge_extraction_sources(
             money_candidates.update(extract_money_scalars_from_text(text, keys=money_keys))
             money_fill: dict[str, object] = {}
             for key, amount in money_candidates.items():
-                if key in di_populated:
+                if key in di_trusted:
                     continue
                 current = getattr(merged, key, None)
                 if not _scalar_empty(current):
@@ -568,7 +655,7 @@ def merge_extraction_sources(
         llm_account = merged.bank_account
         fill: dict[str, object] = {}
         for field_name in _configured_scalar_fill_fields(dt_definition):
-            if field_name in di_populated:
+            if field_name in di_trusted:
                 continue
             current = getattr(merged, field_name, None)
             fallback = getattr(local, field_name, None)
@@ -579,17 +666,9 @@ def merge_extraction_sources(
         merge_line_items = not configured_keys or "line_items" in configured_keys
         if merge_line_items:
             payload_dict = dict(ocr.payload_json or {})
-            di_rows = resolve_line_items_from_ocr_payload(payload_dict)
-            if di_rows is not None and not _llm_line_items_trusted(merged.line_items, text):
-                merged_items = list(di_rows)
-            elif di_rows is not None:
-                merged_items = list(merged.line_items)
-            elif document_has_product_table(text, payload_dict):
-                merged_items = list(merged.line_items)
-            elif document_has_charge_lines(text):
-                merged_items = parse_charge_lines_from_text(text) or list(merged.line_items)
-            else:
-                merged_items = []
+            qty_only_table = document_has_qty_only_table(text, payload_dict)
+            allow_qty_only = qty_only_table
+            merged_items = _merge_line_items_from_sources(merged, text, payload_dict)
             merged_items = sanitize_line_items(
                 merged_items,
                 ocr_text=text,
@@ -599,6 +678,7 @@ def merge_extraction_sources(
                 po_reference=merged.po_reference,
                 so_reference=(merged.extracted_fields or {}).get("so_reference"),
                 cost_centre=merged.cost_centre,
+                allow_qty_only=allow_qty_only,
             )
             if merged_items != merged.line_items:
                 fill["line_items"] = merged_items
@@ -643,12 +723,14 @@ def merge_extraction_sources(
             merged = replace(merged, extracted_fields=custom)
 
     merged = post_process_parsed_data(merged, text, dt_definition=dt_definition)
-    if di_populated:
-        merged = apply_di_scalars_authoritative(merged, payload, selected_keys_list)
+    if di_trusted:
+        merged = apply_di_scalars_authoritative(
+            merged, payload, selected_keys_list, ocr_text=text
+        )
     merged = ground_invoice_scalars(
         merged,
         text,
-        skip_keys=_di_grounding_skip_keys(merged, text, di_populated),
+        skip_keys=_di_grounding_skip_keys(merged, text, di_trusted),
     )
     merged = _apply_absent_fields(merged, dt_definition)
 
@@ -659,5 +741,56 @@ def merge_extraction_sources(
     party_addr = (merged.extracted_fields or {}).get("buyer_address")
     if party_addr and not merged.billing_address:
         merged = replace(merged, billing_address=sanitize_address(party_addr) or None)
+
+    from app.config import flag_enabled_for_dt, get_settings
+    from app.services.extraction.merge_disagreement_telemetry import (
+        collect_scalar_disagreements,
+        disagreement_audit_detail,
+    )
+
+    dt_code = (dt_definition.code or "").strip().upper() if dt_definition else ""
+    local_for_telemetry = parse_local_text(text) if text else None
+    disagreement_rows = collect_scalar_disagreements(
+        field_keys=selected_keys_list,
+        llm_parsed=parsed,
+        di_parsed=di_data,
+        regex_parsed=local_for_telemetry,
+        merged=merged,
+    )
+    if disagreement_rows:
+        raw = dict(merged.raw_fields or {})
+        raw["_merge_source_disagreement"] = disagreement_audit_detail(disagreement_rows)
+        merged = replace(merged, raw_fields=raw)
+
+    settings = get_settings()
+    if settings.use_field_fusion and dt_code and flag_enabled_for_dt("use_field_fusion", dt_code):
+        from app.services.extraction.field_fusion_engine import (
+            apply_fusion_to_invoice_data,
+            fuse_scalar_fields,
+        )
+
+        sources_by_field: dict[str, dict[str, object]] = {}
+        for key in selected_keys_list:
+            if key == "line_items":
+                continue
+            field_sources: dict[str, object] = {}
+            for source_name, source_parsed in (
+                ("llm", parsed),
+                ("azure_di", di_data),
+                ("regex", local_for_telemetry),
+            ):
+                if source_parsed is None:
+                    continue
+                value = getattr(source_parsed, key, None)
+                if value is not None and str(value).strip():
+                    field_sources[source_name] = value
+            if field_sources:
+                sources_by_field[key] = field_sources
+        fused = fuse_scalar_fields(
+            sources_by_field,
+            dt_definition=dt_definition,
+            field_keys=selected_keys_list,
+        )
+        merged = apply_fusion_to_invoice_data(merged, fused)
 
     return merged

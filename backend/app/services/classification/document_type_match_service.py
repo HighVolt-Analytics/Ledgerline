@@ -25,7 +25,9 @@ from app.services.purchase.purchase_match_service import (
 )
 
 PRICE_MATCH_PCT = Decimal("0.02")
+# Absolute price-variance cap in the document's currency (not AU-specific).
 PRICE_MATCH_CAP_AUD = Decimal("100")
+DEFAULT_MATCH_CAP_AMOUNT = Decimal("100")
 
 _REFERENCE_FIELD_KEYS = (
     "original_invoice",

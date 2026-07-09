@@ -12,6 +12,7 @@ export default defineConfig({
     include: [
       "src/lib/approvalsBoard.test.ts",
       "src/lib/documentTypeTemplates.test.ts",
+      "src/lib/documentTypeTemplateMeta.test.ts",
       "src/lib/regenerateClassifierPresets.test.ts",
       "src/lib/documentCompulsoryFields.test.ts",
       "src/lib/documentExtractionFields.test.ts",
@@ -33,6 +34,8 @@ export default defineConfig({
       "src/lib/collectionsQueue.test.ts",
       "src/lib/authSync.test.ts",
       "src/lib/authToken.test.ts",
+      "src/lib/authReturnTo.test.ts",
+      "src/lib/authSession.test.ts",
       "src/lib/tenantSession.test.ts",
       "src/lib/uploadColumnState.test.ts",
       "src/lib/pageTenantIsolation.test.ts",

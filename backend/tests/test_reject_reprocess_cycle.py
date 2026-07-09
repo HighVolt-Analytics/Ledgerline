@@ -183,6 +183,7 @@ async def test_full_requeue_preserves_processing_overrides(
         "playbook",
         "validation",
     ]
+    assert inv.processing_overrides.get("deferred_full_reset") is True
     assert inv.status == InvoiceStatus.PENDING
 
 

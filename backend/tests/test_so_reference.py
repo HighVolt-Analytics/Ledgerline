@@ -38,3 +38,13 @@ def test_apply_parsed_extraction_fields_promotes_so_reference() -> None:
     )
     apply_parsed_extraction_fields(inv, parsed)
     assert inv.so_reference == "SO-9001"
+
+
+def test_multiline_ocr_junk_not_plausible_so_reference() -> None:
+    junk = "spectra Innovations Pte Ltd\nINVOICE NO. : 260371344/"
+    from app.services.sales.so_reference import is_plausible_so_reference
+
+    assert is_plausible_so_reference(junk) is False
+    inv = Invoice(so_reference=junk)
+    assert ensure_invoice_so_reference(inv) is None
+    assert inv.so_reference is None

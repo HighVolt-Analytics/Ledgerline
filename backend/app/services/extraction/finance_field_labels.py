@@ -22,19 +22,28 @@ _ROLE_TERMS: dict[str, tuple[str, ...]] = {
 
 def finance_label_terms(key: str) -> list[str]:
     """Normalized label search terms for a finance/money field."""
+    from app.registry.adapter import use_field_registry, get_registry_adapter
+
     token = str(key or "").strip().lower()
     if not token:
         return []
     seen: set[str] = set()
     terms: list[str] = []
-    for raw in re.split(r",\s*", _FIELD_HINT_PATTERNS.get(token, "")):
-        part = raw.strip()
-        if not part:
-            continue
-        lowered = part.lower()
-        if lowered not in seen:
-            seen.add(lowered)
-            terms.append(part)
+    if use_field_registry():
+        for part in get_registry_adapter().synonyms_for(token):
+            lowered = part.lower()
+            if lowered not in seen:
+                seen.add(lowered)
+                terms.append(part)
+    else:
+        for raw in re.split(r",\s*", _FIELD_HINT_PATTERNS.get(token, "")):
+            part = raw.strip()
+            if not part:
+                continue
+            lowered = part.lower()
+            if lowered not in seen:
+                seen.add(lowered)
+                terms.append(part)
     for extra in _ROLE_TERMS.get(token, ()):
         if extra not in seen:
             seen.add(extra)

@@ -3,8 +3,8 @@
  * Timestamps from the API stay UTC; this module is for business-day boundaries.
  */
 
-export const DEFAULT_TENANT_TIMEZONE = "Australia/Sydney";
-export const DEFAULT_TENANT_LOCALE = "en-AU";
+export const DEFAULT_TENANT_TIMEZONE = "Asia/Singapore";
+export const DEFAULT_TENANT_LOCALE = "en-SG";
 
 type ZonedParts = { year: number; month: number; day: number };
 

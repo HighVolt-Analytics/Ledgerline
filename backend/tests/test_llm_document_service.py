@@ -218,6 +218,23 @@ def test_build_structure_extract_prompts_omits_unconfigured_line_items() -> None
     assert "line_items" not in system
 
 
+def test_build_extract_system_prompt_qty_only_table_does_not_break_format() -> None:
+    from pathlib import Path
+
+    from app.services.extraction.llm_document_service import build_extract_system_prompt
+    from app.services.tenant.tenant_org_context import OrgContext
+
+    text = Path("tests/fixtures/qty_only_table_ocr.txt").read_text(encoding="utf-8")
+    ocr = OcrArtifact(success=True, text=text, text_length=len(text), payload_json={})
+    system = build_extract_system_prompt(
+        OrgContext(),
+        selected_keys=["line_items", "invoice_no"],
+        ocr=ocr,
+    )
+    assert "QTY-ONLY TABLE" in system
+    assert "{description, qty}" in system
+
+
 def test_llm_result_sanitizes_metadata_line_items() -> None:
     llm = LlmDocumentResult.model_validate(
         {

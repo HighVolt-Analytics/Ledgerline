@@ -18,7 +18,8 @@ from app.schemas.reconciliation import (
     ReconPostingRow,
     ReconciliationOverview,
 )
-from app.services.shared.currency import BASE_CURRENCY
+from app.models.tenant import Tenant
+from app.tenant_settings import tenant_currency
 
 _PROCESSED = frozenset({InvoiceStatus.PROCESSED})
 
@@ -117,12 +118,13 @@ async def build_reconciliation_overview(
             )
         )
 
+    tenant = await session.get(Tenant, tenant_id)
     return ReconciliationOverview(
         sum_totals=sum_totals,
         sum_dr=sum_dr,
         sum_cr=sum_cr,
         delta_dr_cr=delta_dr_cr,
         balanced=delta_dr_cr == 0,
-        base_currency=BASE_CURRENCY,
+        base_currency=tenant_currency(tenant),
         by_date=day_rows,
     )

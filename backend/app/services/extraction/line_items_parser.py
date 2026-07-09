@@ -490,26 +490,358 @@ def line_items_from_ocr_payload(payload: dict[str, object]) -> list[ParsedLineIt
     return items
 
 
-def resolve_line_items_from_ocr_payload(payload: dict[str, object] | None) -> list[ParsedLineItem] | None:
-    """Prefer prebuilt-invoice rows; fall back to layout table rows."""
+def _line_item_row_usable(item: ParsedLineItem, *, allow_qty_only: bool = False) -> bool:
+    from app.services.extraction.line_items_sanitizer import _passes_minimum_product_row
+
+    return _passes_minimum_product_row(item, allow_qty_only=allow_qty_only)
+
+
+def _usable_line_items(
+    items: Sequence[ParsedLineItem],
+    *,
+    allow_qty_only: bool = False,
+) -> list[ParsedLineItem]:
+    return [item for item in items if _line_item_row_usable(item, allow_qty_only=allow_qty_only)]
+
+
+def di_line_items_usable(payload: dict[str, object] | None) -> bool:
+    """True when deserialized DI rows contain at least one product row."""
     if not payload:
-        return None
-    di_items = deserialize_line_items(payload.get("di_line_items"))
+        return False
+    return len(_usable_line_items(deserialize_line_items(payload.get("di_line_items")))) >= 1
+
+
+def table_line_items_usable(
+    payload: dict[str, object] | None,
+    *,
+    allow_qty_only: bool = False,
+) -> bool:
+    """True when layout table rows contain at least one usable product row."""
+    if not payload:
+        return False
+    rows = deserialize_line_items(payload.get("table_line_items"))
+    if not rows:
+        return False
+    if allow_qty_only:
+        return len(_usable_line_items(rows, allow_qty_only=True)) >= 1
+    money_rows = [
+        item
+        for item in rows
+        if item.amount is not None or item.unit_price is not None
+    ]
+    if len(_usable_line_items(money_rows)) >= 1:
+        return True
+    return len(_usable_line_items(rows, allow_qty_only=False)) >= 1
+
+
+def resolve_usable_line_items_from_payload(
+    payload: dict[str, object] | None,
+    *,
+    allow_qty_only: bool = False,
+) -> list[ParsedLineItem]:
+    """Prefer usable DI rows; fall back to usable layout table rows."""
+    if not payload:
+        return []
+    di_items = _usable_line_items(deserialize_line_items(payload.get("di_line_items")))
     if di_items:
         return enrich_parsed_line_items(di_items)
     table_items = deserialize_line_items(payload.get("table_line_items"))
-    if table_items:
-        return enrich_parsed_line_items(table_items)
+    if allow_qty_only:
+        usable = _usable_line_items(table_items, allow_qty_only=True)
+    else:
+        money_rows = [
+            item
+            for item in table_items
+            if item.amount is not None or item.unit_price is not None
+        ]
+        usable = _usable_line_items(money_rows) or _usable_line_items(table_items)
+    if usable:
+        return enrich_parsed_line_items(usable)
+    return []
+
+
+def resolve_line_items_from_ocr_payload(payload: dict[str, object] | None) -> list[ParsedLineItem] | None:
+    """Prefer prebuilt-invoice rows; fall back to layout table rows."""
+    usable = resolve_usable_line_items_from_payload(payload)
+    return usable if usable else None
+
+
+_QTY_HEADER_PATTERN = re.compile(r"(?:qty|quantity|q'?ty|pcs)\b", re.I)
+_DESC_HEADER_PATTERN = re.compile(
+    r"(?:desc|item|product|part|component|model|cpu|service)\b",
+    re.I,
+)
+_MONEY_HEADER_PATTERN = re.compile(
+    r"(?:unit\s*price|rate|amount|line\s*total|extended|value|ex\s*gst|unit\s*cost|(?:^|\s)each(?:\s|$)|^price$|\bprice\b)",
+    re.I,
+)
+_TOTALS_LABEL = re.compile(r"^\s*(?:TOTALS?|GRAND\s+TOTAL|SUB\s*TOTAL)\b", re.I)
+_FOOTER_TOTALS_LINE = re.compile(
+    r"(?:total\s+net\s+weight|total\s+gross\s+weight|total\s+no\.?\s+of\s+pallet)",
+    re.I,
+)
+_QTY_ONLY_TAIL = re.compile(
+    r"^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:pcs|nos|units?|kg)?\s*$",
+    re.I,
+)
+
+
+def _split_table_columns(line: str) -> list[str]:
+    parts = [part.strip() for part in re.split(r"\s{2,}|\t+", line.strip()) if part.strip()]
+    if len(parts) >= 2:
+        return parts
+    return [part.strip() for part in line.strip().split() if part.strip()]
+
+
+def _table_has_money_columns(headers: Sequence[str]) -> bool:
+    for header in headers:
+        lowered = header.lower()
+        if re.search(r"subtotal|grand", lowered):
+            continue
+        if _MONEY_HEADER_PATTERN.search(lowered):
+            return True
+    return False
+
+
+def _table_has_qty_column(headers: Sequence[str]) -> bool:
+    return any(_QTY_HEADER_PATTERN.search(header) for header in headers)
+
+
+def _table_has_description_column(headers: Sequence[str]) -> bool:
+    return any(_DESC_HEADER_PATTERN.search(header) for header in headers)
+
+
+def _is_qty_only_totals_line(text: str, cells: Sequence[str] | None = None) -> bool:
+    from app.services.extraction.line_item_skip_patterns import is_summary_line_description
+
+    if is_summary_line_description(text):
+        return True
+    if _TOTALS_LABEL.search(text.strip()):
+        return True
+    if _FOOTER_TOTALS_LINE.search(text):
+        return True
+    if cells:
+        for cell in cells:
+            token = cell.strip()
+            if token and (_TOTALS_LABEL.search(token) or is_summary_line_description(token)):
+                return True
+    return False
+
+
+def _is_aggregate_qty_row(qty: Decimal | None, prior_qtys: Sequence[Decimal]) -> bool:
+    if qty is None or not prior_qtys:
+        return False
+    return qty == sum(prior_qtys)
+
+
+def _payload_has_qty_only_table_rows(payload: dict[str, object]) -> bool:
+    rows = payload.get("table_line_items")
+    if not isinstance(rows, list) or not rows:
+        return False
+    saw_qty_row = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        desc = str(row.get("description") or "").strip()
+        qty = row.get("qty")
+        amount = row.get("amount")
+        unit_price = row.get("unit_price")
+        if amount or unit_price:
+            return False
+        if desc and qty and not _is_qty_only_totals_line(desc):
+            saw_qty_row = True
+    return saw_qty_row
+
+
+def _find_qty_only_header_line(text: str) -> tuple[int, list[str]] | None:
+    for index, line in enumerate(text.splitlines()):
+        cols = _split_table_columns(line)
+        if len(cols) < 2:
+            continue
+        lowered = [col.lower() for col in cols]
+        if (
+            _table_has_qty_column(lowered)
+            and _table_has_description_column(lowered)
+            and not _table_has_money_columns(lowered)
+        ):
+            return index, cols
     return None
+
+
+def _find_qty_column_index(cols: Sequence[str]) -> int | None:
+    for index in range(len(cols) - 1, -1, -1):
+        token = cols[index].strip()
+        if re.match(r"^\d+\s*(?:pcs|nos|units?|kg)?$", token, re.I):
+            return index
+        if re.match(r"^\d+$", token):
+            return index
+    return None
+
+
+def _parse_qty_only_row(line: str) -> ParsedLineItem | None:
+    """Parse one OCR row with description + qty and no trailing money columns."""
+    raw = line.strip()
+    if not raw or len(raw) < 4 or _TABLE_HEADER_LINE.match(raw):
+        return None
+    if _is_qty_only_totals_line(raw):
+        return None
+
+    tail_parsed = _parse_table_row_tail(raw)
+    if tail_parsed is not None and (
+        tail_parsed.unit_price is not None or tail_parsed.amount is not None
+    ):
+        return None
+
+    cols = _split_table_columns(raw)
+    if len(cols) >= 2:
+        qty_index = _find_qty_column_index(cols)
+        if qty_index is not None and qty_index > 0:
+            desc = " ".join(cols[:qty_index]).strip()
+            qty_token = cols[qty_index]
+            if len(desc) >= 3 and not _skip_line_row(desc) and not _is_qty_only_totals_line(desc, cols):
+                qty = _qty(re.sub(r"[^\d.]", "", qty_token))
+                if qty is not None:
+                    return ParsedLineItem(description=desc, qty=qty, unit_price=None, amount=None)
+        for qty_index in range(len(cols) - 1, 0, -1):
+            qty_token = cols[qty_index]
+            if not re.match(r"^\d+(?:\.\d+)?\s*(?:pcs|nos|units?|kg)?$", qty_token, re.I):
+                continue
+            if _looks_like_money_token(qty_token):
+                continue
+            desc = " ".join(cols[:qty_index]).strip()
+            if len(desc) < 3 or _skip_line_row(desc) or _is_qty_only_totals_line(desc, cols):
+                continue
+            qty = _qty(re.sub(r"[^\d.]", "", qty_token))
+            if qty is None:
+                continue
+            return ParsedLineItem(description=desc, qty=qty, unit_price=None, amount=None)
+
+    match = _QTY_ONLY_TAIL.match(raw)
+    if not match:
+        return None
+    desc = match.group(1).strip()
+    if len(desc) < 3 or _skip_line_row(desc) or _is_qty_only_totals_line(desc):
+        return None
+    qty = _qty(match.group(2))
+    if qty is None:
+        return None
+    return ParsedLineItem(description=desc, qty=qty, unit_price=None, amount=None)
+
+
+def parse_qty_only_line_items_from_text(text: str) -> list[ParsedLineItem]:
+    """Extract qty-only product rows from OCR text (packing lists, challans, etc.)."""
+    body = (text or "").strip()
+    if not body:
+        return []
+
+    lines = body.splitlines()
+    header_info = _find_qty_only_header_line(body)
+    header_cols: list[str] = []
+    qty_col = -1
+    desc_start = 0
+    start_row = 0
+    if header_info is not None:
+        header_index, header_cols = header_info
+        start_row = header_index + 1
+        for index, header in enumerate(header_cols):
+            lowered = header.lower()
+            if _QTY_HEADER_PATTERN.search(lowered):
+                qty_col = index
+            if _DESC_HEADER_PATTERN.search(lowered) and desc_start == 0:
+                desc_start = index
+
+    items: list[ParsedLineItem] = []
+    prior_qtys: list[Decimal] = []
+    for line in lines[start_row:]:
+        raw = line.strip()
+        if not raw:
+            prior_qtys = []
+            continue
+        if _is_qty_only_totals_line(raw):
+            continue
+
+        parsed: ParsedLineItem | None = None
+        cols = _split_table_columns(raw)
+        if header_cols and qty_col >= 0 and len(cols) == len(header_cols) and len(cols) > qty_col:
+            desc_parts: list[str] = []
+            for index, header in enumerate(header_cols):
+                if index == qty_col:
+                    break
+                lowered = header.lower()
+                if _DESC_HEADER_PATTERN.search(lowered) or re.search(
+                    r"part|component|model|cpu", lowered
+                ):
+                    token = cols[index].strip()
+                    if token:
+                        desc_parts.append(token)
+            desc = " ".join(desc_parts) or cols[0]
+            qty = _qty(re.sub(r"[^\d.]", "", cols[qty_col]))
+            if desc and qty is not None and not _is_qty_only_totals_line(desc, cols):
+                if not _is_aggregate_qty_row(qty, prior_qtys):
+                    parsed = ParsedLineItem(description=desc, qty=qty, unit_price=None, amount=None)
+        if parsed is None:
+            parsed = _parse_qty_only_row(raw)
+        if parsed is None or _skip_line_row(parsed.description or ""):
+            continue
+        if parsed.qty is not None and _is_aggregate_qty_row(parsed.qty, prior_qtys):
+            continue
+        items.append(parsed)
+        if parsed.qty is not None:
+            prior_qtys.append(parsed.qty)
+
+    return enrich_parsed_line_items(items)
+
+
+def document_has_qty_only_table(
+    ocr_text: str | None,
+    payload: dict[str, object] | None,
+) -> bool:
+    """True when OCR/layout shows a qty table without money columns."""
+    payload_dict = payload or {}
+    if di_line_items_usable(payload_dict):
+        return False
+    if _payload_has_qty_only_table_rows(payload_dict):
+        return True
+
+    table_items = deserialize_line_items(payload_dict.get("table_line_items"))
+    if table_items and not any(item.amount or item.unit_price for item in table_items):
+        if any(item.qty and item.description for item in table_items):
+            return True
+
+    text = (ocr_text or "").strip()
+    if not text:
+        return False
+    if _find_qty_only_header_line(text) is not None:
+        return len(parse_qty_only_line_items_from_text(text)) >= 1
+    qty_rows = [_parse_qty_only_row(line) for line in text.splitlines()]
+    parsed_rows = [row for row in qty_rows if row is not None]
+    return len(parsed_rows) >= 1
+
+
+def document_has_line_item_table(
+    ocr_text: str | None,
+    payload: dict[str, object] | None,
+) -> bool:
+    """True when document has either money-column or qty-only line tables."""
+    return document_has_product_table(ocr_text, payload) or document_has_qty_only_table(
+        ocr_text, payload
+    )
 
 
 def document_has_product_table(
     ocr_text: str | None,
     payload: dict[str, object] | None,
 ) -> bool:
-    """True when DI/table rows exist or OCR shows a product line grid."""
-    if resolve_line_items_from_ocr_payload(payload):
+    """True when DI/table rows exist or OCR shows a money-column product grid."""
+    payload_dict = payload or {}
+    if di_line_items_usable(payload_dict):
         return True
+    table_items = deserialize_line_items(payload_dict.get("table_line_items"))
+    if table_items and any(item.amount or item.unit_price for item in table_items):
+        if len(_usable_line_items(table_items)) >= 1:
+            return True
+    if document_has_qty_only_table(ocr_text, payload_dict):
+        return False
     text = (ocr_text or "").strip()
     if not text:
         return False
@@ -610,9 +942,9 @@ def normalize_di_line_items_for_prompt(items: Sequence[ParsedLineItem]) -> list[
 def line_items_source_from_payload(payload: dict[str, object] | None) -> str:
     if not payload:
         return "none"
-    if payload.get("di_line_items"):
+    if di_line_items_usable(payload):
         return "azure_di"
-    if payload.get("table_line_items"):
+    if table_line_items_usable(payload) or table_line_items_usable(payload, allow_qty_only=True):
         return "azure_layout_table"
     return "none"
 
@@ -621,6 +953,7 @@ def build_line_items_presentation_prompt(
     *,
     di_rows_present: bool,
     ocr_table_present: bool,
+    qty_only_table_present: bool = False,
     charge_lines_present: bool = False,
 ) -> list[str]:
     """Mode-specific LLM rules for line_items (DI copy / OCR table / charge / not applicable)."""
@@ -637,12 +970,22 @@ def build_line_items_presentation_prompt(
             "- Use null for qty, unit_price, or amount when the DI row has no value — never guess.",
             "- field_confidence.line_items: 0.95 when copied from azure_di_line_items; 0.0 when line_items is [].",
         ]
+    if qty_only_table_present:
+        return [
+            "",
+            "LINE ITEMS — QTY-ONLY TABLE (no price columns):",
+            "- Extract product/component rows from ocr.text_excerpt as line_items[].",
+            "- Each row: {{description, qty}}; set unit_price and amount to null when absent.",
+            "- Exclude TOTALS, GRAND TOTAL, SUB TOTAL, and footer summary rows.",
+            "- Extract only product/component lines — never summary or aggregate rows.",
+            "- field_confidence.line_items: per-row confidence; 0.0 when line_items is [].",
+        ]
     if ocr_table_present:
         return [
             "",
             "LINE ITEMS — OCR TABLE (no Azure DI rows):",
             "- Extract only from product table rows in ocr.text_excerpt.",
-            "- Each row: {description, qty, unit_price, amount} — copy verbatim from OCR.",
+            "- Each row: {{description, qty, unit_price, amount}} — copy verbatim from OCR.",
             "- Never include header labels, party blocks, or summary totals as line items.",
             "- field_confidence.line_items: per-row confidence; 0.0 when line_items is [].",
         ]
@@ -651,7 +994,7 @@ def build_line_items_presentation_prompt(
             "",
             "LINE ITEMS — CHARGE LINES (commercial/export, no product grid):",
             "- Extract charge rows from ocr.text_excerpt: FREIGHT, DESCRIPTION OF GOODS, labeled totals.",
-            "- FREIGHT: USD 400.00 → {description: \"Freight\", qty: 1, unit_price: 400, amount: 400}.",
+            "- FREIGHT: USD 400.00 → {{description: \"Freight\", qty: 1, unit_price: 400, amount: 400}}.",
             "- DESCRIPTION OF GOODS block → description row; pair with FREIGHT amount when separate.",
             "- Do not invent rows beyond labeled charge blocks.",
             "- field_confidence.line_items: per-row confidence; 0.0 when line_items is [].",

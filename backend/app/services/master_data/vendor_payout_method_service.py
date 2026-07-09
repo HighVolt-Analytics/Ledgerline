@@ -128,7 +128,7 @@ def payout_method_to_response(row: VendorPaymentMethod) -> VendorPayoutMethodRes
         display_label=row.display_label,
         stripe_account_id=row.stripe_account_id,
         last4=row.last4,
-        currency=row.currency or "AUD",
+        currency=row.currency or "SGD",
         status=row.status or "not_configured",
         is_default=bool(row.is_default),
         provider=meta["provider"],
@@ -238,7 +238,7 @@ async def create_payout_method_for_vendor(
         display_label=(body.display_label or "").strip() or None,
         stripe_account_id=stripe_account_id,
         last4=last4,
-        currency=(body.currency or "AUD").upper()[:3],
+        currency=(body.currency or "SGD").upper()[:3],
         status=body.status,
         is_default=is_default,
     )

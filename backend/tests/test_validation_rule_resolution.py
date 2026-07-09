@@ -40,14 +40,14 @@ def test_resolve_validation_rules_honours_all_disabled() -> None:
     definition = _definition(
         validation_rules=[
             ValidationRuleConfig(code="VR03", enabled=False, severity="block"),
-            ValidationRuleConfig(code="VR05", enabled=False, severity="block"),
+            ValidationRuleConfig(code="VR08", enabled=False, severity="block"),
         ]
     )
     rules = resolve_validation_rules(
         "DT-16",
         document_types=[definition],
     )
-    assert len(rules) == 10
+    assert len(rules) == 7
     assert all(not row.enabled for row in rules)
 
 
@@ -70,10 +70,10 @@ def test_resolve_validation_rules_explicit_beats_forced_standard_profile() -> No
         document_types=[definition],
         validation_profile="standard",
     )
-    assert len(rules) == 10
+    assert len(rules) == 7
     vr03 = next(row for row in rules if row.code == "VR03")
     assert vr03.enabled is False
-    assert any(row.code == "VR05" and row.enabled for row in rules)
+    assert any(row.code == "VR08" and row.enabled for row in rules)
 
 
 @pytest.mark.asyncio
@@ -81,7 +81,7 @@ async def test_run_configured_validations_skips_vr03_when_disabled() -> None:
     definition = _definition(
         validation_rules=[
             ValidationRuleConfig(code="VR03", enabled=False, severity="block"),
-            ValidationRuleConfig(code="VR05", enabled=False, severity="block"),
+            ValidationRuleConfig(code="VR08", enabled=False, severity="block"),
             ValidationRuleConfig(code="VR01", enabled=False, severity="block"),
         ],
         validationProfile="non_actionable",
@@ -169,8 +169,8 @@ async def test_vr03_skips_when_document_type_has_no_compulsory_fields() -> None:
 def test_validation_pass_applicable_for_payable_invoice() -> None:
     definition = _definition(
         validationProfile="standard",
-        posting="Yes",
         routeTarget="Purchase Management",
+        klass="Transactional",
     )
     assert validation_pass_applicable(
         route_target="Purchase Management",
@@ -186,40 +186,35 @@ def test_validation_pass_applicable_for_payable_invoice() -> None:
     assert rate == 50
 
 
-def test_validation_rule_config_accepts_procurement_codes() -> None:
-    row = ValidationRuleConfig(code="VR15", enabled=True, severity="block")
-    assert row.code == "VR15"
-    assert ValidationRuleConfig(code="VR14", enabled=True, severity="block").code == "VR14"
+def test_validation_rule_config_accepts_playbook_code() -> None:
+    assert ValidationRuleConfig(code="VR-PB02", enabled=True, severity="block").code == "VR-PB02"
 
 
-def test_normalize_validation_rules_keeps_finance_only() -> None:
+def test_normalize_validation_rules_keeps_configurable_only() -> None:
     rules = normalize_validation_rules(
         [
             {"code": "VR03", "enabled": True, "severity": "block"},
-            {"code": "VR15", "enabled": True, "severity": "block"},
             {"code": "VR-PB02", "enabled": True, "severity": "block"},
+            {"code": "VR15", "enabled": True, "severity": "block"},
+            {"code": "VR14", "enabled": True, "severity": "block"},
         ]
     )
-    assert [row.code for row in rules] == ["VR03"]
+    assert [row.code for row in rules] == ["VR03", "VR-PB02"]
 
 
-def test_procurement_rules_build_without_schema_error() -> None:
-    from app.services.rule_book.validation_runner import _procurement_rules_for_definition
+def test_po_goods_profile_defaults_include_playbook_rule() -> None:
+    from app.services.rule_book.validation_rule_catalog import default_validation_rules_for_profile
 
-    definition = _definition(
-        code="DT-01",
-        validationProfile="standard",
-        posting="Yes",
-        routeTarget="Purchase Management",
-        playbookProfile="po_goods",
-    )
-    rules = _procurement_rules_for_definition(definition)
-    assert any(row.code == "VR15" for row in rules)
+    rules = default_validation_rules_for_profile("po_goods")
+    codes = {row.code for row in rules if row.enabled}
+    assert "VR-PB02" in codes
+    assert "VR14" not in codes
+    assert "VR15" not in codes
 
 
 @pytest.mark.asyncio
 async def test_explicit_validation_rules_honour_user_toggles_only() -> None:
-    """Validation tab toggles: enabled rules run; disabled + auto VR14/15 do not."""
+    """Validation tab toggles: enabled rules run; disabled rules do not."""
     definition = _definition(
         code="DT-01",
         validationProfile="standard",
@@ -230,8 +225,7 @@ async def test_explicit_validation_rules_honour_user_toggles_only() -> None:
             ValidationRuleConfig(code="VR03", enabled=True, severity="block"),
             ValidationRuleConfig(code="VR01", enabled=True, severity="block"),
             ValidationRuleConfig(code="VR12", enabled=True, severity="block"),
-            ValidationRuleConfig(code="VR05", enabled=False, severity="block"),
-            ValidationRuleConfig(code="VR07", enabled=False, severity="block"),
+            ValidationRuleConfig(code="VR-PB02", enabled=False, severity="block"),
         ],
     )
     invoice = Invoice(
@@ -277,15 +271,16 @@ async def test_explicit_validation_rules_honour_user_toggles_only() -> None:
         return None
 
     with patch(
-        "app.services.validation_runner.run_extended_validations",
+        "app.services.rule_book.validation_runner.run_extended_validations",
         side_effect=_mock_extended,
+    ), patch(
+        "app.services.rule_book.validation_runner._run_universal_duplicate",
+        new_callable=AsyncMock,
+        return_value=None,
     ):
         results = await run_configured_validations(ctx)
     codes = {row.rule for row in results}
-    assert "VR05" not in codes
-    assert "VR07" not in codes
-    assert "VR14" not in codes
-    assert "VR15" not in codes
+    assert "VR-PB02" not in codes
     assert "VR03" in codes
     assert "VR12" in codes
     vr12 = next(row for row in results if row.rule == "VR12")

@@ -23,7 +23,11 @@ from app.services.approval.approval_service import (
 )
 from app.services.shared.file_storage import ensure_stored_file_for_approval
 from app.services.invoice.invoice_access_service import get_invoice_for_tenant
-from app.services.invoice.invoice_response_service import response_for_invoice, responses_for_invoices
+from app.services.invoice.invoice_response_service import (
+    response_for_invoice,
+    responses_for_approval_board,
+    responses_for_invoices,
+)
 
 _QUEUE_STATUSES = (
     InvoiceStatus.EXCEPTION,
@@ -84,7 +88,7 @@ async def list_approvals_board(
         key=lambda inv: (inv.created_at, inv.id),
         reverse=True,
     )
-    responses = await responses_for_invoices(db, list(rows), tenant_id=tenant_id)
+    responses = await responses_for_approval_board(db, list(rows), tenant_id=tenant_id)
     by_id_inv = {inv.id: inv for inv in rows}
     enriched: list[InvoiceResponse] = []
     for resp in responses:

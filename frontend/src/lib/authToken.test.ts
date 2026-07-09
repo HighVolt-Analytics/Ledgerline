@@ -23,8 +23,8 @@ function storedUserForTenant(tenantId: string): AuthUser {
     tenant_id: tenantId,
     tenant_name: tenantId === tenantA ? "Org A" : "Org B",
     tenant_slug: tenantId === tenantA ? "org-a" : "org-b",
-    tenant_timezone: "Australia/Sydney",
-    tenant_locale: "en-AU",
+    tenant_timezone: "Asia/Singapore",
+    tenant_locale: "en-SG",
     onboarding_completed: true,
   };
 }
@@ -37,7 +37,7 @@ describe("mergeStoredUserWithToken", () => {
 
     expect(merged.tenant_id).toBe(tenantB);
     expect(merged.tenant_name).toBe("");
-    expect(merged.tenant_timezone).toBe("Australia/Sydney");
+    expect(merged.tenant_timezone).toBe("Asia/Singapore");
     expect(merged.onboarding_completed).toBeUndefined();
   });
 

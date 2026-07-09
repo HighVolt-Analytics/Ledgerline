@@ -8,6 +8,32 @@ const USER_KEY = "ledgerline_user";
 const MEMBERSHIPS_KEY = "ledgerline_memberships";
 const LAST_TENANT_KEY = "ledgerline_last_tenant_id";
 
+function readWithMigration(key: string): string | null {
+  if (typeof localStorage === "undefined") return null;
+  const fromLocal = localStorage.getItem(key);
+  if (fromLocal !== null) return fromLocal;
+  if (typeof sessionStorage === "undefined") return null;
+  const fromSession = sessionStorage.getItem(key);
+  if (fromSession === null) return null;
+  localStorage.setItem(key, fromSession);
+  sessionStorage.removeItem(key);
+  return fromSession;
+}
+
+function writeAuthItem(key: string, value: string) {
+  localStorage.setItem(key, value);
+  if (typeof sessionStorage !== "undefined") {
+    sessionStorage.removeItem(key);
+  }
+}
+
+function removeAuthItem(key: string) {
+  localStorage.removeItem(key);
+  if (typeof sessionStorage !== "undefined") {
+    sessionStorage.removeItem(key);
+  }
+}
+
 export function loadMembershipsFromSession(): TenantAccountSummary[] {
   return getStoredMemberships();
 }
@@ -22,15 +48,15 @@ export function getLastTenantId(): string | null {
 }
 
 export function getAccessToken(): string | null {
-  return sessionStorage.getItem(ACCESS_KEY);
+  return readWithMigration(ACCESS_KEY);
 }
 
 export function getRefreshToken(): string | null {
-  return sessionStorage.getItem(REFRESH_KEY);
+  return readWithMigration(REFRESH_KEY);
 }
 
 export function getStoredUser(): AuthUser | null {
-  const raw = sessionStorage.getItem(USER_KEY);
+  const raw = readWithMigration(USER_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as AuthUser;
@@ -40,7 +66,7 @@ export function getStoredUser(): AuthUser | null {
 }
 
 export function getStoredMemberships(): TenantAccountSummary[] {
-  const raw = sessionStorage.getItem(MEMBERSHIPS_KEY);
+  const raw = readWithMigration(MEMBERSHIPS_KEY);
   if (!raw) return [];
   try {
     return JSON.parse(raw) as TenantAccountSummary[];
@@ -50,7 +76,7 @@ export function getStoredMemberships(): TenantAccountSummary[] {
 }
 
 export function persistMemberships(memberships: TenantAccountSummary[]) {
-  sessionStorage.setItem(MEMBERSHIPS_KEY, JSON.stringify(memberships));
+  writeAuthItem(MEMBERSHIPS_KEY, JSON.stringify(memberships));
 }
 
 export function persistAuthSuccess(payload: {
@@ -59,18 +85,18 @@ export function persistAuthSuccess(payload: {
   user: AuthUser;
   memberships?: TenantAccountSummary[];
 }) {
-  sessionStorage.setItem(ACCESS_KEY, payload.access_token);
-  sessionStorage.setItem(REFRESH_KEY, payload.refresh_token);
-  sessionStorage.setItem(USER_KEY, JSON.stringify(payload.user));
+  writeAuthItem(ACCESS_KEY, payload.access_token);
+  writeAuthItem(REFRESH_KEY, payload.refresh_token);
+  writeAuthItem(USER_KEY, JSON.stringify(payload.user));
   if (payload.memberships !== undefined) {
     persistMemberships(payload.memberships);
   }
 }
 
 export function clearAuthSession() {
-  sessionStorage.removeItem(ACCESS_KEY);
-  sessionStorage.removeItem(REFRESH_KEY);
-  sessionStorage.removeItem(USER_KEY);
-  sessionStorage.removeItem(MEMBERSHIPS_KEY);
+  removeAuthItem(ACCESS_KEY);
+  removeAuthItem(REFRESH_KEY);
+  removeAuthItem(USER_KEY);
+  removeAuthItem(MEMBERSHIPS_KEY);
   localStorage.removeItem(LAST_TENANT_KEY);
 }

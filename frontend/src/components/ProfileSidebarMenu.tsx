@@ -16,7 +16,7 @@ import {
   type ThemePreference,
 } from "@/context/ThemeContext";
 import { fetchMyMemberships, type TenantAccountSummary } from "@/lib/authApi";
-import { getAccessToken, loadMembershipsFromSession } from "@/lib/authSession";
+import { getAccessToken, loadMembershipsFromSession, persistMemberships } from "@/lib/authSession";
 import { SETTINGS_TABS } from "@/lib/settingsTabs";
 import { SUPER_ADMIN_ROLE } from "@/lib/roles";
 import { formatTenantRole } from "@/lib/tenantRoles";
@@ -68,7 +68,7 @@ export function ProfileSidebarMenu({
     try {
       const rows = await fetchMyMemberships(token);
       setMemberships(rows);
-      sessionStorage.setItem("ledgerline_memberships", JSON.stringify(rows));
+      persistMemberships(rows);
     } catch {
       /* silent */
     }

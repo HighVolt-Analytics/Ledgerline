@@ -8,7 +8,11 @@ from app.config import get_settings
 from app.models.invoice import Invoice
 from app.models.tenant import Tenant
 from app.services.audit.audit_service import log_event
-from app.services.shared.file_storage import relocate_invoice_pdf
+from app.services.shared.file_storage import (
+    relocate_invoice_pdf,
+    repair_invoice_stored_path,
+    stored_file_available,
+)
 from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
 from app.services.tenant.tenant_storage_paths import blob_name_from_stored
 from app.services.vault.vault_invoice_paths import vault_document_type_titles_for_invoice
@@ -51,6 +55,44 @@ def blob_book_segment(stored_path: str | None) -> str | None:
     if idx + 1 >= len(parts):
         return None
     return parts[idx + 1]
+
+
+def _relocate_invoice_pdf_or_none(
+    invoice: Invoice,
+    *,
+    tenant_slug: str,
+    filename: str,
+    tenant_name: str | None,
+    display_vendor: str | None,
+    short_title: str | None,
+    title: str | None,
+    document_type_folder: str | None,
+) -> str | None:
+    from azure.core.exceptions import ResourceNotFoundError
+
+    try:
+        return relocate_invoice_pdf(
+            invoice.raw_file_path,
+            invoice.tenant_id,
+            tenant_slug,
+            invoice.storage_vendor_slug or UNKNOWN_SLUG,
+            invoice.id,
+            invoice.file_hash,
+            filename,
+            tenant_name=tenant_name,
+            vendor_name=display_vendor,
+            invoice_no=invoice.invoice_no,
+            invoice_date=invoice.invoice_date,
+            route_target=invoice.route_target,
+            po_reference=invoice.po_reference,
+            purchase_document_type=invoice.purchase_document_type,
+            document_type_code=invoice.document_type_code,
+            document_type_short_title=short_title,
+            document_type_title=title,
+            document_type_folder=document_type_folder,
+        )
+    except ResourceNotFoundError:
+        return None
 
 
 async def sync_invoice_blob_path(
@@ -114,26 +156,22 @@ async def sync_invoice_blob_path(
     if blob_layout_matches_invoice(invoice.raw_file_path, expected):
         return False
 
-    new_path = relocate_invoice_pdf(
-        invoice.raw_file_path,
-        invoice.tenant_id,
-        tenant_slug,
-        invoice.storage_vendor_slug or UNKNOWN_SLUG,
-        invoice.id,
-        invoice.file_hash,
-        filename,
+    await repair_invoice_stored_path(session, invoice)
+    if not stored_file_available(invoice.raw_file_path, tenant_id=invoice.tenant_id):
+        return False
+
+    new_path = _relocate_invoice_pdf_or_none(
+        invoice,
+        tenant_slug=tenant_slug,
+        filename=filename,
         tenant_name=tenant_name,
-        vendor_name=display_vendor,
-        invoice_no=invoice.invoice_no,
-        invoice_date=invoice.invoice_date,
-        route_target=invoice.route_target,
-        po_reference=invoice.po_reference,
-        purchase_document_type=invoice.purchase_document_type,
-        document_type_code=invoice.document_type_code,
-        document_type_short_title=short_title,
-        document_type_title=title,
+        display_vendor=display_vendor,
+        short_title=short_title,
+        title=title,
         document_type_folder=document_type_folder,
     )
+    if new_path is None:
+        return False
     if new_path == invoice.raw_file_path:
         return False
 

@@ -1,0 +1,9 @@
+{
+  "dt_code": "DT-13",
+  "fields": {},
+  "line_items": {
+    "min_count": 5,
+    "max_count": 6,
+    "qty_only": true
+  }
+}

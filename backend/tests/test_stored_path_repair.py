@@ -53,11 +53,11 @@ async def test_repair_invoice_stored_path_from_blob_search(
 
     with (
         patch(
-            "app.services.file_storage.stored_file_available",
+            "app.services.shared.file_storage.stored_file_available",
             side_effect=lambda path, **kwargs: path == repaired_uri,
         ),
         patch(
-            "app.services.blob_storage.find_blob_uri_for_invoice",
+            "app.services.shared.blob_storage.find_blob_uri_for_invoice",
             return_value=repaired_uri,
         ),
     ):
@@ -94,7 +94,7 @@ async def test_repair_invoice_stored_path_from_audit(
     await db_session.flush()
 
     with patch(
-        "app.services.file_storage._resolve_readable_stored",
+        "app.services.shared.file_storage._resolve_readable_stored",
         side_effect=lambda stored, **kwargs: repaired_uri if stored == repaired_uri else None,
     ):
         repaired = await repair_invoice_stored_path(db_session, inv)

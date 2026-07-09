@@ -144,7 +144,7 @@ export function VendorsPage() {
   const { user } = useAuth();
   const { data: pendingQueue = [] } = usePendingVendors(Boolean(user));
   const promoteMutation = usePromotePendingVendor();
-  const currency = "AUD";
+  const currency = "SGD";
   const [rows, setRows] = useState<Vendor[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);

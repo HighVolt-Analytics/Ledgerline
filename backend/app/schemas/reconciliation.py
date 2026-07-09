@@ -83,5 +83,5 @@ class ReconciliationOverview(BaseModel):
     sum_cr: Decimal
     delta_dr_cr: Decimal
     balanced: bool
-    base_currency: str = "AUD"
+    base_currency: str = ""
     by_date: list[ReconDayOverviewRow]

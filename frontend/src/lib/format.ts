@@ -1,3 +1,5 @@
+import { DEFAULT_TENANT_LOCALE } from "@/lib/tenantTime";
+
 const CURRENCY_SYMBOLS: Record<string, string> = {
   AUD: "A$",
   USD: "$",
@@ -9,7 +11,7 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   AED: "د.إ",
 };
 
-export function currencySymbol(currency = "AUD"): string {
+export function currencySymbol(currency = "SGD"): string {
   return CURRENCY_SYMBOLS[currency] ?? currency;
 }
 
@@ -22,21 +24,22 @@ export function axisMoney(v: number, symbol: string): string {
   return `${symbol}${v.toFixed(0)}`;
 }
 
-export function compactMoney(v: number, currency = "AUD"): string {
+export function compactMoney(v: number, currency = "SGD"): string {
   return axisMoney(v, currencySymbol(currency));
 }
 
 export function money(
   v: string | number | null | undefined,
-  currency = "AUD"
+  currency = "SGD",
+  locale: string = DEFAULT_TENANT_LOCALE
 ): string {
   if (v == null || v === "") return "—";
   const n = typeof v === "string" ? parseFloat(v) : v;
   if (Number.isNaN(n)) return String(v);
   try {
-    return new Intl.NumberFormat("en-AU", {
+    return new Intl.NumberFormat(locale || DEFAULT_TENANT_LOCALE, {
       style: "currency",
-      currency: currency || "AUD",
+      currency: currency || "SGD",
     }).format(n);
   } catch {
     return String(v);

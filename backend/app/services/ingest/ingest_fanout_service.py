@@ -288,6 +288,10 @@ async def _create_invoice_from_bytes(
     if bundle_source_hash:
         extracted_fields = {"source_file_hash": bundle_source_hash}
 
+    from app.models.tenant import Tenant
+    from app.tenant_settings import tenant_currency
+
+    tenant = await session.get(Tenant, tenant_id)
     inv = Invoice(
         tenant_id=tenant_id,
         connected_mailbox_id=meta.connected_mailbox_id,
@@ -297,7 +301,7 @@ async def _create_invoice_from_bytes(
         file_hash=file_hash,
         content_fingerprint=content_fingerprint,
         business_fingerprint=business_fingerprint,
-        currency="AUD",
+        currency=tenant_currency(tenant),
         storage_vendor_slug=vendor_slug,
         purchase_document_type=purchase_document_type,
         email_sender=meta.email_sender,

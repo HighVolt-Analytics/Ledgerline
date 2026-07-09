@@ -190,7 +190,7 @@ export function poGoodsLinkedDocuments(opts: {
         purchaseBundleRole: "po",
         source: opts.po.source ?? "erp_register",
         linkedDossierId: opts.po.dossierId ?? null,
-        linkageDetail: opts.po.present ? `PO register · ${opts.poReference}` : "VR-PB01 required",
+        linkageDetail: opts.po.present ? `PO register · ${opts.poReference}` : "VR-PB02 required",
       }),
       doc({
         documentTypeCode: "DT-15",
@@ -201,7 +201,7 @@ export function poGoodsLinkedDocuments(opts: {
         purchaseBundleRole: "grn",
         source: opts.grn.source ?? "erp_register",
         linkedDossierId: opts.grn.dossierId ?? null,
-        linkageDetail: opts.grn.present ? `GRN tied to ${opts.poReference}` : "VR-PB01 required",
+        linkageDetail: opts.grn.present ? `GRN tied to ${opts.poReference}` : "VR-PB02 required",
       }),
       doc({
         id: "anchor-invoice",

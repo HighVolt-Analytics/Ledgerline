@@ -10,6 +10,7 @@ import { persistAuthSuccess } from "@/lib/authSession";
 import { apiFetchTenantSelectAccounts, type TenantAccountSummary } from "@/lib/authApi";
 import { completeMicrosoftOAuthInBrowser, loadMicrosoftOAuthConfig } from "@/lib/oauthApi";
 import { withRouterBasename } from "@/lib/routerBasename";
+import { postLoginPathForRole, consumeOAuthReturnTo } from "@/lib/authReturnTo";
 import { persistSignupToken } from "@/lib/signupApi";
 
 export function LoginOauthCallbackPage() {
@@ -22,7 +23,8 @@ export function LoginOauthCallbackPage() {
   useEffect(() => {
     if (loading || handled.current) return;
     if (user && user.id > 0) {
-      navigate("/settings", { replace: true });
+      const returnTo = consumeOAuthReturnTo();
+      navigate(postLoginPathForRole(user.role, returnTo), { replace: true });
       return;
     }
 
@@ -176,7 +178,10 @@ async function finishOAuthSession(accessToken: string, refreshToken: string) {
     memberships,
   });
   setAuthUser(user);
-  window.location.replace(withRouterBasename("/settings"));
+  const returnTo = consumeOAuthReturnTo();
+  window.location.replace(
+    withRouterBasename(postLoginPathForRole(user.role, returnTo))
+  );
 }
 
 async function navigateToTenantSelect(

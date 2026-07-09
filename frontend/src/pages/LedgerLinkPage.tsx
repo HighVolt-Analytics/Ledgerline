@@ -28,7 +28,7 @@ export function LedgerLinkPage() {
     () => (data?.overview ? mapReconciliationOverview(data.overview) : null),
     [data?.overview]
   );
-  const currency = data?.overview.base_currency ?? "AUD";
+  const currency = data?.overview.base_currency ?? "SGD";
   const exports = data?.exports;
 
   if (!user) {

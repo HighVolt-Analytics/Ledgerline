@@ -26,12 +26,14 @@ from app.schemas.chart_of_accounts import ChartOfAccountsResponse, UpdateChartOf
 from app.services.master_data.chart_of_accounts_service import load_chart_of_accounts, save_chart_of_accounts
 from app.schemas.setup_checklist import SetupChecklistStateResponse
 from app.services.tenant.tenant_setup_checklist_service import build_setup_checklist_state
+from app.jurisdiction.packs import jurisdiction_api_view, tenant_jurisdiction
 from app.tenant_settings import (
     default_institution_settings,
     institution_settings_view,
     merge_institution_settings,
     merge_onboarding_settings,
     set_setup_checklist_complete,
+    tenant_currency,
     tenant_industry,
     tenant_onboarding_completed,
 )
@@ -44,7 +46,7 @@ def _to_response(tenant: Tenant, *, current_tenant_id: uuid.UUID) -> TenantRespo
         id=tenant.id,
         name=tenant.name,
         slug=tenant.slug,
-        currency="AUD",
+        currency=tenant_currency(tenant),
         is_current=tenant.id == current_tenant_id,
     )
 
@@ -90,7 +92,8 @@ async def create_tenant(
 
 def _institution_response(tenant: Tenant) -> InstitutionSettingsResponse:
     view = institution_settings_view(tenant)
-    return InstitutionSettingsResponse(name=tenant.name, **view)
+    juris = jurisdiction_api_view(tenant_jurisdiction(tenant))
+    return InstitutionSettingsResponse(name=tenant.name, **view, **juris)
 
 
 @router.get("/current/institution", response_model=ApiEnvelope[InstitutionSettingsResponse])

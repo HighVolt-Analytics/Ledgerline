@@ -18,7 +18,7 @@ class PaymentExecutionInstructionResponse(BaseModel):
     vendor_name: str | None = None
     vendor_payout_method_label: str | None = None
     amount: float
-    currency: str = "AUD"
+    currency: str = "SGD"
     due_date: date | None = None
     execution_mode: str
     status: str
@@ -33,7 +33,7 @@ class PaymentExecutionInstructionExportResponse(BaseModel):
     vendor_name: str | None = None
     vendor_payout_method_label: str | None = None
     amount: float
-    currency: str = "AUD"
+    currency: str = "SGD"
     due_date: date | None = None
     execution_mode: str
     status: str
@@ -59,7 +59,7 @@ class PaymentResponse(BaseModel):
     invoice_id: int
     vendor: str | None = None
     amount: float
-    currency: str = "AUD"
+    currency: str = "SGD"
     status: str
     tab: str
     due_date: date | None = None

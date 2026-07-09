@@ -87,6 +87,33 @@ def merge_classification_audit_detail(
     return merged
 
 
+async def load_citation_audit_detail(
+    session: AsyncSession,
+    *,
+    invoice_id: int,
+    tenant_id: uuid.UUID,
+) -> dict[str, Any]:
+    row = (
+        await session.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.invoice_id == invoice_id,
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.event == "citation_grounding",
+            )
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return {}
+    detail = _as_dict(row.detail)
+    return {
+        "citation_failed": detail.get("citation_failed") or [],
+        "citation_verified": detail.get("citation_verified") or [],
+    }
+
+
 async def load_classification_audit_detail(
     session: AsyncSession,
     *,

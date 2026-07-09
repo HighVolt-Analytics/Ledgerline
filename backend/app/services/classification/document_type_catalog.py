@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.config import get_settings
+from app.registry.dt_catalog_entry import DtCatalogEntry
 from app.schemas.document_type import DocumentTypeDefinition
 
 ROUTE_PURCHASE = "Purchase Management"
@@ -241,6 +242,149 @@ def resolve_document_type_for_purchase_kind(
         return min(transactional, key=lambda row: row.classifier.priority)
 
     return None
+
+
+def get_dt_catalog_entry(
+    code: str,
+    *,
+    dt_definition: DocumentTypeDefinition | None = None,
+) -> DtCatalogEntry:
+    """Machine catalog metadata for a document type code.
+
+    When ``dt_definition`` is supplied (org rule book row), classification hints
+    are derived from the org title/short title — not shipped template prose.
+    Shipped defaults are used only for technical metadata (cross-field rules,
+    DI profile) and only when the org row still matches its shipped template.
+    """
+    from app.services.classification.document_type_field_defaults import (
+        default_azure_di_profile,
+        default_classification_hints,
+        default_cross_field_rules,
+        default_fallback_if_unknown_subtype,
+        default_field_overrides,
+        default_negative_hints,
+    )
+
+    token = (code or "").strip().upper()
+    shipped_lookup = _shipped_defaults_lookup_code(token, dt_definition)
+
+    if dt_definition is not None:
+        classification_hints = _org_classification_hints(dt_definition)
+        negative_hints = (
+            tuple(default_negative_hints(shipped_lookup))
+            if _org_uses_shipped_classification_metadata(dt_definition, shipped_lookup)
+            else ()
+        )
+    else:
+        classification_hints = tuple(default_classification_hints(shipped_lookup))
+        negative_hints = tuple(default_negative_hints(shipped_lookup))
+
+    return DtCatalogEntry(
+        code=token,
+        classification_hints=classification_hints,
+        negative_hints=negative_hints,
+        cross_field_rules=tuple(default_cross_field_rules(shipped_lookup)),
+        field_overrides=default_field_overrides(shipped_lookup),
+        azure_di_profile=default_azure_di_profile(shipped_lookup),
+        fallback_if_unknown_subtype=default_fallback_if_unknown_subtype(shipped_lookup),
+    )
+
+
+def _shipped_defaults_lookup_code(
+    code: str,
+    dt_definition: DocumentTypeDefinition | None,
+) -> str:
+    if dt_definition is None:
+        return code
+    matrix = (dt_definition.matrix_template_code or "").strip().upper()
+    return matrix or code
+
+
+def _org_classification_hints(defn: DocumentTypeDefinition) -> tuple[str, ...]:
+    seen: set[str] = set()
+    hints: list[str] = []
+    for raw in (defn.title, defn.short_title):
+        token = str(raw or "").strip()
+        if not token:
+            continue
+        key = token.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        hints.append(token)
+    return tuple(hints)
+
+
+def _shipped_reference_titles(code: str) -> tuple[str, str]:
+    for row in load_shipped_default_document_types():
+        if row.code.upper() == code.upper():
+            return str(row.title or "").strip(), str(row.short_title or "").strip()
+    return "", ""
+
+
+def _org_uses_shipped_classification_metadata(
+    defn: DocumentTypeDefinition,
+    shipped_lookup: str,
+) -> bool:
+    """True when org row still aligns with shipped template (not repurposed)."""
+    matrix = (defn.matrix_template_code or "").strip().upper()
+    if matrix and matrix != (defn.code or "").strip().upper():
+        return True
+    shipped_title, shipped_short = _shipped_reference_titles(shipped_lookup)
+    if not shipped_title and not shipped_short:
+        return False
+    org_title = str(defn.title or "").strip().casefold()
+    org_short = str(defn.short_title or "").strip().casefold()
+    shipped_title_cf = shipped_title.casefold()
+    shipped_short_cf = shipped_short.casefold()
+    return org_title in {shipped_title_cf, shipped_short_cf} or org_short in {
+        shipped_title_cf,
+        shipped_short_cf,
+    }
+
+
+def playbook_profile_for_dt(defn: DocumentTypeDefinition) -> str:
+    """Org playbook profile; shipped defaults only when org row matches shipped template."""
+    explicit = (defn.playbook_profile or "").strip().lower()
+    if explicit:
+        return explicit
+    shipped_lookup = _shipped_defaults_lookup_code(defn.code, defn)
+    if _org_uses_shipped_classification_metadata(defn, shipped_lookup):
+        from app.services.classification.document_type_field_defaults import default_playbook_profile
+
+        return default_playbook_profile(shipped_lookup)
+    return ""
+
+
+def extraction_fields_for_dt(defn: DocumentTypeDefinition) -> list[str]:
+    """Org extraction fields; shipped defaults only when org row matches shipped template."""
+    org_fields = [str(key).strip().lower() for key in (defn.extraction_fields or []) if str(key).strip()]
+    if org_fields:
+        return org_fields
+    shipped_lookup = _shipped_defaults_lookup_code(defn.code, defn)
+    if _org_uses_shipped_classification_metadata(defn, shipped_lookup):
+        from app.services.classification.document_type_field_defaults import default_extraction_fields
+
+        return list(default_extraction_fields(shipped_lookup))
+    return []
+
+
+def classification_hints_for_dt(
+    code: str,
+    *,
+    dt_definition: DocumentTypeDefinition | None = None,
+) -> tuple[list[str], list[str]]:
+    """Positive and negative classification hints for LLM classify prompts."""
+    entry = get_dt_catalog_entry(code, dt_definition=dt_definition)
+    return list(entry.classification_hints), list(entry.negative_hints)
+
+
+def cross_field_rules_for_dt(
+    code: str,
+    *,
+    dt_definition: DocumentTypeDefinition | None = None,
+) -> list[str]:
+    return list(get_dt_catalog_entry(code, dt_definition=dt_definition).cross_field_rules)
 
 
 def clear_document_type_catalog_cache() -> None:

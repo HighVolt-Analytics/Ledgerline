@@ -264,9 +264,20 @@ class ChartOfAccountEntry(BaseModel):
 class PostingDefaults(BaseModel):
     """Journal posting accounts shared across all documents."""
 
-    tax_account: str = "GST Paid"
+    tax_account: str = "Tax Paid"
     payable_account: str = "Accounts Payable"
     fallback_account: str = "Suspense Account"
+
+    @classmethod
+    def for_country(cls, country_code: str | None = None) -> "PostingDefaults":
+        from app.jurisdiction.packs import jurisdiction_pack_for_country
+
+        pack = jurisdiction_pack_for_country(country_code)
+        return cls(
+            tax_account=pack.posting_defaults.tax_account,
+            payable_account=pack.posting_defaults.payable_account,
+            fallback_account=pack.posting_defaults.fallback_account,
+        )
 
 
 class DocumentSetRule(BaseModel):
@@ -746,7 +757,7 @@ def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
                 inferred = infer_playbook_profile_from_definition(definition)
         except Exception:
             inferred = default_playbook_profile_for_code(code) if code else "standard_transactional"
-        merged.append({**row, "playbook_profile": inferred})
+        merged.append({**row, "playbook_profile": inferred, "playbookProfile": inferred})
     data["document_types"] = merged
     return data
 

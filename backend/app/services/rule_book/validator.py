@@ -109,87 +109,86 @@ def vr03_required(data: InvoiceData) -> ValidationResult:
 
 
 async def vr05_abn(
-
     data: InvoiceData,
-
     session: AsyncSession,
-
     *,
-
     tenant_id: int,
-
     sender: str | None = None,
-
+    tax_id_kind: str | None = None,
+    tax_id_label: str | None = None,
 ) -> ValidationResult:
+    from app.jurisdiction.packs import jurisdiction_pack_for_country
+    from app.models.tenant import Tenant
+    from app.tenant_settings import tenant_country
 
     mode = get_settings().abn_validation_mode.strip().lower()
-
     use_checksum = mode == "checksum"
 
-
+    tenant = await session.get(Tenant, tenant_id)
+    pack = jurisdiction_pack_for_country(tenant_country(tenant))
+    kind = (tax_id_kind or pack.tax_id_kind or "generic").strip().lower()
+    label = (tax_id_label or pack.tax_id_label or "Tax ID").strip()
 
     def _abn_ok(value: str) -> bool:
-
         return is_valid_abn(value) if use_checksum else is_abn_format(value)
 
+    candidate = (data.abn or "").strip()
+    gstin = data.raw_fields.get("gstin") if isinstance(data.raw_fields, dict) else None
+    extracted = data.extracted_fields if isinstance(getattr(data, "extracted_fields", None), dict) else {}
+    party_tax = (
+        extracted.get("seller_tax_id")
+        or extracted.get("buyer_tax_id")
+        or extracted.get("seller_abn")
+        or extracted.get("buyer_abn")
+        or ""
+    )
+    if not candidate and party_tax:
+        candidate = str(party_tax).strip()
 
-
-    if data.abn and _abn_ok(data.abn):
-
-        msg = "ABN valid" if use_checksum else "ABN format valid (11 digits)"
-
-        return ValidationResult("VR05", True, msg)
-
-
-
-    if use_checksum and data.abn and is_acceptable_tax_id(data.abn):
-
-        return ValidationResult("VR05", True, "Tax ID accepted (equivalent identifier)")
-
-    gstin = data.raw_fields.get("gstin")
-    if gstin and is_acceptable_tax_id(str(gstin)):
-        return ValidationResult("VR05", True, "GSTIN / tax ID present on document")
-
-
+    if kind == "abn":
+        if candidate and _abn_ok(candidate):
+            msg = f"{label} valid" if use_checksum else f"{label} format valid (11 digits)"
+            return ValidationResult("VR05", True, msg)
+        if use_checksum and candidate and is_acceptable_tax_id(candidate, tax_id_kind="generic"):
+            return ValidationResult("VR05", True, "Tax ID accepted (equivalent identifier)")
+        if gstin and is_acceptable_tax_id(str(gstin), tax_id_kind="gstin"):
+            return ValidationResult("VR05", True, "GSTIN / tax ID present on document")
+    else:
+        check_value = candidate or (str(gstin).strip() if gstin else "")
+        if check_value and is_acceptable_tax_id(check_value, tax_id_kind=kind):
+            return ValidationResult("VR05", True, f"{label} accepted")
+        if check_value and is_acceptable_tax_id(check_value, tax_id_kind="generic"):
+            return ValidationResult("VR05", True, f"{label} / tax ID accepted")
 
     approved = await find_approved_vendor(
-
         session,
-
         tenant_id=tenant_id,
-
         vendor_name=data.vendor,
-
         sender=sender,
-
     )
+    if approved and approved.abn:
+        if kind == "abn" and _abn_ok(approved.abn):
+            data.abn = approved.abn
+            return ValidationResult(
+                "VR05",
+                True,
+                f"{label} from approved vendor registry ({approved.vendor_name})",
+            )
+        if kind != "abn" and is_acceptable_tax_id(approved.abn, tax_id_kind=kind):
+            data.abn = approved.abn if kind == "abn" else data.abn
+            return ValidationResult(
+                "VR05",
+                True,
+                f"{label} from approved vendor registry ({approved.vendor_name})",
+            )
 
-    if approved and approved.abn and _abn_ok(approved.abn):
+    if not candidate and not gstin:
+        return ValidationResult("VR05", False, f"{label} missing")
 
-        data.abn = approved.abn
-
-        return ValidationResult(
-
-            "VR05",
-
-            True,
-
-            f"ABN from approved vendor registry ({approved.vendor_name})",
-
-        )
-
-
-
-    if not data.abn:
-
-        return ValidationResult("VR05", False, "ABN / Tax ID missing")
-
-    detail = "Invalid ABN checksum" if use_checksum else "ABN must be 11 digits"
-
-    return ValidationResult("VR05", False, f"{detail}: {data.abn}")
-
-
-
+    if kind == "abn":
+        detail = "Invalid ABN checksum" if use_checksum else "ABN must be 11 digits"
+        return ValidationResult("VR05", False, f"{detail}: {data.abn}")
+    return ValidationResult("VR05", False, f"Invalid {label}: {candidate or gstin}")
 
 
 def vr07_currency(data: InvoiceData, *, expected_currency: str) -> ValidationResult:
@@ -205,21 +204,35 @@ def vr07_currency(data: InvoiceData, *, expected_currency: str) -> ValidationRes
 
 
 
-def vr08_gst(data: InvoiceData, *, expected_currency: str) -> ValidationResult:
+def vr08_gst(
+    data: InvoiceData,
+    *,
+    expected_currency: str,
+    statutory_tax_rate: Decimal | None = None,
+    tax_label: str = "Tax",
+) -> ValidationResult:
     expected = expected_currency.strip().upper()
     if data.gst is None:
         if data.subtotal is not None and (data.currency or expected).upper() != expected:
-            return ValidationResult("VR08", True, "GST not applicable for foreign invoice")
-        return ValidationResult("VR08", True, "Skipped — subtotal and GST required", skipped=True)
+            return ValidationResult("VR08", True, f"{tax_label} not applicable for foreign invoice")
+        return ValidationResult(
+            "VR08", True, f"Skipped — subtotal and {tax_label} required", skipped=True
+        )
     if data.subtotal is None:
-        return ValidationResult("VR08", True, "Skipped — subtotal and GST required", skipped=True)
+        return ValidationResult(
+            "VR08", True, f"Skipped — subtotal and {tax_label} required", skipped=True
+        )
     rate = resolve_gst_rate_percent(data)
+    if rate is None and statutory_tax_rate is not None:
+        rate = statutory_tax_rate
     if rate is None:
-        return ValidationResult("VR08", True, "Skipped — GST rate could not be determined", skipped=True)
-    expected = expected_gst_amount(data.subtotal, rate)
-    if abs(data.gst - expected) <= Decimal("0.02"):
-        return ValidationResult("VR08", True, f"GST matches {rate}% of subtotal")
-    return ValidationResult("VR08", False, f"GST {data.gst} != {rate}% of {data.subtotal}")
+        return ValidationResult(
+            "VR08", True, f"Skipped — {tax_label} rate could not be determined", skipped=True
+        )
+    expected_amt = expected_gst_amount(data.subtotal, rate)
+    if abs(data.gst - expected_amt) <= Decimal("0.02"):
+        return ValidationResult("VR08", True, f"{tax_label} matches {rate}% of subtotal")
+    return ValidationResult("VR08", False, f"{tax_label} {data.gst} != {rate}% of {data.subtotal}")
 
 
 
@@ -378,7 +391,7 @@ def _skipped(rule: str, reason: str) -> ValidationResult:
     return ValidationResult(rule, True, reason, skipped=True)
 
 
-_SYNC_RULES = [vr03_required, vr07_currency, vr08_gst, vr01_total]
+_SYNC_RULES = [vr03_required, vr08_gst, vr01_total]
 
 
 def _append_playbook_validations(

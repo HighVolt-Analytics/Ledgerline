@@ -11,39 +11,22 @@ ValidationSeverity = Literal["block", "warn"]
 UNIVERSAL_VALIDATION_RULE_CODES = frozenset({"VR02"})
 
 # User-configurable per document type (Rule Book → Validation).
-FINANCE_VALIDATION_RULE_CODES = frozenset(
+CONFIGURABLE_VALIDATION_RULE_CODES = frozenset(
     {
         "VR03",
-        "VR05",
-        "VR07",
         "VR08",
         "VR01",
         "VR09",
-        "VR10",
         "VR11",
         "VR12",
-    }
-)
-
-# Driven by playbook match mode, bundle rules, or extraction fields — not Validation toggles.
-AUTOMATIC_VALIDATION_RULE_CODES = frozenset(
-    {
-        "VR14",
-        "VR15",
-        "VR16",
-        "VR-PB01",
         "VR-PB02",
-        "VR-PB04",
     }
 )
 
-CONFIGURABLE_VALIDATION_RULE_CODES = FINANCE_VALIDATION_RULE_CODES
+# Backward-compatible alias.
+FINANCE_VALIDATION_RULE_CODES = CONFIGURABLE_VALIDATION_RULE_CODES
 
-KNOWN_VALIDATION_RULE_CODES = (
-    UNIVERSAL_VALIDATION_RULE_CODES
-    | FINANCE_VALIDATION_RULE_CODES
-    | AUTOMATIC_VALIDATION_RULE_CODES
-)
+KNOWN_VALIDATION_RULE_CODES = UNIVERSAL_VALIDATION_RULE_CODES | CONFIGURABLE_VALIDATION_RULE_CODES
 
 
 class ValidationRuleConfig(BaseModel):
@@ -79,7 +62,7 @@ def normalize_validation_rules(value: Any) -> list[ValidationRuleConfig]:
             continue
         if row.code in seen or row.code in UNIVERSAL_VALIDATION_RULE_CODES:
             continue
-        if row.code not in FINANCE_VALIDATION_RULE_CODES:
+        if row.code not in CONFIGURABLE_VALIDATION_RULE_CODES:
             continue
         seen.add(row.code)
         out.append(row)

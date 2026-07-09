@@ -235,7 +235,7 @@ async def ensure_payment_for_invoice(db: AsyncSession, invoice: Invoice) -> Paym
         vendor_registry_id=vendor_registry_id,
         vendor=invoice.vendor,
         amount=invoice.total,
-        currency=invoice.currency or "AUD",
+        currency=invoice.currency or "SGD",
         due_date=invoice.due_date,
         status=PaymentStatus.QUEUE,
         approvers=_payment_tier_approvers(invoice.total),

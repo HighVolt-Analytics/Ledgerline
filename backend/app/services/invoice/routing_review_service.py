@@ -9,7 +9,6 @@ from app.schemas.classification_decision import ClassificationDecision
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.classification.document_type_catalog import get_document_type_definition
 from app.services.classification.document_type_classifier import DocumentTypeClassification
-from app.services.classification.document_type_playbook_profile_service import should_enforce_bundle_mandatory
 from app.services.classification.document_type_playbook_service import PlaybookGateResult
 from app.services.rule_book.rule_book_mapper import FALLBACK_RULE_TYPE, MappingDetail
 
@@ -63,13 +62,9 @@ def requires_playbook_review(
     *,
     definition: DocumentTypeDefinition | None = None,
 ) -> bool:
-    if playbook is None or not playbook.blocks_posting:
-        return False
-    if definition is not None and not should_enforce_bundle_mandatory(definition):
-        if playbook.missing_extraction_fields and not playbook.missing_bundle_mandatory:
-            return True
-        return False
-    return True
+    """Field and bundle gaps are enforced via VR03 / VR-PB02 at validation, not here."""
+    _ = (playbook, definition)
+    return False
 
 
 def requires_routing_review(

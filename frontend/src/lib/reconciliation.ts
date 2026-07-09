@@ -1,6 +1,7 @@
 import type { InvoiceDetails, JournalEntry, ReconciliationOverview, RuleBook } from "@/api/types";
 import { documentDisplayRef } from "@/lib/format";
 import {
+  DEFAULT_TENANT_LOCALE,
   tenantMonthKey,
   tenantZonedParts,
 } from "@/lib/tenantTime";
@@ -335,7 +336,7 @@ export function monthKeyFromDate(isoDate: string): string {
   return isoDate.slice(0, 7);
 }
 
-export function formatReconMonthLabel(monthKey: string, locale = "en-AU"): string {
+export function formatReconMonthLabel(monthKey: string, locale = DEFAULT_TENANT_LOCALE): string {
   const [y, m] = monthKey.split("-").map(Number);
   if (!y || !m) return monthKey;
   return new Date(y, m - 1, 1).toLocaleString(locale, {
@@ -344,7 +345,7 @@ export function formatReconMonthLabel(monthKey: string, locale = "en-AU"): strin
   });
 }
 
-export function formatReconMonthOnly(monthKey: string, locale = "en-AU"): string {
+export function formatReconMonthOnly(monthKey: string, locale = DEFAULT_TENANT_LOCALE): string {
   const [, m] = monthKey.split("-").map(Number);
   if (!m) return monthKey;
   return new Date(2020, m - 1, 1).toLocaleString(locale, { month: "long" });
@@ -393,7 +394,7 @@ export function buildReconYears(recon: ReconSummary | null, timeZone: string): s
 export function buildMonthsForYear(
   year: string,
   timeZone: string,
-  locale = "en-AU"
+  locale = DEFAULT_TENANT_LOCALE
 ): { label: string; value: string }[] {
   const y = Number(year);
   if (!y || Number.isNaN(y)) return [];
@@ -415,7 +416,7 @@ export function reconMonthsForYear(
   options: { label: string; value: string }[],
   year: string,
   timeZone: string,
-  locale = "en-AU"
+  locale = DEFAULT_TENANT_LOCALE
 ): { label: string; value: string }[] {
   void options;
   return buildMonthsForYear(year, timeZone, locale);
@@ -425,7 +426,7 @@ export function reconMonthsForYear(
 export function buildReconPeriodOptions(
   recon: ReconSummary | null,
   timeZone: string,
-  locale = "en-AU"
+  locale = DEFAULT_TENANT_LOCALE
 ): { label: string; value: string }[] {
   const keys = new Set<string>();
   for (let i = 0; i < 12; i++) {

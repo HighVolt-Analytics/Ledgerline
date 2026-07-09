@@ -12,7 +12,7 @@ class CollectionResponse(BaseModel):
     invoice_id: int
     customer: str | None = None
     amount: float
-    currency: str = "AUD"
+    currency: str = "SGD"
     status: str
     tab: str
     due_date: date | None = None

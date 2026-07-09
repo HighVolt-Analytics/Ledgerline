@@ -103,7 +103,7 @@ def _parse_sample(
         id=0,
         tenant_id=0,
         status=InvoiceStatus.PARSING,
-        currency=parsed.currency or "AUD",
+        currency=parsed.currency or "SGD",
         email_attachment_name=filename,
         document_text=parsed.document_text,
         vendor=parsed.vendor,

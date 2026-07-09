@@ -28,7 +28,10 @@ from app.schemas.invoice import (
 )
 from app.schemas.classification_api import ClassificationResolveRequest, ClassificationReviewItem
 from app.services.classification.classification_learning_service import record_learning_from_resolution
-from app.services.classification.classification_audit_service import load_classification_audit_detail
+from app.services.classification.classification_audit_service import (
+    load_citation_audit_detail,
+    load_classification_audit_detail,
+)
 from app.services.extraction.llm_document_service import apply_document_type_to_invoice
 from app.services.invoice.invoice_reset import (
     requeue_invoice_for_pipeline,
@@ -95,12 +98,43 @@ from app.services.invoice.invoice_response_service import (
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 
+async def _load_invoice_with_details(
+    db: AsyncSession,
+    *,
+    invoice_id: int,
+    tenant_id: uuid.UUID,
+) -> Invoice:
+    """Load invoice with line items and journal entries for detail responses."""
+    stmt = (
+        select(Invoice)
+        .where(Invoice.id == invoice_id, Invoice.tenant_id == tenant_id)
+        .options(
+            selectinload(Invoice.line_items),
+            selectinload(Invoice.journal_entries),
+        )
+    )
+    inv = (await db.execute(stmt)).scalar_one_or_none()
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    return inv
+
+
 async def _line_items_response(
     db: AsyncSession,
     inv: Invoice,
     *,
     tenant_id,
 ) -> list[LineItemResponse]:
+    from sqlalchemy import inspect as sa_inspect
+
+    if sa_inspect(inv).session is None:
+        inv = (
+            await db.execute(
+                select(Invoice)
+                .where(Invoice.id == inv.id, Invoice.tenant_id == tenant_id)
+                .options(selectinload(Invoice.line_items))
+            )
+        ).scalar_one()
     config = await load_config_for_tenant(db, tenant_id)
     return build_line_item_responses(inv, config)
 
@@ -283,17 +317,11 @@ async def get_invoice(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[InvoiceWithDetails]:
-    stmt = (
-        select(Invoice)
-        .where(Invoice.id == invoice_id, Invoice.tenant_id == ctx.tenant_id)
-        .options(
-            selectinload(Invoice.line_items),
-            selectinload(Invoice.journal_entries),
-        )
+    inv = await _load_invoice_with_details(
+        db,
+        invoice_id=invoice_id,
+        tenant_id=ctx.tenant_id,
     )
-    inv = (await db.execute(stmt)).scalar_one_or_none()
-    if not inv:
-        raise HTTPException(404, "Invoice not found")
 
     base = await _response_for_invoice(
         db,
@@ -303,6 +331,11 @@ async def get_invoice(
         repair_stored_path=True,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
+    )
+    inv = await _load_invoice_with_details(
+        db,
+        invoice_id=invoice_id,
+        tenant_id=ctx.tenant_id,
     )
     return ApiEnvelope(
         data=InvoiceWithDetails(
@@ -360,6 +393,11 @@ async def patch_invoice(
         tenant_id=ctx.tenant_id,
         document_type_extraction_fields=await _document_type_extraction_fields(db, ctx.tenant_id, inv),
         include_extraction_field_confidence=True,
+    )
+    inv = await _load_invoice_with_details(
+        db,
+        invoice_id=invoice_id,
+        tenant_id=ctx.tenant_id,
     )
     return ApiEnvelope(
         data=InvoiceWithDetails(
@@ -698,6 +736,20 @@ async def reprocess_invoice(
         await ensure_invoice_stored_file(db, inv)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            503,
+            "Database timed out; the invoice may be processing elsewhere. Retry in a moment.",
+        ) from exc
+    except Exception as exc:
+        from azure.core.exceptions import ResourceNotFoundError
+
+        if isinstance(exc, ResourceNotFoundError):
+            raise HTTPException(
+                400,
+                "Stored PDF not found in blob storage. Re-attach the file before reprocessing.",
+            ) from exc
+        raise
 
     previous_status = inv.status.value
     preserve_fields = await should_preserve_extracted_on_requeue(db, inv)
@@ -847,6 +899,13 @@ async def invoice_classification_audit(
         db,
         invoice=inv,
         tenant_id=ctx.tenant_id,
+    )
+    merged.update(
+        await load_citation_audit_detail(
+            db,
+            invoice_id=inv.id,
+            tenant_id=ctx.tenant_id,
+        )
     )
     return ApiEnvelope(data=merged)
 

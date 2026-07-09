@@ -52,6 +52,20 @@ def test_sanitize_invoice_no_strips_dated_bleed() -> None:
     assert sanitize_invoice_no(raw) == "RC-SIPL-AUG-INL-20250826-001"
 
 
+def test_sanitize_invoice_no_strips_dated_without_comma() -> None:
+    assert sanitize_invoice_no("2603110950SA DATED: 11.05.2026") == "2603110950SA"
+
+
+def test_split_invoice_no_and_date_recovers_bleed_date() -> None:
+    from datetime import date
+
+    from app.services.extraction.invoice_no_sanitizer import split_invoice_no_and_date
+
+    clean, inv_date = split_invoice_no_and_date("2603110950SA DATED: 11.05.2026")
+    assert clean == "2603110950SA"
+    assert inv_date == date(2026, 5, 11)
+
+
 def test_sanitize_invoice_no_strips_trailing_slash() -> None:
     assert sanitize_invoice_no("260371344/") == "260371344"
 
@@ -76,8 +90,18 @@ def test_di_scalar_fields_populated_only_non_empty() -> None:
     }
     populated = di_scalar_fields_populated(payload)
     assert populated == {"vendor", "invoice_no"}
-    assert not field_di_authoritative(payload, "total")
-    assert field_di_authoritative(payload, "invoice_no")
+    assert not field_di_authoritative(payload, "total", ocr_text="Invoice No: INV-1\nVendor: Acme")
+    assert not field_di_authoritative(payload, "invoice_no")
+    assert field_di_authoritative(
+        payload, "invoice_no", ocr_text="Invoice No: INV-1\nVendor: Acme"
+    )
+
+
+def test_field_di_authoritative_requires_grounding() -> None:
+    payload = {"invoice_fields": {"vendor": "Hallucinated Vendor", "invoice_no": "INV-1"}}
+    ocr_text = "TAX INVOICE\nVendor: Real Co\nInvoice No: INV-1"
+    assert not field_di_authoritative(payload, "vendor", ocr_text=ocr_text)
+    assert field_di_authoritative(payload, "invoice_no", ocr_text=ocr_text)
 
 
 def test_merge_commercial_invoice_freight_total_from_ocr() -> None:
@@ -135,10 +159,12 @@ def test_clear_llm_only_di_populated_fields() -> None:
     payload = {
         "invoice_fields": {"vendor": "DI Vendor", "total": None},
     }
+    ocr_text = "Vendor: DI Vendor\nInvoice No: LLM-1"
     cleared = clear_llm_scalars_for_di_populated_fields(
         parsed,
         ["vendor", "invoice_no", "total"],
         payload,
+        ocr_text=ocr_text,
     )
     assert cleared.vendor is None
     assert cleared.invoice_no == "LLM-1"
@@ -150,7 +176,12 @@ def test_apply_di_scalars_only_populated_keys() -> None:
     payload = {
         "invoice_fields": {"vendor": "DI Vendor", "total": None, "invoice_no": None},
     }
-    merged = apply_di_scalars_authoritative(parsed, payload, ["vendor", "total", "invoice_no"])
+    merged = apply_di_scalars_authoritative(
+        parsed,
+        payload,
+        ["vendor", "total", "invoice_no"],
+        ocr_text="Vendor: DI Vendor\nInvoice No: KEEP",
+    )
     assert merged.vendor == "DI Vendor"
     assert merged.total == Decimal("50")
     assert merged.invoice_no == "KEEP"

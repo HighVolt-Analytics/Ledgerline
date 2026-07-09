@@ -62,5 +62,47 @@ def default_playbook_profile(code: str) -> str:
     return str(value).strip().lower() if value else ""
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def default_classification_hints(code: str) -> list[str]:
+    return _string_list(_row(code).get("classification_hints"))
+
+
+def default_negative_hints(code: str) -> list[str]:
+    return _string_list(_row(code).get("negative_hints"))
+
+
+def default_cross_field_rules(code: str) -> list[str]:
+    return _string_list(_row(code).get("cross_field_rules"))
+
+
+def default_field_overrides(code: str) -> dict[str, dict[str, Any]]:
+    raw = _row(code).get("field_overrides")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in raw.items():
+        token = str(key or "").strip().lower()
+        if not token or not isinstance(value, dict):
+            continue
+        out[token] = dict(value)
+    return out
+
+
+def default_azure_di_profile(code: str) -> str:
+    value = _row(code).get("azure_di_profile")
+    return str(value).strip() if value else ""
+
+
+def default_fallback_if_unknown_subtype(code: str) -> str:
+    value = _row(code).get("fallback_if_unknown_subtype")
+    token = str(value).strip() if value else ""
+    return token or "generic_financial_document"
+
+
 def clear_document_type_defaults_cache() -> None:
     _load_defaults_index.cache_clear()

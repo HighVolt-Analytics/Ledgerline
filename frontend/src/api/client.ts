@@ -52,6 +52,7 @@ import type {
   InvoiceClassificationAudit,
   ProcessingStatus,
   RuleBookConfig,
+  RegistryFieldsResponse,
   RuleBookChangelogEntry,
   RuleBookRulesPayload,
   RuleBookEvaluateRequest,
@@ -343,15 +344,15 @@ function withAuthHeaders(init?: RequestInit): Headers {
   return headers;
 }
 
-/** Load in-memory token from sessionStorage before the first React render. */
+/** Load in-memory token from localStorage before the first React render. */
 export function hydrateAuthTokenFromSession(): void {
   if (authToken) return;
-  if (typeof sessionStorage === "undefined") return;
+  if (typeof localStorage === "undefined") return;
   const token = getAccessToken();
   if (token) authToken = token;
 }
 
-if (typeof sessionStorage !== "undefined") {
+if (typeof localStorage !== "undefined") {
   hydrateAuthTokenFromSession();
 }
 
@@ -1306,6 +1307,7 @@ export const api = {
   getRuleBookChangelog: (limit = 20) =>
     request<RuleBookChangelogEntry[]>(`/api/rule-book/changelog?limit=${limit}`),
   getSettings: () => request<AppSettings>("/api/settings"),
+  getRegistryFields: () => request<RegistryFieldsResponse>("/api/registry/fields"),
   listReconciliation: () => request<DailyReconciliation[]>("/api/reconciliation/daily"),
   getReconciliationDayDetail: (reconDate: string) =>
     request<ReconciliationDayDetail>(`/api/reconciliation/daily/${reconDate}/detail`),

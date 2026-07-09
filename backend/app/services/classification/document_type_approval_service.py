@@ -52,6 +52,7 @@ def _match_is_clean_for_touchless(
     *,
     match_mode: str,
 ) -> bool:
+    _ = results
     if not match_mode_requires_po(match_mode) and match_mode not in {
         "reference_invoice",
         "shipment",
@@ -62,10 +63,7 @@ def _match_is_clean_for_touchless(
         "two_way_grn_invoice",
     }:
         return True
-    vr15 = _validation_result_map(results).get("VR15")
-    if vr15 is None or not vr15.passed:
-        return False
-    return is_clean_match_message(vr15.message or "", match_mode=match_mode)
+    return False
 
 
 def _audit_match_is_clean(detail: dict[str, object] | None) -> bool:
@@ -208,9 +206,6 @@ async def apply_document_type_approval_gate(
     if mode == "variance_workflow":
         match_mode = effective_match_policy(definition).mode
         if not match_mode_requires_po(match_mode):
-            return False
-        vr15 = _validation_result_map(validation_results).get("VR15")
-        if vr15 is not None and vr15.passed:
             return False
         po = await load_purchase_order_for_invoice(session, invoice)
         if po is not None and po.variance_approved:

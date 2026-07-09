@@ -124,7 +124,7 @@ async def attach_dn_invoice_to_so(
         tenant_id=so.tenant_id,
         sales_order_id=so.id,
         dn_qty=qty,
-        dn_currency=getattr(dn_invoice, "currency", None) or "AUD",
+        dn_currency=getattr(dn_invoice, "currency", None) or "SGD",
         dn_date=dn_invoice.invoice_date,
         shipper=None,
         condition_note="Linked via invoice_no bridge",

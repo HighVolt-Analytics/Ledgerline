@@ -106,9 +106,9 @@ def resolve_sales_post_accounts(
         if recv or tax:
             return (
                 recv or "Accounts Receivable",
-                tax or "GST Collected",
+                tax or "Tax Collected",
             )
-    return ("Accounts Receivable", "GST Collected")
+    return ("Accounts Receivable", "Tax Collected")
 
 
 def resolve_config_mapping(

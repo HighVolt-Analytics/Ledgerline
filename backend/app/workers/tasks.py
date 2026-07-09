@@ -21,6 +21,14 @@ logger = get_logger(__name__)
 _last_run: str | None = None
 _inline_active = False
 
+
+def _pipeline_error_message(exc: BaseException) -> str:
+    text = str(exc).strip()
+    if text:
+        return text
+    return f"{type(exc).__name__}"
+
+
 _PENDING_STATUSES = [
     InvoiceStatus.PENDING,
     InvoiceStatus.PARSING,
@@ -99,7 +107,8 @@ async def process_invoice_by_id(
             return True
         except Exception as exc:
             await session.rollback()
-            logger.error("pipeline_error", error=str(exc), invoice_id=invoice_id)
+            error_message = _pipeline_error_message(exc)
+            logger.error("pipeline_error", error=error_message, invoice_id=invoice_id)
             async with db_session_with_rls(resolved_tid) as err_session:
                 inv = await get_for_tenant(err_session, Invoice, invoice_id, resolved_tid)
                 if (
@@ -113,7 +122,7 @@ async def process_invoice_by_id(
                         "pipeline_error",
                         invoice_id=invoice_id,
                         tenant_id=resolved_tid,
-                        detail=audit_document_detail(inv, error=str(exc)),
+                        detail=audit_document_detail(inv, error=error_message),
                     )
             return False
 

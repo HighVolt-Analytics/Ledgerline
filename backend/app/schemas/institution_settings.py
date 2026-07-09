@@ -1,4 +1,4 @@
-"""Institution profile schemas (timezone, locale, country)."""
+"""Institution profile schemas (timezone, locale, country, jurisdiction)."""
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,12 @@ class InstitutionSettingsResponse(BaseModel):
     timezone: str
     locale: str
     currency: str
+    tax_label: str = "Tax"
+    statutory_tax_rate: float | None = None
+    tax_id_kind: str = "generic"
+    tax_id_label: str = "Tax ID"
+    bank_routing_label: str = "Bank code"
+    field_labels: dict[str, str] = Field(default_factory=dict)
 
 
 class UpdateInstitutionSettingsRequest(BaseModel):

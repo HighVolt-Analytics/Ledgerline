@@ -58,7 +58,7 @@ async function detectCountryFromIp(): Promise<string | null> {
 
 /**
  * Resolve pricing region: URL → IP (API + fallbacks) → browser locale/timezone →
- * institution country → tenant billing region → AU default.
+ * institution country → tenant billing region → SG default.
  */
 export function usePricingRegion(options?: {
   tenantCountry?: string | null;
@@ -90,7 +90,7 @@ export function usePricingRegion(options?: {
       ipCountry ??
       options?.institutionCountry ??
       options?.tenantCountry ??
-      "AU";
+      "SG";
     return pricingRegionForCountry(country);
   }, [
     urlCountry,

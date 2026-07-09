@@ -80,7 +80,7 @@ async def ensure_receivable_for_invoice(db: AsyncSession, invoice: Invoice) -> C
         customer_registry_id=customer_registry_id,
         customer=invoice.vendor,
         amount=invoice.total,
-        currency=invoice.currency or "AUD",
+        currency=invoice.currency or "SGD",
         due_date=invoice.due_date,
         status=CollectionStatus.QUEUE,
     )

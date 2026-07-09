@@ -52,7 +52,11 @@ Rules:
 """
 
 
-def build_gap_fill_system_prompt(*, missing_keys: Sequence[str]) -> str:
+def build_gap_fill_system_prompt(
+    *,
+    missing_keys: Sequence[str],
+    qty_only_table_present: bool = False,
+) -> str:
     json_keys = build_llm_extract_json_keys(missing_keys)
     parts = [
         _GAP_FILL_SYSTEM_HEADER.strip(),
@@ -64,12 +68,19 @@ def build_gap_fill_system_prompt(*, missing_keys: Sequence[str]) -> str:
             [
                 "",
                 "LINE ITEMS (when missing_fields includes line_items):",
-                "- line_items: array of {description, qty, unit_price, amount} copied verbatim from OCR.",
+                "- line_items: array of {{description, qty, unit_price, amount}} copied verbatim from OCR.",
                 "- field_confidence must be a JSON object map (e.g. {\"line_items\": 0.95}), never a bare number.",
                 "- field_confidence.line_items: 0.95 when rows are verbatim OCR copies; 0.0 when line_items is [].",
                 "- Return [] when no product/charge table exists — do not invent rows.",
             ]
         )
+        if qty_only_table_present:
+            parts.extend(
+                [
+                    "- Qty-only table detected: extract {{description, qty}}; unit_price and amount must be null.",
+                    "- Exclude TOTALS / summary rows; extract only product/component lines.",
+                ]
+            )
     parts.extend(extraction_accuracy_prompt_lines())
     return "\n".join(parts)
 
@@ -116,7 +127,12 @@ async def gap_fill_missing_fields(
     if not (ocr.text or "").strip():
         return None
 
-    system = build_gap_fill_system_prompt(missing_keys=missing)
+    from app.services.extraction.line_items_parser import document_has_qty_only_table
+
+    system = build_gap_fill_system_prompt(
+        missing_keys=missing,
+        qty_only_table_present=document_has_qty_only_table(ocr.text, ocr.payload_json or {}),
+    )
     user = build_gap_fill_user_payload(ocr=ocr, missing_keys=missing)
     raw = await chat_json_async(
         system=system,
@@ -164,6 +180,8 @@ async def apply_extraction_gap_fill(
         selected_keys,
         parsed=parsed,
         invoice=invoice,
+        ocr_text=ocr.text,
+        ocr_payload=ocr.payload_json or {},
     )
     detail: dict[str, object] = {
         "gap_fill_attempted": False,
@@ -191,6 +209,7 @@ async def apply_extraction_gap_fill(
         gap,
         missing_keys=missing,
         ocr_text=ocr.text,
+        ocr_payload=ocr.payload_json or {},
     )
     detail["gap_fill_filled"] = list(merge_result.filled)
     detail["gap_fill_rejected"] = list(merge_result.rejected)

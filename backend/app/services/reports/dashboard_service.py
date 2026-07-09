@@ -44,7 +44,7 @@ from app.schemas.dashboard import (
     TopVendorRow,
 )
 from app.schemas.invoice import InvoiceStatus as InvoiceStatusSchema
-from app.tenant_settings import tenant_today
+from app.tenant_settings import tenant_currency, tenant_today
 
 _APPROVAL_STATUSES = frozenset(
     {
@@ -336,11 +336,13 @@ async def _sum_value_in_period(
     tenant_id: int,
     month_start: date,
     month_end: date,
+    *,
+    base: str | None = None,
 ) -> tuple[Decimal, dict[str, Decimal]]:
     rows = await _invoice_amount_rows_in_period(
         db, tenant_id, month_start, month_end, statuses=_BOOKED_STATUSES
     )
-    return sum_amounts_by_currency(rows)
+    return sum_amounts_by_currency(rows, base=base)
 
 
 async def _active_users_as_of(db: AsyncSession, tenant_id: int, as_of: date) -> int:
@@ -583,8 +585,10 @@ async def build_stats(
     distinct_vendors = await _distinct_vendors_in_period(
         db, tenant_id, period_start, period_end, statuses=_BOOKED_STATUSES
     )
+    tenant = await db.get(Tenant, tenant_id)
+    reporting_currency = tenant_currency(tenant)
     total_value, value_by_currency = await _sum_value_in_period(
-        db, tenant_id, period_start, period_end
+        db, tenant_id, period_start, period_end, base=reporting_currency
     )
     docs_via_upload = await _docs_via_upload(
         db, tenant_id, month_start=period_start, month_end=period_end
@@ -613,7 +617,7 @@ async def build_stats(
         duplicates_skipped=duplicates,
         rejected=rejected,
         pending_approval=pending_approval,
-        base_currency=BASE_CURRENCY,
+        base_currency=reporting_currency,
         total_value=total_value,
         value_by_currency=value_by_currency,
         total_value_aud=total_value,

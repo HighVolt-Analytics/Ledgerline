@@ -137,14 +137,25 @@ async def requeue_invoice_for_pipeline(
     preserve_document_type: bool = False,
     preserve_extracted_fields: bool = False,
 ) -> None:
-    """Reset posting artifacts; optionally wipe or keep extracted header fields."""
+    """Queue for pipeline; defer destructive field wipe until OCR gates pass."""
     if preserve_extracted_fields:
         await reset_invoice_for_approval(session, inv)
         return
-    keep_dt = preserve_document_type or "classification" in skip_steps_for(inv)
-    await reset_invoice_for_reprocess(
-        session,
-        inv,
-        preserve_document_type=keep_dt,
-        clear_overrides=False,
-    )
+    from app.models.journal import JournalEntry
+    from app.services.invoice.processing_override_catalog import set_deferred_full_reset
+
+    inv.status = InvoiceStatus.PENDING
+    inv.validation_results = None
+    inv.account_code = None
+    inv.account_name = None
+    inv.evaluation_status = None
+
+    for entry in (
+        await session.execute(
+            select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
+        )
+    ).scalars().all():
+        await session.delete(entry)
+
+    set_deferred_full_reset(inv)
+    await session.flush()

@@ -39,8 +39,8 @@ class ReportsKpiTrends(BaseModel):
 
 
 class ReportsAnalytics(BaseModel):
-    base_currency: str = "AUD"
-    tax_label: str = "GST"
+    base_currency: str = ""
+    tax_label: str = "Tax"
     period_key: str
     period_label: str
     net_spend: Decimal

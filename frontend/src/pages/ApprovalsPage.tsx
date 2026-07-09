@@ -25,6 +25,7 @@ import {
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { invoiceCanPublishToLedger, evaluationReviewTooltip } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
+import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import {
   APPROVABLE_STATUSES,
   APPROVAL_QUEUE_STATUSES,
@@ -70,7 +71,7 @@ function docNumber(inv: Invoice): string {
 
 export function ApprovalsPage() {
   const queryClient = useQueryClient();
-  const { data: ruleBook } = useRuleBookConfig();
+  const { data: ruleBook } = useRuleBookConfig(false);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -183,7 +184,7 @@ export function ApprovalsPage() {
 
   useVisibilityPolling(() => {
     if (busyRef.current !== null) return;
-    void load({ silent: true, fresh: true });
+    void load({ silent: true });
   }, APPROVAL_POLL_MS);
 
   useEffect(() => {
@@ -230,7 +231,10 @@ export function ApprovalsPage() {
       setToast("Upload a PDF before approving this invoice.");
       return;
     }
-    const fieldCheck = validateInvoiceReadyForApproval(inv, ruleBook?.documentTypes);
+    const documentTypes =
+      ruleBook?.documentTypes ??
+      ruleBookConfigFromApi(await api.getRuleBookConfig()).documentTypes;
+    const fieldCheck = validateInvoiceReadyForApproval(inv, documentTypes);
     if (!fieldCheck.ok) {
       setToast(fieldCheck.message);
       return;

@@ -1,0 +1,6 @@
+CREDIT NOTE CN-7788
+Vendor: MIXED LINES CORP
+ITEM  QTY  AMOUNT
+Return Widget  -2  -40.00
+New Widget  5  100.00
+TOTAL  60.00

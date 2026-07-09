@@ -140,10 +140,10 @@ export function ReportsPage() {
   const { data: exportDocs } = useReportDocuments(exportFilter, Boolean(exportFilter));
   const { data: allDocs } = useReportDocuments({}, exportOpen && exportMode === "all");
 
-  const currency = analytics?.base_currency ?? "AUD";
-  const taxLabel = analytics?.tax_label ?? "GST";
+  const currency = analytics?.base_currency ?? "SGD";
+  const taxLabel = analytics?.tax_label ?? "Tax";
   const symbol = currencySymbol(currency);
-  const fmt = (v: number) => money(v, currency);
+  const fmt = (v: number) => money(v, currency, locale);
 
   const byAccount = useMemo(
     () => (analytics?.by_gl_account ?? []).map(mapGlAccountRow),

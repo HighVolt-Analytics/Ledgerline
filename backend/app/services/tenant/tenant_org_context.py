@@ -7,6 +7,7 @@ from typing import Any
 
 from app.models.tenant import Tenant
 from app.schemas.rule_book_config import AiClassificationConfig, OrgContextConfig, RuleBookConfigPayload
+from app.tenant_settings import DEFAULT_COUNTRY, tenant_country
 
 _VALID_PERSPECTIVES = frozenset({"buyer", "seller", "mixed"})
 
@@ -26,9 +27,10 @@ class OrgContext:
     default_perspective: str = "buyer"
     intake_summary: str = ""
     classification_hints: str = ""
+    country: str = DEFAULT_COUNTRY
 
 
-def _org_context_from_mapping(block: dict[str, Any]) -> OrgContext:
+def _org_context_from_mapping(block: dict[str, Any], *, country: str = DEFAULT_COUNTRY) -> OrgContext:
     aliases_raw = block.get("aliases") or []
     aliases = [str(a).strip() for a in aliases_raw if str(a).strip()]
     return OrgContext(
@@ -44,6 +46,7 @@ def _org_context_from_mapping(block: dict[str, Any]) -> OrgContext:
         classification_hints=str(
             block.get("classification_hints") or block.get("classificationHints") or ""
         ).strip(),
+        country=country,
     )
 
 
@@ -52,15 +55,17 @@ def _settings_dict(tenant: Tenant | None) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-def org_context_from_settings(settings: dict[str, Any]) -> OrgContext:
+def org_context_from_settings(settings: dict[str, Any], *, country: str | None = None) -> OrgContext:
+    code = (country or DEFAULT_COUNTRY).strip().upper() or DEFAULT_COUNTRY
     block = settings.get("org_context")
     if not isinstance(block, dict):
-        return OrgContext()
-    return _org_context_from_mapping(block)
+        return OrgContext(country=code)
+    return _org_context_from_mapping(block, country=code)
 
 
 def org_context_for_tenant(tenant: Tenant | None) -> OrgContext:
-    ctx = org_context_from_settings(_settings_dict(tenant))
+    country = tenant_country(tenant)
+    ctx = org_context_from_settings(_settings_dict(tenant), country=country)
     if ctx.legal_name:
         return ctx
     if tenant and tenant.name:
@@ -71,6 +76,7 @@ def org_context_for_tenant(tenant: Tenant | None) -> OrgContext:
             classification_hints=ctx.classification_hints,
             abn=ctx.abn,
             aliases=list(ctx.aliases),
+            country=country,
         )
     return ctx
 
@@ -82,6 +88,7 @@ def ai_classification_from_config(config: RuleBookConfigPayload | None) -> AiCla
 
 
 def org_context_from_config(config: RuleBookConfigPayload | None, tenant: Tenant | None) -> OrgContext:
+    country = tenant_country(tenant)
     if config is not None and config.org_context is not None:
         oc = config.org_context
         return OrgContext(
@@ -91,6 +98,7 @@ def org_context_from_config(config: RuleBookConfigPayload | None, tenant: Tenant
             default_perspective=normalize_org_perspective(oc.default_perspective),
             intake_summary=oc.intake_summary.strip(),
             classification_hints=oc.classification_hints.strip(),
+            country=country,
         )
     return org_context_for_tenant(tenant)
 

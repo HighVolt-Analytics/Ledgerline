@@ -38,3 +38,4 @@ class AppSettingsResponse(BaseModel):
     payment_manual_execution_enabled: bool = False
     payment_manual_execution_limit_usd: float = 1000.0
     payment_execution_disabled: bool = False
+    use_field_registry: bool = False

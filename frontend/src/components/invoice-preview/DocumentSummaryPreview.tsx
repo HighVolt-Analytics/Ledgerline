@@ -16,6 +16,8 @@ import {
 
   taxMetaForCurrency,
 
+  taxMetaForJurisdiction,
+
   type ContentReference,
 
   type DocumentContentProfile,
@@ -46,7 +48,7 @@ export type DocumentSummaryPreviewProps = {
 
   fmt: (value: string | null | undefined) => string;
 
-  tax: { label: string; rate: number };
+  tax: { label: string; rate: number | null };
 
   sourceKind: string;
 
@@ -374,7 +376,7 @@ function PreviewTotalsBlock({
 
   fmt: (value: string | null | undefined) => string;
 
-  tax: { label: string; rate: number };
+  tax: { label: string; rate: number | null };
 
   compact: boolean;
 
@@ -424,7 +426,7 @@ function PreviewTotalsBlock({
 
         <PreviewKeyValueRow
 
-          label={`${tax.label} ${tax.rate}%`}
+          label={tax.rate != null ? `${tax.label} ${tax.rate}%` : tax.label}
 
           value={fmt(taxAmount)}
 
@@ -692,5 +694,5 @@ export function DocumentSummaryPreview({
 
 
 
-export { formatPreviewMoney as formatMoney, taxMetaForCurrency as taxMeta };
+export { formatPreviewMoney as formatMoney, taxMetaForCurrency as taxMeta, taxMetaForJurisdiction };
 

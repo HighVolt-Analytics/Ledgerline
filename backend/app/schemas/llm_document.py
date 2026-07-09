@@ -60,6 +60,11 @@ class LlmParty(BaseModel):
         return self
 
 
+class FieldCitation(BaseModel):
+  snippet: str = ""
+  page: int | None = None
+
+
 class LlmLineItem(BaseModel):
     description: str = ""
     amount: Decimal | None = None
@@ -103,6 +108,7 @@ class LlmDocumentResult(BaseModel):
     bank_name: str = ""
     line_items: list[LlmLineItem] = Field(default_factory=list)
     field_confidence: dict[str, float] = Field(default_factory=dict)
+    field_citations: dict[str, FieldCitation] = Field(default_factory=dict)
     extracted_fields: dict[str, str] = Field(default_factory=dict)
     raw: dict[str, Any] = Field(default_factory=dict)
 
@@ -196,4 +202,23 @@ class LlmDocumentResult(BaseModel):
                 out[token] = float(score)
             except (TypeError, ValueError):
                 continue
+        return out
+
+    @field_validator("field_citations", mode="before")
+    @classmethod
+    def _coerce_field_citations(cls, value: Any) -> dict[str, FieldCitation]:
+        if value is None or not isinstance(value, dict):
+            return {}
+        out: dict[str, FieldCitation] = {}
+        for key, citation in value.items():
+            token = str(key or "").strip().lower()
+            if not token:
+                continue
+            if isinstance(citation, FieldCitation):
+                out[token] = citation
+            elif isinstance(citation, dict):
+                out[token] = FieldCitation(
+                    snippet=str(citation.get("snippet") or "").strip(),
+                    page=citation.get("page"),
+                )
         return out

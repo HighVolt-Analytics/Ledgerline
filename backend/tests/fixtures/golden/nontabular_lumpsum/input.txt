@@ -1,0 +1,6 @@
+INVOICE
+Vendor: ACME SUBSCRIPTION LTD
+Invoice No: SUB-2025-001
+Date: 01/01/2025
+Description: Annual platform subscription fee
+Total: USD 12,000.00

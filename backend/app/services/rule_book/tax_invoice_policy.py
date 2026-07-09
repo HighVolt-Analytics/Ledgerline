@@ -1,4 +1,4 @@
-"""Per-country tax-invoice wording policies for VR10."""
+"""Per-country tax-invoice wording policies for VR10 (backed by jurisdiction packs)."""
 
 from __future__ import annotations
 
@@ -19,67 +19,23 @@ def _patterns(*expressions: str) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(expr, re.I) for expr in expressions)
 
 
-_TAX_INVOICE = _patterns(r"tax\s+invoice")
-_VAT_INVOICE = _patterns(r"vat\s+invoice", r"tax\s+invoice")
-_DE_INVOICE = _patterns(r"rechnung", r"\bust\b", r"mwst", r"tax\s+invoice")
+# Shared phrase sets used when building jurisdiction packs.
+TAX_INVOICE_PHRASES = _patterns(r"tax\s+invoice")
+VAT_INVOICE_PHRASES = _patterns(r"vat\s+invoice", r"tax\s+invoice")
+DE_INVOICE_PHRASES = _patterns(r"rechnung", r"\bust\b", r"mwst", r"tax\s+invoice")
 
-COUNTRY_TAX_INVOICE_POLICIES: dict[str, TaxInvoicePolicy] = {
-    "AU": TaxInvoicePolicy(
-        enabled=True,
-        phrase_patterns=_TAX_INVOICE,
-        amount_threshold=Decimal("1000"),
-        enforce_when_tax_present=True,
-    ),
-    "NZ": TaxInvoicePolicy(
-        enabled=True,
-        phrase_patterns=_TAX_INVOICE,
-        amount_threshold=Decimal("1000"),
-        enforce_when_tax_present=True,
-    ),
-    "SG": TaxInvoicePolicy(
-        enabled=True,
-        phrase_patterns=_TAX_INVOICE,
-        amount_threshold=None,
-        enforce_when_tax_present=True,
-    ),
-    "GB": TaxInvoicePolicy(
-        enabled=True,
-        phrase_patterns=_VAT_INVOICE,
-        amount_threshold=None,
-        enforce_when_tax_present=True,
-    ),
-    "DE": TaxInvoicePolicy(
-        enabled=True,
-        phrase_patterns=_DE_INVOICE,
-        amount_threshold=None,
-        enforce_when_tax_present=True,
-    ),
-    "IN": TaxInvoicePolicy(
-        enabled=True,
-        phrase_patterns=_TAX_INVOICE,
-        amount_threshold=None,
-        enforce_when_tax_present=True,
-    ),
-    "AE": TaxInvoicePolicy(
-        enabled=True,
-        phrase_patterns=_VAT_INVOICE,
-        amount_threshold=None,
-        enforce_when_tax_present=True,
-    ),
-    "US": TaxInvoicePolicy(
-        enabled=False,
-        phrase_patterns=(),
-        amount_threshold=None,
-        enforce_when_tax_present=False,
-    ),
-}
+# Back-compat aliases for older imports.
+_TAX_INVOICE = TAX_INVOICE_PHRASES
+_VAT_INVOICE = VAT_INVOICE_PHRASES
+_DE_INVOICE = DE_INVOICE_PHRASES
 
 
 def tax_invoice_policy_for_country(country_code: str) -> TaxInvoicePolicy | None:
-    code = (country_code or "").strip().upper()
-    if not code:
-        return None
-    return COUNTRY_TAX_INVOICE_POLICIES.get(code)
+    # Lazy import avoids cycle: packs -> TaxInvoicePolicy/phrases -> this helper.
+    from app.jurisdiction.packs import jurisdiction_pack_for_country
+
+    pack = jurisdiction_pack_for_country(country_code)
+    return pack.tax_invoice
 
 
 def document_has_tax_invoice_wording(text: str, policy: TaxInvoicePolicy) -> bool:

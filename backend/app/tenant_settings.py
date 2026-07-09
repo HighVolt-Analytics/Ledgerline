@@ -1,4 +1,9 @@
-"""Institution (tenant) locale and timezone — stored in tenant.settings_json."""
+"""Institution (tenant) locale and timezone — stored in tenant.settings_json.
+
+Currency / timezone / locale per country come from jurisdiction pack JSON
+(see ``data/jurisdiction_packs.json``). Platform DEFAULT_* constants are
+SG/Singapore for schemas and empty-settings fallbacks.
+"""
 
 from __future__ import annotations
 
@@ -12,29 +17,29 @@ DEFAULT_COUNTRY = "SG"
 DEFAULT_TIMEZONE = "Asia/Singapore"
 DEFAULT_LOCALE = "en-SG"
 
-# Primary business timezone per supported country (institution default).
-COUNTRY_DEFAULTS: dict[str, dict[str, str]] = {
-    "AU": {"timezone": "Australia/Sydney", "locale": "en-AU"},
-    "US": {"timezone": "America/New_York", "locale": "en-US"},
-    "GB": {"timezone": "Europe/London", "locale": "en-GB"},
-    "IN": {"timezone": "Asia/Kolkata", "locale": "en-IN"},
-    "SG": {"timezone": "Asia/Singapore", "locale": "en-SG"},
-    "NZ": {"timezone": "Pacific/Auckland", "locale": "en-NZ"},
-    "AE": {"timezone": "Asia/Dubai", "locale": "ar-AE"},
-    "DE": {"timezone": "Europe/Berlin", "locale": "de-DE"},
-}
 
-# ISO currency per supported country — aligned with frontend settingsData.ts.
-COUNTRY_CURRENCY: dict[str, str] = {
-    "AU": "AUD",
-    "US": "USD",
-    "GB": "GBP",
-    "IN": "INR",
-    "SG": "SGD",
-    "NZ": "NZD",
-    "AE": "AED",
-    "DE": "EUR",
-}
+def _country_defaults_from_packs() -> dict[str, dict[str, str]]:
+    from app.jurisdiction.loader import country_locale_map
+
+    return country_locale_map()
+
+
+def _country_currency_from_packs() -> dict[str, str]:
+    from app.jurisdiction.loader import country_currency_map
+
+    return country_currency_map()
+
+
+# Populated from pack JSON at import — source of truth for currency/TZ/locale.
+COUNTRY_DEFAULTS: dict[str, dict[str, str]] = _country_defaults_from_packs()
+COUNTRY_CURRENCY: dict[str, str] = _country_currency_from_packs()
+
+
+def refresh_country_maps_from_packs() -> None:
+    """Reload COUNTRY_* maps after pack cache clear (tests / hot reload)."""
+    global COUNTRY_DEFAULTS, COUNTRY_CURRENCY
+    COUNTRY_DEFAULTS = _country_defaults_from_packs()
+    COUNTRY_CURRENCY = _country_currency_from_packs()
 
 
 def default_institution_settings() -> dict[str, str]:
@@ -68,7 +73,10 @@ def tenant_country(tenant: Tenant | None) -> str:
 
 def country_currency(country_code: str) -> str:
     code = (country_code or "").strip().upper()
-    return COUNTRY_CURRENCY.get(code, COUNTRY_CURRENCY[DEFAULT_COUNTRY])
+    currencies = COUNTRY_CURRENCY
+    if code in currencies:
+        return currencies[code]
+    return currencies.get(DEFAULT_COUNTRY, "SGD")
 
 
 def tenant_currency(tenant: Tenant | None) -> str:
@@ -81,7 +89,10 @@ def tenant_timezone(tenant: Tenant | None) -> str:
     if isinstance(tz, str) and tz.strip():
         return _validate_timezone(tz.strip())
     country = tenant_country(tenant)
-    return COUNTRY_DEFAULTS.get(country, COUNTRY_DEFAULTS[DEFAULT_COUNTRY])["timezone"]
+    defaults = COUNTRY_DEFAULTS.get(country) or COUNTRY_DEFAULTS.get(DEFAULT_COUNTRY)
+    if defaults:
+        return defaults["timezone"]
+    return DEFAULT_TIMEZONE
 
 
 def tenant_locale(tenant: Tenant | None) -> str:
@@ -90,7 +101,10 @@ def tenant_locale(tenant: Tenant | None) -> str:
     if isinstance(locale, str) and locale.strip():
         return locale.strip()
     country = tenant_country(tenant)
-    return COUNTRY_DEFAULTS.get(country, COUNTRY_DEFAULTS[DEFAULT_COUNTRY])["locale"]
+    defaults = COUNTRY_DEFAULTS.get(country) or COUNTRY_DEFAULTS.get(DEFAULT_COUNTRY)
+    if defaults:
+        return defaults["locale"]
+    return DEFAULT_LOCALE
 
 
 def tenant_today(tenant: Tenant | None) -> date:

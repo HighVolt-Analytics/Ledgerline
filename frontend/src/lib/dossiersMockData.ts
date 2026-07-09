@@ -134,8 +134,8 @@ function fullPass(detailPrefix: string): DossierPipelineStep[] {
       at: "2026-02-03 08:12:12",
       actor: "Playbook service",
       checks: [
-        { id: "bun-1", label: "DT-14 PO present", state: "pass", ruleRef: "VR-PB01" },
-        { id: "bun-2", label: "DT-15 GRN present", state: "pass", ruleRef: "VR-PB01" },
+        { id: "bun-1", label: "DT-14 PO present", state: "pass", ruleRef: "VR-PB02" },
+        { id: "bun-2", label: "DT-15 GRN present", state: "pass", ruleRef: "VR-PB02" },
       ],
     },
     {
@@ -536,14 +536,14 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
             id: "bun-po",
             label: "DT-14 Purchase order linked",
             state: "pass",
-            ruleRef: "VR-PB01",
+            ruleRef: "VR-PB02",
             detail: "PO-44890 found in dossier",
           },
           {
             id: "bun-grn",
             label: "DT-15 Goods receipt linked",
             state: "fail",
-            ruleRef: "VR-PB01",
+            ruleRef: "VR-PB02",
             expected: "GRN for PO-44890",
             actual: "Not present",
             detail: "No GRN document uploaded or matched by linkage key",
@@ -793,8 +793,8 @@ export const DOSSIER_MOCK_CATALOG: DossierSummary[] = [
         at: "2026-02-03 14:02:09",
         actor: "Playbook service",
         checks: [
-          { id: "b-po", label: "DT-14 Purchase order", state: "pass", ruleRef: "VR-PB01", actual: "PO-44910" },
-          { id: "b-grn", label: "DT-15 Goods receipt", state: "pass", ruleRef: "VR-PB01", actual: "GRN-90255" },
+          { id: "b-po", label: "DT-14 Purchase order", state: "pass", ruleRef: "VR-PB02", actual: "PO-44910" },
+          { id: "b-grn", label: "DT-15 Goods receipt", state: "pass", ruleRef: "VR-PB02", actual: "GRN-90255" },
         ],
       },
       {

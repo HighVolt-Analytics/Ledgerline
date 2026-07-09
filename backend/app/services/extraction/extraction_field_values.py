@@ -117,10 +117,23 @@ def _shipped_defaults_for_definition(defn: DocumentTypeDefinition) -> list[str]:
 
 def configured_extraction_keys(defn: DocumentTypeDefinition) -> list[str]:
     """Resolved extraction keys for one document type definition."""
-    keys = _normalized_keys_from_definition(defn)
+    from app.services.classification.document_type_catalog import (
+        _org_uses_shipped_classification_metadata,
+        _shipped_defaults_lookup_code,
+        extraction_fields_for_dt,
+    )
+    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
+
+    keys = extraction_fields_for_dt(defn)
     if keys:
-        return keys
-    return _shipped_defaults_for_definition(defn)
+        return normalize_extraction_field_keys(keys)
+    org_keys = _normalized_keys_from_definition(defn)
+    if org_keys:
+        return org_keys
+    shipped_lookup = _shipped_defaults_lookup_code(defn.code, defn)
+    if _org_uses_shipped_classification_metadata(defn, shipped_lookup):
+        return _shipped_defaults_for_definition(defn)
+    return []
 
 
 def effective_extraction_field_keys_for_dt(
@@ -390,6 +403,10 @@ def build_smart_ocr_excerpt(
 
 
 def _field_hint_for_key(key: str) -> str:
+    from app.registry.adapter import use_field_registry, get_registry_adapter
+
+    if use_field_registry():
+        return get_registry_adapter().hint_for(key)
     token = str(key or "").strip().lower()
     if token in _FIELD_HINT_PATTERNS:
         return _FIELD_HINT_PATTERNS[token]
@@ -450,6 +467,10 @@ def extraction_field_manifest_prompt_lines(manifest: list[dict[str, str]]) -> li
 
 def extraction_accuracy_prompt_lines() -> list[str]:
     """Shared conservative OCR-only rules for primary extract and gap-fill prompts."""
+    from app.registry.adapter import use_field_registry, get_registry_adapter
+
+    if use_field_registry():
+        return get_registry_adapter().accuracy_prompt_lines()
     return [
         "",
         "Accuracy rules (mandatory):",
@@ -457,6 +478,7 @@ def extraction_accuracy_prompt_lines() -> list[str]:
         "- If a value is not explicitly printed in ocr.text_excerpt or field_snippets, leave the field empty.",
         "- Never default currency (e.g. AUD), assume tax rates, or calculate totals from other fields.",
         "- Never swap semantically similar fields (invoice_no ≠ po_reference, vendor ≠ buyer).",
+        "- invoice_no: copy ONLY the invoice/reference token — never include trailing DATED/DATE labels or dates in invoice_no; put dates in invoice_date.",
         "- field_confidence: 0.0 when empty; 0.95+ only for verbatim OCR copies.",
         "- Example: if you see 'Tax Invoice' but no invoice number label, invoice_no stays empty.",
         "- Example: if project_code is not labeled in OCR, do not infer it from PO or line items.",
@@ -613,11 +635,27 @@ def di_scalar_fields_populated(payload: dict[str, object] | None) -> set[str]:
     return populated
 
 
-def field_di_authoritative(payload: dict[str, object] | None, field_key: str) -> bool:
-    """True when DI provided a non-empty value for this scalar field."""
+def field_di_authoritative(
+    payload: dict[str, object] | None,
+    field_key: str,
+    *,
+    ocr_text: str | None = None,
+    selected_keys: Sequence[str] | None = None,
+) -> bool:
+    """True when DI provided a non-empty value that is OCR-grounded (trusted)."""
     if not prebuilt_invoice_scalars_active(payload):
         return False
-    return field_key.strip().lower() in di_scalar_fields_populated(payload)
+    if not ocr_text:
+        return False
+    token = field_key.strip().lower()
+    keys = (
+        list(selected_keys)
+        if selected_keys
+        else list(_DI_SCALAR_FIELD_KEYS) + list(_DI_PARTY_FIELD_KEYS)
+    )
+    if token in di_trusted_scalar_fields(payload, ocr_text, keys):
+        return True
+    return token in di_trusted_party_fields(payload, ocr_text, keys)
 
 
 _SCALAR_INFERRED_PARTY_KEYS: dict[str, tuple[str, ...]] = {
@@ -643,6 +681,55 @@ def di_party_fields_populated(payload: dict[str, object] | None) -> set[str]:
         if scalar_key in scalar_populated:
             populated.update(party_keys)
     return populated
+
+
+def di_trusted_scalar_fields(
+    payload: dict[str, object] | None,
+    ocr_text: str | None,
+    selected_keys: Sequence[str],
+) -> set[str]:
+    """DI-populated scalar keys whose values are OCR-grounded."""
+    populated = di_scalar_fields_populated(payload)
+    if not populated or not ocr_text:
+        return set()
+    di_data = resolve_scalars_from_ocr_payload(payload, selected_keys)
+    if di_data is None:
+        return set()
+    trusted: set[str] = set()
+    for key in populated:
+        if not _field_in_selected_keys(key, selected_keys):
+            continue
+        value = getattr(di_data, key, None)
+        if _scalar_grounded_for_gap_fill(key, value, ocr_text):
+            trusted.add(key)
+    return trusted
+
+
+def di_trusted_party_fields(
+    payload: dict[str, object] | None,
+    ocr_text: str | None,
+    selected_keys: Sequence[str],
+) -> set[str]:
+    """DI party keys with explicit values that are OCR-grounded."""
+    if not payload or not ocr_text:
+        return set()
+    populated = di_party_fields_populated(payload)
+    if not populated:
+        return set()
+    selected = {str(k).strip().lower() for k in selected_keys}
+    party_raw = payload.get("di_party_fields")
+    if not isinstance(party_raw, dict):
+        party_raw = {}
+    trusted: set[str] = set()
+    for party_key in populated:
+        if party_key not in selected:
+            continue
+        value = party_raw.get(party_key)
+        if not value or not str(value).strip():
+            continue
+        if _scalar_grounded_for_gap_fill(party_key, str(value).strip(), ocr_text):
+            trusted.add(party_key)
+    return trusted
 
 
 def resolve_scalars_from_ocr_payload(
@@ -735,8 +822,25 @@ def normalize_di_party_fields_for_prompt(
 
 def build_finance_field_manifest(selected_keys: Sequence[str]) -> list[dict[str, str]]:
     """Per-field finance semantics for LLM extraction prompts."""
+    from app.registry.adapter import use_field_registry, get_registry_adapter
+
     base = build_extraction_field_manifest(selected_keys)
-    enriched: list[dict[str, str]] = []
+    if use_field_registry():
+        defs_by_key = {
+            row["key"]: row for row in get_registry_adapter().finance_defs_for_keys(list(selected_keys))
+        }
+        enriched: list[dict[str, str]] = []
+        for row in base:
+            defs = defs_by_key.get(row["key"], {})
+            enriched.append(
+                {
+                    **row,
+                    "finance_role": defs.get("finance_role", row["label"]),
+                    "do_not_use": defs.get("do_not_use", ""),
+                }
+            )
+        return enriched
+    enriched = []
     for row in base:
         key = row["key"]
         defs = _FINANCE_FIELD_DEFS.get(key, {})
@@ -787,8 +891,11 @@ def build_scalar_fields_presentation_prompt(
         ]
         if populated:
             lines.append(
-                f"- DI-populated keys (copy only): {', '.join(sorted(populated))}."
+                f"- DI-trusted keys (copy only): {', '.join(sorted(populated))}."
             )
+        lines.append(
+            "- DI hints not in the trusted list must be verified against OCR; do not copy if not visible in text."
+        )
         lines.append(
             "- field_confidence: 0.95 when copied from azure_di_scalar_fields; per-field OCR confidence otherwise; 0.0 when empty."
         )
@@ -807,23 +914,29 @@ def apply_di_scalars_authoritative(
     parsed: InvoiceData,
     payload: dict[str, object],
     selected_keys: Sequence[str],
+    *,
+    ocr_text: str | None = None,
 ) -> InvoiceData:
-    """Overwrite only DI-populated scalar keys with invoice_fields values."""
+    """Overwrite only OCR-grounded (trusted) DI scalar keys with invoice_fields values."""
     di_data = resolve_scalars_from_ocr_payload(payload, selected_keys)
     if di_data is None:
         return parsed
-    populated = di_scalar_fields_populated(payload)
+    trusted = di_trusted_scalar_fields(payload, ocr_text, selected_keys)
     updates: dict[str, object] = {}
     for key in _DI_SCALAR_FIELD_KEYS:
-        if key not in populated or not _field_in_selected_keys(key, selected_keys):
+        if key not in trusted or not _field_in_selected_keys(key, selected_keys):
             continue
         updates[key] = getattr(di_data, key, None)
-    party_populated = di_party_fields_populated(payload)
-    if party_populated and di_data.extracted_fields:
+    party_trusted = di_trusted_party_fields(payload, ocr_text, selected_keys)
+    if party_trusted and di_data.extracted_fields:
         merged_extracted = dict(extracted_fields_from_parsed(parsed))
         selected = {str(k).strip().lower() for k in selected_keys}
         for party_key in _DI_PARTY_FIELD_KEYS:
-            if party_key in selected and party_key in party_populated and party_key in di_data.extracted_fields:
+            if (
+                party_key in selected
+                and party_key in party_trusted
+                and party_key in di_data.extracted_fields
+            ):
                 merged_extracted[party_key] = di_data.extracted_fields[party_key]
         updates["extracted_fields"] = merged_extracted
     if not updates:
@@ -835,10 +948,12 @@ def clear_llm_scalars_for_di_populated_fields(
     parsed: InvoiceData,
     selected_keys: Sequence[str],
     payload: dict[str, object] | None,
+    *,
+    ocr_text: str | None = None,
 ) -> InvoiceData:
-    """Clear LLM values only for scalar keys DI already populated."""
-    populated = di_scalar_fields_populated(payload)
-    party_populated = di_party_fields_populated(payload)
+    """Clear LLM values only for scalar keys where DI values are OCR-grounded (trusted)."""
+    populated = di_trusted_scalar_fields(payload, ocr_text, selected_keys)
+    party_populated = di_trusted_party_fields(payload, ocr_text, selected_keys)
     if not populated and not party_populated:
         return parsed
     updates: dict[str, object] = {}
@@ -867,9 +982,13 @@ def clear_llm_scalars_for_di(
     parsed: InvoiceData,
     selected_keys: Sequence[str],
     ocr_payload: dict[str, object] | None = None,
+    *,
+    ocr_text: str | None = None,
 ) -> InvoiceData:
     """Clear LLM canonical scalars before DI merge applies authoritative values."""
-    return clear_llm_scalars_for_di_populated_fields(parsed, selected_keys, ocr_payload)
+    return clear_llm_scalars_for_di_populated_fields(
+        parsed, selected_keys, ocr_payload, ocr_text=ocr_text
+    )
 
 
 def attach_di_metadata_to_payload(payload: dict[str, object], invoice_data: InvoiceData) -> None:
@@ -964,6 +1083,27 @@ def filter_parsed_to_requested_keys(
     return replace(parsed, **updates)
 
 
+def _sanitize_extracted_field_value(key: str, value: object) -> str | None:
+    from app.services.purchase.po_reference import is_plausible_po_reference
+    from app.services.sales.so_reference import is_plausible_so_reference
+    from app.services.shared.reference_field_sanitizer import (
+        is_reference_like_extraction_key,
+        sanitize_reference_for_column,
+        sanitize_reference_value,
+    )
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if not is_reference_like_extraction_key(key):
+        return text
+    if key in {"so_reference", "sales_order", "sales_order_no", "so_number"}:
+        return sanitize_reference_for_column(text, max_len=100, is_plausible=is_plausible_so_reference)
+    if key in {"po_reference", "purchase_order", "purchase_order_no", "po_number"}:
+        return sanitize_reference_for_column(text, max_len=100, is_plausible=is_plausible_po_reference)
+    return sanitize_reference_value(text, max_len=100)
+
+
 def normalize_extracted_fields_map(raw: Any) -> dict[str, str]:
     if not isinstance(raw, dict):
         return {}
@@ -972,7 +1112,7 @@ def normalize_extracted_fields_map(raw: Any) -> dict[str, str]:
         token = str(key or "").strip().lower()
         if not token or not is_valid_extraction_field_key(token):
             continue
-        text = str(value or "").strip()
+        text = _sanitize_extracted_field_value(token, value)
         if text:
             out[token] = text
     return out
@@ -1065,9 +1205,11 @@ def apply_parsed_extraction_fields(invoice: Invoice, parsed: InvoiceData) -> Non
     existing = dict(invoice.extracted_fields or {})
     existing.update(custom)
     invoice.extracted_fields = existing or None
+    from app.services.purchase.po_reference import ensure_invoice_po_reference
     from app.services.sales.so_reference import ensure_invoice_so_reference
 
     ensure_invoice_so_reference(invoice)
+    ensure_invoice_po_reference(invoice)
 
 
 _LLM_RESERVED_RAW_KEYS = frozenset(
@@ -1229,6 +1371,8 @@ def missing_configured_extraction_keys(
     *,
     parsed: InvoiceData,
     invoice: Invoice | None = None,
+    ocr_text: str | None = None,
+    ocr_payload: dict[str, object] | None = None,
 ) -> list[str]:
     """Configured extraction keys still empty after main extract + OCR enrich."""
     missing: list[str] = []
@@ -1236,7 +1380,20 @@ def missing_configured_extraction_keys(
         token = str(raw or "").strip().lower()
         if not token or not is_valid_extraction_field_key(token):
             continue
-        if token in INFRASTRUCTURE_ATTRS or token == "line_items":
+        if token in INFRASTRUCTURE_ATTRS:
+            continue
+        if token == "line_items":
+            if extraction_field_present_on_parsed(token, parsed):
+                continue
+            from app.services.extraction.line_items_parser import (
+                document_has_charge_lines,
+                document_has_line_item_table,
+            )
+
+            if document_has_line_item_table(ocr_text, ocr_payload) or document_has_charge_lines(
+                ocr_text
+            ):
+                missing.append(token)
             continue
         if not extraction_field_present(token, parsed=parsed, invoice=invoice):
             missing.append(token)
@@ -1328,12 +1485,15 @@ def _scalar_grounded_for_gap_fill(key: str, value: object, ocr_text: str | None)
 
     from app.services.extraction.field_grounding_service import (
         _date_grounded_in_ocr,
+        _invoice_no_grounded,
         _money_grounded_in_ocr,
         value_grounded_in_ocr,
     )
 
     if _scalar_empty(value):
         return False
+    if key == "invoice_no":
+        return _invoice_no_grounded(str(value), ocr_text)
     if key in ("invoice_date", "due_date"):
         if isinstance(value, date):
             return _date_grounded_in_ocr(value, ocr_text)
@@ -1352,6 +1512,7 @@ def merge_gap_fill_into_parsed(
     *,
     missing_keys: Sequence[str],
     ocr_text: str | None,
+    ocr_payload: dict[str, object] | None = None,
 ) -> GapFillMergeResult:
     """Merge gap-fill values into empty fields only; reject ungrounded values."""
     from app.services.extraction.field_grounding_service import ground_extracted_fields_map
@@ -1381,10 +1542,16 @@ def merge_gap_fill_into_parsed(
             continue
         if key == "line_items":
             candidate_items = list(gap.line_items or [])
+            from app.services.extraction.line_items_parser import document_has_line_item_table
+
             if not candidate_items:
+                if document_has_line_item_table(ocr_text, ocr_payload):
+                    rejected.append(key)
                 continue
+            from app.services.extraction.line_items_parser import document_has_qty_only_table
             from app.services.extraction.line_items_sanitizer import sanitize_line_items
 
+            payload_dict = ocr_payload or {}
             sanitized = sanitize_line_items(
                 candidate_items,
                 ocr_text=ocr_text,
@@ -1395,6 +1562,7 @@ def merge_gap_fill_into_parsed(
                 so_reference=(gap.extracted_fields or {}).get("so_reference")
                 or (parsed.extracted_fields or {}).get("so_reference"),
                 cost_centre=gap.cost_centre or parsed.cost_centre,
+                allow_qty_only=document_has_qty_only_table(ocr_text, payload_dict),
             )
             if not sanitized:
                 rejected.append(key)

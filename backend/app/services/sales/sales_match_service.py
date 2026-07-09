@@ -234,13 +234,13 @@ def _three_way_match_audit_detail(
     inv_qty: float | None = None
     inv_unit: float | None = None
     invoice_no: str | None = None
-    currency = "AUD"
+    currency = "SGD"
     if inv is not None:
         qty, unit, _ = _invoice_qty_and_price(inv)
         inv_qty = float(qty)
         inv_unit = float(unit)
         invoice_no = inv.invoice_no
-        currency = (inv.currency or "AUD").strip() or "AUD"
+        currency = (inv.currency or "SGD").strip() or "SGD"
     return {
         "so_present": so.so_document_id is not None,
         "dn_present": dn is not None,

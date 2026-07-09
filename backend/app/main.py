@@ -37,6 +37,7 @@ from app.api import (
     processing,
     purchases,
     reconciliation,
+    registry,
     reports,
     rule_book,
     sales,
@@ -153,6 +154,7 @@ app.include_router(pending_vendors.router, prefix="/api", dependencies=_api_deps
 app.include_router(pending_customers.router, prefix="/api", dependencies=_api_deps)
 app.include_router(reports.router, prefix="/api", dependencies=_module_deps("reports"))
 app.include_router(rule_book.router, prefix="/api", dependencies=_module_deps("rule_book"))
+app.include_router(registry.router, prefix="/api", dependencies=_api_deps)
 app.include_router(settings_api.router, prefix="/api", dependencies=_api_deps)
 app.include_router(approvals.router, prefix="/api", dependencies=_api_deps)
 app.include_router(approval_policy.router, prefix="/api", dependencies=_api_deps)

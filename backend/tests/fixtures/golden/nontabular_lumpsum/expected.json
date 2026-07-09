@@ -1,0 +1,10 @@
+{
+  "dt_code": "DT-01",
+  "fields": {
+    "invoice_no": "SUB-2025-001"
+  },
+  "line_items": {
+    "min_count": 0,
+    "max_count": 0
+  }
+}

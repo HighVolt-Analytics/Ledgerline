@@ -17,7 +17,8 @@ from app.tenant_settings import (
 
 
 def test_default_institution_settings():
-    assert default_institution_settings()["timezone"] == "Australia/Sydney"
+    assert default_institution_settings()["timezone"] == "Asia/Singapore"
+    assert default_institution_settings()["country"] == "SG"
 
 
 def test_tenant_timezone_from_country():
@@ -48,8 +49,10 @@ def test_merge_institution_settings_country_sets_timezone():
 def test_institution_settings_view_defaults_without_json():
     tenant = Tenant(name="Acme", slug="acme")
     view = institution_settings_view(tenant)
-    assert view["country"] == "AU"
-    assert view["timezone"] == "Australia/Sydney"
+    assert view["country"] == "SG"
+    assert view["timezone"] == "Asia/Singapore"
+    assert view["locale"] == "en-SG"
+    assert view["currency"] == "SGD"
 
 
 def test_tenant_today_uses_institution_zone():

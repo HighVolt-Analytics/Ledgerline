@@ -237,7 +237,7 @@ async def build_purchase_dossier(
             po_row=po_row,
             commercial=commercial_for_match,
             match=match,
-            currency=(invoice.currency or "AUD").strip() or "AUD",
+            currency=(invoice.currency or "SGD").strip() or "SGD",
             po_doc=po_doc,
             grn_doc=grn_doc,
         )

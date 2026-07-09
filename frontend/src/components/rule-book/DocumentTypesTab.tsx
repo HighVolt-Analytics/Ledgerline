@@ -47,6 +47,8 @@ import {
   splitExtractionFields,
   standardExtractionFieldsForRoute,
 } from "@/lib/documentExtractionFields";
+import { orgTitleDivergesFromShippedTemplate } from "@/lib/documentTypeTemplateMeta";
+import shippedCatalog from "@/lib/v5DocumentTypes.json";
 import {
   ensureExtractionSuperset,
   normalizeCompulsoryFields,
@@ -758,6 +760,17 @@ function DocumentTypeEditDialog({
   const [routePruneNotice, setRoutePruneNotice] = useState<string | null>(null);
   const { data: coaAccounts = [] } = useChartOfAccounts();
 
+  const titleDivergenceWarning = useMemo(
+    () =>
+      orgTitleDivergesFromShippedTemplate(
+        draft.code,
+        draft.title,
+        draft.shortTitle,
+        shippedCatalog as Array<{ code?: string; title?: string; shortTitle?: string }>,
+      ),
+    [draft.code, draft.title, draft.shortTitle],
+  );
+
   const readiness = useMemo(
     () =>
       documentTypeReadiness(
@@ -875,6 +888,16 @@ function DocumentTypeEditDialog({
                   className="h-9 text-sm"
                 />
               </div>
+              {titleDivergenceWarning ? (
+                <p
+                  className="sm:col-span-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100"
+                  data-testid="dt-title-divergence-warning"
+                >
+                  This document name differs from the shipped template for {draft.code}. Shipped
+                  extraction defaults and playbook metadata will not apply — only org-configured
+                  fields and prompts are used. Silent layout/shape drift is not detected here.
+                </p>
+              ) : null}
               {(showAdvancedIdentity || !isNew) && (
                 <div className="space-y-1.5">
                   <FieldLabel htmlFor="dt-code">Code</FieldLabel>

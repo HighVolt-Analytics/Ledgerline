@@ -245,3 +245,29 @@ export function allRecognitionSignalOptions(): RecognitionSignalOption[] {
   }
   return [...byId.values()];
 }
+
+type ShippedTitleRow = { code?: string; title?: string; shortTitle?: string };
+
+/** True when org title/shortTitle diverges from shipped v5 matrix (repurposed DT). */
+export function orgTitleDivergesFromShippedTemplate(
+  code: string,
+  title: string,
+  shortTitle: string,
+  shippedRows: ShippedTitleRow[],
+): boolean {
+  const token = code.trim().toUpperCase();
+  if (!token) return false;
+  const shipped = shippedRows.find((row) => (row.code || "").trim().toUpperCase() === token);
+  if (!shipped) return false;
+  const orgTitle = title.trim().toLowerCase();
+  const orgShort = shortTitle.trim().toLowerCase();
+  const shippedTitle = (shipped.title || "").trim().toLowerCase();
+  const shippedShort = (shipped.shortTitle || "").trim().toLowerCase();
+  if (!orgTitle && !orgShort) return false;
+  const matchesShipped =
+    orgTitle === shippedTitle ||
+    orgTitle === shippedShort ||
+    orgShort === shippedTitle ||
+    orgShort === shippedShort;
+  return !matchesShipped;
+}

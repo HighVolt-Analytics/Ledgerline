@@ -43,7 +43,7 @@ export function SettingsPage() {
   const [coaSaved, setCoaSaved] = useState(false);
   const [businessName, setBusinessName] = useState("");
   const [industry, setIndustry] = useState<string>(INDUSTRIES[1]);
-  const [country, setCountry] = useState("AU");
+  const [country, setCountry] = useState("SG");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [timezone, setTimezone] = useState("");
@@ -58,7 +58,7 @@ export function SettingsPage() {
   useResetOnTenantChange(() => {
     setBusinessName("");
     setIndustry(INDUSTRIES[1]);
-    setCountry("AU");
+    setCountry("SG");
     setPhone("");
     setTimezone("");
     setSaved(false);
@@ -90,7 +90,7 @@ export function SettingsPage() {
       return;
     }
     setBusinessName(user.tenant_name);
-    setCountry("AU");
+    setCountry("SG");
     setTimezone(user.tenant_timezone);
     setProfileLoading(false);
   }, [user, institution, institutionBlocked, institutionLoading, tenantScope]);
@@ -144,7 +144,8 @@ export function SettingsPage() {
     }
   };
 
-  return (    <div>
+  return (
+    <div>
       {saved && (
         <div className="fixed bottom-4 right-4 z-50 rounded-md border border-border bg-popover px-4 py-2 text-sm shadow-md">
           Profile updated
@@ -281,7 +282,6 @@ export function SettingsPage() {
             </p>
           ) : null}
           <OrgAiBriefPanel
-            tenantName={businessName || user?.tenant_name}
             canEdit={canEditAdmin}
             onSaved={() => setAiBriefSaved(true)}
           />
@@ -290,7 +290,6 @@ export function SettingsPage() {
 
       {tab === "team" && <TenantMembersSection />}
       {tab === "policy" && <ApprovalPolicyPrivileges />}
-
       {tab === "coa" && (
         <ChartOfAccountsPanel canEdit={canEditAdmin} onSaved={() => setCoaSaved(true)} />
       )}

@@ -151,6 +151,54 @@ def extract_key_value_fields(
     return found
 
 
+def _materialize_table_grid(table) -> dict[tuple[int, int], str]:
+    """Expand row_span/column_span so merged cells populate every spanned slot."""
+    grid: dict[tuple[int, int], str] = {}
+    for cell in table.cells:
+        text = cell.text.strip()
+        row_span = max(1, int(cell.row_span or 1))
+        col_span = max(1, int(cell.column_span or 1))
+        for row_offset in range(row_span):
+            for col_offset in range(col_span):
+                grid[(cell.row_index + row_offset, cell.column_index + col_offset)] = text
+    return grid
+
+
+def _is_layout_totals_row(desc: str, row_cells: list[str]) -> bool:
+    from app.services.extraction.line_item_skip_patterns import is_summary_line_description
+
+    if is_summary_line_description(desc):
+        return True
+    if re.search(
+        r"^\s*(?:TOTALS?|GRAND\s+TOTAL|SUB\s*TOTAL)\b",
+        desc,
+        re.I,
+    ):
+        return True
+    for cell in row_cells:
+        token = cell.strip()
+        if not token:
+            continue
+        if re.search(r"^\s*(?:TOTALS?|GRAND\s+TOTAL|SUB\s*TOTAL)\b", token, re.I):
+            return True
+        if re.search(
+            r"\b(?:total\s+net\s+weight|total\s+gross\s+weight|total\s+no\.?\s+of\s+pallet)\b",
+            token,
+            re.I,
+        ):
+            return True
+    return False
+
+
+def _append_meta_suffix(description: str, meta_parts: list[str]) -> str:
+    suffix = " | ".join(part for part in meta_parts if part)
+    if not suffix:
+        return description
+    if suffix.lower() in description.lower():
+        return description
+    return f"{description} | {suffix}"
+
+
 def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[ParsedLineItem]:
     if layout is None or not layout.tables:
         return []
@@ -159,21 +207,26 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
     for table in layout.tables:
         if table.row_count < 2 or table.column_count < 2:
             continue
-        grid: dict[tuple[int, int], str] = {
-            (cell.row_index, cell.column_index): cell.text for cell in table.cells
-        }
-        header_row = grid.get((0, 0), "").lower()
+        grid = _materialize_table_grid(table)
         desc_col = 0
+        desc_cols: list[int] = []
         qty_col = -1
         unit_price_col = -1
         amount_col = -1
+        meta_cols: dict[int, str] = {}
         headers_detected = False
         for col in range(table.column_count):
             header = grid.get((0, col), "").lower()
-            if re.search(r"desc|item|product|service", header):
+            if re.search(r"desc|item|product|service|part|component|cpu", header):
+                desc_cols.append(col)
                 desc_col = col
                 headers_detected = True
-            if re.search(r"qty|quantity", header):
+            elif re.search(r"model", header):
+                desc_cols.append(col)
+                if desc_col == 0 and not grid.get((0, desc_col), "").strip():
+                    desc_col = col
+                headers_detected = True
+            if re.search(r"qty|quantity|q'?ty|pcs", header):
                 qty_col = col
                 headers_detected = True
             if re.search(r"unit\s*price|rate|price\s*ea|price\s*excl|unit\s*cost|(?:^|\s)each(?:\s|$)", header):
@@ -190,17 +243,59 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
             elif re.search(r"^price$|\bprice\b", header) and unit_price_col < 0 and amount_col < 0:
                 unit_price_col = col
                 headers_detected = True
+            elif re.search(r"\bplt|pallet|dimension|coo|origin|weight|hs|harmonized", header):
+                meta_cols[col] = header
+                headers_detected = True
         if not headers_detected:
             continue
 
+        qty_only_table = qty_col >= 0 and unit_price_col < 0 and amount_col < 0
+        carry_meta: dict[int, str] = {}
+        prior_qtys: list[Decimal] = []
+
         for row in range(1, table.row_count):
+            row_cells = [
+                grid.get((row, col), "").strip()
+                for col in range(table.column_count)
+            ]
             desc = grid.get((row, desc_col), "").strip()
+            if desc_cols:
+                desc_parts = [
+                    grid.get((row, col), "").strip()
+                    for col in desc_cols
+                    if col != qty_col and grid.get((row, col), "").strip()
+                ]
+                if desc_parts:
+                    desc = " ".join(desc_parts)
+            if not desc and qty_only_table:
+                for col in range(table.column_count):
+                    if col == qty_col:
+                        continue
+                    if re.search(r"desc|item|product|part|component|model|cpu", grid.get((0, col), "").lower()):
+                        candidate = grid.get((row, col), "").strip()
+                        if candidate:
+                            desc = candidate
+                            desc_col = col
+                            break
+            if _is_layout_totals_row(desc, row_cells):
+                continue
             if not desc or re.search(
                 r"^(?:total|subtotal|gst|tax)\b|\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet)\b",
                 desc,
                 re.I,
             ):
                 continue
+
+            meta_parts: list[str] = []
+            for col, header in meta_cols.items():
+                value = grid.get((row, col), "").strip()
+                if value:
+                    carry_meta[col] = value
+                elif col in carry_meta:
+                    value = carry_meta[col]
+                if value:
+                    meta_parts.append(value)
+
             qty = None
             unit_price = None
             amount = None
@@ -215,18 +310,28 @@ def extract_line_items_from_tables(layout: DocumentLayoutResult | None) -> list[
                 unit_price = _money_value(grid.get((row, unit_price_col), ""))
             if amount_col >= 0:
                 amount = _money_value(grid.get((row, amount_col), ""))
+            if qty is not None and prior_qtys and qty == sum(prior_qtys):
+                continue
+            if qty_only_table and qty is None:
+                continue
+            if not qty_only_table and amount is None and unit_price is None and qty is None:
+                continue
             if amount is None and qty is not None and unit_price is not None:
                 amount = plausible_money(qty * unit_price)
+
+            description = _append_meta_suffix(desc, meta_parts)
             items.append(
                 sanitize_parsed_line_item(
                     ParsedLineItem(
-                        description=desc,
+                        description=description,
                         qty=qty,
                         unit_price=unit_price,
                         amount=amount,
                     )
                 )
             )
+            if qty is not None:
+                prior_qtys.append(qty)
 
     return items
 

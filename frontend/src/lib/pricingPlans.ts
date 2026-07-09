@@ -25,13 +25,13 @@ const REGION_META: Record<
   AU: { symbol: "A$", currency: "AUD", locale: "en-AU" },
 };
 
-/** India → IN, Singapore → SG, Australia → AU, all others → AU. */
+/** India → IN, Singapore → SG, Australia → AU, all others → SG. */
 export function pricingRegionForCountry(countryCode: string | null | undefined): PricingRegion {
   const code = (countryCode || "").trim().toUpperCase();
   if (code === "IN") return "IN";
   if (code === "SG") return "SG";
   if (code === "AU") return "AU";
-  return "AU";
+  return "SG";
 }
 
 export function formatMoney(amount: number, region: PricingRegion): string {

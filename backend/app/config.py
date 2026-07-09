@@ -52,6 +52,26 @@ class Settings(BaseSettings):
         default="./data/document_type_defaults.json",
         validation_alias="DOCUMENT_TYPE_DEFAULTS_PATH",
     )
+    jurisdiction_packs_path: str = Field(
+        default="./data/jurisdiction_packs.json",
+        validation_alias="JURISDICTION_PACKS_PATH",
+    )
+    field_registry_path: str = Field(
+        default="./data/field_registry.json",
+        validation_alias="FIELD_REGISTRY_PATH",
+    )
+    use_field_registry: bool = Field(
+        default=False,
+        validation_alias="USE_FIELD_REGISTRY",
+    )
+    use_citation_grounding: bool = Field(
+        default=False,
+        validation_alias="USE_CITATION_GROUNDING",
+    )
+    use_extraction_self_consistency: bool = Field(
+        default=False,
+        validation_alias="USE_EXTRACTION_SELF_CONSISTENCY",
+    )
     cors_origins: str = "http://localhost:5173"
     public_app_url: str = Field(
         default="",
@@ -183,6 +203,30 @@ class Settings(BaseSettings):
         default="v1",
         validation_alias="PDF_SEGMENT_LLM_PROMPT_VERSION",
     )
+    max_upload_file_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        ge=1024,
+        validation_alias="MAX_UPLOAD_FILE_BYTES",
+    )
+    max_upload_pdf_pages: int = Field(
+        default=200,
+        ge=1,
+        le=500,
+        validation_alias="MAX_UPLOAD_PDF_PAGES",
+    )
+    use_field_fusion: bool = Field(
+        default=False,
+        validation_alias="USE_FIELD_FUSION",
+    )
+    use_composite_routing: bool = Field(
+        default=False,
+        validation_alias="USE_COMPOSITE_ROUTING",
+    )
+    extraction_flag_dt_allowlists_json: str = Field(
+        default="{}",
+        validation_alias="EXTRACTION_FLAG_DT_ALLOWLISTS_JSON",
+        description='JSON map flag_name -> ["DT-01", ...] for per-DT rollout',
+    )
     azure_di_read_model_id: str = Field(
         default="prebuilt-read",
         validation_alias="AZURE_DI_READ_MODEL_ID",
@@ -243,6 +287,13 @@ class Settings(BaseSettings):
         ge=5,
         le=180,
         validation_alias="RUNTIME_LLM_TIMEOUT_SECONDS",
+    )
+    runtime_llm_max_retries: int = Field(
+        default=0,
+        ge=0,
+        le=3,
+        validation_alias="RUNTIME_LLM_MAX_RETRIES",
+        description="Extra attempts after the first runtime LLM call (0 = fail fast on timeout).",
     )
     extraction_gap_fill_enabled: bool = Field(
         default=True,
@@ -343,7 +394,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_expire_minutes: int = 60 * 24 * 7
     access_token_expire_minutes: int = Field(
-        default=60,
+        default=360,
         validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES",
     )
     refresh_token_expire_days: int = Field(
@@ -1094,3 +1145,42 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def flag_enabled_for_dt(
+    flag: str,
+    dt_code: str,
+    *,
+    tenant_id: str | None = None,
+) -> bool:
+    """Global flag must be on AND (no DT allowlist OR dt_code in allowlist)."""
+    _ = tenant_id
+    settings = get_settings()
+    flag_key = (flag or "").strip().lower()
+    dt_token = (dt_code or "").strip().upper()
+    global_map = {
+        "use_field_registry": settings.use_field_registry,
+        "use_citation_grounding": settings.use_citation_grounding,
+        "use_extraction_self_consistency": settings.use_extraction_self_consistency,
+        "use_field_fusion": settings.use_field_fusion,
+        "use_composite_routing": settings.use_composite_routing,
+    }
+    if not global_map.get(flag_key, False):
+        return False
+    import json
+
+    try:
+        allowlists = json.loads(settings.extraction_flag_dt_allowlists_json or "{}")
+    except json.JSONDecodeError:
+        allowlists = {}
+    if not isinstance(allowlists, dict):
+        return True
+    allowed = allowlists.get(flag_key)
+    if not allowed:
+        return True
+    if not isinstance(allowed, list):
+        return True
+    tokens = {(str(row) or "").strip().upper() for row in allowed if str(row).strip()}
+    if not tokens:
+        return True
+    return dt_token in tokens

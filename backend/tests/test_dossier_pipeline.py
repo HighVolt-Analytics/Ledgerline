@@ -505,32 +505,34 @@ async def test_pipeline_extract_ignores_stale_parsing_failed_after_success(
 
 
 @pytest.mark.asyncio
-async def test_pipeline_bundle_linkage_key_missing_exception() -> None:
+async def test_pipeline_bundle_linkage_key_missing_is_advisory_only() -> None:
     inv = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Acme",
         status=InvoiceStatus.EXCEPTION,
         document_type_code="DT-01",
+        validation_results=(
+            '[{"rule":"VR-PB02","passed":false,'
+            '"message":"Valid PO reference required to link supporting documents"}]'
+        ),
     )
     logs = [
         _log(
-            "routing_review_required",
+            "playbook_evaluated",
             1,
-            gate="playbook",
-            playbook={
-                "block_reason": "linkage",
-                "linkage_key_missing": True,
-                "missing_bundle_mandatory": ["DT-02", "DT-03"],
-                "blocks_posting": True,
-            },
+            block_reason="linkage",
+            linkage_key_missing=True,
+            missing_bundle_mandatory=["DT-02", "DT-03"],
+            has_validation_gaps=True,
+            blocks_posting=False,
         ),
+        _log("validation_failed", 1),
     ]
     pipeline = build_dossier_pipeline(inv, logs)
     bundle = next(s for s in pipeline if s.stage_id == "bundle")
-    assert bundle.state == "fail"
-    assert bundle.exception_code == "LINKAGE_KEY_MISSING"
-    assert bundle.failure_reason
-    assert "PO reference" in (bundle.failure_reason or "")
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert bundle.state == "pass"
+    assert validate.state == "fail"
 
 
 @pytest.mark.asyncio
@@ -541,6 +543,10 @@ async def test_pipeline_bundle_incomplete_with_labels() -> None:
         status=InvoiceStatus.EXCEPTION,
         document_type_code="DT-01",
         po_reference="PO-12345",
+        validation_results=(
+            '[{"rule":"VR-PB02","passed":false,'
+            '"message":"Required supporting documents missing for PO: DT-02"}]'
+        ),
     )
     logs = [
         _log(
@@ -549,14 +555,18 @@ async def test_pipeline_bundle_incomplete_with_labels() -> None:
             block_reason="bundle",
             missing_bundle_mandatory=["DT-02"],
             missing_bundle_mandatory_labels={"DT-02": "PO copy"},
-            blocks_posting=True,
+            has_validation_gaps=True,
+            blocks_posting=False,
         ),
+        _log("validation_failed", 1),
     ]
     pipeline = build_dossier_pipeline(inv, logs)
     bundle = next(s for s in pipeline if s.stage_id == "bundle")
-    assert bundle.state == "fail"
-    assert bundle.exception_code == "BUNDLE_INCOMPLETE"
-    assert "PO copy" in (bundle.failure_reason or "")
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert bundle.state == "pass"
+    assert validate.state == "fail"
+    vr_pb02 = next(c for c in validate.checks if c.rule_ref == "VR-PB02")
+    assert vr_pb02.state == "fail"
 
 
 @pytest.mark.asyncio
@@ -639,8 +649,8 @@ async def test_pipeline_validate_waived_when_bypass_with_failed_checks(
         status=InvoiceStatus.PROCESSED,
         po_reference="PO-2026-0612",
         validation_results=(
-            '[{"rule":"VR14","passed":false,"message":"Currency mismatch","skipped":false},'
-            '{"rule":"VR15","passed":false,"message":"Qty over-billing","skipped":false}]'
+            '[{"rule":"VR12","passed":false,"message":"Vendor not found","skipped":false},'
+            '{"rule":"VR03","passed":false,"message":"Missing compulsory fields","skipped":false}]'
         ),
     )
     db_session.add(inv)
@@ -694,8 +704,8 @@ async def test_validate_ignores_stale_classification_routing_after_gate_pass() -
         document_type_confidence=0.95,
         llm_confidence=0.95,
         validation_results=(
-            '[{"rule":"VR-PB01","passed":true,'
-            '"message":"Optional extraction fields not yet captured: so_reference"}]'
+            '[{"rule":"VR03","passed":true,'
+            '"message":"All compulsory fields present"}]'
         ),
     )
     logs = [
@@ -726,8 +736,6 @@ async def test_validate_ignores_stale_classification_routing_after_gate_pass() -
     assert gate.state == "pass"
     assert validate.state == "pass"
     assert validate.exception_code is None
-    vr_pb01 = next(c for c in validate.checks if c.rule_ref == "VR-PB01")
-    assert vr_pb01.state == "pass"
 
 
 @pytest.mark.asyncio

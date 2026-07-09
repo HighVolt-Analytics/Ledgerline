@@ -252,10 +252,9 @@ export function ValidationChecksEditor({
   return (
     <div className="space-y-3">
       <p className="text-[11px] text-muted-foreground">
-        Toggle finance checks per document type (tax, dates, currency, arithmetic, vendor).
-        Compulsory field presence uses starred fields in Extraction fields above (VR03). Matching,
-        bundle, and optional extraction run automatically from Processing playbook and Supporting
-        document requirements. Duplicate check is always on org-wide.
+        Toggle validation checks per document type. Compulsory field presence uses starred fields in
+        Extraction fields above (VR03). Supporting document requirements are configured under
+        Supporting document requirements (VR-PB02). Duplicate check is always on org-wide.
       </p>
 
       <div className="space-y-2 rounded-md border border-border bg-field p-3">

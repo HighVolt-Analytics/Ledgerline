@@ -23,8 +23,8 @@ function payloadFor(tenantId: string, profileTenantId = tenantId): AuthSyncPaylo
     tenant_id: profileTenantId,
     tenant_name: "Org",
     tenant_slug: "org",
-    tenant_timezone: "Australia/Sydney",
-    tenant_locale: "en-AU",
+    tenant_timezone: "Asia/Singapore",
+    tenant_locale: "en-SG",
   } satisfies AuthUser;
   return {
     access_token: jwtWithTenant(tenantId),

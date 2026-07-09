@@ -133,7 +133,7 @@ def build_document_classifier_context(
     subtotal = parsed.subtotal if parsed.subtotal is not None else invoice.subtotal
     gst = parsed.gst if parsed.gst is not None else invoice.gst
     total = parsed.total if parsed.total is not None else invoice.total
-    currency = (parsed.currency or invoice.currency or "AUD").strip()
+    currency = (parsed.currency or invoice.currency or "SGD").strip()
     extracted_fields = merge_extracted_field_maps(
         extracted_fields_from_invoice(invoice),
         extracted_fields_from_parsed(parsed),

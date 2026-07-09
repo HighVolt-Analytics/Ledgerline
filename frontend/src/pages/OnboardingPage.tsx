@@ -36,7 +36,7 @@ export function OnboardingPage() {
           navigate("/", { replace: true });
           return;
         }
-        setCountry(status.country || "AU");
+        setCountry(status.country || "SG");
         if (status.industry && INDUSTRIES.includes(status.industry as Industry)) {
           setIndustry(status.industry as Industry);
         }

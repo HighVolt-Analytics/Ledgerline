@@ -91,10 +91,13 @@ def playbook_blockable_field_keys(keys: list[str] | None) -> list[str]:
 
 def posting_critical_field_keys(keys: list[str] | None) -> list[str]:
     """Required keys that block GL posting when absent."""
+    from app.registry.adapter import get_registry_adapter
+
+    critical = get_registry_adapter().posting_critical_keys()
     return [
         key
         for key in playbook_blockable_field_keys(keys)
-        if key in POSTING_CRITICAL_FIELD_KEYS
+        if key in critical
     ]
 
 

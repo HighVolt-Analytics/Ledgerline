@@ -6,6 +6,7 @@ from typing import Any, Sequence
 
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.classification.classifier_catalogue_compiler import compile_recognition_rules_text
+from app.services.classification.document_type_catalog import get_dt_catalog_entry
 from app.services.classification.recognition_signal_registry import RECOGNITION_SIGNAL_CATALOG
 
 
@@ -17,11 +18,17 @@ def build_llm_catalogue_rows(
         if not defn.enabled:
             continue
         mode = (defn.recognition_mode or "signals").strip().lower()
+        code = defn.code.strip().upper()
+        catalog_entry = get_dt_catalog_entry(code, dt_definition=defn)
         row: dict[str, Any] = {
-            "code": defn.code.strip().upper(),
+            "code": code,
             "title": defn.title,
             "recognition_mode": "prompt" if mode == "prompt" else "signals",
         }
+        if catalog_entry.classification_hints:
+            row["classification_hints"] = list(catalog_entry.classification_hints)
+        if catalog_entry.negative_hints:
+            row["negative_hints"] = list(catalog_entry.negative_hints)
         if mode == "prompt":
             prompt = (defn.llm_prompt or "").strip()
             if prompt:

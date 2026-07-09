@@ -138,3 +138,30 @@ def serialise_processing_overrides(skip_steps: list[str]) -> dict[str, list[str]
     if not validated:
         return None
     return {"skip_steps": validated}
+
+
+def set_deferred_full_reset(invoice: Invoice) -> None:
+    raw = dict(getattr(invoice, "processing_overrides", None) or {})
+    raw["deferred_full_reset"] = True
+    invoice.processing_overrides = raw
+
+
+def consume_deferred_full_reset(invoice: Invoice) -> bool:
+    raw = getattr(invoice, "processing_overrides", None)
+    if not isinstance(raw, dict):
+        return False
+    if not raw.get("deferred_full_reset"):
+        return False
+    updated = dict(raw)
+    updated.pop("deferred_full_reset", None)
+    invoice.processing_overrides = updated or None
+    return True
+
+
+def clear_deferred_full_reset(invoice: Invoice) -> None:
+    raw = getattr(invoice, "processing_overrides", None)
+    if not isinstance(raw, dict) or "deferred_full_reset" not in raw:
+        return
+    updated = dict(raw)
+    updated.pop("deferred_full_reset", None)
+    invoice.processing_overrides = updated or None

@@ -13,7 +13,7 @@ type LedgerOverviewProps = {
   currency?: string;
 };
 
-export function LedgerOverview({ recon, loading = false, currency = "AUD" }: LedgerOverviewProps) {
+export function LedgerOverview({ recon, loading = false, currency = "SGD" }: LedgerOverviewProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const fmt = (v: number) => money(v, currency);
 

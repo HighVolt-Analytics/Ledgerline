@@ -18,6 +18,9 @@ from app.schemas.reports import (
 )
 from app.services.shared.currency import BASE_CURRENCY, convert_to_base
 from app.services.reports.dashboard_service import parse_period, _institution_today
+from app.jurisdiction.packs import jurisdiction_pack_for_country
+from app.models.tenant import Tenant
+from app.tenant_settings import tenant_country, tenant_currency
 
 _REPORTABLE_STATUSES = frozenset({InvoiceStatus.PROCESSED})
 _SUSPENSE_ACCOUNT = "Suspense Account"
@@ -50,12 +53,14 @@ def _account_name(invoice: Invoice) -> str:
     return name or _SUSPENSE_ACCOUNT
 
 
-def _tax_label(currency: str) -> str:
-    if currency == "INR":
-        return "GST"
-    if currency == "GBP":
-        return "VAT"
-    return "GST"
+def _tax_label_for_tenant(tenant: Tenant | None) -> str:
+    return jurisdiction_pack_for_country(tenant_country(tenant)).tax_label
+
+
+async def _tenant_reporting_currency(db: AsyncSession, tenant_id) -> tuple[str, str]:
+    tenant = await db.get(Tenant, tenant_id)
+    currency = tenant_currency(tenant)
+    return currency, _tax_label_for_tenant(tenant)
 
 
 def _delta_pct(current: Decimal, prior: Decimal) -> float | None:
@@ -100,13 +105,17 @@ async def _load_invoices(
     return list((await db.execute(stmt)).scalars().all())
 
 
-def _aggregate_gl(invoices: list[Invoice]) -> list[GlAccountSpendRow]:
+def _aggregate_gl(
+    invoices: list[Invoice],
+    *,
+    base: str = BASE_CURRENCY,
+) -> list[GlAccountSpendRow]:
     totals: dict[str, dict[str, Decimal | int]] = {}
     for inv in invoices:
         account = _account_name(inv)
         bucket = totals.setdefault(account, {"amount": Decimal("0"), "count": 0})
         bucket["amount"] = Decimal(str(bucket["amount"])) + convert_to_base(
-            inv.subtotal, inv.currency
+            inv.subtotal, inv.currency, base=base
         )
         bucket["count"] = int(bucket["count"]) + 1
     rows = [
@@ -120,13 +129,18 @@ def _aggregate_gl(invoices: list[Invoice]) -> list[GlAccountSpendRow]:
     return sorted(rows, key=lambda row: row.amount, reverse=True)
 
 
-def _aggregate_vendors(invoices: list[Invoice], limit: int = 8) -> list[VendorSpendRow]:
+def _aggregate_vendors(
+    invoices: list[Invoice],
+    limit: int = 8,
+    *,
+    base: str = BASE_CURRENCY,
+) -> list[VendorSpendRow]:
     totals: dict[str, dict[str, Decimal | int]] = {}
     for inv in invoices:
         vendor = (inv.vendor or "Unknown").strip() or "Unknown"
         bucket = totals.setdefault(vendor, {"amount": Decimal("0"), "count": 0})
         bucket["amount"] = Decimal(str(bucket["amount"])) + convert_to_base(
-            inv.total, inv.currency
+            inv.total, inv.currency, base=base
         )
         bucket["count"] = int(bucket["count"]) + 1
     rows = [
@@ -140,18 +154,26 @@ def _aggregate_vendors(invoices: list[Invoice], limit: int = 8) -> list[VendorSp
     return sorted(rows, key=lambda row: row.amount, reverse=True)[:limit]
 
 
-def _totals(invoices: list[Invoice]) -> tuple[Decimal, Decimal, Decimal]:
+def _totals(
+    invoices: list[Invoice],
+    *,
+    base: str = BASE_CURRENCY,
+) -> tuple[Decimal, Decimal, Decimal]:
     net = Decimal("0")
     tax = Decimal("0")
     gross = Decimal("0")
     for inv in invoices:
-        net += convert_to_base(inv.subtotal, inv.currency)
-        tax += convert_to_base(inv.gst, inv.currency)
-        gross += convert_to_base(inv.total, inv.currency)
+        net += convert_to_base(inv.subtotal, inv.currency, base=base)
+        tax += convert_to_base(inv.gst, inv.currency, base=base)
+        gross += convert_to_base(inv.total, inv.currency, base=base)
     return net, tax, gross
 
 
-def invoice_to_document_row(invoice: Invoice) -> ReportDocumentRow:
+def invoice_to_document_row(
+    invoice: Invoice,
+    *,
+    base: str = BASE_CURRENCY,
+) -> ReportDocumentRow:
     effective = invoice.invoice_date
     if effective is None and invoice.created_at is not None:
         effective = invoice.created_at.date()
@@ -162,10 +184,10 @@ def invoice_to_document_row(invoice: Invoice) -> ReportDocumentRow:
         account=_account_name(invoice),
         invoice_date=invoice.invoice_date,
         period_key=_period_key_from_date(effective),
-        subtotal=convert_to_base(invoice.subtotal, invoice.currency),
-        gst=convert_to_base(invoice.gst, invoice.currency),
-        total=convert_to_base(invoice.total, invoice.currency),
-        currency=BASE_CURRENCY,
+        subtotal=convert_to_base(invoice.subtotal, invoice.currency, base=base),
+        gst=convert_to_base(invoice.gst, invoice.currency, base=base),
+        total=convert_to_base(invoice.total, invoice.currency, base=base),
+        currency=base,
     )
 
 
@@ -177,28 +199,29 @@ async def build_analytics(
 ) -> ReportsAnalytics:
     today = await _institution_today(db, tenant_id)
     month_start, month_end, period_key = parse_period(month, today=today)
+    base, tax_label = await _tenant_reporting_currency(db, tenant_id)
     invoices = await _load_invoices(
         db, tenant_id=tenant_id, month_start=month_start, month_end=month_end
     )
-    net, tax, gross = _totals(invoices)
+    net, tax, gross = _totals(invoices, base=base)
 
     prior_start, prior_end, _ = _prior_month(month_start)
     prior_invoices = await _load_invoices(
         db, tenant_id=tenant_id, month_start=prior_start, month_end=prior_end
     )
-    prior_net, prior_tax, prior_gross = _totals(prior_invoices)
+    prior_net, prior_tax, prior_gross = _totals(prior_invoices, base=base)
 
     return ReportsAnalytics(
-        base_currency=BASE_CURRENCY,
-        tax_label=_tax_label(BASE_CURRENCY),
+        base_currency=base,
+        tax_label=tax_label,
         period_key=period_key,
         period_label=_period_label(month_start),
         net_spend=net,
         tax_total=tax,
         gross_spend=gross,
         document_count=len(invoices),
-        by_gl_account=_aggregate_gl(invoices),
-        top_vendors=_aggregate_vendors(invoices),
+        by_gl_account=_aggregate_gl(invoices, base=base),
+        top_vendors=_aggregate_vendors(invoices, base=base),
         kpi_trends=ReportsKpiTrends(
             net_spend_delta_pct=_delta_pct(net, prior_net),
             tax_delta_pct=_delta_pct(tax, prior_tax),

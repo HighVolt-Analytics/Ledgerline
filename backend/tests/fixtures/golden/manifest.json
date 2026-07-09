@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "fixtures": [
+  {"id": "qty_only_spectra", "dt_code": "DT-13", "input": "input.txt", "bucket": "qty_only"},
+  {"id": "delivery_challan_qty", "dt_code": "DT-13", "input": "input.txt", "bucket": "qty_only"},
+  {"id": "commercial_invoice_spectra", "dt_code": "DT-01", "input": "input.txt", "bucket": "dt01"},
+  {"id": "nontabular_lumpsum", "dt_code": "DT-01", "input": "input.txt", "bucket": "nontabular"},
+  {"id": "nontabular_subscription", "dt_code": "DT-01", "input": "input.txt", "bucket": "nontabular"},
+  {"id": "multipage_table_p1", "dt_code": "DT-01", "input": "input.txt", "bucket": "multipage_table"},
+  {"id": "multipage_table_p2", "dt_code": "DT-01", "input": "input.txt", "bucket": "multipage_table"},
+  {"id": "mixed_credit_debit", "dt_code": "DT-04", "input": "input.txt", "bucket": "mixed_credit_debit"},
+  {"id": "low_dpi_sparse", "dt_code": "DT-01", "input": "input.txt", "bucket": "low_dpi"},
+  {"id": "handwritten_sparse", "dt_code": "DT-01", "input": "input.txt", "bucket": "handwritten"}
+  ]
+}

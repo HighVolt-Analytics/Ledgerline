@@ -52,6 +52,7 @@ async def test_full_requeue_preserves_processing_overrides(
         "playbook",
         "validation",
     ]
+    assert inv.processing_overrides.get("deferred_full_reset") is True
     assert inv.status == InvoiceStatus.PENDING
 
 
@@ -74,6 +75,9 @@ async def test_classification_skip_preserves_document_type_on_full_requeue(
     await requeue_invoice_for_pipeline(db_session, inv, preserve_extracted_fields=False)
     await db_session.flush()
 
-    assert inv.processing_overrides == {"skip_steps": ["classification"]}
+    assert inv.processing_overrides == {
+        "skip_steps": ["classification"],
+        "deferred_full_reset": True,
+    }
     assert inv.document_type_code == "DT-01"
     assert inv.document_type_confidence == 0.9

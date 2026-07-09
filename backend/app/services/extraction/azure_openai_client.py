@@ -46,11 +46,25 @@ def _embedding_url() -> str:
     )
 
 
-def _is_retryable_openai_error(exc: Exception) -> bool:
+def _is_retryable_openai_error(
+    exc: Exception,
+    *,
+    retry_timeouts: bool,
+) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {429, 500, 502, 503, 504}
+    if isinstance(exc, (httpx.ConnectError, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return True
+    if not retry_timeouts:
+        return False
     if isinstance(exc, (TimeoutError, httpx.TimeoutException, httpx.ReadTimeout)):
         return True
     message = str(exc).lower()
     return "timeout" in message or "timed out" in message
+
+
+def _httpx_timeout(read_seconds: float) -> httpx.Timeout:
+    return httpx.Timeout(connect=10.0, read=read_seconds, write=10.0, pool=10.0)
 
 
 def _chat_json_once(
@@ -58,7 +72,7 @@ def _chat_json_once(
     timeout: float,
     payload: dict[str, Any],
 ) -> dict[str, Any] | None:
-    with httpx.Client(timeout=timeout) as client:
+    with httpx.Client(timeout=_httpx_timeout(timeout)) as client:
         response = client.post(
             _chat_url(),
             headers={
@@ -107,21 +121,36 @@ def chat_json(
     deployment = settings.azure_openai_chat_deployment.lower()
     if "gpt-5" not in deployment:
         payload["temperature"] = 0.1
-    timeout = timeout_seconds or settings.sample_proposal_llm_timeout_seconds
+    if require_runtime:
+        timeout = timeout_seconds or settings.runtime_llm_timeout_seconds
+        max_attempts = settings.runtime_llm_max_retries + 1
+        retry_timeouts = False
+    else:
+        timeout = timeout_seconds or settings.sample_proposal_llm_timeout_seconds
+        max_attempts = 3
+        retry_timeouts = True
     last_error: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(max_attempts):
         try:
             return _chat_json_once(timeout=timeout, payload=payload)
         except Exception as exc:
             last_error = exc
-            if attempt < 2 and _is_retryable_openai_error(exc):
+            if attempt < max_attempts - 1 and _is_retryable_openai_error(
+                exc,
+                retry_timeouts=retry_timeouts,
+            ):
                 import time
 
                 time.sleep(0.5 * (2**attempt))
                 continue
             break
     if last_error is not None:
-        logger.warning("azure_openai_chat_failed", error=str(last_error))
+        logger.warning(
+            "azure_openai_chat_failed",
+            error=str(last_error),
+            require_runtime=require_runtime,
+            attempts=max_attempts,
+        )
     return None
 
 

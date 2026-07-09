@@ -32,8 +32,8 @@ class DashboardStats(BaseModel):
     rejected: int = 0
     pending_approval: int
     base_currency: str = Field(
-        default="AUD",
-        description="Reporting currency for converted totals",
+        default="",
+        description="Reporting currency for converted totals (tenant currency)",
     )
     total_value: Decimal = Field(
         default=Decimal("0"),

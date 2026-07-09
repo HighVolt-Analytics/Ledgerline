@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import get_settings
+from app.config import flag_enabled_for_dt, get_settings
 from app.services.shared.amount_sanity import plausible_money, sanitize_parsed_line_item
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
@@ -32,6 +32,7 @@ from app.services.invoice.processing_override_catalog import (
     clear_processing_overrides,
     override_bypasses_purchase_hold,
     should_skip,
+    skip_steps_for,
 )
 from app.services.invoice.invoice_evaluation_service import (
     EVAL_AUTO_CODED as EVAL_STATUS_AUTO_CODED,
@@ -77,6 +78,7 @@ from app.services.invoice.invoice_pipeline_phases import (
     image_quality_audit_detail,
     phase_llm_classify,
     persist_llm_party_context,
+    phase_file_validity,
     phase_ocr,
     phase_storage_verify,
 )
@@ -938,13 +940,13 @@ async def _apply_parsed_to_invoice(
     invoice.gst_rate = resolve_gst_rate_percent(parsed, allow_inference=False)
     invoice.currency = parsed.currency
     from app.services.extraction.document_text import cap_document_text
-    from app.services.purchase.po_reference import effective_po_reference, extract_po_reference_from_text
+    from app.services.purchase.po_reference import ensure_invoice_po_reference, extract_po_reference_from_text
 
     invoice.document_text = cap_document_text(parsed.document_text)
     from app.services.extraction.extraction_field_values import apply_parsed_extraction_fields
 
     apply_parsed_extraction_fields(invoice, parsed)
-    if not effective_po_reference(invoice.po_reference):
+    if not invoice.po_reference:
         extracted = extract_po_reference_from_text(invoice.document_text)
         if extracted:
             invoice.po_reference = extracted
@@ -953,6 +955,7 @@ async def _apply_parsed_to_invoice(
     from app.services.sales.so_reference import ensure_invoice_so_reference, sanitize_cross_book_linkage_references
 
     ensure_invoice_so_reference(invoice)
+    ensure_invoice_po_reference(invoice)
     sanitize_cross_book_linkage_references(invoice)
 
     from app.services.sales.counterparty_service import sync_invoice_counterparty
@@ -1041,18 +1044,38 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             invoice,
             document_ai_provider=provider_token,
         )
-    except OcrFailed:
+        await phase_file_validity(
+            session,
+            invoice,
+            document_ai_provider=provider_token,
+        )
+    except OcrFailed as exc:
+        reason = str(exc) or "stored_file_missing"
         invoice.status = InvoiceStatus.EXCEPTION
+        if reason in {"file_encrypted", "unsupported_file_type", "file_corrupted", "file_too_large", "file_empty"}:
+            invoice.evaluation_status = EVAL_NEEDS_RESCAN
         await log_event(
             session,
             "parsing_failed",
             invoice_id=invoice.id,
             detail=audit_document_detail(
                 invoice,
-                reason="stored_file_missing",
+                reason=reason,
                 path=invoice.raw_file_path,
+                document_ai_provider=provider_token,
             ),
         )
+        if reason in {"file_encrypted", "unsupported_file_type", "file_corrupted", "file_too_large", "file_empty"}:
+            await log_event(
+                session,
+                "routing_review_required",
+                invoice_id=invoice.id,
+                detail={
+                    "gate": "file_validity",
+                    "review_reasons": [reason],
+                    "document_ai_provider": provider_token,
+                },
+            )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
@@ -1137,6 +1160,21 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             )
             send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
+
+    from app.services.invoice.invoice_reset import reset_invoice_for_reprocess
+    from app.services.invoice.processing_override_catalog import consume_deferred_full_reset
+
+    if consume_deferred_full_reset(invoice) and not preserve_extracted_fields:
+        keep_dt = bool(human_locked_dt) or (
+            classification_override and bool(locked_dt_code)
+        ) or "classification" in skip_steps_for(invoice)
+        await reset_invoice_for_reprocess(
+            session,
+            invoice,
+            preserve_document_type=keep_dt,
+            clear_overrides=False,
+        )
+        await session.flush()
 
     enabled_dt_codes = {
         (dt.code or "").strip().upper()
@@ -1279,6 +1317,29 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                     "document_ai_provider": provider_token,
                 },
             )
+            from app.services.classification.classification_gap_event import (
+                build_classification_gap_event,
+                gap_event_audit_detail,
+            )
+
+            gap_event = build_classification_gap_event(
+                org_id=str(invoice.tenant_id),
+                invoice_id=invoice.id,
+                ocr_text=ocr.text or "",
+                candidates=[
+                    {
+                        "code": gate_result.llm_suggested_dt,
+                        "confidence": gate_result.llm_confidence,
+                    }
+                ],
+                chosen_dt=gate_result.confirmed_dt or gate_result.llm_suggested_dt or "",
+            )
+            await log_event(
+                session,
+                "classification_gap_event",
+                invoice_id=invoice.id,
+                detail=gap_event_audit_detail(gap_event),
+            )
             send_notification(invoice, InvoiceStatus.EXCEPTION)
             return
 
@@ -1364,6 +1425,55 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         document_types=config.document_types,
         tenant_id=invoice.tenant_id,
     )
+    citation_review_required = False
+    citation_results: list = []
+    if llm_result is not None:
+        from app.config import get_settings as _get_settings
+
+        _settings = _get_settings()
+        if _settings.use_citation_grounding:
+            from app.services.extraction.citation_grounding_service import (
+                verify_and_apply_citations,
+            )
+
+            scalar_citation_keys = [
+                key for key in selected_keys if str(key).strip().lower() != "line_items"
+            ]
+            llm_result, citation_results = verify_and_apply_citations(
+                llm_result,
+                ocr,
+                field_keys=scalar_citation_keys,
+            )
+        if _settings.use_extraction_self_consistency:
+            from app.services.extraction.llm_document_service import extract_document_fields
+            from app.services.extraction.self_consistency_service import run_self_consistency
+
+            llm_result, consistency_outcomes = await run_self_consistency(
+                base_result=llm_result,
+                ocr=ocr,
+                dt_definition=dt_definition,
+                extract_fn=extract_document_fields,
+                extract_kwargs={
+                    "ocr": ocr,
+                    "org": org,
+                    "document_types": config.document_types,
+                    "confirmed_dt": confirmed_dt,
+                    "few_shots": few_shots,
+                },
+                use_citation_grounding=_settings.use_citation_grounding,
+            )
+            disagreements = {
+                key: value
+                for key, value in consistency_outcomes.items()
+                if not value.get("agreed")
+            }
+            if disagreements:
+                await log_event(
+                    session,
+                    "self_consistency_disagreement",
+                    invoice_id=invoice.id,
+                    detail={"fields": disagreements},
+                )
     if llm_result is not None:
         parsed = llm_result_to_invoice_data(
             llm_result,
@@ -1393,6 +1503,53 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             invoice_id=invoice.id,
             detail=gap_fill_detail,
         )
+
+    if llm_result is not None:
+        from app.config import get_settings as _get_settings
+
+        _settings = _get_settings()
+        if _settings.use_citation_grounding and "line_items" in {
+            str(key).strip().lower() for key in selected_keys
+        }:
+            from app.services.extraction.citation_grounding_service import (
+                citation_audit_detail,
+                verify_parsed_line_items_citation,
+            )
+
+            line_items_result = verify_parsed_line_items_citation(
+                list(parsed.line_items or []),
+                ocr_text=ocr.text or "",
+                ocr_payload=ocr.payload_json or {},
+            )
+            citation_results = list(citation_results) + [line_items_result]
+        if llm_result is not None and _settings.use_citation_grounding and citation_results:
+            from app.services.extraction.citation_grounding_service import citation_audit_detail
+
+            await log_event(
+                session,
+                "citation_grounding",
+                invoice_id=invoice.id,
+                detail=citation_audit_detail(citation_results),
+            )
+            citation_detail = citation_audit_detail(citation_results)
+            if citation_detail.get("citation_failed") and flag_enabled_for_dt(
+                "use_citation_grounding",
+                confirmed_dt,
+                tenant_id=invoice.tenant_id,
+            ):
+                citation_review_required = True
+                loaded.evaluation_status = EVAL_NEEDS_REVIEW
+                invoice.evaluation_status = EVAL_NEEDS_REVIEW
+                await log_event(
+                    session,
+                    "routing_review_required",
+                    invoice_id=invoice.id,
+                    detail={
+                        "gate": "citation_grounding",
+                        "review_reasons": ["citation_failed"],
+                        "citation_failed": citation_detail.get("citation_failed"),
+                    },
+                )
 
     field_conf_result = evaluate_field_confidence_gate(
         llm_result,
@@ -1863,8 +2020,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     if (invoice.route_target or "").strip() == ROUTE_VAULT:
         _mark_invoice_processed(invoice)
-        invoice.evaluation_status = EVAL_STATUS_AUTO_CODED
-        loaded.evaluation_status = EVAL_STATUS_AUTO_CODED
+        if not citation_review_required:
+            invoice.evaluation_status = EVAL_STATUS_AUTO_CODED
+            loaded.evaluation_status = EVAL_STATUS_AUTO_CODED
         await log_event(
             session,
             "vault_stored",

@@ -113,6 +113,15 @@ export function InvoiceClassificationPanel({
         <p className="text-emerald-700 dark:text-emerald-400">{statusMessage}</p>
       ) : null}
 
+      {audit.citation_failed && audit.citation_failed.length > 0 ? (
+        <div className="rounded border border-rose-500/30 bg-rose-500/10 p-2 text-rose-900 dark:text-rose-200">
+          <p className="font-medium">Citation grounding failed</p>
+          <p className="mt-1 text-[11px]">
+            Fields without valid OCR citations: {audit.citation_failed.join(", ")}
+          </p>
+        </div>
+      ) : null}
+
       {showActions ? (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {onConfirmDt && llmDt ? (

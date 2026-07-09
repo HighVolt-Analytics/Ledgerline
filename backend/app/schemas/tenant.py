@@ -14,5 +14,5 @@ class TenantResponse(BaseModel):
     id: UUID
     name: str
     slug: str
-    currency: str = "AUD"
+    currency: str = ""
     is_current: bool = False

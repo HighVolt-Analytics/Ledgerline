@@ -6,7 +6,7 @@
     "klass": "Transactional",
     "posting": "Yes",
     "extraction": [
-      "Vendor name & tax ID / ABN",
+      "Vendor name & tax ID",
       "Vendor invoice number, invoice date",
       "PO number(s)",
       "Line items: description, qty, UoM, unit price, line value",
@@ -19,7 +19,7 @@
       "Vendor master: exists, active, not blocked, tax ID on invoice = master (else exception — fraud/wrong vendor)",
       "Duplicate check (multi-layer): exact, normalised invoice no., fuzzy ±0.5% / ±7 days, cross-entity scan",
       "Arithmetic: Σ lines = subtotal; subtotal + tax = total; qty × price = line value (rounding ≤ 0.05/line)",
-      "Tax validity (AU): \"Tax Invoice\" stated, ABN valid (live Lookup), GST 10% on taxable lines, buyer identity ≥ AUD 1,000",
+      "Tax validity: required tax-invoice wording per organisation country, valid tax ID, statutory tax rate on taxable lines when applicable, buyer identity above country threshold when configured",
       "3-way match (line level): qty ≤ (PO open AND GRN unbilled); price within §9 tolerance; UoM conversion applied",
       "PO status: approved, not closed/cancelled; invoice currency = PO currency (no silent conversion)",
       "Date sanity: not future; > 12 months → controller approval; posting date per open-period rules",
@@ -27,7 +27,7 @@
     ],
     "match": [
       "3-way (PO ↔ GRN ↔ Invoice) at line level",
-      "Price ±2% capped AUD 100/line → PPV or inventory",
+      "Price ±2% capped by organisation match tolerance per line → PPV or inventory",
       "Qty over-billing 0% — never auto-accept qty > GRN (block, request credit/new GRN)",
       "Qty under-billing allowed (partial invoice, consume PO progressively)"
     ],
@@ -639,7 +639,7 @@
     "posting": "Yes",
     "extraction": [
       "Vendor verification evidence (bank confirmation)",
-      "W-form / ABN check",
+      "W-form / tax ID check",
       "Bank details"
     ],
     "checks": [
@@ -647,7 +647,7 @@
       "Mandatory: independent bank-detail verification (call-back to a number sourced independently, NOT from the invoice)",
       "Tax-ID validation, sanctions / denied-party screening",
       "Duplicate-person check vs employee bank accounts (collusion control)",
-      "Cap: one-time vendor payments above threshold (e.g. AUD 10k) prohibited — force full vendor onboarding",
+      "Cap: one-time vendor payments above organisation threshold prohibited — force full vendor onboarding",
       "Customer refunds via AP: match to credit balance in AR before payment"
     ],
     "match": [
@@ -662,7 +662,7 @@
     ],
     "special": [
       "Call-back verification (independent number)",
-      "AUD 10k cap forces full onboarding",
+      "High-value one-time payment cap forces full onboarding",
       "Collusion check vs employee accounts"
     ],
     "bundleMandatory": [],
@@ -787,7 +787,7 @@
       "Posted by Tax team per assessment, outside AP flow"
     ],
     "special": [
-      "GST assessments, ATO notices → Tax team workflow"
+      "Tax assessments / revenue authority notices → Tax team workflow"
     ],
     "bundleMandatory": [],
     "bundleConditional": []
@@ -799,7 +799,7 @@
     "klass": "Transactional",
     "posting": "Yes",
     "extraction": [
-      "Customer name & tax ID / ABN",
+      "Customer name & tax ID",
       "Invoice number, invoice date, due date",
       "Line items: description, qty, unit price, line value",
       "Subtotal, tax rate & amount, total, currency",

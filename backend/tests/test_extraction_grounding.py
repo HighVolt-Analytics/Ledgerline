@@ -102,6 +102,7 @@ def test_build_llm_user_payload_includes_manifest() -> None:
     )
     assert payload["extraction_field_manifest"]
     assert {row["key"] for row in payload["extraction_field_manifest"]} >= {"vendor", "invoice_no"}
+    assert "field_snippets" in payload["ocr"]
 
 
 def test_ground_invoice_scalars_clears_ungrounded_invoice_no() -> None:
@@ -154,7 +155,7 @@ def test_enrich_parsed_from_ocr_grounded_backfill_po_reference() -> None:
     assert enriched.po_reference == "12345"
 
 
-def test_merge_extraction_sources_blocks_ungrounded_di_vendor() -> None:
+def test_merge_extraction_sources_preserves_llm_when_di_ungrounded() -> None:
     ocr = OcrArtifact(
         success=True,
         text="TAX INVOICE\nVendor: Real Co",
@@ -168,7 +169,7 @@ def test_merge_extraction_sources_blocks_ungrounded_di_vendor() -> None:
     )
     parsed = InvoiceData(vendor="Real Co", document_text=ocr.text)
     merged = merge_extraction_sources(parsed, ocr, dt_definition=_definition())
-    assert merged.vendor is None
+    assert merged.vendor == "Real Co"
     assert merged.invoice_no is None
 
 
@@ -248,3 +249,20 @@ def test_money_grounded_adjacent_line_balance_due() -> None:
 def test_money_grounded_rejects_ungrounded_amount() -> None:
     ocr = "Balance due\n500.00"
     assert not _money_grounded_in_ocr(Decimal("999.99"), ocr, field_key="total")
+
+
+def test_vendor_fuzzy_grounding_normalized_casing() -> None:
+    ocr = "TAX INVOICE\nACME PTY LTD\nTotal: 100.00"
+    assert value_grounded_in_ocr("Acme Pty Ltd", ocr)
+
+
+def test_ground_invoice_scalars_sanitizes_invoice_no_bleed_and_fills_date() -> None:
+    from datetime import date
+
+    from app.services.extraction.field_grounding_service import ground_invoice_scalars
+
+    ocr = "PROFORMA INVOICE NO: 2603110950SA DATED: 11.05.2026"
+    parsed = InvoiceData(invoice_no="2603110950SA DATED: 11.05.2026")
+    grounded = ground_invoice_scalars(parsed, ocr)
+    assert grounded.invoice_no == "2603110950SA"
+    assert grounded.invoice_date == date(2026, 5, 11)

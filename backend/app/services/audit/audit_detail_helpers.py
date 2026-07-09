@@ -85,20 +85,12 @@ VR_CHECK_NAMES: dict[str, str] = {
     "VR01": "Total = subtotal + GST",
     "VR02": "Duplicate check (multi-layer)",
     "VR03": "Required fields and line items",
-    "VR05": "ABN / tax ID",
     "VR06": "Invoice and due dates",
-    "VR07": "Local currency",
     "VR08": "GST rate check",
     "VR09": "Line arithmetic",
-    "VR10": "Tax invoice wording",
     "VR11": "Date sanity",
     "VR12": "Vendor master",
-    "VR14": "PO status & currency",
-    "VR15": "3-way match",
-    "VR16": "Freight / surcharges",
-    "VR-PB01": "Optional extraction fields",
     "VR-PB02": "Required supporting documents",
-    "VR-PB04": "Recommended supporting documents",
 }
 
 
@@ -196,13 +188,13 @@ def three_way_match_audit_detail(
     inv_qty: float | None = None
     inv_unit: float | None = None
     invoice_no: str | None = None
-    currency = "AUD"
+    currency = "SGD"
     if inv is not None:
         qty, unit, _ = _invoice_qty_and_price(inv)  # type: ignore[arg-type]
         inv_qty = float(qty)
         inv_unit = float(unit)
         invoice_no = getattr(inv, "invoice_no", None)
-        currency = (getattr(inv, "currency", None) or "AUD").strip() or "AUD"
+        currency = (getattr(inv, "currency", None) or "SGD").strip() or "SGD"
     return {
         "po_present": po.po_document_id is not None,
         "grn_present": grn is not None,

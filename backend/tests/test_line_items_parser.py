@@ -119,3 +119,51 @@ def test_enrich_line_items_from_text_parses_month_year_description() -> None:
     assert enriched[0].unit_price == Decimal("2450")
     assert enriched[0].amount == Decimal("2695")
 
+
+def test_document_has_qty_only_table_on_spectra_fixture() -> None:
+    from pathlib import Path
+
+    from app.services.extraction.line_items_parser import (
+        document_has_qty_only_table,
+        parse_qty_only_line_items_from_text,
+    )
+
+    text = Path("tests/fixtures/qty_only_table_ocr.txt").read_text(encoding="utf-8")
+    assert document_has_qty_only_table(text, {})
+    items = parse_qty_only_line_items_from_text(text)
+    assert len(items) == 5
+    assert items[0].qty == Decimal("150")
+    assert "CPU CHIPS 14 Gen I3 14100" in items[0].description
+
+
+def test_document_has_qty_only_table_on_delivery_challan_fixture() -> None:
+    from pathlib import Path
+
+    from app.services.extraction.line_items_parser import document_has_qty_only_table
+
+    text = Path("tests/fixtures/delivery_challan_qty_table.txt").read_text(encoding="utf-8")
+    assert document_has_qty_only_table(text, {})
+
+
+def test_document_has_qty_only_table_false_when_money_columns_present() -> None:
+    from app.services.extraction.line_items_parser import document_has_qty_only_table
+
+    text = """
+DESCRIPTION QTY UNIT PRICE AMOUNT
+Widget A 2 10.00 20.00
+"""
+    assert not document_has_qty_only_table(text, {})
+
+
+def test_build_line_items_presentation_prompt_qty_only_mode() -> None:
+    from app.services.extraction.line_items_parser import build_line_items_presentation_prompt
+
+    lines = build_line_items_presentation_prompt(
+        di_rows_present=False,
+        ocr_table_present=False,
+        qty_only_table_present=True,
+    )
+    joined = "\n".join(lines)
+    assert "QTY-ONLY TABLE" in joined
+    assert "TOTALS" in joined
+

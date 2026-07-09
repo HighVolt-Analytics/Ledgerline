@@ -126,6 +126,33 @@ async def phase_storage_verify(
     )
 
 
+async def phase_file_validity(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    document_ai_provider: str,
+) -> None:
+    """Reject corrupt/unsupported files before OCR/DI."""
+    from app.services.invoice.file_validity_gate import (
+        evaluate_file_validity,
+        file_validity_audit_detail,
+    )
+
+    with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+        result = evaluate_file_validity(path)
+    await log_event(
+        session,
+        "file_validity_passed" if result.passed else "file_validity_failed",
+        invoice_id=invoice.id,
+        detail={
+            **file_validity_audit_detail(result),
+            "document_ai_provider": document_ai_provider,
+        },
+    )
+    if not result.passed:
+        raise OcrFailed(result.rejection_code or "file_invalid")
+
+
 async def phase_ocr(
     session: AsyncSession,
     invoice: Invoice,
@@ -600,14 +627,13 @@ def evaluate_field_confidence_gate(
                 missing_gate_fields.append(key)
 
     if llm is None or not llm.field_confidence:
-        reasons = [ReviewReason.EXTRACTION_GAP.value] if missing_gate_fields else []
         return FieldConfidenceGateResult(
-            passed=not missing_gate_fields,
+            passed=True,
             min_confidence=floor,
             gate_fields=gate_fields,
             confirmed_dt=dt_code,
             missing_gate_fields=missing_gate_fields,
-            review_reasons=reasons,
+            review_reasons=[],
             skipped_fields_present_after_merge=[
                 key for key in gate_fields if key not in missing_gate_fields
             ],
@@ -629,10 +655,8 @@ def evaluate_field_confidence_gate(
     reasons: list[str] = []
     if low:
         reasons.append(ReviewReason.FIELD_CONFIDENCE_LOW.value)
-    if missing_gate_fields:
-        reasons.append(ReviewReason.EXTRACTION_GAP.value)
     return FieldConfidenceGateResult(
-        passed=not low and not missing_gate_fields,
+        passed=not low,
         low_confidence_fields=low,
         min_confidence=floor,
         review_reasons=reasons,

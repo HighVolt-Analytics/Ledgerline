@@ -18,6 +18,13 @@ from app.services.shared.flexible_date import _NAME_FORMATS, _NUMERIC_FORMATS_DM
 from app.utils.abn_validator import storage_abn
 from app.utils.tax_id_validator import is_acceptable_tax_id
 
+
+def _grounding_required_for_field(field_key: str) -> bool:
+    from app.registry.adapter import get_registry_adapter
+
+    return get_registry_adapter().grounding_required(field_key)
+
+
 _PLACEHOLDER_PATTERNS = (
     re.compile(r"^45123456789$"),
     re.compile(r"^(\d)\1{5,}$"),
@@ -143,6 +150,18 @@ def value_grounded_in_ocr(value: str | None, ocr_text: str | None) -> bool:
     escaped = re.escape(token)
     if re.search(rf"(?<!\w){escaped}(?!\w)", ocr_text, re.I):
         return True
+
+    from app.services.master_data.vendor_name_utils import normalize_vendor_name
+
+    normalized = normalize_vendor_name(token)
+    if normalized and normalized != token:
+        norm_vendor = _normalize_alnum(normalized)
+        if norm_vendor and len(norm_vendor) >= 4 and norm_vendor in norm_ocr:
+            return True
+        escaped_norm = re.escape(normalized)
+        if re.search(rf"(?<!\w){escaped_norm}(?!\w)", ocr_text, re.I):
+            return True
+
     return False
 
 
@@ -160,6 +179,27 @@ def _date_grounded_in_ocr(value: date | None, ocr_text: str | None) -> bool:
         if value_grounded_in_ocr(token, ocr_text):
             return True
     return False
+
+
+def _invoice_no_grounded(value: str | None, ocr_text: str | None) -> bool:
+    """Invoice numbers must sanitize cleanly and the clean token must appear in OCR."""
+    from app.services.extraction.invoice_no_sanitizer import (
+        invoice_no_has_label_bleed,
+        sanitize_invoice_no,
+    )
+
+    if not value or not str(value).strip():
+        return True
+    if invoice_no_has_label_bleed(value):
+        clean = sanitize_invoice_no(value)
+        if not clean:
+            return False
+        return value_grounded_in_ocr(clean, ocr_text) or value_grounded_in_ocr(str(value).strip(), ocr_text)
+    clean = sanitize_invoice_no(value)
+    token = clean or str(value).strip()
+    if not token:
+        return False
+    return value_grounded_in_ocr(token, ocr_text)
 
 
 def validate_bank_bsb(bsb: str | None, ocr_text: str | None = None) -> str | None:
@@ -237,6 +277,9 @@ def ground_extracted_fields_map(
         if requested_keys is not None and token not in allowed:
             continue
         text = str(value or "").strip()
+        if text and not _grounding_required_for_field(token):
+            grounded[token] = text
+            continue
         if text and value_grounded_in_ocr(text, ocr_text):
             grounded[token] = text
     return grounded
@@ -252,15 +295,35 @@ def ground_invoice_scalars(
     skip = skip_keys or frozenset()
     updates: dict[str, object] = {}
 
-    for field in ("invoice_no", "po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
+    from app.services.extraction.invoice_no_sanitizer import split_invoice_no_and_date
+
+    invoice_no = data.invoice_no
+    if "invoice_no" not in skip and invoice_no:
+        clean_no, bleed_date = split_invoice_no_and_date(str(invoice_no))
+        if clean_no != invoice_no:
+            updates["invoice_no"] = clean_no
+            invoice_no = clean_no
+        if (
+            bleed_date is not None
+            and data.invoice_date is None
+            and "invoice_date" not in skip
+        ):
+            updates["invoice_date"] = bleed_date
+        if invoice_no and not _invoice_no_grounded(str(invoice_no), ocr_text):
+            updates["invoice_no"] = None
+
+    for field in ("po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
         if field in skip:
             continue
         current = getattr(data, field, None)
         if current and not value_grounded_in_ocr(str(current), ocr_text):
             updates[field] = None
 
-    if "invoice_date" not in skip and data.invoice_date is not None and not _date_grounded_in_ocr(
-        data.invoice_date, ocr_text
+    resolved_date = updates.get("invoice_date", data.invoice_date)
+    if (
+        "invoice_date" not in skip
+        and isinstance(resolved_date, date)
+        and not _date_grounded_in_ocr(resolved_date, ocr_text)
     ):
         updates["invoice_date"] = None
 
@@ -327,21 +390,24 @@ def ground_parsed_fields(
         prebuilt_invoice_scalars_active,
     )
     from app.services.extraction.line_items_parser import (
+        deserialize_line_items,
+        di_line_items_usable,
         document_has_charge_lines,
-        document_has_product_table,
-        resolve_line_items_from_ocr_payload,
+        document_has_line_item_table,
     )
 
     filtered = filter_parsed_to_requested_keys(parsed, selected_keys)
     grounded = ground_invoice_scalars(filtered, ocr_text)
     if prebuilt_invoice_scalars_active(ocr_payload):
-        grounded = clear_llm_scalars_for_di_populated_fields(grounded, selected_keys, ocr_payload)
+        grounded = clear_llm_scalars_for_di_populated_fields(
+            grounded, selected_keys, ocr_payload, ocr_text=ocr_text
+        )
     selected = {str(key or "").strip().lower() for key in selected_keys if str(key or "").strip()}
     if "line_items" in selected:
         payload = ocr_payload or {}
-        if resolve_line_items_from_ocr_payload(payload):
+        if di_line_items_usable(payload):
             grounded = replace(grounded, line_items=[])
-        elif not document_has_product_table(ocr_text, payload) and not document_has_charge_lines(
+        elif not document_has_line_item_table(ocr_text, payload) and not document_has_charge_lines(
             ocr_text
         ):
             grounded = replace(grounded, line_items=[])

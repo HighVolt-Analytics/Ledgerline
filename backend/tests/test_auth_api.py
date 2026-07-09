@@ -11,6 +11,11 @@ from app.tenant_ids import TESTING_TENANT_UUID
 from tests.auth_test_helpers import login_via_otp, seed_admin_user
 
 
+def test_access_token_default_expire_minutes_is_six_hours() -> None:
+    get_settings.cache_clear()
+    assert get_settings().access_token_expire_minutes == 360
+
+
 @pytest.mark.asyncio
 async def test_register_and_login(
     client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch

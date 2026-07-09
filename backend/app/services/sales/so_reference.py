@@ -39,9 +39,15 @@ _SO_FILENAME_PATTERNS = (
 
 def is_plausible_so_reference(so: str | None) -> bool:
     """True when SO text looks like a real reference (not OCR noise)."""
+    from app.services.shared.reference_field_sanitizer import has_multiline_text
+
     if not so or not so.strip():
         return False
     text = so.strip()
+    if has_multiline_text(text):
+        return False
+    if len(text) > 64:
+        return False
     if len(text) < 4:
         return False
     if _SO_PREFIX.match(text):
@@ -130,9 +136,19 @@ def resolve_so_reference_from_invoice(invoice) -> str | None:
 
 def ensure_invoice_so_reference(invoice) -> str | None:
     """Populate invoice.so_reference when a plausible key can be inferred."""
+    from app.services.shared.reference_field_sanitizer import sanitize_reference_for_column
+
     resolved = resolve_so_reference_from_invoice(invoice)
-    if resolved:
-        invoice.so_reference = resolved
+    column_value = sanitize_reference_for_column(
+        resolved,
+        max_len=100,
+        is_plausible=is_plausible_so_reference,
+    )
+    if column_value:
+        invoice.so_reference = column_value
+    elif getattr(invoice, "so_reference", None):
+        if not is_plausible_so_reference(invoice.so_reference):
+            invoice.so_reference = None
     return resolved
 
 

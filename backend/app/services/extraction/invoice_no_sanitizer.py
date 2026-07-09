@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 
+_DATE_BLEED_IN_INVOICE_NO = re.compile(
+    r"(?:,\s*)?(?:DATED?|DATE)\s*[:\s]*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})",
+    re.I,
+)
 _INVOICE_NO_BLEED = re.compile(
     r"\s*,\s*(?:DATED?|DATE)\b.*$|\s+\bDATED?\b.*$|\s+\bOF\s+THE\b.*$",
     re.I,
@@ -60,3 +65,32 @@ def extract_invoice_no_from_text(text: str) -> str | None:
             if candidate:
                 return candidate
     return None
+
+
+def invoice_no_has_label_bleed(value: str | None) -> bool:
+    """True when value still contains DATED/DATE/OF THE label bleed."""
+    if not value or not str(value).strip():
+        return False
+    return bool(_INVOICE_NO_BLEED.search(str(value).strip()))
+
+
+def extract_date_from_invoice_no_bleed(value: str | None) -> date | None:
+    """Parse invoice date embedded after DATED:/DATE in a combined invoice-no line."""
+    if not value or not str(value).strip():
+        return None
+    match = _DATE_BLEED_IN_INVOICE_NO.search(str(value).strip())
+    if not match:
+        return None
+    from app.services.shared.flexible_date import parse_flexible_date
+
+    return parse_flexible_date(match.group(1))
+
+
+def split_invoice_no_and_date(value: str | None) -> tuple[str | None, date | None]:
+    """Return sanitized invoice number and optional date parsed from label bleed."""
+    if not value or not str(value).strip():
+        return None, None
+    token = str(value).strip()
+    bleed_date = extract_date_from_invoice_no_bleed(token)
+    clean = sanitize_invoice_no(token)
+    return clean, bleed_date

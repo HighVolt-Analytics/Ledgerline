@@ -3,6 +3,7 @@ import {
   ensureExtractionSuperset,
   normalizeCompulsoryFields,
 } from "@/lib/documentCompulsoryFields";
+import { api } from "@/api/client";
 
 /** Canonical extraction field presets — align with backend document_type_field_keys.py */
 
@@ -34,6 +35,32 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "account_code", label: "Account code" },
   { key: "account_name", label: "Account name" },
 ] as const;
+
+let cachedRegistryOptions: typeof EXTRACTION_FIELD_OPTIONS | null = null;
+
+export async function loadExtractionFieldOptions(): Promise<typeof EXTRACTION_FIELD_OPTIONS> {
+  try {
+    const settings = await api.getSettings();
+    if (!settings.use_field_registry) {
+      return EXTRACTION_FIELD_OPTIONS;
+    }
+    const registry = await api.getRegistryFields();
+    if (!registry.fields?.length) {
+      return EXTRACTION_FIELD_OPTIONS;
+    }
+    cachedRegistryOptions = registry.fields.map((row) => ({
+      key: row.key,
+      label: row.label,
+    })) as typeof EXTRACTION_FIELD_OPTIONS;
+    return cachedRegistryOptions;
+  } catch {
+    return EXTRACTION_FIELD_OPTIONS;
+  }
+}
+
+export function getExtractionFieldOptions(): typeof EXTRACTION_FIELD_OPTIONS {
+  return cachedRegistryOptions ?? EXTRACTION_FIELD_OPTIONS;
+}
 
 export type ExtractionFieldKey = (typeof EXTRACTION_FIELD_OPTIONS)[number]["key"];
 

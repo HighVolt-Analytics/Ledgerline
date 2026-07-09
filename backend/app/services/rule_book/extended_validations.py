@@ -1,24 +1,17 @@
-"""Extended invoice validation rules (VR09–VR16)."""
+"""Extended invoice validation rules (VR09, VR11, VR12)."""
 
 from __future__ import annotations
 
-import re
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice
-from app.models.purchase_order import PurchaseOrderStatus
 from app.schemas.customer import CustomerMaster
 from app.schemas.rule_book_config import RuleBookConfigPayload, VendorMaster
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.invoice.invoice_evaluation_service import ROUTE_SALES
-from app.services.purchase.purchase_match_service import load_purchase_order_for_invoice
-from app.services.rule_book.tax_invoice_policy import (
-    document_has_tax_invoice_wording,
-    tax_invoice_policy_for_country,
-)
 from app.services.rule_book.validator import ValidationResult
 from app.services.master_data.vendor_detection import (
     find_matching_customer_master,
@@ -28,21 +21,8 @@ from app.services.master_data.vendor_detection import (
 
 LINE_TOLERANCE = Decimal("0.05")
 SUBTOTAL_TOLERANCE = Decimal("0.05")
-PRICE_MATCH_PCT = Decimal("0.02")
-PRICE_MATCH_CAP_AUD = Decimal("100")
-FREIGHT_TOLERANCE_AUD = Decimal("100")
-FUZZY_AMOUNT_PCT = Decimal("0.005")
-FUZZY_DATE_DAYS = 7
 
-_FREIGHT_KEYWORDS = re.compile(
-    r"\b(freight|delivery|surcharge|shipping|carriage|handling)\b",
-    re.I,
-)
 _BLOCKED_VENDOR_STATUSES = frozenset({"blocked", "inactive", "suspended", "closed"})
-
-
-def _document_text(data: InvoiceData) -> str:
-    return (data.document_text or "").strip()
 
 
 def vr09_line_arithmetic(data: InvoiceData) -> ValidationResult:
@@ -68,50 +48,6 @@ def vr09_line_arithmetic(data: InvoiceData) -> ValidationResult:
     if issues:
         return ValidationResult("VR09", False, "; ".join(issues))
     return ValidationResult("VR09", True, "Line arithmetic within tolerance")
-
-
-def vr10_tax_invoice_wording(
-    data: InvoiceData,
-    *,
-    country: str,
-    currency: str,
-) -> ValidationResult:
-    policy = tax_invoice_policy_for_country(country)
-    if policy is None:
-        return ValidationResult(
-            "VR10",
-            True,
-            f"Tax invoice wording rule not configured for {country or 'unknown country'}",
-            skipped=True,
-        )
-    if not policy.enabled:
-        return ValidationResult(
-            "VR10",
-            True,
-            f"Tax invoice wording rule not applicable for {country}",
-            skipped=True,
-        )
-
-    text = _document_text(data)
-    has_wording = document_has_tax_invoice_wording(text, policy)
-    subtotal = data.subtotal or data.total or Decimal("0")
-    tax_amount = data.gst or Decimal("0")
-
-    if policy.amount_threshold is not None and subtotal >= policy.amount_threshold and not has_wording:
-        return ValidationResult(
-            "VR10",
-            False,
-            f"Taxable supply ≥ {currency} {policy.amount_threshold} requires tax-invoice wording on document",
-        )
-    if policy.enforce_when_tax_present and tax_amount > 0 and not has_wording:
-        return ValidationResult(
-            "VR10",
-            False,
-            f"Tax charged but document does not state required tax-invoice wording for {country}",
-        )
-    if has_wording:
-        return ValidationResult("VR10", True, "Tax-invoice wording stated on document")
-    return ValidationResult("VR10", True, "Tax invoice wording rule not applicable")
 
 
 def vr11_date_sanity(data: InvoiceData, *, today: date | None = None) -> ValidationResult:
@@ -234,122 +170,6 @@ def vr12_counterparty_master(
     return vr12_vendor_master(data, vendor_masters=vendor_masters)
 
 
-async def vr14_po_status(
-    data: InvoiceData,
-    session: AsyncSession,
-    *,
-    invoice: Invoice | None,
-    tenant_id: int,
-    expected_currency: str,
-) -> ValidationResult:
-    po_ref = (data.po_reference or "").strip()
-    if not po_ref:
-        return ValidationResult("VR14", True, "No PO reference — PO status check skipped")
-
-    if invoice is None:
-        return ValidationResult("VR14", True, "PO status check deferred (no invoice context)")
-
-    po = await load_purchase_order_for_invoice(session, invoice)
-    if po is None:
-        return ValidationResult("VR14", False, f"PO {po_ref} not found in register")
-
-    if po.status == PurchaseOrderStatus.CLOSED:
-        return ValidationResult("VR14", False, f"PO {po_ref} is closed")
-
-    expected = expected_currency.strip().upper()
-    currency = (data.currency or invoice.currency or expected).upper()
-    if currency != expected:
-        return ValidationResult(
-            "VR14",
-            False,
-            f"Invoice currency {currency} must match PO currency ({expected})",
-        )
-
-    return ValidationResult("VR14", True, f"PO {po_ref} is open and currency matches")
-
-
-async def vr15_document_match(
-    data: InvoiceData,
-    session: AsyncSession,
-    *,
-    invoice: Invoice | None,
-    tenant_id: int,
-    document_type_code: str | None = None,
-    document_types: list | None = None,
-) -> ValidationResult:
-    from app.services.classification.document_type_match_service import run_document_match_validation
-
-    outcome = await run_document_match_validation(
-        data,
-        session,
-        invoice=invoice,
-        tenant_id=tenant_id,
-        document_type_code=document_type_code,
-        document_types=document_types,
-    )
-    skipped = outcome.status == "Skipped" and outcome.passed
-    return ValidationResult(
-        "VR15",
-        outcome.passed,
-        outcome.message,
-        skipped=skipped and "skipped" in outcome.message.lower(),
-    )
-
-
-async def vr15_three_way_match(
-    data: InvoiceData,
-    session: AsyncSession,
-    *,
-    invoice: Invoice | None,
-    tenant_id: int,
-    document_type_code: str | None = None,
-    document_types: list | None = None,
-) -> ValidationResult:
-    """Backward-compatible alias — dispatches by document-type match mode."""
-    return await vr15_document_match(
-        data,
-        session,
-        invoice=invoice,
-        tenant_id=tenant_id,
-        document_type_code=document_type_code,
-        document_types=document_types,
-    )
-
-
-def vr16_freight_surcharges(data: InvoiceData, *, expected_currency: str) -> ValidationResult:
-    currency = expected_currency.strip().upper()
-    freight_total = Decimal("0")
-    for line in data.line_items:
-        desc = (line.description or "").strip()
-        if not desc or not _FREIGHT_KEYWORDS.search(desc):
-            continue
-        freight_total += line.amount or Decimal("0")
-
-    if freight_total <= 0:
-        return ValidationResult("VR16", True, "No freight/surcharge lines detected")
-
-    po_ref = (data.po_reference or "").strip()
-    if not po_ref:
-        return ValidationResult(
-            "VR16",
-            False,
-            f"Freight/surcharges {currency} {freight_total} without PO reference",
-        )
-
-    if freight_total > FREIGHT_TOLERANCE_AUD:
-        return ValidationResult(
-            "VR16",
-            False,
-            f"Freight/surcharges {currency} {freight_total} exceed tolerance {currency} {FREIGHT_TOLERANCE_AUD}",
-        )
-
-    return ValidationResult(
-        "VR16",
-        True,
-        f"Freight/surcharges {currency} {freight_total} within tolerance",
-    )
-
-
 async def run_extended_validations(
     code: str,
     data: InvoiceData,
@@ -371,16 +191,6 @@ async def run_extended_validations(
 
     if code == "VR09":
         return vr09_line_arithmetic(data)
-    if code == "VR10":
-        from app.models.tenant import Tenant
-        from app.tenant_settings import tenant_country, tenant_currency
-
-        tenant = await session.get(Tenant, tenant_id)
-        return vr10_tax_invoice_wording(
-            data,
-            country=tenant_country(tenant),
-            currency=tenant_currency(tenant),
-        )
     if code == "VR11":
         from app.models.tenant import Tenant
         from app.tenant_settings import tenant_today
@@ -396,31 +206,4 @@ async def run_extended_validations(
             vendor_masters=rule_config.vendor_masters,
             customer_masters=customer_masters,
         )
-    if code == "VR14":
-        from app.models.tenant import Tenant
-        from app.tenant_settings import tenant_currency
-
-        tenant = await session.get(Tenant, tenant_id)
-        return await vr14_po_status(
-            data,
-            session,
-            invoice=invoice,
-            tenant_id=tenant_id,
-            expected_currency=tenant_currency(tenant),
-        )
-    if code == "VR15":
-        return await vr15_document_match(
-            data,
-            session,
-            invoice=invoice,
-            tenant_id=tenant_id,
-            document_type_code=document_type_code,
-            document_types=document_types,
-        )
-    if code == "VR16":
-        from app.models.tenant import Tenant
-        from app.tenant_settings import tenant_currency
-
-        tenant = await session.get(Tenant, tenant_id)
-        return vr16_freight_surcharges(data, expected_currency=tenant_currency(tenant))
     return None

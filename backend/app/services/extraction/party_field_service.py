@@ -6,8 +6,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.jurisdiction.packs import JurisdictionPack, jurisdiction_pack_for_country
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.services.tenant.tenant_org_context import OrgContext, infer_perspective
+from app.tenant_settings import DEFAULT_COUNTRY
 from app.utils.tax_id_validator import is_acceptable_tax_id
 
 _ADDRESS_BLEED_MARKERS = re.compile(
@@ -17,13 +19,26 @@ _ADDRESS_BLEED_MARKERS = re.compile(
     re.I,
 )
 
-# Shared LLM prompt fragment for all extract/classify paths.
-PARTY_LLM_RULES = """- seller and buyer are objects with name, tax_id, and address (multi-line address as one string).
-- Copy tax_id and address verbatim from OCR; leave empty if absent.
-- Never invent tax IDs or placeholder ABNs (e.g. 45123456789).
-- tax_id is jurisdiction-neutral: ABN, GST, VAT, BIN, TIN, EIN, Company Reg, etc.
-- On commercial/export invoices: seller = issuer/exporter in header; buyer = consignee/applicant/bill-to.
-- Put buyer bill-to address in buyer.address; do not include HS codes, LC refs, or customs metadata in addresses."""
+
+def party_llm_rules(pack: JurisdictionPack | None = None) -> str:
+    """Jurisdiction-aware party prompt fragment."""
+    p = pack or jurisdiction_pack_for_country(DEFAULT_COUNTRY)
+    return (
+        "- seller and buyer are objects with name, tax_id, and address "
+        "(multi-line address as one string).\n"
+        "- Copy tax_id and address verbatim from OCR; leave empty if absent.\n"
+        f"- Never invent tax IDs or {p.llm_tax_id_examples}.\n"
+        f"- tax_id is jurisdiction-aware for this tenant ({p.tax_id_label}); also accept "
+        "ABN, GSTIN, VAT, BIN, TIN, EIN, Company Reg, etc. when printed on the document.\n"
+        "- On commercial/export invoices: seller = issuer/exporter in header; "
+        "buyer = consignee/applicant/bill-to.\n"
+        "- Put buyer bill-to address in buyer.address; do not include HS codes, LC refs, "
+        "or customs metadata in addresses."
+    )
+
+
+# Default rules use platform DEFAULT_COUNTRY (SG pack when org country unset).
+PARTY_LLM_RULES = party_llm_rules()
 
 
 @dataclass(frozen=True)
@@ -68,6 +83,7 @@ def normalize_party_fields(
     tax_id: str | None = None,
     address: str | None = None,
     ocr_text: str | None = None,
+    tax_id_kind: str | None = None,
 ) -> NormalizedParty:
     from app.services.extraction.field_grounding_service import value_grounded_in_ocr
 
@@ -78,26 +94,39 @@ def normalize_party_fields(
     tid = str(tax_id or "").strip()
     if tid and not tax_id_grounded_in_ocr(tid, ocr_text):
         tid = ""
-    if tid and not is_acceptable_tax_id(tid):
-        # Allow grounded non-checksum IDs (e.g. Singapore Co Reg with letters)
-        if not tax_id_grounded_in_ocr(tid, ocr_text):
+    if tid and not is_acceptable_tax_id(tid, tax_id_kind=tax_id_kind):
+        # Allow grounded non-checksum IDs when kind is unset/generic
+        if tax_id_kind and tax_id_kind not in {"generic", ""}:
+            tid = ""
+        elif not tax_id_grounded_in_ocr(tid, ocr_text):
             tid = ""
     return NormalizedParty(name=(name or "").strip(), tax_id=tid, address=addr)
 
 
-def normalize_llm_party(party: LlmParty, ocr_text: str | None) -> NormalizedParty:
+def normalize_llm_party(
+    party: LlmParty,
+    ocr_text: str | None,
+    *,
+    tax_id_kind: str | None = None,
+) -> NormalizedParty:
     return normalize_party_fields(
         name=party.name,
         tax_id=party.tax_id or party.abn,
         address=party.address,
         ocr_text=ocr_text,
+        tax_id_kind=tax_id_kind,
     )
 
 
-def parties_from_llm(llm: LlmDocumentResult, ocr_text: str | None) -> dict[str, NormalizedParty]:
+def parties_from_llm(
+    llm: LlmDocumentResult,
+    ocr_text: str | None,
+    *,
+    tax_id_kind: str | None = None,
+) -> dict[str, NormalizedParty]:
     return {
-        "seller": normalize_llm_party(llm.seller, ocr_text),
-        "buyer": normalize_llm_party(llm.buyer, ocr_text),
+        "seller": normalize_llm_party(llm.seller, ocr_text, tax_id_kind=tax_id_kind),
+        "buyer": normalize_llm_party(llm.buyer, ocr_text, tax_id_kind=tax_id_kind),
     }
 
 
@@ -208,8 +237,9 @@ def resolve_finance_scalars(
         resolve_counterparty_name,
     )
     from app.services.master_data.vendor_resolver import is_plausible_vendor_name
-    from app.utils.abn_validator import storage_abn
+    from app.utils.tax_id_validator import storage_tax_id
 
+    pack = jurisdiction_pack_for_country(org.country)
     seller = parties.get("seller") or NormalizedParty()
     buyer = parties.get("buyer") or NormalizedParty()
 
@@ -248,13 +278,18 @@ def resolve_finance_scalars(
     if top_level and tax_id_grounded_in_ocr(top_level, ocr_text):
         counterparty_tax_id = top_level or counterparty_tax_id
 
-    abn = storage_abn(counterparty_tax_id) if counterparty_tax_id else None
+    abn = (
+        storage_tax_id(counterparty_tax_id, tax_id_kind=pack.tax_id_kind)
+        if counterparty_tax_id
+        else None
+    )
     billing = sanitize_address(buyer.address) or None
 
     return {
         "vendor": vendor,
         "abn": abn,
         "billing_address": billing,
+        "counterparty_tax_id": counterparty_tax_id or None,
     }
 
 
@@ -270,7 +305,8 @@ def apply_party_normalization_to_llm(
     Returns (parties, perspective, finance_scalars, extracted_party_fields).
     """
     org_ctx = org or OrgContext()
-    parties = parties_from_llm(llm, ocr_text)
+    pack = jurisdiction_pack_for_country(org_ctx.country)
+    parties = parties_from_llm(llm, ocr_text, tax_id_kind=pack.tax_id_kind)
     parties = enrich_parties_from_ocr_text(parties, ocr_text)
     perspective = resolve_perspective(parties, llm, org_ctx)
     finance = resolve_finance_scalars(

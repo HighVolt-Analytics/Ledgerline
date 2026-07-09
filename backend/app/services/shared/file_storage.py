@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import uuid
@@ -415,6 +416,53 @@ def stored_file_available(
     )
 
 
+def _parse_audit_relocate_detail(detail: object) -> dict:
+    if isinstance(detail, str):
+        try:
+            detail = json.loads(detail)
+        except json.JSONDecodeError:
+            detail = {}
+    return detail if isinstance(detail, dict) else {}
+
+
+def _lookup_repaired_stored_path(
+    *,
+    invoice_id: int,
+    tenant_id: uuid.UUID,
+    tenant_slug: str,
+    tenant_name: str | None,
+    raw_file_path: str | None,
+    invoice_status,
+    audit_relocate_details: list[dict],
+    storage_kwargs: dict,
+) -> tuple[str | None, str | None]:
+    """Resolve a stale raw_file_path via audit history or blob search (sync; use in thread)."""
+    from app.models.invoice import InvoiceStatus
+
+    if stored_file_available(raw_file_path, **storage_kwargs):
+        return None, None
+
+    for detail in audit_relocate_details:
+        resolved = _resolve_readable_stored(detail.get("to_path"), **storage_kwargs)
+        if resolved:
+            return resolved, "audit"
+
+    prefer_rejected = (
+        invoice_status == InvoiceStatus.REJECTED
+        or is_rejected_storage_path(raw_file_path)
+    )
+    found = blob_storage.find_blob_uri_for_invoice(
+        invoice_id,
+        tenant_id=tenant_id,
+        tenant_slug=tenant_slug,
+        tenant_name=tenant_name,
+        prefer_rejected=prefer_rejected,
+    )
+    if found and stored_file_available(found, **storage_kwargs):
+        return found, "blob_search"
+    return None, None
+
+
 async def repair_invoice_stored_path(session, invoice) -> bool:
     """
     Recover raw_file_path when the blob was relocated but the DB row was not updated.
@@ -424,7 +472,6 @@ async def repair_invoice_stored_path(session, invoice) -> bool:
     from sqlalchemy import select
 
     from app.models.audit import AuditLog
-    from app.models.invoice import InvoiceStatus
     from app.models.tenant import Tenant
     from app.services.audit.audit_service import log_event
 
@@ -437,7 +484,9 @@ async def repair_invoice_stored_path(session, invoice) -> bool:
         "tenant_name": tenant_name,
     }
 
-    if stored_file_available(invoice.raw_file_path, **storage_kwargs):
+    if await asyncio.to_thread(
+        stored_file_available, invoice.raw_file_path, **storage_kwargs
+    ):
         return False
 
     rows = (
@@ -451,47 +500,27 @@ async def repair_invoice_stored_path(session, invoice) -> bool:
             .limit(10)
         )
     ).scalars().all()
-    for row in rows:
-        detail = row.detail
-        if isinstance(detail, str):
-            try:
-                detail = json.loads(detail)
-            except json.JSONDecodeError:
-                detail = {}
-        if not isinstance(detail, dict):
-            detail = {}
-        to_path = detail.get("to_path")
-        resolved = _resolve_readable_stored(to_path, **storage_kwargs)
-        if resolved:
-            old_path = invoice.raw_file_path
-            invoice.raw_file_path = resolved
-            await log_event(
-                session,
-                "blob_path_repaired",
-                invoice_id=invoice.id,
-                detail={"from_path": old_path, "to_path": resolved, "source": "audit"},
-            )
-            return True
+    audit_details = [_parse_audit_relocate_detail(row.detail) for row in rows]
 
-    prefer_rejected = (
-        invoice.status == InvoiceStatus.REJECTED
-        or is_rejected_storage_path(invoice.raw_file_path)
-    )
-    found = blob_storage.find_blob_uri_for_invoice(
-        invoice.id,
+    resolved, source = await asyncio.to_thread(
+        _lookup_repaired_stored_path,
+        invoice_id=invoice.id,
         tenant_id=invoice.tenant_id,
         tenant_slug=tenant_slug,
         tenant_name=tenant_name,
-        prefer_rejected=prefer_rejected,
+        raw_file_path=invoice.raw_file_path,
+        invoice_status=invoice.status,
+        audit_relocate_details=audit_details,
+        storage_kwargs=storage_kwargs,
     )
-    if found and stored_file_available(found, **storage_kwargs):
+    if resolved and source:
         old_path = invoice.raw_file_path
-        invoice.raw_file_path = found
+        invoice.raw_file_path = resolved
         await log_event(
             session,
             "blob_path_repaired",
             invoice_id=invoice.id,
-            detail={"from_path": old_path, "to_path": found, "source": "blob_search"},
+            detail={"from_path": old_path, "to_path": resolved, "source": source},
         )
         return True
 
@@ -505,7 +534,9 @@ async def ensure_invoice_stored_file(session, invoice) -> None:
     Raises ValueError when no blob or local file can be resolved.
     """
     await repair_invoice_stored_path(session, invoice)
-    if stored_file_available(invoice.raw_file_path, tenant_id=invoice.tenant_id):
+    if await asyncio.to_thread(
+        stored_file_available, invoice.raw_file_path, tenant_id=invoice.tenant_id
+    ):
         return
 
     raise ValueError(

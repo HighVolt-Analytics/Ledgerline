@@ -12,7 +12,6 @@ from app.schemas.llm_document import LlmDocumentResult
 from app.services.classification.document_type_catalog import get_document_type_definition, min_route_confidence_for_document_type
 from app.services.classification.document_type_playbook_service import (
     effective_extraction_fields,
-    missing_extraction_fields,
     resolve_definition_for_invoice,
 )
 from app.services.classification.document_type_rule_engine import build_document_classifier_context
@@ -110,13 +109,11 @@ def compare_classification(
     if perspective == "unknown":
         reasons.append(ReviewReason.PERSPECTIVE_AMBIGUOUS)
 
-    # Playbook extraction on suggested DT
-    defn = get_document_type_definition(llm.suggested_dt, document_types=document_types) if llm.suggested_dt else None
-    if defn is not None and not pre_extract:
-        missing = missing_extraction_fields(defn, invoice=invoice, parsed=parsed)
-        if missing:
-            reasons.append(ReviewReason.EXTRACTION_GAP)
-
+    defn = (
+        get_document_type_definition(llm.suggested_dt, document_types=document_types)
+        if llm.suggested_dt
+        else None
+    )
     if defn is not None and (defn.posting or "").strip().lower() == "conditional":
         reasons.append(ReviewReason.NEVER_AUTO_POLICY)
 

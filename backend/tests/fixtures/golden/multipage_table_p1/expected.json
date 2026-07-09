@@ -1,0 +1,9 @@
+{
+  "dt_code": "DT-01",
+  "fields": {
+    "invoice_no": "MP-1001"
+  },
+  "line_items": {
+    "min_count": 2
+  }
+}

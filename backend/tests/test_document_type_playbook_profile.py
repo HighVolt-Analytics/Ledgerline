@@ -63,18 +63,18 @@ def test_explicit_match_policy_override() -> None:
     assert effective_match_policy(definition).mode == "none"
 
 
-def test_playbook_review_skipped_when_bundle_not_enforced() -> None:
+def test_playbook_review_never_blocks_routing() -> None:
     from app.services.classification.document_type_playbook_service import PlaybookGateResult
 
     playbook = PlaybookGateResult(
         missing_bundle_mandatory=("DT-14",),
         missing_bundle_conditional_dt=(),
         conditional_advisories=(),
-        missing_extraction_fields=(),
+        missing_extraction_fields=("vendor",),
     )
     definition = _definition(code="DT-03", playbookProfile="direct_expense")
     assert requires_playbook_review(playbook, definition=definition) is False
-    assert requires_playbook_review(playbook, definition=_definition(playbookProfile="po_goods")) is True
+    assert requires_playbook_review(playbook, definition=_definition(playbookProfile="po_goods")) is False
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_ar_goods_touchless_passes_audit_match_without_clean_vr15_message(
         session,
         invoice,
         definition=definition,
-        validation_results=[ValidationResult("VR15", True, "Matched within tolerance")],
+        validation_results=[],
     )
     assert held is False
 
@@ -155,11 +155,15 @@ async def test_ar_goods_touchless_passes_clean_match(monkeypatch: pytest.MonkeyP
         "app.services.classification.document_type_approval_service.has_document_approval",
         AsyncMock(return_value=False),
     )
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.latest_audit_detail_after_cycle_reset",
+        AsyncMock(return_value={"status": "3-Way Match"}),
+    )
     held = await apply_document_type_approval_gate(
         session,
         invoice,
         definition=definition,
-        validation_results=[ValidationResult("VR15", True, "3-Way Match")],
+        validation_results=[],
     )
     assert held is False
 
@@ -190,11 +194,15 @@ async def test_po_goods_touchless_passes_clean_match(monkeypatch: pytest.MonkeyP
         "app.services.classification.document_type_approval_service.has_document_approval",
         AsyncMock(return_value=False),
     )
+    monkeypatch.setattr(
+        "app.services.classification.document_type_approval_service.latest_audit_detail_after_cycle_reset",
+        AsyncMock(return_value={"status": "3-Way Match"}),
+    )
     held = await apply_document_type_approval_gate(
         session,
         invoice,
         definition=definition,
-        validation_results=[ValidationResult("VR15", True, "3-Way Match")],
+        validation_results=[],
     )
     assert held is False
 
@@ -216,7 +224,7 @@ async def test_variance_workflow_skipped_after_human_approval(monkeypatch: pytes
         session,
         invoice,
         definition=definition,
-        validation_results=[ValidationResult("VR15", False, "Qty Variance")],
+        validation_results=[],
     )
     assert held is False
 
@@ -243,9 +251,28 @@ def test_backfill_playbook_profile_on_save() -> None:
 
 
 def test_effective_playbook_profile_uses_code_defaults() -> None:
-    assert effective_playbook_profile(_definition(code="DT-09", playbookProfile="")) == "freight_logistics"
-    assert effective_playbook_profile(_definition(code="DT-10", playbookProfile="")) == "import_dossier"
-    assert effective_playbook_profile(_definition(code="DT-11", playbookProfile="")) == "intercompany"
+    assert (
+        effective_playbook_profile(
+            _definition(
+                code="DT-09",
+                title="Freight, logistics & customs broker invoice",
+                shortTitle="Freight / broker",
+                playbookProfile="",
+            )
+        )
+        == "freight_logistics"
+    )
+    assert (
+        effective_playbook_profile(
+            _definition(
+                code="DT-10",
+                title="Import dossier (commercial invoice + customs entry + duty)",
+                shortTitle="Import dossier",
+                playbookProfile="",
+            )
+        )
+        == "import_dossier"
+    )
 
 
 def test_playbook_preset_catalog_parity() -> None:

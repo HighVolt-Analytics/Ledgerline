@@ -47,7 +47,7 @@ def _is_label_only_row(item: ParsedLineItem) -> bool:
     return not has_money
 
 
-def _passes_minimum_product_row(item: ParsedLineItem) -> bool:
+def _passes_minimum_product_row(item: ParsedLineItem, *, allow_qty_only: bool = False) -> bool:
     desc = re.sub(r"\s+", " ", (item.description or "").strip())
     if not desc:
         return False
@@ -58,6 +58,8 @@ def _passes_minimum_product_row(item: ParsedLineItem) -> bool:
     if has_money:
         return True
     if has_qty and (item.amount is not None or item.unit_price is not None):
+        return True
+    if allow_qty_only and has_qty:
         return True
     return False
 
@@ -84,9 +86,9 @@ def sanitize_line_items(
     po_reference: str | None = None,
     so_reference: str | None = None,
     cost_centre: str | None = None,
+    allow_qty_only: bool = False,
 ) -> list[ParsedLineItem]:
     """Drop summary/metadata/header duplicate rows from merged line items."""
-    del ocr_text  # reserved for future OCR cross-checks
     header_values = _header_scalar_values(
         vendor=vendor,
         invoice_no=invoice_no,
@@ -105,7 +107,7 @@ def sanitize_line_items(
             continue
         if _duplicates_header_value(desc, header_values):
             continue
-        if not _passes_minimum_product_row(item):
+        if not _passes_minimum_product_row(item, allow_qty_only=allow_qty_only):
             continue
         cleaned.append(item)
     return cleaned
