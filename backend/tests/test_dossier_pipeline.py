@@ -10,6 +10,8 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.dossier.dossier_pipeline_service import (
     STAGE_IDS,
+    _match_audit_indicates_fail,
+    _resolve_match,
     build_dossier_pipeline,
     classification_review_pending,
     first_pipeline_failure,
@@ -991,3 +993,120 @@ async def test_pipeline_vendor_drift_routing_fails_llm_classify_not_validate() -
     assert validate.state == "pending"
     assert first_pipeline_failure(pipeline) is not None
     assert first_pipeline_failure(pipeline).stage_id == "llm_classify"
+
+
+def _match_eval_detail(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "match_status": "3-Way Match",
+        "status": "match",
+        "po_number": "PO-2026-0612",
+        "po_value": 416000.0,
+        "total_deviation": 0.0,
+        "qty_variance_value": 0.0,
+        "price_variance_value": 0.0,
+        "po_qty": 120.0,
+        "po_unit_price": 3466.67,
+        "grn_qty": 120.0,
+        "invoice_qty": 120.0,
+        "invoice_unit_price": 3466.67,
+        "currency": "INR",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_match_audit_indicates_fail_on_mismatch_register_status() -> None:
+    assert _match_audit_indicates_fail({"status": "mismatch"}) is True
+
+
+def test_match_audit_indicates_fail_on_qty_variance_status() -> None:
+    assert _match_audit_indicates_fail({"match_status": "Qty Variance"}) is True
+
+
+def test_match_audit_indicates_fail_on_price_variance_status() -> None:
+    assert _match_audit_indicates_fail({"match_status": "Price Variance"}) is True
+
+
+def test_match_audit_indicates_pass_on_clean_three_way() -> None:
+    assert _match_audit_indicates_fail({"match_status": "3-Way Match", "status": "match"}) is False
+
+
+def test_resolve_match_fails_on_mismatch_register_status() -> None:
+    """Regression: PO-2026-0612 dossier showed pass when register status was mismatch."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Everest Furnishings",
+        po_reference="PO-2026-0612",
+        invoice_no="INV-2026-0703",
+        status=InvoiceStatus.EXCEPTION,
+        currency="INR",
+    )
+    logs = [
+        _log(
+            "three_way_match_evaluated",
+            1,
+            **_match_eval_detail(
+                status="mismatch",
+                match_status="Qty Variance",
+                grn_qty=1.0,
+                total_deviation=412533.33,
+                qty_variance_value=412533.33,
+            ),
+        ),
+    ]
+    step = _resolve_match(inv, logs, wm=15)
+    assert step.state == "fail"
+    assert step.exception_code == "MATCH_FAILED"
+    assert any(check.state == "fail" and check.rule_ref == "MATCH" for check in (step.checks or []))
+
+
+def test_resolve_match_passes_on_clean_three_way_match() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Everest Furnishings",
+        po_reference="PO-2026-0612",
+        status=InvoiceStatus.PROCESSED,
+        currency="INR",
+    )
+    logs = [_log("three_way_match_evaluated", 1, **_match_eval_detail())]
+    step = _resolve_match(inv, logs, wm=15)
+    assert step.state == "pass"
+    assert step.exception_code is None
+
+
+def test_resolve_match_fails_on_variance_hold_without_approval() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Everest Furnishings",
+        status=InvoiceStatus.EXCEPTION,
+    )
+    logs = [
+        _log(
+            "three_way_match_variance_unapproved",
+            1,
+            match_status="Qty Variance",
+            qty_variance_value=412533.33,
+        ),
+    ]
+    step = _resolve_match(inv, logs, wm=15)
+    assert step.state == "fail"
+    assert step.exception_code == "MATCH_FAILED"
+
+
+def test_resolve_match_passes_after_sales_variance_approved() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Harbour View Hotel",
+        status=InvoiceStatus.PROCESSED,
+    )
+    logs = [
+        _log(
+            "three_way_match_variance_unapproved",
+            1,
+            match_status="Qty Variance",
+            qty_variance_value=405.0,
+        ),
+        _log("sales_variance_approved", 1, so_number="SO-DEMO-100"),
+    ]
+    step = _resolve_match(inv, logs, wm=15)
+    assert step.state == "pass"

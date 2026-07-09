@@ -122,6 +122,10 @@ _EVENT_STAGE.update(
         "match_phase_evaluated": 12,
         "match_context_incomplete": 12,
         "purchase_variance_approved": 12,
+        "sales_variance_approved": 12,
+        "variance_approval_reprocess_queued": 12,
+        "variance_approval_posting_resumed": 15,
+        "three_way_match_variance_unapproved": 15,
         "invoice_approved": 13,
         "approval_required": 13,
         "approval_requested": 13,
@@ -129,6 +133,7 @@ _EVENT_STAGE.update(
         "mapping_applied": 14,
         "mapping_review_required": 14,
         "journal_unbalanced": 15,
+        "journal_control_account_unresolved": 15,
         "reconciliation_halted": 16,
         "reconciliation_skipped": 16,
         "invoice_processed": 17,
@@ -170,6 +175,10 @@ _REMEDIATION: dict[str, str] = {
     "MAP_SUSPENSE": "Map to a real GL account in the rule book or approve suspense mapping.",
     "MAP_CONFIG": "Set Post to ledger for this document type in Rule Book → Document types.",
     "JOURNAL_UNBALANCED": "Correct subtotal, GST, and total on the invoice or reprocess after extraction fixes.",
+    "JOURNAL_CONTROL_ACCOUNT_UNRESOLVED": (
+        "Add the missing payable, receivable, or tax account names to Chart of Accounts "
+        "(Settings → Rule Book), then reprocess."
+    ),
     "PIPELINE_ERROR": "Fix the reported issue and reprocess the dossier from the exception queue.",
     "RECON_HALTED": "Clear the daily reconciliation halt before posting.",
     "PAY_FAILED": "Review payment details and re-release from the payments queue.",
@@ -1230,29 +1239,64 @@ def _resolve_validate(
     return _step("validate", state="pending", detail="—", checks=checks)
 
 
+def _match_audit_indicates_fail(detail_dict: dict[str, object]) -> bool:
+    from app.services.match.match_variance_gate_service import MATCH_FAIL_STATUSES
+
+    match_status = str(detail_dict.get("match_status") or "").strip()
+    register_status = str(detail_dict.get("status") or "").strip().lower()
+    if match_status in MATCH_FAIL_STATUSES:
+        return True
+    if register_status == "mismatch":
+        return True
+    return False
+
+
 def _resolve_match(
     inv: Invoice,
     logs: list[AuditLog],
     wm: int,
     document_types: list | None = None,
 ) -> DossierPipelineStepResponse:
-    checks = _validation_checks(inv, document_types)
-    match_fail = any(c.state == "fail" and c.rule_ref == "MATCH" for c in checks)
+    from app.services.dossier.dossier_match_service import (
+        match_checks_from_summary,
+        match_summary_from_audit_detail,
+    )
+
+    vr_checks = _validation_checks(inv, document_types)
     match_log = _latest_log(logs, "three_way_match_evaluated")
-    variance_log = _latest_log(logs, "purchase_variance_approved")
+    variance_hold = _latest_log(logs, "three_way_match_variance_unapproved")
+    purchase_variance_log = _latest_log(logs, "purchase_variance_approved")
+    sales_variance_log = _latest_log(logs, "sales_variance_approved")
+    variance_cleared = purchase_variance_log is not None or sales_variance_log is not None
+
+    match_checks: list = []
+    if match_log and isinstance(match_log.detail, dict):
+        currency = str(match_log.detail.get("currency") or inv.currency or "SGD")
+        summary = match_summary_from_audit_detail(match_log.detail, currency=currency)
+        if summary is not None:
+            match_checks = match_checks_from_summary(summary)
+
+    match_fail = any(c.state == "fail" and c.rule_ref == "MATCH" for c in match_checks)
+    if variance_hold is not None and not variance_cleared:
+        match_fail = True
 
     if match_log:
         detail = _detail_from_log(match_log, fallback="three_way_match_evaluated")
         detail_dict = match_log.detail if isinstance(match_log.detail, dict) else {}
-        status = str(detail_dict.get("status") or detail_dict.get("match_status") or "").lower()
-        state: DossierStageState = "fail" if match_fail or any(
-            token in status for token in ("variance", "no grn", "routed")
-        ) else "pass"
+        audit_fail = _match_audit_indicates_fail(detail_dict)
+        state: DossierStageState = "fail" if match_fail or audit_fail else "pass"
         failure = None
         remediation = None
         if state == "fail":
             failure = detail
             remediation = _remediation_for("MATCH_FAILED", inv)
+        merged_checks = match_checks
+        if vr_checks:
+            seen = {row.id for row in match_checks}
+            merged_checks = [
+                *match_checks,
+                *(row for row in vr_checks if row.id not in seen),
+            ]
         return _step(
             "match",
             state=state,
@@ -1261,14 +1305,30 @@ def _resolve_match(
             exception_code="MATCH_FAILED" if state == "fail" else None,
             failure_reason=failure,
             remediation=remediation,
+            checks=merged_checks,
         )
 
-    if variance_log:
+    if variance_hold is not None and not variance_cleared:
+        detail = _detail_from_log(variance_hold, fallback="three_way_match_variance_unapproved")
+        return _step(
+            "match",
+            state="fail",
+            detail=detail,
+            at=variance_hold.created_at,
+            exception_code="MATCH_FAILED",
+            failure_reason=detail,
+            remediation=_remediation_for("MATCH_FAILED", inv),
+            checks=match_checks,
+        )
+
+    if purchase_variance_log or sales_variance_log:
+        cleared = purchase_variance_log or sales_variance_log
+        assert cleared is not None
         return _step(
             "match",
             state="pass",
-            detail=_detail_from_log(variance_log, fallback="purchase_variance_approved"),
-            at=variance_log.created_at,
+            detail=_detail_from_log(cleared, fallback=cleared.event),
+            at=cleared.created_at,
         )
 
     if match_fail:
@@ -1280,6 +1340,7 @@ def _resolve_match(
             exception_code="MATCH_FAILED",
             failure_reason="Document match failed",
             remediation=_remediation_for("MATCH_FAILED", inv),
+            checks=match_checks,
         )
 
     from app.services.sales.so_reference import resolve_so_reference_from_invoice
@@ -1394,6 +1455,32 @@ def _resolve_journal(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
             exception_code="JOURNAL_UNBALANCED",
             failure_reason=reason,
             remediation=_REMEDIATION["JOURNAL_UNBALANCED"],
+        )
+
+    variance_fail = _latest_log(logs, "three_way_match_variance_unapproved")
+    if variance_fail and inv.status == InvoiceStatus.EXCEPTION:
+        reason = _detail_from_log(variance_fail, fallback="three_way_match_variance_unapproved")
+        return _step(
+            "journal",
+            state="fail",
+            detail=reason,
+            at=variance_fail.created_at,
+            exception_code="MATCH_FAILED",
+            failure_reason=reason,
+            remediation=_remediation_for("MATCH_FAILED", inv),
+        )
+
+    control_fail = _latest_log(logs, "journal_control_account_unresolved")
+    if control_fail and inv.status == InvoiceStatus.EXCEPTION:
+        reason = _detail_from_log(control_fail, fallback="journal_control_account_unresolved")
+        return _step(
+            "journal",
+            state="fail",
+            detail=reason,
+            at=control_fail.created_at,
+            exception_code="JOURNAL_CONTROL_ACCOUNT_UNRESOLVED",
+            failure_reason=reason,
+            remediation=_REMEDIATION["JOURNAL_CONTROL_ACCOUNT_UNRESOLVED"],
         )
 
     processed = _latest_log(logs, "invoice_processed", "purchase_document_processed")
