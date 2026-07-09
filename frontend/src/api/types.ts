@@ -1051,15 +1051,6 @@ export interface AppSettings {
   payment_manual_execution_enabled: boolean;
   payment_manual_execution_limit_usd: number;
   payment_execution_disabled: boolean;
-  app_env: string;
-  payment_environment_label: string;
-  public_app_base_url?: string;
-  public_api_base_url?: string;
-  stripe_mode: string;
-  xero_configured: boolean;
-  quickbooks_configured: boolean;
-  stripe_global_payouts_enabled?: boolean;
-  stripe_global_payouts_access_status: string;
   use_field_registry?: boolean;
 }
 

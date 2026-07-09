@@ -8,15 +8,10 @@ import shippedDefaults from "@/lib/documentTypeDefaults.json";
 import classifierPresets from "@/lib/documentTypeClassifierPresets.json";
 import { playbookPresetForProfile, type PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import type {
-  DocumentTypeClass,
   DocumentTypeClassifier,
   DocumentTypeDefinition,
 } from "@/lib/v5DocumentTypes";
 import { createBlankDocumentType, emptyDocumentTypePostTo, nextOrgDocumentTypeCode } from "@/lib/v5DocumentTypes";
-import type {
-  DocumentTypeClassifier,
-  DocumentTypeDefinition,
-} from "@/lib/v5DocumentTypes";
 import type { DocumentTypeClass } from "@/lib/documentTypeKlass";
 import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { routeTargetForDocumentTypeCode } from "@/lib/documentTypeRouteTargets";

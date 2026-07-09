@@ -12,7 +12,6 @@ import {
   applyDefaultPostToIfEmpty,
   suggestedLedgerForPlaybookProfile,
 } from "@/lib/documentTypeGlDefaults";
-import type { ChartOfAccountRow } from "@/api/types";
 import {
   documentTypeRequiresPostTo,
   postToConfigWarnings,

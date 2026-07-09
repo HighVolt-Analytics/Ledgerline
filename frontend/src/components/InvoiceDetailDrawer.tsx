@@ -116,7 +116,7 @@ function canEdit(status: string): boolean {
 function extractionFieldDisplayLabel(
   key: string,
   inv: InvoiceDetails,
-  tax: { label: string; rate: number }
+  tax: { label: string; rate: number | null }
 ): string {
   return extractionFieldLabelForInvoice(key, inv, tax);
 }

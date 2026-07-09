@@ -7,6 +7,8 @@ import { api } from "@/api/client";
 
 /** Canonical extraction field presets — align with backend document_type_field_keys.py */
 
+export type ExtractionFieldOption = { key: string; label: string };
+
 export const EXTRACTION_FIELD_OPTIONS = [
   { key: "vendor", label: "Vendor" },
   { key: "abn", label: "Tax ID / ABN" },
@@ -14,7 +16,8 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "invoice_date", label: "Invoice date" },
   { key: "due_date", label: "Due date" },
   { key: "po_reference", label: "PO reference" },
-  { key: "so_reference", label: "SO reference" },  { key: "cost_centre", label: "Cost centre" },
+  { key: "so_reference", label: "SO reference" },
+  { key: "cost_centre", label: "Cost centre" },
   { key: "subtotal", label: "Subtotal" },
   { key: "gst", label: "Tax (GST/VAT)" },
   { key: "gst_rate", label: "Tax rate (%)" },
@@ -34,11 +37,13 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "email_subject", label: "Email subject" },
   { key: "account_code", label: "Account code" },
   { key: "account_name", label: "Account name" },
-] as const;
+] as const satisfies readonly ExtractionFieldOption[];
 
-let cachedRegistryOptions: typeof EXTRACTION_FIELD_OPTIONS | null = null;
+export type ExtractionFieldKey = (typeof EXTRACTION_FIELD_OPTIONS)[number]["key"];
 
-export async function loadExtractionFieldOptions(): Promise<typeof EXTRACTION_FIELD_OPTIONS> {
+let cachedRegistryOptions: readonly ExtractionFieldOption[] | null = null;
+
+export async function loadExtractionFieldOptions(): Promise<readonly ExtractionFieldOption[]> {
   try {
     const settings = await api.getSettings();
     if (!settings.use_field_registry) {
@@ -51,18 +56,16 @@ export async function loadExtractionFieldOptions(): Promise<typeof EXTRACTION_FI
     cachedRegistryOptions = registry.fields.map((row) => ({
       key: row.key,
       label: row.label,
-    })) as typeof EXTRACTION_FIELD_OPTIONS;
+    }));
     return cachedRegistryOptions;
   } catch {
     return EXTRACTION_FIELD_OPTIONS;
   }
 }
 
-export function getExtractionFieldOptions(): typeof EXTRACTION_FIELD_OPTIONS {
+export function getExtractionFieldOptions(): readonly ExtractionFieldOption[] {
   return cachedRegistryOptions ?? EXTRACTION_FIELD_OPTIONS;
 }
-
-export type ExtractionFieldKey = (typeof EXTRACTION_FIELD_OPTIONS)[number]["key"];
 
 export type RouteTarget = (typeof ROUTE_TARGETS)[number];
 

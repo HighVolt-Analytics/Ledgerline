@@ -13,7 +13,6 @@ import type {
   DocumentTypePostTo,
   RecognitionMode,
 } from "@/lib/v5DocumentTypes";
-import { emptyDocumentTypePostTo } from "@/lib/v5DocumentTypes";
 import { extractionFieldLabel, normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
 import { newClientRowKey } from "@/lib/clientRowKey";
 

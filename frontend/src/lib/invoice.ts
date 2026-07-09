@@ -105,9 +105,9 @@ export function counterpartyUnknownLabel(inv: Pick<Invoice, "route_target">): st
 export function extractionFieldLabelForInvoice(
   key: string,
   inv: Pick<Invoice, "route_target">,
-  tax?: { label: string; rate: number },
+  tax?: { label: string; rate: number | null },
 ): string {
-  if (key === "gst" && tax) return `${tax.label} ${tax.rate}%`;
+  if (key === "gst" && tax) return `${tax.label} ${tax.rate ?? 0}%`;
   if (key === "vendor") return counterpartyLabel(inv);
   return extractionFieldLabel(key);
 }
