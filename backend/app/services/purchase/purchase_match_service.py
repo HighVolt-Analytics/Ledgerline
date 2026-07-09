@@ -701,6 +701,7 @@ async def execute_purchase_document_match(
     *,
     session: AsyncSession,
     invoice: Invoice,
+    match_config: PurchaseMatchConfig | None = None,
 ) -> object:
     """Run tiered AP match (3-way PO, 2-way PO, or 2-way GRN) for the invoice pipeline."""
     from app.services.classification.document_type_match_service import compute_two_way_po_match
@@ -720,7 +721,7 @@ async def execute_purchase_document_match(
         )
 
     if ctx.effective_mode == "three_way_po_grn" and ctx.po is not None:
-        match = compute_three_way_match(ctx.po, invoice)
+        match = compute_three_way_match(ctx.po, invoice, match_config=match_config)
         if match.status == "No GRN":
             return _purchase_match_result_to_outcome(match, match_mode="three_way_po_grn")
         po_unit = float(ctx.po.po_unit_price)
@@ -740,7 +741,11 @@ async def execute_purchase_document_match(
 
     if ctx.effective_mode == "two_way_grn_invoice" and ctx.grn_invoice is not None:
         grn_qty = await _load_grn_invoice_qty(session, ctx.grn_invoice)
-        match = compute_two_way_grn_match(grn_qty=grn_qty, inv=invoice)
+        match = compute_two_way_grn_match(
+            grn_qty=grn_qty,
+            inv=invoice,
+            match_config=match_config,
+        )
         return _purchase_match_result_to_outcome(match, match_mode="two_way_grn_invoice")
 
     from app.services.classification.document_type_match_service import DocumentMatchOutcome
@@ -884,4 +889,10 @@ async def approve_purchase_variance(
         invoice_id_for_audit=po.invoice_id,
         rule_book_config=config,
     )
+    if inv is not None:
+        from app.services.match.match_variance_gate_service import (
+            resume_invoice_posting_after_variance_approval,
+        )
+
+        await resume_invoice_posting_after_variance_approval(db, inv, config=config)
     return purchase_order_to_response(po, inv, config=config)

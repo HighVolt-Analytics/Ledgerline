@@ -15,7 +15,12 @@ from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.vendor import VendorRegistry
 from app.models.customer import CustomerRegistry
-from app.services.rule_book.account_mapper import AccountMapping, MappingDetail
+from app.schemas.rule_book_config import RuleBookConfigPayload
+from app.services.rule_book.account_mapper import (
+    AccountMapping,
+    MappingDetail,
+    resolve_fallback_account_mapping,
+)
 from app.services.dossier.document_duplicate_service import (
     find_existing_ingest_duplicate,
     find_invoice_by_file_hash,
@@ -115,7 +120,11 @@ from app.services.ingest.email_ingestion import RawEmail, mark_message_read
 from app.services.shared.file_storage import open_pdf_for_reading
 from app.services.vault.vault_blob_sync import sync_invoice_blob_path
 from app.services.ingest.graph_mail_folders import folder_moves_enabled
-from app.services.payments.journal_generator import generate_entries, is_balanced
+from app.services.payments.journal_generator import (
+    generate_entries,
+    get_unresolved_control_accounts,
+    is_balanced,
+)
 from app.services.shared.notifier import send_notification
 from app.services.reconciliation.reconciliation_service import reconcile_daily, save_reconciliation
 from app.services.rule_book.validator import all_passed, results_to_json, run_all_validations
@@ -985,6 +994,285 @@ async def _apply_parsed_to_invoice(
 
     await _replace_line_items(session, loaded, parsed.line_items)
     return invoice.vendor
+
+
+async def resume_invoice_posting_pipeline(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    config: RuleBookConfigPayload | None = None,
+) -> None:
+    """Resume mapping→journal→post using persisted extract fields (no OCR/LLM/extract)."""
+    cfg: RuleBookConfigPayload = config or await load_config_for_tenant(session, invoice.tenant_id)
+    tenant_row = await session.get(Tenant, invoice.tenant_id)
+    org = org_context_from_config(cfg, tenant_row)
+    bypass_review_gates = await human_approved_payable_bypass(session, invoice)
+
+    loaded = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.id == invoice.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+    parsed = invoice_data_from_invoice(loaded)
+    resolved_vendor = loaded.vendor
+
+    route = (loaded.route_target or "").strip()
+    if route == ROUTE_PURCHASE:
+        from app.services.purchase.purchase_document_service import sync_purchase_document
+
+        await sync_purchase_document(session, loaded)
+        invoice.purchase_document_type = loaded.purchase_document_type
+        invoice.po_reference = loaded.po_reference
+    elif route == ROUTE_SALES:
+        from app.services.sales.sales_document_service import sync_sales_document
+
+        await sync_sales_document(session, loaded)
+        invoice.sales_document_type = loaded.sales_document_type
+        invoice.so_reference = loaded.so_reference
+
+    if await _vendor_hold_unless_skipped(session, loaded):
+        invoice.status = InvoiceStatus.EXCEPTION
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    invoice.status = InvoiceStatus.MAPPING
+    await session.flush()
+
+    loaded = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.id == invoice.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+    from app.services.purchase.purchase_match_service import load_purchase_order_for_invoice
+    from app.services.sales.sales_match_service import load_sales_order_for_invoice
+
+    linked_po = await load_purchase_order_for_invoice(session, loaded)
+    linked_so = await load_sales_order_for_invoice(session, loaded)
+    map_config = cfg
+    mapping, mapping_detail = _resolve_header_mapping(
+        loaded,
+        config=map_config,
+        purchase_order=linked_po,
+        sales_order=linked_so,
+    )
+    invoice.account_code = mapping.account_code
+    invoice.account_name = mapping.account_name
+    await _sync_counterparty_and_evaluate(
+        session,
+        loaded,
+        parsed=parsed,
+        config=cfg,
+        org=org,
+    )
+    await sync_invoice_blob_path(session, loaded, parsed_vendor=resolved_vendor)
+    invoice.raw_file_path = loaded.raw_file_path
+    invoice.route_target = loaded.route_target
+    if await _vendor_hold_unless_skipped(session, loaded):
+        invoice.status = InvoiceStatus.EXCEPTION
+        invoice.evaluation_status = loaded.evaluation_status
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+    await log_event(
+        session,
+        "mapping_applied",
+        invoice_id=invoice.id,
+        detail={
+            "account_code": mapping.account_code,
+            "account_name": mapping.account_name,
+            "rule_type": mapping_detail.rule_type,
+            "match_reason": mapping_detail.match_reason,
+            "resume": "variance_approval",
+        },
+    )
+
+    if not should_skip(invoice, "line_gl_mapping"):
+        from app.services.classification.line_gl_mapping_service import apply_line_gl_mapping
+
+        await apply_line_gl_mapping(session, loaded, map_config)
+
+    if (
+        requires_gl_mapping_review(
+            loaded,
+            mapping_detail,
+            document_types=list(cfg.document_types),
+        )
+        and not bypass_review_gates
+        and not should_skip(invoice, "mapping_review")
+    ):
+        invoice.status = InvoiceStatus.EXCEPTION
+        invoice.evaluation_status = EVAL_NEEDS_REVIEW
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    if await apply_team_expense_approval_gate(session, invoice):
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    from app.services.match.match_variance_gate_service import (
+        build_variance_gate_audit_detail,
+        evaluate_match_variance_gate,
+    )
+
+    variance_gate = await evaluate_match_variance_gate(session, loaded, config=cfg)
+    if variance_gate.blocked:
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "three_way_match_variance_unapproved",
+            invoice_id=invoice.id,
+            detail=build_variance_gate_audit_detail(variance_gate),
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    invoice.status = InvoiceStatus.JOURNALING
+    await session.flush()
+    existing_entries = (
+        await session.execute(
+            select(JournalEntry).where(
+                *journal_entries_for_invoice(invoice.tenant_id, invoice.id),
+            )
+        )
+    ).scalars().all()
+    for entry in existing_entries:
+        await session.delete(entry)
+    await session.flush()
+    journal_lines = generate_entries(invoice, mapping, config=cfg, sales_order=linked_so)
+    if not is_balanced(journal_lines):
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "journal_unbalanced",
+            invoice_id=invoice.id,
+            detail={
+                "subtotal": float(invoice.subtotal or 0),
+                "gst": float(invoice.gst or 0),
+                "total": float(invoice.total or 0),
+                "resume": "variance_approval",
+            },
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+    unresolved_control = get_unresolved_control_accounts(invoice=invoice, config=map_config)
+    if unresolved_control:
+        invoice.status = InvoiceStatus.EXCEPTION
+        fallback = resolve_fallback_account_mapping(map_config)
+        await log_event(
+            session,
+            "journal_control_account_unresolved",
+            invoice_id=invoice.id,
+            detail={
+                "unresolved": unresolved_control,
+                "fallback_code": fallback.account_code,
+                "fallback_name": fallback.account_name,
+                "route_target": invoice.route_target,
+                "resume": "variance_approval",
+            },
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+    for line in journal_lines:
+        session.add(
+            JournalEntry(
+                tenant_id=invoice.tenant_id,
+                invoice_id=invoice.id,
+                date=line.date,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                debit=line.debit,
+                credit=line.credit,
+                entry_type=line.entry_type,
+            )
+        )
+
+    invoice.status = InvoiceStatus.RECONCILING
+    await session.flush()
+    recon_date = invoice.invoice_date or date.today()
+    recon = await reconcile_daily(
+        session,
+        recon_date,
+        tenant_id=invoice.tenant_id,
+        current_invoice=invoice,
+        config=cfg,
+    )
+    await save_reconciliation(session, recon, tenant_id=invoice.tenant_id)
+    if recon.halted:
+        route_target = (invoice.route_target or "").strip()
+        non_blocking_recon = route_target in (ROUTE_TEAM, ROUTE_EXPENSES, ROUTE_SALES) or bypass_review_gates
+        if not non_blocking_recon:
+            invoice.status = InvoiceStatus.EXCEPTION
+            await log_event(
+                session,
+                "reconciliation_halted",
+                invoice_id=invoice.id,
+                detail={"reason": recon.halt_reason, "resume": "variance_approval"},
+            )
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
+            return
+
+    pre_post = (
+        await session.execute(
+            select(Invoice)
+            .where(Invoice.id == invoice.id)
+            .options(selectinload(Invoice.line_items))
+        )
+    ).scalar_one()
+    if await _vendor_hold_unless_skipped(session, pre_post):
+        invoice.status = InvoiceStatus.EXCEPTION
+        invoice.evaluation_status = pre_post.evaluation_status
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
+    _mark_invoice_processed(invoice)
+    await session.flush()
+    await record_team_expense_processed(session, invoice)
+    from app.services.purchase.purchase_document_service import (
+        is_commercial_purchase_invoice,
+        sync_purchase_document,
+    )
+
+    await sync_purchase_document(session, invoice)
+    if is_commercial_purchase_invoice(invoice):
+        from app.services.payments.settlement_service import ensure_payment_with_audit
+
+        await ensure_payment_with_audit(session, invoice)
+
+    from app.services.sales.sales_document_service import (
+        is_commercial_sales_invoice,
+        sync_sales_document,
+    )
+
+    await sync_sales_document(session, invoice)
+    if is_commercial_sales_invoice(invoice):
+        from app.services.payments.settlement_service import ensure_receivable_with_audit
+
+        await ensure_receivable_with_audit(session, invoice)
+    await _safe_auto_learn(session, invoice)
+    await log_event(
+        session,
+        "invoice_processed",
+        invoice_id=invoice.id,
+        detail={
+            "route_target": invoice.route_target,
+            "status": invoice.status.value,
+            "vendor": invoice.vendor,
+            "amount": float(invoice.total) if invoice.total is not None else None,
+            "resume": "variance_approval",
+        },
+    )
+    from app.services.integration.publish_service import publish_invoice_to_ledger
+
+    await publish_invoice_to_ledger(
+        session,
+        invoice,
+        auto=True,
+        skip_if_insufficient_credits=True,
+    )
+    send_notification(invoice, InvoiceStatus.PROCESSED)
 
 
 async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
@@ -2201,6 +2489,23 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
+    from app.services.match.match_variance_gate_service import (
+        build_variance_gate_audit_detail,
+        evaluate_match_variance_gate,
+    )
+
+    variance_gate = await evaluate_match_variance_gate(session, loaded, config=config)
+    if variance_gate.blocked:
+        invoice.status = InvoiceStatus.EXCEPTION
+        await log_event(
+            session,
+            "three_way_match_variance_unapproved",
+            invoice_id=invoice.id,
+            detail=build_variance_gate_audit_detail(variance_gate),
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+
     invoice.status = InvoiceStatus.JOURNALING
     await session.flush()
     existing_entries = (
@@ -2224,6 +2529,23 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 "subtotal": float(invoice.subtotal or 0),
                 "gst": float(invoice.gst or 0),
                 "total": float(invoice.total or 0),
+            },
+        )
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
+    unresolved_control = get_unresolved_control_accounts(invoice=invoice, config=map_config)
+    if unresolved_control:
+        invoice.status = InvoiceStatus.EXCEPTION
+        fallback = resolve_fallback_account_mapping(map_config)
+        await log_event(
+            session,
+            "journal_control_account_unresolved",
+            invoice_id=invoice.id,
+            detail={
+                "unresolved": unresolved_control,
+                "fallback_code": fallback.account_code,
+                "fallback_name": fallback.account_name,
+                "route_target": invoice.route_target,
             },
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)

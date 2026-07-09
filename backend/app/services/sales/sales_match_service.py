@@ -712,6 +712,12 @@ async def approve_sales_variance(
         invoice_id_for_audit=so.invoice_id,
         rule_book_config=config,
     )
+    if inv is not None:
+        from app.services.match.match_variance_gate_service import (
+            resume_invoice_posting_after_variance_approval,
+        )
+
+        await resume_invoice_posting_after_variance_approval(db, inv, config=config)
     return sales_order_to_response(so, inv, config=config)
 
 
@@ -998,6 +1004,7 @@ async def execute_ar_document_match(
     *,
     session: AsyncSession,
     invoice: Invoice,
+    match_config: PurchaseMatchConfig | None = None,
 ) -> object:
     """Run tiered AR match (3-way SO or 2-way DN) for the invoice pipeline."""
     requested = (match_mode or "three_way_so_dn").strip().lower()
@@ -1015,16 +1022,21 @@ async def execute_ar_document_match(
         )
 
     if ctx.effective_mode == "three_way_so_dn" and ctx.so is not None:
-        match = compute_three_way_match(ctx.so, invoice)
+        match = compute_three_way_match(ctx.so, invoice, match_config=match_config)
         return _sales_match_result_to_outcome(match, match_mode="three_way_so_dn")
 
     if ctx.effective_mode == "two_way_so_invoice" and ctx.so is not None:
-        match = compute_two_way_so_match(ctx.so, invoice)
+        match = compute_two_way_so_match(ctx.so, invoice, match_config=match_config)
         return _sales_match_result_to_outcome(match, match_mode="two_way_so_invoice")
 
     if ctx.effective_mode == "two_way_dn_invoice" and ctx.dn_invoice is not None:
         dn_qty, dn_uom = await _load_dn_invoice_qty(session, ctx.dn_invoice)
-        match = compute_two_way_dn_match(dn_qty=dn_qty, dn_uom=dn_uom, inv=invoice)
+        match = compute_two_way_dn_match(
+            dn_qty=dn_qty,
+            dn_uom=dn_uom,
+            inv=invoice,
+            match_config=match_config,
+        )
         return _sales_match_result_to_outcome(match, match_mode="two_way_dn_invoice")
 
     from app.services.classification.document_type_match_service import DocumentMatchOutcome
