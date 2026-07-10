@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { Mail, Pause, Play, Plus, RefreshCw, Trash2, Calendar } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { CloudUpload, Mail, Plus, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
 import type { ConnectedMailbox, Invoice, MailboxBackfillJob } from "@/api/types";
 import { ConnectMailboxDialog } from "@/components/ConnectMailboxDialog";
@@ -33,14 +33,16 @@ import {
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
-import { cn } from "@/lib/cn";
 import { useNavBadges } from "@/hooks/useNavBadges";
 import {
   invalidateUploadInvoiceList,
   useUploadInvoiceList,
 } from "@/hooks/useUploadInvoiceList";
-import { ActionChip } from "@/components/ActionChip";
-import { UploadDropZone } from "@/components/upload/UploadDropZone";
+import {
+  UploadEmailChannelPanel,
+  UploadViberChannelPanel,
+  UploadWhatsappChannelPanel,
+} from "@/components/upload/UploadChannelPanels";
 import {
   UploadInvoiceMobileRow,
   UploadInvoiceTableRow,
@@ -48,6 +50,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryClient";
 import { mergeBoardRowWithLocal, shouldClearProcessingId } from "@/lib/approvalsBoard";
+import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
 import {
   BULK_UPLOAD_MAX_FILES,
   filterUploadFiles,
@@ -57,6 +60,24 @@ import {
   uploadFilesInBatch,
   watchInvoiceIdsForVendorHold,
 } from "@/lib/bulkUpload";
+import { UploadDropZone } from "@/components/upload/UploadDropZone";
+
+type ChannelTab = "upload" | "email" | "whatsapp" | "viber";
+type ViewTab = "summary" | "detailed";
+
+function parseChannelTab(value: string | null): ChannelTab {
+  if (value === "upload" || value === "email" || value === "whatsapp" || value === "viber") {
+    return value;
+  }
+  return "upload";
+}
+
+function parseViewTab(searchParams: URLSearchParams): ViewTab {
+  if (searchParams.get("tab") === "matrix" || searchParams.get("view") === "summary") {
+    return "summary";
+  }
+  return "detailed";
+}
 
 const UPLOAD_LOAD_HINT =
   `${API_PORT_HINT.trim()} and migrations are up to date `;
@@ -96,22 +117,6 @@ function relativeTime(iso: string | null | undefined): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
-}
-
-function mailboxProvider(mb: ConnectedMailbox): string {
-  if (mb.mail_provider === "google") return "Gmail";
-  if (mb.mail_provider === "microsoft") return "Outlook";
-  const label = `${mb.display_name ?? ""} ${mb.email}`.toLowerCase();
-  if (label.includes("imap")) return "IMAP";
-  if (
-    label.includes("outlook") ||
-    label.includes("office365") ||
-    label.includes("microsoft")
-  ) {
-    return "Outlook";
-  }
-  if (label.includes("exchange")) return "Exchange";
-  return "Gmail";
 }
 
 function mailboxNickname(mb: ConnectedMailbox): string {
@@ -154,7 +159,8 @@ export function UploadPage() {
   const queryClient = useQueryClient();
   const isAdmin = user?.role === "admin";
   const [searchParams, setSearchParams] = useSearchParams();
-  const workspaceTab = searchParams.get("tab") === "matrix" ? "matrix" : "upload";
+  const channelTab = parseChannelTab(searchParams.get("channel"));
+  const viewTab = parseViewTab(searchParams);
   const { data: navBadges } = useNavBadges();
   const [matrixFlagged, setMatrixFlagged] = useState(0);
   const matrixRefreshRef = useRef<(() => void) | null>(null);
@@ -165,7 +171,7 @@ export function UploadPage() {
     data: mailboxQueryData = [],
     blocked: mailboxesBlocked,
     refetch: refetchMailboxes,
-  } = useMailboxes(Boolean(user) && workspaceTab === "upload");
+  } = useMailboxes(Boolean(user));
   const [source, setSource] = useState("all");
   const [evalFilter, setEvalFilter] = useState<"all" | "needs_review">("all");
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get("q") ?? "");
@@ -178,6 +184,7 @@ export function UploadPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [fetching, setFetching] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(
     null
   );
@@ -209,7 +216,10 @@ export function UploadPage() {
     source,
     q: debouncedSearch,
     mailboxId: selectedMailboxId,
-    enabled: canRenderTenantOwnedUi(tenantScope) && workspaceTab === "upload",
+    enabled:
+      canRenderTenantOwnedUi(tenantScope) &&
+      viewTab === "detailed" &&
+      channelTab === "upload",
     processingIds,
   });
 
@@ -317,10 +327,29 @@ export function UploadPage() {
     setDrawerOpen(true);
   };
 
-  const setWorkspaceTab = (tab: "upload" | "matrix") => {
+  const docsPerChannel = useMemo(() => {
+    let whatsapp = 0;
+    let viber = 0;
+    for (const inv of captured) {
+      const src = (inv.capture_source ?? "").toLowerCase();
+      if (src.includes("whatsapp")) whatsapp += 1;
+      if (src.includes("viber")) viber += 1;
+    }
+    return { whatsapp, viber };
+  }, [captured]);
+
+  const setChannelTab = (tab: ChannelTab) => {
     const next = new URLSearchParams(searchParams);
-    if (tab === "matrix") next.set("tab", "matrix");
-    else next.delete("tab");
+    if (tab === "upload") next.delete("channel");
+    else next.set("channel", tab);
+    setSearchParams(next, { replace: true });
+  };
+
+  const setViewTab = (tab: ViewTab) => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("tab");
+    if (tab === "summary") next.set("view", "summary");
+    else next.delete("view");
     setSearchParams(next, { replace: true });
   };
 
@@ -490,6 +519,7 @@ export function UploadPage() {
     const truncated = accepted.length > files.length;
 
     setUploading(true);
+    setUploadFiles(files);
     setUploadProgress({ completed: 0, total: files.length });
     setFetchNotice(null);
     try {
@@ -535,6 +565,7 @@ export function UploadPage() {
       setFetchNotice(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+      setUploadFiles([]);
       setUploadProgress(null);
     }
   }
@@ -549,19 +580,13 @@ export function UploadPage() {
   const workspaceShell = (content: ReactNode) => (
     <div>
       <PageHeader
-        title="Documents"
-        subtitle={
-          workspaceTab === "upload"
-            ? "Documents captured from connected mailboxes, uploads and the vault."
-            : "Pipeline stage status, anomaly detection, and payment readiness. Flagged documents are blocked from progressing until cleared."
-        }
         actions={
-          workspaceTab === "upload" && isAdmin ? (
+          channelTab === "email" && isAdmin ? (
             <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4 mr-1.5 shrink-0" />
               Add mailbox
             </Button>
-          ) : workspaceTab === "upload" ? null : (
+          ) : viewTab === "summary" ? (
             <Button
               variant="outline"
               size="sm"
@@ -571,50 +596,175 @@ export function UploadPage() {
               <RefreshCw className="h-4 w-4 mr-1" />
               Refresh
             </Button>
-          )
+          ) : null
         }
-      />
-      <PageTabs
-        className="mb-5"
-        value={workspaceTab}
-        onChange={(value) => setWorkspaceTab(value as "upload" | "matrix")}
-        data-testid="upload-workspace-tabs"
-        tabs={[
-          {
-            value: "upload",
-            testid: "tab-upload-inbox",
-            label: (
-              <>
-                Upload
-                {inboxCount > 0 ? (
-                  <Badge variant="secondary" className="ml-1.5 tnum font-normal">
-                    {inboxCount}
-                  </Badge>
-                ) : null}
-              </>
-            ),
-          },
-          {
-            value: "matrix",
-            testid: "tab-upload-matrix",
-            label: (
-              <>
-                Doc. Matrix
-                {matrixFlagged > 0 ? (
-                  <Badge variant="destructive" className="ml-1.5 tnum font-normal">
-                    {matrixFlagged}
-                  </Badge>
-                ) : null}
-              </>
-            ),
-          },
-        ]}
-      />
+      >
+        <PageTabs
+          value={channelTab}
+          onChange={(value) => setChannelTab(value as ChannelTab)}
+          data-testid="upload-channel-tabs"
+          tabs={[
+            {
+              value: "upload",
+              testid: "tab-upload-upload",
+              label: (
+                <span className="inline-flex items-center gap-2">
+                  <CloudUpload className="h-4 w-4 text-primary" />
+                  Upload
+                </span>
+              ),
+            },
+            {
+              value: "email",
+              testid: "tab-upload-email",
+              label: (
+                <span className="inline-flex items-center gap-2">
+                  <IntegrationBrandIcon id="graph" size={16} />
+                  Email
+                </span>
+              ),
+            },
+            {
+              value: "whatsapp",
+              testid: "tab-upload-whatsapp",
+              label: (
+                <span className="inline-flex items-center gap-2">
+                  <IntegrationBrandIcon id="whatsapp" size={16} />
+                  WhatsApp
+                </span>
+              ),
+            },
+            {
+              value: "viber",
+              testid: "tab-upload-viber",
+              label: (
+                <span className="inline-flex items-center gap-2">
+                  <IntegrationBrandIcon id="viber" size={16} />
+                  Viber
+                </span>
+              ),
+            },
+          ]}
+        />
+      </PageHeader>
+      {channelTab === "email" ? (
+        <UploadEmailChannelPanel
+          mailboxes={mailboxes}
+          docsPerMailbox={docsPerMailbox}
+          isAdmin={Boolean(isAdmin)}
+          loading={loading}
+          fetching={fetching}
+          importBusy={importBusy}
+          onAddMailbox={() => setAddOpen(true)}
+          onImport={setImportMailbox}
+          onFetch={(mb) => void fetchMailbox(mb)}
+          onToggle={toggleMailboxActive}
+          onRemove={removeMailbox}
+          onReconnect={(mb) => void reconnectMailbox(mb)}
+          isPollable={isMailboxPollable}
+        />
+      ) : channelTab === "whatsapp" ? (
+        <UploadWhatsappChannelPanel docCount={docsPerChannel.whatsapp} />
+      ) : channelTab === "viber" ? (
+        <UploadViberChannelPanel docCount={docsPerChannel.viber} />
+      ) : null}
+
+      {channelTab === "upload" ? (
+        <>
+          <UploadDropZone
+            className="mb-6"
+            disabled={uploading}
+            uploading={uploading}
+            progress={uploadProgress}
+            files={uploadFiles}
+            onFiles={(files) => void runUpload(files)}
+            onBrowse={() => uploadInputRef.current?.click()}
+          />
+          <DocumentMatrixPanel
+            embedded
+            showControls={false}
+            showTable={false}
+            showLegend={false}
+            onFlaggedCount={setMatrixFlagged}
+            refreshRef={matrixRefreshRef}
+          />
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept={UPLOAD_ACCEPT}
+            multiple
+            className="hidden"
+            data-testid="input-upload-doc"
+            onChange={uploadDocuments}
+          />
+          {fetchNotice ? (
+            <Card
+              className="p-3 mb-4 text-xs text-muted-foreground border-dashed"
+              role="status"
+              data-testid="upload-notice"
+            >
+              {fetchNotice}
+            </Card>
+          ) : null}
+          {importJob && (importJob.status === "queued" || importJob.status === "running") && (
+            <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">
+              Importing mail from {importJob.from_date} through today…{" "}
+              {importJob.messages_scanned > 0
+                ? `${importJob.messages_scanned} message(s) scanned`
+                : "scanning mailbox"}
+            </Card>
+          )}
+        </>
+      ) : null}
+      {channelTab === "upload" ? (
+        <PageTabs
+          className="mb-5"
+          value={viewTab}
+          onChange={(value) => setViewTab(value as ViewTab)}
+          data-testid="upload-view-tabs"
+          tabs={[
+            {
+              value: "summary",
+              testid: "tab-upload-summary",
+              label: (
+                <>
+                  Summary
+                  {matrixFlagged > 0 ? (
+                    <Badge variant="destructive" className="ml-1.5 tnum font-normal">
+                      {matrixFlagged}
+                    </Badge>
+                  ) : null}
+                </>
+              ),
+            },
+            {
+              value: "detailed",
+              testid: "tab-upload-detailed",
+              label: (
+                <>
+                  Detailed
+                  {inboxCount > 0 ? (
+                    <Badge variant="secondary" className="ml-1.5 tnum font-normal">
+                      {inboxCount}
+                    </Badge>
+                  ) : null}
+                </>
+              ),
+            },
+          ]}
+        />
+      ) : null}
       {content}
     </div>
   );
 
-  if (error && workspaceTab === "upload" && captured.length === 0 && !loading) {
+  if (
+    error &&
+    channelTab === "upload" &&
+    viewTab === "detailed" &&
+    captured.length === 0 &&
+    !loading
+  ) {
     return workspaceShell(
       <Card className="p-6 border-destructive/30 bg-destructive/5 text-sm text-destructive">
         {formatTenantLoadError(error, UPLOAD_LOAD_HINT)}
@@ -629,14 +779,17 @@ export function UploadPage() {
   }
 
   return workspaceShell(
-    workspaceTab === "matrix" ? (
-      <DocumentMatrixPanel
-        embedded
-        onFlaggedCount={setMatrixFlagged}
-        onGoUpload={() => setWorkspaceTab("upload")}
-        refreshRef={matrixRefreshRef}
-      />
-    ) : (
+    channelTab === "upload" && viewTab === "summary" ? (
+      <>
+        <DocumentMatrixPanel
+          embedded
+          showKpis={false}
+          onFlaggedCount={setMatrixFlagged}
+          onGoUpload={() => setViewTab("detailed")}
+          refreshRef={matrixRefreshRef}
+        />
+      </>
+    ) : channelTab !== "upload" ? null : (
       <>
       <ConnectMailboxDialog
         open={addOpen}
@@ -652,184 +805,16 @@ export function UploadPage() {
         onSubmit={(payload) => void startHistoricalImport(payload)}
       />
 
-      <UploadDropZone
-        className="mb-6"
-        disabled={uploading}
-        uploading={uploading}
-        progress={uploadProgress}
-        onFiles={(files) => void runUpload(files)}
-        onBrowse={() => uploadInputRef.current?.click()}
-      />
-
-      <input
-        ref={uploadInputRef}
-        type="file"
-        accept={UPLOAD_ACCEPT}
-        multiple
-        className="hidden"
-        data-testid="input-upload-doc"
-        onChange={uploadDocuments}
-      />
-
-      {fetchNotice ? (
-        <Card
-          className="p-3 mb-4 text-xs text-muted-foreground border-dashed"
-          role="status"
-          data-testid="upload-notice"
-        >
-          {fetchNotice}
-        </Card>
-      ) : null}
-
-      {importJob && (importJob.status === "queued" || importJob.status === "running") && (
-        <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">
-          Importing mail from {importJob.from_date} through today…{" "}
-          {importJob.messages_scanned > 0
-            ? `${importJob.messages_scanned} message(s) scanned`
-            : "scanning mailbox"}
-        </Card>
-      )}
-
-      {mailboxes.length > 0 ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-6">
-          {mailboxes.map((mb) => {
-            const docCount = docsPerMailbox.get(mb.id) ?? 0;
-            return (
-              <Card key={mb.id} className="p-4 min-w-0" data-testid={`card-mailbox-${mb.email}`}>
-                <div className="flex items-start justify-between gap-2 min-w-0">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <Mail className="h-4 w-4 text-primary shrink-0" />
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm truncate">{mailboxNickname(mb)}</p>
-                      <p className="text-xs text-muted-foreground truncate tnum">{mb.email}</p>
-                    </div>
-                  </div>
-                  <span
-                    className={cn(
-                      "inline-flex items-center rounded-md border px-2.5 py-0.5 text-[10px] font-semibold shrink-0",
-                      mb.connection_status === "connected" && mb.is_active
-                        ? "text-[hsl(var(--chart-1))] border-[hsl(var(--chart-1)/0.4)]"
-                        : mb.connection_status === "error"
-                          ? "text-destructive border-destructive/40"
-                          : "text-muted-foreground border-border"
-                    )}
-                  >
-                    {mb.connection_status === "connected"
-                      ? mb.is_active
-                        ? "Connected"
-                        : "Paused"
-                      : mb.connection_status === "error"
-                        ? "Error"
-                        : "Disconnected"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2 mt-3 text-xs text-muted-foreground min-w-0">
-                  <span className="truncate">
-                    {mailboxProvider(mb)} · {relativeTime(mb.last_poll_at)}
-                  </span>
-                  <span className="tnum shrink-0">{docCount} docs</span>
-                </div>
-                {mb.connection_status === "error" && mb.last_error ? (
-                  <p className="mt-2 text-xs text-destructive line-clamp-3" title={mb.last_error}>
-                    {mb.last_error}
-                  </p>
-                ) : null}
-                <div className="mt-3 flex items-center gap-1.5 min-w-0">
-                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                    {mb.connection_status === "error" && isAdmin ? (
-                      <ActionChip
-                        tone="approve"
-                        icon={Mail}
-                        label="Reconnect"
-                        testId={`button-reconnect-${mb.email}`}
-                        disabled={importBusy || fetching === mb.email}
-                        onClick={() => void reconnectMailbox(mb)}
-                      />
-                    ) : null}
-                    <ActionChip
-                      tone="edit"
-                      icon={Calendar}
-                      label="Import"
-                      testId={`button-import-${mb.email}`}
-                      disabled={importBusy || fetching === mb.email || !isMailboxPollable(mb)}
-                      onClick={() => setImportMailbox(mb)}
-                    />
-                    <ActionChip
-                      tone="post"
-                      icon={RefreshCw}
-                      label="Fetch"
-                      testId={`button-fetch-${mb.email}`}
-                      disabled={
-                        fetching === mb.email || importBusy || !isMailboxPollable(mb)
-                      }
-                      iconClassName={fetching === mb.email ? "animate-spin" : undefined}
-                      onClick={() => void fetchMailbox(mb)}
-                    />
-                    {isAdmin ? (
-                      <ActionChip
-                        tone={mb.is_active ? "pending" : "approve"}
-                        icon={mb.is_active ? Pause : Play}
-                        label={mb.is_active ? "Pause" : "Resume"}
-                        testId={`button-toggle-${mb.email}`}
-                        onClick={() => toggleMailboxActive(mb)}
-                      />
-                    ) : null}
-                  </div>
-                  {isAdmin ? (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 text-destructive"
-                    data-testid={`button-remove-${mb.email}`}
-                    onClick={() => removeMailbox(mb)}
-                    aria-label={`Remove ${mb.email}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                  ) : null}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      ) : (
-        !loading && (
-          <Card className="p-4 mb-6 text-sm text-muted-foreground">
-            No mailboxes connected yet.{" "}
-            {isAdmin ? (
-              <>
-                <button
-                  type="button"
-                  className="text-primary hover:underline"
-                  onClick={() => setAddOpen(true)}
-                >
-                  Add a mailbox
-                </button>{" "}
-                or manage invitations in{" "}
-                <Link to="/integrations" className="text-primary hover:underline">
-                  Integrations
-                </Link>
-                .
-              </>
-            ) : (
-              <>
-                Ask an admin to connect a mailbox from{" "}
-                <Link to="/integrations" className="text-primary hover:underline">
-                  Integrations
-                </Link>
-                .
-              </>
-            )}
-          </Card>
-        )
-      )}
-
       {loading && captured.length === 0 ? (
         <InlineTableSkeleton rows={8} columns={6} />
       ) : captured.length === 0 ? (
         <EmptyState
           title="No documents yet"
-          hint="Drop files in the panel above, or connect a mailbox and fetch from email."
+          hint={
+            channelTab === "upload"
+              ? "Upload documents from the Upload tab, or capture documents from Email, WhatsApp, or Viber."
+              : "Capture documents from Email, WhatsApp, or Viber. To upload files, switch to the Upload tab."
+          }
           action={
             isAdmin ? (
               <Button size="sm" onClick={() => setAddOpen(true)}>

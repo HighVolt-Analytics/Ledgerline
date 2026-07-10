@@ -359,6 +359,26 @@ export function stageIdsForPhase(phaseId: DossierPipelinePhaseId): DossierPipeli
   return DOSSIER_PIPELINE_STAGES.filter((stage) => stage.phase === phaseId).map((stage) => stage.id);
 }
 
+export function phaseIdForStage(stageId: DossierPipelineStageId): DossierPipelinePhaseId {
+  return DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.phase ?? "capture";
+}
+
+export function defaultActivePipelinePhase(pipeline: DossierPipelineStep[]): DossierPipelinePhaseId {
+  const fail = firstPipelineFailure(pipeline);
+  if (fail) return phaseIdForStage(fail.stageId);
+
+  for (const phase of DOSSIER_PIPELINE_PHASES) {
+    const steps = stageIdsForPhase(phase.id)
+      .map((id) => pipeline.find((step) => step.stageId === id))
+      .filter(Boolean) as DossierPipelineStep[];
+    if (steps.some((step) => step.state === "fail" || step.state === "pending")) {
+      return phase.id;
+    }
+  }
+
+  return "capture";
+}
+
 export function phaseStageSummary(
   pipeline: DossierPipelineStep[],
   phaseId: DossierPipelinePhaseId,

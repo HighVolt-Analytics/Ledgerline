@@ -1,5 +1,6 @@
 import type { Invoice } from "@/api/types";
 import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
+import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import {
   EvaluationStatusBadge,
   RouteTargetBadge,
@@ -9,7 +10,7 @@ import { InboxSourceBadge } from "@/components/inbox/InboxSourceBadge";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { UploadColumnCell } from "@/components/upload/UploadColumnCell";
 import { documentDisplayRef, money } from "@/lib/format";
-import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
+import { effectiveDocumentTypeCode, invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
 import {
   counterpartyMatchLabel,
   counterpartyName,
@@ -61,12 +62,23 @@ function DocumentMetaLine({
   documentTypes?: DocumentTypeDefinition[] | null;
   mode: ColumnDisplayMode;
 }) {
+  const code = documentTypes?.length
+    ? effectiveDocumentTypeCode(inv, documentTypes)
+    : (inv.document_type_code ?? "").trim();
   const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
-  const metaText = [inv.invoice_no, typeLabel].filter(Boolean).join(" · ");
 
   return (
-    <UploadColumnCell mode={mode} className="text-xs text-muted-foreground tnum truncate">
-      {metaText || "—"}
+    <UploadColumnCell mode={mode} className="text-xs text-muted-foreground tnum">
+      <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
+        {inv.invoice_no ? <span className="truncate">{inv.invoice_no}</span> : null}
+        <DocumentTypeChip
+          code={code}
+          label={typeLabel}
+          title={typeLabel}
+          purchaseKind={inv.purchase_document_type}
+          documentTypes={documentTypes}
+        />
+      </span>
     </UploadColumnCell>
   );
 }

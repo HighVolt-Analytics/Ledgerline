@@ -53,7 +53,10 @@ export function ActionChip({
       )}
       disabled={disabled}
       title={title}
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
       data-testid={testId}
     >
       <Icon className={cn("approvals-action-chip__icon", iconClassName)} />

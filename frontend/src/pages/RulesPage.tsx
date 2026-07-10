@@ -1,27 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import {
-  Building2,
-  CircleUser,
-  Inbox,
-  Layers,
-  Loader2,
-  Scale,
-} from "lucide-react";
+import { Navigate, useSearchParams } from "react-router-dom";
+import { Inbox, Layers, Loader2, Scale } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Card } from "@/components/ui/card";
-import { CustomersTab } from "@/components/rule-book/CustomersTab";
 import { DocumentTypesTab } from "@/components/rule-book/DocumentTypesTab";
 import { AiClassificationSettingsPanel } from "@/components/rule-book/AiClassificationSettingsPanel";
 import { IngestionTab } from "@/components/rule-book/IngestionTab";
-import { EmployeesTab } from "@/components/rule-book/EmployeesTab";
 import { LiveEvaluation } from "@/components/rule-book/LiveEvaluation";
 import { RuleChangeHistory } from "@/components/rule-book/RuleChangeHistory";
 import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
 import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
-import { VendorsTab } from "@/components/rule-book/VendorsTab";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
 import { useRuleBookConfig, useDeleteRuleBookDocumentType, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
@@ -38,9 +28,6 @@ import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 const RULEBOOK_TABS = [
   { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
   { value: "document-types", label: "Document types", testid: "tab-document-types", icon: Layers },
-  { value: "vendors", label: "Vendors", testid: "tab-vendors", icon: Building2 },
-  { value: "customers", label: "Customers", testid: "tab-customers", icon: Building2 },
-  { value: "employees", label: "Employees", testid: "tab-employees", icon: CircleUser },
   { value: "posting", label: "Posting", testid: "tab-posting", icon: Scale },
 ] as const;
 
@@ -51,7 +38,6 @@ export function RulesPage() {
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const tabFromUrl = searchParams.get("tab");
-  const customersSection = searchParams.get("customersSection");
   const [tab, setTab] = useState<string>(() => {
     if (tabFromUrl && RULEBOOK_TABS.some((row) => row.value === tabFromUrl)) {
       return tabFromUrl;
@@ -207,6 +193,14 @@ export function RulesPage() {
     );
   }
 
+  const legacyCreationsTab =
+    tabFromUrl === "vendors" || tabFromUrl === "customers" || tabFromUrl === "employees";
+  if (legacyCreationsTab) {
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", tabFromUrl);
+    return <Navigate to={`/creations?${params.toString()}`} replace />;
+  }
+
   if (isLoading || blocked || !ruleBook) {
     if (isError) {
       return (
@@ -327,18 +321,6 @@ export function RulesPage() {
           rules={ruleBook.emailCaptureRules}
           onChange={(emailCaptureRules) => patch({ emailCaptureRules })}
         />
-      </PageTabPanel>
-      <PageTabPanel value="vendors" active={tab} className="mt-0">
-        <VendorsTab
-          detection={ruleBook.vendorDetectionConfig}
-          onDetectionChange={(vendorDetectionConfig) => patch({ vendorDetectionConfig })}
-        />
-      </PageTabPanel>
-      <PageTabPanel value="customers" active={tab} className="mt-0">
-        <CustomersTab defaultSection={customersSection} />
-      </PageTabPanel>
-      <PageTabPanel value="employees" active={tab} className="mt-0">
-        <EmployeesTab />
       </PageTabPanel>
       <PageTabPanel value="posting" active={tab} className="mt-0 space-y-5">
         <PostingDefaultsPanel

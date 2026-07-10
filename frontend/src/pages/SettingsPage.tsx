@@ -167,7 +167,7 @@ export function SettingsPage() {
         subtitle="Organisation profile, AI document brief, team, approval policy, and chart of accounts."
       />
 
-      <div className="flex flex-wrap gap-1 border-b border-border mb-4">
+      <div className="app-underline-tabs mb-4" role="tablist" aria-label="Settings sections">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -175,11 +175,11 @@ export function SettingsPage() {
             data-testid={t.testid}
             onClick={() => setTab(t.id)}
             className={cn(
-              "px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              tab === t.id
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+              "app-underline-tabs__tab",
+              tab === t.id && "app-underline-tabs__tab--active"
             )}
+            role="tab"
+            aria-selected={tab === t.id}
           >
             {t.label}
           </button>
@@ -187,7 +187,7 @@ export function SettingsPage() {
       </div>
 
       {tab === "profile" && (
-        <Card className="p-5 max-w-2xl">
+        <Card className="p-5 w-full max-w-none">
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-1.5 sm:col-span-2">
               <label htmlFor="input-settings-name" className="text-sm font-medium">

@@ -30,12 +30,16 @@ import {
   taxMeta,
 } from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
+import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
+import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
+import { DossierPipelineTimeline } from "@/components/dossiers/DossierPipelineTimeline";
 import { PageTabs } from "@/components/PageTabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { documentDisplayRef, vendorInvoiceNo } from "@/lib/format";
+import { fetchDossierById, type DossierSummaryWithInvoiceId } from "@/lib/dossierApi";
 import {
   lineItemGridTemplateColumns,
   resolvePreviewLineItems,
@@ -93,7 +97,8 @@ import {
 import { requiresClassificationConfirm } from "@/lib/classificationAuditDisplay";
 
 const TABS = ["fields", "lines", "po", "tax", "audit", "overrides", "pipeline"] as const;
-type Tab = (typeof TABS)[number];
+export type InvoiceDrawerTab = (typeof TABS)[number];
+type Tab = InvoiceDrawerTab;
 
 const TAB_LABELS: Record<Exclude<Tab, "po">, string> = {
   fields: "Fields",
@@ -653,7 +658,7 @@ type InvoiceDetailDrawerProps = {
   onPipelineEnd?: (invoiceId: number) => void;
   onEditingChange?: (editing: boolean) => void;
   startInEditMode?: boolean;
-  initialTab?: Tab;
+  initialTab?: InvoiceDrawerTab;
 };
 
 export function InvoiceDetailDrawer({
@@ -690,6 +695,8 @@ export function InvoiceDetailDrawer({
   const [dossier, setDossier] = useState<PurchaseDossier | null>(null);
   const [salesDossier, setSalesDossier] = useState<SalesDossierResponse | null>(null);
   const [dossierLoading, setDossierLoading] = useState(false);
+  const [drawerDossier, setDrawerDossier] = useState<DossierSummaryWithInvoiceId | null>(null);
+  const [drawerDossierLoading, setDrawerDossierLoading] = useState(false);
 
   const activeInvoiceId = viewId ?? invoiceId;
 
@@ -826,6 +833,19 @@ export function InvoiceDetailDrawer({
       })
       .finally(() => setDossierLoading(false));
   }, [inv, tab]);
+
+  useEffect(() => {
+    if (!open || tab !== "pipeline" || !invoiceId) {
+      setDrawerDossier(null);
+      return;
+    }
+    const dossierKey = documentDisplayRef({ id: invoiceId });
+    setDrawerDossierLoading(true);
+    void fetchDossierById(dossierKey)
+      .then((row) => setDrawerDossier(row))
+      .catch(() => setDrawerDossier(null))
+      .finally(() => setDrawerDossierLoading(false));
+  }, [open, tab, invoiceId]);
 
   const reloadDossier = useCallback(() => {
     if (!inv) return;
@@ -1266,9 +1286,16 @@ export function InvoiceDetailDrawer({
                     {docNumber}
                   </Badge>
                   {documentTypeBadgeLabel ? (
-                    <Badge className="bg-accent text-accent-foreground border-0 text-[10px]">
-                      {documentTypeBadgeLabel}
-                    </Badge>
+                    <DocumentTypeChip
+                      code={resolvedDocumentTypeCode}
+                      label={documentTypeBadgeLabel}
+                      title={documentTypeBadgeLabel}
+                      purchaseKind={inv?.purchase_document_type}
+                      documentTypes={ruleBook?.documentTypes}
+                    />
+                  ) : null}
+                  {inv.evaluation_status ? (
+                    <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
                   ) : null}
                 </div>
                 <p className="text-xs text-muted-foreground tnum mt-0.5">
@@ -1340,6 +1367,7 @@ export function InvoiceDetailDrawer({
                 <PageTabs
                   value={tab}
                   onChange={(v) => selectTab(v as Tab)}
+                  secondaryVariant="chevron"
                   tabs={TABS.map((t) => ({
                     value: t,
                     label: tabLabel(t, inv?.route_target, invoiceMatchMode),
@@ -1577,7 +1605,29 @@ export function InvoiceDetailDrawer({
                   </div>
                 )}
 
-                {tab === "pipeline" && inv && <PipelineDebugPanel invoice={inv} />}
+                {tab === "pipeline" && inv && (
+                  <div className="mt-4 space-y-6">
+                    {drawerDossierLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading dossier pipeline…</p>
+                    ) : drawerDossier ? (
+                      <DossierPipelineTimeline
+                        layout="drawer"
+                        pipeline={drawerDossier.pipeline}
+                        routeTarget={drawerDossier.routeTarget}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No dossier pipeline is available for this document yet.
+                      </p>
+                    )}
+                    <div className="border-t border-border pt-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                        Pipeline audit (dev)
+                      </p>
+                      <PipelineDebugPanel invoice={inv} />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1629,7 +1679,7 @@ export function InvoiceDetailDrawer({
                         onClick={() => void handleApproveAndProcess()}
                       >
                         <Send className="h-4 w-4 mr-1" />
-                        Approve &amp; process
+                        Confirm &amp; process
                       </Button>
                     )}
                   </div>
@@ -1689,7 +1739,7 @@ export function InvoiceDetailDrawer({
                         onClick={() => void handleApproveAndProcess()}
                       >
                         <Send className="h-4 w-4 mr-1" />
-                        Approve &amp; process
+                        Confirm &amp; process
                       </Button>
                     )}
                     {invoiceCanPublishToLedger(inv) && (

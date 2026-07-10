@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CreationsEmployeesTabSkeleton, InlineTableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { useToast } from "@/context/ToastContext";
 import { api } from "@/api/client";
 import {
@@ -174,12 +175,7 @@ export function EmployeesTab() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading employee masters…
-      </div>
-    );
+    return <CreationsEmployeesTabSkeleton />;
   }
 
   return (
@@ -380,11 +376,8 @@ export function EmployeesTab() {
             <tbody>
               {claimsLoading ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Loading recent claims…
-                    </span>
+                  <td colSpan={4} className="p-0">
+                    <InlineTableSkeleton rows={3} columns={4} />
                   </td>
                 </tr>
               ) : recentClaimValidations.length === 0 ? (

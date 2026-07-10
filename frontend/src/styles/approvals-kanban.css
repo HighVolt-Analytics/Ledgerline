@@ -67,17 +67,32 @@
 .approvals-kanban-card {
   display: flex;
   flex-direction: column;
-  min-height: 7.5rem;
+  min-height: 5.5rem;
   padding: 0.875rem;
   border-radius: 0.875rem;
   border: 1px solid hsl(var(--border) / 0.5);
   background-color: hsl(var(--card));
   color: hsl(var(--card-foreground));
-  cursor: pointer;
   text-align: left;
   transition:
     box-shadow 160ms ease,
     border-color 160ms ease;
+}
+
+.approvals-kanban-card__hit {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .approvals-kanban-card:hover {
@@ -89,9 +104,10 @@
 
 .approvals-kanban-card__top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.5rem;
+  margin-bottom: 0;
 }
 
 .approvals-kanban-card__subline-row {
@@ -99,7 +115,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-top: 0.25rem;
+  margin-top: 0.125rem;
+  margin-bottom: 0;
 }
 
 .approvals-kanban-card__review-pill {
@@ -141,16 +158,12 @@
   white-space: nowrap;
 }
 
-.approvals-kanban-card__ref {
+.approvals-kanban-card__type-chip {
   flex-shrink: 0;
-  font-size: 0.625rem;
-  font-weight: 500;
-  line-height: 1;
-  padding: 0.2rem 0.45rem;
-  border-radius: 0.375rem;
-  border: 1px solid hsl(var(--border) / 0.55);
-  background: hsl(var(--background) / 0.35);
-  color: hsl(var(--muted-foreground));
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .approvals-kanban-card__meta {
@@ -164,17 +177,286 @@
 
 .approvals-kanban-card__actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 0.375rem;
-  row-gap: 0.375rem;
-  margin-top: auto;
-  padding-top: 0.625rem;
+  gap: 0.3125rem;
+  margin-top: 0.625rem;
+  padding-top: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
 
-.approvals-kanban-card:has(.approvals-kanban-card__actions .approvals-action-chip:nth-child(3))
-  .approvals-kanban-card__subline-row {
-  margin-bottom: 0.625rem;
+.approvals-kanban-card__actions::-webkit-scrollbar {
+  display: none;
+}
+
+.approvals-kanban-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.approvals-kanban-toolbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.approvals-kanban-toolbar__run-btn {
+  border-color: hsl(var(--border));
+  background-color: hsl(var(--foreground));
+  color: hsl(var(--background));
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.08);
+}
+
+.approvals-kanban-toolbar__run-btn:hover:not(:disabled) {
+  background-color: hsl(var(--foreground) / 0.9);
+  color: hsl(var(--background));
+}
+
+.dark .approvals-kanban-toolbar__run-btn {
+  border-color: hsl(var(--border) / 0.65);
+  background-color: hsl(0 0% 100%);
+  color: hsl(0 0% 9%);
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.2);
+}
+
+.dark .approvals-kanban-toolbar__run-btn:hover:not(:disabled) {
+  background-color: hsl(0 0% 96%);
+  color: hsl(0 0% 9%);
+}
+
+/* Connected chevron status tags — rounded start; pointed joins; rounded end on last segment */
+.approvals-step-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 0.125rem;
+}
+
+.approvals-step-tag {
+  --step-tag-bg: hsl(188 72% 82%);
+  --step-tag-fg: hsl(200 35% 16%);
+  --step-notch: 0.65rem;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2rem;
+  padding: 0.35rem 1.1rem 0.35rem 0.95rem;
+  margin-right: 1px;
+  background: var(--step-tag-bg);
+  color: var(--step-tag-fg);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  position: relative;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--step-notch)) 0,
+    100% 50%,
+    calc(100% - var(--step-notch)) 100%,
+    0 100%,
+    var(--step-notch) 50%
+  );
+}
+
+.dark .approvals-step-tag {
+  --step-tag-bg: hsl(188 55% 34%);
+  --step-tag-fg: hsl(0 0% 98%);
+}
+
+.approvals-step-tag--start {
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--step-notch)) 0,
+    100% 50%,
+    calc(100% - var(--step-notch)) 100%,
+    0 100%
+  );
+  padding-left: 0.85rem;
+  border-radius: 9999px 0 0 9999px;
+}
+
+.approvals-step-tag--middle {
+  padding-left: 1.15rem;
+}
+
+.approvals-step-tag--end {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, var(--step-notch) 50%);
+  padding-right: 0.9rem;
+  padding-left: 1.15rem;
+  border-radius: 0 9999px 9999px 0;
+  margin-right: 0;
+}
+
+.approvals-step-tag--only {
+  clip-path: none;
+  border-radius: 9999px;
+  padding: 0.35rem 0.9rem;
+  margin-right: 0;
+}
+
+.approvals-step-tag__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 0.25rem;
+  border-radius: 9999px;
+  background: hsl(0 0% 100% / 0.55);
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+
+.dark .approvals-step-tag__count {
+  background: hsl(0 0% 0% / 0.22);
+}
+
+.approvals-step-tag--interactive {
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  transition: filter 120ms ease;
+}
+
+.approvals-step-tag--interactive:hover {
+  filter: brightness(0.97);
+}
+
+.approvals-step-tag--active {
+  --step-tag-bg: hsl(188 94% 43%);
+  --step-tag-fg: hsl(0 0% 100%);
+}
+
+.dark .approvals-step-tag--active {
+  --step-tag-bg: hsl(188 70% 42%);
+  --step-tag-fg: hsl(0 0% 98%);
+}
+
+/* Drawer secondary row — compact connected chevron tabs (Processing overrides · Pipeline) */
+.invoice-drawer-detail-pane .app-underline-tabs-stack {
+  gap: 0.75rem;
+}
+
+.app-underline-tabs--chevron {
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: none;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 0.125rem;
+}
+
+.app-underline-tabs__tab--chevron {
+  --drawer-chevron-notch: 0.45rem;
+  --drawer-chevron-bg: hsl(0 0% 100%);
+  --drawer-chevron-fg: hsl(var(--foreground));
+
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  padding: 0.2rem 0.65rem 0.2rem 0.55rem;
+  margin-right: 1px;
+  border: 1px solid hsl(var(--border) / 0.75);
+  background: var(--drawer-chevron-bg);
+  color: var(--drawer-chevron-fg);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--drawer-chevron-notch)) 0,
+    100% 50%,
+    calc(100% - var(--drawer-chevron-notch)) 100%,
+    0 100%,
+    var(--drawer-chevron-notch) 50%
+  );
+}
+
+.app-underline-tabs__tab--chevron::after {
+  display: none;
+}
+
+.dark .app-underline-tabs__tab--chevron {
+  --drawer-chevron-bg: hsl(0 0% 100%);
+  --drawer-chevron-fg: hsl(var(--primary-foreground));
+}
+
+.app-underline-tabs__tab--chevron-start {
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--drawer-chevron-notch)) 0,
+    100% 50%,
+    calc(100% - var(--drawer-chevron-notch)) 100%,
+    0 100%
+  );
+  padding-left: 0.55rem;
+  border-radius: 9999px 0 0 9999px;
+}
+
+.app-underline-tabs__tab--chevron-middle {
+  padding-left: 0.75rem;
+}
+
+.app-underline-tabs__tab--chevron-end {
+  clip-path: polygon(
+    0 0,
+    100% 0,
+    100% 100%,
+    0 100%,
+    var(--drawer-chevron-notch) 50%
+  );
+  padding-right: 0.55rem;
+  padding-left: 0.75rem;
+  border-radius: 0 9999px 9999px 0;
+  margin-right: 0;
+}
+
+.app-underline-tabs__tab--chevron-only {
+  clip-path: none;
+  border-radius: 9999px;
+  padding: 0.2rem 0.65rem;
+  margin-right: 0;
+}
+
+.app-underline-tabs__tab--chevron:hover:not(.app-underline-tabs__tab--active) {
+  --drawer-chevron-bg: hsl(0 0% 100%);
+  border-color: hsl(var(--border));
+  color: var(--drawer-chevron-fg);
+}
+
+.app-underline-tabs__tab--chevron.app-underline-tabs__tab--active {
+  --drawer-chevron-bg: hsl(192 46% 40%);
+  --drawer-chevron-fg: hsl(0 0% 100%);
+  border-color: hsl(192 46% 40%);
+  color: hsl(0 0% 100%);
+}
+
+.dark .app-underline-tabs__tab--chevron.app-underline-tabs__tab--active {
+  --drawer-chevron-bg: hsl(192 36% 32%);
+  --drawer-chevron-fg: hsl(0 0% 96%);
+  border-color: hsl(192 36% 32%);
+  color: hsl(0 0% 96%);
 }
 
 /* Status-pill action chips — matches reference badges */
@@ -487,10 +769,11 @@
 
 /* Kanban card actions — elevated pill buttons; icon carries tone color */
 .approvals-kanban-card__actions .approvals-action-chip {
-  height: 1.75rem;
-  padding: 0 0.75rem;
-  gap: 0.4rem;
-  font-size: 0.75rem;
+  flex-shrink: 0;
+  height: 1.625rem;
+  padding: 0 0.5rem;
+  gap: 0.3rem;
+  font-size: 0.6875rem;
   border-radius: 9999px;
   border: 1px solid hsl(var(--border) / 0.35);
   background-color: hsl(var(--muted));
@@ -502,8 +785,8 @@
 }
 
 .approvals-kanban-card__actions .approvals-action-chip__icon {
-  width: 0.875rem;
-  height: 0.875rem;
+  width: 0.8125rem;
+  height: 0.8125rem;
 }
 
 .approvals-kanban-card__actions .approvals-action-chip:not(:disabled):not(.approvals-action-chip--static):hover {

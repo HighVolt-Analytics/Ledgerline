@@ -1,5 +1,6 @@
 import { Clock } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
+import { DossierPipelineStatusKpi } from "@/components/dossiers/DossierPipelineStatusKpi";
 import type { DossierSummary } from "@/lib/dossiers";
 import { ROUTE_SALES } from "@/lib/invoice";
 import { money } from "@/lib/format";
@@ -20,7 +21,17 @@ function linkageSummary(dossier: DossierSummary): string {
   return ref ? `PO ${ref}` : "Non-PO";
 }
 
-export function DossierSummaryStrip({ dossier }: { dossier: DossierSummary }) {
+type DossierSummaryStripProps = {
+  dossier: DossierSummary;
+  onOpenInvoice?: () => void;
+  onJumpToFailure?: () => void;
+};
+
+export function DossierSummaryStrip({
+  dossier,
+  onOpenInvoice,
+  onJumpToFailure,
+}: DossierSummaryStripProps) {
   return (
     <div className="dossier-kpi-grid">
       <div className="dossier-kpi-card">
@@ -67,6 +78,12 @@ export function DossierSummaryStrip({ dossier }: { dossier: DossierSummary }) {
         </div>
         <div className="dossier-kpi-sub">Owner: {dossier.owner}</div>
       </div>
+
+      <DossierPipelineStatusKpi
+        dossier={dossier}
+        onOpenInvoice={onOpenInvoice}
+        onJumpToFailure={onJumpToFailure}
+      />
     </div>
   );
 }

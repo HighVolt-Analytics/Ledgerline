@@ -50,6 +50,9 @@ const ReportsPage = lazy(() =>
 const RulesPage = lazy(() =>
   import("@/pages/RulesPage").then((m) => ({ default: m.RulesPage }))
 );
+const CreationsPage = lazy(() =>
+  import("@/pages/CreationsPage").then((m) => ({ default: m.CreationsPage }))
+);
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage }))
 );
@@ -241,6 +244,14 @@ export default function App() {
               element={
                 <LazyPage>
                   <VendorsPage />
+                </LazyPage>
+              }
+            />
+            <Route
+              path="creations"
+              element={
+                <LazyPage>
+                  <CreationsPage />
                 </LazyPage>
               }
             />

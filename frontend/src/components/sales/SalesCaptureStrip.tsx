@@ -14,7 +14,7 @@ export function SalesCaptureStrip({ activeRuleCount = 0 }: { activeRuleCount?: n
         </span>
       </div>
       <Link
-        to="/rules?tab=customers&customersSection=capture"
+        to="/creations?tab=customers&customersSection=capture"
         className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm"
         data-testid="link-sales-customers"
       >

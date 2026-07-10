@@ -5,14 +5,15 @@ import {
   Clock,
   User,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DossierPipelinePhaseStrip } from "@/components/dossiers/DossierPipelinePhaseStrip";
-import { StatusPill, pillTones } from "@/components/StatusPill";
+import { approvalStatusChipClass, warningStatusChipClass } from "@/lib/kpiModuleColors";
 import type {
   DossierPipelineCheck,
   DossierPipelinePhaseId,
   DossierPipelineStep,
   DossierPipelineStageId,
+  DossierStageState,
 } from "@/lib/dossiers";
 import {
   DOSSIER_PIPELINE_PHASES,
@@ -24,25 +25,33 @@ import {
   dossierStageStateLabel,
   firstPipelineFailure,
   isStageBlocked,
+  phaseIdForStage,
   phaseStageSummary,
   pipelineBlockedFromStageId,
-  stageShouldDefaultOpen,
+  stageIdsForPhase,
 } from "@/lib/dossiers";
 import { cn } from "@/lib/cn";
 
-function stageStatusTone(state: DossierPipelineStep["state"]): string {
-  if (state === "pass") return pillTones.ok;
-  if (state === "fail") return pillTones.bad;
-  if (state === "waived") return pillTones.amber;
-  return pillTones.muted;
+function stageStateChipClass(state: DossierPipelineStep["state"]): string {
+  if (state === "pass") return approvalStatusChipClass("approve");
+  if (state === "fail") return approvalStatusChipClass("reject");
+  if (state === "waived") return approvalStatusChipClass("muted");
+  return warningStatusChipClass();
 }
 
-function checkStatusTone(state: DossierPipelineCheck["state"]): string {
-  if (state === "pass") return pillTones.ok;
-  if (state === "fail") return pillTones.bad;
-  if (state === "waived") return pillTones.amber;
-  if (state === "skipped") return pillTones.muted;
-  return pillTones.muted;
+function checkStateChipClass(state: DossierPipelineCheck["state"]): string {
+  if (state === "pass") return approvalStatusChipClass("approve");
+  if (state === "fail") return approvalStatusChipClass("reject");
+  if (state === "waived" || state === "skipped") return approvalStatusChipClass("muted");
+  if (state === "pending") return warningStatusChipClass();
+  return approvalStatusChipClass("muted");
+}
+
+function overviewStatChipClass(kind: "pass" | "fail" | "waived" | "pending"): string {
+  if (kind === "pass") return approvalStatusChipClass("approve");
+  if (kind === "fail") return approvalStatusChipClass("reject");
+  if (kind === "waived") return approvalStatusChipClass("muted");
+  return warningStatusChipClass();
 }
 
 function checkStatusLabel(state: DossierPipelineCheck["state"]): string {
@@ -71,36 +80,31 @@ function stageHasDetail(step: DossierPipelineStep | undefined): boolean {
   );
 }
 
+function phaseHasFailure(
+  phaseId: DossierPipelinePhaseId,
+  byStage: Map<DossierPipelineStageId, DossierPipelineStep>
+): boolean {
+  return stageIdsForPhase(phaseId).some((id) => byStage.get(id)?.state === "fail");
+}
+
+function defaultOpenPhases(
+  byStage: Map<DossierPipelineStageId, DossierPipelineStep>
+): Set<DossierPipelinePhaseId> {
+  const open = new Set<DossierPipelinePhaseId>();
+  for (const phase of DOSSIER_PIPELINE_PHASES) {
+    if (phaseHasFailure(phase.id, byStage)) {
+      open.add(phase.id);
+    }
+  }
+  return open;
+}
+
 function defaultOpenStages(
-  pipeline: DossierPipelineStep[],
-  byStage: Map<DossierPipelineStageId, DossierPipelineStep>,
-  focusMode: boolean
+  byStage: Map<DossierPipelineStageId, DossierPipelineStep>
 ): Set<DossierPipelineStageId> {
   const open = new Set<DossierPipelineStageId>();
-  const fail = firstPipelineFailure(pipeline);
-
-  if (focusMode && fail) {
-    open.add(fail.stageId);
-    const failOrder =
-      DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === fail.stageId)?.order ?? 0;
-    let downstream = 0;
-    for (const stage of DOSSIER_PIPELINE_STAGES) {
-      if (stage.order <= failOrder) continue;
-      const step = byStage.get(stage.id);
-      if (isStageBlocked(step)) {
-        open.add(stage.id);
-        downstream += 1;
-        if (downstream >= 2) break;
-      }
-    }
-    return open;
-  }
-
   for (const stage of DOSSIER_PIPELINE_STAGES) {
-    const step = byStage.get(stage.id);
-    const blocked =
-      pipelineBlockedFromStageId(pipeline, stage.id) && isStageBlocked(step);
-    if (stageShouldDefaultOpen(step, blocked)) {
+    if (byStage.get(stage.id)?.state === "fail") {
       open.add(stage.id);
     }
   }
@@ -138,9 +142,9 @@ function PipelineCheckTable({ checks }: { checks: DossierPipelineCheck[] }) {
               <td className="tnum">{check.expected ?? "—"}</td>
               <td className="tnum">{check.actual ?? "—"}</td>
               <td className="text-right">
-                <StatusPill className={checkStatusTone(check.state)}>
+                <span className={checkStateChipClass(check.state)}>
                   {checkStatusLabel(check.state)}
-                </StatusPill>
+                </span>
               </td>
             </tr>
           ))}
@@ -159,7 +163,7 @@ function PipelineStageCard({
   onToggle,
   cardRef,
   routeTarget,
-  hiddenInFocus,
+  compact = false,
 }: {
   order: number;
   stageId: DossierPipelineStageId;
@@ -169,15 +173,16 @@ function PipelineStageCard({
   onToggle: () => void;
   cardRef?: (el: HTMLElement | null) => void;
   routeTarget?: string | null;
-  hiddenInFocus?: boolean;
+  compact?: boolean;
 }) {
-  if (hiddenInFocus) return null;
-
   const state = step?.state ?? "pending";
   const hasDetail = stageHasDetail(step);
+  const showBody = open && hasDetail;
 
   const cardClass = cn(
     "dossier-pipeline-stage",
+    !showBody && "dossier-pipeline-stage--collapsed",
+    compact && "dossier-pipeline-stage--compact",
     state === "pass" && "dossier-pipeline-stage--pass",
     state === "fail" && "dossier-pipeline-stage--fail",
     state === "waived" && "dossier-pipeline-stage--waived",
@@ -194,6 +199,8 @@ function PipelineStageCard({
           ? `Waiting — ${step.blockedReason}`
           : null;
 
+  const showHeadDetail = showBody || (state === "fail" && Boolean(summaryLine));
+
   return (
     <article
       ref={cardRef}
@@ -205,7 +212,7 @@ function PipelineStageCard({
         type="button"
         className="dossier-pipeline-stage__head"
         onClick={() => hasDetail && onToggle()}
-        aria-expanded={open}
+        aria-expanded={showBody}
         disabled={!hasDetail}
       >
         <span className={cn("dossier-pipeline-stage__node", `dossier-pipeline-stage__node--${state}`)}>
@@ -214,16 +221,18 @@ function PipelineStageCard({
         <span className="dossier-pipeline-stage__title-block">
           <span className="dossier-pipeline-stage__title-row">
             <span className="dossier-pipeline-stage__name">{dossierStageLabel(stageId, routeTarget)}</span>
-            <StatusPill className={stageStatusTone(state)}>{dossierStageStateLabel(state)}</StatusPill>
+            <span className={stageStateChipClass(state)}>{dossierStageStateLabel(state)}</span>
             {blocked && state === "pending" ? (
               <span className="dossier-pipeline-stage__did-not-run">Did not run</span>
             ) : null}
-            {step?.exceptionCode ? (
+            {step?.exceptionCode && showHeadDetail ? (
               <span className="dossier-pipeline-stage__code tnum">{step.exceptionCode}</span>
             ) : null}
           </span>
-          <span className="dossier-pipeline-stage__hint">{dossierStageDescription(stageId)}</span>
-          {summaryLine ? (
+          {showHeadDetail ? (
+            <span className="dossier-pipeline-stage__hint">{dossierStageDescription(stageId)}</span>
+          ) : null}
+          {summaryLine && showHeadDetail ? (
             <span
               className={cn(
                 "dossier-pipeline-stage__summary",
@@ -237,12 +246,12 @@ function PipelineStageCard({
         </span>
         {hasDetail ? (
           <span className="dossier-pipeline-stage__chevron">
-            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            {showBody ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </span>
         ) : null}
       </button>
 
-      {open && hasDetail ? (
+      {showBody ? (
         <div className="dossier-pipeline-stage__body">
           {(step?.actor || step?.at || step?.durationMs) && (
             <div className="dossier-pipeline-stage__meta">
@@ -267,16 +276,16 @@ function PipelineStageCard({
           )}
 
           {state === "fail" && (step?.failureReason || step?.remediation) ? (
-            <div className="dossier-pipeline-failure-box">
-              <div className="dossier-pipeline-failure-box__title">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
+            <div className="dossier-pipeline-failure-plain">
+              <div className="dossier-pipeline-failure-plain__title">
+                <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
                 Why this stage failed
               </div>
               {step?.failureReason ? (
-                <p className="dossier-pipeline-failure-box__reason">{step.failureReason}</p>
+                <p className="dossier-pipeline-failure-plain__reason">{step.failureReason}</p>
               ) : null}
               {step?.remediation ? (
-                <p className="dossier-pipeline-failure-box__fix">
+                <p className="dossier-pipeline-failure-plain__fix">
                   <span className="font-semibold">What to do: </span>
                   {step.remediation}
                 </p>
@@ -314,38 +323,132 @@ function PipelineStageCard({
   );
 }
 
-function PassedStagesSummary({
+function CompletedStagesGroup({
   count,
-  expanded,
+  open,
   onToggle,
+  children,
 }: {
   count: number;
-  expanded: boolean;
+  open: boolean;
   onToggle: () => void;
+  children: ReactNode;
 }) {
   if (count <= 0) return null;
   return (
-    <button
-      type="button"
-      className="dossier-pipeline-passed-summary"
-      onClick={onToggle}
-      aria-expanded={expanded}
+    <div className="dossier-pipeline-completed-group">
+      <button
+        type="button"
+        className="dossier-pipeline-completed-group__head"
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        <span className="dossier-pipeline-completed-group__label">
+          {count} completed stage{count === 1 ? "" : "s"}
+        </span>
+        <span className="dossier-pipeline-completed-group__chevron" aria-hidden>
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </span>
+      </button>
+      {open ? <div className="dossier-pipeline-completed-group__body">{children}</div> : null}
+    </div>
+  );
+}
+
+function splitPhaseStages(
+  phaseStages: (typeof DOSSIER_PIPELINE_STAGES)[number][],
+  byStage: Map<DossierPipelineStageId, DossierPipelineStep>
+) {
+  const failedStage = phaseStages.find((stage) => byStage.get(stage.id)?.state === "fail");
+  const failOrder = failedStage?.order ?? null;
+  const completedBeforeFail: (typeof DOSSIER_PIPELINE_STAGES)[number][] = [];
+  const failed: (typeof DOSSIER_PIPELINE_STAGES)[number][] = [];
+  const rest: (typeof DOSSIER_PIPELINE_STAGES)[number][] = [];
+
+  for (const stage of phaseStages) {
+    const state = byStage.get(stage.id)?.state ?? "pending";
+    if (state === "fail") {
+      failed.push(stage);
+    } else if (
+      failOrder != null &&
+      stage.order < failOrder &&
+      (state === "pass" || state === "waived")
+    ) {
+      completedBeforeFail.push(stage);
+    } else {
+      rest.push(stage);
+    }
+  }
+
+  return { completedBeforeFail, failed, rest };
+}
+
+function PipelinePhaseStep({
+  index,
+  phaseId,
+  label,
+  state,
+  summary,
+  open,
+  onToggle,
+  isLast,
+  children,
+}: {
+  index: number;
+  phaseId: DossierPipelinePhaseId;
+  label: string;
+  state: DossierStageState;
+  summary: string;
+  open: boolean;
+  onToggle: () => void;
+  isLast: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "dossier-pipeline-step",
+        open && "dossier-pipeline-step--open",
+        state === "fail" && "dossier-pipeline-step--fail"
+      )}
+      data-testid={`phase-${phaseId}`}
     >
-      <span className="dossier-pipeline-passed-summary__label">
-        {count} stage{count === 1 ? "" : "s"} completed
-      </span>
-      <span className="dossier-pipeline-passed-summary__action">
-        {expanded ? "Hide" : "Show"}
-      </span>
-    </button>
+      <div className="dossier-pipeline-step__rail" aria-hidden>
+        <span className="dossier-pipeline-step__line dossier-pipeline-step__line--top" />
+        <span className={cn("dossier-pipeline-step__marker", `dossier-pipeline-step__marker--${state}`)}>
+          {index}
+        </span>
+        {!isLast ? <span className="dossier-pipeline-step__line dossier-pipeline-step__line--bottom" /> : null}
+      </div>
+      <div className="dossier-pipeline-step__content">
+        <div className="dossier-pipeline-step__heading">
+          <button
+            type="button"
+            className="dossier-pipeline-step__heading-toggle"
+            onClick={onToggle}
+            aria-expanded={open}
+          >
+            <div className="dossier-pipeline-step__heading-main">
+              <div className="dossier-pipeline-step__title-row">
+                <h3 className="dossier-pipeline-step__label">{label}</h3>
+                <span className={stageStateChipClass(state)}>{dossierStageStateLabel(state)}</span>
+              </div>
+              {!open ? <p className="dossier-pipeline-step__summary">{summary}</p> : null}
+            </div>
+            <span className="dossier-pipeline-step__chevron" aria-hidden>
+              {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </span>
+          </button>
+        </div>
+        {open ? <div className="dossier-pipeline-step__panel">{children}</div> : null}
+      </div>
+    </div>
   );
 }
 
 type DossierPipelineOverviewProps = {
   pipeline: DossierPipelineStep[];
   routeTarget?: string | null;
-  focusMode: boolean;
-  onToggleFocusMode: () => void;
   onJumpToFailure?: () => void;
   onExpandAll?: () => void;
   onCollapseAll?: () => void;
@@ -354,8 +457,6 @@ type DossierPipelineOverviewProps = {
 export function DossierPipelineOverview({
   pipeline,
   routeTarget,
-  focusMode,
-  onToggleFocusMode,
   onJumpToFailure,
   onExpandAll,
   onCollapseAll,
@@ -363,38 +464,28 @@ export function DossierPipelineOverview({
   const counts = useMemo(() => dossierPipelineCounts(pipeline), [pipeline]);
   const pending = pipeline.filter((s) => s.state === "pending").length;
   const firstFail = firstPipelineFailure(pipeline);
-  const hasFailure = Boolean(firstFail);
 
   return (
     <div className="dossier-pipeline-overview">
-      <DossierPipelinePhaseStrip pipeline={pipeline} className="dossier-pipeline-overview__phases" />
+      <DossierPipelinePhaseStrip
+        pipeline={pipeline}
+        variant="connected"
+        className="dossier-pipeline-overview__phases dossier-card-pipeline--detail"
+      />
       <div className="dossier-pipeline-overview__row">
         <div className="dossier-pipeline-overview__stats">
-          <span className="dossier-pipeline-overview__stat dossier-pipeline-overview__stat--pass">
-            {counts.pass} complete
-          </span>
+          <span className={overviewStatChipClass("pass")}>{counts.pass} complete</span>
           {counts.fail > 0 ? (
-            <span className="dossier-pipeline-overview__stat dossier-pipeline-overview__stat--fail">
-              {counts.fail} failed
-            </span>
+            <span className={overviewStatChipClass("fail")}>{counts.fail} failed</span>
           ) : null}
           {counts.waived > 0 ? (
-            <span className="dossier-pipeline-overview__stat dossier-pipeline-overview__stat--waived">
-              {counts.waived} skipped
-            </span>
+            <span className={overviewStatChipClass("waived")}>{counts.waived} skipped</span>
           ) : null}
           {pending > 0 ? (
-            <span className="dossier-pipeline-overview__stat dossier-pipeline-overview__stat--pending">
-              {pending} waiting
-            </span>
+            <span className={overviewStatChipClass("pending")}>{pending} waiting</span>
           ) : null}
         </div>
         <div className="dossier-pipeline-overview__actions">
-          {hasFailure ? (
-            <button type="button" className="dossier-pipeline-overview__link" onClick={onToggleFocusMode}>
-              {focusMode ? "Show all stages" : "Focus on problem"}
-            </button>
-          ) : null}
           {firstFail && onJumpToFailure ? (
             <button type="button" className="dossier-pipeline-overview__link" onClick={onJumpToFailure}>
               Jump to failure
@@ -414,17 +505,20 @@ export function DossierPipelineOverview({
       </div>
       {firstFail ? (
         <div className="dossier-pipeline-overview__blocker">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <div>
-            <span className="font-semibold">
-              Failed at stage {String(
-                DOSSIER_PIPELINE_STAGES.find((s) => s.id === firstFail.stageId)?.order ?? ""
-              ).padStart(2, "0")}{" "}
-              — {dossierStageLabel(firstFail.stageId, routeTarget)}
-            </span>
-            {firstFail.exceptionCode ? (
-              <span className="dossier-pipeline-stage__code tnum ml-2">{firstFail.exceptionCode}</span>
-            ) : null}
+          <AlertTriangle className="h-4 w-4 shrink-0 ds-warning-icon" aria-hidden />
+          <div className="dossier-pipeline-overview__blocker-main">
+            <div className="dossier-pipeline-overview__blocker-head">
+              <span className="dossier-pipeline-overview__blocker-title">
+                Failed at stage{" "}
+                {String(
+                  DOSSIER_PIPELINE_STAGES.find((s) => s.id === firstFail.stageId)?.order ?? ""
+                ).padStart(2, "0")}{" "}
+                — {dossierStageLabel(firstFail.stageId, routeTarget)}
+              </span>
+              {firstFail.exceptionCode ? (
+                <span className={approvalStatusChipClass("muted")}>{firstFail.exceptionCode}</span>
+              ) : null}
+            </div>
             <p className="dossier-pipeline-overview__blocker-detail">
               {firstFail.failureReason ?? firstFail.detail}
             </p>
@@ -435,27 +529,90 @@ export function DossierPipelineOverview({
   );
 }
 
+export const DOSSIER_PIPELINE_FOCUS_STAGE_EVENT = "dossier-pipeline-focus-stage";
+export const DOSSIER_PIPELINE_FOCUS_PHASE_EVENT = "dossier-pipeline-focus-phase";
+
 export function DossierPipelineTimeline({
   pipeline,
   routeTarget,
+  layout = "page",
 }: {
   pipeline: DossierPipelineStep[];
   routeTarget?: string | null;
+  layout?: "page" | "drawer";
 }) {
   const byStage = useMemo(
     () => new Map(pipeline.map((step) => [step.stageId, step])),
     [pipeline]
   );
-  const hasFailure = Boolean(firstPipelineFailure(pipeline));
 
-  const [focusMode, setFocusMode] = useState(hasFailure);
-  const [showPassedStages, setShowPassedStages] = useState(false);
-  const [openStages, setOpenStages] = useState(() =>
-    defaultOpenStages(pipeline, byStage, hasFailure)
+  const [openPhases, setOpenPhases] = useState(() => defaultOpenPhases(byStage));
+  const [openStages, setOpenStages] = useState(() => defaultOpenStages(byStage));
+  const [openCompletedGroups, setOpenCompletedGroups] = useState<Set<DossierPipelinePhaseId>>(
+    () => new Set()
   );
   const stageRefs = useRef<Partial<Record<DossierPipelineStageId, HTMLElement | null>>>({});
 
   const phases = useMemo(() => dossierPipelinePhases(pipeline), [pipeline]);
+
+  useEffect(() => {
+    const map = new Map(pipeline.map((step) => [step.stageId, step]));
+    setOpenPhases(defaultOpenPhases(map));
+    setOpenStages(defaultOpenStages(map));
+    setOpenCompletedGroups(new Set());
+  }, [pipeline]);
+
+  const focusPhase = useCallback((phaseId: DossierPipelinePhaseId, openPanel = true) => {
+    if (openPanel) {
+      setOpenPhases((prev) => new Set(prev).add(phaseId));
+    }
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-testid="phase-${phaseId}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }, []);
+
+  const focusStage = useCallback(
+    (stageId: DossierPipelineStageId) => {
+      const phaseId = phaseIdForStage(stageId);
+      focusPhase(phaseId);
+      setOpenStages((prev) => new Set(prev).add(stageId));
+      requestAnimationFrame(() => {
+        stageRefs.current[stageId]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    },
+    [focusPhase]
+  );
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const stageId = (event as CustomEvent<{ stageId: DossierPipelineStageId }>).detail?.stageId;
+      if (!stageId) return;
+      focusStage(stageId);
+    };
+    window.addEventListener(DOSSIER_PIPELINE_FOCUS_STAGE_EVENT, handler);
+    return () => window.removeEventListener(DOSSIER_PIPELINE_FOCUS_STAGE_EVENT, handler);
+  }, [focusStage]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const phaseId = (event as CustomEvent<{ phaseId: DossierPipelinePhaseId }>).detail?.phaseId;
+      if (!phaseId) return;
+      focusPhase(phaseId);
+    };
+    window.addEventListener(DOSSIER_PIPELINE_FOCUS_PHASE_EVENT, handler);
+    return () => window.removeEventListener(DOSSIER_PIPELINE_FOCUS_PHASE_EVENT, handler);
+  }, [focusPhase]);
+
+  const togglePhase = useCallback((phaseId: DossierPipelinePhaseId) => {
+    setOpenPhases((prev) => {
+      const next = new Set(prev);
+      if (next.has(phaseId)) next.delete(phaseId);
+      else next.add(phaseId);
+      return next;
+    });
+  }, []);
 
   const toggleStage = useCallback((stageId: DossierPipelineStageId) => {
     setOpenStages((prev) => {
@@ -469,104 +626,105 @@ export function DossierPipelineTimeline({
   const jumpToFailure = useCallback(() => {
     const fail = firstPipelineFailure(pipeline);
     if (!fail) return;
-    setOpenStages((prev) => new Set(prev).add(fail.stageId));
-    requestAnimationFrame(() => {
-      stageRefs.current[fail.stageId]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-  }, [pipeline]);
-
-  const toggleFocusMode = useCallback(() => {
-    setFocusMode((prev) => {
-      const next = !prev;
-      setOpenStages(defaultOpenStages(pipeline, byStage, next));
-      setShowPassedStages(false);
-      return next;
-    });
-  }, [pipeline, byStage]);
+    focusStage(fail.stageId);
+  }, [pipeline, focusStage]);
 
   const expandAll = useCallback(() => {
-    setFocusMode(false);
-    setShowPassedStages(true);
-    const ids = DOSSIER_PIPELINE_STAGES.map((s) => s.id).filter((id) =>
+    setOpenPhases(new Set(DOSSIER_PIPELINE_PHASES.map((phase) => phase.id)));
+    setOpenCompletedGroups(new Set(DOSSIER_PIPELINE_PHASES.map((phase) => phase.id)));
+    const ids = DOSSIER_PIPELINE_STAGES.map((stage) => stage.id).filter((id) =>
       stageHasDetail(byStage.get(id))
     );
     setOpenStages(new Set(ids));
   }, [byStage]);
 
   const collapseAll = useCallback(() => {
-    setOpenStages(new Set());
-  }, []);
-
-  const passedStageIds = useMemo(() => {
-    return DOSSIER_PIPELINE_STAGES.filter((stage) => byStage.get(stage.id)?.state === "pass").map(
-      (stage) => stage.id
-    );
-  }, [byStage]);
-
-  const shouldHidePassed = focusMode && !showPassedStages;
+    const map = new Map(pipeline.map((step) => [step.stageId, step]));
+    setOpenPhases(defaultOpenPhases(map));
+    setOpenStages(defaultOpenStages(map));
+    setOpenCompletedGroups(new Set());
+  }, [pipeline]);
 
   return (
-    <div className="dossier-pipeline-detail">
-      <DossierPipelineOverview
-        pipeline={pipeline}
-        routeTarget={routeTarget}
-        focusMode={focusMode}
-        onToggleFocusMode={toggleFocusMode}
-        onJumpToFailure={jumpToFailure}
-        onExpandAll={expandAll}
-        onCollapseAll={collapseAll}
-      />
-      <div className="dossier-pipeline-stages">
-        {shouldHidePassed && passedStageIds.length > 0 ? (
-          <PassedStagesSummary
-            count={passedStageIds.length}
-            expanded={showPassedStages}
-            onToggle={() => setShowPassedStages((v) => !v)}
-          />
-        ) : null}
-        {DOSSIER_PIPELINE_PHASES.map((phase) => {
-          const phaseMeta = phases.find((p) => p.phaseId === phase.id);
-          const phaseStages = DOSSIER_PIPELINE_STAGES.filter((s) => s.phase === phase.id);
+    <div
+      className={cn(
+        "dossier-pipeline-detail",
+        layout === "drawer" && "invoice-drawer-dossier-pipeline"
+      )}
+      data-testid={layout === "drawer" ? "invoice-drawer-dossier-pipeline" : undefined}
+    >
+      {layout === "page" ? (
+        <DossierPipelineOverview
+          pipeline={pipeline}
+          routeTarget={routeTarget}
+          onJumpToFailure={jumpToFailure}
+          onExpandAll={expandAll}
+          onCollapseAll={collapseAll}
+        />
+      ) : null}
+      <div className="dossier-pipeline-stepper" data-testid="pipeline-phase-stepper">
+        {DOSSIER_PIPELINE_PHASES.map((phase, index) => {
+          const phaseMeta = phases.find((row) => row.phaseId === phase.id);
+          const state = phaseMeta?.state ?? "pending";
+          const phaseStages = DOSSIER_PIPELINE_STAGES.filter((stage) => stage.phase === phase.id);
+          const open = openPhases.has(phase.id);
+          const { completedBeforeFail, failed, rest } = splitPhaseStages(phaseStages, byStage);
+
+          const renderStageCard = (stage: (typeof DOSSIER_PIPELINE_STAGES)[number], compact = false) => {
+            const step = byStage.get(stage.id);
+            const blocked =
+              pipelineBlockedFromStageId(pipeline, stage.id) && isStageBlocked(step);
+            return (
+              <PipelineStageCard
+                key={stage.id}
+                order={stage.order}
+                stageId={stage.id}
+                step={step}
+                blocked={blocked}
+                open={openStages.has(stage.id)}
+                onToggle={() => toggleStage(stage.id)}
+                routeTarget={routeTarget}
+                compact={compact}
+                cardRef={(el) => {
+                  stageRefs.current[stage.id] = el;
+                }}
+              />
+            );
+          };
 
           return (
-            <section key={phase.id} className="dossier-pipeline-phase" data-testid={`phase-${phase.id}`}>
-              <header className="dossier-pipeline-phase__head">
-                <span className="dossier-pipeline-phase__name">{phase.label}</span>
-                {phaseMeta ? (
-                  <StatusPill className={stageStatusTone(phaseMeta.state)}>
-                    {dossierStageStateLabel(phaseMeta.state)}
-                  </StatusPill>
+            <PipelinePhaseStep
+              key={phase.id}
+              index={index + 1}
+              phaseId={phase.id}
+              label={phase.label}
+              state={state}
+              summary={phaseStageSummary(pipeline, phase.id, routeTarget)}
+              open={open}
+              onToggle={() => togglePhase(phase.id)}
+              isLast={index === DOSSIER_PIPELINE_PHASES.length - 1}
+            >
+              <div className="dossier-pipeline-step__stages">
+                {completedBeforeFail.length > 0 ? (
+                  <CompletedStagesGroup
+                    count={completedBeforeFail.length}
+                    open={openCompletedGroups.has(phase.id)}
+                    onToggle={() =>
+                      setOpenCompletedGroups((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(phase.id)) next.delete(phase.id);
+                        else next.add(phase.id);
+                        return next;
+                      })
+                    }
+                  >
+                    {completedBeforeFail.map((stage) => renderStageCard(stage, true))}
+                  </CompletedStagesGroup>
                 ) : null}
-                <span className="dossier-pipeline-phase__summary">
-                  {phaseStageSummary(pipeline, phase.id as DossierPipelinePhaseId, routeTarget)}
-                </span>
-              </header>
-
-              {phaseStages.map((stage) => {
-                const step = byStage.get(stage.id);
-                const blocked =
-                  pipelineBlockedFromStageId(pipeline, stage.id) && isStageBlocked(step);
-                const hidePassed =
-                  shouldHidePassed && step?.state === "pass" && !showPassedStages;
-
-                return (
-                  <PipelineStageCard
-                    key={stage.id}
-                    order={stage.order}
-                    stageId={stage.id}
-                    step={step}
-                    blocked={blocked}
-                    open={openStages.has(stage.id)}
-                    onToggle={() => toggleStage(stage.id)}
-                    routeTarget={routeTarget}
-                    hiddenInFocus={hidePassed}
-                    cardRef={(el) => {
-                      stageRefs.current[stage.id] = el;
-                    }}
-                  />
-                );
-              })}
-            </section>
+                {failed.map((stage) => renderStageCard(stage))}
+                {rest.map((stage) => renderStageCard(stage, true))}
+              </div>
+            </PipelinePhaseStep>
           );
         })}
       </div>

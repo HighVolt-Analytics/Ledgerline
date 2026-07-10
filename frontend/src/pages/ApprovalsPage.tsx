@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
+import { Check, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { api, ApiError, clearGetCache } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
-import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
 import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { PageHeader } from "@/components/PageHeader";
@@ -13,7 +12,7 @@ import { PageLoader } from "@/components/PageLoader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
-import { documentDisplayRef, money } from "@/lib/format";
+import { documentDisplayRef } from "@/lib/format";
 import { fetchApprovalsBoard } from "@/lib/invoices";
 import {
   approveAndProcess,
@@ -23,8 +22,13 @@ import {
   watchProcessingUntilIdle,
 } from "@/lib/invoiceActions";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
-import { invoiceCanPublishToLedger, evaluationReviewTooltip } from "@/lib/invoice";
+import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
+import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
+import {
+  effectiveDocumentTypeCode,
+  invoiceDocumentTypeDisplayLabel,
+} from "@/lib/documentTypeResolve";
 import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import {
   APPROVABLE_STATUSES,
@@ -65,10 +69,6 @@ function upsertInvoice(rows: Invoice[], row: Invoice): Invoice[] {
   return [...byId.values()];
 }
 
-function docNumber(inv: Invoice): string {
-  return documentDisplayRef(inv);
-}
-
 export function ApprovalsPage() {
   const queryClient = useQueryClient();
   const { data: ruleBook } = useRuleBookConfig(false);
@@ -86,6 +86,7 @@ export function ApprovalsPage() {
   const [processingIds, setProcessingIds] = useState<Set<number>>(() => new Set());
   const [processingBusy, setProcessingBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
   const loadSeq = useRef(0);
   const busyRef = useRef<number | null>(null);
   const processingIdsRef = useRef(processingIds);
@@ -110,6 +111,34 @@ export function ApprovalsPage() {
     setDrawerEditMode(edit);
     setDrawerOpen(true);
   }
+
+  const pendingInvoiceParam = searchParams.get("invoice");
+
+  useEffect(() => {
+    if (!pendingInvoiceParam || loading) return;
+
+    const clearDeepLinkParams = () => {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("invoice");
+      setSearchParams(nextParams, { replace: true });
+    };
+
+    const invoiceId = Number(pendingInvoiceParam);
+    if (!Number.isFinite(invoiceId) || invoiceId <= 0) {
+      clearDeepLinkParams();
+      return;
+    }
+
+    const inv = invoices.find((row) => row.id === invoiceId);
+    if (inv) {
+      openDrawer(inv);
+    } else {
+      setDrawerInvoice({ id: invoiceId } as Invoice);
+      setDrawerEditMode(false);
+      setDrawerOpen(true);
+    }
+    clearDeepLinkParams();
+  }, [pendingInvoiceParam, loading, invoices, searchParams, setSearchParams]);
 
   const load = useCallback(async (options?: { silent?: boolean; fresh?: boolean }) => {
     const scope = captureTenantFetchScope();
@@ -212,6 +241,7 @@ export function ApprovalsPage() {
     [invoices]
   );
   const needsReviewCount = useMemo(() => needsReviewQueueCount(invoices), [invoices]);
+  const documentTypes = ruleBook?.documentTypes ?? [];
 
   const invalidateAfterApproval = useCallback(async () => {
     await Promise.all([
@@ -489,51 +519,41 @@ export function ApprovalsPage() {
         </Card>
       )}
 
-      {needsReviewCount > 0 && (
-        <Card className="p-3 mb-4 text-xs border-amber-500/40 bg-amber-500/10 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-muted-foreground">
-            {needsReviewCount} document{needsReviewCount === 1 ? "" : "s"} flagged{" "}
-            <span className="font-medium text-foreground">needs review</span> after classification
-            (vendor drift, field confidence, or policy disagreement).
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={processingBusy}
-            onClick={() => void runNeedsReviewProcessing()}
-            data-testid="button-run-needs-review"
-          >
-            {processingBusy ? "Processing…" : "Process needs-review queue"}
-          </Button>
-        </Card>
-      )}
-
-      {board.awaiting.length > 0 && (
-        <Card className="p-3 mb-4 text-xs border-border bg-muted/40 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-muted-foreground">
-            {board.awaiting.length} document{board.awaiting.length === 1 ? "" : "s"} in the
-            pipeline (parse → validate → map → journal). Click Run processing if they
-            do not advance automatically.
-          </p>
-          <Button
-            variant="default"
-            size="sm"
-            disabled={processingBusy}
-            onClick={() => void runProcessing()}
-            data-testid="button-run-processing"
-          >
-            {processingBusy ? "Processing…" : "Run processing"}
-          </Button>
-        </Card>
-      )}
-
-      <div className="mb-4 flex justify-end">
+      <div className="approvals-kanban-toolbar">
         <ListSearchInput
           value={searchQuery}
           onChange={setSearchQuery}
-          placeholder="Search this list…"
+          placeholder="Search approvals…"
           testId="input-approvals-search"
+          className="w-full max-w-md"
         />
+        <div className="approvals-kanban-toolbar__actions">
+          {needsReviewCount > 0 ? (
+            <Button
+              type="button"
+              variant="surface"
+              size="sm"
+              disabled={processingBusy}
+              onClick={() => void runNeedsReviewProcessing()}
+              data-testid="button-run-needs-review"
+            >
+              {processingBusy ? "Processing…" : "Process needs-review queue"}
+            </Button>
+          ) : null}
+          {board.awaiting.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="approvals-kanban-toolbar__run-btn"
+              disabled={processingBusy}
+              onClick={() => void runProcessing()}
+              data-testid="button-run-processing"
+            >
+              {processingBusy ? "Processing…" : "Run processing"}
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="approvals-kanban-board">
@@ -552,53 +572,39 @@ export function ApprovalsPage() {
                 </span>
               </header>
               <div className="approvals-kanban-column__cards">
-                {cards.map((inv) => (
+                {cards.map((inv) => {
+                  const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
+                  const typeCode = effectiveDocumentTypeCode(inv, documentTypes);
+                  return (
                   <article
                     key={inv.id}
                     className="approvals-kanban-card"
                     data-testid={`card-approval-${inv.id}`}
-                    onClick={() => openDrawer(inv)}
                   >
-                    <div className="approvals-kanban-card__top">
-                      <span className="approvals-kanban-card__vendor">{inv.vendor ?? "—"}</span>
-                      <span className="approvals-kanban-card__ref">{documentDisplayRef(inv)}</span>
-                    </div>
-                    <div className="approvals-kanban-card__subline-row">
-                      <p className="approvals-kanban-card__meta tnum">
-                        {docNumber(inv)} · {money(inv.total, inv.currency)}
-                        {col.key === "awaiting" && (
-                          <span className="ml-1 capitalize">· {inv.status.replace(/_/g, " ")}</span>
-                        )}
-                      </p>
-                      {inv.evaluation_status === "needs_review" && (
-                        <span
-                          className="approvals-kanban-card__review-pill"
-                          title={evaluationReviewTooltip(inv)}
-                          aria-label={evaluationReviewTooltip(inv)}
-                          data-testid={`needs-review-${inv.id}`}
-                        >
-                          <AlertTriangle aria-hidden />
-                          Review
-                        </span>
-                      )}
-                    </div>
-                    {col.key === "awaiting" && inv.evaluation_status ? (
-                      <div className="mt-1.5">
-                        <EvaluationStatusBadge
-                          status={inv.evaluation_status}
-                          invoice={inv}
+                    <button
+                      type="button"
+                      className="approvals-kanban-card__hit"
+                      onClick={() => openDrawer(inv)}
+                      aria-label={`Open ${inv.vendor ?? "document"} ${documentDisplayRef(inv)}`}
+                    >
+                      <div className="approvals-kanban-card__top">
+                        <span className="approvals-kanban-card__vendor">{inv.vendor ?? "—"}</span>
+                        <DocumentTypeChip
+                          code={typeCode}
+                          label={typeLabel}
+                          title={typeLabel}
+                          purchaseKind={inv.purchase_document_type}
+                          documentTypes={documentTypes}
+                          className="approvals-kanban-card__type-chip"
                         />
                       </div>
-                    ) : null}
-                    {col.key === "pending" && inv.evaluation_status ? (
-                      <div className="mt-1.5">
-                        <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
+                      <div className="approvals-kanban-card__subline-row">
+                        <span className="approvals-kanban-card__meta tnum">
+                          {documentDisplayRef(inv)}
+                        </span>
                       </div>
-                    ) : null}
-                    <div
-                      className="approvals-kanban-card__actions"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    </button>
+                    <div className="approvals-kanban-card__actions">
                       {canShowReprocessOnBoard(inv, col.key) && (
                         <ActionChip
                           tone="reprocess"
@@ -627,7 +633,7 @@ export function ApprovalsPage() {
                         <ActionChip
                           tone="approve"
                           icon={Check}
-                          label={busyId === inv.id ? "…" : "Approve"}
+                          label={busyId === inv.id ? "…" : "Confirm"}
                           disabled={busyId === inv.id}
                           onClick={() => void approveInvoice(inv.id)}
                           testId={`approve-${inv.id}`}
@@ -676,7 +682,8 @@ export function ApprovalsPage() {
                       )}
                     </div>
                   </article>
-                ))}
+                  );
+                })}
                 {cards.length === 0 && (
                   <p className="approvals-kanban-empty">Empty</p>
                 )}

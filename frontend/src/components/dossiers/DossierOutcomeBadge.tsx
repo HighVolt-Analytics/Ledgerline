@@ -1,4 +1,5 @@
 import { StatusPill, pillTones } from "@/components/StatusPill";
+import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import type { DossierOutcome } from "@/lib/dossiers";
 import { dossierOutcomeLabel } from "@/lib/dossiers";
 import { cn } from "@/lib/cn";
@@ -26,25 +27,16 @@ export function DossierOutcomeBadge({
   );
 }
 
-export function DossierTypeBadge({ code, title, className }: { code: string; title?: string; className?: string }) {
-  const token = (code ?? "").trim();
-  if (!token) {
-    return (
-      <span title={title ?? "Document type not classified"}>
-        <StatusPill className={cn(pillTones.muted, className)}>Unclassified</StatusPill>
-      </span>
-    );
-  }
+export function DossierTypeBadge({
+  code,
+  title,
+  className,
+}: {
+  code: string;
+  title?: string;
+  className?: string;
+}) {
   return (
-    <span title={title}>
-      <StatusPill
-        className={cn(
-          "border-primary/20 bg-primary/10 text-primary",
-          className
-        )}
-      >
-        {token}
-      </StatusPill>
-    </span>
+    <DocumentTypeChip code={code} label={title} title={title} className={className} />
   );
 }

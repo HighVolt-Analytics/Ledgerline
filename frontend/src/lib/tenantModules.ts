@@ -42,8 +42,8 @@ export const TENANT_MODULE_CATALOG: TenantModuleDef[] = [
   },
   {
     key: "dossiers",
-    label: "Dossiers",
-    description: "Purchase dossiers and approval chains.",
+    label: "Processing",
+    description: "Document processing pipeline and approval chains.",
     group: "Operations",
   },
   {
@@ -60,7 +60,7 @@ export const TENANT_MODULE_CATALOG: TenantModuleDef[] = [
   },
   {
     key: "ledger_link",
-    label: "Ledger Link",
+    label: "Accounting",
     description: "Export to accounting ledger.",
     group: "Finance",
   },

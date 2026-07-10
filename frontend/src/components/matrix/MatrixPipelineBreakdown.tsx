@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 
 function StageStateIcon({ state }: { state: MatrixCell["state"] }) {
   if (state === "done") {
-    return <Check className="h-3.5 w-3.5 text-[hsl(var(--chart-1))]" aria-hidden />;
+    return <Check className="matrix-ok-icon h-3.5 w-3.5 shrink-0" aria-hidden />;
   }
   if (state === "fail") {
     return <Ban className="h-3.5 w-3.5 text-destructive" aria-hidden />;

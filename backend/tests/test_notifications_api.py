@@ -51,7 +51,7 @@ async def test_notifications_pipeline_error(
     assert data["unread_count"] >= 1
     row = next(item for item in data["items"] if item["event"] == "pipeline_error")
     assert row["severity"] == "error"
-    assert row["href"] == "/approvals"
+    assert row["href"] == f"/approvals?invoice={inv.id}"
     assert row["is_unread"] is True
 
 
@@ -117,7 +117,7 @@ async def test_notifications_vendor_registration_hold(
     data = res.json()["data"]
     row = next(item for item in data["items"] if item["event"] == "vendor_registration_hold")
     assert row["severity"] == "action"
-    assert row["href"] == "/approvals"
+    assert row["href"] == f"/approvals?invoice={inv.id}"
     assert "Unknown Supplier" in row["title"]
 
 
@@ -157,7 +157,7 @@ async def test_notifications_customer_registration_hold(
     data = res.json()["data"]
     row = next(item for item in data["items"] if item["event"] == "customer_registration_hold")
     assert row["severity"] == "action"
-    assert row["href"] == "/approvals"
+    assert row["href"] == f"/approvals?invoice={inv.id}"
     assert "Unknown Buyer" in row["title"]
 
 

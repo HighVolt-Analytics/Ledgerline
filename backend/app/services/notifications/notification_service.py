@@ -100,7 +100,7 @@ def _notification_href(event: str, invoice_id: int | None) -> str | None:
     if invoice_id is None:
         return None
     if event in _ACTION_EVENTS or event == "invoice_rejected" or event == "pipeline_error":
-        return "/approvals"
+        return f"/approvals?invoice={invoice_id}"
     return f"/vault?invoice={invoice_id}"
 
 

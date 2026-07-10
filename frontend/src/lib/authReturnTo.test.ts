@@ -44,7 +44,7 @@ describe("postLoginPathForRole", () => {
     expect(postLoginPathForRole("member", "/vault?invoice=3")).toBe("/vault?invoice=3");
   });
 
-  it("uses dashboard for members without returnTo", () => {
-    expect(postLoginPathForRole("member", null)).toBe("/");
+  it("uses upload for members without returnTo", () => {
+    expect(postLoginPathForRole("member", null)).toBe("/upload");
   });
 });

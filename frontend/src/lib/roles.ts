@@ -5,5 +5,5 @@ export function isSuperAdmin(role: string | undefined | null): boolean {
 }
 
 export function homePathForRole(role: string | undefined | null): string {
-  return isSuperAdmin(role) ? "/platform/clients" : "/";
+  return isSuperAdmin(role) ? "/platform/clients" : "/upload";
 }

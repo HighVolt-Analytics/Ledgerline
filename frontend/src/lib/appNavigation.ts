@@ -34,10 +34,24 @@ export type NavGroup = {
 
 export const NAV_GROUPS: NavGroup[] = [
   {
+    label: "Dashboard",
+    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard }],
+  },
+  {
     label: "Workspace",
     items: [
-      { to: "/", label: "Dashboard", icon: LayoutDashboard },
       { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
+      { to: "/dossiers", label: "Processing", icon: FolderKanban, moduleKey: "dossiers" },
+      { to: "/creations", label: "Creations", icon: Users },
+      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
+      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
+      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
+    ],
+  },
+  {
+    label: "Operations",
+    items: [
+      { to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" },
       {
         to: "/team-expenses",
         label: "Team Expenses",
@@ -68,18 +82,8 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Operations",
-    items: [
-      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
-      { to: "/dossiers", label: "Dossiers", icon: FolderKanban, moduleKey: "dossiers" },
-      { to: "/vendors", label: "Vendors", icon: Users },
-      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
-    ],
-  },
-  {
     label: "Finance",
     items: [
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
       {
         to: "/collections",
         label: "Collections",
@@ -87,9 +91,8 @@ export const NAV_GROUPS: NavGroup[] = [
         badge: "collections",
         moduleKey: "sales",
       },
-      { to: "/ledger-link", label: "Ledger Link", icon: Link2, moduleKey: "ledger_link" },
+      { to: "/ledger-link", label: "Accounting", icon: Link2, moduleKey: "ledger_link" },
       { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
-      { to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" },
     ],
   },
   {

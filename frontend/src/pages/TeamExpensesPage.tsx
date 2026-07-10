@@ -273,7 +273,7 @@ export function TeamExpensesPage() {
         {budgets.length === 0 ? (
           <EmptyState
             title="No employee budgets configured"
-            hint="Add employees with budget caps on the Rule Book → Employees tab."
+            hint="Add employees with budget caps on the Creations → Employees tab."
           />
         ) : (
           <Card className="overflow-hidden">

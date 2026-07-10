@@ -1,16 +1,46 @@
-import { FileUp, Upload } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { Check, CloudUpload, FileUp, Loader2, Upload } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { BULK_UPLOAD_MAX_FILES, UPLOAD_ACCEPT_LABEL } from "@/lib/bulkUpload";
 import { cn } from "@/lib/cn";
+import type { SimpleIcon } from "simple-icons";
+import { siAdobeacrobatreader, siJpeg, siMicrosoftword } from "simple-icons";
 
 const FORMAT_TAGS = UPLOAD_ACCEPT_LABEL.split(",").map((s) => s.trim());
+
+const FILE_TYPE_ICONS: Record<string, SimpleIcon | null> = {
+  PDF: siAdobeacrobatreader,
+  JPG: siJpeg,
+  JPEG: siJpeg,
+  PNG: null,
+  DOCX: siMicrosoftword,
+};
+
+function FileTypeTag({ label }: { label: string }) {
+  const icon = FILE_TYPE_ICONS[label.toUpperCase()] ?? null;
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+      {icon ? (
+        <svg
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden
+          className="h-3 w-3"
+        >
+          <path fill={`#${icon.hex}`} style={{ fill: `#${icon.hex}` }} d={icon.path} />
+        </svg>
+      ) : null}
+      <span>{label}</span>
+    </span>
+  );
+}
 
 type UploadDropZoneProps = {
   disabled?: boolean;
   uploading?: boolean;
   progress?: { completed: number; total: number } | null;
+  files?: File[];
   onFiles: (files: File[]) => void;
   onBrowse: () => void;
   compact?: boolean;
@@ -21,6 +51,7 @@ export function UploadDropZone({
   disabled = false,
   uploading = false,
   progress,
+  files = [],
   onFiles,
   onBrowse,
   compact = false,
@@ -28,12 +59,37 @@ export function UploadDropZone({
 }: UploadDropZoneProps) {
   const [dragActive, setDragActive] = useState(false);
   const dragDepth = useRef(0);
+  const [activePct, setActivePct] = useState(0);
 
   const inactive = disabled || uploading;
-  const pct =
-    progress && progress.total > 0
-      ? Math.round((progress.completed / progress.total) * 100)
-      : 0;
+  const completed = progress?.completed ?? 0;
+  const total = progress?.total ?? Math.max(files.length, 0);
+  const overallPct =
+    uploading && total > 0
+      ? Math.min(
+          99,
+          Math.max(0, Math.floor(((completed + activePct / 100) / total) * 100))
+        )
+      : total > 0
+        ? 100
+        : 0;
+
+  useEffect(() => {
+    if (!uploading || !progress || progress.total <= 0) {
+      setActivePct(0);
+      return;
+    }
+    setActivePct(0);
+    const t = window.setInterval(() => {
+      setActivePct((p) => {
+        if (!uploading) return 0;
+        // Ease out; keep moving but never "finish" until completion increments.
+        const next = p < 92 ? p + 3 : p < 97 ? p + 1 : p;
+        return Math.min(98, next);
+      });
+    }, 120);
+    return () => window.clearInterval(t);
+  }, [uploading, progress?.completed, progress?.total]);
 
   const handleDragEnter = useCallback(
     (e: React.DragEvent) => {
@@ -97,7 +153,7 @@ export function UploadDropZone({
           </span>
         ) : progress ? (
           <span className="text-xs text-muted-foreground tnum">
-            {progress.completed} / {progress.total}
+            {overallPct}% · {completed} done
           </span>
         ) : null}
       </div>
@@ -136,42 +192,71 @@ export function UploadDropZone({
               compact ? "flex-row gap-4 text-left" : "flex-col gap-3 text-center"
             )}
           >
-            <div
-              className={cn(
-                "upload-drop-zone__icon flex shrink-0 items-center justify-center rounded-lg border transition-colors",
-                compact ? "h-10 w-10" : "h-12 w-12",
-                dragActive && !inactive
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border bg-muted/50 text-muted-foreground group-hover:border-primary/30 group-hover:text-primary"
-              )}
-            >
-              {dragActive && !inactive ? (
-                <FileUp className={cn(compact ? "h-5 w-5" : "h-6 w-6")} aria-hidden />
-              ) : (
-                <Upload className={cn(compact ? "h-5 w-5" : "h-6 w-6")} aria-hidden />
-              )}
-            </div>
-
             <div className={cn("min-w-0", compact && "flex-1")}>
               {uploading && progress ? (
                 <>
                   <p className={cn("font-medium text-foreground", compact ? "text-sm" : "text-base")}>
-                    Uploading documents…
+                    Uploading {progress.total} file{progress.total === 1 ? "" : "s"}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Processing starts automatically when the batch finishes
+                    {completed} done · {Math.max(0, progress.total - completed)} remaining
                   </p>
-                  <div className={cn("mt-3", compact ? "max-w-full" : "max-w-md mx-auto")}>
-                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
+
+                  <div className={cn("mt-3 space-y-3", compact ? "max-w-full" : "max-w-lg mx-auto")}>
+                    {(files.length ? files : Array.from({ length: progress.total }, (_, i) => ({ name: `File ${i + 1}` } as File)))
+                      .slice(0, progress.total)
+                      .map((f, idx) => {
+                        const isDone = idx < completed;
+                        const isActive = idx === completed;
+                        const rowPct = isDone ? 100 : isActive ? activePct : 0;
+                        return (
+                          <div key={`${idx}-${f.name}`} className="text-left">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 flex items-center gap-2">
+                                {isDone ? (
+                                  <Check className="h-4 w-4 text-[hsl(var(--chart-1))] shrink-0" aria-hidden />
+                                ) : isActive ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" aria-hidden />
+                                ) : (
+                                  <span className="h-4 w-4 shrink-0" />
+                                )}
+                                <span className="text-sm font-medium truncate">{f.name}</span>
+                              </div>
+                              <span className="text-xs text-muted-foreground tnum shrink-0">
+                                {Math.round(rowPct)}%
+                              </span>
+                            </div>
+                            <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
+                              <div
+                                className={cn(
+                                  "h-full rounded-full transition-[width] duration-200 ease-out",
+                                  isDone ? "bg-[hsl(var(--chart-1))]" : "bg-primary"
+                                )}
+                                style={{ width: `${rowPct}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
                   </div>
                 </>
               ) : (
                 <>
+                  <div
+                    className={cn(
+                      "upload-drop-zone__icon mx-auto flex shrink-0 items-center justify-center transition-colors",
+                      compact ? "h-10 w-10" : "h-12 w-12",
+                      dragActive && !inactive
+                        ? "text-primary"
+                        : "text-muted-foreground group-hover:text-primary"
+                    )}
+                  >
+                    {dragActive && !inactive ? (
+                      <FileUp className={cn(compact ? "h-5 w-5" : "h-6 w-6")} aria-hidden />
+                    ) : (
+                      <CloudUpload className={cn(compact ? "h-5 w-5" : "h-6 w-6")} aria-hidden />
+                    )}
+                  </div>
                   <p className={cn("font-medium text-foreground", compact ? "text-sm" : "text-base")}>
                     {dragActive ? "Release to upload" : "Drop files here"}
                   </p>
@@ -183,12 +268,7 @@ export function UploadDropZone({
                   {!compact ? (
                     <div className="flex flex-wrap justify-center gap-1.5 mt-3">
                       {FORMAT_TAGS.map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-md border border-border bg-card px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                        >
-                          {tag}
-                        </span>
+                        <FileTypeTag key={tag} label={tag} />
                       ))}
                     </div>
                   ) : null}

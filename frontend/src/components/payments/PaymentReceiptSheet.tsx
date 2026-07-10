@@ -152,7 +152,7 @@ export function PaymentReceiptSheet({
             className="inline-flex mt-3 w-full h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium shadow-sm hover-elevate hover:bg-accent hover:text-accent-foreground"
           >
             <Link2 className="h-3.5 w-3.5 mr-1.5" />
-            View in Ledger Link
+            View in Accounting
           </a>
 
           <DocumentAuditTrail docId={payment.id} />

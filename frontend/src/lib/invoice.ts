@@ -483,8 +483,8 @@ export function evaluationStatusDescription(
   }
   if (status === "pending_vendor") {
     return isSales
-      ? "Customer is not in master (VR12 on) — register in Rule Book → Customers before processing."
-      : "Vendor is not in master (VR12 on) — register in Rule Book → Vendors before processing.";
+      ? "Customer is not in master (VR12 on) — register in Creations → Customers before processing."
+      : "Vendor is not in master (VR12 on) — register in Creations → Vendors before processing.";
   }
   if (status === "unmatched_expense_vendor") {
     return "Small expense from an unknown vendor — advisory only, not held. Raise expense_vendor_hold_above to block.";

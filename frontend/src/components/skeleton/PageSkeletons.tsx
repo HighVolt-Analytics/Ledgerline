@@ -447,6 +447,60 @@ export function LedgerOverviewSkeleton() {
   );
 }
 
+export function CreationsVendorsTabSkeleton() {
+  return (
+    <div className="space-y-4" data-testid="vendors-tab-skeleton" aria-busy aria-label="Loading vendors">
+      <Card className="p-3 space-y-2">
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-3 w-full max-w-xl" />
+      </Card>
+      <Skeleton className="h-4 w-full max-w-2xl" />
+      <Card className="p-4 space-y-4">
+        <Skeleton className="h-4 w-44" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-8 w-full rounded-md" />
+          ))}
+        </div>
+        <Skeleton className="h-8 w-full max-w-xs rounded-md" />
+      </Card>
+      <Card className="overflow-hidden p-0">
+        <div className="border-b border-border/60 p-3">
+          <div className="flex flex-wrap gap-2">
+            <Skeleton className="h-8 flex-1 min-w-[200px] rounded-md" />
+            <Skeleton className="h-8 w-40 rounded-md" />
+            <Skeleton pill className="h-8 w-28" />
+          </div>
+        </div>
+        <InlineTableSkeleton rows={6} columns={7} />
+      </Card>
+    </div>
+  );
+}
+
+export function CreationsEmployeesTabSkeleton() {
+  return (
+    <div className="space-y-4" data-testid="employees-tab-skeleton" aria-busy aria-label="Loading employees">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Skeleton className="h-4 w-full max-w-2xl" />
+        <div className="flex gap-2">
+          <Skeleton pill className="h-8 w-24" />
+          <Skeleton pill className="h-8 w-32" />
+        </div>
+      </div>
+      <Card className="overflow-hidden p-0">
+        <InlineTableSkeleton rows={6} columns={6} />
+      </Card>
+      <Card className="overflow-hidden p-0">
+        <div className="border-b border-border/60 p-3">
+          <Skeleton className="h-4 w-44" />
+        </div>
+        <InlineTableSkeleton rows={4} columns={4} />
+      </Card>
+    </div>
+  );
+}
+
 export function GenericPageSkeleton() {
   return (
     <div className="space-y-4">

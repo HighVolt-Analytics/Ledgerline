@@ -15,6 +15,7 @@ import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
 import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
+import { CounterpartyColumnHeaderLink } from "@/components/upload/CounterpartyCreationsLink";
 import { MATRIX_STAGES, matrixStageSettled, type MatrixCellState, type MatrixStage } from "@/lib/matrix";
 import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
@@ -26,6 +27,7 @@ import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
+import { StatusPill, pillTones } from "@/components/StatusPill";
 import {
   API_PORT_HINT,
   captureTenantFetchScope,
@@ -40,11 +42,13 @@ const PAGE_SIZE = 10;
 
 const QUEUE_STATUSES = new Set(["exception", "duplicate_skipped", "rejected"]);
 
-type MatrixFilter = "all" | "anomalies" | "awaiting" | "paid";
+type MatrixFilter = "all" | "anomalies" | "awaiting" | "paid" | "pending" | "failed";
 
 const FILTER_PILLS: { key: MatrixFilter; label: string }[] = [
   { key: "all", label: "Show all" },
   { key: "anomalies", label: "Anomalies only" },
+  { key: "pending", label: "Pending" },
+  { key: "failed", label: "Failed" },
   { key: "awaiting", label: "Awaiting payment" },
   { key: "paid", label: "Paid this month" },
 ];
@@ -70,6 +74,21 @@ function isPaidThisMonth(paidDate: string | null | undefined): boolean {
 
 function stageBlocked(flag: MatrixFlagType, cellState: MatrixCellState | undefined): boolean {
   return flag !== "Clean" && cellState === "pending";
+}
+
+function rowHasPendingStage(row: MatrixTableRow): boolean {
+  return MATRIX_STAGES.some((stage) => row.cells[stage as MatrixStage]?.state === "pending");
+}
+
+function rowHasFailedStage(row: MatrixTableRow): boolean {
+  return MATRIX_STAGES.some((stage) => {
+    const cell = row.cells[stage as MatrixStage];
+    if (cell?.state === "fail") return true;
+    return (
+      (stage === "Approved" || stage === "Posted") &&
+      stageBlocked(row.flag, cell?.state)
+    );
+  });
 }
 
 function toFlagType(value: string): MatrixFlagType {
@@ -111,11 +130,19 @@ function rowFromApi(row: MatrixRow): MatrixTableRow {
 
 export function DocumentMatrixPanel({
   embedded = false,
+  showKpis = true,
+  showControls = true,
+  showTable = true,
+  showLegend = true,
   onFlaggedCount,
   onGoUpload,
   refreshRef,
 }: {
   embedded?: boolean;
+  showKpis?: boolean;
+  showControls?: boolean;
+  showTable?: boolean;
+  showLegend?: boolean;
   onFlaggedCount?: (count: number) => void;
   onGoUpload?: () => void;
   refreshRef?: MutableRefObject<(() => void) | null>;
@@ -245,6 +272,12 @@ export function DocumentMatrixPanel({
         }
         if (filter === "paid") {
           return row.payment === "Paid" && isPaidThisMonth(row.paidDate);
+        }
+        if (filter === "pending") {
+          return rowHasPendingStage(row);
+        }
+        if (filter === "failed") {
+          return rowHasFailedStage(row);
         }
         return true;
       }),
@@ -380,64 +413,68 @@ export function DocumentMatrixPanel({
         />
       ) : (
         <>
-          <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
-            <KpiCard label="Documents" value={matrixRows.length} testid="kpi-matrix-docs" />
-            <KpiCard
-              label="Flagged for review"
-              value={kpis.flagged}
-              testid="kpi-matrix-flagged"
-              delta={
-                kpis.flagged > 0
-                  ? { dir: "up", text: `${kpis.duplicates} duplicates`, good: false }
-                  : undefined
-              }
-            />
-            <KpiCard
-              label="Awaiting payment"
-              value={kpis.awaiting}
-              testid="kpi-matrix-awaiting"
-            />
-            <KpiCard label="Paid this month" value={kpis.paid} testid="kpi-matrix-paid" />
-          </div>
-
-          <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:flex-wrap sm:items-center">
-            <div className="flex flex-wrap items-center gap-2">
-            {FILTER_PILLS.map((pill) => (
-              <button
-                key={pill.key}
-                type="button"
-                onClick={() => setFilter(pill.key)}
-                data-testid={`matrix-filter-${pill.key}`}
-                className={cn(
-                  "rounded-full px-3 py-1 text-xs font-medium border transition-colors",
-                  filter === pill.key
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border text-muted-foreground hover:text-foreground hover-elevate"
-                )}
-              >
-                {pill.label}
-              </button>
-            ))}
+          {showKpis ? (
+            <div className="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-5">
+              <KpiCard label="Documents" value={matrixRows.length} testid="kpi-matrix-docs" />
+              <KpiCard
+                label="Flagged for review"
+                value={kpis.flagged}
+                testid="kpi-matrix-flagged"
+                delta={
+                  kpis.flagged > 0
+                    ? { dir: "up", text: `${kpis.duplicates} duplicates`, good: false }
+                    : undefined
+                }
+              />
+              <KpiCard
+                label="Awaiting payment"
+                value={kpis.awaiting}
+                testid="kpi-matrix-awaiting"
+              />
+              <KpiCard label="Paid this month" value={kpis.paid} testid="kpi-matrix-paid" />
             </div>
-            <ListSearchInput
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search this list…"
-              testId="input-matrix-search"
-              className="w-full sm:ml-auto sm:max-w-xs"
-            />
-            <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
-              {filteredRows.length} of {matrixRows.length} documents
-              {filteredRows.length > PAGE_SIZE ? ` · page ${page} of ${totalPages}` : ""}
-            </span>
-          </div>
+          ) : null}
 
-          <Card className="overflow-hidden">
+          {showControls ? (
+            <div className="flex items-center gap-2 mb-3 w-full">
+              <ListSearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search this list…"
+                testId="input-matrix-search"
+                className="w-[760px] shrink-0"
+              />
+              <div className="flex items-center gap-2 flex-nowrap overflow-x-auto whitespace-nowrap pr-1">
+                {FILTER_PILLS.map((pill) => (
+                  <button
+                    key={pill.key}
+                    type="button"
+                    onClick={() => setFilter(pill.key)}
+                    data-testid={`matrix-filter-${pill.key}`}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-xs font-medium border transition-colors shrink-0",
+                      filter === pill.key
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border text-muted-foreground hover:text-foreground hover-elevate"
+                    )}
+                  >
+                    {pill.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline ml-auto">
+                {filteredRows.length} of {matrixRows.length} documents
+                {filteredRows.length > PAGE_SIZE ? ` · page ${page} of ${totalPages}` : ""}
+              </span>
+            </div>
+          ) : null}
+
+          {showTable ? <Card className="overflow-hidden">
             <div className="md:hidden divide-y divide-border">
               {pagedRows.length === 0 && (
-                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className="matrix-table-empty text-sm">
                   No documents match your search.
-                </p>
+                </div>
               )}
               {pagedRows.map(({ inv, cells, flag, payment }) => {
                 const docRef = documentDisplayRef(inv);
@@ -507,7 +544,9 @@ export function DocumentMatrixPanel({
                       Document
                     </th>
                     <th className="px-3 py-2.5 text-left font-medium">
-                      {counterpartyColumnLabel({ mixed: true })}
+                      <CounterpartyColumnHeaderLink
+                        label={counterpartyColumnLabel({ mixed: true })}
+                      />
                     </th>
                     {MATRIX_STAGES.map((stage) => (
                       <th key={stage} className="px-3 py-2.5 text-center font-medium">
@@ -526,7 +565,7 @@ export function DocumentMatrixPanel({
                     <tr>
                       <td
                         colSpan={MATRIX_STAGES.length + 5}
-                        className="px-4 py-8 text-center text-muted-foreground"
+                        className="matrix-table-empty text-sm"
                       >
                         No documents match your search.
                       </td>
@@ -636,64 +675,70 @@ export function DocumentMatrixPanel({
                 </div>
               </div>
             )}
-          </Card>
+          </Card> : null}
 
-          <p className="text-xs text-muted-foreground mt-3 flex items-center gap-4 flex-wrap">
-            <span className="inline-flex items-center gap-1">
-              <Check className="h-3.5 w-3.5 text-[hsl(var(--chart-1))]" />
-              Complete
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <Clock className="h-3.5 w-3.5" />
-              Pending
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <Ban className="h-3.5 w-3.5 text-destructive" />
-              Failed / blocked
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <Minus className="h-3.5 w-3.5 text-muted-foreground/70" />
-              Skipped (not applicable)
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <AlertTriangle className="h-3.5 w-3.5 ds-warning-icon" />
-              Anomaly routes through approval before payment
-            </span>
-          </p>
+          {showLegend ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <StatusPill className={pillTones.ok}>
+                <Check className="matrix-ok-icon h-3 w-3 shrink-0" />
+                Complete
+              </StatusPill>
+              <StatusPill className={pillTones.muted}>
+                <Clock className="h-3 w-3" />
+                Pending
+              </StatusPill>
+              <StatusPill className={pillTones.bad}>
+                <Ban className="h-3 w-3" />
+                Failed / blocked
+              </StatusPill>
+              <StatusPill className={pillTones.muted}>
+                <Minus className="h-3 w-3" />
+                Skipped (not applicable)
+              </StatusPill>
+              <StatusPill className={pillTones.amber}>
+                <AlertTriangle className="h-3 w-3 ds-warning-icon" />
+                Anomaly routes through approval before payment
+              </StatusPill>
+            </div>
+          ) : null}
         </>
       )}
 
-      <MatrixFlagDrawer
-        row={
-          flagDrawerRow
-            ? {
-                inv: flagDrawerRow.inv,
-                flag: flagDrawerRow.flag,
-                reason: flagDrawerRow.reason,
-                conflictWith: flagDrawerRow.conflictWith,
-                conflictDetail: flagDrawerRow.conflictDetail,
-                cells: flagDrawerRow.cells,
-              }
-            : null
-        }
-        open={flagDrawerId !== null}
-        onClose={() => setFlagDrawerId(null)}
-        busy={resolveBusy}
-        onResolve={(_docId, action) => {
-          const inv = flagDrawerRow?.inv;
-          if (inv) void resolveFlag(inv, action);
-        }}
-      />
+      {showTable ? (
+        <>
+          <MatrixFlagDrawer
+            row={
+              flagDrawerRow
+                ? {
+                    inv: flagDrawerRow.inv,
+                    flag: flagDrawerRow.flag,
+                    reason: flagDrawerRow.reason,
+                    conflictWith: flagDrawerRow.conflictWith,
+                    conflictDetail: flagDrawerRow.conflictDetail,
+                    cells: flagDrawerRow.cells,
+                  }
+                : null
+            }
+            open={flagDrawerId !== null}
+            onClose={() => setFlagDrawerId(null)}
+            busy={resolveBusy}
+            onResolve={(_docId, action) => {
+              const inv = flagDrawerRow?.inv;
+              if (inv) void resolveFlag(inv, action);
+            }}
+          />
 
-      <InvoiceDetailDrawer
-        invoiceId={drawerInvoiceId}
-        open={drawerOpen}
-        onClose={() => {
-          setDrawerOpen(false);
-          setDrawerInvoiceId(null);
-        }}
-        onUpdated={() => void load({ silent: true, fresh: true })}
-      />
+          <InvoiceDetailDrawer
+            invoiceId={drawerInvoiceId}
+            open={drawerOpen}
+            onClose={() => {
+              setDrawerOpen(false);
+              setDrawerInvoiceId(null);
+            }}
+            onUpdated={() => void load({ silent: true, fresh: true })}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

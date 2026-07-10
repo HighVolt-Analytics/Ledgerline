@@ -65,21 +65,23 @@ type NavGroup = {
   nested?: boolean;
 };
 
+const DASHBOARD_ITEM: NavItem = {
+  to: "/",
+  label: "Dashboard",
+  icon: LayoutDashboard,
+};
+
 const WORKSPACE_GROUPS: NavGroup[] = [
   {
     label: "",
     nested: false,
-    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard }],
-  },
-  {
-    label: "Documents",
-    nested: true,
     items: [
       { to: "/upload", label: "Upload", icon: Upload, badge: "upload" },
-      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses" },
-      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses" },
-      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart, moduleKey: "purchase" },
-      { to: "/sales", label: "Sales Management", icon: TrendingUp, badge: "sales", moduleKey: "sales" },
+      { to: "/dossiers", label: "Processing", icon: FolderKanban, moduleKey: "dossiers" },
+      { to: "/creations", label: "Creations", icon: Users },
+      { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
+      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
+      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
     ],
   },
 ];
@@ -88,36 +90,33 @@ const OPERATIONS_GROUPS: NavGroup[] = [
   {
     label: "",
     nested: false,
-    items: [{ to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" }],
+    items: [{ to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" }],
   },
   {
-    label: "Records",
+    label: "Management",
     nested: true,
     items: [
-      { to: "/dossiers", label: "Dossiers", icon: FolderKanban, moduleKey: "dossiers" },
-      { to: "/vendors", label: "Vendors", icon: Users },
-      { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
+      { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses" },
+      { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses" },
+      { to: "/purchases", label: "Purchase Management", icon: ShoppingCart, moduleKey: "purchase" },
+      { to: "/sales", label: "Sales Management", icon: TrendingUp, badge: "sales", moduleKey: "sales" },
     ],
   },
 ];
 
 const FINANCE_GROUPS: NavGroup[] = [
   {
-    label: "Payments",
+    label: "Receivables",
     nested: true,
     items: [
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
       { to: "/collections", label: "Collections", icon: Coins, badge: "collections", moduleKey: "sales" },
-      { to: "/ledger-link", label: "Ledger Link", icon: Link2, moduleKey: "ledger_link" },
+      { to: "/ledger-link", label: "Accounting", icon: Link2, moduleKey: "ledger_link" },
     ],
   },
   {
     label: "Treasury",
     nested: true,
-    items: [
-      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
-      { to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" },
-    ],
+    items: [{ to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" }],
   },
 ];
 
@@ -175,6 +174,7 @@ function pathMatchesItem(pathname: string, to: string) {
 }
 
 function sectionForPath(pathname: string): string {
+  if (pathname === "/") return "";
   let bestSection = "workspace";
   let bestPathLen = -1;
   for (const section of ALL_SECTIONS) {
@@ -333,6 +333,13 @@ export function Layout() {
 
   const searchableNavItems = useMemo((): FlatNavItem[] => {
     const items: FlatNavItem[] = [];
+    if (canShowNavItem(DASHBOARD_ITEM)) {
+      items.push({
+        ...DASHBOARD_ITEM,
+        icon: DASHBOARD_ITEM.icon as FlatNavItem["icon"],
+        group: "Dashboard",
+      });
+    }
     for (const section of ALL_SECTIONS) {
       for (const group of section.groups) {
         for (const item of group.items) {
@@ -353,8 +360,11 @@ export function Layout() {
   }, [enabledModules, permissions]);
 
   const collapsedNavItems = useMemo(
-    () =>
-      MAIN_PRIMARY_SECTIONS.flatMap((section) =>
+    () => [
+      ...(canShowNavItem(DASHBOARD_ITEM)
+        ? [{ ...DASHBOARD_ITEM, level: "subfield" as const }]
+        : []),
+      ...MAIN_PRIMARY_SECTIONS.flatMap((section) =>
         visibleGroupsForSection(section, canShowNavItem).flatMap((group) =>
           group.items.map((item) => ({
             ...item,
@@ -362,6 +372,7 @@ export function Layout() {
           }))
         )
       ),
+    ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [enabledModules, permissions]
   );
@@ -492,6 +503,10 @@ export function Layout() {
         </nav>
       ) : (
         <nav className="primary-sidebar__nav" aria-label="Main sections">
+          <div className="primary-sidebar__subnav-flat primary-sidebar__subnav-flat--dashboard">
+            {canShowNavItem(DASHBOARD_ITEM) &&
+              renderPrimaryNavItem(DASHBOARD_ITEM, "subfield", false)}
+          </div>
           {MAIN_PRIMARY_SECTIONS.map(({ id, label, icon: Icon, groups }) => (
             <div key={id} className="primary-sidebar__section">
               <button

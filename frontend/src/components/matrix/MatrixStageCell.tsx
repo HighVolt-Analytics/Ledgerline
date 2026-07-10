@@ -8,7 +8,7 @@ function MatrixCellIcon({ state }: { state: MatrixCellState }) {
   if (state === "done") {
     return (
       <Check
-        className="h-4 w-4 text-[hsl(var(--chart-1))]"
+        className="matrix-ok-icon h-4 w-4 shrink-0"
         aria-label="done"
       />
     );

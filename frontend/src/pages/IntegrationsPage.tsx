@@ -40,6 +40,24 @@ import {
 } from "@/lib/tenantSession";
 import { useStripeAccount, useStripeReadiness } from "@/hooks/useStripe";
 import { useAccountingIntegrations } from "@/hooks/useAccountingIntegrations";
+import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
+import type { IntegrationBrandId } from "@/components/integrations/IntegrationBrandIcon";
+
+const INTEGRATION_BRANDS: Partial<Record<string, IntegrationBrandId>> = {
+  graph: "graph",
+  whatsapp: "whatsapp",
+  viber: "viber",
+  blob: "blob",
+  di: "di",
+  postgres: "postgres",
+  redis: "redis",
+  appinsights: "appinsights",
+  xero: "xero",
+  qbo: "qbo",
+  myob: "myob",
+  "stripe-payments": "stripe",
+  "stripe-billing": "stripe",
+};
 
 function statusBadge(ok: boolean) {
   return ok ? (
@@ -751,9 +769,15 @@ export function IntegrationsPage() {
             data-testid={`card-integration-${h.id}`}
           >
             <div className="flex items-start justify-between">
-              <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-primary">
-                <h.icon className="h-5 w-5" />
-              </div>
+              {INTEGRATION_BRANDS[h.id] ? (
+                <div className="h-10 w-10 flex items-center justify-center">
+                  <IntegrationBrandIcon id={INTEGRATION_BRANDS[h.id]!} size={22} />
+                </div>
+              ) : (
+                <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-primary">
+                  <h.icon className="h-5 w-5" />
+                </div>
+              )}
               {"badge" in h && h.badge ? h.badge : statusBadge(h.ok)}
             </div>
             <div>
@@ -1035,7 +1059,7 @@ export function IntegrationsPage() {
             <h2 className="text-sm font-semibold">WhatsApp Business</h2>
             <p className="text-xs text-muted-foreground">
               Connect a business number so employees can submit expense receipts via WhatsApp.
-              Identity is matched by phone number in Rule Book → Employees.
+              Identity is matched by phone number in Creations → Employees.
             </p>
           </div>
           <MessageCircle className="h-5 w-5 text-muted-foreground" />
@@ -1193,7 +1217,7 @@ export function IntegrationsPage() {
             <h2 className="text-sm font-semibold">Viber</h2>
             <p className="text-xs text-muted-foreground">
               Connect your Viber Public Account bot so employees can submit expense receipts via
-              Viber. Identity is matched by Viber user ID or phone in Rule Book → Employees.
+              Viber. Identity is matched by Viber user ID or phone in Creations → Employees.
             </p>
           </div>
           <MessageCircle className="h-5 w-5 text-muted-foreground" />

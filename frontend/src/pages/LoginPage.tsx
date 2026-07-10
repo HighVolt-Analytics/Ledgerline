@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
+import { OAuthBrandIcon } from "@/components/auth/OAuthBrandIcon";
 import { useAuth } from "@/context/AuthContext";
 import { postLoginPathForRole, readReturnTo, rememberOAuthReturnTo } from "@/lib/authReturnTo";
 import { PUBLIC_SIGNUP_PATH } from "@/lib/publicSignupRoutes";
@@ -243,28 +244,32 @@ export function LoginPage() {
           </button>
 
           {(oauthProviders.google || oauthProviders.microsoft) && (
-            <div className="space-y-2 pt-2">
-              <p className="text-center text-xs text-muted-foreground">or continue with</p>
-              {oauthProviders.microsoft && (
-                <button
-                  type="button"
-                  className="auth-secondary-btn w-full"
-                  disabled={busy}
-                  onClick={() => void startMicrosoftOAuth("login")}
-                >
-                  Microsoft
-                </button>
-              )}
-              {oauthProviders.google && (
-                <button
-                  type="button"
-                  className="auth-secondary-btn w-full"
-                  disabled={busy}
-                  onClick={() => startGoogleOAuth("login")}
-                >
-                  Google
-                </button>
-              )}
+            <div className="auth-oauth">
+              <p className="auth-oauth-label">or continue with</p>
+              <div className="auth-oauth-row">
+                {oauthProviders.microsoft && (
+                  <button
+                    type="button"
+                    className="auth-oauth-btn"
+                    disabled={busy}
+                    onClick={() => void startMicrosoftOAuth("login")}
+                  >
+                    <OAuthBrandIcon provider="microsoft" />
+                    <span>Microsoft</span>
+                  </button>
+                )}
+                {oauthProviders.google && (
+                  <button
+                    type="button"
+                    className="auth-oauth-btn"
+                    disabled={busy}
+                    onClick={() => startGoogleOAuth("login")}
+                  >
+                    <OAuthBrandIcon provider="google" />
+                    <span>Google</span>
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

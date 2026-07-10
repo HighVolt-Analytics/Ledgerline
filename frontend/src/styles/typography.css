@@ -354,19 +354,14 @@
 
 
 
-/* Lead / intro paragraphs that were set too small */
+/* Keep muted helper copy compact across Workspace pages */
 
 .app-workspace__main p.text-sm.text-muted-foreground,
 .app-workspace__scroll p.text-sm.text-muted-foreground {
-
-  font-size: var(--type-body-lg-size);
-
-  line-height: var(--type-body-lg-leading);
-
-  letter-spacing: var(--type-body-lg-tracking);
-
-  font-weight: var(--type-body-lg-weight);
-
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-leading);
+  letter-spacing: var(--type-body-sm-tracking);
+  font-weight: var(--type-body-sm-weight);
 }
 
 

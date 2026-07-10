@@ -5,8 +5,8 @@ import type { MatrixFlagType } from "@/lib/v4MatrixMockData";
 export function MatrixFlagBadge({ flag }: { flag: MatrixFlagType }) {
   if (flag === "Clean") {
     return (
-      <StatusPill className="bg-primary/15 text-primary border-transparent">
-        <Check className="h-3 w-3" />
+      <StatusPill className={pillTones.ok}>
+        <Check className="matrix-ok-icon h-3 w-3 shrink-0" />
         Clean
       </StatusPill>
     );
@@ -29,7 +29,7 @@ export function MatrixFlagBadge({ flag }: { flag: MatrixFlagType }) {
   }
   return (
     <StatusPill className={pillTones.amber}>
-      <AlertTriangle className="h-3 w-3" />
+      <AlertTriangle className="h-3 w-3 ds-warning-icon" />
       Anomaly Detected
     </StatusPill>
   );

@@ -35,10 +35,10 @@ export function LedgerLinkPage() {
     return (
       <div>
         <PageHeader
-          title="Ledger Link"
+          title="Accounting"
           subtitle="Reconcile double-entry postings, then export or push to your accounting system."
         />
-        <p className="text-sm text-muted-foreground">Sign in to view ledger link data.</p>
+        <p className="text-sm text-muted-foreground">Sign in to view accounting data.</p>
       </div>
     );
   }
@@ -47,7 +47,7 @@ export function LedgerLinkPage() {
     return (
       <div>
         <PageHeader
-          title="Ledger Link"
+          title="Accounting"
           subtitle="Reconcile double-entry postings, then export or push to your accounting system."
         />
         <PageLoader variant="table" />
@@ -59,11 +59,11 @@ export function LedgerLinkPage() {
     return (
       <div>
         <PageHeader
-          title="Ledger Link"
+          title="Accounting"
           subtitle="Reconcile double-entry postings, then export or push to your accounting system."
         />
         <p className="text-sm text-destructive">
-          {error instanceof Error ? error.message : "Failed to load ledger link"}
+          {error instanceof Error ? error.message : "Failed to load accounting data"}
         </p>
       </div>
     );
@@ -72,7 +72,7 @@ export function LedgerLinkPage() {
   return (
     <div>
       <PageHeader
-        title="Ledger Link"
+        title="Accounting"
         subtitle="Reconcile double-entry postings, then export or push to your accounting system."
       >
         <PageTabs value={tab} onChange={setTab} className="flex-wrap h-auto" tabs={LL_TABS} />

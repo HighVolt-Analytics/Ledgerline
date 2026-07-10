@@ -48,8 +48,8 @@ TENANT_MODULE_CATALOG: tuple[TenantModuleDef, ...] = (
     ),
     TenantModuleDef(
         key="dossiers",
-        label="Dossiers",
-        description="Purchase dossiers and approval chains.",
+        label="Processing",
+        description="Document processing pipeline and approval chains.",
         group="Operations",
     ),
     TenantModuleDef(

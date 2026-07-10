@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Link } from "react-router-dom";
 
@@ -189,6 +189,8 @@ function LinkedDocumentCard({
 
   anchorInvoiceId,
 
+  focused = false,
+
   onOpenDocument,
 
   onLinkSlot,
@@ -203,6 +205,8 @@ function LinkedDocumentCard({
 
   anchorInvoiceId?: number | null;
 
+  focused?: boolean;
+
   onOpenDocument?: (invoiceId: number) => void;
 
   onLinkSlot?: (doc: DossierLinkedDocument) => void;
@@ -212,6 +216,13 @@ function LinkedDocumentCard({
   unlinkingId?: number | null;
 
 }) {
+
+  const cardRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!focused) return;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [focused]);
 
   const Icon = roleIcon(doc);
 
@@ -265,7 +276,9 @@ function LinkedDocumentCard({
 
     (hasManualOverlay || isManualOnly) && "dossier-linked-doc--manual",
 
-    canOpen && "dossier-linked-doc--clickable hover-elevate"
+    canOpen && "dossier-linked-doc--clickable hover-elevate",
+
+    focused && "dossier-linked-doc--focused"
 
   );
 
@@ -465,6 +478,8 @@ function LinkedDocumentCard({
 
         className={className}
 
+        ref={cardRef as React.Ref<HTMLButtonElement>}
+
         data-testid={`linked-doc-${doc.id}`}
 
         aria-label={`Open ${doc.label}`}
@@ -485,7 +500,7 @@ function LinkedDocumentCard({
 
   return (
 
-    <article className={className} data-testid={`linked-doc-${doc.id}`}>
+    <article className={className} ref={cardRef} data-testid={`linked-doc-${doc.id}`}>
 
       {body}
 
@@ -505,6 +520,8 @@ export function DossierLinkedDocumentsPanel({
 
   dossierId,
 
+  focusedDocIds = [],
+
   onOpenDocument,
 
   onAddManualLink,
@@ -518,6 +535,8 @@ export function DossierLinkedDocumentsPanel({
   anchorInvoiceId?: number | null;
 
   dossierId?: string;
+
+  focusedDocIds?: string[];
 
   onOpenDocument?: (invoiceId: number) => void;
 
@@ -545,6 +564,8 @@ export function DossierLinkedDocumentsPanel({
   const [slotTarget, setSlotTarget] = useState<DossierLinkedDocument | null>(null);
 
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null);
+
+  const focusedSet = useMemo(() => new Set(focusedDocIds), [focusedDocIds]);
 
 
 
@@ -683,6 +704,8 @@ export function DossierLinkedDocumentsPanel({
                 doc={doc}
 
                 anchorInvoiceId={anchorInvoiceId}
+
+                focused={focusedSet.has(doc.id)}
 
                 onOpenDocument={onOpenDocument}
 

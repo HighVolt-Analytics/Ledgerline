@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   ChevronDown,
@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/context/ToastContext";
+import { CreationsVendorsTabSkeleton } from "@/components/skeleton/PageSkeletons";
 import {
   useCreateVendorMaster,
   useDeleteVendorMaster,
@@ -78,9 +79,11 @@ function StatusDot({ status }: { status: string }) {
 export function VendorsTab({
   detection,
   onDetectionChange,
+  initialSearchQuery,
 }: {
   detection: VendorDetectionConfig;
   onDetectionChange: (d: VendorDetectionConfig) => void;
+  initialSearchQuery?: string | null;
 }) {
   const { toast } = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -109,6 +112,24 @@ export function VendorsTab({
     () => vendors.filter((vendor) => vendor.status !== "Pending registration"),
     [vendors],
   );
+
+  const listSearch = initialSearchQuery?.trim().toLowerCase() ?? "";
+
+  const visibleVendors = useMemo(() => {
+    if (!listSearch) return activeVendors;
+    return activeVendors.filter((vendor) => {
+      const haystack = [vendor.name, vendor.abn, ...vendor.aliases]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(listSearch);
+    });
+  }, [activeVendors, listSearch]);
+
+  useEffect(() => {
+    if (!listSearch || visibleVendors.length === 0) return;
+    setExpandedId(visibleVendors[0]!.id);
+  }, [listSearch, visibleVendors]);
 
   const vendorById = (id: string) => vendors.find((v) => v.id === id);
 
@@ -287,12 +308,7 @@ export function VendorsTab({
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading vendor masters…
-      </div>
-    );
+    return <CreationsVendorsTabSkeleton />;
   }
 
   return (
@@ -459,16 +475,22 @@ export function VendorsTab({
               </tr>
             </thead>
             <tbody>
-              {vendors.length === 0 && (
+              {visibleVendors.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No vendors yet. Click <span className="font-medium text-foreground">New Vendor</span>{" "}
-                    to register one before sending invoices, or complete registration from the queue
-                    below when a document is held.
+                    {listSearch
+                      ? `No vendors match “${initialSearchQuery?.trim()}”.`
+                      : (
+                        <>
+                          No vendors yet. Click <span className="font-medium text-foreground">New Vendor</span>{" "}
+                          to register one before sending invoices, or complete registration from the queue
+                          below when a document is held.
+                        </>
+                      )}
                   </td>
                 </tr>
               )}
-              {vendors.map((v) => {
+              {visibleVendors.map((v) => {
                 const open = expandedId === v.id;
                 const draft = getDraft(v);
                 const dirty = dirtyIds.has(v.id);

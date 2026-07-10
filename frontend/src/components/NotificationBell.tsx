@@ -32,14 +32,20 @@ function NotificationCard({
 }) {
   const Icon = notificationSeverityIcon(item.severity);
   const tone = severityKpiTone(item.severity);
+  const clickable = Boolean(item.href);
+  const Tag = clickable ? "button" : "article";
 
   return (
-    <article
+    <Tag
+      type={clickable ? "button" : undefined}
       className={cn(
         "notifications-drawer__item",
-        item.is_unread && "notifications-drawer__item--unread"
+        item.is_unread && "notifications-drawer__item--unread",
+        clickable && "notifications-drawer__item--clickable"
       )}
       data-testid={`notification-item-${item.id}`}
+      onClick={clickable ? () => onOpen(item.href) : undefined}
+      aria-label={clickable ? `Open notification: ${item.title}` : undefined}
     >
       {item.is_unread ? (
         <span
@@ -66,18 +72,9 @@ function NotificationCard({
           <span className="notifications-drawer__item-time">
             {relativeNotificationTime(item.created_at)}
           </span>
-          {item.href ? (
-            <button
-              type="button"
-              className="notifications-drawer__link"
-              onClick={() => onOpen(item.href)}
-            >
-              View
-            </button>
-          ) : null}
         </div>
       </div>
-    </article>
+    </Tag>
   );
 }
 

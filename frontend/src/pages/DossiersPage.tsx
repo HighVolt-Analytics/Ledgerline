@@ -101,7 +101,7 @@ export function DossiersPage() {
         ) {
           return;
         }
-        setError(err instanceof Error ? err.message : "Failed to load dossiers");
+        setError(err instanceof Error ? err.message : "Failed to load processing queue");
       } finally {
         if (seq === loadSeq.current && isTenantFetchScopeCurrent(scope) && !options?.silent) {
           setLoading(false);
@@ -121,14 +121,14 @@ export function DossiersPage() {
 
   const emptyMessage = useMemo(() => {
     if (loading) return null;
-    if (search || typeFilter !== "all") return "No dossiers match your filters.";
-    return "No dossiers yet. Uploaded and ingested documents appear here after processing.";
+    if (search || typeFilter !== "all") return "No documents match your filters.";
+    return "No documents yet. Uploaded and ingested items appear here after processing.";
   }, [loading, search, typeFilter]);
 
   return (
     <div data-testid="page-dossiers">
       <PageHeader
-        title="Dossiers"
+        title="Processing"
         subtitle="Latest posting bundles — invoice, supporting documents, full pipeline, and posting outcome."
         actions={
           <Button
@@ -148,14 +148,14 @@ export function DossiersPage() {
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border flex-wrap">
           <h3 className="text-sm font-semibold flex items-center gap-2">
             <FolderKanban className="h-4 w-4 text-primary" />
-            Recent dossiers
+            Recent documents
             <span className="text-muted-foreground tnum font-normal">({total})</span>
           </h3>
           <div className="flex items-center gap-2 ml-auto flex-wrap">
             <ListSearchInput
               value={query}
               onChange={setQuery}
-              placeholder="Search dossiers…"
+              placeholder="Search documents…"
               testId="input-dossier-search"
             />
             <Select
@@ -176,7 +176,7 @@ export function DossiersPage() {
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">{emptyMessage}</div>
         ) : (
           <div className="p-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="dossier-grid">
               {rows.map((dossier) => (
                 <DossierCard key={dossier.id} dossier={dossier} />
               ))}

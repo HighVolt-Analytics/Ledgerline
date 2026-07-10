@@ -1,6 +1,6 @@
 import { Navigate, useLocation } from "react-router-dom";
 
-/** Legacy route — customer setup lives in Rule Book → Customers. */
+/** Legacy route — customer setup lives in Creations → Customers. */
 export function CustomersPage() {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
@@ -10,5 +10,5 @@ export function CustomersPage() {
   if (!params.has("tab")) {
     params.set("tab", "customers");
   }
-  return <Navigate to={`/rules?${params.toString()}`} replace />;
+  return <Navigate to={`/creations?${params.toString()}`} replace />;
 }

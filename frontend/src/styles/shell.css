@@ -645,6 +645,23 @@
   border: none;
   border-bottom: 1px solid hsl(var(--border) / 0.55);
   background: transparent;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.notifications-drawer__item--clickable {
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.notifications-drawer__item--clickable:hover {
+  background: hsl(var(--muted) / 0.35);
+}
+
+.notifications-drawer__item--clickable:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -2px;
 }
 
 .notifications-drawer__item:last-child {
@@ -791,6 +808,12 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.primary-sidebar__subnav-flat--dashboard {
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid hsl(var(--sidebar-border) / 0.65);
 }
 
 .primary-sidebar__nav-item {
@@ -1922,4 +1945,91 @@
   bottom: 0;
   height: 1px;
   background-color: hsl(var(--border) / 0.8);
+}
+
+/* Upload summary matrix — completed / success tick icons */
+.matrix-ok-icon {
+  color: hsl(142 64% 38%) !important;
+  stroke: hsl(142 64% 38%) !important;
+}
+
+.dark .matrix-ok-icon {
+  color: hsl(142 70% 52%) !important;
+  stroke: hsl(142 70% 52%) !important;
+}
+
+.matrix-table-empty {
+  min-height: 11rem;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Get started popup — inverted surface: dark in light mode, light in dark mode */
+.onboarding-get-started-surface {
+  background: hsl(214 15% 13%);
+  color: hsl(210 15% 90%);
+  border-color: hsl(214 12% 20%);
+}
+
+.onboarding-get-started-surface__header {
+  background: hsl(214 12% 16%);
+  border-color: hsl(214 12% 20%);
+}
+
+.onboarding-get-started-surface__muted {
+  color: hsl(210 10% 65%);
+}
+
+.onboarding-get-started-surface__track {
+  background: hsl(214 12% 22%);
+}
+
+.onboarding-get-started-surface__divide > li + li {
+  border-top: 1px solid hsl(214 12% 20%);
+}
+
+.onboarding-get-started-surface__row:hover {
+  background: hsl(214 12% 18%);
+}
+
+.dark .onboarding-get-started-surface {
+  background: hsl(80 20% 98%);
+  color: hsl(220 16% 14%);
+  border-color: hsl(72 10% 88%);
+}
+
+.dark .onboarding-get-started-surface__header {
+  background: hsl(72 12% 92%);
+  border-color: hsl(72 10% 88%);
+}
+
+.dark .onboarding-get-started-surface__muted {
+  color: hsl(220 10% 42%);
+}
+
+.dark .onboarding-get-started-surface__track {
+  background: hsl(72 10% 84%);
+}
+
+.dark .onboarding-get-started-surface__divide > li + li {
+  border-top: 1px solid hsl(72 10% 88%);
+}
+
+.dark .onboarding-get-started-surface__row:hover {
+  background: hsl(72 12% 90%);
+}
+
+/* Summary matrix — counterparty link to Creations */
+.counterparty-creations-link {
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--nav-accent));
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  color: inherit;
+  transition: color 0.15s ease;
+}
+
+.counterparty-creations-link:hover {
+  color: hsl(var(--nav-accent));
 }

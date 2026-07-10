@@ -17,53 +17,66 @@ from app.schemas.setup_checklist import SetupChecklistItem, SetupChecklistStateR
 from app.services.master_data.chart_of_accounts_service import load_chart_of_accounts
 from app.tenant_settings import (
     tenant_industry,
-    tenant_onboarding_completed,
     tenant_setup_checklist_complete,
 )
 
 _CHECKLIST_DEFS: list[dict] = [
     {
         "id": "profile_name",
-        "label": "Set your business name",
-        "group": "Profile",
+        "label": "Complete organisation profile",
+        "group": "Getting started",
         "route": "/settings?tab=profile",
     },
     {
         "id": "profile_industry",
         "label": "Choose your industry",
-        "group": "Profile",
+        "group": "Getting started",
         "route": "/settings?tab=profile",
     },
     {
         "id": "profile_country",
         "label": "Confirm business country",
-        "group": "Profile",
+        "group": "Getting started",
         "route": "/settings?tab=profile",
     },
     {
         "id": "team_invite",
         "label": "Invite a team member",
-        "group": "Team",
+        "group": "Getting started",
         "route": "/settings?tab=team",
         "optional": True,
     },
     {
         "id": "connect_mailbox",
-        "label": "Connect an email mailbox",
-        "group": "Integrations",
+        "label": "Connect your mailbox",
+        "group": "Getting started",
         "route": "/integrations",
     },
     {
         "id": "chart_of_accounts",
         "label": "Configure chart of accounts",
-        "group": "Accounting",
+        "group": "Getting started",
         "route": "/settings?tab=coa",
     },
     {
         "id": "first_document",
         "label": "Upload your first document",
-        "group": "Documents",
+        "group": "Getting started",
         "route": "/upload",
+    },
+    {
+        "id": "review_rules",
+        "label": "Review your rules",
+        "group": "Getting started",
+        "route": "/rules",
+        "optional": True,
+    },
+    {
+        "id": "check_ledgerlink",
+        "label": "Connect accounting (LedgerLink)",
+        "group": "Getting started",
+        "route": "/ledger-link",
+        "optional": True,
     },
 ]
 
@@ -126,6 +139,9 @@ async def _item_done(
             )
         ).scalar_one()
         return int(count or 0) > 0
+    if item_id in ("review_rules", "check_ledgerlink"):
+        # Optional navigation-only tasks; completion can be tracked later if needed.
+        return False
     return False
 
 
@@ -139,7 +155,7 @@ async def build_setup_checklist_state(
     if tenant_setup_checklist_complete(tenant):
         return SetupChecklistStateResponse(complete=True, show=False, progress=100, items=[])
 
-    if is_support_session or user_role not in ("admin", "super_admin"):
+    if is_support_session:
         return SetupChecklistStateResponse(complete=False, show=False, progress=0, items=[])
 
     items: list[SetupChecklistItem] = []
@@ -165,7 +181,8 @@ async def build_setup_checklist_state(
     all_required_done = all(i.done for i in required)
     complete = all_required_done
 
-    show = not complete and tenant_onboarding_completed(tenant)
+    # The checklist is the "get started" surface; show it until completion.
+    show = not complete
 
     return SetupChecklistStateResponse(
         complete=complete,
