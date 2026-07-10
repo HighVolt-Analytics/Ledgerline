@@ -1,4 +1,4 @@
 export const assets = {
-  logo: '/ledgerlinklogo.png',
+  logo: '/ledgerlinklogo-Photoroom.png',
   hero: '/neww%20hero.png',
 };
