@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  compulsoryFieldsForDocumentType,
   ensureExtractionSuperset,
   normalizeCompulsoryFields,
   optionalExtractionFields,
@@ -64,5 +65,32 @@ describe("validateCompulsoryFieldsForApproval", () => {
     if (!result.ok) {
       expect(result.message).toContain("due_date");
     }
+  });
+});
+
+describe("compulsoryFieldsForDocumentType", () => {
+  const documentTypes = [
+    {
+      code: "DT-08",
+      requiredFields: ["vendor", "total", "due_date"],
+      validationRules: [{ code: "VR03", enabled: true, severity: "block" as const }],
+    },
+    {
+      code: "DT-09",
+      requiredFields: ["vendor", "total"],
+      validationRules: [{ code: "VR03", enabled: false, severity: "block" as const }],
+    },
+  ];
+
+  it("returns starred fields when VR03 is enabled", () => {
+    expect(compulsoryFieldsForDocumentType(documentTypes, "DT-08")).toEqual([
+      "vendor",
+      "total",
+      "due_date",
+    ]);
+  });
+
+  it("returns empty when VR03 is disabled", () => {
+    expect(compulsoryFieldsForDocumentType(documentTypes, "DT-09")).toEqual([]);
   });
 });

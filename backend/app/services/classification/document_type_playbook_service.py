@@ -249,6 +249,20 @@ def effective_required_fields(definition: DocumentTypeDefinition) -> list[str]:
     return list(definition.required_fields or [])
 
 
+def approval_enforced_required_fields(definition: DocumentTypeDefinition | None) -> list[str]:
+    """Starred compulsory fields enforced at approve — only when VR03 is enabled."""
+    if definition is None:
+        return []
+    from app.services.rule_book.validation_rule_catalog import (
+        effective_validation_rules,
+        enabled_rule_codes,
+    )
+
+    if "VR03" not in enabled_rule_codes(effective_validation_rules(definition)):
+        return []
+    return effective_required_fields(definition)
+
+
 def effective_playbook_required_fields(definition: DocumentTypeDefinition) -> list[str]:
     """Compulsory keys that may block playbook (excludes ingest/OCR infrastructure)."""
     from app.services.classification.document_type_field_keys import (

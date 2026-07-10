@@ -202,6 +202,39 @@ async def test_approve_requires_compulsory_fields_when_configured(
     _assert_invoice_ready_for_approval(inv, definition=definition)
 
 
+def test_approve_skips_compulsory_fields_when_vr03_disabled() -> None:
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.schemas.validation_rule import ValidationRuleConfig
+    from app.services.approval.approval_service import _assert_invoice_ready_for_approval
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        total=Decimal("99"),
+        due_date=date(2026, 8, 1),
+        currency="AUD",
+        file_hash="approve-vr03-off-1",
+        document_type_code="DT-08",
+    )
+    definition = DocumentTypeDefinition(
+        code="DT-08",
+        title="Direct expense",
+        shortTitle="Direct",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
+        routeTarget="Expenses Management",
+        extractionFields=["vendor", "invoice_no", "total"],
+        requiredFields=["vendor", "invoice_no", "total"],
+        validation_rules=[
+            ValidationRuleConfig(code="VR03", enabled=False, severity="block"),
+        ],
+    )
+    _assert_invoice_ready_for_approval(inv, definition=definition)
+
+
 @pytest.mark.asyncio
 async def test_patch_billing_address(client: AsyncClient, db_session: AsyncSession) -> None:
     inv = Invoice(

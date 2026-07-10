@@ -70,3 +70,41 @@ def test_merge_skips_non_transactional_playbook_profile() -> None:
     )
     assert merged.required_fields == ["invoice_no"]
     assert "subtotal" not in merged.extraction_fields
+
+
+def test_save_validation_preserves_unstarred_purchase_route_fields() -> None:
+    """Rule book save must not re-inject route baseline into required_fields."""
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
+
+    minimal_classifier = {
+        "enabled": False,
+        "priority": 100,
+        "confidence": 0.85,
+        "root": {"type": "group", "operator": "AND", "children": []},
+    }
+    body = {
+        "schema_version": 1,
+        "document_types": [
+            {
+                "code": "DT-50",
+                "title": "Purchase invoice",
+                "short_title": "Purchase",
+                "klass": "Transactional",
+                "posting": "No",
+                "route_target": "Purchase Management",
+                "enabled": False,
+                "recognition_mode": "signals",
+                "recognition_signals": [],
+                "llm_prompt": "",
+                "classifier": minimal_classifier,
+                "extraction_fields": ["vendor", "total", "subtotal", "due_date"],
+                "required_fields": ["vendor"],
+                "post_to": {"ledger": "", "sub_ledger": ""},
+            }
+        ],
+    }
+    saved = validate_rule_book_config_for_save(body)
+    row = saved.document_types[0]
+    assert row.required_fields == ["vendor"]
+    assert "subtotal" not in row.required_fields
+    assert "due_date" not in row.required_fields

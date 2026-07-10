@@ -178,14 +178,14 @@ export function settlementFieldsForApproval(inv: SettlementInvoiceShape): readon
   return expectedSettlementKind(inv) === "none" ? [] : SETTLEMENT_FIELD_KEYS;
 }
 
-/** User-facing hint for what settlement needs before approve. */
+/** User-facing hint for settlement context after approve (informational only — not an approve gate). */
 export function settlementApprovalHint(inv: SettlementInvoiceShape): string | null {
   const settlement = expectedSettlementKind(inv);
   if (settlement === "payment") {
-    return "Payments queue requires vendor, total, and due date before approve.";
+    return "After approve, documents may enter the payments queue when vendor, total, and due date are present.";
   }
   if (settlement === "collection") {
-    return "Collections queue requires customer, total, and due date before approve.";
+    return "After approve, documents may enter the collections queue when customer, total, and due date are present.";
   }
   return null;
 }

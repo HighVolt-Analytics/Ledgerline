@@ -413,9 +413,10 @@ function ExtractionFieldsPicker({
         <div>
           <p className="text-[11px] font-medium text-foreground">Standard fields (pipeline)</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Workspace route controls which standard fields you can add. Starred fields are{" "}
-            <span className="font-medium text-foreground">compulsory</span> (your choice) — they
-            drive VR03, playbook blocking, and Approve. Unstarred fields stay extracted but optional.
+            Workspace route controls which standard fields you can add. Star fields you want
+            compulsory — only when VR03 (Compulsory fields) is enabled in Validation below. Unstarred
+            fields stay extracted but optional. Route recommendations are hints; use Apply route
+            recommendations to star them.
           </p>
           {routeBaselineHint ? (
             <p className="mt-1 text-[11px] text-muted-foreground">{routeBaselineHint}</p>
@@ -980,24 +981,12 @@ function DocumentTypeEditDialog({
                           requiredFields: next.requiredFields,
                           nextRoute,
                         });
-                        const transactional = isTransactionalForRouteCompulsory({
-                          posting,
-                          playbookProfile: next.playbookProfile,
-                        });
-                        const fields = transactional
-                          ? mergeRouteCompulsoryIntoConfig({
-                              requiredFields: reconciled.requiredFields,
-                              extractionFields: reconciled.extractionFields,
-                              routeTarget: nextRoute,
-                              transactional: true,
-                            })
-                          : reconciled;
                         if (reconciled.removedStandardFields.length > 0) {
                           const count = reconciled.removedStandardFields.length;
                           setRoutePruneNotice(
                             `${count} standard field${count === 1 ? "" : "s"} removed because ${
                               count === 1 ? "it is" : "they are"
-                            } not valid on ${nextRoute}. Route recommendations were applied where applicable.`
+                            } not valid on ${nextRoute}.`
                           );
                         } else {
                           setRoutePruneNotice(null);
@@ -1005,8 +994,8 @@ function DocumentTypeEditDialog({
                         onChange({
                           ...next,
                           posting,
-                          extractionFields: fields.extractionFields,
-                          requiredFields: fields.requiredFields,
+                          extractionFields: reconciled.extractionFields,
+                          requiredFields: reconciled.requiredFields,
                         });
                       }}
                       className={selectClass}

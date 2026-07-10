@@ -252,9 +252,10 @@ export function ValidationChecksEditor({
   return (
     <div className="space-y-3">
       <p className="text-[11px] text-muted-foreground">
-        Toggle validation checks per document type. Compulsory field presence uses starred fields in
-        Extraction fields above (VR03). Supporting document requirements are configured under
-        Supporting document requirements (VR-PB02). Duplicate check is always on org-wide.
+        Toggle validation checks per document type. When VR03 (Compulsory fields) is on, starred
+        fields in Extraction fields above are required at approve and in the pipeline. When VR03 is
+        off, starred fields are treated as optional. Supporting document requirements are configured
+        under Supporting document requirements (VR-PB02). Duplicate check is always on org-wide.
       </p>
 
       <div className="space-y-2 rounded-md border border-border bg-field p-3">
@@ -270,7 +271,9 @@ export function ValidationChecksEditor({
               ? compulsory.length
                 ? compulsory.map((key) => extractionFieldLabel(key)).join(", ")
                 : "No compulsory fields starred — configure in Extraction fields"
-              : null;
+              : meta.code === "VR03" && !row.enabled
+                ? "Starred fields are optional for approve and pipeline while this check is off"
+                : null;
           return (
             <div
               key={meta.code}

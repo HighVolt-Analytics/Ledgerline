@@ -62,6 +62,27 @@ describe("validateInvoiceReadyForApproval", () => {
     );
     expect(result.ok).toBe(false);
   });
+
+  it("allows approve when VR03 is disabled even if starred fields are missing", () => {
+    const vr03OffTypes = [
+      {
+        code: "DT-08",
+        requiredFields: ["vendor", "total", "due_date"],
+        validationRules: [{ code: "VR03", enabled: false, severity: "block" as const }],
+      },
+    ] as unknown as DocumentTypeDefinition[];
+
+    const result = validateInvoiceReadyForApproval(
+      {
+        document_type_code: "DT-08",
+        vendor: null,
+        total: "100",
+        due_date: null,
+      },
+      vr03OffTypes
+    );
+    expect(result).toEqual({ ok: true });
+  });
 });
 
 describe("compulsoryFieldsForInvoice", () => {
@@ -175,6 +196,6 @@ describe("settlementApprovalHint", () => {
         sales_document_type: null,
         gl_posting_applicable: true,
       })
-    ).toContain("Payments queue");
+    ).toContain("payments queue");
   });
 });

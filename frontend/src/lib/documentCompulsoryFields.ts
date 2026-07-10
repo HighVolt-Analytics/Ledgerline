@@ -1,5 +1,6 @@
 import shippedDefaults from "@/lib/documentTypeDefaults.json";
 import { normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
+import { effectiveValidationRules } from "@/lib/documentValidationChecks";
 
 type DefaultsRow = {
   required_fields?: string[];
@@ -136,11 +137,21 @@ export function validateCompulsoryFieldsForApproval(
 }
 
 export function compulsoryFieldsForDocumentType(
-  documentTypes: Array<{ code: string; requiredFields?: string[] }>,
+  documentTypes: Array<{
+    code: string;
+    requiredFields?: string[];
+    validationProfile?: string;
+    validationRules?: Array<{ code: string; enabled: boolean }>;
+  }>,
   code: string | null | undefined
 ): string[] {
   const token = (code ?? "").trim().toUpperCase();
   if (!token) return [];
   const row = documentTypes.find((dt) => dt.code.trim().toUpperCase() === token);
-  return normalizeExtractionFieldKeys(row?.requiredFields ?? []);
+  if (!row) return [];
+  const vr03Enabled = effectiveValidationRules(row).some(
+    (rule) => rule.code === "VR03" && rule.enabled
+  );
+  if (!vr03Enabled) return [];
+  return normalizeExtractionFieldKeys(row.requiredFields ?? []);
 }

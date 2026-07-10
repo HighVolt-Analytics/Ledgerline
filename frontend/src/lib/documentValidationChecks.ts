@@ -43,7 +43,7 @@ export const CONFIGURABLE_VALIDATION_CHECKS = [
 
 export const VALIDATION_CHECK_DESCRIPTIONS: Record<string, string> = {
   VR02: "Exact, normalized, and fuzzy duplicate detection. Always on for the organisation.",
-  VR03: "Uses the starred compulsory fields from Extraction fields. Blocks posting when any are missing.",
+  VR03: "Uses starred fields from Extraction fields. When enabled, blocks approve and posting when any are missing.",
   VR08: "GST must match extracted tax rate × subtotal within tolerance.",
   VR01: "Total must equal subtotal plus tax.",
   VR09: "Line amounts must reconcile to subtotal; qty × price per line.",

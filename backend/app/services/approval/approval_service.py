@@ -205,11 +205,13 @@ def _assert_invoice_ready_for_approval(
     definition: DocumentTypeDefinition | None = None,
 ) -> None:
     from app.services.classification.document_type_field_checks import field_is_present
-    from app.services.classification.document_type_playbook_service import effective_required_fields
+    from app.services.classification.document_type_playbook_service import (
+        approval_enforced_required_fields,
+    )
     from app.services.classification.document_type_rule_engine import build_document_classifier_context
     from app.services.invoice.invoice_data import invoice_data_from_invoice
 
-    compulsory = effective_required_fields(definition) if definition is not None else []
+    compulsory = approval_enforced_required_fields(definition)
     if compulsory:
         parsed = invoice_data_from_invoice(inv)
         ctx = build_document_classifier_context(invoice=inv, parsed=parsed)
