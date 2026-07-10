@@ -17,6 +17,7 @@ from app.schemas.onboarding import OnboardingStatusResponse, UpdateOnboardingReq
 from app.schemas.org_ai_brief import OrgAiBriefResponse, UpdateOrgAiBriefRequest
 from app.schemas.tenant import CreateTenantRequest, TenantResponse
 from app.services.auth.membership_service import ensure_membership, list_user_tenants
+from app.services.rule_book.rule_book_config_repository import ensure_default_config
 from app.services.tenant.org_ai_brief_service import (
     load_org_ai_brief,
     save_org_ai_brief,
@@ -84,6 +85,7 @@ async def create_tenant(
     db.add(tenant)
     await db.flush()
     await ensure_membership(db, user_id=ctx.user_id, tenant_id=tenant.id, role="admin")
+    await ensure_default_config(db, tenant.id)
 
     return ApiEnvelope(
         data=_to_response(tenant, current_tenant_id=ctx.tenant_id),
