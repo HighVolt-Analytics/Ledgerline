@@ -8,15 +8,17 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.models.tenant import Tenant
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
-from app.schemas.rule_book_config import RuleBookConfigPayload
+from app.schemas.rule_book_config import PostingDefaults, RuleBookConfigPayload
+from app.services.master_data.starter_chart_of_accounts import build_starter_chart_of_accounts
+from app.tenant_settings import tenant_country
 
 
-def _default_config_dict() -> dict[str, Any]:
+def _base_template_config_dict() -> dict[str, Any]:
     template = Path(get_settings().rule_book_config_path)
     if template.is_file():
         with template.open(encoding="utf-8") as fh:
@@ -29,11 +31,32 @@ def _default_config_dict() -> dict[str, Any]:
     return RuleBookConfigPayload().model_dump()
 
 
+def _default_config_dict_for_country(country_code: str | None) -> dict[str, Any]:
+    data = _base_template_config_dict()
+    posting = PostingDefaults.for_country(country_code)
+    data["posting_defaults"] = posting.model_dump()
+    data["chart_of_accounts"] = [
+        entry.model_dump()
+        for entry in build_starter_chart_of_accounts(country_code, posting_defaults=posting)
+    ]
+    return data
+
+
 def _schema_version_from_config(config: dict[str, Any]) -> int:
     try:
         return int(config.get("schema_version") or 1)
     except (TypeError, ValueError):
         return 1
+
+
+async def _resolve_country_for_tenant(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> str | None:
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        return None
+    return tenant_country(tenant)
 
 
 async def fetch_config_dict(
@@ -54,7 +77,8 @@ async def ensure_default_config(
     if existing is not None:
         return existing
 
-    config = _default_config_dict()
+    country = await _resolve_country_for_tenant(session, tenant_id)
+    config = _default_config_dict_for_country(country)
     row = TenantRuleBookConfig(
         tenant_id=tenant_id,
         config=config,
