@@ -1,6 +1,9 @@
 import shippedDefaults from "@/lib/documentTypeDefaults.json";
 import { normalizeExtractionFieldKeys } from "@/lib/documentExtractionFields";
-import { effectiveValidationRules } from "@/lib/documentValidationChecks";
+import {
+  effectiveValidationRules,
+  type ValidationRuleConfig,
+} from "@/lib/documentValidationChecks";
 
 type DefaultsRow = {
   required_fields?: string[];
@@ -141,7 +144,7 @@ export function compulsoryFieldsForDocumentType(
     code: string;
     requiredFields?: string[];
     validationProfile?: string;
-    validationRules?: Array<{ code: string; enabled: boolean }>;
+    validationRules?: ValidationRuleConfig[];
   }>,
   code: string | null | undefined
 ): string[] {
