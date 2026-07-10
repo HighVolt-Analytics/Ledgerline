@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,8 +11,10 @@ from app.models.tenant import Tenant
 from app.models.tenant_member_invite import TenantMemberInvite
 from app.models.user import User
 from app.models.user_tenant_mapping import UserTenantMapping
+from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.schemas.setup_checklist import SetupChecklistItem, SetupChecklistStateResponse
-from app.services.master_data.chart_of_accounts_service import load_chart_of_accounts
+from app.services.rule_book.account_mapper import category_resolved_in_coa
+from app.services.rule_book.rule_book_config_io import load_posting_config_payload
 from app.tenant_settings import (
     tenant_industry,
     tenant_setup_checklist_complete,
@@ -80,6 +80,22 @@ _CHECKLIST_DEFS: list[dict] = [
     },
 ]
 
+_SALES_RECEIVABLE_ACCOUNT = "Accounts Receivable"
+_SALES_TAX_ACCOUNT = "Tax Collected"
+
+
+def _coa_functional_for_journaling(config: RuleBookConfigPayload) -> bool:
+    """True when control accounts required for purchase and sales journals resolve in COA."""
+    defaults = config.posting_defaults
+    required = [
+        defaults.payable_account,
+        defaults.tax_account,
+        defaults.fallback_account,
+        _SALES_RECEIVABLE_ACCOUNT,
+        _SALES_TAX_ACCOUNT,
+    ]
+    return all(category_resolved_in_coa(name, config) for name in required)
+
 
 async def _item_done(
     session: AsyncSession,
@@ -129,9 +145,8 @@ async def _item_done(
         ).scalar_one()
         return int(count or 0) > 0
     if item_id == "chart_of_accounts":
-        coa = await load_chart_of_accounts(session, tenant_id)
-        accounts = coa.get("accounts") if isinstance(coa, dict) else None
-        return isinstance(accounts, list) and len(accounts) > 0
+        config = await load_posting_config_payload(session, tenant_id)
+        return _coa_functional_for_journaling(config)
     if item_id == "first_document":
         count = (
             await session.execute(
