@@ -461,6 +461,136 @@ def test_bundle_dt_cells_marks_advisory_slots() -> None:
     assert cells["DT-26"] == "Advisory"
 
 
+def test_collect_linked_doc_entries_uses_slot_dt_code_for_manual_overlay() -> None:
+    from app.schemas.dossier import (
+        DossierLinkedDocumentResponse,
+        DossierManualLinkInfoResponse,
+    )
+
+    linked = DossierLinkedDocumentsResponse(
+        linkage_kind="shipment_ref",
+        linkage_label="Import dossier",
+        enforce_bundle=True,
+        documents=[
+            DossierLinkedDocumentResponse(
+                id="DT-27-bundle",
+                document_type_code="DT-27",
+                label="Bill of lading",
+                present=False,
+                requirement="mandatory",
+                manual_link=DossierManualLinkInfoResponse(
+                    id=1,
+                    invoice_id=42,
+                    linked_dossier_id="DOC-42",
+                    document_ref="BL-1",
+                    label="Unclassified upload",
+                    document_type_code="DT-06",
+                    has_file=True,
+                ),
+            ),
+        ],
+    )
+    entries = collect_linked_doc_entries(1, linked)
+    assert len(entries) == 1
+    assert entries[0].invoice_id == 42
+    assert entries[0].document_type_code == "DT-27"
+    assert entries[0].pin_dt_code is True
+
+
+def test_bundle_dt_cells_shows_manual_link_instead_of_missing() -> None:
+    from app.schemas.dossier import (
+        DossierLinkedDocumentResponse,
+        DossierManualLinkInfoResponse,
+    )
+
+    linked = DossierLinkedDocumentsResponse(
+        linkage_kind="shipment_ref",
+        linkage_label="Import dossier",
+        enforce_bundle=True,
+        documents=[
+            DossierLinkedDocumentResponse(
+                id="anchor",
+                document_type_code="DT-10",
+                label="Import invoice",
+                present=True,
+                requirement="mandatory",
+                is_anchor=True,
+                invoice_id=1,
+            ),
+            DossierLinkedDocumentResponse(
+                id="DT-27-bundle",
+                document_type_code="DT-27",
+                label="Bill of lading",
+                present=False,
+                requirement="mandatory",
+                manual_link=DossierManualLinkInfoResponse(
+                    id=1,
+                    invoice_id=42,
+                    linked_dossier_id="DOC-42",
+                    document_ref="BL-4402",
+                    label="Bill of lading",
+                    document_type_code="DT-27",
+                    has_file=True,
+                ),
+            ),
+        ],
+    )
+    cells = bundle_dt_cells_by_code(1, linked, ["DT-27"])
+    assert cells["DT-27"] != "Missing"
+    assert "BL-4402" in cells["DT-27"]
+    assert_csv_hyperlink(cells["DT-27"], url=vault_view_path(42))
+
+
+@pytest.mark.asyncio
+async def test_documents_bundle_export_includes_manual_slot_link(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    from app.services.dossier.dossier_manual_link_service import create_manual_link
+
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Importer",
+        document_type_code="DT-01",
+        invoice_no="INV-MANUAL-BUNDLE",
+        invoice_date=date(2026, 9, 1),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-manual-anchor",
+    )
+    support = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Supplier",
+        document_type_code="DT-02",
+        invoice_no="PO-MANUAL-1",
+        invoice_date=date(2026, 9, 1),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-manual-po",
+    )
+    db_session.add_all([anchor, support])
+    await db_session.flush()
+
+    await create_manual_link(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        anchor_invoice_id=anchor.id,
+        linked_invoice_id=support.id,
+    )
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-09-01&date_to=2026-09-30"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    row = next(
+        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-MANUAL-BUNDLE"
+    )
+    po_col = header.index("PO (supporting)")
+    assert row[po_col] != "Missing"
+    assert_csv_hyperlink(row[po_col], url=vault_view_path(support.id))
+
+
 @pytest.mark.asyncio
 async def test_documents_bundle_export_missing_mandatory_in_csv(
     client: AsyncClient,

@@ -161,7 +161,7 @@ function statusPill(doc: DossierLinkedDocument) {
 
   if (doc.manualLink) {
 
-    return { tone: pillTones.amber, label: doc.present ? "linked" : "missing" };
+    return { tone: pillTones.amber, label: "manual" };
 
   }
 

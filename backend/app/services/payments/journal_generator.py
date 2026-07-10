@@ -5,7 +5,12 @@ from decimal import Decimal
 from app.models.invoice import Invoice
 from app.models.journal import EntryType
 from app.schemas.rule_book_config import RuleBookConfigPayload
-from app.services.rule_book.account_mapper import AccountMapping, resolve_category_for_config
+from app.services.rule_book.account_mapper import (
+    AccountMapping,
+    ControlAccountRole,
+    category_resolved_in_coa,
+    resolve_category_for_config,
+)
 from app.services.rule_book.rule_book_mapper import (
     ROUTE_SALES,
     get_payable_account_mapping,
@@ -121,3 +126,27 @@ def is_balanced(lines: list[JournalLine]) -> bool:
     dr = sum(line.debit for line in lines)
     cr = sum(line.credit for line in lines)
     return dr == cr
+
+
+def get_unresolved_control_accounts(
+    *,
+    invoice: Invoice,
+    config: RuleBookConfigPayload,
+) -> list[ControlAccountRole]:
+    """Return control/tax roles whose COA labels are missing from the tenant chart."""
+    unresolved: list[ControlAccountRole] = []
+
+    if (invoice.route_target or "").strip() == ROUTE_SALES:
+        recv_label, tax_label = resolve_sales_post_accounts(invoice, config)
+        if not category_resolved_in_coa(recv_label, config):
+            unresolved.append("receivable_account")
+        if not category_resolved_in_coa(tax_label, config):
+            unresolved.append("tax_account")
+        return unresolved
+
+    defaults = config.posting_defaults
+    if not category_resolved_in_coa(defaults.payable_account, config):
+        unresolved.append("payable_account")
+    if not category_resolved_in_coa(defaults.tax_account, config):
+        unresolved.append("tax_account")
+    return unresolved

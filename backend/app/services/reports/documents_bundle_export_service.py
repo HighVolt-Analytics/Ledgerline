@@ -211,6 +211,18 @@ def _bundle_slots_by_dt_code(
     return slots
 
 
+def _manual_link_cell(
+    manual_link,
+    *,
+    cell_format: BundleCellFormat,
+) -> str:
+    ref = (manual_link.document_ref or "").strip() or f"DOC-{manual_link.invoice_id}"
+    url = vault_view_path(manual_link.invoice_id)
+    if cell_format == "plain":
+        return f"{ref} | {url}" if url else ref
+    return excel_hyperlink(url, ref)
+
+
 def bundle_dt_cells_by_code(
     anchor_invoice_id: int,
     linked: DossierLinkedDocumentsResponse,
@@ -237,6 +249,8 @@ def bundle_dt_cells_by_code(
         slot = slots_by_dt.get(code)
         if slot is None:
             out[code] = ""
+        elif slot.manual_link is not None:
+            out[code] = _manual_link_cell(slot.manual_link, cell_format=cell_format)
         elif slot.present:
             out[code] = linked_cells.get(code, "")
         elif slot.requirement == "mandatory":

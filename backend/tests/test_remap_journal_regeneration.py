@@ -20,7 +20,10 @@ async def test_remap_regenerates_journal_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = RuleBookConfigPayload(
-        posting_defaults=PostingDefaults(),
+        posting_defaults=PostingDefaults(
+            tax_account="GST Paid",
+            payable_account="Accounts Payable",
+        ),
         chart_of_accounts=[
             ChartOfAccountEntry(code="6100", name="Software", type="Expense"),
             ChartOfAccountEntry(code="6200", name="Supplies", type="Expense"),

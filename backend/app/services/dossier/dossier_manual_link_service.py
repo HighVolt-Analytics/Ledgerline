@@ -113,6 +113,72 @@ def _ad_hoc_manual_document(
     )
 
 
+def _dt_code_from_slot_id(slot_id: str) -> str | None:
+    token = (slot_id or "").strip()
+    if token.startswith("DT-") and "-bundle" in token:
+        return token.split("-bundle", 1)[0].upper()
+    return None
+
+
+def _pick_single_slot(
+    candidates: list[DossierLinkedDocumentResponse],
+) -> DossierLinkedDocumentResponse | None:
+    if len(candidates) == 1:
+        return candidates[0]
+    mandatory = [doc for doc in candidates if doc.requirement == "mandatory"]
+    if len(mandatory) == 1:
+        return mandatory[0]
+    return None
+
+
+def _find_slot_for_manual_link(
+    link: DossierManualLink,
+    linked: Invoice,
+    documents: list[DossierLinkedDocumentResponse],
+) -> DossierLinkedDocumentResponse | None:
+    eligible = [
+        doc for doc in documents if not doc.is_anchor and doc.manual_link is None
+    ]
+    linked_code = (linked.document_type_code or "").strip().upper()
+    if linked_code:
+        match = _pick_single_slot(
+            [
+                doc
+                for doc in eligible
+                if (doc.document_type_code or "").strip().upper() == linked_code
+            ]
+        )
+        if match is not None:
+            return match
+
+    stale_code = _dt_code_from_slot_id(link.slot_id or "")
+    if stale_code:
+        match = _pick_single_slot(
+            [
+                doc
+                for doc in eligible
+                if (doc.document_type_code or "").strip().upper() == stale_code
+            ]
+        )
+        if match is not None:
+            return match
+    return None
+
+
+def _apply_slot_overlay(
+    doc: DossierLinkedDocumentResponse,
+    link: DossierManualLink,
+    linked: Invoice,
+    document_types: list[DocumentTypeDefinition],
+) -> DossierLinkedDocumentResponse:
+    return doc.model_copy(
+        update={
+            "manual_link": _manual_link_info(link, linked, document_types),
+            "manual_link_id": link.id,
+        }
+    )
+
+
 async def apply_manual_links(
     session: AsyncSession,
     *,
@@ -132,12 +198,12 @@ async def apply_manual_links(
     linked_ids = {link.linked_invoice_id for link in links}
     invoices = await _load_invoices(session, linked_ids, tenant_id=tenant_id)
 
-    slot_links = {link.slot_id: link for link in links if link.slot_id}
-    ad_hoc: list[DossierLinkedDocumentResponse] = []
+    slot_links_by_id = {link.slot_id: link for link in links if link.slot_id}
+    matched_link_ids: set[int] = set()
 
     documents: list[DossierLinkedDocumentResponse] = []
     for doc in response.documents:
-        slot_link = slot_links.get(doc.id)
+        slot_link = slot_links_by_id.get(doc.id)
         if slot_link is None:
             documents.append(doc)
             continue
@@ -145,16 +211,29 @@ async def apply_manual_links(
         if linked is None:
             documents.append(doc)
             continue
-        documents.append(
-            doc.model_copy(
-                update={
-                    "manual_link": _manual_link_info(slot_link, linked, document_types),
-                }
-            )
-        )
+        matched_link_ids.add(slot_link.id)
+        documents.append(_apply_slot_overlay(doc, slot_link, linked, document_types))
 
     for link in links:
-        if link.slot_id:
+        if link.id in matched_link_ids or not link.slot_id:
+            continue
+        linked = invoices.get(link.linked_invoice_id)
+        if linked is None:
+            continue
+        target = _find_slot_for_manual_link(link, linked, documents)
+        if target is None:
+            continue
+        matched_link_ids.add(link.id)
+        documents = [
+            _apply_slot_overlay(doc, link, linked, document_types)
+            if doc.id == target.id
+            else doc
+            for doc in documents
+        ]
+
+    ad_hoc: list[DossierLinkedDocumentResponse] = []
+    for link in links:
+        if link.id in matched_link_ids:
             continue
         linked = invoices.get(link.linked_invoice_id)
         if linked is None:
@@ -162,6 +241,46 @@ async def apply_manual_links(
         ad_hoc.append(_ad_hoc_manual_document(link, linked, document_types))
 
     return response.model_copy(update={"documents": documents + ad_hoc})
+
+
+def _resolve_slot_id(
+    slot_id: str | None,
+    linked: Invoice,
+    documents: list[DossierLinkedDocumentResponse],
+) -> str | None:
+    token = (slot_id or "").strip()
+    if not token:
+        return None
+    if any(doc.id == token for doc in documents if not doc.is_anchor):
+        return token
+
+    linked_code = (linked.document_type_code or "").strip().upper()
+    if linked_code:
+        match = _pick_single_slot(
+            [
+                doc
+                for doc in documents
+                if not doc.is_anchor
+                and (doc.document_type_code or "").strip().upper() == linked_code
+            ]
+        )
+        if match is not None:
+            return match.id
+
+    stale_code = _dt_code_from_slot_id(token)
+    if stale_code:
+        match = _pick_single_slot(
+            [
+                doc
+                for doc in documents
+                if not doc.is_anchor
+                and (doc.document_type_code or "").strip().upper() == stale_code
+            ]
+        )
+        if match is not None:
+            return match.id
+
+    return token
 
 
 async def create_manual_link(
@@ -198,13 +317,43 @@ async def create_manual_link(
     if existing is not None:
         raise HTTPException(409, "Document is already manually linked")
 
+    resolved_slot_id = slot_id
     if slot_id:
+        from app.services.classification.document_type_playbook_service import (
+            resolve_definition_for_invoice,
+        )
+        from app.services.dossier.dossier_linked_documents_service import (
+            build_dossier_linked_documents,
+        )
+        from app.services.invoice.invoice_evaluation_service import (
+            load_posting_config_for_tenant,
+        )
+
+        config = await load_posting_config_for_tenant(session, tenant_id)
+        definition = resolve_definition_for_invoice(anchor, config.document_types)
+        linked_docs = await build_dossier_linked_documents(
+            session,
+            anchor,
+            definition=definition,
+            document_types=config.document_types,
+        )
+        resolved_slot_id = _resolve_slot_id(
+            slot_id,
+            linked,
+            linked_docs.documents,
+        )
+        if resolved_slot_id and not any(
+            doc.id == resolved_slot_id for doc in linked_docs.documents if not doc.is_anchor
+        ):
+            # Keep stale slot_id — apply_manual_links will DT-match or ad-hoc append.
+            resolved_slot_id = slot_id.strip()
+
         slot_taken = (
             await session.execute(
                 select(DossierManualLink).where(
                     DossierManualLink.tenant_id == tenant_id,
                     DossierManualLink.anchor_invoice_id == anchor_invoice_id,
-                    DossierManualLink.slot_id == slot_id,
+                    DossierManualLink.slot_id == resolved_slot_id,
                 )
             )
         ).scalar_one_or_none()
@@ -215,7 +364,7 @@ async def create_manual_link(
         tenant_id=tenant_id,
         anchor_invoice_id=anchor_invoice_id,
         linked_invoice_id=linked_invoice_id,
-        slot_id=(slot_id or "").strip() or None,
+        slot_id=(resolved_slot_id or "").strip() or None,
         created_by_user_id=created_by_user_id,
     )
     session.add(row)

@@ -341,6 +341,7 @@ class LinkedDocExportEntry:
     document_type_code: str
     document_ref: str | None
     invoice_no: str | None = None
+    pin_dt_code: bool = False
 
 
 def collect_linked_doc_entries(
@@ -356,6 +357,8 @@ def collect_linked_doc_entries(
         dt_code: str,
         doc_ref: str | None,
         invoice_no: str | None = None,
+        *,
+        pin_dt_code: bool = False,
     ) -> None:
         if inv_id in seen:
             return
@@ -366,6 +369,7 @@ def collect_linked_doc_entries(
                 document_type_code=(dt_code or "").strip() or "?",
                 document_ref=(doc_ref or "").strip() or None,
                 invoice_no=(invoice_no or "").strip() or None,
+                pin_dt_code=pin_dt_code,
             )
         )
 
@@ -374,7 +378,13 @@ def collect_linked_doc_entries(
             continue
         if doc.manual_link is not None:
             ml = doc.manual_link
-            add_entry(ml.invoice_id, ml.document_type_code, ml.document_ref)
+            slot_code = (doc.document_type_code or ml.document_type_code or "").strip()
+            add_entry(
+                ml.invoice_id,
+                slot_code,
+                ml.document_ref,
+                pin_dt_code=bool(slot_code),
+            )
             continue
         if doc.link_kind == "manual" and doc.invoice_id is not None:
             add_entry(doc.invoice_id, doc.document_type_code, doc.document_ref, doc.invoice_no)
@@ -420,7 +430,7 @@ def linked_docs_by_dt_code(
     by_dt: dict[str, list[tuple[str, str]]] = {}
     for entry in collect_linked_doc_entries(anchor_invoice_id, linked):
         code = entry.document_type_code.upper()
-        if invoice_dt_code_by_id:
+        if invoice_dt_code_by_id and not entry.pin_dt_code:
             actual = (invoice_dt_code_by_id.get(entry.invoice_id) or "").strip().upper()
             if actual:
                 code = actual

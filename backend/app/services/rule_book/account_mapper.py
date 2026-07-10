@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice
 from app.schemas.rule_book_config import RuleBookConfigPayload
+
+ControlAccountRole = Literal["payable_account", "receivable_account", "tax_account"]
 
 
 @dataclass
@@ -27,6 +30,30 @@ class MappingDetail:
     account_name: str
     rule_type: str
     match_reason: str
+
+
+def category_resolved_in_coa(
+    category: str,
+    config: RuleBookConfigPayload | None = None,
+) -> bool:
+    """True when category name matches a chart_of_accounts entry (case-insensitive)."""
+    cleaned = (category or "").strip()
+    if not cleaned or config is None or not config.chart_of_accounts:
+        return False
+    for entry in config.chart_of_accounts:
+        if entry.name == cleaned:
+            return True
+    lowered = cleaned.lower()
+    for entry in config.chart_of_accounts:
+        if entry.name.lower() == lowered:
+            return True
+    return False
+
+
+def resolve_fallback_account_mapping(
+    config: RuleBookConfigPayload,
+) -> AccountMapping:
+    return resolve_category_for_config(config.posting_defaults.fallback_account, config)
 
 
 def resolve_category_for_config(

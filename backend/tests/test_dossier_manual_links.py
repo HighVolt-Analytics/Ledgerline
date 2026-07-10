@@ -69,8 +69,122 @@ async def test_manual_link_on_bundle_slot(db_session: AsyncSession) -> None:
     slot = linked.documents[0]
     assert slot.present is False
     assert slot.manual_link is not None
+    assert slot.manual_link_id is not None
     assert slot.manual_link.invoice_id == bl.id
     assert slot.manual_link.document_ref == bl.document_ref
+
+
+@pytest.mark.asyncio
+async def test_orphaned_slot_id_falls_back_by_dt_code(db_session: AsyncSession) -> None:
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Importer",
+        status=InvoiceStatus.MAPPING,
+        document_type_code="DT-10",
+        file_hash="anchor-orphan-slot",
+    )
+    bl = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Carrier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-27",
+        invoice_no="BL-ORPHAN",
+        file_hash="bl-orphan",
+    )
+    db_session.add_all([anchor, bl])
+    await db_session.flush()
+    await assign_document_ref(db_session, bl)
+
+    await create_manual_link(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        anchor_invoice_id=anchor.id,
+        linked_invoice_id=bl.id,
+        slot_id="DT-27-bundle",
+    )
+
+    base = DossierLinkedDocumentsResponse(
+        linkage_kind="so_reference",
+        linkage_key="SO-9",
+        linkage_label="SO reference",
+        enforce_bundle=True,
+        documents=[
+            DossierLinkedDocumentResponse(
+                id="DT-27-bundle-so",
+                document_type_code="DT-27",
+                label="Bill of lading",
+                present=False,
+                requirement="mandatory",
+            )
+        ],
+    )
+    linked = await apply_manual_links(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        anchor_invoice_id=anchor.id,
+        response=base,
+        document_types=[],
+    )
+
+    slot = linked.documents[0]
+    assert slot.manual_link is not None
+    assert slot.manual_link.invoice_id == bl.id
+    assert slot.manual_link_id is not None
+
+
+@pytest.mark.asyncio
+async def test_orphaned_slot_id_appends_ad_hoc_when_no_dt_match(db_session: AsyncSession) -> None:
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Importer",
+        status=InvoiceStatus.MAPPING,
+        document_type_code="DT-10",
+        file_hash="anchor-ad-hoc-fallback",
+    )
+    support = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Carrier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-06",
+        invoice_no="PACK-ORPHAN",
+        file_hash="pack-orphan",
+    )
+    db_session.add_all([anchor, support])
+    await db_session.flush()
+
+    await create_manual_link(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        anchor_invoice_id=anchor.id,
+        linked_invoice_id=support.id,
+        slot_id="DT-99-bundle",
+    )
+
+    base = DossierLinkedDocumentsResponse(
+        linkage_kind="standalone",
+        linkage_label="Standalone",
+        enforce_bundle=False,
+        documents=[
+            DossierLinkedDocumentResponse(
+                id="DT-15-bundle-grn",
+                document_type_code="DT-15",
+                label="GRN",
+                present=False,
+                requirement="mandatory",
+            )
+        ],
+    )
+    linked = await apply_manual_links(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        anchor_invoice_id=anchor.id,
+        response=base,
+        document_types=[],
+    )
+
+    manual = next(doc for doc in linked.documents if doc.link_kind == "manual")
+    assert manual.invoice_id == support.id
+    assert manual.manual_link_id is not None
 
 
 @pytest.mark.asyncio

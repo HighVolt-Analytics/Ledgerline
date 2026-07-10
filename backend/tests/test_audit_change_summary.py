@@ -121,3 +121,33 @@ def test_validation_failed_from_invoice_results() -> None:
         validation_results_json='[{"rule": "VR03", "passed": false, "message": "missing line items"}]',
     )
     assert summary == "Failed checks: VR03"
+
+
+def test_journal_control_account_unresolved_remap_skip_label() -> None:
+    summary = summarize_audit_change(
+        "journal_control_account_unresolved",
+        {
+            "unresolved": ["payable_account", "tax_account"],
+            "context": "remap_skip",
+        },
+    )
+    assert summary.startswith("Rule book remap — ")
+    assert "payable_account" in summary
+    assert "tax_account" in summary
+
+
+def test_journal_control_account_unresolved_pipeline_has_no_remap_prefix() -> None:
+    summary = summarize_audit_change(
+        "journal_control_account_unresolved",
+        {"unresolved": ["receivable_account", "tax_account"]},
+    )
+    assert not summary.startswith("Rule book remap — ")
+    assert "receivable_account" in summary
+
+
+def test_journal_unbalanced_remap_skip_label() -> None:
+    summary = summarize_audit_change(
+        "journal_unbalanced",
+        {"subtotal": 1000.0, "gst": 100.0, "total": 900.0, "context": "remap_skip"},
+    )
+    assert summary.startswith("Rule book remap — Journal unbalanced —")

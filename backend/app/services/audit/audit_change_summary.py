@@ -490,6 +490,34 @@ def summarize_audit_change(
         if label and reason:
             return f"{label} error — {reason}"
         return reason or "Accounting integration error"
+    if event == "journal_control_account_unresolved":
+        unresolved = d.get("unresolved")
+        prefix = (
+            "Rule book remap — "
+            if str(d.get("context") or "").strip() == "remap_skip"
+            else ""
+        )
+        if isinstance(unresolved, list) and unresolved:
+            return (
+                f"{prefix}Unresolved control accounts: "
+                f"{', '.join(str(item) for item in unresolved)}"
+            )
+        return f"{prefix}Control/tax account missing from chart of accounts"
+    if event == "journal_unbalanced":
+        prefix = (
+            "Rule book remap — "
+            if str(d.get("context") or "").strip() == "remap_skip"
+            else ""
+        )
+        subtotal = d.get("subtotal")
+        gst = d.get("gst")
+        total = d.get("total")
+        if subtotal is not None and gst is not None and total is not None:
+            return (
+                f"{prefix}Journal unbalanced — "
+                f"subtotal {subtotal}, GST {gst}, total {total}"
+            )
+        return f"{prefix}Journal debits and credits do not balance"
 
     reason = str(d.get("hold_reason") or d.get("reason") or "").strip()
     if reason:

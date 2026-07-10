@@ -16,7 +16,12 @@ from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.audit.audit_service import log_event
 from app.services.invoice.invoice_evaluation_service import apply_invoice_evaluation, load_config_for_tenant
 from app.services.classification.document_type_reclassify_service import reclassify_invoice_document_type
-from app.services.payments.journal_generator import generate_entries, is_balanced
+from app.services.payments.journal_generator import (
+    generate_entries,
+    get_unresolved_control_accounts,
+    is_balanced,
+)
+from app.services.rule_book.account_mapper import resolve_fallback_account_mapping
 from app.services.rule_book.rule_book_mapper import map_invoice_to_account
 from app.tenant_child_tables import journal_entries_for_invoice
 from app.services.vault.vault_blob_sync import sync_invoice_blob_path
@@ -66,11 +71,46 @@ async def _regenerate_journal_entries(
 
     mapping = map_invoice_to_account(invoice, config=config)
     lines = generate_entries(invoice, mapping, config=config)
+    # Remap skips keep PROCESSED status; audit log (context=remap_skip) is the trail —
+    # Pipeline debug journal step only fails when status is EXCEPTION.
     if not is_balanced(lines):
         logger.warning(
             "remap_journal_regen_skipped_unbalanced",
             invoice_id=invoice.id,
             tenant_id=str(invoice.tenant_id),
+        )
+        await log_event(
+            session,
+            "journal_unbalanced",
+            invoice_id=invoice.id,
+            detail={
+                "subtotal": float(invoice.subtotal or 0),
+                "gst": float(invoice.gst or 0),
+                "total": float(invoice.total or 0),
+                "context": "remap_skip",
+            },
+        )
+        return False
+
+    unresolved_control = get_unresolved_control_accounts(invoice=invoice, config=config)
+    if unresolved_control:
+        fallback = resolve_fallback_account_mapping(config)
+        logger.warning(
+            "remap_journal_regen_skipped_unresolved_control",
+            invoice_id=invoice.id,
+            tenant_id=str(invoice.tenant_id),
+        )
+        await log_event(
+            session,
+            "journal_control_account_unresolved",
+            invoice_id=invoice.id,
+            detail={
+                "unresolved": unresolved_control,
+                "fallback_code": fallback.account_code,
+                "fallback_name": fallback.account_name,
+                "route_target": invoice.route_target,
+                "context": "remap_skip",
+            },
         )
         return False
 
