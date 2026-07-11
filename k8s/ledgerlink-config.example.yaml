@@ -1,6 +1,6 @@
-# Example ConfigMap for namespace quantum-ledgerlink.
+﻿# Example ConfigMap for namespace quantum-ledgerlink.
 # Apply after filling non-secret values: kubectl apply -f k8s/ledgerlink-config.example.yaml
-# Do not commit real secrets — use app-secrets for sensitive keys.
+# Do not commit real secrets â€” use app-secrets for sensitive keys.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -27,14 +27,14 @@ data:
   GRAPH_OAUTH_FRONTEND_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/integrations"
   LOG_LEVEL: "INFO"
   AUTH_REQUIRED: "true"
-  # Slug for legacy env-mailbox bootstrap only — not used for API tenant impersonation.
+  # Slug for legacy env-mailbox bootstrap only â€” not used for API tenant impersonation.
   DEFAULT_TENANT_SLUG: "qa-sandbox"
   DEFAULT_TENANT_NAME: "LedgerLink QA Sandbox"
   STRIPE_MODE: "sandbox"
   STRIPE_RETURN_URL: "https://staging.highvolt.tech/ledgerlink/payments"
   STRIPE_REFRESH_URL: "https://staging.highvolt.tech/ledgerlink/payments"
   STRIPE_OAUTH_REDIRECT_URL: "https://staging.highvolt.tech/ledgerlink/payments/stripe/oauth/callback"
-  # Production safety — keep false until live cutover is explicitly approved
+  # Production safety â€” keep false until live cutover is explicitly approved
   STRIPE_PAYMENTS_EXECUTION_ENABLED: "false"
   STRIPE_LIVE_PAYMENTS_ENABLED: "false"
   STRIPE_GLOBAL_PAYOUTS_ENABLED: "false"
@@ -42,10 +42,10 @@ data:
   STRIPE_GLOBAL_PAYOUTS_MAX_AMOUNT_USD: "1000"
   STRIPE_GLOBAL_PAYOUTS_SUPPORTED_COUNTRIES: "AU"
   STRIPE_GLOBAL_PAYOUTS_SUPPORTED_CURRENCIES: "AUD,USD"
-  # Platform subscription billing (LedgerLink → customer; not Connect / payouts)
+  # Platform subscription billing (LedgerLink â†’ customer; not Connect / payouts)
   STRIPE_PLATFORM_BILLING_ENABLED: "false"
   STRIPE_PLATFORM_BILLING_LIVE_ENABLED: "false"
-  # LedgerLink Studio — one multi-currency monthly Stripe Price for all regions
+  # LedgerLink Studio â€” one multi-currency monthly Stripe Price for all regions
   STRIPE_PRICE_STUDIO_INR: "price_1Tr2y5Gvr4HvPvAZowfD0wKD"
   STRIPE_PRICE_STUDIO_AUD: "price_1Tr2y5Gvr4HvPvAZowfD0wKD"
   STRIPE_PRICE_STUDIO_SGD: "price_1Tr2y5Gvr4HvPvAZowfD0wKD"
@@ -61,7 +61,9 @@ data:
   # STRIPE_PLATFORM_BILLING_WEBHOOK_SECRET,
   # WHATSAPP_OAUTH_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/auth/whatsapp/callback
   # WHATSAPP_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
+  # XERO_ENABLED=true
   # XERO_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/xero/callback
   # QUICKBOOKS_REDIRECT_URI=https://staging.highvolt.tech/ledgerlink/api/integrations/quickbooks/callback
   # ACCOUNTING_OAUTH_FRONTEND_RETURN_URL=https://staging.highvolt.tech/ledgerlink/integrations
-  # app-secrets: XERO_CLIENT_ID, XERO_CLIENT_SECRET, QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET
+  # app-secrets: XERO_CLIENT_ID, XERO_CLIENT_SECRET, XERO_WEBHOOK_KEY, QUICKBOOKS_CLIENT_ID, QUICKBOOKS_CLIENT_SECRET
+

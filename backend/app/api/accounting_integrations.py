@@ -1,4 +1,4 @@
-"""Accounting integrations — Xero and QuickBooks Online OAuth."""
+﻿"""Accounting integrations — Xero and QuickBooks Online OAuth."""
 
 from __future__ import annotations
 
@@ -11,27 +11,44 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, actor_from_context, bind_db_to_tenant, get_db, require_admin
 from app.config import get_settings
-from app.models.accounting_integration import AccountingProvider
+from app.models.accounting_integration import AccountingIntegrationStatus, AccountingProvider
 from app.models.user import User, UserRole
 from app.schemas.accounting_integration import (
     AccountingConnectResponse,
     AccountingDisconnectResponse,
     AccountingIntegrationItem,
     AccountingIntegrationsStatusResponse,
+    XeroConnectionsResponse,
+    XeroConnectionItem,
+    XeroInvoiceStatusResponse,
+    XeroPushInvoiceResponse,
+    XeroReadinessResponse,
+    XeroSelectConnectionRequest,
+    XeroSelectConnectionResponse,
+    XeroSyncContactsResponse,
+    XeroSyncSettingsResponse,
 )
 from app.schemas.common import ApiEnvelope
 from app.services.integration.accounting_integration_service import (
     build_connect_url,
     complete_oauth_callback,
     disconnect_integration,
+    
     integration_status_item,
     list_integrations,
+    list_xero_connections,
     parse_oauth_state,
     provider_label,
     quickbooks_configured,
     record_integration_error,
+    select_xero_connection,
+    validate_oauth_state_replay,
     xero_configured,
 )
+from app.services.integration.xero_client import XeroApiError
+from app.services.integration.xero_push_service import get_invoice_xero_status, push_invoice_to_xero
+from app.services.integration.xero_readiness import get_xero_readiness_enriched
+from app.services.integration.xero_sync_service import sync_contacts, sync_settings
 from app.services.audit.audit_service import log_event
 from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
@@ -123,6 +140,126 @@ async def xero_connect(
     return ApiEnvelope(data=AccountingConnectResponse(connect_url=url))
 
 
+@router.get("/xero/readiness", response_model=ApiEnvelope[XeroReadinessResponse])
+async def xero_readiness(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[XeroReadinessResponse]:
+    data = await get_xero_readiness_enriched(db, ctx.tenant_id)
+    return ApiEnvelope(data=XeroReadinessResponse.model_validate(data))
+
+
+@router.get("/xero/connections", response_model=ApiEnvelope[XeroConnectionsResponse])
+async def xero_connections(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[XeroConnectionsResponse]:
+    rows = await list_xero_connections(db, ctx.tenant_id)
+    return ApiEnvelope(
+        data=XeroConnectionsResponse(
+            connections=[XeroConnectionItem.model_validate(row) for row in rows]
+        )
+    )
+
+
+@router.post("/xero/connections/select", response_model=ApiEnvelope[XeroSelectConnectionResponse])
+async def xero_select_connection(
+    body: XeroSelectConnectionRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[XeroSelectConnectionResponse]:
+    try:
+        row = await select_xero_connection(
+            db,
+            tenant_id=ctx.tenant_id,
+            xero_connection_id=body.xero_connection_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await db.commit()
+    return ApiEnvelope(
+        data=XeroSelectConnectionResponse(
+            status=row.status,
+            display_name=row.display_name,
+            provider_tenant_id=row.provider_tenant_id,
+        )
+    )
+
+
+@router.post("/xero/sync/settings", response_model=ApiEnvelope[XeroSyncSettingsResponse])
+async def xero_sync_settings_route(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[XeroSyncSettingsResponse]:
+    try:
+        counts = await sync_settings(db, ctx.tenant_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except XeroApiError as exc:
+        raise HTTPException(exc.status_code or 502, exc.message) from exc
+    await db.commit()
+    return ApiEnvelope(data=XeroSyncSettingsResponse.model_validate(counts))
+
+
+@router.post("/xero/sync/contacts", response_model=ApiEnvelope[XeroSyncContactsResponse])
+async def xero_sync_contacts_route(
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[XeroSyncContactsResponse]:
+    try:
+        counts = await sync_contacts(db, ctx.tenant_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except XeroApiError as exc:
+        raise HTTPException(exc.status_code or 502, exc.message) from exc
+    await db.commit()
+    return ApiEnvelope(data=XeroSyncContactsResponse.model_validate(counts))
+
+
+@router.post(
+    "/xero/invoices/{invoice_id}/push",
+    response_model=ApiEnvelope[XeroPushInvoiceResponse],
+)
+async def xero_push_invoice(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[XeroPushInvoiceResponse]:
+    try:
+        result = await push_invoice_to_xero(
+            db,
+            tenant_id=ctx.tenant_id,
+            invoice_id=invoice_id,
+            user_id=ctx.user_id or 0,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except XeroApiError as exc:
+        await db.commit()
+        raise HTTPException(exc.status_code or 502, exc.message) from exc
+    await db.commit()
+    return ApiEnvelope(data=XeroPushInvoiceResponse.model_validate(result))
+
+
+@router.get(
+    "/xero/invoices/{invoice_id}/status",
+    response_model=ApiEnvelope[XeroInvoiceStatusResponse],
+)
+async def xero_invoice_status(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_admin),
+) -> ApiEnvelope[XeroInvoiceStatusResponse]:
+    data = await get_invoice_xero_status(
+        db,
+        tenant_id=ctx.tenant_id,
+        invoice_id=invoice_id,
+    )
+    return ApiEnvelope(data=XeroInvoiceStatusResponse.model_validate(data))
+
+
 @router.get("/quickbooks/connect", response_model=ApiEnvelope[AccountingConnectResponse])
 async def quickbooks_connect(
     ctx: AuthContext = Depends(require_admin),
@@ -172,6 +309,7 @@ async def accounting_disconnect(
         actor_name=actor_name,
         actor_email=actor_email,
     )
+    await db.commit()
     return ApiEnvelope(
         data=AccountingDisconnectResponse(disconnected=True, provider=provider),
     )
@@ -204,6 +342,7 @@ async def xero_oauth_callback(
         if tenant_id is None:
             raise ValueError("Invalid OAuth session")
         user_id = int(payload["sub"])
+        await validate_oauth_state_replay(payload)
     except Exception as exc:
         logger.warning("xero_oauth_state_invalid", error=str(exc))
         url = _append_query(return_base, {query_key: "error", "reason": "invalid_state"})
@@ -239,8 +378,13 @@ async def xero_oauth_callback(
             actor_email=user.email if user else None,
         )
         await db.commit()
-        company = (row.display_name or "Xero")[:80]
-        url = _append_query(return_base, {query_key: "connected", "company": company})
+        redirect_params: dict[str, str]
+        if row.status == AccountingIntegrationStatus.ORGANISATION_SELECTION_REQUIRED.value:
+            redirect_params = {query_key: "organisation_selection_required"}
+        else:
+            company = (row.display_name or "Xero")[:80]
+            redirect_params = {query_key: "connected", "company": company}
+        url = _append_query(return_base, redirect_params)
         return RedirectResponse(url=url, status_code=302)
     except Exception as exc:
         logger.warning("xero_oauth_callback_failed", error=str(exc), tenant_id=str(tenant_id))
@@ -296,6 +440,7 @@ async def quickbooks_oauth_callback(
         if tenant_id is None:
             raise ValueError("Invalid OAuth session")
         user_id = int(payload["sub"])
+        await validate_oauth_state_replay(payload)
     except Exception as exc:
         logger.warning("quickbooks_oauth_state_invalid", error=str(exc))
         url = _append_query(return_base, {query_key: "error", "reason": "invalid_state"})
@@ -359,3 +504,4 @@ async def quickbooks_oauth_callback(
         await db.commit()
         url = _append_query(return_base, {query_key: "error", "reason": "oauth_failed"})
         return RedirectResponse(url=url, status_code=302)
+

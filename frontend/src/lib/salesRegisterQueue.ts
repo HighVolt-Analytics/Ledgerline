@@ -45,7 +45,7 @@ export function salesActionIssue(inv: Invoice, coverage: SalesRegisterCoverage):
 
   const soRef = inv.so_reference?.trim();
   if (!soRef) return "Missing SO reference";
-  if (!coverage.soNumbers.has(soRef.toUpperCase())) return "Awaiting register sync";
+  if (!coverage.soNumbers.has(soRef.toUpperCase())) return `SO ${soRef} not in register`;
   return "Awaiting register sync";
 }
 

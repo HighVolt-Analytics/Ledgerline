@@ -1,4 +1,4 @@
--- PostgreSQL RLS for tenant isolation (idempotent).
+﻿-- PostgreSQL RLS for tenant isolation (idempotent).
 -- Run after alembic upgrade 029: python scripts/run_rls.py
 
 DO $$
@@ -15,6 +15,8 @@ DECLARE
     'stripe_accounts', 'stripe_balance_snapshots', 'stripe_transactions', 'vendor_payment_methods',
     'invoice_ocr_artifacts', 'classification_learning_events',
     'accounting_integrations',
+    'xero_connections',
+    'external_accounting_refs',
     'connected_viber_accounts', 'payment_execution_instructions',
     'customer_masters', 'customer_registry', 'sales_orders', 'delivery_notes', 'collections'
   ];
@@ -45,7 +47,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- App role (optional — migrations use owner role)
+-- App role (optional â€” migrations use owner role)
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ledgerlink_app') THEN
@@ -56,3 +58,4 @@ END $$;
 GRANT USAGE ON SCHEMA public TO ledgerlink_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ledgerlink_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ledgerlink_app;
+

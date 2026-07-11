@@ -1,19 +1,25 @@
-"""Encrypt OAuth tokens at rest using the app JWT secret."""
+﻿"""Encrypt OAuth tokens at rest using the app JWT secret or optional accounting key."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import os
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.config import get_settings
 
 
+def _encryption_material() -> bytes:
+    explicit = (os.getenv("XERO_TOKEN_ENCRYPTION_KEY") or "").strip()
+    source = explicit or get_settings().jwt_secret
+    digest = hashlib.sha256(source.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest)
+
+
 def _fernet() -> Fernet:
-    digest = hashlib.sha256(get_settings().jwt_secret.encode("utf-8")).digest()
-    key = base64.urlsafe_b64encode(digest)
-    return Fernet(key)
+    return Fernet(_encryption_material())
 
 
 def encrypt_secret(value: str) -> str:

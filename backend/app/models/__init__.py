@@ -1,4 +1,6 @@
+﻿from app.models.accounting_sync_job import AccountingSyncJob
 from app.models.accounting_integration import AccountingIntegration
+from app.models.external_accounting_ref import ExternalAccountingRef
 from app.models.audit import AuditLog
 from app.models.auth_account import AuthAccount
 from app.models.classification_learning import ClassificationLearningEvent, InvoiceOcrArtifact
@@ -47,11 +49,15 @@ from app.models.pending_customer import PendingCustomer
 from app.models.pending_vendor import PendingVendor
 from app.models.vendor import VendorRegistry
 from app.models.vendor_master import VendorMasterRecord
+from app.models.xero_connection import XeroConnection
+from app.models.xero_webhook_event import XeroWebhookEvent
 
-import app.tenant_child_tables  # noqa: F401 — register child-table tenant listeners
+import app.tenant_child_tables  # noqa: F401 â€” register child-table tenant listeners
 
 __all__ = [
     "AccountingIntegration",
+    "AccountingSyncJob",
+    "ExternalAccountingRef",
     "AuditLog",
     "AuthAccount",
     "ClassificationLearningEvent",
@@ -98,4 +104,7 @@ __all__ = [
     "VendorMasterRecord",
     "VendorPaymentMethod",
     "VendorRegistry",
+    "XeroConnection",
+    "XeroWebhookEvent",
 ]
+

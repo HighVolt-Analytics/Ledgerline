@@ -12,6 +12,14 @@ import type {
   ApiEnvelope,
   AppSettings,
   AccountingIntegrationsStatus,
+  XeroConnectionsResponse,
+  XeroInvoiceStatus,
+  XeroPushResult,
+  XeroReadiness,
+  XeroSelectConnectionResult,
+  XeroSyncContactsResult,
+  XeroSyncSettingsResult,
+  XeroVerifyResult,
   AuthUser,
   ConnectedMailbox,
   MailboxBackfillJob,
@@ -817,10 +825,57 @@ export const api = {
     request<{ connect_url: string }>("/api/integrations/quickbooks/connect"),
   disconnectAccountingIntegration: (provider: "xero" | "quickbooks_online") => {
     bustGetCache("/api/integrations/status");
+    bustGetCacheByPrefix("/api/integrations/xero");
     return request<{ disconnected: boolean; provider: string }>(
       `/api/integrations/${provider}/disconnect`,
       { method: "POST" }
     );
+  },
+  getXeroReadiness: (options?: FreshRequestOptions) => {
+    const path = "/api/integrations/xero/readiness";
+    if (options?.fresh) bustGetCache(path);
+    return request<XeroReadiness>(path);
+  },
+  verifyXeroConnection: () => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<XeroVerifyResult>("/api/integrations/xero/verify");
+  },
+  getXeroConnections: (options?: FreshRequestOptions) => {
+    const path = "/api/integrations/xero/connections";
+    if (options?.fresh) bustGetCache(path);
+    return request<XeroConnectionsResponse>(path);
+  },
+  selectXeroConnection: (xero_connection_id: string) => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    bustGetCache("/api/integrations/status");
+    return request<XeroSelectConnectionResult>("/api/integrations/xero/connections/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ xero_connection_id }),
+    });
+  },
+  syncXeroSettings: () => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<XeroSyncSettingsResult>("/api/integrations/xero/sync/settings", {
+      method: "POST",
+    });
+  },
+  syncXeroContacts: () => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<XeroSyncContactsResult>("/api/integrations/xero/sync/contacts", {
+      method: "POST",
+    });
+  },
+  pushXeroInvoice: (invoiceId: number) => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<XeroPushResult>(`/api/integrations/xero/invoices/${invoiceId}/push`, {
+      method: "POST",
+    });
+  },
+  getXeroInvoiceStatus: (invoiceId: number, options?: FreshRequestOptions) => {
+    const path = `/api/integrations/xero/invoices/${invoiceId}/status`;
+    if (options?.fresh) bustGetCache(path);
+    return request<XeroInvoiceStatus>(path);
   },
   getViberStatus: (options?: FreshRequestOptions) => {
     const path = "/api/integrations/viber/status";

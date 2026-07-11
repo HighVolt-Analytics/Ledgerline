@@ -24,6 +24,7 @@ import type {
   MailboxConnectionRequest,
   ViberConnection,
   WhatsappConnection,
+  XeroReadiness,
 } from "@/api/types";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
@@ -88,8 +89,77 @@ function accountingStatusBadge(item: AccountingIntegrationItem | undefined) {
   return <Badge variant="secondary">Not connected</Badge>;
 }
 
+function xeroReadinessBadge(readiness: XeroReadiness | null | undefined) {
+  const status = readiness?.status ?? "disconnected";
+  if (readiness?.ready) {
+    return (
+      <Badge variant="outline" className="border-[hsl(var(--chart-1)/0.4)] text-[hsl(var(--chart-1))]">
+        Ready
+      </Badge>
+    );
+  }
+  if (status === "organisation_selection_required") {
+    return <Badge variant="secondary">Select organisation</Badge>;
+  }
+  if (status === "needs_reauth") {
+    return (
+      <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400">
+        Reconnect required
+      </Badge>
+    );
+  }
+  if (status === "connected") {
+    return (
+      <Badge variant="outline" className="border-[hsl(var(--chart-1)/0.4)] text-[hsl(var(--chart-1))]">
+        Connected
+      </Badge>
+    );
+  }
+  if (status === "error") {
+    return (
+      <Badge variant="outline" className="border-destructive/40 text-destructive">
+        Error
+      </Badge>
+    );
+  }
+  if (status === "expired") {
+    return <Badge variant="secondary">Expired</Badge>;
+  }
+  return <Badge variant="secondary">Not connected</Badge>;
+}
+
+function xeroStateLabel(readiness: XeroReadiness | null | undefined): string {
+  if (!readiness?.configured) return "Not configured on server";
+  if (!readiness.connected) return "Not connected";
+  if (readiness.ready) {
+    return readiness.display_name
+      ? `${readiness.display_name} · Ready for sync & push`
+      : "Ready for sync & push";
+  }
+  if (readiness.status === "organisation_selection_required") {
+    return "Choose which Xero organisation to link";
+  }
+  if (readiness.status === "needs_reauth") {
+    return readiness.last_error || "Session expired — reconnect Xero";
+  }
+  if (readiness.status === "error") {
+    return readiness.last_error || "Connection error — try reconnecting";
+  }
+  if (readiness.display_name) return readiness.display_name;
+  return "Connected — finishing setup";
+}
+
+function needsXeroOrgSelection(readiness: XeroReadiness | null | undefined): boolean {
+  return (
+    readiness?.status === "organisation_selection_required" ||
+    (readiness?.connected === true && readiness.organisation_selected === false)
+  );
+}
+
+const XERO_OAUTH_SELECT_ORG = new Set(["organisation_selection_required", "select_org"]);
+
 function accountingConnected(item: AccountingIntegrationItem | undefined): boolean {
-  return item?.status === "connected";
+  return item?.status === "connected" || item?.status === "organisation_selection_required";
 }
 
 function accountingTagline(
@@ -153,10 +223,22 @@ export function IntegrationsPage() {
   const [waBusy, setWaBusy] = useState(false);
   const [accountingBusy, setAccountingBusy] = useState<string | null>(null);
   const [accountingError, setAccountingError] = useState<string | null>(null);
+  const [xeroSyncBusy, setXeroSyncBusy] = useState<"settings" | "contacts" | "select" | "verify" | null>(null);
+  const [showXeroOrgPicker, setShowXeroOrgPicker] = useState(false);
   const {
     status: accountingStatus,
+    xeroReadiness,
+    xeroVerify,
+    xeroConnections,
     loading: accountingLoading,
+    xeroLoading,
+    xeroError,
     reload: reloadAccounting,
+    reloadAll: reloadAccountingAll,
+    selectXeroOrg,
+    syncXeroSettings,
+    syncXeroContacts,
+    verifyXeroConnection,
   } = useAccountingIntegrations(Boolean(s));
   const { data: stripeAccount, isLoading: stripeAccountLoading } = useStripeAccount(Boolean(s));
   const { data: stripeReadiness, isLoading: stripeReadinessLoading } = useStripeReadiness(Boolean(s));
@@ -191,6 +273,8 @@ export function IntegrationsPage() {
     setVbError(null);
     setAdminConsentUrl(null);
     setAdminConsentNote(null);
+    setShowXeroOrgPicker(false);
+    setXeroSyncBusy(null);
   });
 
   const loadMailboxes = useCallback((fresh = false) => {
@@ -371,18 +455,25 @@ export function IntegrationsPage() {
         title: "Xero connected",
         description: company ? `${company} is linked to this tenant.` : undefined,
       });
-      void reloadAccounting(true);
+      void reloadAccountingAll(true);
+    } else if (XERO_OAUTH_SELECT_ORG.has(xero)) {
+      setShowXeroOrgPicker(true);
+      toast({
+        title: "Select Xero organisation",
+        description: "Choose which Xero organisation to connect to this tenant.",
+      });
+      void reloadAccountingAll(true);
     } else if (xero === "error") {
       const msg = ACCOUNTING_OAUTH_ERRORS[reason ?? ""] ?? reason ?? "Xero connection failed";
       setAccountingError(msg);
       toast({ title: "Xero connection failed", description: msg, variant: "destructive" });
-      void reloadAccounting(true);
+      void reloadAccountingAll(true);
     }
     searchParams.delete("xero");
     searchParams.delete("company");
     searchParams.delete("reason");
     setSearchParams(searchParams, { replace: true });
-  }, [searchParams, setSearchParams, toast, reloadAccounting]);
+  }, [searchParams, setSearchParams, toast, reloadAccountingAll]);
 
   useEffect(() => {
     const quickbooks = searchParams.get("quickbooks");
@@ -426,11 +517,20 @@ export function IntegrationsPage() {
   }
 
   async function disconnectAccounting(provider: "xero" | "quickbooks_online") {
+    const label = provider === "xero" ? "Xero" : "QuickBooks";
+    if (
+      !window.confirm(
+        `Disconnect ${label} from this organisation? Synced references remain, but live push and sync will stop.`
+      )
+    ) {
+      return;
+    }
     setAccountingBusy(provider);
     setAccountingError(null);
     try {
       await api.disconnectAccountingIntegration(provider);
-      await reloadAccounting(true);
+      await reloadAccountingAll(true);
+      setShowXeroOrgPicker(false);
       toast({
         title: provider === "xero" ? "Xero disconnected" : "QuickBooks disconnected",
       });
@@ -438,6 +538,99 @@ export function IntegrationsPage() {
       setAccountingError(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
       setAccountingBusy(null);
+    }
+  }
+
+  async function handleSelectXeroOrg(xeroConnectionId: string) {
+    setXeroSyncBusy("select");
+    setAccountingError(null);
+    try {
+      const result = await selectXeroOrg(xeroConnectionId);
+      setShowXeroOrgPicker(false);
+      toast({
+        title: "Xero organisation selected",
+        description: result.display_name ?? undefined,
+      });
+    } catch (err) {
+      setAccountingError(err instanceof Error ? err.message : "Could not select organisation");
+    } finally {
+      setXeroSyncBusy(null);
+    }
+  }
+
+  async function handleSyncXeroSettings() {
+    setXeroSyncBusy("settings");
+    setAccountingError(null);
+    try {
+      const result = await syncXeroSettings();
+      toast({
+        title: "Xero settings synced",
+        description: `${result.account} accounts · ${result.tax_rate} tax rates · ${result.currency} currencies`,
+      });
+    } catch (err) {
+      setAccountingError(err instanceof Error ? err.message : "Settings sync failed");
+      toast({
+        title: "Xero settings sync failed",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setXeroSyncBusy(null);
+    }
+  }
+
+  async function handleVerifyXeroConnection() {
+    setXeroSyncBusy("verify");
+    setAccountingError(null);
+    try {
+      const result = await verifyXeroConnection();
+      if (result.connected) {
+        toast({
+          title: "Connection verified",
+          description: result.organisation_name || "Xero organisation verified",
+        });
+      } else if (result.needs_reauth) {
+        toast({
+          title: "Reconnect required",
+          description: result.message || "Xero session expired",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Verification failed",
+          description: result.message || "Could not verify Xero connection",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Verification failed",
+        description: err instanceof Error ? err.message : "Could not verify Xero connection",
+        variant: "destructive",
+      });
+    } finally {
+      setXeroSyncBusy(null);
+    }
+  }
+
+  async function handleSyncXeroContacts() {
+    setXeroSyncBusy("contacts");
+    setAccountingError(null);
+    try {
+      const result = await syncXeroContacts();
+      toast({
+        title: "Xero contacts synced",
+        description: `${result.contact} contacts updated`,
+      });
+    } catch (err) {
+      setAccountingError(err instanceof Error ? err.message : "Contacts sync failed");
+      toast({
+        title: "Xero contacts sync failed",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setXeroSyncBusy(null);
     }
   }
 
@@ -553,6 +746,10 @@ export function IntegrationsPage() {
 
   const xeroItem = accountingStatus?.xero;
   const qboItem = accountingStatus?.quickbooks_online;
+  const xeroOrgPickerVisible =
+    showXeroOrgPicker || needsXeroOrgSelection(xeroReadiness) || xeroReadiness?.status === "organisation_selection_required";
+  const xeroConnectedForUi = xeroReadiness?.connected === true || accountingConnected(xeroItem);
+  const xeroReady = xeroReadiness?.ready === true;
 
   const items = useMemo(
     () => {
@@ -631,10 +828,10 @@ export function IntegrationsPage() {
     {
       id: "xero",
       name: "Xero",
-      tagline: accountingTagline(xeroItem, "Chart of accounts & journals"),
-      ok: accountingConnected(xeroItem),
+      tagline: xeroReadiness ? xeroStateLabel(xeroReadiness) : accountingTagline(xeroItem, "Chart of accounts & journals"),
+      ok: xeroReady || accountingConnected(xeroItem),
       icon: ArrowLeftRight,
-      badge: accountingStatusBadge(xeroItem),
+      badge: xeroReadiness ? xeroReadinessBadge(xeroReadiness) : accountingStatusBadge(xeroItem),
       footer: accountingCardFooter("xero", xeroItem, s.xero_configured),
     },
     {
@@ -702,6 +899,7 @@ export function IntegrationsPage() {
       vbConnections,
       xeroItem,
       qboItem,
+      xeroReadiness,
       stripePaymentsTagline,
       stripePaymentsConnected,
       accountingBusy,
@@ -1358,10 +1556,170 @@ export function IntegrationsPage() {
         )}
       </Card>
 
+      <Card className="p-5 mb-6" data-testid="panel-xero-integration">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold">Xero accounting</h2>
+            <p className="text-xs text-muted-foreground">
+              Production OAuth, organisation selection, settings sync, and invoice push to Xero.
+            </p>
+          </div>
+          <ArrowLeftRight className="h-5 w-5 text-muted-foreground" />
+        </div>
+
+        {(accountingError || xeroError) && (
+          <p className="text-sm text-destructive mb-3">{accountingError ?? xeroError}</p>
+        )}
+
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs mb-4 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">Readiness</span>
+            {xeroReadinessBadge(xeroReadiness)}
+            {(accountingLoading || xeroLoading) && (
+              <span className="text-muted-foreground">Loading…</span>
+            )}
+          </div>
+          <p className="text-muted-foreground">{xeroStateLabel(xeroReadiness)}</p>
+          {xeroReadiness?.display_name && (
+            <p className="text-muted-foreground">
+              Connected organisation: <span className="text-foreground">{xeroReadiness.display_name}</span>
+            </p>
+          )}
+          {(xeroVerify?.connected || xeroReadiness?.connection_verified) && (
+            <p className="text-[hsl(var(--chart-1))]">✓ Connection verified</p>
+          )}
+          {xeroReadiness?.needs_reauth || xeroVerify?.needs_reauth ? (
+            <p className="text-amber-700 dark:text-amber-400">Reconnect required</p>
+          ) : null}
+          {xeroReadiness?.last_successful_sync_at && (
+            <p className="text-muted-foreground">
+              Last sync: {new Date(xeroReadiness.last_successful_sync_at).toLocaleString()}
+            </p>
+          )}
+          {(xeroReadiness?.last_error_message || xeroReadiness?.last_error) && (
+            <p className="text-destructive">
+              Last error: {xeroReadiness.last_error_message || xeroReadiness.last_error}
+            </p>
+          )}
+          {xeroReadiness?.connection_count != null && xeroReadiness.connection_count > 0 && (
+            <p className="text-muted-foreground">
+              {xeroReadiness.connection_count} organisation
+              {xeroReadiness.connection_count === 1 ? "" : "s"} available
+            </p>
+          )}
+        </div>
+
+        {!s.xero_configured && (
+          <p className="text-sm text-muted-foreground mb-4">
+            Set XERO_CLIENT_ID and XERO_CLIENT_SECRET in backend environment to enable OAuth.
+          </p>
+        )}
+
+        {user?.role === "admin" && s.xero_configured && !xeroConnectedForUi && (
+          <div className="mb-4">
+            <Button
+              size="sm"
+              disabled={accountingBusy === "xero" || accountingLoading}
+              onClick={() => void startAccountingConnect("xero")}
+            >
+              {accountingBusy === "xero" ? "Redirecting…" : "Connect Xero"}
+            </Button>
+          </div>
+        )}
+
+        {xeroOrgPickerVisible && xeroConnections.length > 0 && (
+          <div className="mb-4 space-y-2" data-testid="xero-org-picker">
+            <p className="text-xs font-medium">Select Xero organisation</p>
+            <ul className="space-y-2">
+              {xeroConnections.map((conn) => (
+                <li
+                  key={conn.id}
+                  className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm gap-3"
+                >
+                  <div className="min-w-0">
+                    <span className="font-medium">
+                      {conn.xero_tenant_name || conn.xero_tenant_id}
+                    </span>
+                    {conn.selected && (
+                      <Badge variant="outline" className="ml-2 text-[10px]">
+                        Selected
+                      </Badge>
+                    )}
+                  </div>
+                  {user?.role === "admin" && !conn.selected && (
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs shrink-0"
+                      disabled={xeroSyncBusy === "select"}
+                      onClick={() => void handleSelectXeroOrg(conn.xero_connection_id)}
+                    >
+                      {xeroSyncBusy === "select" ? "Selecting…" : "Use this org"}
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {user?.role === "admin" && xeroReady && (
+          <div className="flex flex-wrap gap-2 mb-4">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={xeroSyncBusy != null}
+              onClick={() => void handleVerifyXeroConnection()}
+            >
+              {xeroSyncBusy === "verify" ? "Verifying…" : "Verify connection"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={xeroSyncBusy != null}
+              onClick={() => void handleSyncXeroSettings()}
+            >
+              {xeroSyncBusy === "settings" ? "Syncing settings…" : "Sync settings"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={xeroSyncBusy != null}
+              onClick={() => void handleSyncXeroContacts()}
+            >
+              {xeroSyncBusy === "contacts" ? "Syncing contacts…" : "Sync contacts"}
+            </Button>
+          </div>
+        )}
+
+        {user?.role === "admin" && xeroConnectedForUi && (
+          <div className="flex flex-wrap gap-2">
+            {(xeroReadiness?.needs_reauth || xeroVerify?.needs_reauth) && (
+              <Button
+                size="sm"
+                disabled={accountingBusy === "xero"}
+                onClick={() => void startAccountingConnect("xero")}
+              >
+                {accountingBusy === "xero" ? "Redirecting…" : "Reconnect Xero"}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={accountingBusy === "xero" || accountingLoading}
+              onClick={() => void disconnectAccounting("xero")}
+            >
+              {accountingBusy === "xero" ? "Disconnecting…" : "Disconnect Xero"}
+            </Button>
+          </div>
+        )}
+      </Card>
+
       <Card className="p-5">
-        <h2 className="text-sm font-semibold mb-1">Planned Xero & QuickBooks sync</h2>
+        <h2 className="text-sm font-semibold mb-1">Planned QuickBooks sync</h2>
         <p className="text-xs text-muted-foreground mb-4">
-          OAuth connection is live; bill and journal sync is not enabled yet. Planned features:
+          Xero settings, contacts, and invoice push are live. QuickBooks bill and journal sync is
+          not enabled yet. Planned features:
         </p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {["Chart of accounts", "Contacts", "Bills & payments", "Tax rates", "Tracking categories"].map(
