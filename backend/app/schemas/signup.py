@@ -16,6 +16,8 @@ class SignupVerifyOtpRequest(BaseModel):
 class SignupOrganizationRequest(BaseModel):
     organization_name: str = Field(min_length=1, max_length=255)
     country: str = Field(min_length=2, max_length=2)
+    industry: str | None = Field(default=None, max_length=64)
+    phone: str | None = Field(default=None, max_length=32)
 
 
 class SignupSelectPlanRequest(BaseModel):
@@ -42,6 +44,8 @@ class SignupSessionInfo(BaseModel):
     status: str
     organization_name: str | None = None
     country: str | None = None
+    industry: str | None = None
+    phone: str | None = None
     plan: str | None = None
     identity_via_oauth: bool = False
 
@@ -55,6 +59,13 @@ class SignupPlanOption(BaseModel):
     currency_code: str
     social_integration: bool
     email_integration: bool
+
+
+class SignupLinkResponse(BaseModel):
+    path: str
+    url: str
+    aliases: list[str]
+    embed_html: str
 
 
 class OAuthProvidersResponse(BaseModel):

@@ -33,6 +33,8 @@ class SignupSession:
     organization_name: str | None = None
     organization_slug: str | None = None
     country: str | None = None
+    industry: str | None = None
+    phone: str | None = None
     plan: str | None = None
     tenant_id: str | None = None
     stripe_session_id: str | None = None
@@ -49,6 +51,8 @@ class SignupSession:
             "organization_name": self.organization_name,
             "organization_slug": self.organization_slug,
             "country": self.country,
+            "industry": self.industry,
+            "phone": self.phone,
             "plan": self.plan,
             "tenant_id": self.tenant_id,
             "stripe_session_id": self.stripe_session_id,
@@ -67,6 +71,8 @@ class SignupSession:
             organization_name=data.get("organization_name"),
             organization_slug=data.get("organization_slug"),
             country=data.get("country"),
+            industry=data.get("industry"),
+            phone=data.get("phone"),
             plan=data.get("plan"),
             tenant_id=data.get("tenant_id"),
             stripe_session_id=data.get("stripe_session_id"),

@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
-import type { BillingState, CheckoutSessionResult } from "@/api/types";
+import type { BillingLedgerCategory, BillingState, CheckoutSessionResult } from "@/api/types";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
 import { normalizeBillingState } from "@/lib/billingUtils";
 import { queryKeys } from "@/lib/queryClient";
@@ -23,10 +23,14 @@ export function useBilling(enabled = true) {
   });
 }
 
-export function useBillingUsage(page = 1, enabled = true) {
+export function useBillingUsage(
+  page = 1,
+  enabled = true,
+  category: BillingLedgerCategory = "usage"
+) {
   return useTenantQuery({
-    queryKey: [...queryKeys.billing(), "usage", page, "v2"],
-    queryFn: () => api.getBillingUsage(page, 50, { fresh: true }),
+    queryKey: [...queryKeys.billing(), "ledger", category, page, "v2"],
+    queryFn: () => api.getBillingUsage(page, 50, category, { fresh: true }),
     enabled,
     staleTime: 0,
     retry: (failureCount, error) => {

@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.api import (
     accounting_integrations,
@@ -59,6 +59,7 @@ from app.services.ingest.inline_mailbox_poller import (
     stop_inline_mailbox_poller,
 )
 from app.services.rule_book.rule_book_save_buffer import flush_all_rule_book_save_buffers
+from app.services.shared.public_app_url import build_oauth_frontend_path
 from app.services.tenant.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.tenant.tenant_module_service import require_module
 from app.telemetry import setup_application_insights
@@ -203,6 +204,21 @@ async def connect_mailbox_page() -> HTMLResponse:
 async def accept_invite_page() -> HTMLResponse:
     """Public tenant member invite landing page (works via ngrok on the API port)."""
     return HTMLResponse(content=_ACCEPT_INVITE_HTML)
+
+
+@app.get("/signup", include_in_schema=False)
+@app.get("/start", include_in_schema=False)
+@app.get("/get-started", include_in_schema=False)
+@app.get("/register", include_in_schema=False)
+@app.get("/setup", include_in_schema=False)
+@app.get("/billing", include_in_schema=False)
+async def redirect_frontend_app_routes(request: Request) -> RedirectResponse:
+    """Send SPA routes to the React dev server when ngrok tunnels to the API."""
+    target = build_oauth_frontend_path(request.url.path)
+    if request.url.query:
+        separator = "&" if "?" in target else "?"
+        target = f"{target}{separator}{request.url.query}"
+    return RedirectResponse(url=target, status_code=307)
 
 
 @app.get("/health")

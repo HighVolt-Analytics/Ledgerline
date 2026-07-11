@@ -44,6 +44,8 @@ class CreditLedgerEntry(Base):
     stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     stripe_invoice_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    stripe_hosted_invoice_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    stripe_receipt_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

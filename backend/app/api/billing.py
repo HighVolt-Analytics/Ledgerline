@@ -51,6 +51,7 @@ from app.services.payments.stripe_platform_billing_service import (
     get_checkout_status,
     get_signup_checkout_status,
     public_plans_for_country,
+    resolve_ledger_invoice_links,
 )
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -73,6 +74,8 @@ def _ledger_row(row) -> CreditLedgerEntryResponse:
         azure_cost_breakdown=row.azure_cost_breakdown_json,
         filename=row.filename,
         invoice_id=row.invoice_id,
+        stripe_hosted_invoice_url=row.stripe_hosted_invoice_url,
+        stripe_receipt_url=row.stripe_receipt_url,
         created_at=row.created_at,
     )
 
@@ -228,11 +231,26 @@ async def get_billing(
 async def get_billing_usage(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    category: str | None = Query(
+        None,
+        pattern=r"^(usage|invoice)$",
+        description="Filter ledger: 'usage' = credit consumption, 'invoice' = billing events",
+    ),
     ctx: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[BillingUsageHistoryResponse]:
     offset = (page - 1) * page_size
-    rows, total = await list_credit_ledger(db, ctx.tenant_id, limit=page_size, offset=offset)
+    rows, total = await list_credit_ledger(
+        db, ctx.tenant_id, limit=page_size, offset=offset, category=category
+    )
+    # For the Invoices tab, backfill hosted invoice / receipt URLs from Stripe so
+    # top-ups and subscription signups link out to the Stripe-hosted invoice page.
+    if category == "invoice" and rows:
+        try:
+            if await resolve_ledger_invoice_links(db, rows):
+                await db.commit()
+        except Exception:  # pragma: no cover - never let link resolution break the page
+            await db.rollback()
     pages = max(1, (total + page_size - 1) // page_size)
     return ApiEnvelope(
         data=BillingUsageHistoryResponse(
@@ -293,6 +311,8 @@ async def get_checkout_status_endpoint(
         session_id=session_id,
         tenant_id=ctx.tenant_id,
     )
+    if data.get("fulfilled"):
+        await db.commit()
     return ApiEnvelope(data=CheckoutStatusResponse.model_validate(data))
 
 

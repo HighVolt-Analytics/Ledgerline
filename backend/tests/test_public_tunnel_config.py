@@ -116,3 +116,59 @@ def test_build_public_app_path_uses_tunnel(monkeypatch: pytest.MonkeyPatch) -> N
     assert resolve_public_app_base_url() == "https://example.ngrok-free.dev"
     url = build_public_app_path("/connect-mailbox?token=abc")
     assert url.startswith("https://example.ngrok-free.dev/connect-mailbox?token=abc")
+
+
+def test_signup_checkout_return_urls_use_frontend_not_tunnel(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.payments.stripe_platform_billing_service import _signup_checkout_return_urls
+
+    monkeypatch.setenv(
+        "PUBLIC_TUNNEL_URL",
+        "https://example.ngrok-free.dev",
+    )
+    monkeypatch.setenv("PUBLIC_APP_URL", "http://localhost:5173")
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:5173")
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_SUCCESS_URL", "")
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_CANCEL_URL", "")
+    get_settings.cache_clear()
+
+    success_url, cancel_url = _signup_checkout_return_urls(get_settings())
+    assert success_url.startswith("http://localhost:5173/signup?checkout=success")
+    assert "session_id={CHECKOUT_SESSION_ID}" in success_url
+    assert cancel_url == "http://localhost:5173/signup?checkout=cancelled"
+
+
+def test_signup_checkout_return_urls_honor_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.payments.stripe_platform_billing_service import _signup_checkout_return_urls
+
+    monkeypatch.setenv(
+        "STRIPE_PLATFORM_BILLING_SUCCESS_URL",
+        "http://localhost:5173/signup?checkout=success",
+    )
+    monkeypatch.setenv(
+        "STRIPE_PLATFORM_BILLING_CANCEL_URL",
+        "http://localhost:5173/signup?checkout=cancelled",
+    )
+    get_settings.cache_clear()
+
+    success_url, cancel_url = _signup_checkout_return_urls(get_settings())
+    assert success_url.startswith("http://localhost:5173/signup?checkout=success")
+    assert cancel_url == "http://localhost:5173/signup?checkout=cancelled"
+
+
+def test_billing_checkout_return_urls_ignore_signup_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.payments.stripe_platform_billing_service import _billing_checkout_return_urls
+
+    monkeypatch.setenv(
+        "STRIPE_PLATFORM_BILLING_SUCCESS_URL",
+        "http://localhost:5173/signup?checkout=success",
+    )
+    monkeypatch.setenv(
+        "STRIPE_PLATFORM_BILLING_CANCEL_URL",
+        "http://localhost:5173/signup?checkout=cancelled",
+    )
+    get_settings.cache_clear()
+
+    success_url, cancel_url = _billing_checkout_return_urls(get_settings())
+    assert success_url.startswith("http://localhost:5173/billing?checkout=success")
+    assert "session_id={CHECKOUT_SESSION_ID}" in success_url
+    assert cancel_url == "http://localhost:5173/billing?checkout=cancelled"

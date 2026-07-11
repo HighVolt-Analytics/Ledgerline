@@ -33,6 +33,7 @@ from app.services.payments.stripe_platform_billing_service import (
     _require_platform_stripe_secret,
     _stripe_value,
     _validate_signup_request,
+    get_checkout_status,
 )
 from tests.conftest import TESTING_TENANT_UUID
 
@@ -109,6 +110,33 @@ def test_list_country_plans_singapore_studio() -> None:
 
 
 @pytest.mark.asyncio
+async def test_studio_checkout_line_items_use_catalog_when_price_currency_mismatch(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_ENABLED", "true")
+    monkeypatch.setenv("STRIPE_PRICE_STUDIO_AUD", "price_inr_only")
+    get_settings.cache_clear()
+
+    from app.services.payments.stripe_platform_billing_service import (
+        _plan_snapshot,
+        _studio_checkout_line_items,
+    )
+
+    cfg = get_settings()
+    snapshot = _plan_snapshot("AU", PLAN_STUDIO)
+
+    with patch(
+        "app.services.payments.stripe_platform_billing_service._run_stripe",
+        new=AsyncMock(return_value={"currency": "inr"}),
+    ):
+        line_items = await _studio_checkout_line_items(cfg, snapshot=snapshot)
+
+    assert line_items[0]["price_data"]["currency"] == "aud"
+    assert line_items[0]["price_data"]["unit_amount"] == 5000
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
 async def test_grant_credits_idempotent_once(db_session) -> None:
     first = await grant_credits_idempotent(
         db_session,
@@ -174,6 +202,51 @@ async def test_checkout_completed_topup_grants_once(db_session, monkeypatch) -> 
 
     await db_session.refresh(billing)
     assert billing.credit_balance == before + 100
+
+
+@pytest.mark.asyncio
+async def test_get_checkout_status_fulfills_topup_without_webhook(db_session, monkeypatch) -> None:
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_ENABLED", "true")
+    get_settings.cache_clear()
+
+    billing = await db_session.get(TenantBilling, TESTING_TENANT_UUID)
+    assert billing is not None
+    before = billing.credit_balance
+
+    checkout = {
+        "id": "cs_topup_poll",
+        "status": "complete",
+        "payment_status": "paid",
+        "mode": "payment",
+        "payment_intent": "pi_poll",
+        "metadata": {
+            "tenant_id": str(TESTING_TENANT_UUID),
+            "event_type": "credit_topup",
+            "amount": "100",
+            "currency": "AUD",
+            "credits_to_add": "500",
+        },
+    }
+
+    with patch(
+        "app.services.payments.stripe_platform_billing_service._run_stripe",
+        new=AsyncMock(return_value=checkout),
+    ), patch(
+        "app.services.payments.stripe_platform_billing_service.apply_rls_session_context",
+        new=AsyncMock(),
+    ):
+        result = await get_checkout_status(
+            db_session,
+            session_id="cs_topup_poll",
+            tenant_id=TESTING_TENANT_UUID,
+        )
+
+    assert result["fulfilled"] is True
+    assert result["payment_status"] == "paid"
+    await db_session.refresh(billing)
+    assert billing.credit_balance == before + 500
+
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -250,6 +323,100 @@ async def test_invoice_paid_grants_monthly_credits_once(db_session, monkeypatch)
         )
     ).scalars().all()
     assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_fulfill_signup_checkout_session_provisions_without_webhook(
+    db_session, monkeypatch
+) -> None:
+    monkeypatch.setenv("STRIPE_PLATFORM_BILLING_ENABLED", "true")
+    monkeypatch.setenv("STRIPE_PRICE_STUDIO_AUD", "price_test_studio")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    from app.services.payments.stripe_platform_billing_service import (
+        SIGNUP_STATUS_COMPLETED,
+        SIGNUP_STATUS_PENDING,
+        fulfill_signup_checkout_session,
+    )
+
+    slug = f"studio-poll-{uuid.uuid4().hex[:8]}"
+    pending = PendingSignupBillingSession(
+        id=uuid.uuid4(),
+        signup_token="tok_poll",
+        email=f"{slug}@example.com",
+        organisation_name="Studio Poll Org",
+        organisation_slug=slug,
+        country="AU",
+        plan_code=PLAN_STUDIO,
+        currency="AUD",
+        monthly_credits=250,
+        user_limit=3,
+        password_hash="hashed",
+        status=SIGNUP_STATUS_PENDING,
+        stripe_checkout_session_id="cs_poll_signup",
+        signup_source="wizard",
+        industry="Hospitality",
+    )
+    db_session.add(pending)
+    await db_session.flush()
+
+    checkout = _FakeStripeSession(
+        id="cs_poll_signup",
+        payment_status="paid",
+        status="complete",
+        customer="cus_test",
+        subscription=_FakeStripeSession(
+            id="sub_test",
+            status="active",
+            items=_FakeStripeSession(
+                data=[_FakeStripeSession(price=_FakeStripeSession(id="price_test_studio"))]
+            ),
+        ),
+    )
+
+    with patch(
+        "app.services.payments.stripe_platform_billing_service._run_stripe",
+        new=AsyncMock(return_value=checkout),
+    ), patch(
+        "app.services.payments.stripe_platform_billing_service._unique_slug",
+        new=AsyncMock(return_value=slug),
+    ):
+        result = await fulfill_signup_checkout_session(
+            db_session, session_id="cs_poll_signup"
+        )
+
+    assert result["payment_status"] == "paid"
+    assert result["tenant_id"]
+    await db_session.refresh(pending)
+    assert pending.status == SIGNUP_STATUS_COMPLETED
+    assert pending.tenant_id is not None
+
+    tenant = await db_session.get(Tenant, pending.tenant_id)
+    assert tenant is not None
+    assert tenant.settings_json.get("onboarding_completed") is True
+    assert tenant.settings_json.get("country") == "AU"
+    assert tenant.settings_json.get("industry") == "Hospitality"
+
+    billing = await db_session.get(TenantBilling, pending.tenant_id)
+    assert billing is not None
+    assert billing.plan == PLAN_STUDIO
+    assert billing.credit_balance == 250
+
+    ledger_rows = (
+        await db_session.execute(
+            select(CreditLedgerEntry).where(
+                CreditLedgerEntry.tenant_id == pending.tenant_id,
+            )
+        )
+    ).scalars().all()
+    assert len(ledger_rows) == 1
+    assert ledger_rows[0].event_type == "subscription_signup"
+    assert ledger_rows[0].credits_delta == 250
+    assert ledger_rows[0].balance_after == 250
+
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSignupValidationInput,
   EMPTY_SIGNUP_FIELDS,
+  getIdentityDisabledReason,
   getPlanActionDisabledReason,
   getSignupDisabledReason,
   isSignupFormComplete,
@@ -46,19 +47,13 @@ describe("signupForm", () => {
   it("rejects invalid email", () => {
     expect(isValidEmail("not-an-email")).toBe(false);
     expect(
-      getSignupDisabledReason({
-        ...validStudioInput,
-        fields: { ...validFields, email: "not-an-email" },
-      })
+      getIdentityDisabledReason({ ...validFields, email: "not-an-email" }, false)
     ).toBe("Enter a valid email.");
   });
 
   it("rejects password mismatch", () => {
     expect(
-      getSignupDisabledReason({
-        ...validStudioInput,
-        fields: { ...validFields, confirmPassword: "other" },
-      })
+      getIdentityDisabledReason({ ...validFields, confirmPassword: "other" }, false)
     ).toBe("Passwords do not match.");
   });
 
@@ -68,7 +63,9 @@ describe("signupForm", () => {
         ...validStudioInput,
         platformBillingEnabled: false,
       })
-    ).toBe("Stripe billing is not enabled in staging.");
+    ).toBe(
+      "Stripe billing is not enabled. Set STRIPE_PLATFORM_BILLING_ENABLED=true in backend/.env and restart the API server."
+    );
   });
 
   it("enables studio checkout after user fills each field", () => {

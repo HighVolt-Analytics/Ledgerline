@@ -45,7 +45,7 @@ export function LoginOauthCallbackPage() {
     if (signupToken) {
       handled.current = true;
       persistSignupToken(signupToken);
-      navigate(`/signup?token=${encodeURIComponent(signupToken)}`, { replace: true });
+      navigate(`/signup?signup_token=${encodeURIComponent(signupToken)}`, { replace: true });
       return;
     }
 
@@ -96,7 +96,7 @@ export function LoginOauthCallbackPage() {
           if (result.result === "signup" && result.signup_token) {
             persistSignupToken(result.signup_token);
             window.location.replace(
-              withRouterBasename(`/signup?token=${encodeURIComponent(result.signup_token)}`)
+              withRouterBasename(`/signup?signup_token=${encodeURIComponent(result.signup_token)}`)
             );
             return;
           }

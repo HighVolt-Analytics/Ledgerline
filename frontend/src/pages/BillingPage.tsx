@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Coins, Mail, MessageCircle, X } from "lucide-react";
+import { Coins, ExternalLink, Mail, MessageCircle, Receipt, X } from "lucide-react";
 import { ManagePlanDialog } from "@/components/billing/ManagePlanDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
@@ -25,12 +25,33 @@ function formatEventType(type: string) {
   return type.replace(/_/g, " ");
 }
 
+function formatAmount(amount: number | null | undefined, currency: string | null | undefined) {
+  if (amount == null) return "—";
+  const code = (currency || "").trim().toUpperCase();
+  if (code) {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: code,
+        maximumFractionDigits: 2,
+      }).format(amount);
+    } catch {
+      return `${code} ${amount.toLocaleString()}`;
+    }
+  }
+  return amount.toLocaleString();
+}
+
 export function BillingPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: billing, isLoading, error, refetch } = useBilling(Boolean(user));
+  const [activeTab, setActiveTab] = useState<"usage" | "invoices">("usage");
   const [usagePage, setUsagePage] = useState(1);
-  const { data: usage } = useBillingUsage(usagePage, Boolean(user && billing));
+  const [invoicesPage, setInvoicesPage] = useState(1);
+  const billingReady = Boolean(user && billing);
+  const { data: usage } = useBillingUsage(usagePage, billingReady, "usage");
+  const { data: invoices } = useBillingUsage(invoicesPage, billingReady, "invoice");
   const { topUp, upgradeToStudio } = useBillingMutations();
   const [institutionCountry, setInstitutionCountry] = useState<string | null>(null);
   const { region: pricingRegion } = usePricingRegion({
@@ -63,7 +84,11 @@ export function BillingPage() {
       try {
         const status = await api.getCheckoutStatus(sessionId);
         if (checkout === "success" && status.payment_status === "paid") {
-          setMessage("Payment successful — your credits will update shortly.");
+          setMessage(
+            status.fulfilled
+              ? "Payment successful — credits have been added to your account."
+              : "Payment successful — your credits will update shortly.",
+          );
         } else if (checkout === "cancelled" || status.status === "expired") {
           setMessage("Checkout was cancelled.");
         } else if (checkout === "success") {
@@ -242,78 +267,203 @@ export function BillingPage() {
         </Card>
       </div>
 
-      <h2 className="text-sm font-semibold mb-3">Usage history</h2>
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left">
-                <th className="px-4 py-2 font-medium">When</th>
-                <th className="px-4 py-2 font-medium">Event</th>
-                <th className="px-4 py-2 font-medium">Detail</th>
-                <th className="px-4 py-2 font-medium text-right">Credits</th>
-                <th className="px-4 py-2 font-medium text-right">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(usage?.items ?? []).map((row) => (
-                <tr key={row.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
-                    {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
-                  </td>
-                  <td className="px-4 py-2.5 capitalize">{formatEventType(row.event_type)}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground max-w-xs truncate">
-                    {row.description}
-                    {row.pages != null && row.pages > 0 && (
-                      <span className="ml-1">({row.pages} pg)</span>
-                    )}
-                  </td>
-                  <td
-                    className={cn(
-                      "px-4 py-2.5 text-right tnum",
-                      row.credits_delta < 0 ? "text-destructive" : "text-[hsl(var(--chart-1))]"
-                    )}
-                  >
-                    {row.credits_delta > 0 ? "+" : ""}
-                    {row.credits_delta.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tnum">{row.balance_after.toLocaleString()}</td>
+      <div className="mb-3 flex items-center gap-1 border-b border-border">
+        <button
+          type="button"
+          onClick={() => setActiveTab("usage")}
+          className={cn(
+            "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+            activeTab === "usage"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+          data-testid="tab-usage-history"
+        >
+          <Coins className="h-3.5 w-3.5" />
+          Usage history
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("invoices")}
+          className={cn(
+            "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+            activeTab === "invoices"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+          data-testid="tab-invoices"
+        >
+          <Receipt className="h-3.5 w-3.5" />
+          Invoices
+        </button>
+      </div>
+
+      {activeTab === "usage" && (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 text-left">
+                  <th className="px-4 py-2 font-medium">When</th>
+                  <th className="px-4 py-2 font-medium">Event</th>
+                  <th className="px-4 py-2 font-medium">Detail</th>
+                  <th className="px-4 py-2 font-medium text-right">Credits</th>
+                  <th className="px-4 py-2 font-medium text-right">Balance</th>
                 </tr>
-              ))}
-              {(usage?.items ?? []).length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                    No usage recorded yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        {usage && usage.pages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={usagePage <= 1}
-              onClick={() => setUsagePage((p) => Math.max(1, p - 1))}
-            >
-              Previous
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Page {usage.page} of {usage.pages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={usagePage >= usage.pages}
-              onClick={() => setUsagePage((p) => p + 1)}
-            >
-              Next
-            </Button>
+              </thead>
+              <tbody>
+                {(usage?.items ?? []).map((row) => (
+                  <tr key={row.id} className="border-b border-border last:border-0">
+                    <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                      {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 capitalize">{formatEventType(row.event_type)}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground max-w-xs truncate">
+                      {row.description}
+                      {row.pages != null && row.pages > 0 && (
+                        <span className="ml-1">({row.pages} pg)</span>
+                      )}
+                    </td>
+                    <td
+                      className={cn(
+                        "px-4 py-2.5 text-right tnum",
+                        row.credits_delta < 0 ? "text-destructive" : "text-[hsl(var(--chart-1))]"
+                      )}
+                    >
+                      {row.credits_delta > 0 ? "+" : ""}
+                      {row.credits_delta.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tnum">{row.balance_after.toLocaleString()}</td>
+                  </tr>
+                ))}
+                {(usage?.items ?? []).length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                      No credit usage recorded yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
-      </Card>
+          {usage && usage.pages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={usagePage <= 1}
+                onClick={() => setUsagePage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Page {usage.page} of {usage.pages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={usagePage >= usage.pages}
+                onClick={() => setUsagePage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {activeTab === "invoices" && (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 text-left">
+                  <th className="px-4 py-2 font-medium">When</th>
+                  <th className="px-4 py-2 font-medium">Type</th>
+                  <th className="px-4 py-2 font-medium">Detail</th>
+                  <th className="px-4 py-2 font-medium text-right">Amount</th>
+                  <th className="px-4 py-2 font-medium text-right">Credits</th>
+                  <th className="px-4 py-2 font-medium text-right">Invoice</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(invoices?.items ?? []).map((row) => {
+                  const invoiceUrl = row.stripe_hosted_invoice_url || row.stripe_receipt_url;
+                  return (
+                    <tr key={row.id} className="border-b border-border last:border-0">
+                      <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                        {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
+                      </td>
+                      <td className="px-4 py-2.5 capitalize">{formatEventType(row.event_type)}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground max-w-xs truncate">
+                        {row.description}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tnum">
+                        {formatAmount(row.amount_paid, row.currency_code)}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-4 py-2.5 text-right tnum",
+                          row.credits_delta < 0 ? "text-destructive" : "text-[hsl(var(--chart-1))]"
+                        )}
+                      >
+                        {row.credits_delta > 0 ? "+" : ""}
+                        {row.credits_delta.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        {invoiceUrl ? (
+                          <a
+                            href={invoiceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-primary hover:underline"
+                            data-testid={`invoice-link-${row.id}`}
+                          >
+                            View
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {(invoices?.items ?? []).length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                      No invoices yet. Top-ups and subscription charges will appear here.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {invoices && invoices.pages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={invoicesPage <= 1}
+                onClick={() => setInvoicesPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Page {invoices.page} of {invoices.pages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={invoicesPage >= invoices.pages}
+                onClick={() => setInvoicesPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
 
       <ManagePlanDialog
         open={manageOpen}

@@ -1753,8 +1753,12 @@ export interface CreditLedgerEntry {
   azure_cost_breakdown?: Record<string, unknown> | null;
   filename?: string | null;
   invoice_id?: number | null;
+  stripe_hosted_invoice_url?: string | null;
+  stripe_receipt_url?: string | null;
   created_at?: string | null;
 }
+
+export type BillingLedgerCategory = "usage" | "invoice";
 
 export interface BillingState {
   balance: number;
@@ -1791,6 +1795,7 @@ export interface CheckoutStatusResult {
   event_type?: string | null;
   tenant_id?: string | null;
   email?: string | null;
+  fulfilled?: boolean;
 }
 
 export interface BillingSignupCheckoutBody {

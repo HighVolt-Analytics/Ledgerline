@@ -11,6 +11,8 @@ export type SignupSessionInfo = {
   status: string;
   organization_name?: string | null;
   country?: string | null;
+  industry?: string | null;
+  phone?: string | null;
   plan?: string | null;
   identity_via_oauth: boolean;
 };
@@ -107,12 +109,19 @@ export async function fetchSignupSession(signupToken: string): Promise<SignupSes
 export async function signupSetOrganization(
   signupToken: string,
   organizationName: string,
-  country: string
+  country: string,
+  industry?: string,
+  phone?: string
 ): Promise<SignupSessionInfo> {
   const res = await fetch(`${BASE}/api/signup/organization`, {
     method: "POST",
     headers: authHeaders(signupToken),
-    body: JSON.stringify({ organization_name: organizationName, country }),
+    body: JSON.stringify({
+      organization_name: organizationName,
+      country,
+      industry: industry?.trim() || undefined,
+      phone: phone?.trim() || undefined,
+    }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   const json = await res.json();
@@ -159,6 +168,22 @@ export async function signupConfirmPayment(
     method: "POST",
     headers: authHeaders(signupToken),
   });
+  if (!res.ok) throw new Error(await parseError(res));
+  const json = await res.json();
+  return json.data as SignupCompleteResponse;
+}
+
+export async function signupCompleteStudio(
+  signupToken: string,
+  sessionId: string
+): Promise<SignupCompleteResponse> {
+  const res = await fetch(
+    `${BASE}/api/signup/complete-studio?session_id=${encodeURIComponent(sessionId)}`,
+    {
+      method: "POST",
+      headers: authHeaders(signupToken),
+    }
+  );
   if (!res.ok) throw new Error(await parseError(res));
   const json = await res.json();
   return json.data as SignupCompleteResponse;

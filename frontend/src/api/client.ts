@@ -3,6 +3,7 @@ import type {
   BillingState,
   BillingSignupCheckoutBody,
   BillingPlansCatalog,
+  BillingLedgerCategory,
   BillingUsageHistory,
   CheckoutSessionResult,
   CheckoutStatusResult,
@@ -1329,8 +1330,15 @@ export const api = {
     return request<BillingState>(path);
   },
   getGeoCountry: () => request<{ country_code: string | null }>("/api/geo/country"),
-  getBillingUsage: (page = 1, pageSize = 50, options?: FreshRequestOptions) => {
-    const path = `/api/billing/usage?page=${page}&page_size=${pageSize}`;
+  getBillingUsage: (
+    page = 1,
+    pageSize = 50,
+    category?: BillingLedgerCategory,
+    options?: FreshRequestOptions
+  ) => {
+    const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    if (category) query.set("category", category);
+    const path = `/api/billing/usage?${query.toString()}`;
     if (options?.fresh) bustGetCache(path);
     return request<BillingUsageHistory>(path);
   },

@@ -77,7 +77,7 @@ def _frontend_oauth_callback_url(**params: str) -> str:
 
 
 def _signup_redirect(signup_token: str) -> str:
-    return f"{build_oauth_frontend_path('/signup')}?token={signup_token}"
+    return f"{build_oauth_frontend_path('/signup')}?signup_token={signup_token}"
 
 
 async def _resolve_oauth_identity(

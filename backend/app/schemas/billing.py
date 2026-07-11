@@ -39,6 +39,8 @@ class CreditLedgerEntryResponse(BaseModel):
     azure_cost_breakdown: dict[str, Any] | None = None
     filename: str | None = None
     invoice_id: int | None = None
+    stripe_hosted_invoice_url: str | None = None
+    stripe_receipt_url: str | None = None
     created_at: datetime | None = None
 
 
@@ -128,6 +130,7 @@ class CheckoutStatusResponse(BaseModel):
     event_type: str | None = None
     tenant_id: str | None = None
     email: str | None = None
+    fulfilled: bool = False
 
 
 class PlatformCreditSettingsResponse(BaseModel):

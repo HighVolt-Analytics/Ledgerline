@@ -13,6 +13,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { LoginOauthCallbackPage } from "@/pages/LoginOauthCallbackPage";
 import { SignupPage } from "@/pages/SignupPage";
+import { ALL_PUBLIC_SIGNUP_PATHS } from "@/lib/publicSignupRoutes";
 import { SuperAdminEmbedPage } from "@/pages/SuperAdminEmbedPage";
 import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
 import { OnboardingPage } from "@/pages/OnboardingPage";
@@ -124,7 +125,9 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/login/oauth/callback" element={<LoginOauthCallbackPage />} />
-        <Route path="/signup" element={<SignupPage />} />
+        {ALL_PUBLIC_SIGNUP_PATHS.map((path) => (
+          <Route key={path} path={path} element={<SignupPage />} />
+        ))}
         <Route path="/platform/embed" element={<SuperAdminEmbedPage />} />
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
         <Route path="/setup" element={<SignupPage />} />

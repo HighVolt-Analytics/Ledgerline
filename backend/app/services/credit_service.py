@@ -32,6 +32,21 @@ from app.services.extraction.document_ai_provider import DocumentAiProvider
 from app.tenant_settings import tenant_country
 
 
+# Event types that represent billing / payment / credit-grant events. These are
+# surfaced under the "Invoices" tab. Everything else (document processing charges,
+# expiry, etc.) is treated as credit-usage history.
+INVOICE_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "top_up",
+        "subscription_signup",
+        "monthly_grant",
+        "plan_upgrade",
+        "plan_change",
+        "admin_grant",
+    }
+)
+
+
 class InsufficientCreditsError(Exception):
     def __init__(self, balance: int, required: int) -> None:
         self.balance = balance
@@ -107,6 +122,7 @@ async def ensure_tenant_billing(
     tenant_id: uuid.UUID,
     *,
     plan: str | None = None,
+    grant_initial_credits: bool = True,
 ) -> TenantBilling:
     billing = await session.get(TenantBilling, tenant_id)
     if billing is not None:
@@ -116,16 +132,20 @@ async def ensure_tenant_billing(
     today = date.today()
     initial_plan = plan or PLAN_FREE
     region = tenant_pricing_region(tenant) if tenant else pricing_region_for_country(None)
-    credits = monthly_credits_for_plan(
-        country_code=tenant_country(tenant) if tenant else None,
-        plan=initial_plan,
+    credits = (
+        monthly_credits_for_plan(
+            country_code=tenant_country(tenant) if tenant else None,
+            plan=initial_plan,
+        )
+        if grant_initial_credits
+        else 0
     )
     billing = TenantBilling(
         tenant_id=tenant_id,
         plan=initial_plan,
         credit_balance=credits,
         billing_anchor_date=today,
-        last_monthly_grant_at=today if credits > 0 else None,
+        last_monthly_grant_at=today if credits > 0 or not grant_initial_credits else None,
     )
     session.add(billing)
     await session.flush()
@@ -434,7 +454,6 @@ async def apply_studio_subscription_to_billing(
     if grant_initial_credits:
         credits = studio_def.monthly_credits
         delta = credits - old_balance
-        billing.credit_balance = credits
         billing.last_monthly_grant_at = date.today()
         key = idempotency_key or f"studio_activation:{tenant_id}"
         if delta != 0:
@@ -600,18 +619,31 @@ async def list_credit_ledger(
     *,
     limit: int = 100,
     offset: int = 0,
+    category: str | None = None,
 ) -> tuple[list[CreditLedgerEntry], int]:
+    """List ledger entries.
+
+    ``category`` filters the ledger:
+      - ``"invoice"``: only billing / payment / credit-grant events.
+      - ``"usage"``: only credit-usage history (document charges, expiry, etc.).
+      - ``None``: all entries.
+    """
+    filters = [CreditLedgerEntry.tenant_id == tenant_id]
+    normalized = (category or "").strip().lower()
+    if normalized == "invoice":
+        filters.append(CreditLedgerEntry.event_type.in_(INVOICE_EVENT_TYPES))
+    elif normalized == "usage":
+        filters.append(CreditLedgerEntry.event_type.notin_(INVOICE_EVENT_TYPES))
+
     total = (
         await session.execute(
-            select(func.count())
-            .select_from(CreditLedgerEntry)
-            .where(CreditLedgerEntry.tenant_id == tenant_id)
+            select(func.count()).select_from(CreditLedgerEntry).where(*filters)
         )
     ).scalar_one()
     rows = (
         await session.execute(
             select(CreditLedgerEntry)
-            .where(CreditLedgerEntry.tenant_id == tenant_id)
+            .where(*filters)
             .order_by(CreditLedgerEntry.created_at.desc(), CreditLedgerEntry.id.desc())
             .limit(limit)
             .offset(offset)

@@ -1085,6 +1085,7 @@ class Settings(BaseSettings):
             and self.microsoft_oauth_redirect_uri.strip()
         )
 
+    @property
     def stripe_platform_billing_secret_key_resolved(self) -> str:
         dedicated = self.stripe_platform_billing_secret_key.strip()
         if dedicated:
@@ -1131,17 +1132,17 @@ class Settings(BaseSettings):
         explicit = self.stripe_platform_billing_success_url.strip()
         if explicit:
             return explicit
-        from app.services.shared.public_app_url import build_public_app_path
+        from app.services.shared.public_app_url import build_oauth_frontend_path
 
-        return build_public_app_path("/billing?checkout=success")
+        return build_oauth_frontend_path("/billing?checkout=success")
 
     def stripe_platform_billing_cancel_url_resolved(self) -> str:
         explicit = self.stripe_platform_billing_cancel_url.strip()
         if explicit:
             return explicit
-        from app.services.shared.public_app_url import build_public_app_path
+        from app.services.shared.public_app_url import build_oauth_frontend_path
 
-        return build_public_app_path("/billing?checkout=cancelled")
+        return build_oauth_frontend_path("/billing?checkout=cancelled")
     @property
     def application_insights_runtime_enabled(self) -> bool:
         """Send telemetry only on App Service or when explicitly enabled locally."""

@@ -239,3 +239,17 @@ async def test_public_studio_signup_missing_stripe_key_returns_clean_error(
 
     assert res.status_code == 503
     assert res.json()["detail"] == "Stripe platform billing is not configured"
+
+
+@pytest.mark.asyncio
+async def test_public_signup_link(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:5173")
+    get_settings.cache_clear()
+
+    res = await client.get("/api/signup/link")
+    assert res.status_code == 200
+    body = res.json()["data"]
+    assert body["path"] == "/signup"
+    assert body["url"] == "http://localhost:5173/signup"
+    assert "/start" in body["aliases"]
+    assert "Get started with Ledgerline" in body["embed_html"]

@@ -41,6 +41,9 @@ _SKIP_DEFAULT_PATHS = (
     "/connect-mailbox",
     "/accept-invite",
     "/signup",
+    "/start",
+    "/get-started",
+    "/register",
     "/setup",
 )
 
