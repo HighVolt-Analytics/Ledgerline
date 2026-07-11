@@ -470,8 +470,18 @@ function approvalPolicyFromApi(
   };
 }
 
-function approvalPolicyToApi(policy: ApprovalPolicy): Record<string, unknown> {
-  const payload: Record<string, unknown> = { mode: policy.mode };
+function approvalPolicyToApi(policy: ApprovalPolicy): {
+  mode: string;
+  auto_approve_below?: number;
+  require_approval_for_unmatched?: boolean;
+  require_approval_for_unverified_counterparty?: boolean;
+} {
+  const payload: {
+    mode: string;
+    auto_approve_below?: number;
+    require_approval_for_unmatched?: boolean;
+    require_approval_for_unverified_counterparty?: boolean;
+  } = { mode: policy.mode };
   if (policy.autoApproveBelow != null && Number.isFinite(policy.autoApproveBelow)) {
     payload.auto_approve_below = policy.autoApproveBelow;
   }
