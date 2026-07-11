@@ -35,6 +35,33 @@ CONFIDENCE_TIE_EPSILON = 0.02
 WEIGHT_FIELDS = 0.30
 WEIGHT_PARSE = 0.15
 WEIGHT_HEADING = 0.10
+PARSE_FALLBACK_SCORE = 0.6
+HEADING_CATALOGUE_MATCH_MIN = 0.82
+
+
+@dataclass(frozen=True)
+class DocumentTypeScoreWeights:
+    rule: float = WEIGHT_RULE
+    fields: float = WEIGHT_FIELDS
+    parse: float = WEIGHT_PARSE
+    heading: float = WEIGHT_HEADING
+    parse_fallback: float = PARSE_FALLBACK_SCORE
+    heading_catalogue_match_min: float = HEADING_CATALOGUE_MATCH_MIN
+
+
+def score_weights_from_ai_config(ai_cfg: object | None) -> DocumentTypeScoreWeights:
+    if ai_cfg is None:
+        return DocumentTypeScoreWeights()
+    return DocumentTypeScoreWeights(
+        rule=float(getattr(ai_cfg, "dt_score_weight_rule", WEIGHT_RULE)),
+        fields=float(getattr(ai_cfg, "dt_score_weight_fields", WEIGHT_FIELDS)),
+        parse=float(getattr(ai_cfg, "dt_score_weight_parse", WEIGHT_PARSE)),
+        heading=float(getattr(ai_cfg, "dt_score_weight_heading", WEIGHT_HEADING)),
+        parse_fallback=float(getattr(ai_cfg, "dt_score_parse_fallback", PARSE_FALLBACK_SCORE)),
+        heading_catalogue_match_min=float(
+            getattr(ai_cfg, "heading_catalogue_match_min", HEADING_CATALOGUE_MATCH_MIN)
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -57,7 +84,9 @@ def parse_quality_score(
     *,
     parsed: InvoiceData | None = None,
     definition: DocumentTypeDefinition | None = None,
+    weights: DocumentTypeScoreWeights | None = None,
 ) -> float:
+    resolved = weights or DocumentTypeScoreWeights()
     if parse_confidence == "high":
         return 1.0
     if parsed is not None:
@@ -85,9 +114,9 @@ def parse_quality_score(
                     score_document_type_for_heading,
                 )
 
-                if score_document_type_for_heading(definition, kind) >= 0.82:
+                if score_document_type_for_heading(definition, kind) >= resolved.heading_catalogue_match_min:
                     return 1.0
-    return 0.6
+    return float(resolved.parse_fallback)
 
 
 def effective_min_route_confidence(definition: DocumentTypeDefinition) -> float:
@@ -137,17 +166,19 @@ def compute_document_type_confidence(
     parse_confidence: ParseConfidence | None,
     heading_alignment: float,
     parse_score: float | None = None,
+    weights: DocumentTypeScoreWeights | None = None,
 ) -> float:
+    resolved = weights or DocumentTypeScoreWeights()
     resolved_parse = (
         parse_score
         if parse_score is not None
-        else parse_quality_score(parse_confidence)
+        else parse_quality_score(parse_confidence, weights=resolved)
     )
     blended = (
-        WEIGHT_RULE * rule_strength
-        + WEIGHT_FIELDS * field_completeness
-        + WEIGHT_PARSE * resolved_parse
-        + WEIGHT_HEADING * heading_alignment
+        resolved.rule * rule_strength
+        + resolved.fields * field_completeness
+        + resolved.parse * resolved_parse
+        + resolved.heading * heading_alignment
     )
     return round(min(1.0, max(0.0, blended)), 4)
 
@@ -160,7 +191,9 @@ def score_document_type_definition(
     rule_strength: float,
     parse_confidence: ParseConfidence | None,
     ctx: DocumentClassifierContext | None = None,
+    weights: DocumentTypeScoreWeights | None = None,
 ) -> DocumentTypeScoreBreakdown:
+    resolved = weights or DocumentTypeScoreWeights()
     context = ctx or build_document_classifier_context(invoice=invoice, parsed=parsed)
     field_score, req_present, req_missing, abs_ok, abs_bad = score_field_completeness(
         definition,
@@ -184,6 +217,7 @@ def score_document_type_definition(
         parse_confidence,
         parsed=parsed,
         definition=definition,
+        weights=resolved,
     )
     confidence = compute_document_type_confidence(
         rule_strength=rule_strength,
@@ -191,6 +225,7 @@ def score_document_type_definition(
         parse_confidence=parse_confidence,
         heading_alignment=heading_score,
         parse_score=parse_score,
+        weights=resolved,
     )
     confidence = round(
         max(0.0, confidence - conflict_confidence_penalty(conflicts)),

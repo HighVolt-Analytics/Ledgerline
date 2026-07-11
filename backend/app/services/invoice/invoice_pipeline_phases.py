@@ -374,7 +374,7 @@ def reconcile_llm_dt_with_heading(
                     score_document_type_for_heading(llm_defn, heading_kind) if llm_defn else 0.0
                 )
                 heading_score = score_document_type_for_heading(heading_defn, heading_kind)
-                if heading_score >= 0.82 and heading_score > llm_score:
+                if heading_score >= float(ai_cfg.heading_catalogue_match_min) and heading_score > llm_score:
                     adopt_reason = "heading_stronger_than_llm_dt"
 
     if adopt_reason is None:

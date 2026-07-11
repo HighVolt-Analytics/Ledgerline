@@ -2111,6 +2111,8 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         ),
         force=True,
         allow_auto_correct=True,
+        auto_correct_gap=ai_cfg.policy_auto_correct_gap,
+        review_gap=ai_cfg.policy_review_gap,
     )
 
     if policy_result.auto_corrected and policy_result.corrected_dt:
@@ -2142,6 +2144,8 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             ),
             force=True,
             allow_auto_correct=False,
+            auto_correct_gap=ai_cfg.policy_auto_correct_gap,
+            review_gap=ai_cfg.policy_review_gap,
         )
         if policy_verify.oscillation_hold or policy_verify.needs_review:
             invoice.status = InvoiceStatus.EXCEPTION

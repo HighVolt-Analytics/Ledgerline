@@ -423,6 +423,40 @@ class AiClassificationConfig(BaseModel):
         alias="vendorDriftConfidenceDrop",
         description="Alert when LLM confidence drops this far below vendor baseline",
     )
+    dt_score_weight_rule: float = Field(
+        default=0.45, ge=0.0, le=1.0, alias="dtScoreWeightRule"
+    )
+    dt_score_weight_fields: float = Field(
+        default=0.30, ge=0.0, le=1.0, alias="dtScoreWeightFields"
+    )
+    dt_score_weight_parse: float = Field(
+        default=0.15, ge=0.0, le=1.0, alias="dtScoreWeightParse"
+    )
+    dt_score_weight_heading: float = Field(
+        default=0.10, ge=0.0, le=1.0, alias="dtScoreWeightHeading"
+    )
+    dt_score_parse_fallback: float = Field(
+        default=0.6, ge=0.0, le=1.0, alias="dtScoreParseFallback"
+    )
+    heading_catalogue_match_min: float = Field(
+        default=0.82,
+        ge=0.0,
+        le=1.0,
+        alias="headingCatalogueMatchMin",
+        description="Min catalogue/heading alignment score to treat heading as stronger than LLM",
+    )
+    policy_auto_correct_gap: float = Field(
+        default=0.12,
+        ge=0.0,
+        le=1.0,
+        alias="policyAutoCorrectGap",
+    )
+    policy_review_gap: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        alias="policyReviewGap",
+    )
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
