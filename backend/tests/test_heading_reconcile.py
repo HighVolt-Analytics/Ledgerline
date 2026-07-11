@@ -191,3 +191,118 @@ def test_list_heading_aware_matches_skips_po_goods_for_coo() -> None:
     )
     codes = {row[0].code for row in matches}
     assert "DT-01" not in codes
+
+
+def test_body_keyword_role_label_does_not_override_llm() -> None:
+    """Shipper's Name and Address is body noise — must not override a real LLM DT."""
+    ocr = OcrArtifact(
+        success=True,
+        text=(
+            "ACME FREIGHT\n"
+            "Shipper's Name and Address\n"
+            "Acme Pty Ltd\n"
+            "Consignee's Name and Address\n"
+            "Buyer Co\n"
+        ),
+        text_length=120,
+    )
+    llm = LlmDocumentResult(
+        suggested_dt="DT-02",
+        confidence=0.92,
+        reasoning="tax invoice layout",
+        perspective="purchase",
+        document_heading="",
+    )
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING)
+    transport = _dt(
+        code="DT-AWB",
+        title="Air waybill",
+        shortTitle="AWB",
+        klass="Non-actionable",
+        posting="NEVER",
+        playbookProfile="freight_logistics",
+        requiredFields=[],
+        extractionFields=["vendor"],
+        classifier=_classifier(priority=30),
+    )
+    updated, detail = reconcile_llm_dt_with_heading(
+        llm,
+        invoice=invoice,
+        ocr=ocr,
+        document_types=[_dt02(), transport],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.65),
+    )
+    assert detail is None
+    assert updated is not None
+    assert updated.suggested_dt == "DT-02"
+
+
+def test_glued_packinglist_underdetect_unchanged() -> None:
+    ocr = OcrArtifact(
+        success=True,
+        text="PACKINGLIST\nQty Cartons 4",
+        text_length=28,
+    )
+    llm = LlmDocumentResult(
+        suggested_dt="DT-02",
+        confidence=0.9,
+        reasoning="invoice",
+        perspective="purchase",
+    )
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING)
+    packing = _dt(
+        code="DT-PL",
+        title="Packing list",
+        shortTitle="Packing list",
+        klass="Non-actionable",
+        posting="NEVER",
+        requiredFields=[],
+        extractionFields=["vendor"],
+        classifier=_classifier(priority=40),
+    )
+    updated, detail = reconcile_llm_dt_with_heading(
+        llm,
+        invoice=invoice,
+        ocr=ocr,
+        document_types=[_dt02(), packing],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.65),
+    )
+    assert detail is None
+    assert updated is not None
+    assert updated.suggested_dt == "DT-02"
+
+
+def test_title_line_commercial_invoice_still_adopts() -> None:
+    ocr = OcrArtifact(
+        success=True,
+        text="COMMERCIAL INVOICE\nSeller Acme\nTotal 100",
+        text_length=40,
+    )
+    llm = LlmDocumentResult(
+        suggested_dt="",
+        confidence=0.5,
+        reasoning="",
+        perspective="purchase",
+        document_heading="COMMERCIAL INVOICE",
+    )
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING)
+    commercial = _dt(
+        code="DT-CI",
+        title="Commercial invoice",
+        shortTitle="Commercial invoice",
+        requiredFields=[],
+        extractionFields=["vendor", "total"],
+        classifier=_classifier(priority=40),
+    )
+    updated, detail = reconcile_llm_dt_with_heading(
+        llm,
+        invoice=invoice,
+        ocr=ocr,
+        document_types=[_dt(), commercial],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.65),
+    )
+    assert detail is not None
+    assert detail["adopted_dt"] == "DT-CI"
+    assert detail.get("heading_source") == "title_line"
+    assert updated is not None
+    assert updated.suggested_dt == "DT-CI"

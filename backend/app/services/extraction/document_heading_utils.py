@@ -28,6 +28,14 @@ HeadingKind = Literal[
     "customs_permit",
 ]
 
+HeadingKindSource = Literal["title_line", "body_keyword"]
+
+
+@dataclass(frozen=True)
+class InferredPageHeading:
+    kind: HeadingKind
+    source: HeadingKindSource
+
 _HEADING_SCAN_LINES = 30
 
 _CONTINUATION_PAGE = re.compile(
@@ -194,10 +202,14 @@ def _label_from_line(line: str) -> str | None:
 
 def extract_document_heading_signals(text: str) -> DocumentHeadingSignals:
     """Scan the top of OCR text for document-type headings."""
-    return _heading_signals_from_lines(text)
+    return _heading_signals_from_lines(text, include_body_fallback=True)
 
 
-def _heading_signals_from_lines(text: str) -> DocumentHeadingSignals:
+def _heading_signals_from_lines(
+    text: str,
+    *,
+    include_body_fallback: bool = True,
+) -> DocumentHeadingSignals:
     if not text or not text.strip():
         return DocumentHeadingSignals(primary_label=None, primary_kind=None, kinds=())
 
@@ -220,7 +232,7 @@ def _heading_signals_from_lines(text: str) -> DocumentHeadingSignals:
             seen_kinds.add(kind)
             kinds.append(kind)
 
-    if not kinds:
+    if include_body_fallback and not kinds:
         blob = "\n".join(text.splitlines()[:50])
         for pattern, kind in _PAGE_KIND_KEYWORDS:
             if kind in seen_kinds:
@@ -244,22 +256,28 @@ def is_continuation_page(text: str) -> bool:
     return bool(_CONTINUATION_PAGE.search(text or ""))
 
 
-def infer_page_document_kind(text: str) -> HeadingKind | None:
-    """Detect document kind from a single page (headings + import/logistics keywords)."""
+def infer_page_document_kind_with_source(text: str) -> InferredPageHeading | None:
+    """Detect page kind and whether it came from a title line vs body keywords."""
     if not text or not text.strip():
         return None
     if is_continuation_page(text):
         return None
 
-    signals = _heading_signals_from_lines(text)
-    if signals.primary_kind is not None:
-        return signals.primary_kind
+    title_signals = _heading_signals_from_lines(text, include_body_fallback=False)
+    if title_signals.primary_kind is not None:
+        return InferredPageHeading(kind=title_signals.primary_kind, source="title_line")
 
     blob = "\n".join(text.splitlines()[:50])
     for pattern, kind in _PAGE_KIND_KEYWORDS:
         if pattern.search(blob):
-            return kind
+            return InferredPageHeading(kind=kind, source="body_keyword")
     return None
+
+
+def infer_page_document_kind(text: str) -> HeadingKind | None:
+    """Detect document kind from a single page (headings + import/logistics keywords)."""
+    inferred = infer_page_document_kind_with_source(text)
+    return inferred.kind if inferred else None
 
 
 def _expected_heading_kinds(
@@ -340,6 +358,16 @@ def _classifier_document_text_blob(definition: DocumentTypeDefinition) -> str:
     return " ".join(chunks)
 
 
+def _token_matches_blob(token: str, blob: str) -> bool:
+    """Substring match for long phrases; word-boundary for short tokens."""
+    if not token or not blob:
+        return False
+    if len(token) <= 4 or token in {"b/l", " po ", "awb", "hawb", "mawb", "grn", "coo", "sow"}:
+        pattern = rf"(?<![\w/]){re.escape(token.strip())}(?![\w/])"
+        return bool(re.search(pattern, blob, flags=re.I))
+    return token in blob
+
+
 def score_document_type_for_heading(
     definition: DocumentTypeDefinition,
     heading_kind: HeadingKind,
@@ -350,18 +378,19 @@ def score_document_type_for_heading(
 
     metadata = _definition_metadata_blob(definition)
     classifier_text = _classifier_document_text_blob(definition)
+    short_title = (definition.short_title or "").lower()
     best = 0.0
 
     for token in tokens:
         token = token.strip().lower()
         if not token:
             continue
-        if token in (definition.short_title or "").lower():
+        if _token_matches_blob(token, short_title):
             best = max(best, 1.0)
             continue
-        if token in metadata:
+        if _token_matches_blob(token, metadata):
             best = max(best, 0.82)
-        if token in classifier_text:
+        if _token_matches_blob(token, classifier_text):
             best = max(best, 0.88)
         for part in re.split(r"[\s/·]+", metadata):
             if part and token == part:

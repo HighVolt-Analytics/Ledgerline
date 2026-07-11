@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 
 from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeDefinition
-from app.services.extraction.document_heading_utils import HeadingKind, infer_page_document_kind
+from app.services.extraction.document_heading_utils import (
+    HeadingKind,
+    InferredPageHeading,
+    infer_page_document_kind_with_source,
+)
 from app.services.classification.document_type_rule_engine import (
     build_document_classifier_context,
     list_configured_document_type_matches,
@@ -65,9 +69,21 @@ def resolve_segment_heading_kind(
     document_text: str | None,
     segment_heading_kind: HeadingKind | None = None,
 ) -> HeadingKind | None:
+    inferred = resolve_segment_heading_with_source(
+        document_text=document_text,
+        segment_heading_kind=segment_heading_kind,
+    )
+    return inferred.kind if inferred else None
+
+
+def resolve_segment_heading_with_source(
+    *,
+    document_text: str | None,
+    segment_heading_kind: HeadingKind | None = None,
+) -> InferredPageHeading | None:
     if segment_heading_kind:
-        return segment_heading_kind
-    return infer_page_document_kind(document_text or "")
+        return InferredPageHeading(kind=segment_heading_kind, source="title_line")
+    return infer_page_document_kind_with_source(document_text or "")
 
 
 def _definition_metadata_blob(definition: DocumentTypeDefinition) -> str:
@@ -99,6 +115,15 @@ def _classifier_document_text_blob(definition: DocumentTypeDefinition) -> str:
     return " ".join(chunks)
 
 
+def _token_matches_blob(token: str, blob: str) -> bool:
+    if not token or not blob:
+        return False
+    if len(token) <= 4 or token in {"b/l", " po ", "awb", "hawb", "mawb", "grn", "coo", "sow"}:
+        pattern = rf"(?<![\w/]){re.escape(token.strip())}(?![\w/])"
+        return bool(re.search(pattern, blob, flags=re.I))
+    return token in blob
+
+
 def score_document_type_for_heading(
     definition: DocumentTypeDefinition,
     heading_kind: HeadingKind,
@@ -109,18 +134,19 @@ def score_document_type_for_heading(
 
     metadata = _definition_metadata_blob(definition)
     classifier_text = _classifier_document_text_blob(definition)
+    short_title = (definition.short_title or "").lower()
     best = 0.0
 
     for token in tokens:
         token = token.strip().lower()
         if not token:
             continue
-        if token in (definition.short_title or "").lower():
+        if _token_matches_blob(token, short_title):
             best = max(best, 1.0)
             continue
-        if token in metadata:
+        if _token_matches_blob(token, metadata):
             best = max(best, 0.82)
-        if token in classifier_text:
+        if _token_matches_blob(token, classifier_text):
             best = max(best, 0.88)
         for part in re.split(r"[\s/·]+", metadata):
             if part and token == part:

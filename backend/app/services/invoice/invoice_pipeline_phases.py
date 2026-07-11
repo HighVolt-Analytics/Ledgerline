@@ -313,17 +313,22 @@ def reconcile_llm_dt_with_heading(
     from app.services.classification.segment_heading_classification import (
         classify_from_segment_heading,
         heading_conflicts_with_definition,
-        resolve_segment_heading_kind,
+        resolve_segment_heading_with_source,
     )
 
     document_text = ocr.text or ""
     heading_text = (llm.document_heading if llm is not None else "") or ""
-    heading_kind = resolve_segment_heading_kind(
+    inferred = resolve_segment_heading_with_source(
         document_text=f"{heading_text}\n{document_text}".strip(),
     )
-    if heading_kind is None:
+    if inferred is None:
         return llm, None
 
+    # Body-keyword-only matches (role labels, embedded keywords) must not override LLM.
+    if inferred.source == "body_keyword":
+        return llm, None
+
+    heading_kind = inferred.kind
     parsed = InvoiceData(
         document_text=document_text,
         document_heading=heading_text.strip(),
@@ -391,6 +396,7 @@ def reconcile_llm_dt_with_heading(
     )
     return updated, {
         "heading_kind": heading_kind,
+        "heading_source": inferred.source,
         "previous_dt": previous_dt or None,
         "adopted_dt": adopted_code,
         "heading_confidence": round(float(heading_match.confidence), 4),
