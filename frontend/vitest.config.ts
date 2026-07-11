@@ -39,6 +39,8 @@ export default defineConfig({
       "src/lib/publicSignupRoutes.test.ts",
       "src/lib/signupForm.test.ts",
       "src/pages/SetupPage.test.tsx",
+      "src/pages/IntegrationsPage.test.tsx",
+      "src/hooks/useAccountingIntegrations.test.ts",
       "src/api/client.test.ts",
       "src/api/clientInvitePaths.test.ts",
     ],

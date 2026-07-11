@@ -1063,6 +1063,97 @@ export interface AccountingIntegrationsStatus {
   quickbooks_online: AccountingIntegrationItem;
 }
 
+export type XeroIntegrationStatus =
+  | "disconnected"
+  | "connected"
+  | "expired"
+  | "error"
+  | "needs_reauth"
+  | "organisation_selection_required";
+
+export interface XeroReadiness {
+  enabled?: boolean;
+  configured: boolean;
+  connected: boolean;
+  ready: boolean;
+  status: XeroIntegrationStatus | string;
+  organisation_selected: boolean;
+  organisation_selection_required?: boolean;
+  provider_tenant_id: string | null;
+  display_name: string | null;
+  connection_count: number;
+  last_error: string | null;
+  last_error_code?: string | null;
+  last_error_message?: string | null;
+  needs_reauth?: boolean;
+  last_successful_sync_at?: string | null;
+  connection_verified?: boolean;
+  verified_at?: string | null;
+  latest_sync_job_status?: string | null;
+  latest_sync_job_type?: string | null;
+}
+
+export interface XeroVerifyResult {
+  connected: boolean;
+  needs_reauth: boolean;
+  organisation_id: string | null;
+  organisation_name: string | null;
+  verified_at: string | null;
+  message: string | null;
+}
+
+export interface XeroConnectionItem {
+  id: number;
+  xero_connection_id: string;
+  xero_tenant_id: string;
+  xero_tenant_type: string | null;
+  xero_tenant_name: string | null;
+  selected: boolean;
+}
+
+export interface XeroConnectionsResponse {
+  connections: XeroConnectionItem[];
+}
+
+export interface XeroSelectConnectionResult {
+  status: string;
+  display_name: string | null;
+  provider_tenant_id: string | null;
+}
+
+export interface XeroSyncSettingsResult {
+  organisation: number;
+  account: number;
+  tax_rate: number;
+  currency: number;
+}
+
+export interface XeroSyncContactsResult {
+  contact: number;
+}
+
+export interface XeroPushResult {
+  invoice_id: number;
+  skipped: boolean;
+  reason: string | null;
+  external_entity_id: string | null;
+  external_number: string | null;
+  external_status: string | null;
+  xero_type: string | null;
+}
+
+export interface XeroInvoiceStatus {
+  invoice_id: number;
+  pushed: boolean;
+  external_entity_id: string | null;
+  external_number: string | null;
+  external_status: string | null;
+  last_pushed_at: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  payload_hash: string | null;
+}
+
 export interface StripeGlobalPayoutsReadinessResponse {
   enabled: boolean;
   access_status: string;
