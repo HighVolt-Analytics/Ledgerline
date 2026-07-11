@@ -10,6 +10,7 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType, JournalEntry
 from app.models.reconciliation import DailyReconciliation
 from app.schemas.rule_book_config import RuleBookConfigPayload
+from app.services.invoice.invoice_amounts import invoice_payable_total
 from app.services.rule_book.rule_book_mapper import (
     ROUTE_SALES,
     get_payable_account_mapping,
@@ -82,11 +83,18 @@ def _include_current_invoice(
 ) -> Decimal:
     if current_invoice is None:
         return Decimal("0")
-    if current_invoice.invoice_date != recon_date or current_invoice.total is None:
+    if current_invoice.invoice_date != recon_date:
         return Decimal("0")
     if _is_sales_route(current_invoice) != sales:
         return Decimal("0")
-    return current_invoice.total
+    if sales:
+        if current_invoice.total is None:
+            return Decimal("0")
+        return current_invoice.total
+    payable_total = invoice_payable_total(current_invoice)
+    if payable_total is None:
+        return Decimal("0")
+    return payable_total
 
 
 async def reconcile_daily(

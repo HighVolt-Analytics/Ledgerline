@@ -286,3 +286,41 @@ async def test_explicit_validation_rules_honour_user_toggles_only() -> None:
     vr12 = next(row for row in results if row.rule == "VR12")
     assert vr12.passed is False
     assert vr12.severity == "block"
+
+
+@pytest.mark.asyncio
+async def test_grn_non_actionable_skips_transactional_vr_rules() -> None:
+    definition = _definition(
+        code="DT-03",
+        klass="Non-transactional",
+        posting="No",
+        routeTarget="Purchase Management",
+        validationProfile="non_actionable",
+        purchaseBundleRole="grn",
+        validation_rules=[
+            ValidationRuleConfig(code="VR03", enabled=True, severity="block"),
+            ValidationRuleConfig(code="VR11", enabled=True, severity="block"),
+        ],
+    )
+    invoice = Invoice(
+        id=2,
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.VALIDATING,
+        currency="AUD",
+        document_type_code="DT-03",
+        purchase_document_type="grn",
+    )
+    data = InvoiceData(po_reference="PO-TEST-2026-001")
+    ctx = ValidationRunContext(
+        data=data,
+        session=AsyncMock(),
+        tenant_id=TESTING_TENANT_UUID,
+        document_type_code="DT-03",
+        document_types=[definition],
+        purchase_document_type="grn",
+        invoice=invoice,
+        playbook_gates=None,
+    )
+
+    results = await run_configured_validations(ctx)
+    assert results == []

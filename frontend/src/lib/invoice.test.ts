@@ -123,6 +123,16 @@ describe("counterparty labels", () => {
     expect(counterpartyName({ vendor: " Acme " } as Invoice)).toBe("Acme");
     expect(
       counterpartyName({
+        route_target: ROUTE_PURCHASE,
+        purchase_document_type: "grn",
+        vendor: "Sysco Australia Pty Ltd",
+        extracted_fields: {
+          seller_name: "GRN-2026-0001",
+        },
+      } as Invoice),
+    ).toBe("Sysco Australia Pty Ltd");
+    expect(
+      counterpartyName({
         route_target: ROUTE_SALES,
         vendor: "Tenant Org",
         extracted_fields: {

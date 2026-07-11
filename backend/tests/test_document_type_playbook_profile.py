@@ -229,6 +229,97 @@ async def test_variance_workflow_skipped_after_human_approval(monkeypatch: pytes
     assert held is False
 
 
+def test_backfill_shipped_document_type_identity_fixes_swapped_bundle_roles() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_payload
+
+    payload = validate_rule_book_config_payload(
+        {
+            "document_types": [
+                {
+                    "code": "DT-01",
+                    "matrixTemplateCode": "DT-01",
+                    "title": "Purchase order (copy)",
+                    "shortTitle": "PO (supporting)",
+                    "klass": "Non-transactional",
+                    "posting": "No",
+                    "purchaseBundleRole": "po",
+                    "playbookProfile": "supporting",
+                    "validationProfile": "non_actionable",
+                    "routeTarget": "Purchase Management",
+                },
+                {
+                    "code": "DT-02",
+                    "matrixTemplateCode": "DT-02",
+                    "title": "Goods receipt note (GRN) / delivery docket",
+                    "shortTitle": "GRN (supporting)",
+                    "klass": "Non-transactional",
+                    "posting": "No",
+                    "purchaseBundleRole": "grn",
+                    "playbookProfile": "supporting",
+                    "routeTarget": "Purchase Management",
+                },
+                {
+                    "code": "DT-03",
+                    "matrixTemplateCode": "DT-03",
+                    "title": "PO-based goods invoice",
+                    "shortTitle": "PO goods invoice",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "playbookProfile": "po_goods",
+                    "validationProfile": "",
+                    "postTo": {"ledger": "Operating Expenses"},
+                    "routeTarget": "Purchase Management",
+                },
+            ]
+        }
+    )
+    by_code = {row.code: row for row in payload.document_types}
+    assert by_code["DT-01"].purchase_bundle_role == ""
+    assert by_code["DT-02"].purchase_bundle_role == "po"
+    assert by_code["DT-03"].purchase_bundle_role == "grn"
+    assert by_code["DT-01"].title == "PO-based goods invoice"
+    assert by_code["DT-01"].playbook_profile == "po_goods"
+    assert by_code["DT-01"].klass == "Transactional"
+    assert by_code["DT-01"].posting == "Yes"
+    assert by_code["DT-02"].playbook_profile == "supporting"
+    assert by_code["DT-03"].playbook_profile == "supporting"
+    assert by_code["DT-03"].klass == "Non-transactional"
+    assert by_code["DT-03"].posting == "No"
+    assert by_code["DT-03"].validation_profile == "non_actionable"
+    assert (by_code["DT-03"].post_to.ledger or "") == ""
+
+
+def test_repurposed_org_code_not_overwritten_by_shipped_matrix_identity() -> None:
+    """Org DT-04 used for a custom non-PO invoice must not inherit shipped credit-note identity."""
+    from app.schemas.rule_book_config import validate_rule_book_config_payload
+
+    payload = validate_rule_book_config_payload(
+        {
+            "document_types": [
+                {
+                    "code": "DT-04",
+                    "title": "Non-PO vendor invoice",
+                    "shortTitle": "Non-PO invoice",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "recognition_mode": "prompt",
+                    "llm_prompt": (
+                        "Standard vendor tax invoice with no purchase order reference. "
+                        "Not a credit note."
+                    ),
+                    "playbookProfile": "standard_transactional",
+                    "routeTarget": "Purchase Management",
+                    "postTo": {"ledger": "Operating Expenses"},
+                }
+            ]
+        }
+    )
+    row = payload.document_types[0]
+    assert row.title == "Non-PO vendor invoice"
+    assert row.short_title == "Non-PO invoice"
+    assert row.playbook_profile == "standard_transactional"
+
+
 def test_backfill_playbook_profile_on_save() -> None:
     from app.schemas.rule_book_config import validate_rule_book_config_payload
 

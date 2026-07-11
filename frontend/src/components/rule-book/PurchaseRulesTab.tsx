@@ -15,11 +15,11 @@ import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
-import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
+import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import { usePurchases } from "@/hooks/usePurchases";
+import { defaultExpensePostingLedger, mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
 import { nextRulePriority } from "@/lib/rulePriority";
 import type { PurchaseRule } from "@/lib/v4RuleBookTypes";
-import { LEDGER_ACCOUNTS } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
 import { FieldLabel } from "./FieldLabel";
 import {
@@ -44,7 +44,12 @@ export function PurchaseRulesTab({
   onChange: (rules: PurchaseRule[]) => void;
 }) {
   const { toast } = useToast();
-  const { data: coaAccounts = [] } = useChartOfAccounts();
+  const {
+    allAccounts,
+    options: ledgerOptions,
+    hasRealAccounts,
+    isLoading: coaLoading,
+  } = useCoaAccountOptions({ includeEmpty: false });
   const { data: purchases = [] } = usePurchases();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -72,7 +77,7 @@ export function PurchaseRulesTab({
         priority: nextRulePriority(rules),
         matchOn: { poPrefix: "PO-" },
         postTo: {
-          ledger: LEDGER_ACCOUNTS[0],
+          ledger: defaultExpensePostingLedger(allAccounts),
           subLedger: "",
         },
         matchedCount: 0,
@@ -249,11 +254,12 @@ export function PurchaseRulesTab({
                               subLedger: reconcileSubLedgerOnLedgerChange(
                                 ledger,
                                 rule.postTo.subLedger,
-                                coaAccounts
+                                allAccounts
                               ),
                             })
                           }
-                          options={toSelectOptions(LEDGER_ACCOUNTS)}
+                          options={mergeCoaOptionsWithSavedValue(ledgerOptions, rule.postTo.ledger)}
+                          disabled={coaLoading}
                           className="w-full"
                         />
                       </FieldLabel>
@@ -262,12 +268,17 @@ export function PurchaseRulesTab({
                           ledger={rule.postTo.ledger}
                           value={rule.postTo.subLedger}
                           onChange={(subLedger) => updatePost(rule.id, { subLedger })}
-                          accounts={coaAccounts}
+                          accounts={allAccounts}
                           size="sm"
                           placeholder="cost centre"
                         />
                       </FieldLabel>
                     </div>
+                    {!coaLoading && !hasRealAccounts ? (
+                      <p className="text-[10px] text-muted-foreground mt-2">
+                        Add accounts in Settings → Chart of accounts.
+                      </p>
+                    ) : null}
                     <p className="text-[11px] text-muted-foreground mt-2">
                       Tax and payable accounts are set org-wide on the Posting tab.
                     </p>

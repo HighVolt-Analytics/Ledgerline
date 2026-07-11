@@ -39,6 +39,7 @@ import type {
   DashboardStats,
   ReportsAnalytics,
   ReportDocumentRow,
+  SubledgerBalancesResponse,
   Invoice,
   InvoiceDetails,
   LedgerLinkResponse,
@@ -1082,6 +1083,8 @@ export const api = {
   reject: (id: number) => {
     bustGetCacheByPrefix("/api/approvals");
     bustGetCacheByPrefix("/api/invoices");
+    bustGetCacheByPrefix("/api/purchases");
+    bustGetCacheByPrefix("/api/sales");
     return request<Invoice>(`/api/approvals/${id}/reject`, { method: "POST" });
   },
   requestApproval: (id: number) =>
@@ -1114,6 +1117,8 @@ export const api = {
   deleteApprovalPermanently: (id: number) => {
     bustGetCacheByPrefix("/api/approvals");
     bustGetCacheByPrefix("/api/invoices");
+    bustGetCacheByPrefix("/api/purchases");
+    bustGetCacheByPrefix("/api/sales");
     return request<void>(`/api/approvals/${id}`, { method: "DELETE" });
   },
   listVendors: (options?: FreshRequestOptions) => {
@@ -1391,6 +1396,22 @@ export const api = {
     }),
   getReportsAnalytics: (month: string) =>
     request<ReportsAnalytics>(`/api/reports/analytics?month=${encodeURIComponent(month)}`),
+  getApBalances: (asOf?: string) => {
+    const params = new URLSearchParams();
+    if (asOf) params.set("as_of", asOf);
+    const query = params.toString();
+    return request<SubledgerBalancesResponse>(
+      `/api/reports/subledger/ap-balances${query ? `?${query}` : ""}`
+    );
+  },
+  getArBalances: (asOf?: string) => {
+    const params = new URLSearchParams();
+    if (asOf) params.set("as_of", asOf);
+    const query = params.toString();
+    return request<SubledgerBalancesResponse>(
+      `/api/reports/subledger/ar-balances${query ? `?${query}` : ""}`
+    );
+  },
   getReportDocuments: (filter?: ReportDateFilter) =>
     request<ReportDocumentRow[]>(`/api/reports/documents${reportDateQuery(filter)}`),
   generateReport: (filter?: ReportDateFilter) =>

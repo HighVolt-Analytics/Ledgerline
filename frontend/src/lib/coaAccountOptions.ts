@@ -121,6 +121,15 @@ export function coaTypesForFallbackDefaults(): ChartOfAccountType[] {
 
 export type CoaPostingRole = "revenue" | "receivable" | "tax_collected";
 
+export type CoaLedgerPurpose =
+  | "expense_default"
+  | "revenue_default"
+  | "receivable_default"
+  | "tax_collected_default";
+
+const CONTROL_LEDGER_NAME = /\b(payable|creditor|suspense|bank|cash)\b/i;
+const TAX_INPUT_ASSET_NAME = /\b(gst|tax|vat)\b/i;
+
 const REVENUE_LIKE_NAME = /\b(sales|revenue|income|turnover)\b/i;
 const RECEIVABLE_LIKE_NAME = /\b(receivable|debtor|debtors|trade)\b/i;
 const TAX_COLLECTED_LIKE_NAME = /\b(gst|tax|vat|output)\b/i;
@@ -144,6 +153,55 @@ export function excludeCoaAccountNames(
   const excluded = new Set(namesToExclude.map((name) => name.trim()).filter(Boolean));
   if (!excluded.size) return accounts;
   return accounts.filter((row) => !excluded.has(row.name));
+}
+
+/** Expense-side default ledgers for vendors, purchase/expense rules, and employee budgets. */
+export function filterCoaAccountsForExpenseDefaultLedger(
+  accounts: ChartOfAccountRow[]
+): ChartOfAccountRow[] {
+  return filterCoaAccountsByTypes(accounts, ["Expense", "Asset"]).filter((row) => {
+    const name = row.name.trim();
+    if (isReceivableLikeAccountName(name)) return false;
+    if (isTaxCollectedLikeAccountName(name)) return false;
+    if (CONTROL_LEDGER_NAME.test(name)) return false;
+    if (row.type === "Asset" && TAX_INPUT_ASSET_NAME.test(name)) return false;
+    return true;
+  });
+}
+
+export function filterCoaAccountsForLedgerPurpose(
+  accounts: ChartOfAccountRow[],
+  purpose: CoaLedgerPurpose
+): ChartOfAccountRow[] {
+  switch (purpose) {
+    case "expense_default":
+      return filterCoaAccountsForExpenseDefaultLedger(accounts);
+    case "revenue_default":
+      return filterCoaAccountsForPostingRole(accounts, "revenue");
+    case "receivable_default":
+      return filterCoaAccountsForPostingRole(accounts, "receivable");
+    case "tax_collected_default":
+      return filterCoaAccountsForPostingRole(accounts, "tax_collected");
+    default:
+      return accounts;
+  }
+}
+
+export function mergeCoaOptionsWithSavedValue(
+  options: CoaSelectOption[],
+  savedValue: string
+): CoaSelectOption[] {
+  const cleaned = savedValue.trim();
+  if (!cleaned || cleaned === "—") return options;
+  if (options.some((option) => option.value === cleaned)) return options;
+  return [...options, { value: cleaned, label: `${cleaned} (not in COA)` }];
+}
+
+export function defaultExpensePostingLedger(accounts: ChartOfAccountRow[]): string {
+  const preferred = resolveCoaAccountName("Operating Expenses", accounts);
+  if (preferred) return preferred;
+  const filtered = filterCoaAccountsForExpenseDefaultLedger(accounts);
+  return filtered[0]?.name ?? "";
 }
 
 export function filterCoaAccountsForPostingRole(

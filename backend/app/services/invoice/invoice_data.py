@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 ParseSource = Literal["local", "azure_di", "azure_layout"]
 ParseConfidence = Literal["high", "low"]
+LineItemsGrounding = Literal["grounded", "ungrounded", "unverifiable"]
 
 
 @dataclass
@@ -21,6 +22,9 @@ class ParsedLineItem:
     unit_price: Decimal | None = None
     amount: Decimal | None = None
     tax_amount: Decimal | None = None
+    source: str | None = None
+    source_confidence: float | None = None
+    fused_from: list[str] | None = None
 
 
 @dataclass
@@ -41,6 +45,7 @@ class InvoiceData:
     po_reference: str | None = None
     cost_centre: str | None = None
     line_items: list[ParsedLineItem] = field(default_factory=list)
+    line_items_grounding: LineItemsGrounding | None = None
     raw_fields: dict[str, Any] = field(default_factory=dict)
     document_text: str | None = None
     document_heading: str | None = None
@@ -73,6 +78,7 @@ def _line_items_from_invoice(invoice: object) -> list[ParsedLineItem]:
 
     line_items: list[ParsedLineItem] = []
     for line in items:
+        fused_raw = getattr(line, "fused_from", None)
         line_items.append(
             ParsedLineItem(
                 description=getattr(line, "description", None),
@@ -80,6 +86,13 @@ def _line_items_from_invoice(invoice: object) -> list[ParsedLineItem]:
                 unit_price=getattr(line, "unit_price", None),
                 amount=getattr(line, "amount", None),
                 tax_amount=getattr(line, "tax_amount", None),
+                source=getattr(line, "extraction_source", None),
+                source_confidence=(
+                    float(line.source_confidence)
+                    if getattr(line, "source_confidence", None) is not None
+                    else None
+                ),
+                fused_from=list(fused_raw) if isinstance(fused_raw, list) else None,
             )
         )
     return line_items

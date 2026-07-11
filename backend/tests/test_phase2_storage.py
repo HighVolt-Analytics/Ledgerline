@@ -34,7 +34,24 @@ def test_is_plausible_vendor_name_rejects_boilerplate() -> None:
     )
     assert not is_plausible_vendor_name("Pre-carriage by")
     assert not is_plausible_vendor_name("Port of Loading")
+    assert not is_plausible_vendor_name("PO Number :")
+    assert not is_plausible_vendor_name("Invoice Number :")
+    assert not is_plausible_vendor_name("GRN-2026-0001")
+    assert not is_plausible_vendor_name("PO-TEST-2026-001")
     assert is_plausible_vendor_name("Atlassian Pty Ltd")
+
+
+def test_extract_supplier_party_from_vendor_label() -> None:
+    from app.services.master_data.vendor_name_utils import extract_supplier_party_from_text
+
+    text = """PURCHASE ORDER
+PO Number:
+PO-TEST-2026-001
+Vendor:
+Sysco Australia Pty Ltd
+Vendor ABN:
+12 345 678 901"""
+    assert extract_supplier_party_from_text(text) == "Sysco Australia Pty Ltd"
 
 
 def test_is_valid_storage_slug() -> None:

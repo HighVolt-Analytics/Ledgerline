@@ -6,40 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
+from app.services.dossier.dossier_pipeline_service import PIPELINE_AUDIT_EVENTS
+from app.services.invoice.processing_cycle_service import CYCLE_RESET_EVENTS
 
-# Events referenced by dossier pipeline, summary, and approval builders.
-DOSSIER_AUDIT_EVENTS: frozenset[str] = frozenset(
-    {
-        "email_ingested",
-        "invoice_uploaded",
-        "invoice_file_attached",
-        "duplicate_skipped",
-        "duplicate_in_progress",
-        "duplicate_reingest_rejected",
-        "parse_completed",
-        "invoice_parsed",
-        "parsing_failed",
-        "document_classified",
-        "playbook_evaluated",
-        "vendor_registration_hold",
-        "validation_passed",
-        "validation_failed",
-        "routing_review_required",
-        "three_way_match_evaluated",
-        "purchase_variance_approved",
-        "invoice_approved",
-        "approval_required",
-        "approval_requested",
-        "team_expense_approval_required",
-        "mapping_applied",
-        "mapping_review_required",
-        "reconciliation_halted",
-        "reconciliation_skipped",
-        "invoice_processed",
-        "purchase_document_processed",
-        "invoice_published_to_ledger",
-        "vault_stored",
-    }
+# Pipeline stage events plus cycle-reset markers (so _cycle_logs ignores stale approvals)
+# and early-abort pipeline_error surfaced on the dossier timeline.
+DOSSIER_AUDIT_EVENTS: frozenset[str] = (
+    PIPELINE_AUDIT_EVENTS | CYCLE_RESET_EVENTS | frozenset({"pipeline_error"})
 )
 
 

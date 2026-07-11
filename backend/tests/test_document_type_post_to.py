@@ -36,6 +36,14 @@ def test_default_post_to_ledger_from_profile() -> None:
     assert default_post_to_ledger("supporting", accounts) == ""
 
 
+def test_default_post_to_ledger_po_goods_falls_back_to_expense_coa() -> None:
+    accounts = [
+        ChartOfAccountEntry(code="6100", name="Operating Expenses", type="Expense"),
+        ChartOfAccountEntry(code="1000", name="Bank", type="Asset"),
+    ]
+    assert default_post_to_ledger("po_goods", accounts) == "Operating Expenses"
+
+
 def test_default_post_to_ledger_sparse_revenue_coa() -> None:
     accounts = [ChartOfAccountEntry(code="1", name="sales", type="Revenue")]
     assert default_post_to_ledger("ar_goods", accounts) == "sales"

@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.customer import CustomerRegistry
 from app.models.invoice import Invoice
 from app.models.vendor import VendorRegistry
+from app.services.master_data.party_coa_subledger_service import (
+    ensure_customer_party_coa_sub_ledger,
+    ensure_vendor_party_coa_sub_ledger,
+)
 from app.services.master_data.vendor_resolver import UNKNOWN_SLUG, slugify_vendor_name
 
 
@@ -63,6 +67,12 @@ async def upsert_vendor_registry_from_promotion(
             )
         )
         await db.flush()
+        await ensure_vendor_party_coa_sub_ledger(
+            db,
+            tenant_id,
+            slug=slug,
+            vendor_name=name.strip(),
+        )
         return
 
     if name.strip() and row.vendor_name.strip().lower() != name.strip().lower():
@@ -73,6 +83,12 @@ async def upsert_vendor_registry_from_promotion(
     if pattern and row.sender_pattern.strip().lower() != pattern.lower():
         row.sender_pattern = pattern
     await db.flush()
+    await ensure_vendor_party_coa_sub_ledger(
+        db,
+        tenant_id,
+        slug=row.vendor_slug,
+        vendor_name=row.vendor_name,
+    )
 
 
 async def upsert_customer_registry_from_promotion(
@@ -112,6 +128,12 @@ async def upsert_customer_registry_from_promotion(
             )
         )
         await db.flush()
+        await ensure_customer_party_coa_sub_ledger(
+            db,
+            tenant_id,
+            slug=slug,
+            customer_name=name.strip(),
+        )
         return
 
     if name.strip() and row.customer_name.strip().lower() != name.strip().lower():
@@ -122,6 +144,12 @@ async def upsert_customer_registry_from_promotion(
     if pattern and row.sender_pattern.strip().lower() != pattern.lower():
         row.sender_pattern = pattern
     await db.flush()
+    await ensure_customer_party_coa_sub_ledger(
+        db,
+        tenant_id,
+        slug=row.customer_slug,
+        customer_name=row.customer_name,
+    )
 
 
 async def sync_vendor_registry_after_promotion(

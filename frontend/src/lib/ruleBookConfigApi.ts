@@ -22,7 +22,7 @@ import {
   normalizeDocumentTypeIdentity,
   normalizeDocumentTypeKlass,
 } from "@/lib/documentTypeKlass";
-import type { PlaybookProfile } from "@/lib/documentPlaybookConfig";
+import type { ApprovalPolicy, PlaybookProfile } from "@/lib/documentPlaybookConfig";
 import {
   inferPlaybookProfileFromDefinition,
   normalizeApprovalMode,
@@ -443,6 +443,47 @@ function mapSampleAnalysis(
   };
 }
 
+function approvalPolicyFromApi(
+  raw: Record<string, unknown> | undefined,
+  defaultMode: ApprovalPolicy["mode"]
+): ApprovalPolicy {
+  const mode = normalizeApprovalMode(
+    raw?.mode ? String(raw.mode) : undefined,
+    defaultMode
+  );
+  const autoRaw = raw?.auto_approve_below ?? raw?.autoApproveBelow;
+  const autoApproveBelow =
+    autoRaw === null || autoRaw === undefined || autoRaw === ""
+      ? null
+      : Number(autoRaw);
+  return {
+    mode,
+    autoApproveBelow: Number.isFinite(autoApproveBelow) ? autoApproveBelow : null,
+    requireApprovalForUnmatched: Boolean(
+      raw?.require_approval_for_unmatched ?? raw?.requireApprovalForUnmatched ?? false
+    ),
+    requireApprovalForUnverifiedCounterparty: Boolean(
+      raw?.require_approval_for_unverified_counterparty ??
+        raw?.requireApprovalForUnverifiedCounterparty ??
+        false
+    ),
+  };
+}
+
+function approvalPolicyToApi(policy: ApprovalPolicy): Record<string, unknown> {
+  const payload: Record<string, unknown> = { mode: policy.mode };
+  if (policy.autoApproveBelow != null && Number.isFinite(policy.autoApproveBelow)) {
+    payload.auto_approve_below = policy.autoApproveBelow;
+  }
+  if (policy.requireApprovalForUnmatched) {
+    payload.require_approval_for_unmatched = true;
+  }
+  if (policy.requireApprovalForUnverifiedCounterparty) {
+    payload.require_approval_for_unverified_counterparty = true;
+  }
+  return payload;
+}
+
 function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
   const extractionFields = normalizeExtractionFieldKeys(
     (raw.extraction_fields ?? raw.extractionFields ?? []) as string[]
@@ -453,8 +494,10 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
   );
   const playbookProfile = inferPlaybookProfileFromRaw(raw);
   const preset = playbookPresetForProfile(playbookProfile);
+  const rawApproval = (raw.approval_policy ?? raw.approvalPolicy) as
+    | Record<string, unknown>
+    | undefined;
   const rawMatchMode = (raw.match_policy as { mode?: string } | undefined)?.mode;
-  const rawApprovalMode = (raw.approval_policy as { mode?: string } | undefined)?.mode;
   const klass = normalizeDocumentTypeKlass(String(raw.klass ?? ""));
   const posting = derivePostingFromKlassAndProfile(
     klass,
@@ -498,12 +541,7 @@ function mapDocumentType(raw: Record<string, unknown>): DocumentTypeDefinition {
       matchPolicy: {
         mode: normalizeMatchMode(rawMatchMode ? String(rawMatchMode) : undefined, preset.matchMode),
       },
-      approvalPolicy: {
-        mode: normalizeApprovalMode(
-          rawApprovalMode ? String(rawApprovalMode) : undefined,
-          preset.approvalMode
-        ),
-      },
+      approvalPolicy: approvalPolicyFromApi(rawApproval, preset.approvalMode),
       validationRules: mergeConfigurableRules(
         String(raw.code),
         String(raw.validation_profile ?? raw.validationProfile ?? ""),
@@ -573,7 +611,7 @@ function documentTypeToApi(
     validation_profile: reconciled.validationProfile || undefined,
     playbook_profile: reconciled.playbookProfile || undefined,
     match_policy: { mode: reconciled.matchPolicy.mode },
-    approval_policy: { mode: reconciled.approvalPolicy.mode },
+    approval_policy: approvalPolicyToApi(reconciled.approvalPolicy),
     validation_rules: reconciled.validationRules.map((row) => ({
       code: row.code,
       enabled: row.enabled,
@@ -753,6 +791,7 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
     postingDefaults: {
       taxAccount: api.posting_defaults?.tax_account ?? "GST Paid",
       payableAccount: api.posting_defaults?.payable_account ?? "Accounts Payable",
+      receivableAccount: api.posting_defaults?.receivable_account ?? "Accounts Receivable",
       fallbackAccount: api.posting_defaults?.fallback_account ?? "Suspense Account",
     },
     documentSets: (api.document_sets ?? []).map((set) => ({
@@ -846,6 +885,7 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
     posting_defaults: {
       tax_account: state.postingDefaults.taxAccount,
       payable_account: state.postingDefaults.payableAccount,
+      receivable_account: state.postingDefaults.receivableAccount,
       fallback_account: state.postingDefaults.fallbackAccount,
     },
     document_sets: state.documentSets.map((set) => ({

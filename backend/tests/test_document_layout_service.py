@@ -166,6 +166,8 @@ def test_extract_line_items_from_table_with_unit_price() -> None:
 
 
 def test_extract_line_items_skips_tables_without_headers() -> None:
+    from decimal import Decimal
+
     from app.services.extraction.layout_field_extractor import extract_line_items_from_tables
 
     layout = DocumentLayoutResult(
@@ -188,7 +190,9 @@ def test_extract_line_items_skips_tables_without_headers() -> None:
         )
     )
     items = extract_line_items_from_tables(layout)
-    assert items == []
+    assert len(items) == 2
+    assert items[0].description == "Catering package"
+    assert items[0].qty == Decimal("10")
 
 
 def test_merge_extraction_fills_total_from_table_summary_row() -> None:

@@ -57,6 +57,8 @@ def _posting(raw: Any | None) -> PostingNameDefaults:
         payable_account=str(data.get("payable_account") or "Accounts Payable"),
         fallback_account=str(data.get("fallback_account") or "Suspense Account"),
         sales_tax_account=str(data.get("sales_tax_account") or "Tax Collected"),
+        bank_account=str(data.get("bank_account") or "Bank Account"),
+        receivable_account=str(data.get("receivable_account") or "Accounts Receivable"),
     )
 
 

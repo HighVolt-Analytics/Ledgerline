@@ -5,10 +5,6 @@ import { Loader2 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import {
-  coaTypesForMainLedger,
-  postingRoleForMainLedger,
-} from "@/lib/coaAccountOptions";
-import {
   applyDefaultPostToIfEmpty,
   suggestedLedgerForPlaybookProfile,
 } from "@/lib/documentTypeGlDefaults";
@@ -35,11 +31,7 @@ export function DocumentTypePostToEditor({
   onChange,
   disabled,
 }: DocumentTypePostToEditorProps) {
-  const mainTypes = coaTypesForMainLedger(draft.playbookProfile, draft.routeTarget);
-  const mainPostingRole = postingRoleForMainLedger(draft.playbookProfile, draft.routeTarget);
-  const { options: mainOptions, allAccounts, hasRealAccounts: hasMainLedgerAccounts, isLoading } = useCoaAccountOptions({
-    types: mainTypes,
-    postingRole: mainPostingRole,
+  const { options: mainOptions, allAccounts, isLoading } = useCoaAccountOptions({
     includeEmpty: true,
     emptyLabel: documentTypeRequiresPostTo(draft)
       ? "— Select account —"
@@ -47,18 +39,13 @@ export function DocumentTypePostToEditor({
   });
 
   const ledgerExclude = draft.postTo.ledger.trim() ? [draft.postTo.ledger] : [];
-  const {
-    options: receivableOptions,
-    hasRealAccounts: hasReceivableAccounts,
-  } = useCoaAccountOptions({
-    postingRole: "receivable",
+  const { options: receivableOptions } = useCoaAccountOptions({
     excludeNames: ledgerExclude,
     includeEmpty: true,
     emptyLabel: "Accounts Receivable (default)",
     enabled: draft.routeTarget === "Sales Management",
   });
-  const { options: taxOptions, hasRealAccounts: hasTaxAccounts } = useCoaAccountOptions({
-    postingRole: "tax_collected",
+  const { options: taxOptions } = useCoaAccountOptions({
     excludeNames: ledgerExclude,
     includeEmpty: true,
     emptyLabel: "GST Collected (default)",
@@ -156,11 +143,6 @@ export function DocumentTypePostToEditor({
               data-testid="dt-post-to-ledger"
             />
           </FieldLabel>
-          {mainPostingRole === "revenue" && !hasMainLedgerAccounts ? (
-            <p className="text-[10px] text-muted-foreground">
-              No revenue account in your chart — add one (type Revenue) in Settings → Chart of accounts.
-            </p>
-          ) : null}
         </div>
         <FieldLabel label="Sub-ledger">
           <SubLedgerField
@@ -191,12 +173,6 @@ export function DocumentTypePostToEditor({
                   className="w-full"
                 />
               </FieldLabel>
-              {!hasReceivableAccounts ? (
-                <p className="text-[10px] text-muted-foreground">
-                  No trade-debtor asset in your chart — using Accounts Receivable default. Add one
-                  in Settings → Chart of accounts.
-                </p>
-              ) : null}
             </div>
             <div className="space-y-1">
               <FieldLabel label="Tax account (collected)">
@@ -208,11 +184,6 @@ export function DocumentTypePostToEditor({
                   className="w-full"
                 />
               </FieldLabel>
-              {!hasTaxAccounts ? (
-                <p className="text-[10px] text-muted-foreground">
-                  No output-tax liability in your chart — using GST Collected default.
-                </p>
-              ) : null}
             </div>
           </div>
         </div>

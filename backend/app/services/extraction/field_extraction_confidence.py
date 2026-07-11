@@ -116,7 +116,7 @@ def _score_abn(data: InvoiceData) -> float:
     raw = (data.abn or "").strip()
     if not raw:
         return _empty_score("abn")
-    if not value_grounded_in_ocr(raw, data.document_text):
+    if not value_grounded_in_ocr(raw, data.document_text, field_key="abn"):
         return 28.0
     if not is_acceptable_tax_id(raw):
         return 34.0

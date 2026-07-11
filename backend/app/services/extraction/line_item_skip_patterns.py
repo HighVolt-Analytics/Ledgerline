@@ -26,9 +26,7 @@ HEADER_DEDUP_EXTRACTED_FIELD_KEYS: tuple[str, ...] = (
 )
 
 # Optional prefix for money columns in OCR line-item rows (shared with frontend invoicePreview.ts).
-OPTIONAL_CURRENCY_MONEY_PREFIX = (
-    r"(?:[$€£¥]|(?:AUD|USD|SGD|NZD|GBP|EUR|CAD|INR|MYR|THB|HKD|JPY|CNY)\s*)?"
-)
+from app.services.extraction.locale_vocab import OPTIONAL_CURRENCY_MONEY_PREFIX  # noqa: E402
 
 # Metadata field labels that must never appear as product line rows.
 _METADATA_LABEL = re.compile(
@@ -91,9 +89,22 @@ def is_metadata_line_description(desc: str | None) -> bool:
     return False
 
 
-def should_skip_line_row(desc: str | None) -> bool:
+def should_skip_line_row(
+    desc: str | None,
+    *,
+    trace: object | None = None,
+    row_key: str | None = None,
+) -> bool:
     """Combined skip check used by parser and sanitizer."""
-    return is_summary_line_description(desc) or is_metadata_line_description(desc)
+    if is_summary_line_description(desc):
+        if trace is not None and row_key:
+            trace.record(row_key, "skip_pattern", "dropped", "summary_row")
+        return True
+    if is_metadata_line_description(desc):
+        if trace is not None and row_key:
+            trace.record(row_key, "skip_pattern", "dropped", "metadata_label")
+        return True
+    return False
 
 
 def has_trusted_line_items(items: list) -> bool:

@@ -183,6 +183,17 @@ def enrich_ocr_with_invoice_model(
             ocr, ocr, confirmed_dt=confirmed_dt, dt_definition=dt_definition, failure_reason="skipped_profile"
         )
 
+    from app.services.extraction.line_items_parser import resolve_usable_line_items_from_payload
+
+    if resolve_usable_line_items_from_payload(dict(ocr.payload_json or {})):
+        return ocr, build_di_enrich_audit_detail(
+            ocr,
+            ocr,
+            confirmed_dt=confirmed_dt,
+            dt_definition=dt_definition,
+            failure_reason="skipped_existing_line_items",
+        )
+
     content_type = _content_type_for_path(path)
     invoice_data = parse_with_document_intelligence(path, content_type=content_type)
     if invoice_data is None:

@@ -11,6 +11,7 @@ from app.services.rule_book.account_mapper import (
     category_resolved_in_coa,
     resolve_category_for_config,
 )
+from app.services.invoice.invoice_amounts import resolve_invoice_amounts
 from app.services.rule_book.rule_book_mapper import (
     ROUTE_SALES,
     get_payable_account_mapping,
@@ -27,20 +28,8 @@ class JournalLine:
     debit: Decimal
     credit: Decimal
     entry_type: EntryType
-
-
-def _resolve_amounts(invoice: Invoice) -> tuple[Decimal, Decimal, Decimal]:
-    """Normalize subtotal/gst/total so journal lines balance when only total was extracted."""
-    gst = invoice.gst if invoice.gst is not None else Decimal("0")
-    subtotal = invoice.subtotal
-    total = invoice.total
-
-    if total is None:
-        total = (subtotal or Decimal("0")) + gst
-    if subtotal is None:
-        subtotal = max(total - gst, Decimal("0"))
-
-    return subtotal, gst, total
+    vendor_registry_id: int | None = None
+    customer_registry_id: int | None = None
 
 
 def generate_entries(
@@ -49,12 +38,15 @@ def generate_entries(
     *,
     config: RuleBookConfigPayload | None = None,
     sales_order=None,
+    vendor_registry_id: int | None = None,
+    customer_registry_id: int | None = None,
+    control_mapping: AccountMapping | None = None,
 ) -> list[JournalLine]:
     from app.schemas.rule_book_config import RuleBookConfigPayload as ConfigPayload
 
     cfg = config or ConfigPayload()
     entry_date = invoice.invoice_date or date.today()
-    subtotal, gst, total = _resolve_amounts(invoice)
+    subtotal, gst, total = resolve_invoice_amounts(invoice)
 
     if (invoice.route_target or "").strip() == ROUTE_SALES:
         recv_label, tax_label = resolve_sales_post_accounts(
@@ -62,7 +54,7 @@ def generate_entries(
             cfg,
             sales_order=sales_order,
         )
-        receivable = resolve_category_for_config(recv_label, cfg)
+        receivable = control_mapping or resolve_category_for_config(recv_label, cfg)
         tax = resolve_category_for_config(tax_label, cfg)
         return [
             JournalLine(
@@ -72,6 +64,7 @@ def generate_entries(
                 total,
                 Decimal("0"),
                 EntryType.DEBIT,
+                customer_registry_id=customer_registry_id,
             ),
             JournalLine(
                 entry_date,
@@ -92,7 +85,7 @@ def generate_entries(
         ]
 
     tax = get_tax_account_mapping(cfg)
-    payable = get_payable_account_mapping(cfg)
+    payable = control_mapping or get_payable_account_mapping(cfg)
 
     return [
         JournalLine(
@@ -118,6 +111,7 @@ def generate_entries(
             Decimal("0"),
             total,
             EntryType.CREDIT,
+            vendor_registry_id=vendor_registry_id,
         ),
     ]
 

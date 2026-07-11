@@ -1641,7 +1641,6 @@ def merge_gap_fill_into_parsed(
             payload_dict = ocr_payload or {}
             sanitized = sanitize_line_items(
                 candidate_items,
-                ocr_text=ocr_text,
                 extracted_fields=gap.extracted_fields,
                 vendor=gap.vendor or parsed.vendor,
                 invoice_no=gap.invoice_no or parsed.invoice_no,
@@ -1688,11 +1687,12 @@ def enrich_parsed_from_ocr(
     ocr: OcrArtifact,
     *,
     dt_definition: DocumentTypeDefinition | None = None,
+    trace: object | None = None,
 ) -> InvoiceData:
     """Fill missing parse fields from OCR/DI/layout/regex after LLM extract."""
     from app.services.extraction.extraction_orchestrator import merge_extraction_sources
 
-    return merge_extraction_sources(parsed, ocr, dt_definition=dt_definition)
+    return merge_extraction_sources(parsed, ocr, dt_definition=dt_definition, trace=trace)
 
 
 def ensure_extraction_baseline(

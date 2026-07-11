@@ -10,6 +10,12 @@ class EntryType(str, Enum):
     CREDIT = "credit"
 
 
+class JournalEntryKind(str, Enum):
+    INVOICE_ACCRUAL = "invoice_accrual"
+    PAYMENT_SETTLEMENT = "payment_settlement"
+    COLLECTION_SETTLEMENT = "collection_settlement"
+
+
 class JournalEntryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -21,3 +27,8 @@ class JournalEntryResponse(BaseModel):
     debit: Decimal
     credit: Decimal
     entry_type: EntryType
+    vendor_registry_id: int | None = None
+    customer_registry_id: int | None = None
+    entry_kind: JournalEntryKind = JournalEntryKind.INVOICE_ACCRUAL
+    payment_id: int | None = None
+    collection_id: int | None = None

@@ -116,6 +116,7 @@ export type ChartOfAccountType = "Expense" | "Asset" | "Liability" | "Revenue" |
 export interface SubLedgerRow {
   code: string;
   name: string;
+  origin?: "party" | "manual";
 }
 
 export interface ChartOfAccountRow {
@@ -961,6 +962,37 @@ export interface ReportsAnalytics {
   period_has_data: boolean;
 }
 
+export interface SubledgerBalanceRow {
+  registry_id: number;
+  slug: string;
+  name: string;
+  abn: string | null;
+  approved: boolean;
+  balance: number | string;
+  document_count: number;
+  last_activity_date: string | null;
+}
+
+export interface SubledgerUnregisteredBucket {
+  balance: number | string;
+  document_count: number;
+}
+
+export interface SubledgerTotals {
+  balance: number | string;
+  counterparty_count: number;
+}
+
+export interface SubledgerBalancesResponse {
+  base_currency: string;
+  as_of: string;
+  control_account_code: string;
+  control_account_name: string;
+  rows: SubledgerBalanceRow[];
+  unregistered: SubledgerUnregisteredBucket;
+  totals: SubledgerTotals;
+}
+
 export interface Vendor {
   id: number;
   vendor_slug: string;
@@ -1280,6 +1312,7 @@ export interface RuleBookConfig {
   posting_defaults: {
     tax_account: string;
     payable_account: string;
+    receivable_account?: string;
     fallback_account: string;
   };
   document_sets: Array<{

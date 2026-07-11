@@ -90,6 +90,11 @@ def build_line_item_response(
         gl_mapping_source=line.gl_mapping_source,
         gl_mapping_confidence=float(confidence) if confidence is not None else None,
         gl_mapping_reason=line.gl_mapping_reason,
+        extraction_source=line.extraction_source,
+        source_confidence=(
+            float(line.source_confidence) if line.source_confidence is not None else None
+        ),
+        fused_from=list(line.fused_from) if isinstance(line.fused_from, list) else None,
     )
 
 

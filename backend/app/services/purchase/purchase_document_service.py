@@ -12,6 +12,11 @@ from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
 from app.models.purchase_order import PurchaseOrder
 from app.services.audit.audit_service import log_event
 from app.services.master_data.bundle_vendor_service import reconcile_dossier_vendor
+from app.services.master_data.po_vendor_register_service import (
+    apply_plausible_vendor_to_invoice_from_po,
+    ensure_vendor_master_for_po_register,
+    plausible_register_vendor,
+)
 from app.services.invoice.invoice_evaluation_service import ROUTE_EXPENSES, ROUTE_PURCHASE
 from app.services.extraction.document_heading_utils import extract_document_heading_signals
 from app.services.purchase.po_reference import (
@@ -192,10 +197,11 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
 
     po = await _get_or_load_po(db, invoice, po_number)
     if po is None:
+        vendor_name = plausible_register_vendor(invoice.vendor)
         po = PurchaseOrder(
             tenant_id=invoice.tenant_id,
             po_number=po_number,
-            vendor=invoice.vendor,
+            vendor=vendor_name,
             po_date=invoice.invoice_date,
             item=first_line.description if first_line else None,
             po_qty=qty,
@@ -213,8 +219,9 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
         ).scalar_one()
     else:
         po.po_document_id = invoice.id
-        if not po.vendor:
-            po.vendor = invoice.vendor
+        repaired_vendor = plausible_register_vendor(invoice.vendor)
+        if repaired_vendor and not plausible_register_vendor(po.vendor):
+            po.vendor = repaired_vendor
         if po.po_qty <= 0:
             po.po_qty = qty
         if po.po_unit_price <= 0:
@@ -257,6 +264,7 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
     await reconcile_dossier_vendor(
         db, invoice, po, document_type=PurchaseDocumentType.PO.value
     )
+    await ensure_vendor_master_for_po_register(db, invoice.tenant_id, po)
     return po
 
 
@@ -312,6 +320,7 @@ async def _sync_grn_document(db: AsyncSession, invoice: Invoice, po_number: str)
     await reconcile_dossier_vendor(
         db, invoice, po, document_type=PurchaseDocumentType.GRN.value
     )
+    await ensure_vendor_master_for_po_register(db, invoice.tenant_id, po)
     return po
 
 
@@ -348,6 +357,7 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
     invoice = await _load_invoice_with_lines(db, invoice)
     po.invoice_id = invoice.id
     config = await load_classification_config(db, invoice.tenant_id)
+    await apply_plausible_vendor_to_invoice_from_po(db, invoice, po)
     inherit_po_coding_to_invoice(po, invoice, config=config)
 
     bridged = await bridge_orphan_grns_via_commercial_invoice(
@@ -380,6 +390,7 @@ async def _sync_commercial_invoice(db: AsyncSession, invoice: Invoice, po_number
     await reconcile_dossier_vendor(
         db, invoice, po, document_type=PurchaseDocumentType.INVOICE.value
     )
+    await ensure_vendor_master_for_po_register(db, invoice.tenant_id, po)
     return po
 
 
@@ -403,36 +414,10 @@ async def sync_purchase_document(
     if doc_type == PurchaseDocumentType.PO.value:
         if not po_number:
             return None
-        result = await _sync_po_document(db, invoice, po_number)
-        if result is not None:
-            from app.services.dossier.dossier_reprocess_service import (
-                reprocess_held_commercial_invoices_on_anchor,
-            )
-
-            await reprocess_held_commercial_invoices_on_anchor(
-                db,
-                tenant_id=invoice.tenant_id,
-                route_target=ROUTE_PURCHASE,
-                anchor_ref=po_number,
-                triggering_invoice_id=invoice.id,
-            )
-        return result
+        return await _sync_po_document(db, invoice, po_number)
     if doc_type == PurchaseDocumentType.GRN.value:
         if grn_has_po_ref(invoice) and po_number:
-            result = await _sync_grn_document(db, invoice, po_number)
-            if result is not None:
-                from app.services.dossier.dossier_reprocess_service import (
-                    reprocess_held_commercial_invoices_on_anchor,
-                )
-
-                await reprocess_held_commercial_invoices_on_anchor(
-                    db,
-                    tenant_id=invoice.tenant_id,
-                    route_target=ROUTE_PURCHASE,
-                    anchor_ref=po_number,
-                    triggering_invoice_id=invoice.id,
-                )
-            return result
+            return await _sync_grn_document(db, invoice, po_number)
         await _sync_orphan_grn_document(db, invoice)
         return None
     if doc_type == PurchaseDocumentType.INVOICE.value:

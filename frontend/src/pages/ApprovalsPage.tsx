@@ -43,7 +43,7 @@ import {
 } from "@/lib/approvalsBoard";
 import { ActionChip } from "@/components/ActionChip";
 import { cn } from "@/lib/cn";
-import { queryKeys } from "@/lib/queryClient";
+import { queryKeys, tenantQueryKey } from "@/lib/queryClient";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import {
@@ -247,6 +247,11 @@ export function ApprovalsPage() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.payments() }),
       queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.purchases() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.purchasesTwoWay() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.sales() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.salesTwoWay() }),
+      queryClient.invalidateQueries({ queryKey: tenantQueryKey(["invoices"]) }),
     ]);
   }, [queryClient]);
 
@@ -376,6 +381,7 @@ export function ApprovalsPage() {
       const rejected = await api.reject(id);
       setInvoices((prev) => upsertInvoice(prev, rejected));
       setToast("Invoice rejected — file moved to rejected storage");
+      await invalidateAfterApproval();
       await load({ fresh: true });
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) {
@@ -407,6 +413,7 @@ export function ApprovalsPage() {
         setDrawerInvoice(null);
       }
       setToast("Invoice permanently deleted");
+      await invalidateAfterApproval();
       await load({ silent: true, fresh: true });
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Permanent delete failed");

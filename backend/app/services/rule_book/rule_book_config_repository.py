@@ -13,8 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.tenant import Tenant
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
-from app.schemas.rule_book_config import PostingDefaults, RuleBookConfigPayload
-from app.services.master_data.starter_chart_of_accounts import build_starter_chart_of_accounts
+from app.schemas.rule_book_config import PostingDefaults, RuleBookConfigPayload, validate_rule_book_config_payload
+from app.services.rule_book.account_mapper import coa_functional_for_journaling
+from app.services.master_data.starter_chart_of_accounts import (
+    build_starter_chart_of_accounts,
+    merge_missing_starter_accounts,
+)
 from app.tenant_settings import tenant_country
 
 
@@ -87,6 +91,34 @@ async def ensure_default_config(
     session.add(row)
     await session.flush()
     return deepcopy(config)
+
+
+async def upgrade_tenant_coa_if_needed(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> bool:
+    """Merge missing starter control accounts when COA cannot support journaling. Idempotent."""
+    raw = await fetch_config_dict(session, tenant_id)
+    if raw is None:
+        return False
+
+    config = validate_rule_book_config_payload(raw)
+    if coa_functional_for_journaling(config):
+        return False
+
+    country = await _resolve_country_for_tenant(session, tenant_id)
+    merged_entries = merge_missing_starter_accounts(
+        list(config.chart_of_accounts),
+        country,
+        posting_defaults=config.posting_defaults,
+    )
+    if len(merged_entries) == len(config.chart_of_accounts):
+        return False
+
+    data = deepcopy(raw)
+    data["chart_of_accounts"] = [entry.model_dump() for entry in merged_entries]
+    await upsert_config(session, tenant_id, validate_rule_book_config_payload(data).model_dump())
+    return True
 
 
 async def upsert_config(

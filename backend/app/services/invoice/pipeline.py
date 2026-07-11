@@ -11,7 +11,7 @@ from app.config import flag_enabled_for_dt, get_settings
 from app.services.shared.amount_sanity import plausible_money, sanitize_parsed_line_item
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
-from app.models.journal import JournalEntry
+from app.models.journal import JournalEntry, JournalEntryKind
 from app.models.line_item import LineItem
 from app.models.vendor import VendorRegistry
 from app.models.customer import CustomerRegistry
@@ -110,6 +110,7 @@ from app.services.purchase.team_expense_validator import has_receipt_attachment
 from app.services.master_data.vendor_hold_service import apply_vendor_hold_if_needed
 from app.services.master_data.bundle_vendor_service import reconcile_dossier_vendor, resolve_canonical_vendor_name
 from app.services.master_data.vendor_name_utils import is_plausible_vendor_name
+from app.services.invoice.invoice_amounts import backfill_invoice_amounts_from_sources
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem, invoice_data_from_invoice
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 from app.services.ingest.attachment_filter import filter_invoice_attachments
@@ -124,6 +125,10 @@ from app.services.payments.journal_generator import (
     generate_entries,
     get_unresolved_control_accounts,
     is_balanced,
+)
+from app.services.payments.journal_persist_service import persist_journal_lines
+from app.services.master_data.journal_counterparty_resolver import (
+    resolve_counterparty_registry_ids_for_journal,
 )
 from app.services.shared.notifier import send_notification
 from app.services.reconciliation.reconciliation_service import reconcile_daily, save_reconciliation
@@ -299,6 +304,8 @@ async def _replace_line_items(
     session: AsyncSession,
     invoice: Invoice,
     lines: list[ParsedLineItem],
+    *,
+    trace: object | None = None,
 ) -> None:
     stale = list(invoice.line_items)
     if stale:
@@ -312,8 +319,13 @@ async def _replace_line_items(
         )
     invoice.line_items.clear()
     await session.flush()
-    for line in lines:
-        cleaned = sanitize_parsed_line_item(line)
+    from app.services.extraction.line_item_trace import row_key_for_item
+
+    for index, line in enumerate(lines):
+        row_key = row_key_for_item(line, index)
+        cleaned = sanitize_parsed_line_item(line, trace=trace, row_key=row_key)
+        if trace is not None:
+            trace.record(row_key, "persist", "kept", "persisted_row")
         invoice.line_items.append(
             LineItem(
                 tenant_id=invoice.tenant_id,
@@ -323,6 +335,9 @@ async def _replace_line_items(
                 unit_price=cleaned.unit_price,
                 amount=cleaned.amount,
                 tax_amount=cleaned.tax_amount,
+                extraction_source=cleaned.source,
+                source_confidence=cleaned.source_confidence,
+                fused_from=list(cleaned.fused_from) if cleaned.fused_from else None,
             )
         )
     await session.flush()
@@ -760,6 +775,29 @@ async def ingest_email_attachments(
     return result
 
 
+async def _maybe_reprocess_held_commercial_siblings(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    route_target: str,
+    anchor_ref: str | None,
+) -> None:
+    anchor = (anchor_ref or "").strip()
+    if not anchor:
+        return
+    from app.services.dossier.dossier_reprocess_service import (
+        reprocess_held_commercial_invoices_on_anchor,
+    )
+
+    await reprocess_held_commercial_invoices_on_anchor(
+        session,
+        tenant_id=invoice.tenant_id,
+        route_target=route_target,
+        anchor_ref=anchor,
+        triggering_invoice_id=invoice.id,
+    )
+
+
 async def _finish_purchase_supporting_document(session: AsyncSession, invoice: Invoice) -> None:
     """PO / GRN documents: sync register, skip AP journal and GL mapping."""
     from app.services.purchase.purchase_document_service import EVAL_AWAITING_PO, sync_purchase_document
@@ -796,6 +834,13 @@ async def _finish_purchase_supporting_document(session: AsyncSession, invoice: I
             linked_po,
             document_type=invoice.purchase_document_type,
         )
+
+    await _maybe_reprocess_held_commercial_siblings(
+        session,
+        invoice,
+        route_target=ROUTE_PURCHASE,
+        anchor_ref=invoice.po_reference,
+    )
 
     await finish_non_posting_document(
         session,
@@ -835,6 +880,13 @@ async def _finish_sales_supporting_document(session: AsyncSession, invoice: Invo
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
+    await _maybe_reprocess_held_commercial_siblings(
+        session,
+        invoice,
+        route_target=ROUTE_SALES,
+        anchor_ref=invoice.so_reference,
+    )
+
     await finish_non_posting_document(
         session,
         invoice,
@@ -853,6 +905,7 @@ async def _apply_parsed_to_invoice(
     config,
     preserve_existing: bool = False,
     org=None,
+    trace: object | None = None,
 ) -> str | None:
     """Write extracted AP fields onto invoice rows (post-classification extract phase)."""
     if preserve_existing:
@@ -894,7 +947,7 @@ async def _apply_parsed_to_invoice(
 
             invoice.document_text = cap_document_text(parsed.document_text)
         if not loaded.line_items:
-            await _replace_line_items(session, loaded, parsed.line_items)
+            await _replace_line_items(session, loaded, parsed.line_items, trace=trace)
 
         from app.services.extraction.extraction_field_values import apply_parsed_extraction_fields
 
@@ -992,7 +1045,7 @@ async def _apply_parsed_to_invoice(
     loaded.document_heading = invoice.document_heading
     loaded.extracted_fields = invoice.extracted_fields
 
-    await _replace_line_items(session, loaded, parsed.line_items)
+    await _replace_line_items(session, loaded, parsed.line_items, trace=trace)
     return invoice.vendor
 
 
@@ -1135,13 +1188,40 @@ async def resume_invoice_posting_pipeline(
         await session.execute(
             select(JournalEntry).where(
                 *journal_entries_for_invoice(invoice.tenant_id, invoice.id),
+                JournalEntry.entry_kind == JournalEntryKind.INVOICE_ACCRUAL,
             )
         )
     ).scalars().all()
     for entry in existing_entries:
         await session.delete(entry)
     await session.flush()
-    journal_lines = generate_entries(invoice, mapping, config=cfg, sales_order=linked_so)
+    backfill_invoice_amounts_from_sources(loaded)
+    invoice.subtotal = loaded.subtotal
+    invoice.gst = loaded.gst
+    invoice.total = loaded.total
+    vendor_reg_id, customer_reg_id = await resolve_counterparty_registry_ids_for_journal(
+        session, invoice
+    )
+    from app.services.master_data.party_coa_subledger_service import (
+        resolve_invoice_control_mapping,
+    )
+
+    control_mapping = await resolve_invoice_control_mapping(
+        session,
+        invoice,
+        cfg,
+        vendor_registry_id=vendor_reg_id,
+        customer_registry_id=customer_reg_id,
+    )
+    journal_lines = generate_entries(
+        invoice,
+        mapping,
+        config=cfg,
+        sales_order=linked_so,
+        vendor_registry_id=vendor_reg_id,
+        customer_registry_id=customer_reg_id,
+        control_mapping=control_mapping,
+    )
     if not is_balanced(journal_lines):
         invoice.status = InvoiceStatus.EXCEPTION
         await log_event(
@@ -1175,19 +1255,7 @@ async def resume_invoice_posting_pipeline(
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
-    for line in journal_lines:
-        session.add(
-            JournalEntry(
-                tenant_id=invoice.tenant_id,
-                invoice_id=invoice.id,
-                date=line.date,
-                account_code=line.account_code,
-                account_name=line.account_name,
-                debit=line.debit,
-                credit=line.credit,
-                entry_type=line.entry_type,
-            )
-        )
+    persist_journal_lines(session, invoice, journal_lines)
 
     invoice.status = InvoiceStatus.RECONCILING
     await session.flush()
@@ -1794,8 +1862,14 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     else:
         local = parse_local_text(ocr.text or "")
         parsed = replace(local, document_text=ocr.text or local.document_text)
-    parsed = ground_parsed_fields(parsed, ocr.text, selected_keys, ocr.payload_json)
-    parsed = enrich_parsed_from_ocr(parsed, ocr, dt_definition=dt_definition)
+    from app.config import get_settings as _trace_settings
+    from app.services.extraction.line_item_trace import resolve_line_item_trace
+
+    line_item_trace = resolve_line_item_trace(_trace_settings().runtime_line_item_trace_enabled)
+    parsed = ground_parsed_fields(
+        parsed, ocr.text, selected_keys, ocr.payload_json, trace=line_item_trace
+    )
+    parsed = enrich_parsed_from_ocr(parsed, ocr, dt_definition=dt_definition, trace=line_item_trace)
     parsed, gap_fill_detail = await apply_extraction_gap_fill(
         parsed,
         ocr=ocr,
@@ -1810,6 +1884,22 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             "extraction_gap_fill",
             invoice_id=invoice.id,
             detail=gap_fill_detail,
+        )
+
+    from app.services.extraction.line_items_fallback_service import apply_line_items_fallback
+
+    parsed, fallback_tier = apply_line_items_fallback(
+        parsed,
+        ocr_text=ocr.text,
+        ocr_payload=ocr.payload_json or {},
+        dt_definition=dt_definition,
+    )
+    if fallback_tier:
+        await log_event(
+            session,
+            "line_items_fallback_applied",
+            invoice_id=invoice.id,
+            detail={"tier": fallback_tier, "line_count": len(parsed.line_items or [])},
         )
 
     if llm_result is not None:
@@ -1874,6 +1964,32 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         detail=field_confidence_audit_detail(field_conf_result),
     )
 
+    from app.services.classification.document_type_playbook_service import confidence_gate_fields
+    from app.services.invoice.invoice_pipeline_phases import evaluate_line_item_review_gate
+
+    li_passed, li_confidence, li_reasons = evaluate_line_item_review_gate(
+        parsed,
+        dt_definition=dt_definition,
+    )
+    if not li_passed and "line_items" in confidence_gate_fields(dt_definition):
+        loaded.evaluation_status = EVAL_NEEDS_REVIEW
+        invoice.evaluation_status = EVAL_NEEDS_REVIEW
+        await log_event(
+            session,
+            "routing_review_required",
+            invoice_id=invoice.id,
+            detail={
+                "gate": "line_item_confidence",
+                "line_items_confidence": li_confidence,
+                "review_reasons": li_reasons,
+            },
+        )
+
+    if _trace_settings().runtime_line_item_trace_enabled and line_item_trace.entries:
+        raw_fields = dict(parsed.raw_fields or {})
+        raw_fields["_line_item_trace"] = line_item_trace.to_dict()
+        parsed = replace(parsed, raw_fields=raw_fields)
+
     resolved_vendor = await _apply_parsed_to_invoice(
         session,
         invoice=invoice,
@@ -1882,6 +1998,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         config=config,
         preserve_existing=preserve_extracted_fields,
         org=org,
+        trace=line_item_trace,
     )
 
     if preserve_extracted_fields:
@@ -2512,13 +2629,40 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         await session.execute(
             select(JournalEntry).where(
                 *journal_entries_for_invoice(invoice.tenant_id, invoice.id),
+                JournalEntry.entry_kind == JournalEntryKind.INVOICE_ACCRUAL,
             )
         )
     ).scalars().all()
     for entry in existing_entries:
         await session.delete(entry)
     await session.flush()
-    journal_lines = generate_entries(invoice, mapping, config=config, sales_order=linked_so)
+    backfill_invoice_amounts_from_sources(loaded)
+    invoice.subtotal = loaded.subtotal
+    invoice.gst = loaded.gst
+    invoice.total = loaded.total
+    vendor_reg_id, customer_reg_id = await resolve_counterparty_registry_ids_for_journal(
+        session, invoice
+    )
+    from app.services.master_data.party_coa_subledger_service import (
+        resolve_invoice_control_mapping,
+    )
+
+    control_mapping = await resolve_invoice_control_mapping(
+        session,
+        invoice,
+        config,
+        vendor_registry_id=vendor_reg_id,
+        customer_registry_id=customer_reg_id,
+    )
+    journal_lines = generate_entries(
+        invoice,
+        mapping,
+        config=config,
+        sales_order=linked_so,
+        vendor_registry_id=vendor_reg_id,
+        customer_registry_id=customer_reg_id,
+        control_mapping=control_mapping,
+    )
     if not is_balanced(journal_lines):
         invoice.status = InvoiceStatus.EXCEPTION
         await log_event(
@@ -2550,19 +2694,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
-    for line in journal_lines:
-        session.add(
-            JournalEntry(
-                tenant_id=invoice.tenant_id,
-                invoice_id=invoice.id,
-                date=line.date,
-                account_code=line.account_code,
-                account_name=line.account_name,
-                debit=line.debit,
-                credit=line.credit,
-                entry_type=line.entry_type,
-            )
-        )
+    persist_journal_lines(session, invoice, journal_lines)
 
     invoice.status = InvoiceStatus.RECONCILING
     await session.flush()

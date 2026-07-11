@@ -331,7 +331,9 @@ export function dossierBlockerFromSummary(dossier: Pick<
       "Pipeline blocked — review required";
     if (bottleneck) {
       return {
-        stageId: bottleneck.stageId,
+        stageId:
+          (dossier.blockerStageId as DossierPipelineStageId | undefined) ??
+          bottleneck.stageId,
         reason,
         remediation: dossier.blockerRemediation,
         exceptionCode: bottleneck.step.exceptionCode,

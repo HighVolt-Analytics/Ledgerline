@@ -69,6 +69,9 @@ def _rule_signature(rule: dict[str, Any]) -> dict[str, Any]:
         "title": rule.get("title"),
         "klass": rule.get("klass"),
         "posting": rule.get("posting"),
+        "match_policy": rule.get("match_policy") or rule.get("matchPolicy"),
+        "approval_policy": rule.get("approval_policy") or rule.get("approvalPolicy"),
+        "playbook_profile": rule.get("playbook_profile") or rule.get("playbookProfile"),
     }
 
 

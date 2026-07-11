@@ -6,6 +6,7 @@ import re
 
 from app.services.extraction.extraction_field_values import _FIELD_HINT_PATTERNS
 from app.services.extraction.line_item_skip_patterns import OPTIONAL_CURRENCY_MONEY_PREFIX
+from app.services.extraction.locale_vocab import optional_currency_code_group
 
 MONEY_SCALAR_KEYS: tuple[str, ...] = ("subtotal", "gst", "gst_rate", "total")
 
@@ -105,7 +106,7 @@ def build_money_inline_patterns() -> list[tuple[str, re.Pattern[str]]]:
         (
             "total",
             re.compile(
-                rf"(?i)FREIGHT\s*[:\-]?\s*(?:USD|AUD|SGD|EUR|GBP)?\s*{_MONEY_CAPTURE}",
+                rf"(?i)FREIGHT\s*[:\-]?\s*{optional_currency_code_group()}\s*{_MONEY_CAPTURE}",
             ),
         )
     )

@@ -88,10 +88,10 @@ def resolve_gst_rate_percent(
     from app.services.extraction.field_grounding_service import value_grounded_in_ocr
 
     token = str(rate).strip()
-    if token and value_grounded_in_ocr(token, ocr_text):
+    if token and value_grounded_in_ocr(token, ocr_text, field_key="gst_rate"):
         return rate
     percent_token = f"{token}%"
-    if value_grounded_in_ocr(percent_token, ocr_text):
+    if value_grounded_in_ocr(percent_token, ocr_text, field_key="gst_rate"):
         return rate
     return None
 

@@ -20,16 +20,28 @@ REFERENCE_BLOCK = re.compile(
 BARE_CODE_TOKEN = re.compile(r"^[A-Z0-9][A-Z0-9\-/_]{1,20}$", re.I)
 
 
-def is_noise_line_item_row(description: str | None, qty: Decimal | None = None) -> bool:
+def is_noise_line_item_row(
+    description: str | None,
+    qty: Decimal | None = None,
+    *,
+    trace: object | None = None,
+    row_key: str | None = None,
+) -> bool:
     """True when a row looks like address/reference/metadata rather than a product line."""
     desc = (description or "").strip()
     if not desc:
         return True
     if REFERENCE_BLOCK.search(desc):
+        if trace is not None and row_key:
+            trace.record(row_key, "noise", "dropped", "reference_block")
         return True
     if ADDRESS_LIKE.search(desc) and POSTAL_RUN.search(desc):
+        if trace is not None and row_key:
+            trace.record(row_key, "noise", "dropped", "address_like")
         return True
     if ADDRESS_LIKE.search(desc) and len(desc.split()) <= 8:
+        if trace is not None and row_key:
+            trace.record(row_key, "noise", "dropped", "address_like")
         return True
     if BARE_CODE_TOKEN.match(desc) and qty is not None and qty > Decimal("10000"):
         return True

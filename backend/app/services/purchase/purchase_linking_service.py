@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -102,14 +104,9 @@ async def attach_grn_invoice_to_po(
     po,
 ) -> GoodsReceipt:
     """Create or refresh GRN register row for an uploaded GRN document."""
-    from app.services.purchase.purchase_match_service import _invoice_qty_and_price
+    from app.services.purchase.purchase_match_service import resolve_grn_received_qty
 
     existing = await grn_linked_to_po(session, grn_invoice.id)
-    if existing is not None:
-        if existing.purchase_order_id != po.id:
-            existing.purchase_order_id = po.id
-        return existing
-
     loaded = (
         await session.execute(
             select(Invoice)
@@ -118,12 +115,22 @@ async def attach_grn_invoice_to_po(
         )
     ).scalar_one_or_none()
     grn_invoice = loaded or grn_invoice
-    qty, _, _ = _invoice_qty_and_price(grn_invoice)
+    po_qty = Decimal(str(po.po_qty or 0)) if po is not None else None
+    qty = resolve_grn_received_qty(grn_invoice, po_qty=po_qty if po_qty > 0 else None)
+    if qty <= 1 and po_qty is not None and po_qty > qty:
+        qty = po_qty
+
+    if existing is not None:
+        if existing.purchase_order_id != po.id:
+            existing.purchase_order_id = po.id
+        if qty > 0 and qty != existing.grn_qty:
+            existing.grn_qty = qty
+        return existing
 
     grn = GoodsReceipt(
         tenant_id=po.tenant_id,
         purchase_order_id=po.id,
-        grn_qty=qty,
+        grn_qty=qty if qty > 0 else Decimal("1"),
         grn_date=grn_invoice.invoice_date,
         receiver=None,
         condition_note="Linked via invoice_no bridge",

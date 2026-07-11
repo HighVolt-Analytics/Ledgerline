@@ -8,6 +8,7 @@ import json
 import uuid
 from decimal import Decimal
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -16,13 +17,19 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import JournalEntry
 from app.models.purchase_order import PurchaseOrder
+from app.models.tenant import Tenant
+from app.models.user import User
+from app.services.auth.auth_service import create_access_token
 from app.services.invoice.invoice_reset import requeue_invoice_for_pipeline
 from app.services.purchase.purchase_match_service import approve_purchase_variance
+from app.services.rule_book.rule_book_config_repository import upgrade_tenant_coa_if_needed
 from app.tenant_child_tables import journal_entries_for_invoice
+from app.tenant_ids import TESTING_TENANT_UUID
 from app.workers.tasks import process_invoice_by_id
 
 PO_NUMBER = "PO-2026-0612"
 INVOICE_ID = 187
+API = "http://127.0.0.1:8001"
 VARIANCE_EVENTS = frozenset(
     {
         "three_way_match_variance_unapproved",
@@ -146,6 +153,49 @@ async def _wait_pipeline(tenant_id, timeout_sec: int = 180) -> bool:
     return False
 
 
+async def _auth_for_tenant(tenant_id: uuid.UUID) -> str:
+    async with async_session_factory() as session:
+        tenant = await session.get(Tenant, tenant_id)
+        user = (
+            await session.execute(
+                select(User).where(User.tenant_id == tenant_id, User.is_active.is_(True)).limit(1)
+            )
+        ).scalar_one_or_none()
+        if not tenant or not user:
+            raise RuntimeError(f"No user for tenant {tenant_id}")
+        return create_access_token(
+            user_id=user.id,
+            tenant_id=tenant_id,
+            tenant_slug=tenant.slug,
+            email=user.email,
+            role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        )
+
+
+async def _api_approve_variance(po_id: int, tenant_id: uuid.UUID) -> dict:
+    token = await _auth_for_tenant(tenant_id)
+    headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": str(tenant_id)}
+    async with httpx.AsyncClient(base_url=API, timeout=180.0) as client:
+        r = await client.post(f"/api/purchases/{po_id}/approve-variance", headers=headers)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text}
+        return {"status": r.status_code, "body": body}
+
+
+async def _wait_processed(timeout_sec: int = 120) -> bool:
+    for _ in range(timeout_sec):
+        async with async_session_factory() as session:
+            status = (
+                await session.execute(select(Invoice.status).where(Invoice.id == INVOICE_ID))
+            ).scalar_one_or_none()
+            if status == InvoiceStatus.PROCESSED:
+                return True
+        await asyncio.sleep(1)
+    return False
+
+
 async def main() -> None:
     print("=" * 72)
     print("VARIANCE GATE VERIFICATION — PO-2026-0612 / invoice 187")
@@ -250,16 +300,27 @@ async def main() -> None:
             await session.execute(select(func.max(AuditLog.id)).where(AuditLog.invoice_id == INVOICE_ID))
         ).scalar() or 0
 
-    print(f"\n--- APPROVE VARIANCE on PO {po.id} ---")
+    print(f"\n--- UPGRADE TENANT COA (enable post-variance journaling) ---")
     async with async_session_factory() as session:
-        po_row = (
-            await session.execute(
-                select(PurchaseOrder).where(PurchaseOrder.id == po.id)
-            )
-        ).scalar_one()
-        tenant_uuid = po_row.tenant_id
-        await approve_purchase_variance(session, tenant_uuid, po_row.id)
+        upgraded = await upgrade_tenant_coa_if_needed(session, TESTING_TENANT_UUID)
         await session.commit()
+        print(f"upgrade_tenant_coa_if_needed: {upgraded}")
+
+    print(f"\n--- APPROVE VARIANCE on PO {po.id} ---")
+    await asyncio.sleep(2)
+    approve_resp = await _api_approve_variance(po.id, tenant_uuid)
+    print(f"approve-variance HTTP: {approve_resp['status']}")
+    if approve_resp["status"] != 200:
+        print("HTTP approve failed; falling back to direct DB approve")
+        async with async_session_factory() as session:
+            po_row = (
+                await session.execute(select(PurchaseOrder).where(PurchaseOrder.id == po.id))
+            ).scalar_one()
+            await approve_purchase_variance(session, tenant_uuid, po_row.id)
+            await session.commit()
+
+    processed = await _wait_processed()
+    print(f"wait processed: {processed}")
 
     async with async_session_factory() as session:
         after_approve = await _snapshot(session, INVOICE_ID)

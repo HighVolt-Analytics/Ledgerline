@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.vendor import VendorRegistry
 from app.schemas.vendor import VendorCreate, VendorResponse, VendorUpdate
+from app.services.master_data.party_coa_subledger_service import ensure_vendor_party_coa_sub_ledger
 from app.tenant_scoped import get_for_tenant
 
 
@@ -54,6 +55,12 @@ async def create_vendor_registry(
     )
     db.add(row)
     await db.flush()
+    await ensure_vendor_party_coa_sub_ledger(
+        db,
+        tenant_id,
+        slug=row.vendor_slug,
+        vendor_name=row.vendor_name,
+    )
     return VendorResponse.model_validate(row)
 
 
@@ -78,6 +85,12 @@ async def update_vendor_registry(
         row.approved = body.approved
 
     await db.flush()
+    await ensure_vendor_party_coa_sub_ledger(
+        db,
+        tenant_id,
+        slug=row.vendor_slug,
+        vendor_name=row.vendor_name,
+    )
     return VendorResponse.model_validate(row)
 
 

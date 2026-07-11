@@ -799,6 +799,7 @@ def _normalize_llm_raw(
     *,
     selected_keys: Sequence[str] | None = None,
     custom_keys: Sequence[str] | None = None,
+    trace: object | None = None,
 ) -> dict[str, Any]:
     """Best-effort cleanup before Pydantic validation (LLMs often emit '' or nested vendor)."""
     out = dict(raw)
@@ -820,14 +821,19 @@ def _normalize_llm_raw(
         items = out.get("line_items")
         if isinstance(items, list):
             cleaned: list[dict[str, Any]] = []
-            for row in items:
+            for index, row in enumerate(items):
                 if not isinstance(row, dict):
                     continue
                 desc = str(row.get("description") or "").strip()
-                if not desc or should_skip_line_row(desc):
+                row_key = desc.lower()[:80] if desc else f"row_{index}"
+                if not desc:
+                    if trace is not None:
+                        trace.record(row_key, "llm_normalize", "dropped", "empty_description")
+                    continue
+                if should_skip_line_row(desc, trace=trace, row_key=row_key):
                     continue
                 item = dict(row)
-                for key in ("amount", "qty", "unit_price"):
+                for key in ("amount", "qty", "unit_price", "tax_amount"):
                     if item.get(key) == "":
                         item[key] = None
                 cleaned.append(item)
@@ -897,18 +903,21 @@ def _parsed_line_items_from_llm(
     from app.services.extraction.line_items_sanitizer import sanitize_line_items
 
     allow_qty_only = document_has_qty_only_table(ocr_text, ocr_payload or {})
+    line_items_confidence = llm.field_confidence.get("line_items")
     items = [
         ParsedLineItem(
             description=row.description or None,
             qty=row.qty,
             unit_price=row.unit_price,
             amount=row.amount,
+            tax_amount=row.tax_amount,
+            source="llm",
+            source_confidence=line_items_confidence,
         )
         for row in llm.line_items
     ]
     cleaned = sanitize_line_items(
         items,
-        ocr_text=ocr_text,
         extracted_fields=extracted_fields,
         vendor=vendor,
         invoice_no=invoice_no,
@@ -1193,6 +1202,7 @@ def llm_result_to_invoice_data(
             "buyer": llm.buyer.model_dump(),
             "layout_kv": ocr.layout_kv,
             "extracted_fields": extracted,
+            "_line_items_confidence": (llm.field_confidence or {}).get("line_items"),
         },
     )
     parsed.gst_rate = resolve_gst_rate_percent(parsed, ocr_text=ocr_text, allow_inference=False)

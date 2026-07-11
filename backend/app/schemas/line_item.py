@@ -19,6 +19,9 @@ class LineItemResponse(BaseModel):
     gl_mapping_source: str | None = None
     gl_mapping_confidence: float | None = None
     gl_mapping_reason: str | None = None
+    extraction_source: str | None = None
+    source_confidence: float | None = None
+    fused_from: list[str] | None = None
 
 
 class LineItemUpdateBody(BaseModel):

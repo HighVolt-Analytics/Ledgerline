@@ -674,6 +674,34 @@ def evaluate_field_confidence_gate(
     )
 
 
+def evaluate_line_item_review_gate(
+    parsed: InvoiceData | None,
+    *,
+    dt_definition: DocumentTypeDefinition | None = None,
+    threshold: float | None = None,
+) -> tuple[bool, float | None, list[str]]:
+    """Return whether line-item confidence meets review threshold."""
+    from app.services.classification.document_type_playbook_service import confidence_gate_fields
+    from app.services.extraction.extraction_orchestrator import _doc_line_items_confidence
+    from app.services.extraction.field_extraction_confidence import _score_line_items
+    from app.services.extraction.line_item_parsing_config import DEFAULT_THRESHOLDS
+
+    if parsed is None or not parsed.line_items:
+        return True, None, []
+    gate_fields = confidence_gate_fields(dt_definition)
+    if "line_items" not in gate_fields:
+        return True, None, []
+
+    confidence = _doc_line_items_confidence(parsed)
+    if confidence is None:
+        confidence = _score_line_items(parsed) / 100.0
+
+    floor = threshold if threshold is not None else DEFAULT_THRESHOLDS.line_item_review_confidence_threshold
+    if confidence < floor:
+        return False, confidence, ["line_item_confidence_low"]
+    return True, confidence, []
+
+
 def field_confidence_audit_detail(result: FieldConfidenceGateResult) -> dict[str, object]:
     return {
         "gate": "field_confidence",

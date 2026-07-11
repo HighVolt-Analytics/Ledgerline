@@ -1,10 +1,10 @@
-import { Shield } from "lucide-react";
+import { Loader2, Shield } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
-import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
+import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import { cn } from "@/lib/cn";
+import { mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
 import type { VendorMaster } from "@/lib/v4RuleBookTypes";
-import { LEDGER_ACCOUNTS } from "@/lib/v4RuleBookTypes";
 import { BankDetailsSection } from "./BankDetailsSection";
 import { FieldLabel } from "./FieldLabel";
 import {
@@ -12,22 +12,12 @@ import {
   SubLedgerField,
 } from "./SubLedgerField";
 
-const VENDOR_LEDGER_OPTIONS = [
-  "—",
-  ...LEDGER_ACCOUNTS.filter(
-    (a) =>
-      ![
-        "GST Paid",
-        "Sales Tax Paid",
-        "GST Input Credit",
-        "VAT Paid",
-        "Accounts Payable",
-        "Suspense Account",
-      ].includes(a)
-  ),
-];
-
 const VENDOR_STATUS_OPTIONS = ["Active", "On hold", "Pending registration"] as const;
+
+function normalizeLedgerValue(ledger: string): string {
+  const trimmed = ledger.trim();
+  return trimmed === "—" ? "" : trimmed;
+}
 
 export function VendorDetailPanel({
   vendor,
@@ -42,7 +32,15 @@ export function VendorDetailPanel({
   onToggleMask?: () => void;
   focusBank?: boolean;
 }) {
-  const { data: coaAccounts = [] } = useChartOfAccounts();
+  const {
+    allAccounts,
+    options,
+    hasRealAccounts,
+    isLoading,
+  } = useCoaAccountOptions({ emptyLabel: "—" });
+  const ledgerValue = normalizeLedgerValue(vendor.defaultLedger);
+  const ledgerOptions = mergeCoaOptionsWithSavedValue(options, ledgerValue);
+
   return (
     <div
       className={cn("bg-muted/20 p-4 space-y-4", focusBank && "ring-1 ring-primary/30")}
@@ -120,30 +118,45 @@ export function VendorDetailPanel({
       />
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-        <FieldLabel label="Default ledger">
-          <Select
-            value={vendor.defaultLedger}
-            onValueChange={(defaultLedger) =>
-              onChange({
-                defaultLedger,
-                defaultSubLedger: reconcileSubLedgerOnLedgerChange(
-                  defaultLedger === "—" ? "" : defaultLedger,
-                  vendor.defaultSubLedger ?? "",
-                  coaAccounts
-                ),
-              })
-            }
-            options={toSelectOptions(VENDOR_LEDGER_OPTIONS)}
-            size="sm"
-            className="w-full text-xs"
-          />
-        </FieldLabel>
+        <div className="space-y-1">
+          <FieldLabel label="Default ledger">
+            {isLoading ? (
+              <div className="flex h-8 items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading…
+              </div>
+            ) : (
+              <Select
+                value={ledgerValue}
+                onValueChange={(defaultLedger) =>
+                  onChange({
+                    defaultLedger,
+                    defaultSubLedger: reconcileSubLedgerOnLedgerChange(
+                      defaultLedger,
+                      vendor.defaultSubLedger ?? "",
+                      allAccounts
+                    ),
+                  })
+                }
+                options={ledgerOptions}
+                disabled={isLoading}
+                size="sm"
+                className="w-full text-xs"
+              />
+            )}
+          </FieldLabel>
+          {!isLoading && !hasRealAccounts ? (
+            <p className="text-[10px] text-muted-foreground">
+              Add accounts in Settings → Chart of accounts.
+            </p>
+          ) : null}
+        </div>
         <FieldLabel label="Sub-ledger">
           <SubLedgerField
-            ledger={vendor.defaultLedger === "—" ? "" : vendor.defaultLedger}
+            ledger={ledgerValue}
             value={vendor.defaultSubLedger ?? ""}
             onChange={(defaultSubLedger) => onChange({ defaultSubLedger })}
-            accounts={coaAccounts}
+            accounts={allAccounts}
             size="sm"
           />
         </FieldLabel>
@@ -173,7 +186,7 @@ export function VendorDetailPanel({
         <ul className="space-y-1 text-xs">
           <li>
             <span className="text-muted-foreground">Invoice received:</span> Dr{" "}
-            <span className="font-medium">{vendor.defaultLedger}</span> · Cr{" "}
+            <span className="font-medium">{ledgerValue || "—"}</span> · Cr{" "}
             <span className="font-medium">Accounts Payable</span>
           </li>
           <li>

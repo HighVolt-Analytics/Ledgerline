@@ -92,7 +92,10 @@ async def load_rule_book_config_dict(
 
     stored = await fetch_config_dict(session, tid)
     if stored is not None:
-        return stored
+        fixed = validate_rule_book_config_payload(stored).model_dump()
+        if fixed.get("document_types") != stored.get("document_types"):
+            await upsert_config(session, tid, fixed)
+        return fixed
 
     legacy = _load_legacy_file_dict(tid)
     if legacy is not None:

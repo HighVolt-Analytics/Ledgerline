@@ -79,7 +79,6 @@ def _duplicates_header_value(desc: str, header_values: set[str]) -> bool:
 def sanitize_line_items(
     items: list[ParsedLineItem],
     *,
-    ocr_text: str | None = None,
     extracted_fields: Mapping[str, str] | None = None,
     vendor: str | None = None,
     invoice_no: str | None = None,
@@ -87,8 +86,11 @@ def sanitize_line_items(
     so_reference: str | None = None,
     cost_centre: str | None = None,
     allow_qty_only: bool = False,
+    trace: object | None = None,
 ) -> list[ParsedLineItem]:
     """Drop summary/metadata/header duplicate rows from merged line items."""
+    from app.services.extraction.line_item_trace import row_key_for_item
+
     header_values = _header_scalar_values(
         vendor=vendor,
         invoice_no=invoice_no,
@@ -99,19 +101,28 @@ def sanitize_line_items(
     )
 
     cleaned: list[ParsedLineItem] = []
-    for item in items:
+    for index, item in enumerate(items):
         desc = item.description or ""
-        if should_skip_line_row(desc):
+        row_key = row_key_for_item(item, index)
+        if should_skip_line_row(desc, trace=trace, row_key=row_key):
             continue
         if _is_label_only_row(item):
+            if trace is not None:
+                trace.record(row_key, "sanitize", "dropped", "label_only")
             continue
         if _duplicates_header_value(desc, header_values):
+            if trace is not None:
+                trace.record(row_key, "sanitize", "dropped", "header_duplicate")
             continue
         from app.services.extraction.line_item_noise_patterns import is_noise_line_item_row
 
-        if is_noise_line_item_row(desc, item.qty):
+        if is_noise_line_item_row(desc, item.qty, trace=trace, row_key=row_key):
             continue
         if not _passes_minimum_product_row(item, allow_qty_only=allow_qty_only):
+            if trace is not None:
+                trace.record(row_key, "sanitize", "dropped", "minimum_row")
             continue
+        if trace is not None:
+            trace.record(row_key, "sanitize", "kept", "product_row")
         cleaned.append(item)
     return cleaned

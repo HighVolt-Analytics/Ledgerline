@@ -78,11 +78,13 @@ async def reset_invoice_for_approval(session: AsyncSession, inv: Invoice) -> Non
     inv.account_code = None
     inv.account_name = None
 
-    for entry in (
-        await session.execute(
-            select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
-        )
-    ).scalars().all():
+    with session.no_autoflush:
+        entries = (
+            await session.execute(
+                select(JournalEntry).where(*journal_entries_for_invoice(inv.tenant_id, inv.id))
+            )
+        ).scalars().all()
+    for entry in entries:
         await session.delete(entry)
 
     await session.flush()

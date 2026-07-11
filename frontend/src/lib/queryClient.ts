@@ -30,6 +30,8 @@ const baseKeys = {
   dashboardOverview: (month: string, activityLimit: number) =>
     ["dashboard", "overview", month, activityLimit] as const,
   reportsAnalytics: (month: string) => ["reports", "analytics", month] as const,
+  subledgerApBalances: (asOf?: string) => ["reports", "subledger", "ap", asOf ?? ""] as const,
+  subledgerArBalances: (asOf?: string) => ["reports", "subledger", "ar", asOf ?? ""] as const,
   reportDocuments: (dateFrom?: string, dateTo?: string) =>
     ["reports", "documents", dateFrom ?? "all", dateTo ?? "all"] as const,
   reconciliationOverview: ["reconciliation", "overview"] as const,
@@ -83,6 +85,8 @@ export const queryKeys = {
   dashboardOverview: (month: string, activityLimit: number) =>
     tenantQueryKey(baseKeys.dashboardOverview(month, activityLimit)),
   reportsAnalytics: (month: string) => tenantQueryKey(baseKeys.reportsAnalytics(month)),
+  subledgerApBalances: (asOf?: string) => tenantQueryKey(baseKeys.subledgerApBalances(asOf)),
+  subledgerArBalances: (asOf?: string) => tenantQueryKey(baseKeys.subledgerArBalances(asOf)),
   reportDocuments: (dateFrom?: string, dateTo?: string) =>
     tenantQueryKey(baseKeys.reportDocuments(dateFrom, dateTo)),
   reconciliationOverview: () => tenantQueryKey(baseKeys.reconciliationOverview),

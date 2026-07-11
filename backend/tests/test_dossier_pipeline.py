@@ -14,6 +14,7 @@ from app.services.dossier.dossier_pipeline_service import (
     _resolve_match,
     build_dossier_pipeline,
     classification_review_pending,
+    first_pipeline_bottleneck,
     first_pipeline_failure,
 )
 from app.services.dossier.dossier_service import _confidence_pct, build_dossier_summary
@@ -660,7 +661,7 @@ async def test_pipeline_validate_waived_when_bypass_with_failed_checks(
     logs = [
         _log("validation_bypassed_after_human_approval", inv.id),
         _log("validation_passed", inv.id),
-        _log("three_way_match_evaluated", inv.id, status="variance"),
+        _log("three_way_match_evaluated", inv.id, status="mismatch"),
         _log("mapping_applied", inv.id, account_name="5100"),
         _log("invoice_processed", inv.id),
     ]
@@ -1110,3 +1111,80 @@ def test_resolve_match_passes_after_sales_variance_approved() -> None:
     ]
     step = _resolve_match(inv, logs, wm=15)
     assert step.state == "pass"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_journal_unbalanced_fails_journal_stage() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Qantas",
+        status=InvoiceStatus.EXCEPTION,
+        account_name="Marketing Expense",
+    )
+    logs = [
+        _log_id("invoice_uploaded", 1, 1),
+        _log_id("validation_passed", 1, 2),
+        _log_id("mapping_applied", 1, 3, account_name="Marketing Expense"),
+        _log_id("journal_unbalanced", 1, 4, subtotal=0, gst=0, total=2580),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    journal = next(s for s in pipeline if s.stage_id == "journal")
+    assert journal.state == "fail"
+    assert journal.exception_code == "JOURNAL_UNBALANCED"
+    assert first_pipeline_bottleneck(pipeline) is journal
+
+
+def test_pipeline_cycle_reset_excludes_stale_approval_from_dossier_audit_events() -> None:
+    from app.services.dossier.dossier_audit import DOSSIER_AUDIT_EVENTS
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Qantas",
+        status=InvoiceStatus.EXCEPTION,
+        route_target="Purchase Management",
+    )
+    all_logs = [
+        _log_id("invoice_uploaded", 1, 1),
+        _log_id("validation_passed", 1, 2),
+        _log_id("invoice_approved", 1, 3, actor_name="Reviewer"),
+        _log_id("invoice_requeued", 1, 4),
+        _log_id("validation_passed", 1, 5),
+        _log_id("approval_required", 1, 6, reason="match_not_clean"),
+    ]
+    filtered = [entry for entry in all_logs if entry.event in DOSSIER_AUDIT_EVENTS]
+    pipeline = build_dossier_pipeline(inv, filtered)
+    approve = next(s for s in pipeline if s.stage_id == "approve")
+    assert approve.state == "pending"
+    assert approve.detail == "match_not_clean"
+
+
+@pytest.mark.asyncio
+async def test_build_dossier_summary_pending_approval_sets_blocker(
+    db_session: AsyncSession,
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Atlassian",
+        status=InvoiceStatus.EXCEPTION,
+        document_type_code="DT-09",
+        account_name="Marketing Expense",
+        route_target="Purchase Management",
+        file_hash="dossier-approval-blocker",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    logs = [
+        _log("invoice_uploaded", inv.id),
+        _log("storage_verified", inv.id),
+        _log("ocr_completed", inv.id),
+        _log("classification_gate_passed", inv.id, confirmed_dt="DT-09"),
+        _log("parse_completed", inv.id),
+        _log("document_classified", inv.id, confirmed_dt="DT-09"),
+        _log("validation_passed", inv.id),
+        _log("approval_required", inv.id, reason="match_not_clean"),
+    ]
+    summary = await build_dossier_summary(db_session, inv, logs, compact=True)
+    assert summary.outcome == "blocked"
+    assert summary.blocker_stage_id == "approve"
+    assert summary.blocker_reason == "match_not_clean"
+    assert summary.outcome_banner == "match_not_clean"

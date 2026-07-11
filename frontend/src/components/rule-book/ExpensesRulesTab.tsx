@@ -7,10 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
-import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
+import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
+import { defaultExpensePostingLedger, mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
 import { nextRulePriority } from "@/lib/rulePriority";
 import type { ExpenseRule } from "@/lib/v4RuleBookTypes";
-import { LEDGER_ACCOUNTS } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
 import { FieldLabel } from "./FieldLabel";
 import {
@@ -35,7 +35,12 @@ export function ExpensesRulesTab({
   onChange: (rules: ExpenseRule[]) => void;
 }) {
   const { toast } = useToast();
-  const { data: coaAccounts = [] } = useChartOfAccounts();
+  const {
+    allAccounts,
+    options: ledgerOptions,
+    hasRealAccounts,
+    isLoading: coaLoading,
+  } = useCoaAccountOptions({ includeEmpty: false });
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const update = (id: string, patch: Partial<ExpenseRule>) =>
@@ -65,7 +70,7 @@ export function ExpensesRulesTab({
         enabled: true,
         priority: nextRulePriority(rules),
         matchOn: { descriptionContains: "" },
-        postTo: { ledger: LEDGER_ACCOUNTS[0], subLedger: "" },
+        postTo: { ledger: defaultExpensePostingLedger(allAccounts), subLedger: "" },
         matchedCount: 0,
       },
     ]);
@@ -211,11 +216,12 @@ export function ExpensesRulesTab({
                               subLedger: reconcileSubLedgerOnLedgerChange(
                                 ledger,
                                 rule.postTo.subLedger,
-                                coaAccounts
+                                allAccounts
                               ),
                             })
                           }
-                          options={toSelectOptions(LEDGER_ACCOUNTS)}
+                          options={mergeCoaOptionsWithSavedValue(ledgerOptions, rule.postTo.ledger)}
+                          disabled={coaLoading}
                           className="w-full"
                         />
                       </FieldLabel>
@@ -224,11 +230,16 @@ export function ExpensesRulesTab({
                           ledger={rule.postTo.ledger}
                           value={rule.postTo.subLedger}
                           onChange={(subLedger) => updatePost(rule.id, { subLedger })}
-                          accounts={coaAccounts}
+                          accounts={allAccounts}
                           size="sm"
                         />
                       </FieldLabel>
                     </div>
+                    {!coaLoading && !hasRealAccounts ? (
+                      <p className="text-[10px] text-muted-foreground mt-2">
+                        Add accounts in Settings → Chart of accounts.
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="flex justify-end">

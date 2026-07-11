@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+asyncpg://invoice:invoice@localhost:5432/invoice_db"
     )
+    database_command_timeout_seconds: int = Field(
+        default=180,
+        ge=30,
+        le=900,
+        validation_alias="DATABASE_COMMAND_TIMEOUT_SECONDS",
+    )
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
@@ -217,6 +223,10 @@ class Settings(BaseSettings):
     use_field_fusion: bool = Field(
         default=False,
         validation_alias="USE_FIELD_FUSION",
+    )
+    runtime_line_item_trace_enabled: bool = Field(
+        default=False,
+        validation_alias="RUNTIME_LINE_ITEM_TRACE_ENABLED",
     )
     use_composite_routing: bool = Field(
         default=False,
@@ -1144,7 +1154,14 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if os.getenv("PARSE_MIN_TEXT_CHARS"):
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "PARSE_MIN_TEXT_CHARS is deprecated and ignored; use OCR_MIN_TEXT_CHARS instead"
+        )
+    return settings
 
 
 def flag_enabled_for_dt(

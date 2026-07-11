@@ -28,15 +28,14 @@ _MONEY_TOKEN = re.compile(
 
 
 def parse_money_token(raw: str | None) -> Decimal | None:
+    from app.services.shared.locale_number_parser import parse_localized_decimal
+
     if not raw:
         return None
-    cleaned = re.sub(r"[^\d.\-]", "", str(raw).replace(",", ""))
-    if not cleaned:
+    parsed = parse_localized_decimal(str(raw))
+    if parsed is None:
         return None
-    try:
-        return plausible_money(Decimal(cleaned))
-    except (InvalidOperation, ValueError):
-        return None
+    return plausible_money(parsed)
 
 
 def _scan_region_for_money(

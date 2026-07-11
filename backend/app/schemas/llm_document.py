@@ -70,13 +70,14 @@ class LlmLineItem(BaseModel):
     amount: Decimal | None = None
     qty: Decimal | None = None
     unit_price: Decimal | None = None
+    tax_amount: Decimal | None = None
 
     @field_validator("description", mode="before")
     @classmethod
     def _coerce_description(cls, value: Any) -> str:
         return str(value or "").strip()
 
-    @field_validator("amount", "qty", "unit_price", mode="before")
+    @field_validator("amount", "qty", "unit_price", "tax_amount", mode="before")
     @classmethod
     def _coerce_decimal_fields(cls, value: Any) -> Decimal | None:
         return _parse_optional_decimal(value)

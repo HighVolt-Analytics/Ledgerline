@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.customer import CustomerRegistry
 from app.schemas.customer import CustomerCreate, CustomerResponse, CustomerUpdate
+from app.services.master_data.party_coa_subledger_service import ensure_customer_party_coa_sub_ledger
 from app.services.master_data.vendor_resolver import slugify_vendor_name
 from app.tenant_scoped import get_for_tenant
 
@@ -55,6 +56,12 @@ async def create_customer_registry(
     )
     db.add(row)
     await db.flush()
+    await ensure_customer_party_coa_sub_ledger(
+        db,
+        tenant_id,
+        slug=row.customer_slug,
+        customer_name=row.customer_name,
+    )
     return CustomerResponse.model_validate(row)
 
 
@@ -79,6 +86,12 @@ async def update_customer_registry(
         row.approved = body.approved
 
     await db.flush()
+    await ensure_customer_party_coa_sub_ledger(
+        db,
+        tenant_id,
+        slug=row.customer_slug,
+        customer_name=row.customer_name,
+    )
     return CustomerResponse.model_validate(row)
 
 

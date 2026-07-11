@@ -118,14 +118,12 @@ def extract_pdf_text(path: Path) -> str:
 
 
 def _money(raw: str) -> Decimal | None:
-    cleaned = re.sub(r"[^\d.\-]", "", raw.replace(",", ""))
-    if not cleaned:
+    from app.services.shared.locale_number_parser import parse_localized_decimal
+
+    parsed = parse_localized_decimal(raw)
+    if parsed is None:
         return None
-    try:
-        value = Decimal(cleaned)
-    except InvalidOperation:
-        return None
-    return plausible_money(value)
+    return plausible_money(parsed)
 
 
 def _date(raw: str) -> date | None:
@@ -215,9 +213,7 @@ def parse_text_fields(text: str) -> dict[str, Any]:
         if m and _invoice_no_sane(m.group(1)):
             fields["grn_reference"] = m.group(1).strip()
 
-    vendor: str | None = None
-    if is_po or is_grn:
-        vendor = extract_supplier_party_from_text(text)
+    vendor: str | None = extract_supplier_party_from_text(text)
     if not vendor and not is_grn:
         vendor_patterns = [
             r"^([A-Za-z0-9][A-Za-z0-9\s&.,'\-]{2,50}?)\s+(?:TAX\s+INVOICE|INVOICE)\b",

@@ -96,19 +96,21 @@ def resolve_sales_post_accounts(
     *,
     sales_order: SalesOrder | None = None,
 ) -> tuple[str, str]:
-    """Return (receivable_account_label, tax_account_label) for sales journals."""
+    """Return (receivable_account_label, tax_account_label) for sales journals.
+
+    Receivable control comes from Rule Book posting defaults (single AR parent).
+    Tax may still come from the document-type Post to override.
+    """
     del sales_order
+    recv = (config.posting_defaults.receivable_account or "").strip() or "Accounts Receivable"
+    tax = "Tax Collected"
     definition = resolve_document_type_definition_for_invoice(invoice, config)
     if definition is not None:
         post = definition.post_to
-        recv = (post.receivable_account or "").strip()
-        tax = (post.tax_account or "").strip()
-        if recv or tax:
-            return (
-                recv or "Accounts Receivable",
-                tax or "Tax Collected",
-            )
-    return ("Accounts Receivable", "Tax Collected")
+        tax_override = (post.tax_account or "").strip()
+        if tax_override:
+            tax = tax_override
+    return (recv, tax)
 
 
 def resolve_config_mapping(
@@ -183,4 +185,9 @@ def get_payable_account_mapping(config: RuleBookConfigPayload) -> AccountMapping
 
 
 def get_receivable_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
-    return resolve_category_for_config("Accounts Receivable", config)
+    label = (config.posting_defaults.receivable_account or "").strip() or "Accounts Receivable"
+    return resolve_category_for_config(label, config)
+
+
+def get_bank_account_mapping(config: RuleBookConfigPayload) -> AccountMapping:
+    return resolve_category_for_config(config.posting_defaults.bank_account, config)

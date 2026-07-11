@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
+from app.schemas.playbook_policy import ApprovalPolicy
 from app.services.audit.audit_service import log_event
 from app.services.classification.document_type_playbook_profile_service import (
     effective_approval_policy,
@@ -14,9 +15,18 @@ from app.services.classification.document_type_playbook_profile_service import (
     match_mode_requires_sales,
 )
 from app.services.classification.document_type_match_service import is_clean_match_message
-from app.services.invoice.invoice_evaluation_service import EVAL_PENDING_APPROVAL, ROUTE_TEAM
+from app.services.invoice.invoice_evaluation_service import (
+    EVAL_PENDING_APPROVAL,
+    ROUTE_PURCHASE,
+    ROUTE_SALES,
+    ROUTE_TEAM,
+)
 from app.services.invoice.processing_cycle_service import latest_audit_detail_after_cycle_reset
-from app.services.purchase.purchase_match_service import compute_three_way_match
+from app.services.master_data.counterparty_trust_service import counterparty_requires_registration
+from app.services.purchase.purchase_match_service import (
+    compute_three_way_match,
+    load_purchase_order_for_invoice,
+)
 from app.services.sales.sales_match_service import compute_three_way_match as compute_sales_three_way_match
 from app.services.rule_book.validator import ValidationResult
 
@@ -81,12 +91,63 @@ def _audit_match_is_clean(detail: dict[str, object] | None) -> bool:
     return False
 
 
+async def _resolve_effective_match_tier(
+    session: AsyncSession,
+    invoice: Invoice,
+    match_mode: str,
+) -> str:
+    route = (invoice.route_target or "").strip()
+    if route == ROUTE_PURCHASE:
+        from app.services.purchase.purchase_match_service import resolve_purchase_match_context
+
+        ctx = await resolve_purchase_match_context(session, invoice, requested_mode=match_mode)
+        return ctx.effective_mode
+    if route == ROUTE_SALES:
+        from app.services.sales.sales_match_service import resolve_ar_match_context
+
+        ctx = await resolve_ar_match_context(session, invoice, requested_mode=match_mode)
+        return ctx.effective_mode
+    return "none"
+
+
+def _amount_requires_approval(invoice: Invoice, policy: ApprovalPolicy) -> bool:
+    if policy.auto_approve_below is None:
+        return False
+    if invoice.total is None:
+        return True
+    return float(invoice.total) >= float(policy.auto_approve_below)
+
+
+async def _collect_risk_hold_reasons(
+    session: AsyncSession,
+    invoice: Invoice,
+    policy: ApprovalPolicy,
+    *,
+    match_mode: str,
+    resolved_tier: str | None = None,
+) -> list[str]:
+    reasons: list[str] = []
+    tier = resolved_tier
+    if policy.require_approval_for_unmatched:
+        if tier is None:
+            tier = await _resolve_effective_match_tier(session, invoice, match_mode)
+        if tier == "none":
+            reasons.append("unmatched_document")
+    if _amount_requires_approval(invoice, policy):
+        reasons.append("amount_above_threshold")
+    if policy.require_approval_for_unverified_counterparty:
+        if await counterparty_requires_registration(session, invoice):
+            reasons.append("unverified_counterparty")
+    return reasons
+
+
 async def _touchless_match_satisfied(
     session: AsyncSession,
     invoice: Invoice,
     validation_results: list[ValidationResult],
     *,
     match_mode: str,
+    resolved_tier: str | None = None,
 ) -> bool:
     if _match_is_clean_for_touchless(validation_results, match_mode=match_mode):
         return True
@@ -107,20 +168,24 @@ async def _touchless_match_satisfied(
         )
 
         ctx = await resolve_purchase_match_context(session, invoice, requested_mode=match_mode)
-        if ctx.effective_mode == "three_way_po_grn" and ctx.po is not None:
-            match = compute_three_way_match(ctx.po, invoice)
-            if match.status == "3-Way Match" or ctx.po.variance_approved:
+        tier = resolved_tier or ctx.effective_mode
+        po = ctx.po
+        grn_invoice = ctx.grn_invoice
+
+        if tier == "three_way_po_grn" and po is not None:
+            match = compute_three_way_match(po, invoice)
+            if match.status == "3-Way Match" or po.variance_approved:
                 return True
-        elif ctx.effective_mode == "two_way_po_ses" and ctx.po is not None:
+        elif tier == "two_way_po_ses" and po is not None:
             from app.services.classification.document_type_match_service import compute_two_way_po_match
 
-            outcome = compute_two_way_po_match(ctx.po, invoice)
-            if outcome.passed or ctx.po.variance_approved:
+            outcome = compute_two_way_po_match(po, invoice)
+            if outcome.passed or po.variance_approved:
                 return True
-        elif ctx.effective_mode == "two_way_grn_invoice" and ctx.grn_invoice is not None:
+        elif tier == "two_way_grn_invoice" and grn_invoice is not None:
             from app.services.purchase.purchase_match_service import _load_grn_invoice_qty
 
-            grn_qty = await _load_grn_invoice_qty(session, ctx.grn_invoice)
+            grn_qty = await _load_grn_invoice_qty(session, grn_invoice)
             match = compute_two_way_grn_match(grn_qty=grn_qty, inv=invoice)
             if match.status == "2-Way Match":
                 return True
@@ -132,18 +197,22 @@ async def _touchless_match_satisfied(
         )
 
         ctx = await resolve_ar_match_context(session, invoice, requested_mode=match_mode)
-        if ctx.effective_mode == "three_way_so_dn" and ctx.so is not None:
-            match = compute_sales_three_way_match(ctx.so, invoice)
-            if match.status == "3-Way Match" or ctx.so.variance_approved:
+        tier = resolved_tier or ctx.effective_mode
+        so = ctx.so
+        dn_invoice = ctx.dn_invoice
+
+        if tier == "three_way_so_dn" and so is not None:
+            match = compute_sales_three_way_match(so, invoice)
+            if match.status == "3-Way Match" or so.variance_approved:
                 return True
-        elif ctx.effective_mode == "two_way_so_invoice" and ctx.so is not None:
-            match = compute_two_way_so_match(ctx.so, invoice)
-            if match.status == "2-Way Match" or ctx.so.variance_approved:
+        elif tier == "two_way_so_invoice" and so is not None:
+            match = compute_two_way_so_match(so, invoice)
+            if match.status == "2-Way Match" or so.variance_approved:
                 return True
-        elif ctx.effective_mode == "two_way_dn_invoice" and ctx.dn_invoice is not None:
+        elif tier == "two_way_dn_invoice" and dn_invoice is not None:
             from app.services.sales.sales_match_service import _load_dn_invoice_qty
 
-            dn_qty, dn_uom = await _load_dn_invoice_qty(session, ctx.dn_invoice)
+            dn_qty, dn_uom = await _load_dn_invoice_qty(session, dn_invoice)
             match = compute_two_way_dn_match(dn_qty=dn_qty, dn_uom=dn_uom, inv=invoice)
             if match.status == "2-Way Match":
                 return True
@@ -156,12 +225,15 @@ async def _hold_for_approval(
     *,
     definition: DocumentTypeDefinition,
     reason: str,
+    reasons: list[str] | None = None,
     extra_detail: dict[str, object] | None = None,
 ) -> None:
     invoice.status = InvoiceStatus.EXCEPTION
     invoice.evaluation_status = EVAL_PENDING_APPROVAL
+    all_reasons = reasons if reasons else [reason]
     detail: dict[str, object] = {
-        "reason": reason,
+        "reason": all_reasons[0],
+        "reasons": all_reasons,
         "document_type_code": definition.code,
         "approval_mode": effective_approval_policy(definition).mode,
     }
@@ -203,8 +275,41 @@ async def apply_document_type_approval_gate(
     if mode == "manager_gate":
         return False
 
+    match_mode = effective_match_policy(definition).mode
+    resolved_tier: str | None = None
+    if policy.require_approval_for_unmatched:
+        resolved_tier = await _resolve_effective_match_tier(session, invoice, match_mode)
+
+    risk_reasons = await _collect_risk_hold_reasons(
+        session,
+        invoice,
+        policy,
+        match_mode=match_mode,
+        resolved_tier=resolved_tier,
+    )
+    if risk_reasons:
+        extra: dict[str, object] = {
+            "match_mode": match_mode,
+            "resolved_match_tier": resolved_tier,
+        }
+        if policy.auto_approve_below is not None:
+            extra["auto_approve_below"] = policy.auto_approve_below
+        if invoice.total is not None:
+            extra["amount"] = float(invoice.total)
+        currency = getattr(invoice, "currency", None)
+        if currency:
+            extra["currency"] = str(currency).strip()
+        await _hold_for_approval(
+            session,
+            invoice,
+            definition=definition,
+            reason=risk_reasons[0],
+            reasons=risk_reasons,
+            extra_detail=extra,
+        )
+        return True
+
     if mode == "variance_workflow":
-        match_mode = effective_match_policy(definition).mode
         if not match_mode_requires_po(match_mode):
             return False
         po = await load_purchase_order_for_invoice(session, invoice)
@@ -218,14 +323,13 @@ async def apply_document_type_approval_gate(
         )
         return True
 
-    match_mode = effective_match_policy(definition).mode
-
     if mode in {"full_doa", "never_touchless", "supervisor_on_exception"}:
         if mode == "supervisor_on_exception" and await _touchless_match_satisfied(
             session,
             invoice,
             validation_results,
             match_mode=match_mode,
+            resolved_tier=resolved_tier,
         ):
             return False
         await _hold_for_approval(session, invoice, definition=definition, reason=mode)
@@ -239,6 +343,7 @@ async def apply_document_type_approval_gate(
             invoice,
             validation_results,
             match_mode=match_mode,
+            resolved_tier=resolved_tier,
         ):
             return False
         await _hold_for_approval(

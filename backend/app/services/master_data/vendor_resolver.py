@@ -46,19 +46,9 @@ _FORM_LABEL_MARKERS = (
 
 
 def is_plausible_vendor_name(name: str | None) -> bool:
-    if not name or not name.strip():
-        return False
-    s = name.strip()
-    if len(s) > _MAX_VENDOR_NAME_LEN:
-        return False
-    low = s.lower()
-    if any(marker in low for marker in _INSTRUCTION_MARKERS):
-        return False
-    if any(low == marker or low.startswith(f"{marker} ") for marker in _FORM_LABEL_MARKERS):
-        return False
-    if len(s.split()) > 8:
-        return False
-    return True
+    from app.services.master_data.vendor_name_utils import is_plausible_vendor_name as _is_plausible
+
+    return _is_plausible(name)
 
 
 def is_valid_storage_slug(slug: str | None) -> bool:

@@ -181,6 +181,26 @@ describe("applyPlaybookChange", () => {
   });
 });
 
+describe("mergeApprovalPolicyMode", () => {
+  it("preserves risk fields when playbook mode changes", () => {
+    const next = reconcilePlaybookDraft(
+      dt({
+        playbookProfile: "po_goods",
+        approvalPolicy: {
+          mode: "touchless_on_clean_match",
+          autoApproveBelow: 500,
+          requireApprovalForUnmatched: true,
+          requireApprovalForUnverifiedCounterparty: true,
+        },
+      })
+    );
+    expect(next.approvalPolicy.mode).toBe("touchless_on_clean_match");
+    expect(next.approvalPolicy.autoApproveBelow).toBe(500);
+    expect(next.approvalPolicy.requireApprovalForUnmatched).toBe(true);
+    expect(next.approvalPolicy.requireApprovalForUnverifiedCounterparty).toBe(true);
+  });
+});
+
 describe("reconcilePlaybookDraft", () => {
   it("sets supporting playbook when purchase bundle role is po", () => {
     const next = reconcilePlaybookDraft(

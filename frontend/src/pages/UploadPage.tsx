@@ -178,6 +178,9 @@ export function UploadPage() {
   const debouncedSearch = useDebouncedValue(searchQuery.trim());
 
   useEffect(() => {
+    // Only sync when the URL explicitly carries q — do not wipe local typing when
+    // other params (e.g. tab) change.
+    if (!searchParams.has("q")) return;
     const q = searchParams.get("q") ?? "";
     setSearchQuery((current) => (current === q ? current : q));
   }, [searchParams]);
@@ -263,9 +266,11 @@ export function UploadPage() {
     setPage(1);
   }, [source, debouncedSearch]);
 
+  // Clear merged rows only on page/source changes. Search keeps previous rows via
+  // keepPreviousData so the list (and search input) do not unmount mid-keystroke.
   useEffect(() => {
     prevMergedRef.current = [];
-  }, [page, source, debouncedSearch]);
+  }, [page, source]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -291,6 +296,11 @@ export function UploadPage() {
     }
     return captured;
   }, [captured, evalFilter]);
+
+  const hasActiveSearch = Boolean(searchQuery.trim() || debouncedSearch);
+  // Keep the captured-documents chrome (incl. search) mounted while searching so
+  // focus is not lost when the query key refetches or returns zero matches.
+  const showCapturedChrome = captured.length > 0 || hasActiveSearch;
 
   useEffect(() => {
     setProcessingIds((prev) => {
@@ -805,9 +815,9 @@ export function UploadPage() {
         onSubmit={(payload) => void startHistoricalImport(payload)}
       />
 
-      {loading && captured.length === 0 ? (
+      {loading && !showCapturedChrome ? (
         <InlineTableSkeleton rows={8} columns={6} />
-      ) : captured.length === 0 ? (
+      ) : !showCapturedChrome ? (
         <EmptyState
           title="No documents yet"
           hint={
@@ -872,10 +882,18 @@ export function UploadPage() {
             </div>
           </div>
 
+          {loading && captured.length === 0 ? (
+            <div className="px-3 sm:px-4 py-4">
+              <InlineTableSkeleton rows={6} columns={6} />
+            </div>
+          ) : (
+            <>
           <div className="md:hidden divide-y divide-border">
             {filtered.length === 0 && (
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                No documents match this filter.
+                {hasActiveSearch
+                  ? "No documents match your search."
+                  : "No documents match this filter."}
               </p>
             )}
             {filtered.map((inv) => (
@@ -918,7 +936,9 @@ export function UploadPage() {
                 {filtered.length === 0 && (
                   <tr>
                     <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
-                      No documents match this filter.
+                      {hasActiveSearch
+                        ? "No documents match your search."
+                        : "No documents match this filter."}
                     </td>
                   </tr>
                 )}
@@ -973,6 +993,8 @@ export function UploadPage() {
               </Button>
             </div>
           </div>
+            </>
+          )}
         </Card>
       )}
 

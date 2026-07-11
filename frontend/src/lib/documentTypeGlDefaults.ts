@@ -57,3 +57,19 @@ export function applyDefaultPostToIfEmpty(
   const ledger = defaultPostToLedger(playbookProfile, accounts, routeTarget);
   return ledger ? { ...postTo, ledger } : postTo;
 }
+
+export function defaultSalesRulePostTo(accounts: ChartOfAccountRow[]): {
+  ledger: string;
+  subLedger: string;
+  taxAccount: string;
+  receivableAccount: string;
+} {
+  const taxAccounts = filterCoaAccountsForPostingRole(accounts, "tax_collected");
+  const receivableAccounts = filterCoaAccountsForPostingRole(accounts, "receivable");
+  return {
+    ledger: defaultPostToLedger("ar_goods", accounts),
+    subLedger: "",
+    taxAccount: taxAccounts[0]?.name ?? "",
+    receivableAccount: receivableAccounts[0]?.name ?? "",
+  };
+}

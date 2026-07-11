@@ -16,10 +16,13 @@ from app.schemas.reports_api import (
     ReportsDocumentsRequest,
     ReportsWorkbookRequest,
 )
+from app.schemas.subledger import SubledgerBalancesResponse
+from app.schemas.subledger_api import SubledgerBalancesRequest
 from app.services.reports.documents_bundle_export_service import (
     build_documents_bundle_export,
 )
 from app.services.reports.reports_service import build_analytics, list_documents
+from app.services.reports.subledger_balance_service import fetch_ap_balances, fetch_ar_balances
 from app.services.reports.reports_workbook_service import (
     resolve_workbook_date_filter,
     upload_workbook_blob,
@@ -59,6 +62,44 @@ async def reports_documents(
     except ValueError as exc:
         raise http_bad_request(exc) from exc
     return ApiEnvelope(data=rows)
+
+
+@router.get("/subledger/ap-balances", response_model=ApiEnvelope[SubledgerBalancesResponse])
+async def reports_ap_balances(
+    params: Annotated[SubledgerBalancesRequest, Query()],
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[SubledgerBalancesResponse]:
+    """Accounts payable balances grouped by vendor registry."""
+    return ApiEnvelope(
+        data=await fetch_ap_balances(
+            db,
+            ctx.tenant_id,
+            as_of=params.as_of,
+            include_unregistered=params.include_unregistered,
+            limit=params.limit,
+            offset=params.offset,
+        )
+    )
+
+
+@router.get("/subledger/ar-balances", response_model=ApiEnvelope[SubledgerBalancesResponse])
+async def reports_ar_balances(
+    params: Annotated[SubledgerBalancesRequest, Query()],
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ApiEnvelope[SubledgerBalancesResponse]:
+    """Accounts receivable balances grouped by customer registry."""
+    return ApiEnvelope(
+        data=await fetch_ar_balances(
+            db,
+            ctx.tenant_id,
+            as_of=params.as_of,
+            include_unregistered=params.include_unregistered,
+            limit=params.limit,
+            offset=params.offset,
+        )
+    )
 
 
 @router.get("/documents-bundle/export")

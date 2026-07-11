@@ -52,7 +52,22 @@ def _is_placeholder(value: str) -> bool:
 
 
 def _normalize_money_for_grounding(value: Decimal | str) -> str:
-    token = str(value).strip()
+    from app.services.shared.locale_number_parser import parse_localized_decimal
+
+    if isinstance(value, Decimal):
+        token = str(value).strip()
+        try:
+            return format(value.normalize(), "f").rstrip("0").rstrip(".")
+        except Exception:
+            pass
+    else:
+        token = str(value).strip()
+    parsed = parse_localized_decimal(token)
+    if parsed is not None:
+        try:
+            return format(parsed.normalize(), "f").rstrip("0").rstrip(".")
+        except Exception:
+            return str(parsed)
     cleaned = re.sub(r"[^\d.\-]", "", token.replace(",", ""))
     if not cleaned:
         return ""
@@ -125,12 +140,43 @@ def _money_grounded_in_ocr(
     return _money_grounded_adjacent_line(value, ocr_text, field_key=field_key)
 
 
-def value_grounded_in_ocr(value: str | None, ocr_text: str | None) -> bool:
-    """True when value is empty or provably present in OCR text."""
-    if not value or not str(value).strip():
-        return True
-    if not ocr_text:
+def _label_terms_for_field_key(field_key: str) -> list[str]:
+    from app.services.extraction.extraction_field_values import _FIELD_HINT_PATTERNS
+    from app.services.extraction.finance_field_labels import finance_label_terms
+
+    token = str(field_key or "").strip().lower()
+    if token in ("subtotal", "gst", "total", "gst_rate"):
+        return finance_label_terms(token)
+    hints = _FIELD_HINT_PATTERNS.get(token, "")
+    if hints:
+        return [part.strip() for part in hints.split(",") if part.strip()]
+    return []
+
+
+def _label_proximate_grounded(value: str, ocr_text: str, field_key: str) -> bool:
+    terms = _label_terms_for_field_key(field_key)
+    if not terms or not value.strip():
         return False
+    lines = ocr_text.splitlines()
+    value_token = value.strip()
+    norm_val = _normalize_alnum(value_token)
+    for index, line in enumerate(lines):
+        line_lower = line.lower()
+        if not any(term.lower() in line_lower for term in terms):
+            continue
+        for offset in range(3):
+            probe_index = index + offset
+            if probe_index >= len(lines):
+                break
+            probe = lines[probe_index]
+            if value_token in probe or value_token.lower() in probe.lower():
+                return True
+            if norm_val and len(norm_val) >= 4 and norm_val in _normalize_alnum(probe):
+                return True
+    return False
+
+
+def _substring_grounded_in_ocr(value: str, ocr_text: str) -> bool:
     token = str(value).strip()
     if _is_placeholder(token):
         return False
@@ -165,6 +211,43 @@ def value_grounded_in_ocr(value: str | None, ocr_text: str | None) -> bool:
     return False
 
 
+def value_grounded_in_ocr(
+    value: str | None,
+    ocr_text: str | None,
+    *,
+    field_key: str | None = None,
+    grounding_debug: dict[str, str] | None = None,
+) -> bool:
+    """True when value is empty or provably present in OCR text."""
+    if not value or not str(value).strip():
+        return True
+    if not ocr_text:
+        return False
+    token = str(value).strip()
+    key = str(field_key or "").strip().lower() or None
+
+    if key:
+        if key in ("subtotal", "gst", "total", "gst_rate"):
+            try:
+                amount = value if isinstance(value, Decimal) else Decimal(str(value).replace(",", ""))
+                if _money_grounded_adjacent_line(amount, ocr_text, field_key=key):
+                    if grounding_debug is not None:
+                        grounding_debug[key] = "label_proximate"
+                    return True
+            except Exception:
+                pass
+        elif _label_proximate_grounded(token, ocr_text, key):
+            if grounding_debug is not None:
+                grounding_debug[key] = "label_proximate"
+            return True
+
+    if _substring_grounded_in_ocr(token, ocr_text):
+        if grounding_debug is not None and key:
+            grounding_debug[key] = "substring_fallback"
+        return True
+    return False
+
+
 def _date_grounded_in_ocr(value: date | None, ocr_text: str | None) -> bool:
     if value is None:
         return True
@@ -194,12 +277,14 @@ def _invoice_no_grounded(value: str | None, ocr_text: str | None) -> bool:
         clean = sanitize_invoice_no(value)
         if not clean:
             return False
-        return value_grounded_in_ocr(clean, ocr_text) or value_grounded_in_ocr(str(value).strip(), ocr_text)
+        return value_grounded_in_ocr(clean, ocr_text, field_key="invoice_no") or value_grounded_in_ocr(
+            str(value).strip(), ocr_text, field_key="invoice_no"
+        )
     clean = sanitize_invoice_no(value)
     token = clean or str(value).strip()
     if not token:
         return False
-    return value_grounded_in_ocr(token, ocr_text)
+    return value_grounded_in_ocr(token, ocr_text, field_key="invoice_no")
 
 
 def validate_bank_bsb(bsb: str | None, ocr_text: str | None = None) -> str | None:
@@ -266,6 +351,7 @@ def ground_extracted_fields_map(
     ocr_text: str | None,
     *,
     requested_keys: Sequence[str] | None = None,
+    grounding_debug: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Clear string field values that cannot be verified in OCR."""
     if not fields:
@@ -280,7 +366,12 @@ def ground_extracted_fields_map(
         if text and not _grounding_required_for_field(token):
             grounded[token] = text
             continue
-        if text and value_grounded_in_ocr(text, ocr_text):
+        if text and value_grounded_in_ocr(
+            text,
+            ocr_text,
+            field_key=token,
+            grounding_debug=grounding_debug,
+        ):
             grounded[token] = text
     return grounded
 
@@ -294,6 +385,7 @@ def ground_invoice_scalars(
     """Clear scalar fields that cannot be verified in OCR."""
     skip = skip_keys or frozenset()
     updates: dict[str, object] = {}
+    grounding_debug: dict[str, str] = {}
 
     from app.services.extraction.invoice_no_sanitizer import split_invoice_no_and_date
 
@@ -316,7 +408,12 @@ def ground_invoice_scalars(
         if field in skip:
             continue
         current = getattr(data, field, None)
-        if current and not value_grounded_in_ocr(str(current), ocr_text):
+        if current and not value_grounded_in_ocr(
+            str(current),
+            ocr_text,
+            field_key=field,
+            grounding_debug=grounding_debug,
+        ):
             updates[field] = None
 
     resolved_date = updates.get("invoice_date", data.invoice_date)
@@ -341,12 +438,22 @@ def ground_invoice_scalars(
         updates["due_date"] = None
 
     currency = (data.currency or "").strip()
-    if "currency" not in skip and currency and not value_grounded_in_ocr(currency, ocr_text):
+    if "currency" not in skip and currency and not value_grounded_in_ocr(
+        currency,
+        ocr_text,
+        field_key="currency",
+        grounding_debug=grounding_debug,
+    ):
         updates["currency"] = ""
 
     abn_raw = (data.abn or "").strip()
     if abn_raw and "abn" not in skip:
-        if not value_grounded_in_ocr(abn_raw, ocr_text):
+        if not value_grounded_in_ocr(
+            abn_raw,
+            ocr_text,
+            field_key="abn",
+            grounding_debug=grounding_debug,
+        ):
             updates["abn"] = None
         else:
             stored = storage_abn(abn_raw)
@@ -368,9 +475,15 @@ def ground_invoice_scalars(
     extracted = ground_extracted_fields_map(
         extracted_fields_from_parsed(data),
         ocr_text,
+        grounding_debug=grounding_debug,
     )
     if extracted != extracted_fields_from_parsed(data):
         updates["extracted_fields"] = extracted
+
+    if grounding_debug:
+        raw = dict(data.raw_fields or {})
+        raw["_grounding_debug"] = grounding_debug
+        updates["raw_fields"] = raw
 
     if not updates:
         return data
@@ -382,6 +495,8 @@ def ground_parsed_fields(
     ocr_text: str | None,
     selected_keys: Sequence[str],
     ocr_payload: dict[str, object] | None = None,
+    *,
+    trace: object | None = None,
 ) -> InvoiceData:
     """Filter and ground parsed extraction output before OCR backfill."""
     from app.services.extraction.extraction_field_values import (
@@ -406,11 +521,17 @@ def ground_parsed_fields(
     if "line_items" in selected:
         payload = ocr_payload or {}
         if di_line_items_usable(payload):
-            grounded = replace(grounded, line_items=[])
+            if trace is not None:
+                trace.record("*", "grounding", "modified", "di_rows_authoritative")
+            grounded = replace(grounded, line_items_grounding="ungrounded")
         elif not document_has_line_item_table(ocr_text, payload) and not document_has_charge_lines(
             ocr_text
         ):
-            grounded = replace(grounded, line_items=[])
+            if trace is not None:
+                trace.record("*", "grounding", "modified", "no_line_item_table_signal")
+            grounded = replace(grounded, line_items_grounding="unverifiable")
+        else:
+            grounded = replace(grounded, line_items_grounding="grounded")
     custom_keys = non_canonical_extraction_keys(selected_keys)
     if custom_keys:
         extracted = ground_extracted_fields_map(

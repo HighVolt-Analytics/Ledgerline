@@ -469,7 +469,10 @@ async def list_sales_orders(
     db: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> list[SalesOrderResponse]:
+    from app.services.approval.match_register_cleanup import sales_order_has_document_anchor
     from app.services.sales.so_reference import is_plausible_so_reference
+
+    _HIDDEN_STATUSES = (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)
 
     rows = (
         await db.execute(
@@ -489,6 +492,7 @@ async def list_sales_orders(
                 Invoice.route_target == ROUTE_SALES,
                 Invoice.so_reference.isnot(None),
                 Invoice.so_reference != "",
+                Invoice.status.notin_(_HIDDEN_STATUSES),
             )
             .options(selectinload(Invoice.line_items))
             .order_by(Invoice.created_at.desc())
@@ -519,12 +523,17 @@ async def list_sales_orders(
     for so in rows:
         if so.id in sos_with_rows:
             continue
+        if not sales_order_has_document_anchor(so):
+            continue
         inv = None
         if so.invoice_id:
             inv = (
                 await db.execute(
                     select(Invoice)
-                    .where(Invoice.id == so.invoice_id)
+                    .where(
+                        Invoice.id == so.invoice_id,
+                        Invoice.status.notin_(_HIDDEN_STATUSES),
+                    )
                     .options(selectinload(Invoice.line_items))
                 )
             ).scalar_one_or_none()
@@ -540,6 +549,8 @@ async def list_two_way_sales_orphans(
     """DN ↔ invoice pairs on 2-way playbook without a sales-order register row."""
     from app.services.classification.document_type_match_service import resolve_match_mode
 
+    _HIDDEN_STATUSES = (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)
+
     routed = (
         await db.execute(
             select(Invoice)
@@ -547,6 +558,7 @@ async def list_two_way_sales_orphans(
                 Invoice.tenant_id == tenant_id,
                 Invoice.route_target == ROUTE_SALES,
                 Invoice.sales_document_type.notin_(("so", "dn")),
+                Invoice.status.notin_(_HIDDEN_STATUSES),
             )
             .options(selectinload(Invoice.line_items))
             .order_by(Invoice.created_at.desc())

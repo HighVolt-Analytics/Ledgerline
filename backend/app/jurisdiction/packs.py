@@ -18,6 +18,8 @@ class PostingNameDefaults:
     payable_account: str
     fallback_account: str
     sales_tax_account: str
+    bank_account: str = "Bank Account"
+    receivable_account: str = "Accounts Receivable"
 
 
 @dataclass(frozen=True)

@@ -92,4 +92,10 @@ def default_post_to_ledger(
     route = (route_target or "").strip()
     if profile == "ar_goods" or route == "Sales Management":
         return _resolve_sparse_revenue_ledger(accounts)
+    allowed_types = coa_types_for_playbook_profile(playbook_profile)
+    if allowed_types:
+        for account_type in allowed_types:
+            for entry in accounts:
+                if (entry.type or "") == account_type and (entry.name or "").strip():
+                    return entry.name
     return ""

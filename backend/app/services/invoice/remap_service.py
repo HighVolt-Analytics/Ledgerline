@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import db_session_with_rls
 from app.models.invoice import Invoice, InvoiceStatus
-from app.models.journal import JournalEntry
+from app.models.journal import JournalEntry, JournalEntryKind
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.audit.audit_service import log_event
 from app.services.invoice.invoice_evaluation_service import apply_invoice_evaluation, load_config_for_tenant
@@ -21,6 +21,11 @@ from app.services.payments.journal_generator import (
     get_unresolved_control_accounts,
     is_balanced,
 )
+from app.services.payments.journal_persist_service import persist_journal_lines
+from app.services.master_data.journal_counterparty_resolver import (
+    resolve_counterparty_registry_ids_for_journal,
+)
+from app.services.master_data.party_coa_subledger_service import resolve_invoice_control_mapping
 from app.services.rule_book.account_mapper import resolve_fallback_account_mapping
 from app.services.rule_book.rule_book_mapper import map_invoice_to_account
 from app.tenant_child_tables import journal_entries_for_invoice
@@ -70,7 +75,24 @@ async def _regenerate_journal_entries(
         return False
 
     mapping = map_invoice_to_account(invoice, config=config)
-    lines = generate_entries(invoice, mapping, config=config)
+    vendor_reg_id, customer_reg_id = await resolve_counterparty_registry_ids_for_journal(
+        session, invoice
+    )
+    control_mapping = await resolve_invoice_control_mapping(
+        session,
+        invoice,
+        config,
+        vendor_registry_id=vendor_reg_id,
+        customer_registry_id=customer_reg_id,
+    )
+    lines = generate_entries(
+        invoice,
+        mapping,
+        config=config,
+        vendor_registry_id=vendor_reg_id,
+        customer_registry_id=customer_reg_id,
+        control_mapping=control_mapping,
+    )
     # Remap skips keep PROCESSED status; audit log (context=remap_skip) is the trail —
     # Pipeline debug journal step only fails when status is EXCEPTION.
     if not is_balanced(lines):
@@ -114,10 +136,12 @@ async def _regenerate_journal_entries(
         )
         return False
 
+    # Only replace accrual lines — preserve payment/collection settlements.
     existing_entries = (
         await session.execute(
             select(JournalEntry).where(
                 *journal_entries_for_invoice(invoice.tenant_id, invoice.id),
+                JournalEntry.entry_kind == JournalEntryKind.INVOICE_ACCRUAL,
             )
         )
     ).scalars().all()
@@ -125,19 +149,7 @@ async def _regenerate_journal_entries(
         await session.delete(entry)
     await session.flush()
 
-    for line in lines:
-        session.add(
-            JournalEntry(
-                tenant_id=invoice.tenant_id,
-                invoice_id=invoice.id,
-                date=line.date,
-                account_code=line.account_code,
-                account_name=line.account_name,
-                debit=line.debit,
-                credit=line.credit,
-                entry_type=line.entry_type,
-            )
-        )
+    persist_journal_lines(session, invoice, lines)
     return True
 
 

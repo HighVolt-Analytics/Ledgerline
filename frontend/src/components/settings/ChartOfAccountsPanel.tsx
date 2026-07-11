@@ -188,7 +188,11 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
         rows.map((row) => {
           const payload = chartOfAccountRowToPayload(row);
           const subLedgers = (row.subLedgers ?? [])
-            .map((sub) => ({ code: sub.code.trim(), name: sub.name.trim() }))
+            .map((sub) => ({
+              code: sub.code.trim(),
+              name: sub.name.trim(),
+              ...(sub.origin ? { origin: sub.origin } : {}),
+            }))
             .filter((sub) => sub.code && sub.name);
           return {
             code: payload.code,
@@ -228,8 +232,9 @@ export function ChartOfAccountsPanel({ canEdit = false, onSaved }: ChartOfAccoun
     <div className="w-full space-y-4" data-testid="chart-of-accounts-panel">
       <p className="text-sm text-muted-foreground">
         GL accounts for this organisation. Optionally define sub-ledgers under each account for
-        cost centres or analytical segments. Classification rules reference account names from
-        this list.
+        cost centres or analytical segments. Vendor/customer party sub-ledgers are also created
+        automatically under the Rule Book payable/receivable accounts when counterparties are
+        registered. Classification rules reference account names from this list.
       </p>
 
       <Card className="overflow-hidden">

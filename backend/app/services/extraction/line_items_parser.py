@@ -10,6 +10,11 @@ from app.services.extraction.line_item_skip_patterns import (
     OPTIONAL_CURRENCY_MONEY_PREFIX,
     should_skip_line_row,
 )
+from app.services.extraction.locale_vocab import optional_currency_code_group, unit_alternation_regex
+from app.services.extraction.line_item_parsing_config import (
+    DEFAULT_THRESHOLDS,
+    LineItemParsingThresholds,
+)
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 from app.services.shared.amount_sanity import (
     plausible_money,
@@ -39,18 +44,65 @@ _GRN_LINE_ROW = re.compile(
     r"^(.{4,80}?)\s+(\d+(?:\.\d+)?)\s+(?:Good|Damaged|Partial|[A-Za-z]{3,})\s*$",
     re.M,
 )
+_GRN_DESC_QTY_ROW = re.compile(
+    r"^(.{4,80}?)\s+(\d+(?:\.\d+)?)\s*$",
+    re.M,
+)
 _GRN_QTY_TABLE_ROW = re.compile(
-    r"^\s*\d+\s+(.+?)\s+\d+(?:\.\d+)?\s+(?:Kg|Nos|Box|Pair|Units?|Ltr|Litre)\s+",
+    rf"^\s*\d+\s+(.+?)\s+\d+(?:\.\d+)?\s+(?:{unit_alternation_regex()})\s+",
     re.M | re.I,
 )
+
+
+def _make_line_item(
+    *,
+    description: str | None = None,
+    qty: Decimal | None = None,
+    unit_price: Decimal | None = None,
+    amount: Decimal | None = None,
+    tax_amount: Decimal | None = None,
+    source: str | None = None,
+    source_confidence: float | None = None,
+    fused_from: list[str] | None = None,
+) -> ParsedLineItem:
+    return ParsedLineItem(
+        description=description,
+        qty=qty,
+        unit_price=unit_price,
+        amount=amount,
+        tax_amount=tax_amount,
+        source=source,
+        source_confidence=source_confidence,
+        fused_from=fused_from,
+    )
+
+
+def _provenance_fields(item: ParsedLineItem) -> dict[str, object]:
+    return {
+        "source": item.source,
+        "source_confidence": item.source_confidence,
+        "fused_from": list(item.fused_from) if item.fused_from else None,
+    }
+
+
+def _merge_provenance(
+    primary: ParsedLineItem,
+    secondary: ParsedLineItem,
+) -> tuple[str | None, float | None, list[str] | None]:
+    sources = [s for s in (primary.source, secondary.source) if s]
+    if len(sources) >= 2:
+        confidences = [
+            c for c in (primary.source_confidence, secondary.source_confidence) if c is not None
+        ]
+        return "fused", (max(confidences) if confidences else None), sources
+    return primary.source or secondary.source, primary.source_confidence or secondary.source_confidence, None
 def _money(raw: str) -> Decimal | None:
-    cleaned = re.sub(r"[^\d.\-]", "", raw.replace(",", ""))
-    if not cleaned:
+    from app.services.shared.locale_number_parser import parse_localized_decimal
+
+    parsed = parse_localized_decimal(raw)
+    if parsed is None:
         return None
-    try:
-        return plausible_money(Decimal(cleaned))
-    except Exception:
-        return None
+    return plausible_money(parsed)
 
 
 def _qty(raw: str | Decimal | int | float) -> Decimal | None:
@@ -78,7 +130,11 @@ def _looks_like_money_token(token: str) -> bool:
     return bool(re.match(r"^[\d,]+\.\d{2}$", cleaned))
 
 
-def _qty_looks_like_year_in_description(item: ParsedLineItem) -> bool:
+def _qty_looks_like_year_in_description(
+    item: ParsedLineItem,
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> bool:
     qty = item.qty
     desc = (item.description or "").strip()
     if qty is None or not desc:
@@ -86,31 +142,42 @@ def _qty_looks_like_year_in_description(item: ParsedLineItem) -> bool:
     if qty != qty.to_integral_value():
         return False
     year = int(qty)
-    if not (1900 <= year <= 2099):
+    if not (thresholds.year_min <= year <= thresholds.year_max):
         return False
     return bool(_MONTH_TRAIL.search(desc))
 
 
-def _repair_year_misplaced_as_qty(item: ParsedLineItem) -> ParsedLineItem:
-    if not _qty_looks_like_year_in_description(item):
+def _repair_year_misplaced_as_qty(
+    item: ParsedLineItem,
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> ParsedLineItem:
+    if not _qty_looks_like_year_in_description(item, thresholds=thresholds):
         return item
     year = int(item.qty)
     desc = (item.description or "").strip()
     repaired_desc = desc if desc.endswith(str(year)) else f"{desc} {year}"
-    return ParsedLineItem(
+    return _make_line_item(
         description=repaired_desc,
         qty=Decimal("1") if item.unit_price is not None or item.amount is not None else None,
         unit_price=item.unit_price,
         amount=item.amount,
         tax_amount=item.tax_amount,
+        source=item.source,
+        source_confidence=item.source_confidence,
+        fused_from=list(item.fused_from) if item.fused_from else None,
     )
 
 
-def _line_item_row_score(item: ParsedLineItem) -> tuple[int, int, int, int]:
+def _line_item_row_score(
+    item: ParsedLineItem,
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> tuple[int, int, int, int]:
     score = 0
-    if _qty_looks_like_year_in_description(item):
+    if _qty_looks_like_year_in_description(item, thresholds=thresholds):
         score -= 10
-    elif item.qty is not None and item.qty > Decimal("10000"):
+    elif item.qty is not None and item.qty > thresholds.max_plausible_qty:
         score -= 5
     money_signal = 0
     if item.unit_price is not None or item.amount is not None:
@@ -121,7 +188,11 @@ def _line_item_row_score(item: ParsedLineItem) -> tuple[int, int, int, int]:
     return (score, money_signal, 1 if item.qty is not None else 0, len(item.description or ""))
 
 
-def _dedupe_prefix_fragment_rows(items: list[ParsedLineItem]) -> list[ParsedLineItem]:
+def _dedupe_prefix_fragment_rows(
+    items: list[ParsedLineItem],
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> list[ParsedLineItem]:
     if len(items) < 2:
         return items
     keep = [True] * len(items)
@@ -140,7 +211,9 @@ def _dedupe_prefix_fragment_rows(items: list[ParsedLineItem]) -> list[ParsedLine
                 continue
             if left_key != right_key and not (left_key.startswith(right_key) or right_key.startswith(left_key)):
                 continue
-            if _line_item_row_score(left) >= _line_item_row_score(right):
+            if _line_item_row_score(left, thresholds=thresholds) >= _line_item_row_score(
+                right, thresholds=thresholds
+            ):
                 keep[j] = False
             else:
                 keep[i] = False
@@ -148,10 +221,14 @@ def _dedupe_prefix_fragment_rows(items: list[ParsedLineItem]) -> list[ParsedLine
     return [item for item, kept in zip(items, keep) if kept]
 
 
-def _parse_table_row_tail(line: str) -> ParsedLineItem | None:
+def _parse_table_row_tail(
+    line: str,
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> ParsedLineItem | None:
     """Parse one OCR table row by anchoring qty and money columns at the line end."""
     raw = line.strip()
-    if not raw or len(raw) < 8 or _TABLE_HEADER_LINE.match(raw):
+    if not raw or len(raw) < thresholds.min_row_length or _TABLE_HEADER_LINE.match(raw):
         return None
 
     cols = [part.strip() for part in re.split(r"\s{2,}|\t+", raw) if part.strip()]
@@ -160,18 +237,20 @@ def _parse_table_row_tail(line: str) -> ParsedLineItem | None:
         if _skip_line_row(desc):
             return None
         if len(cols) >= 5:
-            return ParsedLineItem(
+            return _make_line_item(
                 description=desc,
                 qty=_qty(cols[1]),
                 unit_price=_money(cols[2]),
                 tax_amount=_money(cols[3]),
                 amount=_money(cols[4]),
+                source="regex",
             )
-        return ParsedLineItem(
+        return _make_line_item(
             description=desc,
             qty=_qty(cols[1]),
             unit_price=_money(cols[2]),
             amount=_money(cols[3]),
+            source="regex",
         )
 
     for pattern, with_gst in ((_TAIL_ROW_5, True), (_TAIL_ROW_4, False)):
@@ -179,49 +258,60 @@ def _parse_table_row_tail(line: str) -> ParsedLineItem | None:
         if not match:
             continue
         desc = raw[: match.start()].strip()
-        if len(desc) < 4 or _skip_line_row(desc):
+        if len(desc) < thresholds.min_desc_length_tail_row or _skip_line_row(desc):
             continue
         groups = match.groups()
         if with_gst:
-            return ParsedLineItem(
+            return _make_line_item(
                 description=desc,
                 qty=_qty(groups[0]),
                 unit_price=_money(groups[1]),
                 tax_amount=_money(groups[2]),
                 amount=_money(groups[3]),
+                source="regex",
             )
-        return ParsedLineItem(
+        return _make_line_item(
             description=desc,
             qty=_qty(groups[0]),
             unit_price=_money(groups[1]),
             amount=_money(groups[2]),
+            source="regex",
         )
     return None
 
 
-def _parse_row_for_description(text: str, description: str) -> ParsedLineItem | None:
+def _parse_row_for_description(
+    text: str,
+    description: str,
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> ParsedLineItem | None:
     needle = re.sub(r"\s+", " ", (description or "").strip())
     if not needle or _skip_line_row(needle):
         return None
+    prefix_len = thresholds.desc_match_prefix_len
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or needle.lower() not in line.lower():
             continue
-        parsed = _parse_table_row_tail(line)
+        parsed = _parse_table_row_tail(line, thresholds=thresholds)
         if parsed is None:
             continue
         parsed_desc = parsed.description or ""
         if not (
-            parsed_desc.lower().startswith(needle.lower()[: min(len(needle), 24)])
-            or needle.lower().startswith(parsed_desc.lower()[: min(len(parsed_desc), 24)])
+            parsed_desc.lower().startswith(needle.lower()[: min(len(needle), prefix_len)])
+            or needle.lower().startswith(parsed_desc.lower()[: min(len(parsed_desc), prefix_len)])
         ):
             continue
-        return ParsedLineItem(
+        return _make_line_item(
             description=needle if len(needle) >= len(parsed_desc) else parsed.description,
             qty=parsed.qty,
             unit_price=parsed.unit_price,
             amount=parsed.amount,
             tax_amount=parsed.tax_amount,
+            source=parsed.source,
+            source_confidence=parsed.source_confidence,
+            fused_from=list(parsed.fused_from) if parsed.fused_from else None,
         )
     return None
 
@@ -243,19 +333,54 @@ def enrich_line_items_from_text(
             enriched.append(item)
             continue
         enriched.append(
-            ParsedLineItem(
+            _make_line_item(
                 description=item.description or parsed.description,
                 qty=item.qty if item.qty is not None else parsed.qty,
                 unit_price=item.unit_price if item.unit_price is not None else parsed.unit_price,
                 amount=item.amount if item.amount is not None else parsed.amount,
                 tax_amount=item.tax_amount,
+                source=item.source or parsed.source,
+                source_confidence=item.source_confidence or parsed.source_confidence,
+                fused_from=list(item.fused_from) if item.fused_from else None,
             )
         )
     return enrich_parsed_line_items(enriched)
 
 
-def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
+def parse_line_items_from_layout_grids(payload: dict[str, object]) -> list[ParsedLineItem]:
+    """Parse line items from serialized Azure DI layout_table_grids in OCR payload."""
+    from app.services.extraction.layout_field_extractor import parse_line_items_from_table_grid
+
+    raw = payload.get("layout_table_grids")
+    if not isinstance(raw, list):
+        return []
+    merged: list[ParsedLineItem] = []
+    for table_rows in raw:
+        if not isinstance(table_rows, list) or len(table_rows) < 2:
+            continue
+        grid_rows: list[list[str]] = []
+        for row in table_rows:
+            if not isinstance(row, list):
+                continue
+            grid_rows.append([str(cell or "").strip() for cell in row])
+        if len(grid_rows) < 2:
+            continue
+        table_items = parse_line_items_from_table_grid(grid_rows)
+        if table_items:
+            merged = merge_line_item_lists(merged, table_items)
+    return enrich_parsed_line_items(merged)
+
+
+def parse_line_items_from_text(
+    text: str,
+    payload: dict[str, object] | None = None,
+) -> list[ParsedLineItem]:
     """Heuristic table rows: description qty unit_price amount (and GRN qty rows)."""
+    if payload:
+        grid_rows = parse_line_items_from_layout_grids(payload)
+        if grid_rows:
+            return grid_rows
+
     items: list[ParsedLineItem] = []
     for raw_line in text.splitlines():
         parsed = _parse_table_row_tail(raw_line)
@@ -269,11 +394,36 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
         if _skip_line_row(desc) or re.search(r"qty\s*received|condition", desc, re.I):
             continue
         items.append(
-            ParsedLineItem(
+            _make_line_item(
                 description=desc.strip(),
                 qty=_qty(qty_s),
-                unit_price=None,
-                amount=None,
+                source="regex",
+            )
+        )
+    if items:
+        return items
+
+    in_grn_qty_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.search(r"qty\s*received", line, re.I):
+            in_grn_qty_section = True
+            continue
+        if not in_grn_qty_section:
+            continue
+        m = _GRN_LINE_ROW.match(line) or _GRN_DESC_QTY_ROW.match(line)
+        if m is None:
+            continue
+        desc, qty_s = m.groups()
+        if _skip_line_row(desc):
+            continue
+        items.append(
+            _make_line_item(
+                description=desc.strip(),
+                qty=_qty(qty_s),
+                source="regex",
             )
         )
     if items:
@@ -284,7 +434,7 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
         if _skip_line_row(desc) or re.search(r"item\s+description|po\s+qty", desc, re.I):
             continue
         qty_match = re.findall(
-            r"(\d+(?:\.\d+)?)\s+(?:Kg|Nos|Box|Pair|Units?|Ltr|Litre)\b",
+            rf"(\d+(?:\.\d+)?)\s+(?:{unit_alternation_regex()})\b",
             m.group(0),
             re.I,
         )
@@ -292,11 +442,10 @@ def parse_line_items_from_text(text: str) -> list[ParsedLineItem]:
             _qty(qty_match[0]) if qty_match else None
         )
         items.append(
-            ParsedLineItem(
+            _make_line_item(
                 description=desc,
                 qty=qty,
-                unit_price=None,
-                amount=None,
+                source="regex",
             )
         )
     return items
@@ -343,12 +492,13 @@ def parse_line_items_from_di_items(items_field: Any) -> list[ParsedLineItem]:
         if not description or _skip_line_row(description):
             continue
         parsed.append(
-            ParsedLineItem(
+            _make_line_item(
                 description=description,
                 qty=_qty(qty) if qty is not None else None,
                 unit_price=_money(str(unit)) if unit is not None else None,
                 amount=_money(str(amount)) if amount is not None else None,
                 tax_amount=_money(str(tax)) if tax is not None else None,
+                source="di",
             )
         )
     return parsed
@@ -358,9 +508,13 @@ def _normalize_line_description(desc: str | None) -> str:
     return re.sub(r"\s+", " ", (desc or "").strip().lower())
 
 
-def enrich_parsed_line_items(items: list[ParsedLineItem]) -> list[ParsedLineItem]:
-    repaired = [_repair_year_misplaced_as_qty(item) for item in items]
-    deduped = _dedupe_prefix_fragment_rows(repaired)
+def enrich_parsed_line_items(
+    items: list[ParsedLineItem],
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> list[ParsedLineItem]:
+    repaired = [_repair_year_misplaced_as_qty(item, thresholds=thresholds) for item in items]
+    deduped = _dedupe_prefix_fragment_rows(repaired, thresholds=thresholds)
     enriched: list[ParsedLineItem] = []
     for item in deduped:
         qty = item.qty
@@ -371,12 +525,15 @@ def enrich_parsed_line_items(items: list[ParsedLineItem]) -> list[ParsedLineItem
         if unit_price is None and amount is not None and qty is not None and qty > 0:
             unit_price = amount / qty
         enriched.append(sanitize_parsed_line_item(
-            ParsedLineItem(
+            _make_line_item(
                 description=item.description,
                 qty=qty,
                 unit_price=unit_price,
                 amount=amount,
                 tax_amount=item.tax_amount,
+                source=item.source,
+                source_confidence=item.source_confidence,
+                fused_from=list(item.fused_from) if item.fused_from else None,
             )
         ))
     return enriched
@@ -412,8 +569,9 @@ def merge_line_item_lists(
             merged.append(primary_item)
             continue
 
+        merged_source, merged_confidence, merged_fused = _merge_provenance(primary_item, secondary_item)
         merged.append(
-            ParsedLineItem(
+            _make_line_item(
                 description=primary_item.description or secondary_item.description,
                 qty=primary_item.qty if primary_item.qty is not None else secondary_item.qty,
                 unit_price=(
@@ -427,6 +585,9 @@ def merge_line_item_lists(
                     else secondary_item.amount
                 ),
                 tax_amount=primary_item.tax_amount or secondary_item.tax_amount,
+                source=merged_source,
+                source_confidence=merged_confidence,
+                fused_from=merged_fused,
             )
         )
 
@@ -450,12 +611,17 @@ def serialize_line_items(items: list[ParsedLineItem]) -> list[dict[str, str | No
                 "qty": str(item.qty) if item.qty is not None else None,
                 "unit_price": str(item.unit_price) if item.unit_price is not None else None,
                 "amount": str(item.amount) if item.amount is not None else None,
+                "tax_amount": str(item.tax_amount) if item.tax_amount is not None else None,
             }
         )
     return rows
 
 
-def deserialize_line_items(raw: object) -> list[ParsedLineItem]:
+def deserialize_line_items(
+    raw: object,
+    *,
+    default_source: str | None = None,
+) -> list[ParsedLineItem]:
     if not isinstance(raw, list):
         return []
     items: list[ParsedLineItem] = []
@@ -466,6 +632,7 @@ def deserialize_line_items(raw: object) -> list[ParsedLineItem]:
         qty_raw = row.get("qty")
         unit_raw = row.get("unit_price")
         amount_raw = row.get("amount")
+        tax_raw = row.get("tax_amount")
         qty = None
         if qty_raw is not None and str(qty_raw).strip():
             try:
@@ -473,11 +640,19 @@ def deserialize_line_items(raw: object) -> list[ParsedLineItem]:
             except Exception:
                 qty = None
         items.append(
-            ParsedLineItem(
+            _make_line_item(
                 description=description,
                 qty=qty,
                 unit_price=_money(str(unit_raw)) if unit_raw is not None else None,
                 amount=_money(str(amount_raw)) if amount_raw is not None else None,
+                tax_amount=_money(str(tax_raw)) if tax_raw is not None else None,
+                source=str(row.get("extraction_source") or row.get("source") or "").strip() or default_source,
+                source_confidence=(
+                    float(row["source_confidence"])
+                    if row.get("source_confidence") is not None
+                    else None
+                ),
+                fused_from=list(row["fused_from"]) if isinstance(row.get("fused_from"), list) else None,
             )
         )
     return items
@@ -539,11 +714,17 @@ def resolve_usable_line_items_from_payload(
     *,
     allow_qty_only: bool = False,
 ) -> list[ParsedLineItem]:
-    """Merge usable DI and layout table rows; DI fills gaps, table appends missing rows."""
+    """Merge usable DI, layout table, and layout grid rows."""
     if not payload:
         return []
-    di_items = _usable_line_items(deserialize_line_items(payload.get("di_line_items")))
-    table_items = deserialize_line_items(payload.get("table_line_items"))
+    di_items = _usable_line_items(
+        deserialize_line_items(payload.get("di_line_items"), default_source="di")
+    )
+    table_items = deserialize_line_items(payload.get("table_line_items"), default_source="table")
+    grid_items = _usable_line_items(
+        parse_line_items_from_layout_grids(payload),
+        allow_qty_only=allow_qty_only,
+    )
     if allow_qty_only:
         table_usable = _usable_line_items(table_items, allow_qty_only=True)
     else:
@@ -553,6 +734,13 @@ def resolve_usable_line_items_from_payload(
             if item.amount is not None or item.unit_price is not None
         ]
         table_usable = _usable_line_items(money_rows) or _usable_line_items(table_items)
+    if not table_usable and grid_items:
+        table_usable = grid_items
+    elif table_usable and grid_items:
+        table_usable = merge_line_item_lists(
+            enrich_parsed_line_items(table_usable),
+            enrich_parsed_line_items(grid_items),
+        )
     if di_items and table_usable:
         return merge_line_item_lists(
             enrich_parsed_line_items(di_items),
@@ -592,6 +780,7 @@ _QTY_ONLY_TAIL = re.compile(
 
 
 def _split_table_columns(line: str) -> list[str]:
+    """Best-effort column split when no structured layout table grid is available."""
     parts = [part.strip() for part in re.split(r"\s{2,}|\t+", line.strip()) if part.strip()]
     if len(parts) >= 2:
         return parts
@@ -683,15 +872,19 @@ def _find_qty_column_index(cols: Sequence[str]) -> int | None:
     return None
 
 
-def _parse_qty_only_row(line: str) -> ParsedLineItem | None:
+def _parse_qty_only_row(
+    line: str,
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> ParsedLineItem | None:
     """Parse one OCR row with description + qty and no trailing money columns."""
     raw = line.strip()
-    if not raw or len(raw) < 4 or _TABLE_HEADER_LINE.match(raw):
+    if not raw or len(raw) < thresholds.min_qty_only_row_length or _TABLE_HEADER_LINE.match(raw):
         return None
     if _is_qty_only_totals_line(raw):
         return None
 
-    tail_parsed = _parse_table_row_tail(raw)
+    tail_parsed = _parse_table_row_tail(raw, thresholds=thresholds)
     if tail_parsed is not None and (
         tail_parsed.unit_price is not None or tail_parsed.amount is not None
     ):
@@ -703,10 +896,14 @@ def _parse_qty_only_row(line: str) -> ParsedLineItem | None:
         if qty_index is not None and qty_index > 0:
             desc = " ".join(cols[:qty_index]).strip()
             qty_token = cols[qty_index]
-            if len(desc) >= 3 and not _skip_line_row(desc) and not _is_qty_only_totals_line(desc, cols):
+            if (
+                len(desc) >= thresholds.min_desc_length_qty_only
+                and not _skip_line_row(desc)
+                and not _is_qty_only_totals_line(desc, cols)
+            ):
                 qty = _qty(re.sub(r"[^\d.]", "", qty_token))
                 if qty is not None:
-                    return ParsedLineItem(description=desc, qty=qty, unit_price=None, amount=None)
+                    return _make_line_item(description=desc, qty=qty, source="regex")
         for qty_index in range(len(cols) - 1, 0, -1):
             qty_token = cols[qty_index]
             if not re.match(r"^\d+(?:\.\d+)?\s*(?:pcs|nos|units?|kg)?$", qty_token, re.I):
@@ -714,23 +911,31 @@ def _parse_qty_only_row(line: str) -> ParsedLineItem | None:
             if _looks_like_money_token(qty_token):
                 continue
             desc = " ".join(cols[:qty_index]).strip()
-            if len(desc) < 3 or _skip_line_row(desc) or _is_qty_only_totals_line(desc, cols):
+            if (
+                len(desc) < thresholds.min_desc_length_qty_only
+                or _skip_line_row(desc)
+                or _is_qty_only_totals_line(desc, cols)
+            ):
                 continue
             qty = _qty(re.sub(r"[^\d.]", "", qty_token))
             if qty is None:
                 continue
-            return ParsedLineItem(description=desc, qty=qty, unit_price=None, amount=None)
+            return _make_line_item(description=desc, qty=qty, source="regex")
 
     match = _QTY_ONLY_TAIL.match(raw)
     if not match:
         return None
     desc = match.group(1).strip()
-    if len(desc) < 3 or _skip_line_row(desc) or _is_qty_only_totals_line(desc):
+    if (
+        len(desc) < thresholds.min_desc_length_qty_only
+        or _skip_line_row(desc)
+        or _is_qty_only_totals_line(desc)
+    ):
         return None
     qty = _qty(match.group(2))
     if qty is None:
         return None
-    return ParsedLineItem(description=desc, qty=qty, unit_price=None, amount=None)
+    return _make_line_item(description=desc, qty=qty, source="regex")
 
 
 def parse_qty_only_line_items_from_text(text: str) -> list[ParsedLineItem]:
@@ -783,7 +988,7 @@ def parse_qty_only_line_items_from_text(text: str) -> list[ParsedLineItem]:
             qty = _qty(re.sub(r"[^\d.]", "", cols[qty_col]))
             if desc and qty is not None and not _is_qty_only_totals_line(desc, cols):
                 if not _is_aggregate_qty_row(qty, prior_qtys):
-                    parsed = ParsedLineItem(description=desc, qty=qty, unit_price=None, amount=None)
+                    parsed = _make_line_item(description=desc, qty=qty, source="regex")
         if parsed is None:
             parsed = _parse_qty_only_row(raw)
         if parsed is None or _skip_line_row(parsed.description or ""):
@@ -868,7 +1073,7 @@ def document_has_product_table(
 
 
 _CHARGE_FREIGHT = re.compile(
-    r"^\s*FREIGHT\s*[:\-]?\s*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)",
+    rf"^\s*FREIGHT\s*[:\-]?\s*{optional_currency_code_group()}\s*([\d,]+\.?\d*)",
     re.I | re.M,
 )
 _CHARGE_GOODS_DESC = re.compile(
@@ -876,7 +1081,7 @@ _CHARGE_GOODS_DESC = re.compile(
     re.I | re.M,
 )
 _CHARGE_TOTAL = re.compile(
-    r"^\s*TOTAL\s*[:\-]?\s*(?:USD|AUD|SGD|EUR|GBP)?\s*([\d,]+\.?\d*)",
+    rf"^\s*TOTAL\s*[:\-]?\s*{optional_currency_code_group()}\s*([\d,]+\.?\d*)",
     re.I | re.M,
 )
 
@@ -893,7 +1098,11 @@ def document_has_charge_lines(ocr_text: str | None) -> bool:
     return False
 
 
-def parse_charge_lines_from_text(text: str | None) -> list[ParsedLineItem]:
+def parse_charge_lines_from_text(
+    text: str | None,
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> list[ParsedLineItem]:
     """Parse freight / goods-description charge rows from commercial invoices."""
     body = (text or "").strip()
     if not body:
@@ -902,20 +1111,25 @@ def parse_charge_lines_from_text(text: str | None) -> list[ParsedLineItem]:
     goods = _CHARGE_GOODS_DESC.search(body)
     if goods:
         desc = goods.group(1).strip().rstrip(".,;")
-        if desc and len(desc) > 3:
+        if desc and len(desc) > thresholds.min_charge_desc_length:
             items.append(
-                ParsedLineItem(description=desc[:200], qty=Decimal("1"), unit_price=None, amount=None)
+                _make_line_item(
+                    description=desc[: thresholds.max_charge_desc_length],
+                    qty=Decimal("1"),
+                    source="regex",
+                )
             )
     freight = _CHARGE_FREIGHT.search(body)
     if freight:
         amount = _money(freight.group(1))
         if amount is not None:
             items.append(
-                ParsedLineItem(
+                _make_line_item(
                     description="Freight",
                     qty=Decimal("1"),
                     unit_price=amount,
                     amount=amount,
+                    source="regex",
                 )
             )
     if not items:
@@ -924,11 +1138,12 @@ def parse_charge_lines_from_text(text: str | None) -> list[ParsedLineItem]:
             amount = _money(total_match.group(1))
             if amount is not None:
                 items.append(
-                    ParsedLineItem(
+                    _make_line_item(
                         description="Total charges",
                         qty=Decimal("1"),
                         unit_price=amount,
                         amount=amount,
+                        source="regex",
                     )
                 )
     return enrich_parsed_line_items(items)

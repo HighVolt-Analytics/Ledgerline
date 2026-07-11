@@ -194,7 +194,13 @@ def strip_ssl_query_params(url: str) -> str:
 
 def asyncpg_connect_args(database_url: str) -> dict[str, Any]:
     """Asyncpg connect_args; Azure Postgres on Windows needs an explicit SSL context."""
-    args: dict[str, Any] = {"command_timeout": 60, "timeout": 30}
+    from app.config import get_settings
+
+    settings = get_settings()
+    args: dict[str, Any] = {
+        "command_timeout": settings.database_command_timeout_seconds,
+        "timeout": 30,
+    }
     if "postgres.database.azure.com" in database_url:
         args["ssl"] = ssl.create_default_context()
     return args

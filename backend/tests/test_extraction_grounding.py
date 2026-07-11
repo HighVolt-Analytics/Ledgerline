@@ -266,3 +266,22 @@ def test_ground_invoice_scalars_sanitizes_invoice_no_bleed_and_fills_date() -> N
     grounded = ground_invoice_scalars(parsed, ocr)
     assert grounded.invoice_no == "2603110950SA"
     assert grounded.invoice_date == date(2026, 5, 11)
+
+
+def test_label_proximate_grounding_prefers_labeled_invoice_no() -> None:
+    ocr = """
+Purchase Order PO-INV-12345 reference
+Invoice No: INV-12345
+Total 100.00
+"""
+    debug: dict[str, str] = {}
+    assert value_grounded_in_ocr("INV-12345", ocr, field_key="invoice_no", grounding_debug=debug)
+    assert debug.get("invoice_no") == "label_proximate"
+    assert value_grounded_in_ocr("INV-12345", ocr) is True
+
+
+def test_label_proximate_without_field_key_uses_substring() -> None:
+    ocr = "Invoice No: INV-999\nPO-INV-999 elsewhere"
+    debug: dict[str, str] = {}
+    assert value_grounded_in_ocr("INV-999", ocr, grounding_debug=debug)
+    assert "INV-999" not in debug

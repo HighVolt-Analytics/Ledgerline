@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Ban, Check, Clock, Minus, RefreshCw } from "lucide-react";
 import type { Invoice, MatrixRow } from "@/api/types";
 import { api } from "@/api/client";
@@ -28,6 +29,7 @@ import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useAuth } from "@/context/AuthContext";
 import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { StatusPill, pillTones } from "@/components/StatusPill";
+import { queryKeys, tenantQueryKey } from "@/lib/queryClient";
 import {
   API_PORT_HINT,
   captureTenantFetchScope,
@@ -149,6 +151,18 @@ export function DocumentMatrixPanel({
 }) {
   const { user } = useAuth();
   const { data: ruleBook } = useRuleBookConfig();
+  const queryClient = useQueryClient();
+
+  const invalidateManagementCaches = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.purchases() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.purchasesTwoWay() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.sales() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.salesTwoWay() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() }),
+      queryClient.invalidateQueries({ queryKey: tenantQueryKey(["invoices"]) }),
+    ]);
+  }, [queryClient]);
   const tenantScope = user?.tenant_id ?? null;
   const loadSeq = useRef(0);
   const loadInFlightRef = useRef(false);
@@ -353,6 +367,7 @@ export function DocumentMatrixPanel({
           await api.reject(inv.id);
           setToast(`${documentDisplayRef(inv)} rejected as duplicate`);
         }
+        await invalidateManagementCaches();
       } else {
         await api.requestApproval(inv.id);
         setToast(`${documentDisplayRef(inv)} sent to approvals`);

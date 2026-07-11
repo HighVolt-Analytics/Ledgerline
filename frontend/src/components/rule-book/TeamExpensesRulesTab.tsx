@@ -15,12 +15,13 @@ import { NumericInput } from "@/components/ui/numeric-input";
 import { Select, toSelectOptions } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
-import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
+import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import { cn } from "@/lib/cn";
+import { defaultExpensePostingLedger, mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
 import { fmtAud } from "@/lib/v4MockData";
 import { nextRulePriority } from "@/lib/rulePriority";
 import type { TeamExpenseRule } from "@/lib/v4RuleBookTypes";
-import { LEDGER_ACCOUNTS, TEAM_CHANNELS } from "@/lib/v4RuleBookTypes";
+import { TEAM_CHANNELS } from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
 import { FieldLabel } from "./FieldLabel";
 import {
@@ -61,7 +62,12 @@ export function TeamExpensesRulesTab({
   onChange: (rules: TeamExpenseRule[]) => void;
 }) {
   const { toast } = useToast();
-  const { data: coaAccounts = [] } = useChartOfAccounts();
+  const {
+    allAccounts,
+    options: ledgerOptions,
+    hasRealAccounts,
+    isLoading: coaLoading,
+  } = useCoaAccountOptions({ includeEmpty: false });
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const update = (id: string, patch: Partial<TeamExpenseRule>) =>
@@ -96,7 +102,7 @@ export function TeamExpensesRulesTab({
         enabled: true,
         priority: nextRulePriority(rules),
         matchOn: { channelEquals: "Any" },
-        postTo: { ledger: LEDGER_ACCOUNTS[0], subLedger: "" },
+        postTo: { ledger: defaultExpensePostingLedger(allAccounts), subLedger: "" },
         policy: { requireReceipt: true, receiptThreshold: 25, autoApproveBelow: 30 },
         matchedCount: 0,
       },
@@ -254,11 +260,12 @@ export function TeamExpensesRulesTab({
                               subLedger: reconcileSubLedgerOnLedgerChange(
                                 ledger,
                                 rule.postTo.subLedger,
-                                coaAccounts
+                                allAccounts
                               ),
                             })
                           }
-                          options={toSelectOptions(LEDGER_ACCOUNTS)}
+                          options={mergeCoaOptionsWithSavedValue(ledgerOptions, rule.postTo.ledger)}
+                          disabled={coaLoading}
                           className="w-full"
                         />
                       </FieldLabel>
@@ -267,11 +274,16 @@ export function TeamExpensesRulesTab({
                           ledger={rule.postTo.ledger}
                           value={rule.postTo.subLedger}
                           onChange={(subLedger) => updatePost(rule.id, { subLedger })}
-                          accounts={coaAccounts}
+                          accounts={allAccounts}
                           size="sm"
                         />
                       </FieldLabel>
                     </div>
+                    {!coaLoading && !hasRealAccounts ? (
+                      <p className="text-[10px] text-muted-foreground mt-2">
+                        Add accounts in Settings → Chart of accounts.
+                      </p>
+                    ) : null}
                   </div>
 
                   <div>

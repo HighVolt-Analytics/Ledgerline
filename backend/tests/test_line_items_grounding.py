@@ -97,18 +97,20 @@ def test_build_line_items_presentation_prompt_di_mode() -> None:
     assert "row-for-row" in joined
 
 
-def test_ground_parsed_fields_clears_llm_line_items_when_di_present() -> None:
+def test_ground_parsed_fields_annotates_llm_line_items_when_di_present() -> None:
     parsed = InvoiceData(
-        line_items=[ParsedLineItem(description="LLM invented", amount=Decimal("99"))],
+        line_items=[ParsedLineItem(description="LLM invented", amount=Decimal("99"), source="llm")],
     )
     payload = {"di_line_items": [{"description": "DI row", "amount": "10"}]}
     grounded = ground_parsed_fields(parsed, "Invoice text", ["line_items"], payload)
-    assert grounded.line_items == []
+    assert grounded.line_items_grounding == "ungrounded"
+    assert len(grounded.line_items) == 1
+    assert grounded.line_items[0].description == "LLM invented"
 
 
-def test_ground_parsed_fields_clears_line_items_when_no_table() -> None:
+def test_ground_parsed_fields_annotates_line_items_when_no_table() -> None:
     parsed = InvoiceData(
-        line_items=[ParsedLineItem(description="LLM invented", amount=Decimal("99"))],
+        line_items=[ParsedLineItem(description="LLM invented", amount=Decimal("99"), source="llm")],
     )
     grounded = ground_parsed_fields(
         parsed,
@@ -116,10 +118,13 @@ def test_ground_parsed_fields_clears_line_items_when_no_table() -> None:
         ["line_items"],
         {},
     )
-    assert grounded.line_items == []
+    assert grounded.line_items_grounding == "unverifiable"
+    assert len(grounded.line_items) == 1
 
 
-def test_merge_extraction_sources_uses_di_rows_not_llm() -> None:
+def test_merge_extraction_sources_drops_ungrounded_llm_when_di_present() -> None:
+    from app.services.extraction.line_item_trace import LineItemTrace
+
     ocr = OcrArtifact(
         success=True,
         text="TAX INVOICE\nVendor: Acme\nDESCRIPTION QTY AMOUNT\nWidget 2 20.00",
@@ -133,12 +138,30 @@ def test_merge_extraction_sources_uses_di_rows_not_llm() -> None:
     parsed = InvoiceData(
         vendor="Acme",
         document_text=ocr.text,
-        line_items=[ParsedLineItem(description="LLM Wrong", amount=Decimal("999"))],
+        line_items=[ParsedLineItem(description="LLM Wrong", amount=Decimal("999"), source="llm")],
+        line_items_grounding="ungrounded",
     )
-    merged = merge_extraction_sources(parsed, ocr, dt_definition=_definition())
+    trace = LineItemTrace()
+    merged = merge_extraction_sources(parsed, ocr, dt_definition=_definition(), trace=trace)
     assert len(merged.line_items) == 1
     assert merged.line_items[0].description == "DI Widget"
     assert merged.line_items[0].amount == Decimal("20")
+    assert merged.line_items[0].source == "di"
+
+
+def test_filter_post_merge_line_items_drops_ungrounded_llm() -> None:
+    from app.services.extraction.extraction_orchestrator import filter_post_merge_line_items
+    from app.services.extraction.line_item_trace import LineItemTrace
+
+    trace = LineItemTrace()
+    items = [
+        ParsedLineItem(description="LLM Wrong", amount=Decimal("999"), source="llm"),
+        ParsedLineItem(description="DI Widget", qty=Decimal("2"), amount=Decimal("20"), source="di"),
+    ]
+    filtered = filter_post_merge_line_items(items, grounding="ungrounded", trace=trace)
+    assert len(filtered) == 1
+    assert filtered[0].description == "DI Widget"
+    assert any(entry["reason"] == "ungrounded_post_merge" for entry in trace.to_dict())
 
 
 def test_merge_extraction_sources_empty_when_no_table() -> None:
@@ -150,7 +173,8 @@ def test_merge_extraction_sources_empty_when_no_table() -> None:
     parsed = InvoiceData(
         vendor="Acme",
         document_text=ocr.text,
-        line_items=[ParsedLineItem(description="LLM Wrong", amount=Decimal("999"))],
+        line_items=[ParsedLineItem(description="LLM Wrong", amount=Decimal("999"), source="llm")],
+        line_items_grounding="unverifiable",
     )
     merged = merge_extraction_sources(parsed, ocr, dt_definition=_definition())
     assert merged.line_items == []

@@ -143,6 +143,9 @@ _EVENT_STAGE.update(
     }
 )
 
+# Audit events that advance or fail pipeline stages (used by dossier audit fetch).
+PIPELINE_AUDIT_EVENTS: frozenset[str] = frozenset(_EVENT_STAGE.keys())
+
 _STATUS_FLOOR: dict[InvoiceStatus, int] = {
     InvoiceStatus.PENDING: 0,
     InvoiceStatus.PARSING: 7,
@@ -1374,7 +1377,11 @@ def _resolve_approve(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
 
     if approval_required and inv.status == InvoiceStatus.EXCEPTION:
         detail_dict = approval_required.detail if isinstance(approval_required.detail, dict) else {}
-        reason = str(detail_dict.get("reason", "")).strip() or _detail_from_log(approval_required)
+        raw_reasons = detail_dict.get("reasons")
+        if isinstance(raw_reasons, list) and raw_reasons:
+            reason = ", ".join(str(item).strip() for item in raw_reasons if str(item).strip())
+        else:
+            reason = str(detail_dict.get("reason", "")).strip() or _detail_from_log(approval_required)
         return _step(
             "approve",
             state="pending",
@@ -1846,7 +1853,27 @@ def build_dossier_pipeline(
 
 
 def first_pipeline_failure(steps: list[DossierPipelineStepResponse]) -> DossierPipelineStepResponse | None:
-    for step in steps:
-        if step.state == "fail":
+    for stage_id in STAGE_IDS:
+        step = next((row for row in steps if row.stage_id == stage_id), None)
+        if step is not None and step.state == "fail":
+            return step
+    return None
+
+
+def first_pipeline_bottleneck(
+    steps: list[DossierPipelineStepResponse],
+) -> DossierPipelineStepResponse | None:
+    """First failing stage, or first pending stage blocking forward progress."""
+    fail = first_pipeline_failure(steps)
+    if fail is not None:
+        return fail
+    by_stage = {step.stage_id: step for step in steps}
+    for stage_id in STAGE_IDS:
+        step = by_stage.get(stage_id)
+        if step is None:
+            break
+        if step.state == "pending" and step.detail and step.detail != "—":
+            return step
+        if step.state == "pending":
             return step
     return None

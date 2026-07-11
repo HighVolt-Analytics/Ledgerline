@@ -98,13 +98,14 @@ async def process_invoice_by_id(
     if resolved_tid is None:
         return False
 
+    ok = False
     async with db_session_with_rls(resolved_tid) as session:
         inv = await get_for_tenant(session, Invoice, invoice_id, resolved_tid)
         if inv is None:
             return False
         try:
             await process_invoice(session, inv)
-            return True
+            ok = True
         except Exception as exc:
             await session.rollback()
             error_message = _pipeline_error_message(exc)
@@ -124,7 +125,11 @@ async def process_invoice_by_id(
                         tenant_id=resolved_tid,
                         detail=audit_document_detail(inv, error=error_message),
                     )
-            return False
+
+    from app.services.dossier.dossier_reprocess_service import flush_scheduled_sibling_reprocess
+
+    await flush_scheduled_sibling_reprocess()
+    return ok
 
 
 async def process_invoice_background(

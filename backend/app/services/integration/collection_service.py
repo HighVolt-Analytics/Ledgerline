@@ -127,6 +127,9 @@ async def mark_collection_received(
     row.status = CollectionStatus.RECEIVED
     row.received_date = received_date or datetime.now(timezone.utc)
     await db.flush()
+    from app.services.payments.settlement_service import post_collection_settlement_journal
+
+    await post_collection_settlement_journal(db, row)
     return collection_to_response(row)
 
 

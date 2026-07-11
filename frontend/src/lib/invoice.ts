@@ -74,13 +74,22 @@ export function counterpartyMatchLabel(
 }
 
 export function counterpartyName(
-  inv: Pick<Invoice, "vendor" | "route_target" | "extracted_fields">,
+  inv: Pick<
+    Invoice,
+    "vendor" | "route_target" | "extracted_fields" | "purchase_document_type"
+  >,
 ): string {
   const fields = inv.extracted_fields ?? {};
   const kind = counterpartyKind(inv);
   const vendor = inv.vendor?.trim() || "";
   const buyer = fields.buyer_name?.trim() || "";
   const seller = fields.seller_name?.trim() || "";
+  const purchaseDoc = (inv.purchase_document_type ?? "").trim().toLowerCase();
+
+  // PO/GRN: vendor column is authoritative; seller_name often holds doc numbers (GRN-xxx).
+  if (purchaseDoc === "po" || purchaseDoc === "grn") {
+    return vendor || seller || "—";
+  }
 
   if (kind === "customer") {
     if (buyer) return buyer;

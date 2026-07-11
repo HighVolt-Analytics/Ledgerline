@@ -187,6 +187,16 @@ async def _run_core_rule(code: str, ctx: ValidationRunContext) -> ValidationResu
 
 
 def _rules_for_context(ctx: ValidationRunContext) -> list[ValidationRuleConfig]:
+    from app.services.classification.document_type_validation_service import resolve_validation_profile
+
+    profile = ctx.validation_profile or resolve_validation_profile(
+        ctx.document_type_code,
+        document_types=ctx.document_types,
+        tenant_id=ctx.tenant_id,
+    )
+    if profile == PROFILE_NON_ACTIONABLE:
+        return list(PROFILE_NON_ACTIONABLE_RULES)
+
     if ctx.purchase_document_type in {"po", "grn"}:
         resolved = resolve_validation_rules(
             ctx.document_type_code,

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.journal import EntryType
+from app.models.line_item import LineItem
 from app.schemas.rule_book_config import ChartOfAccountEntry, PostingDefaults, RuleBookConfigPayload
 from app.services.rule_book.account_mapper import AccountMapping
 from app.services.rule_book.rule_book_mapper import ROUTE_SALES
@@ -35,6 +36,32 @@ def test_ap_credit() -> None:
     )
     ap = [ln for ln in generate_entries(inv, AccountMapping("6200", "Supplies")) if ln.credit > 0]
     assert ap[0].credit == Decimal("550")
+
+
+def test_line_items_infer_subtotal_and_total_for_ap() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        invoice_date=date(2026, 6, 24),
+        subtotal=None,
+        gst=Decimal("50"),
+        total=None,
+        status=InvoiceStatus.JOURNALING,
+        currency="AUD",
+    )
+    inv.line_items = [
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            description="Fresh Produce Mixed Box",
+            qty=Decimal("10"),
+            amount=Decimal("500"),
+        )
+    ]
+    lines = generate_entries(inv, AccountMapping("6130", "Marketing Expense"))
+    assert is_balanced(lines)
+    payable = [ln for ln in lines if ln.credit > 0]
+    assert payable[0].credit == Decimal("550")
+    expense = [ln for ln in lines if ln.account_code == "6130"]
+    assert expense[0].debit == Decimal("500")
 
 
 def test_total_only_infers_subtotal_for_ap() -> None:

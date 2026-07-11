@@ -394,6 +394,9 @@ async def mark_payment_paid_manual(
         instruction.note = body.note.strip()
 
     await db.flush()
+    from app.services.payments.settlement_service import post_payment_settlement_journal
+
+    await post_payment_settlement_journal(db, payment)
     return await _payment_response_with_instruction(db, tenant_id, payment), True
 
 

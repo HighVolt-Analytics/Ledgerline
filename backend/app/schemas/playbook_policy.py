@@ -127,6 +127,24 @@ class MatchPolicy(BaseModel):
 
 class ApprovalPolicy(BaseModel):
     mode: ApprovalMode = "touchless_on_clean_match"
+    auto_approve_below: float | None = Field(
+        default=None,
+        alias="autoApproveBelow",
+        description=(
+            "Hold at/above this amount; compared to invoice.total in document currency "
+            "(no FX normalization — same as team expense auto_approve_below)."
+        ),
+    )
+    require_approval_for_unmatched: bool = Field(
+        default=False,
+        alias="requireApprovalForUnmatched",
+    )
+    require_approval_for_unverified_counterparty: bool = Field(
+        default=False,
+        alias="requireApprovalForUnverifiedCounterparty",
+    )
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
 
     @field_validator("mode", mode="before")
     @classmethod

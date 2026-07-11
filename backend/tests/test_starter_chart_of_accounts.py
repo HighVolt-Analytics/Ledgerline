@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.invoice import Invoice
 from app.models.tenant import Tenant
 from app.models.tenant_rule_book_config import TenantRuleBookConfig
-from app.schemas.rule_book_config import validate_rule_book_config_payload
+from app.schemas.rule_book_config import PostingDefaults, validate_rule_book_config_payload
 from app.services.master_data.starter_chart_of_accounts import (
     GENERIC_EXPENSE_ACCOUNT,
     GENERIC_REVENUE_ACCOUNT,
     SALES_RECEIVABLE_ACCOUNT,
     SALES_TAX_ACCOUNT,
     build_starter_chart_of_accounts,
+    merge_missing_starter_accounts,
 )
 from app.services.payments.journal_generator import (
     generate_entries,
@@ -24,7 +25,11 @@ from app.services.payments.journal_generator import (
     is_balanced,
 )
 from app.services.rule_book.account_mapper import AccountMapping, category_resolved_in_coa
-from app.services.rule_book.rule_book_config_repository import ensure_default_config, fetch_config_dict
+from app.services.rule_book.rule_book_config_repository import (
+    ensure_default_config,
+    fetch_config_dict,
+    upgrade_tenant_coa_if_needed,
+)
 from app.services.rule_book.rule_book_mapper import ROUTE_SALES
 
 
@@ -86,8 +91,9 @@ def test_build_starter_chart_of_accounts_includes_both_routes() -> None:
     assert GENERIC_REVENUE_ACCOUNT in names
     assert "GST Paid" in names
     assert "Accounts Payable" in names
+    assert "Bank Account" in names
     assert "Suspense Account" in names
-    assert len(entries) == 7
+    assert len(entries) == 8
 
 
 @pytest.mark.asyncio
@@ -161,3 +167,54 @@ async def test_ensure_default_config_leaves_existing_custom_coa_untouched(
     stored = await fetch_config_dict(db_session, tenant_id)
     assert stored is not None
     assert stored["chart_of_accounts"] == custom_coa
+
+
+def test_merge_missing_starter_accounts_preserves_custom_entries() -> None:
+    thin = [
+        build_starter_chart_of_accounts("AU")[0].model_copy(update={"code": "1000", "name": "Bank Account"}),
+        build_starter_chart_of_accounts("AU")[0].model_copy(
+            update={"code": "6130", "name": "Marketing Expense", "type": "Expense"}
+        ),
+    ]
+    merged = merge_missing_starter_accounts(thin, "AU")
+    names = {entry.name for entry in merged}
+    assert "Marketing Expense" in names
+    assert SALES_RECEIVABLE_ACCOUNT in names
+    assert "Accounts Payable" in names
+    assert "GST Paid" in names
+    assert len(merged) >= 8
+
+
+@pytest.mark.asyncio
+async def test_upgrade_tenant_coa_if_needed_merges_thin_coa(db_session: AsyncSession) -> None:
+    tenant_id = await _add_tenant(db_session, country="AU", slug_suffix="thin-upgrade")
+    custom_coa = [
+        {"code": "1000", "name": "Bank Account", "type": "Asset"},
+        {"code": "6130", "name": "Marketing Expense", "type": "Expense"},
+        {"code": "6140", "name": "R&D Expense", "type": "Expense"},
+    ]
+    db_session.add(
+        TenantRuleBookConfig(
+            tenant_id=tenant_id,
+            config={
+                "schema_version": 1,
+                "posting_defaults": PostingDefaults.for_country("AU").model_dump(),
+                "chart_of_accounts": custom_coa,
+            },
+            schema_version=1,
+        )
+    )
+    await db_session.flush()
+
+    changed = await upgrade_tenant_coa_if_needed(db_session, tenant_id)
+    assert changed is True
+    stored = validate_rule_book_config_payload(await fetch_config_dict(db_session, tenant_id) or {})
+    assert category_resolved_in_coa(stored.posting_defaults.payable_account, stored)
+    assert category_resolved_in_coa(SALES_RECEIVABLE_ACCOUNT, stored)
+
+
+@pytest.mark.asyncio
+async def test_upgrade_tenant_coa_if_needed_is_idempotent(db_session: AsyncSession) -> None:
+    tenant_id = await _add_tenant(db_session, country="AU", slug_suffix="idempotent")
+    await ensure_default_config(db_session, tenant_id)
+    assert await upgrade_tenant_coa_if_needed(db_session, tenant_id) is False

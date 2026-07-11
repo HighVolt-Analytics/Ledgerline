@@ -23,6 +23,10 @@ from app.services.extraction.extraction_field_values import (
     merge_extracted_field_maps,
     prebuilt_invoice_scalars_active,
 )
+from app.services.extraction.line_item_parsing_config import (
+    DEFAULT_THRESHOLDS,
+    LineItemParsingThresholds,
+)
 from app.services.extraction.layout_field_extractor import extract_key_value_fields
 from app.services.extraction.pdf_parser import (
     parse_local_text,
@@ -246,7 +250,7 @@ def _value_grounded_for_field(field_name: str, value: object, ocr_text: str | No
             return _date_grounded_in_ocr(value, ocr_text)
         parsed = parse_flexible_date(str(value))
         return _date_grounded_in_ocr(parsed, ocr_text) if parsed else False
-    return value_grounded_in_ocr(str(value), ocr_text)
+    return value_grounded_in_ocr(str(value), ocr_text, field_key=field_name)
 
 
 def _merge_di_grounded(
@@ -373,7 +377,7 @@ def _apply_configured_extracted_fields(
         candidate = (kv.get(key) or "").strip()
         if not candidate:
             continue
-        if ocr_text and not value_grounded_in_ocr(candidate, ocr_text):
+        if ocr_text and not value_grounded_in_ocr(candidate, ocr_text, field_key=key):
             continue
         updates[key] = candidate
     if not updates:
@@ -467,7 +471,7 @@ def _di_grounding_skip_keys(data: InvoiceData, ocr_text: str | None, di_populate
                 skip.add(key)
         elif key in ("po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
             current = getattr(data, key, None)
-            if current and value_grounded_in_ocr(str(current), ocr_text):
+            if current and value_grounded_in_ocr(str(current), ocr_text, field_key=key):
                 skip.add(key)
         elif key == "invoice_date" and data.invoice_date is not None and _date_grounded_in_ocr(
             data.invoice_date, ocr_text
@@ -483,13 +487,67 @@ def _di_grounding_skip_keys(data: InvoiceData, ocr_text: str | None, di_populate
                 skip.add(key)
         elif key == "currency":
             currency = (data.currency or "").strip()
-            if currency and value_grounded_in_ocr(currency, ocr_text):
+            if currency and value_grounded_in_ocr(currency, ocr_text, field_key="currency"):
                 skip.add(key)
         elif key == "abn":
             abn_raw = (data.abn or "").strip()
-            if abn_raw and value_grounded_in_ocr(abn_raw, ocr_text):
+            if abn_raw and value_grounded_in_ocr(abn_raw, ocr_text, field_key="abn"):
                 skip.add(key)
     return frozenset(skip)
+
+
+def _llm_line_item_row_trusted(
+    item: ParsedLineItem,
+    *,
+    doc_confidence: float | None = None,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> bool:
+    if not (item.description or "").strip():
+        return False
+    missing = sum(1 for value in (item.qty, item.unit_price, item.amount) if value is None)
+    if missing == 0:
+        return True
+    if (
+        doc_confidence is not None
+        and doc_confidence >= thresholds.llm_line_item_confidence_threshold
+        and missing <= 1
+    ):
+        return True
+    return False
+
+
+def _llm_line_items_trust_mask(
+    items: list[ParsedLineItem],
+    *,
+    doc_confidence: float | None = None,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> list[bool]:
+    return [
+        _llm_line_item_row_trusted(item, doc_confidence=doc_confidence, thresholds=thresholds)
+        for item in items
+    ]
+
+
+def _llm_line_items_fully_trusted(
+    items: list[ParsedLineItem],
+    ocr_text: str | None,
+    *,
+    table_row_count: int = 0,
+    doc_confidence: float | None = None,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> bool:
+    """True when every LLM line item is trusted and covers at least as many rows as table/DI."""
+    _ = ocr_text
+    if not items:
+        return False
+    mask = _llm_line_items_trust_mask(
+        items, doc_confidence=doc_confidence, thresholds=thresholds
+    )
+    if not all(mask):
+        return False
+    if table_row_count > len(items):
+        return False
+    return True
 
 
 def _llm_line_items_trusted(
@@ -497,19 +555,57 @@ def _llm_line_items_trusted(
     ocr_text: str | None,
     *,
     table_row_count: int = 0,
+    doc_confidence: float | None = None,
 ) -> bool:
-    """True when every LLM line item is complete and covers at least as many rows as table/DI."""
-    _ = ocr_text
-    if not items:
-        return False
-    for item in items:
-        if not (item.description or "").strip():
-            return False
-        if item.qty is None or item.unit_price is None or item.amount is None:
-            return False
-    if table_row_count > len(items):
-        return False
-    return True
+    return _llm_line_items_fully_trusted(
+        items,
+        ocr_text,
+        table_row_count=table_row_count,
+        doc_confidence=doc_confidence,
+    )
+
+
+def _doc_line_items_confidence(merged: InvoiceData) -> float | None:
+    raw = merged.raw_fields or {}
+    value = raw.get("_line_items_confidence")
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _merge_llm_rows_with_partial_trust(
+    llm_rows: list[ParsedLineItem],
+    structured_rows: list[ParsedLineItem],
+    *,
+    doc_confidence: float | None,
+    table_row_count: int = 0,
+) -> list[ParsedLineItem]:
+    if not llm_rows:
+        return list(structured_rows)
+    if _llm_line_items_fully_trusted(
+        llm_rows,
+        None,
+        table_row_count=table_row_count,
+        doc_confidence=doc_confidence,
+    ):
+        return list(llm_rows)
+    mask = _llm_line_items_trust_mask(llm_rows, doc_confidence=doc_confidence)
+    picked: list[ParsedLineItem] = []
+    for index, trusted in enumerate(mask):
+        if trusted and index < len(llm_rows):
+            picked.append(llm_rows[index])
+        elif index < len(structured_rows):
+            picked.append(structured_rows[index])
+        elif index < len(llm_rows):
+            picked.append(llm_rows[index])
+    if len(structured_rows) > len(picked):
+        picked = merge_line_item_lists(picked, structured_rows[len(picked) :])
+    elif structured_rows:
+        picked = merge_line_item_lists(structured_rows, picked)
+    return picked
 
 
 def _qty_only_llm_rows_usable(items: list[ParsedLineItem]) -> list[ParsedLineItem]:
@@ -578,57 +674,82 @@ def _merge_line_items_from_sources(
 ) -> list[ParsedLineItem]:
     """Resolve line items from DI, layout, OCR text, LLM, or charge blocks."""
     llm_rows = list(merged.line_items)
+    doc_confidence = _doc_line_items_confidence(merged)
     qty_only_table = document_has_qty_only_table(text, payload_dict)
 
     if qty_only_table:
         structured = _authoritative_structured_line_items(payload_dict)
         if structured:
             llm_qty = _qty_only_llm_rows_usable(llm_rows)
-            if llm_qty and _llm_line_items_trusted(
-                llm_qty,
-                text,
-                table_row_count=len(structured),
-            ):
-                return list(llm_qty)
+            if llm_qty:
+                merged_qty = _merge_llm_rows_with_partial_trust(
+                    llm_qty,
+                    structured,
+                    doc_confidence=doc_confidence,
+                    table_row_count=len(structured),
+                )
+                if _llm_line_items_fully_trusted(
+                    llm_qty,
+                    text,
+                    table_row_count=len(structured),
+                    doc_confidence=doc_confidence,
+                ):
+                    return list(llm_qty)
+                return merged_qty
             return list(structured)
 
         llm_qty = _qty_only_llm_rows_usable(llm_rows)
         table_qty = _qty_only_table_rows_from_payload(payload_dict)
         text_qty = parse_qty_only_line_items_from_text(text)
         table_row_count = max(len(table_qty), len(text_qty))
-        if llm_qty and _llm_line_items_trusted(
-            llm_qty,
-            text,
-            table_row_count=table_row_count,
-        ):
-            return list(llm_qty)
-        return _union_line_item_sources(llm_qty, table_qty, text_qty)
+        structured_qty = _union_line_item_sources(table_qty, text_qty)
+        if llm_qty:
+            if _llm_line_items_fully_trusted(
+                llm_qty,
+                text,
+                table_row_count=table_row_count,
+                doc_confidence=doc_confidence,
+            ):
+                return list(llm_qty)
+            return _merge_llm_rows_with_partial_trust(
+                llm_qty,
+                structured_qty,
+                doc_confidence=doc_confidence,
+                table_row_count=table_row_count,
+            )
+        return structured_qty
 
     if document_has_product_table(text, payload_dict):
         llm_rows = list(merged.line_items)
         table_rows = resolve_usable_line_items_from_payload(payload_dict)
         use_text_fallback = not di_line_items_usable(payload_dict) or not table_rows
         text_rows = (
-            list(enrich_parsed_line_items(parse_line_items_from_text(text)))
+            list(enrich_parsed_line_items(parse_line_items_from_text(text, payload_dict)))
             if use_text_fallback
             else []
         )
         llm_enriched = enrich_line_items_from_text(llm_rows, text) if llm_rows else []
         base = _union_line_item_sources(table_rows, text_rows)
         table_row_count = len(base)
-        if llm_enriched and _llm_line_items_trusted(
-            llm_enriched,
-            text,
-            table_row_count=table_row_count,
-        ):
-            return list(llm_enriched)
-        if base:
-            if llm_enriched and _llm_line_items_trusted(
+        if llm_enriched:
+            if _llm_line_items_fully_trusted(
                 llm_enriched,
                 text,
                 table_row_count=table_row_count,
+                doc_confidence=doc_confidence,
             ):
                 return list(llm_enriched)
+            if base:
+                partial = _merge_llm_rows_with_partial_trust(
+                    llm_enriched,
+                    base,
+                    doc_confidence=doc_confidence,
+                    table_row_count=table_row_count,
+                )
+                if _llm_rows_worth_merging(llm_enriched):
+                    return partial
+                return base
+        if base:
             if llm_enriched and _llm_rows_worth_merging(llm_enriched):
                 return _union_line_item_sources(base, llm_enriched)
             return base
@@ -641,12 +762,95 @@ def _merge_line_items_from_sources(
     return []
 
 
+_STRUCTURED_LINE_ITEM_SOURCES = frozenset({"table", "di", "regex", "fused"})
+
+
+def _structured_line_item_match(
+    item: ParsedLineItem,
+    structured_rows: list[ParsedLineItem],
+) -> bool:
+    from app.services.extraction.line_items_parser import _normalize_line_description
+
+    key = _normalize_line_description(item.description)
+    if not key:
+        return False
+    prefix_len = DEFAULT_THRESHOLDS.desc_match_prefix_len
+    for row in structured_rows:
+        other = _normalize_line_description(row.description)
+        if not other:
+            continue
+        if key == other:
+            return True
+        if key.startswith(other[: min(len(other), prefix_len)]):
+            return True
+        if other.startswith(key[: min(len(key), prefix_len)]):
+            return True
+    return False
+
+
+def filter_post_merge_line_items(
+    items: list[ParsedLineItem],
+    *,
+    grounding: str | None,
+    trace: object | None = None,
+) -> list[ParsedLineItem]:
+    """Drop ungrounded LLM rows after merge while preserving structured extraction."""
+    if grounding not in ("ungrounded", "unverifiable"):
+        return items
+
+    from app.services.extraction.line_item_trace import row_key_for_item
+
+    structured_rows = [item for item in items if (item.source or "") in _STRUCTURED_LINE_ITEM_SOURCES]
+    filtered: list[ParsedLineItem] = []
+    for index, item in enumerate(items):
+        if (item.source or "") != "llm":
+            filtered.append(item)
+            continue
+        if grounding == "unverifiable" or not _structured_line_item_match(item, structured_rows):
+            if trace is not None:
+                trace.record(
+                    row_key_for_item(item, index),
+                    "post_merge",
+                    "dropped",
+                    "ungrounded_post_merge",
+                )
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _collect_line_item_fusion_sources(
+    merged: InvoiceData,
+    text: str,
+    payload_dict: dict[str, object],
+    *,
+    local: InvoiceData | None = None,
+) -> dict[str, list[ParsedLineItem]]:
+    di_rows = deserialize_line_items(payload_dict.get("di_line_items"))
+    layout_rows = resolve_usable_line_items_from_payload(payload_dict)
+    regex_rows = (
+        list(enrich_parsed_line_items(parse_line_items_from_text(text, payload_dict)))
+        if text
+        else []
+    )
+    charge_rows = parse_charge_lines_from_text(text) if text else []
+    if charge_rows and not regex_rows:
+        regex_rows = charge_rows
+    return {
+        "llm": list(merged.line_items),
+        "azure_di": di_rows,
+        "layout": layout_rows,
+        "regex": regex_rows,
+    }
+
+
 def merge_extraction_sources(
     parsed: InvoiceData,
     ocr: OcrArtifact,
     *,
     dt_definition: DocumentTypeDefinition | None = None,
     di_data: InvoiceData | None = None,
+    trace: object | None = None,
 ) -> InvoiceData:
     """Merge LLM/DI/layout/regex into one InvoiceData with DT-aware cleanup."""
     text = (ocr.text or parsed.document_text or "").strip()
@@ -747,10 +951,34 @@ def merge_extraction_sources(
             payload_dict = dict(ocr.payload_json or {})
             qty_only_table = document_has_qty_only_table(text, payload_dict)
             allow_qty_only = qty_only_table
-            merged_items = _merge_line_items_from_sources(merged, text, payload_dict)
+            dt_code_early = (dt_definition.code or "").strip().upper() if dt_definition else ""
+            from app.config import flag_enabled_for_dt, get_settings
+
+            _settings = get_settings()
+            if (
+                _settings.use_field_fusion
+                and dt_code_early
+                and flag_enabled_for_dt("use_field_fusion", dt_code_early)
+            ):
+                from app.services.extraction.field_fusion_engine import fuse_line_items
+
+                fusion_sources = _collect_line_item_fusion_sources(
+                    merged,
+                    text,
+                    payload_dict,
+                    local=local,
+                )
+                merged_items = fuse_line_items(
+                    fusion_sources,
+                    dt_definition=dt_definition,
+                    merged=merged,
+                    ocr_text=text,
+                    payload_dict=payload_dict,
+                )
+            else:
+                merged_items = _merge_line_items_from_sources(merged, text, payload_dict)
             merged_items = sanitize_line_items(
                 merged_items,
-                ocr_text=text,
                 extracted_fields=merged.extracted_fields,
                 vendor=merged.vendor,
                 invoice_no=merged.invoice_no,
@@ -758,6 +986,12 @@ def merge_extraction_sources(
                 so_reference=(merged.extracted_fields or {}).get("so_reference"),
                 cost_centre=merged.cost_centre,
                 allow_qty_only=allow_qty_only,
+                trace=trace,
+            )
+            merged_items = filter_post_merge_line_items(
+                merged_items,
+                grounding=merged.line_items_grounding,
+                trace=trace,
             )
             if merged_items != merged.line_items:
                 fill["line_items"] = merged_items
@@ -878,5 +1112,18 @@ def merge_extraction_sources(
             field_keys=selected_keys_list,
         )
         merged = apply_fusion_to_invoice_data(merged, fused)
+
+    from app.services.extraction.line_items_fallback_service import apply_line_items_fallback
+
+    merged, fallback_tier = apply_line_items_fallback(
+        merged,
+        ocr_text=text,
+        ocr_payload=payload,
+        dt_definition=dt_definition,
+    )
+    if fallback_tier:
+        raw = dict(merged.raw_fields or {})
+        raw["_line_items_fallback"] = fallback_tier
+        merged = replace(merged, raw_fields=raw)
 
     return merged

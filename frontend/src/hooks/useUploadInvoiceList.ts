@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { QueryClient } from "@tanstack/react-query";
+import { keepPreviousData, type QueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
@@ -54,6 +54,8 @@ export function useUploadInvoiceList(options: {
   const query = useTenantQuery<UploadInvoiceListData>({
     queryKey: queryKeys.uploadDocuments(page, pageSize, source, q, mailboxId),
     enabled,
+    // Avoid clearing the list (and unmounting the search input) while q/page changes.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const params: Record<string, string> = {
         page: String(page),

@@ -290,14 +290,32 @@ def get_dt_catalog_entry(
     )
 
 
+def shipped_matrix_slot_for_org_row(defn: DocumentTypeDefinition) -> str | None:
+    """Shipped matrix code whose catalogue identity applies to this org row, if any.
+
+    Org catalogue codes (DT-01, DT-02, …) are independent sequence slots. When a tenant
+    repurposes org DT-04 for a custom non-PO invoice, shipped DT-04 (credit note) metadata
+    must not apply — even though the codes collide.
+    """
+    org_code = (defn.code or "").strip().upper()
+    if not org_code:
+        return None
+    matrix = (defn.matrix_template_code or "").strip().upper()
+    if matrix:
+        return matrix
+    if _org_uses_shipped_classification_metadata(defn, org_code):
+        return org_code
+    return None
+
+
 def _shipped_defaults_lookup_code(
     code: str,
     dt_definition: DocumentTypeDefinition | None,
 ) -> str:
     if dt_definition is None:
         return code
-    matrix = (dt_definition.matrix_template_code or "").strip().upper()
-    return matrix or code
+    slot = shipped_matrix_slot_for_org_row(dt_definition)
+    return slot or code
 
 
 def _org_classification_hints(defn: DocumentTypeDefinition) -> tuple[str, ...]:

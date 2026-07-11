@@ -198,6 +198,12 @@ async def list_invoices(
             query = query.where(Invoice.connected_mailbox_id == connected_mailbox_id)
         if route_target and route_target.strip():
             query = query.where(Invoice.route_target == route_target.strip())
+            # Rejected / duplicate docs belong on Approvals, not management pages.
+            query = query.where(
+                Invoice.status.notin_(
+                    (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)
+                )
+            )
         if evaluation_status is not None:
             query = query.where(Invoice.evaluation_status == evaluation_status.value)
         if q and q.strip():

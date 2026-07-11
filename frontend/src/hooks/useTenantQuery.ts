@@ -1,6 +1,7 @@
 import {
   useQuery,
   type QueryKey,
+  type UseQueryOptions,
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { getActiveTenantId } from "@/api/client";
@@ -31,6 +32,8 @@ type TenantUseQueryOptions<TQueryFnData, TError = Error> = {
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
   refetchOnMount?: boolean | "always";
+  /** Keep prior rows visible while a new key (page/search) fetches. */
+  placeholderData?: UseQueryOptions<TQueryFnData, TError>["placeholderData"];
   retry?: boolean | number | ((failureCount: number, error: TError) => boolean);
 };
 
@@ -82,7 +85,9 @@ export function useTenantQuery<TQueryFnData, TError = Error, TData = TQueryFnDat
   const { data: safeData, blocked, tenantId } = useTenantOwnedData(
     query.data as TData | undefined,
     {
-      isLoading: query.isLoading || query.isPending,
+      // Do not mask placeholder/previous rows while a new key is fetching — that
+      // remounts list chrome (e.g. search inputs) and drops focus mid-keystroke.
+      isLoading: query.data === undefined && (query.isLoading || query.isPending),
       queryKeyTenantId: keyTenantId,
       dataTenantId: keyTenantId,
     }

@@ -81,6 +81,7 @@ S3 Storage & Data Transfer 1 $380.00 $38.00 $418.00
     assert items[0].qty == Decimal("1")
     assert items[0].unit_price == Decimal("2450.00")
     assert items[0].amount == Decimal("2695.00")
+    assert items[0].source == "regex"
     assert items[1].description == "S3 Storage & Data Transfer"
     assert items[1].qty == Decimal("1")
 
@@ -167,3 +168,79 @@ def test_build_line_items_presentation_prompt_qty_only_mode() -> None:
     assert "QTY-ONLY TABLE" in joined
     assert "TOTALS" in joined
 
+
+def test_line_item_thresholds_default_matches_existing_fixture() -> None:
+    from app.services.extraction.line_items_parser import parse_line_items_from_text
+
+    text = """
+DESCRIPTION QTY UNIT PRICE GST AMOUNT
+EC2 Compute - May 2026 1 $2,450.00 $245.00 $2,695.00
+"""
+    items = parse_line_items_from_text(text)
+    assert len(items) == 1
+    assert items[0].unit_price == Decimal("2450.00")
+
+
+def test_line_item_thresholds_max_qty_affects_row_score() -> None:
+    from app.services.extraction.line_item_parsing_config import LineItemParsingThresholds
+    from app.services.extraction.line_items_parser import _line_item_row_score
+
+    item = ParsedLineItem(description="Bulk order", qty=Decimal("800"), unit_price=Decimal("10"), amount=Decimal("8000"))
+    strict = LineItemParsingThresholds(max_plausible_qty=Decimal("500"))
+    loose = LineItemParsingThresholds(max_plausible_qty=Decimal("10000"))
+    assert _line_item_row_score(item, thresholds=strict) < _line_item_row_score(item, thresholds=loose)
+
+
+def test_parse_line_items_from_di_items_sets_source_di() -> None:
+    from types import SimpleNamespace
+
+    from app.services.extraction.line_items_parser import parse_line_items_from_di_items
+
+    def field(val: str) -> SimpleNamespace:
+        return SimpleNamespace(value_string=val)
+
+    row = SimpleNamespace(
+        value_object={
+            "Description": field("Widget"),
+            "Quantity": field("2"),
+            "UnitPrice": field("10.00"),
+            "Amount": field("20.00"),
+        }
+    )
+    items = parse_line_items_from_di_items(SimpleNamespace(value_array=[row]))
+    assert len(items) == 1
+    assert items[0].source == "di"
+    assert items[0].amount == Decimal("20")
+
+
+def test_parse_line_items_from_table_grid_sets_source_table() -> None:
+    from app.services.extraction.layout_field_extractor import parse_line_items_from_table_grid
+
+    rows = [
+        ["Description", "Qty", "Unit Price", "Amount"],
+        ["Widget A", "2", "10.00", "20.00"],
+    ]
+    items = parse_line_items_from_table_grid(rows)
+    assert len(items) == 1
+    assert items[0].source == "table"
+    assert items[0].description == "Widget A"
+
+
+def test_serialize_line_items_round_trips_tax_amount() -> None:
+    from app.services.extraction.line_items_parser import deserialize_line_items, serialize_line_items
+
+    items = [
+        ParsedLineItem(
+            description="EC2 Compute - May 2026",
+            qty=Decimal("1"),
+            unit_price=Decimal("2450.00"),
+            tax_amount=Decimal("245.00"),
+            amount=Decimal("2695.00"),
+            source="regex",
+        )
+    ]
+    payload = serialize_line_items(items)
+    restored = deserialize_line_items(payload)
+    assert len(restored) == 1
+    assert restored[0].tax_amount == Decimal("245.00")
+    assert restored[0].amount == Decimal("2695.00")

@@ -50,6 +50,25 @@ def category_resolved_in_coa(
     return False
 
 
+_SALES_RECEIVABLE_ACCOUNT = "Accounts Receivable"
+_SALES_TAX_ACCOUNT = "Tax Collected"
+
+
+def coa_functional_for_journaling(config: RuleBookConfigPayload) -> bool:
+    """True when control accounts required for purchase and sales journals resolve in COA."""
+    defaults = config.posting_defaults
+    receivable = (defaults.receivable_account or "").strip() or _SALES_RECEIVABLE_ACCOUNT
+    required = [
+        defaults.payable_account,
+        defaults.tax_account,
+        defaults.fallback_account,
+        defaults.bank_account,
+        receivable,
+        _SALES_TAX_ACCOUNT,
+    ]
+    return all(category_resolved_in_coa(name, config) for name in required)
+
+
 def resolve_fallback_account_mapping(
     config: RuleBookConfigPayload,
 ) -> AccountMapping:

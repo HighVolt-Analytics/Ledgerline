@@ -231,3 +231,52 @@ async def test_list_dossiers_compact_includes_blocker_fields(
     assert failed["remediation"]
     passed = next(s for s in row["pipeline"] if s["stage_id"] == "ingest")
     assert passed.get("failure_reason") is None
+
+
+@pytest.mark.asyncio
+async def test_list_dossiers_pending_approval_blocker_fields(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Atlassian Pty Ltd",
+        invoice_no="ATL-2026-55721",
+        document_type_code="DT-09",
+        status=InvoiceStatus.EXCEPTION,
+        route_target="Purchase Management",
+        account_name="Marketing Expense",
+        file_hash="dossier-approval-pending",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+    await assign_document_ref(db_session, inv)
+    db_session.add_all(
+        [
+            AuditLog(
+                event="invoice_uploaded",
+                invoice_id=inv.id,
+                created_at=datetime.now(timezone.utc),
+                detail={},
+            ),
+            AuditLog(
+                event="validation_passed",
+                invoice_id=inv.id,
+                created_at=datetime.now(timezone.utc),
+                detail={},
+            ),
+            AuditLog(
+                event="approval_required",
+                invoice_id=inv.id,
+                created_at=datetime.now(timezone.utc),
+                detail={"reason": "match_not_clean"},
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/dossiers?page=1&page_size=50")
+    assert res.status_code == 200
+    row = next(r for r in res.json()["data"] if r["id"] == inv.document_ref)
+    assert row["blocker_stage_id"] == "approve"
+    assert row["blocker_reason"] == "match_not_clean"
+    assert row["outcome_banner"] == "match_not_clean"

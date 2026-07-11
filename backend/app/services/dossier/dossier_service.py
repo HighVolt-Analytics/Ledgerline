@@ -15,7 +15,12 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.tenant import Tenant
 from app.models.payment import Payment, PaymentStatus
-from app.schemas.dossier import DossierLinkedDocumentResponse, DossierLinkedDocumentsResponse, DossierSummaryResponse
+from app.schemas.dossier import (
+    DossierLinkedDocumentResponse,
+    DossierLinkedDocumentsResponse,
+    DossierPipelineStepResponse,
+    DossierSummaryResponse,
+)
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.services.sales.counterparty_service import (
     counterparty_side_for_route,
@@ -32,6 +37,7 @@ from app.services.dossier.dossier_match_service import enrich_match_pipeline_ste
 from app.services.dossier.dossier_pipeline_service import (
     build_dossier_pipeline,
     classification_review_pending,
+    first_pipeline_bottleneck,
     first_pipeline_failure,
 )
 from app.services.shared.file_storage import has_stored_path
@@ -111,6 +117,17 @@ def _payment_status_key(invoice: Invoice, payment: Payment | None) -> tuple[str 
     if payment.status in (PaymentStatus.AWAITING, PaymentStatus.QUEUE, PaymentStatus.SCHEDULED):
         return "awaiting", label
     return None, label
+
+
+def _blocker_detail_from_step(step: DossierPipelineStepResponse | None) -> str | None:
+    if step is None:
+        return None
+    if step.failure_reason and step.failure_reason.strip():
+        return step.failure_reason.strip()
+    detail = (step.detail or "").strip()
+    if detail and detail != "—":
+        return detail
+    return None
 
 
 def _derive_outcome(
@@ -570,6 +587,8 @@ async def build_dossier_summary(
             match_log_detail=match_log_detail,
         )
         fail = first_pipeline_failure(pipeline)
+    bottleneck = fail or first_pipeline_bottleneck(pipeline)
+    blocker_detail = _blocker_detail_from_step(bottleneck)
     approved_human = any(log.event == "invoice_approved" for log in logs)
     outcome, banner = _derive_outcome(
         invoice,
@@ -577,7 +596,7 @@ async def build_dossier_summary(
         fail is not None,
         published=published,
         payment=payment,
-        fail_detail=fail.detail if fail else None,
+        fail_detail=blocker_detail,
     )
     if invoice.status == InvoiceStatus.PROCESSED and published and approved_human:
         outcome = "manual_posted"
@@ -638,9 +657,9 @@ async def build_dossier_summary(
         owner=_owner_from_logs(logs),
         outcome=outcome,
         outcome_banner=banner,
-        blocker_stage_id=fail.stage_id if fail else None,
-        blocker_reason=(fail.failure_reason or fail.detail) if fail else None,
-        blocker_remediation=fail.remediation if fail else None,
+        blocker_stage_id=bottleneck.stage_id if bottleneck else None,
+        blocker_reason=blocker_detail,
+        blocker_remediation=bottleneck.remediation if bottleneck else None,
         pipeline=pipeline,
         linked_documents=linked,
         approval_chain=approval,

@@ -74,7 +74,7 @@ export function AllInvoicesPage() {
         <ListSearchInput
           value={searchQuery}
           onChange={setSearchQuery}
-          placeholder="Search this listΓÇª"
+          placeholder="Search this list…"
           testId="input-all-invoices-search"
           className="ml-auto"
         />

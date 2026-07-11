@@ -144,6 +144,35 @@ def _invoice_qty_and_price(inv: Invoice) -> tuple[Decimal, Decimal, float]:
     return qty, unit_price, gst_rate
 
 
+def _sum_line_item_qty(inv: Invoice) -> Decimal:
+    total = Decimal("0")
+    for line in inv.line_items or []:
+        if line.qty is not None:
+            total += line.qty
+    return total
+
+
+def resolve_grn_received_qty(
+    inv: Invoice,
+    *,
+    po_qty: Decimal | None = None,
+) -> Decimal:
+    """Received quantity for GRN register — never default to 1 without evidence."""
+    from app.services.extraction.line_items_parser import parse_line_items_from_text
+
+    qty = _sum_line_item_qty(inv)
+    if qty <= 0:
+        body = (inv.document_text or "").strip()
+        if body:
+            parsed = parse_line_items_from_text(body)
+            for row in parsed:
+                if row.qty is not None:
+                    qty += row.qty
+    if qty <= 0 and po_qty is not None and po_qty > 0:
+        qty = Decimal(str(po_qty))
+    return qty
+
+
 def _latest_grn(po: PurchaseOrder) -> GoodsReceipt | None:
     if not po.goods_receipts:
         return None
@@ -463,7 +492,10 @@ async def list_purchase_orders(
     tenant_id: int,
 ) -> list[PurchaseOrderResponse]:
     """One register row per purchase-routed invoice; POs without invoices listed once."""
+    from app.services.approval.match_register_cleanup import purchase_order_has_document_anchor
     from app.services.purchase.po_reference import is_plausible_po_reference
+
+    _HIDDEN_STATUSES = (InvoiceStatus.REJECTED, InvoiceStatus.DUPLICATE_SKIPPED)
 
     rows = (
         await db.execute(
@@ -485,6 +517,7 @@ async def list_purchase_orders(
                 Invoice.route_target == ROUTE_PURCHASE,
                 Invoice.po_reference.isnot(None),
                 Invoice.po_reference != "",
+                Invoice.status.notin_(_HIDDEN_STATUSES),
             )
             .options(selectinload(Invoice.line_items))
             .order_by(Invoice.created_at.desc())
@@ -515,12 +548,17 @@ async def list_purchase_orders(
     for po in rows:
         if po.id in pos_with_rows:
             continue
+        if not purchase_order_has_document_anchor(po):
+            continue
         inv = None
         if po.invoice_id:
             inv = (
                 await db.execute(
                     select(Invoice)
-                    .where(Invoice.id == po.invoice_id)
+                    .where(
+                        Invoice.id == po.invoice_id,
+                        Invoice.status.notin_(_HIDDEN_STATUSES),
+                    )
                     .options(selectinload(Invoice.line_items))
                 )
             ).scalar_one_or_none()
@@ -592,8 +630,7 @@ async def _load_grn_invoice_qty(
         )
     ).scalar_one_or_none()
     row = loaded or grn_invoice
-    qty, _, _ = _invoice_qty_and_price(row)
-    return qty
+    return resolve_grn_received_qty(row)
 
 
 async def resolve_purchase_match_context(
@@ -889,10 +926,33 @@ async def approve_purchase_variance(
         invoice_id_for_audit=po.invoice_id,
         rule_book_config=config,
     )
-    if inv is not None:
+    invoice_id = po.invoice_id
+    await db.commit()
+
+    po = (
+        await db.execute(
+            select(PurchaseOrder)
+            .where(
+                PurchaseOrder.id == purchase_order_id,
+                PurchaseOrder.tenant_id == tenant_id,
+            )
+            .options(selectinload(PurchaseOrder.goods_receipts))
+        )
+    ).scalar_one()
+
+    inv = None
+    if invoice_id is not None:
+        inv = (
+            await db.execute(
+                select(Invoice)
+                .where(Invoice.id == invoice_id)
+                .options(selectinload(Invoice.line_items))
+            )
+        ).scalar_one_or_none()
         from app.services.match.match_variance_gate_service import (
             resume_invoice_posting_after_variance_approval,
         )
 
         await resume_invoice_posting_after_variance_approval(db, inv, config=config)
+
     return purchase_order_to_response(po, inv, config=config)

@@ -16,6 +16,7 @@ import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { ChartTooltip } from "@/components/ChartTooltip";
 import { ExportWorkbookDialog } from "@/components/ExportWorkbookDialog";
+import { SubledgerBalanceTable } from "@/components/reports/SubledgerBalanceTable";
 import { ReportDownloadMenu } from "@/components/reports/ReportDownloadMenu";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
@@ -24,6 +25,7 @@ import { YearMonthPeriodPicker } from "@/components/YearMonthPeriodPicker";
 import { Card } from "@/components/ui/card";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import { useReportDocuments, useReportsAnalytics } from "@/hooks/useReportsAnalytics";
+import { useApBalances, useArBalances } from "@/hooks/useSubledgerBalances";
 import { axisMoney, currencySymbol, money, toNumber } from "@/lib/format";
 import {
   buildMonthsForYear,
@@ -107,6 +109,9 @@ export function ReportsPage() {
   const [activePieIndex, setActivePieIndex] = useState<number | null>(null);
 
   const { data: analytics, isLoading, error } = useReportsAnalytics(month);
+  const subledgerAsOf = tenantTodayIso(timeZone);
+  const { data: apBalances, isLoading: apLoading } = useApBalances(subledgerAsOf);
+  const { data: arBalances, isLoading: arLoading } = useArBalances(subledgerAsOf);
   const rangeInvalid = exportMode === "range" && dateFrom > dateTo;
 
   const yearOptions = useMemo(() => buildReconYears(null, timeZone), [timeZone]);
@@ -475,6 +480,57 @@ export function ReportsPage() {
           </table>
         </Card>
       </div>
+
+      <Card className="p-4">
+        <h2 className="text-base font-semibold mb-1">AP / AR party balances</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          Open balances by vendor under the Rule Book payable ledger, and by customer under the
+          receivable ledger. (Rule Book expense “Sub-ledger” fields are GL coding segments, not
+          these party balances.)
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 mb-4">
+          <KpiCard
+            label="Total AP outstanding"
+            value={
+              apLoading
+                ? "…"
+                : fmt(toNumber(apBalances?.totals.balance ?? 0))
+            }
+            delta={{
+              dir: "flat",
+              text: `${apBalances?.totals.counterparty_count ?? 0} vendors`,
+            }}
+          />
+          <KpiCard
+            label="Total AR outstanding"
+            value={
+              arLoading
+                ? "…"
+                : fmt(toNumber(arBalances?.totals.balance ?? 0))
+            }
+            delta={{
+              dir: "flat",
+              text: `${arBalances?.totals.counterparty_count ?? 0} customers`,
+            }}
+          />
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <SubledgerBalanceTable
+            title="AP vendor balances"
+            data={apBalances}
+            currency={apBalances?.base_currency ?? currency}
+            emptyLabel="No open AP balances"
+            unregisteredLabel="Unregistered vendors"
+          />
+          <SubledgerBalanceTable
+            title="AR customer balances"
+            data={arBalances}
+            currency={arBalances?.base_currency ?? currency}
+            emptyLabel="No open AR balances"
+            unregisteredLabel="Unregistered customers"
+          />
+        </div>
+      </Card>
     </div>
   );
 }

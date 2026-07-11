@@ -62,6 +62,9 @@ export type MatchPolicy = {
 
 export type ApprovalPolicy = {
   mode: ApprovalMode;
+  autoApproveBelow?: number | null;
+  requireApprovalForUnmatched?: boolean;
+  requireApprovalForUnverifiedCounterparty?: boolean;
 };
 
 export const PLAYBOOK_PROFILE_OPTIONS: Array<{ value: PlaybookProfile; label: string }> = [
@@ -301,7 +304,25 @@ export function emptyMatchPolicy(): MatchPolicy {
 }
 
 export function emptyApprovalPolicy(): ApprovalPolicy {
-  return { mode: "touchless_on_clean_match" };
+  return {
+    mode: "touchless_on_clean_match",
+    autoApproveBelow: null,
+    requireApprovalForUnmatched: false,
+    requireApprovalForUnverifiedCounterparty: false,
+  };
+}
+
+export function mergeApprovalPolicyMode(
+  existing: ApprovalPolicy | undefined,
+  mode: ApprovalMode
+): ApprovalPolicy {
+  return {
+    autoApproveBelow: existing?.autoApproveBelow ?? null,
+    requireApprovalForUnmatched: existing?.requireApprovalForUnmatched ?? false,
+    requireApprovalForUnverifiedCounterparty:
+      existing?.requireApprovalForUnverifiedCounterparty ?? false,
+    mode,
+  };
 }
 
 const ROUTE_PURCHASE = "Purchase Management";
@@ -406,7 +427,7 @@ export function reconcilePlaybookDraft(draft: DocumentTypeDefinition): DocumentT
       ...draft,
       playbookProfile: bundleProfile,
       matchPolicy: { mode: preset.matchMode },
-      approvalPolicy: { mode: preset.approvalMode },
+      approvalPolicy: mergeApprovalPolicyMode(draft.approvalPolicy, preset.approvalMode),
     };
   }
 
@@ -426,7 +447,7 @@ export function reconcilePlaybookDraft(draft: DocumentTypeDefinition): DocumentT
     ...draft,
     playbookProfile: profile,
     matchPolicy: { mode: matchMode },
-    approvalPolicy: { mode: approvalMode },
+    approvalPolicy: mergeApprovalPolicyMode(draft.approvalPolicy, approvalMode),
   };
 }
 
@@ -439,7 +460,7 @@ export function applyPlaybookProfileSelection(
     ...draft,
     playbookProfile: profile,
     matchPolicy: { mode: clampMatchModeForRoute(draft.routeTarget, preset.matchMode) },
-    approvalPolicy: { mode: preset.approvalMode },
+    approvalPolicy: mergeApprovalPolicyMode(draft.approvalPolicy, preset.approvalMode),
   };
 }
 

@@ -109,3 +109,40 @@ def apply_fusion_to_invoice_data(parsed: Any, fused: dict[str, FusionResult]) ->
     if not updates:
         return parsed
     return replace(parsed, **updates)
+
+
+def fuse_line_items(
+    sources: dict[str, list[Any]],
+    *,
+    dt_definition: DocumentTypeDefinition | None = None,
+    merged: Any | None = None,
+    ocr_text: str = "",
+    payload_dict: dict[str, object] | None = None,
+) -> list[Any]:
+    """Fuse line-item rows from multiple extraction sources.
+
+    When ``merged``, ``ocr_text``, and ``payload_dict`` are supplied, uses the
+    same shape-aware resolver as ``_merge_line_items_from_sources`` (qty-only,
+    product table, charge-lines). Otherwise falls back to flat priority merge.
+    """
+    if merged is not None and ocr_text.strip() and payload_dict is not None:
+        from app.services.extraction.extraction_orchestrator import _merge_line_items_from_sources
+
+        return _merge_line_items_from_sources(merged, ocr_text, payload_dict)
+
+    from app.services.extraction.line_items_parser import merge_line_item_lists
+    from app.services.invoice.invoice_data import ParsedLineItem
+
+    priority = _source_priority(dt_definition, "line_items")
+    merged_rows: list[ParsedLineItem] = []
+    seen: set[str] = set()
+    for source_name in priority:
+        rows = sources.get(source_name) or []
+        if rows:
+            merged_rows = merge_line_item_lists(merged_rows, list(rows))
+            seen.add(source_name)
+    for source_name, rows in sources.items():
+        if source_name in seen or not rows:
+            continue
+        merged_rows = merge_line_item_lists(merged_rows, list(rows))
+    return merged_rows

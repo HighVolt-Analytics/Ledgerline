@@ -640,6 +640,7 @@ export const DEFAULT_MAILBOX = "accounts@acme-hospitality.com.au";
 export const DEFAULT_POSTING_DEFAULTS = {
   taxAccount: "GST Paid",
   payableAccount: "Accounts Payable",
+  receivableAccount: "Accounts Receivable",
   fallbackAccount: "Suspense Account",
 } as const;
 

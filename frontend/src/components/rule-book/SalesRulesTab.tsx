@@ -4,17 +4,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, toSelectOptions } from "@/components/ui/select";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/context/ToastContext";
-import { useChartOfAccounts } from "@/hooks/useChartOfAccounts";
+import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
+import { mergeCoaOptionsWithSavedValue } from "@/lib/coaAccountOptions";
+import { defaultSalesRulePostTo } from "@/lib/documentTypeGlDefaults";
 import { nextRulePriority } from "@/lib/rulePriority";
 import type { SalesRule } from "@/lib/v4RuleBookTypes";
-import {
-  LEDGER_ACCOUNTS,
-  RECEIVABLE_ACCOUNTS,
-  TAX_ACCOUNTS,
-} from "@/lib/v4RuleBookTypes";
 import { AccountBadge } from "./AccountBadge";
 import { FieldLabel } from "./FieldLabel";
 import {
@@ -38,7 +35,20 @@ export function SalesRulesTab({
   onChange: (rules: SalesRule[]) => void;
 }) {
   const { toast } = useToast();
-  const { data: coaAccounts = [] } = useChartOfAccounts();
+  const {
+    allAccounts,
+    options: revenueOptions,
+    hasRealAccounts: hasRevenueAccounts,
+    isLoading: coaLoading,
+  } = useCoaAccountOptions({ includeEmpty: false });
+  const { options: taxOptions } = useCoaAccountOptions({
+    includeEmpty: true,
+    emptyLabel: "GST Collected (default)",
+  });
+  const { options: receivableOptions } = useCoaAccountOptions({
+    includeEmpty: true,
+    emptyLabel: "Accounts Receivable (default)",
+  });
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const update = (id: string, patch: Partial<SalesRule>) =>
@@ -60,6 +70,7 @@ export function SalesRulesTab({
 
   const addRule = () => {
     const id = `sr-${Date.now()}`;
+    const defaults = defaultSalesRulePostTo(allAccounts);
     onChange([
       ...rules,
       {
@@ -68,12 +79,7 @@ export function SalesRulesTab({
         enabled: true,
         priority: nextRulePriority(rules),
         matchOn: { customerContains: "" },
-        postTo: {
-          ledger: LEDGER_ACCOUNTS[0],
-          subLedger: "",
-          taxAccount: TAX_ACCOUNTS[0],
-          receivableAccount: RECEIVABLE_ACCOUNTS[0],
-        },
+        postTo: defaults,
         matchedCount: 0,
       },
     ]);
@@ -219,11 +225,12 @@ export function SalesRulesTab({
                               subLedger: reconcileSubLedgerOnLedgerChange(
                                 ledger,
                                 rule.postTo.subLedger,
-                                coaAccounts
+                                allAccounts
                               ),
                             })
                           }
-                          options={toSelectOptions(LEDGER_ACCOUNTS)}
+                          options={mergeCoaOptionsWithSavedValue(revenueOptions, rule.postTo.ledger)}
+                          disabled={coaLoading}
                           className="w-full"
                         />
                       </FieldLabel>
@@ -232,29 +239,42 @@ export function SalesRulesTab({
                           ledger={rule.postTo.ledger}
                           value={rule.postTo.subLedger}
                           onChange={(subLedger) => updatePost(rule.id, { subLedger })}
-                          accounts={coaAccounts}
+                          accounts={allAccounts}
                           size="sm"
                         />
                       </FieldLabel>
                       <FieldLabel label="Tax account">
                         <Select
-                          value={rule.postTo.taxAccount ?? TAX_ACCOUNTS[0]}
+                          value={rule.postTo.taxAccount ?? ""}
                           onValueChange={(taxAccount) => updatePost(rule.id, { taxAccount })}
-                          options={toSelectOptions(TAX_ACCOUNTS)}
+                          options={mergeCoaOptionsWithSavedValue(
+                            taxOptions,
+                            rule.postTo.taxAccount ?? ""
+                          )}
+                          disabled={coaLoading}
                           className="w-full"
                         />
                       </FieldLabel>
                       <FieldLabel label="Receivable account">
                         <Select
-                          value={rule.postTo.receivableAccount ?? RECEIVABLE_ACCOUNTS[0]}
+                          value={rule.postTo.receivableAccount ?? ""}
                           onValueChange={(receivableAccount) =>
                             updatePost(rule.id, { receivableAccount })
                           }
-                          options={toSelectOptions(RECEIVABLE_ACCOUNTS)}
+                          options={mergeCoaOptionsWithSavedValue(
+                            receivableOptions,
+                            rule.postTo.receivableAccount ?? ""
+                          )}
+                          disabled={coaLoading}
                           className="w-full"
                         />
                       </FieldLabel>
                     </div>
+                    {!coaLoading && !hasRevenueAccounts ? (
+                      <p className="text-[10px] text-muted-foreground mt-2">
+                        Add accounts in Settings → Chart of accounts.
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="flex justify-end">

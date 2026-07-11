@@ -25,6 +25,15 @@ _LABEL_FRAGMENT = re.compile(
     re.I,
 )
 
+_FIELD_LABEL_VENDOR = re.compile(
+    r"^(?:po|purchase\s+order|invoice|tax\s+invoice|grn|goods\s+receipt|"
+    r"delivery\s+note|credit\s+note|debit\s+note|statement|remittance|"
+    r"invoice\s+number|po\s+number|grn\s+number|order\s+number|date|due\s+date|"
+    r"invoice\s+date|abn|gst|total|subtotal|amount|qty|quantity|line|description|"
+    r"bill\s+to|ship\s+to|received\s+at)(?:\s*number)?\s*:?\s*$",
+    re.I,
+)
+
 _COMPANY_SUFFIX = re.compile(
     r"^(.+?\b(?:Pty\.?\s*Ltd\.?|Pvt\s+Ltd\.?|Limited|Ltd\.?|Inc\.?|Corp\.?|"
     r"Corporation|Company|Co\.?|LLC|GmbH|PLC))\b",
@@ -33,6 +42,24 @@ _COMPANY_SUFFIX = re.compile(
 
 _ADDRESSish_LINE = re.compile(
     r"^\d+\s+\w+|(?:\broad\b|\bstreet\b|\bavenue\b|\bdrive\b|\bnsw\b|\bvic\b|\bqld\b).*\d{4}\b",
+    re.I,
+)
+
+_FORM_LABEL_MARKERS = (
+    "pre-carriage",
+    "pre carriage",
+    "place of",
+    "port of",
+    "vessel",
+    "notify party",
+    "consignee",
+    "shipper",
+    "freight payable",
+    "marks and numbers",
+)
+
+_DOC_REFERENCE_NAME = re.compile(
+    r"^(?:GRN|PO|INV|SO|DN|RCP|DEL|ORDER)(?:[\s#:_-]+|\s*number\s*:?\s*)[\w-]*\d",
     re.I,
 )
 
@@ -48,8 +75,16 @@ def is_plausible_vendor_name(value: str | None) -> bool:
         return False
     if _LABEL_FRAGMENT.match(text):
         return False
+    if _FIELD_LABEL_VENDOR.match(text):
+        return False
+    if re.match(r"^(?:po|invoice|grn|order)\s+number\s*:?\s*$", text, re.I):
+        return False
     lower = text.lower()
+    if any(lower == marker or lower.startswith(f"{marker} ") for marker in _FORM_LABEL_MARKERS):
+        return False
     if lower.startswith(("invoice date", "due date", "abn:", "abn ")):
+        return False
+    if _DOC_REFERENCE_NAME.match(text):
         return False
     if text.count(".") >= 1 and len(text) > 55:
         return False
@@ -91,8 +126,10 @@ def _clean_party_line(line: str) -> str:
 
 
 def extract_supplier_party_from_text(text: str) -> str | None:
-    """Supplier on PO / GRN layouts (Vendor/Supplier or Supplier Details blocks)."""
+    """Supplier on PO / GRN / invoice layouts (Vendor/Supplier blocks)."""
     patterns = (
+        r"Vendor[:\s]+\n\s*([^\n]+)",
+        r"Vendor[:\s]+([^\n]+)",
         r"(?:Vendor\s*/?\s*Supplier|Supplier\s+Details?)(?:[^\n]*)?\n\s*([^\n]+)",
         r"Bill\s+From[:\s]+([^\n]+)",
         r"Remit\s+To[:\s]+([^\n]+)",

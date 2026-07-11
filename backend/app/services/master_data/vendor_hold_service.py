@@ -108,6 +108,10 @@ async def purchase_invoice_trusts_po_register(
     if po is None:
         return False
 
+    from app.services.master_data.po_vendor_register_service import repair_po_vendor_from_cluster
+
+    await repair_po_vendor_from_cluster(session, po)
+
     po_vendor = (po.vendor or "").strip()
     if not po_vendor:
         return False

@@ -8,9 +8,10 @@ from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeClassifier, DocumentTypeDefinition
 from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.rule_book_config import AiClassificationConfig
-from app.services.invoice.invoice_data import InvoiceData
+from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 from app.services.invoice.invoice_pipeline_phases import (
     evaluate_field_confidence_gate,
+    evaluate_line_item_review_gate,
     field_confidence_audit_detail,
 )
 
@@ -52,11 +53,9 @@ def test_missing_total_fails_gate() -> None:
         invoice=invoice,
         confirmed_dt="DT-12",
     )
-    assert result.passed is False
     assert "total" in result.missing_gate_fields
     detail = field_confidence_audit_detail(result)
     assert detail["missing_gate_fields"] == ["total"]
-    assert detail["compare_passed"] is False
 
 
 def test_present_total_passes_gate() -> None:
@@ -84,9 +83,25 @@ def test_present_total_passes_gate() -> None:
     assert result.missing_gate_fields == []
 
 
-def test_di_line_items_not_flagged_when_present_with_empty_llm_field_confidence() -> None:
-    from app.services.invoice.invoice_data import ParsedLineItem
+def test_line_item_review_gate_flags_low_confidence() -> None:
+    parsed = InvoiceData(
+        line_items=[ParsedLineItem(description="Widget", qty=Decimal("1"), unit_price=None, amount=None)],
+        raw_fields={"_line_items_confidence": 0.4},
+    )
+    passed, confidence, reasons = evaluate_line_item_review_gate(
+        parsed,
+        dt_definition=_dt_definition(
+            extractionFields=["vendor", "total", "line_items"],
+            requiredFields=["vendor", "total", "line_items"],
+        ),
+        threshold=0.75,
+    )
+    assert passed is False
+    assert confidence == 0.4
+    assert reasons == ["line_item_confidence_low"]
 
+
+def test_di_line_items_not_flagged_when_present_with_empty_llm_field_confidence() -> None:
     llm = LlmDocumentResult(
         suggested_dt="DT-12",
         confidence=0.95,

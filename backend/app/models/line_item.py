@@ -4,7 +4,7 @@ import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Numeric, String, Text, Uuid
+from sqlalchemy import ForeignKey, JSON, Numeric, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -37,5 +37,8 @@ class LineItem(Base):
     gl_mapping_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     gl_mapping_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
     gl_mapping_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    fused_from: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="line_items")

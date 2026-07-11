@@ -30,6 +30,7 @@ from app.services.invoice.invoice_reset import (
     clear_invoice_posting_artifacts,
     reset_invoice_for_approval,
 )
+from app.services.approval.match_register_cleanup import cleanup_match_registers_for_invoice
 from app.services.purchase.team_expense_approval import assert_team_expense_approvable
 from app.services.vault.vault_invoice_paths import vault_document_type_titles_for_invoice
 from app.services.vault.vault_paths import filename_from_stored
@@ -337,5 +338,6 @@ async def permanently_delete_invoice(session: AsyncSession, inv: Invoice) -> Non
         invoice_id=inv.id,
         prefer_rejected=prefer_rejected,
     )
+    await cleanup_match_registers_for_invoice(session, inv.id)
     await session.delete(inv)
     await session.flush()

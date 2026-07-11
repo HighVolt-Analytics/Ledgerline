@@ -217,11 +217,15 @@ class EmployeeMaster(BaseModel):
 ChartOfAccountType = Literal["Expense", "Asset", "Liability", "Revenue", "Equity"]
 
 
+SubLedgerOrigin = Literal["party", "manual"]
+
+
 class SubLedgerEntry(BaseModel):
     """Optional sub-ledger row nested under a main GL account."""
 
     code: str = Field(..., min_length=1, max_length=32)
     name: str = Field(..., min_length=1, max_length=128)
+    origin: SubLedgerOrigin = "manual"
 
     @field_validator("code", "name", mode="before")
     @classmethod
@@ -266,7 +270,9 @@ class PostingDefaults(BaseModel):
 
     tax_account: str = "Tax Paid"
     payable_account: str = "Accounts Payable"
+    receivable_account: str = "Accounts Receivable"
     fallback_account: str = "Suspense Account"
+    bank_account: str = "Bank Account"
 
     @classmethod
     def for_country(cls, country_code: str | None = None) -> "PostingDefaults":
@@ -276,7 +282,9 @@ class PostingDefaults(BaseModel):
         return cls(
             tax_account=pack.posting_defaults.tax_account,
             payable_account=pack.posting_defaults.payable_account,
+            receivable_account=pack.posting_defaults.receivable_account,
             fallback_account=pack.posting_defaults.fallback_account,
+            bank_account=pack.posting_defaults.bank_account,
         )
 
 
@@ -717,12 +725,19 @@ def _sync_match_policy_with_playbook(data: dict[str, Any]) -> dict[str, Any]:
                 should_sync = True
 
         if should_sync:
+            existing_approval = row.get("approval_policy") or row.get("approvalPolicy")
+            if not isinstance(existing_approval, dict):
+                existing_approval = {}
+            merged_approval = {
+                **existing_approval,
+                "mode": preset.approval_mode,
+            }
             row = {
                 **row,
                 "match_policy": {"mode": preset.match_mode},
                 "matchPolicy": {"mode": preset.match_mode},
-                "approval_policy": {"mode": preset.approval_mode},
-                "approvalPolicy": {"mode": preset.approval_mode},
+                "approval_policy": merged_approval,
+                "approvalPolicy": merged_approval,
             }
         merged.append(row)
     data["document_types"] = merged
@@ -758,6 +773,185 @@ def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             inferred = default_playbook_profile_for_code(code) if code else "standard_transactional"
         merged.append({**row, "playbook_profile": inferred, "playbookProfile": inferred})
+    data["document_types"] = merged
+    return data
+
+
+def _backfill_shipped_document_type_identity(data: dict[str, Any]) -> dict[str, Any]:
+    """Align tenant DT rows with shipped catalogue identity when linked to a matrix template."""
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.services.classification.document_type_catalog import (
+        load_shipped_default_document_types,
+        shipped_matrix_slot_for_org_row,
+    )
+
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    shipped_by_code = {
+        row.code.strip().upper(): row for row in load_shipped_default_document_types()
+    }
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        code = str(row.get("code") or "").strip().upper()
+        try:
+            definition = DocumentTypeDefinition.model_validate(row)
+            matrix_code = shipped_matrix_slot_for_org_row(definition)
+        except Exception:
+            matrix_code = None
+        if not matrix_code:
+            merged.append(row)
+            continue
+        shipped = shipped_by_code.get(matrix_code)
+        if shipped is None:
+            merged.append(row)
+            continue
+
+        updates: dict[str, Any] = {}
+        from app.services.classification.playbook_profile_catalog import default_playbook_profile_for_code
+
+        shipped_role = (shipped.purchase_bundle_role or "").strip().lower()
+        current_role = str(
+            row.get("purchase_bundle_role") or row.get("purchaseBundleRole") or ""
+        ).strip().lower()
+        if shipped_role != current_role:
+            updates["purchase_bundle_role"] = shipped_role
+            updates["purchaseBundleRole"] = shipped_role
+
+        shipped_playbook = default_playbook_profile_for_code(matrix_code)
+        current_playbook = str(
+            row.get("playbook_profile") or row.get("playbookProfile") or ""
+        ).strip()
+        if shipped_playbook and current_playbook != shipped_playbook:
+            updates["playbook_profile"] = shipped_playbook
+            updates["playbookProfile"] = shipped_playbook
+
+        if shipped.title and str(row.get("title") or "").strip() != shipped.title.strip():
+            updates["title"] = shipped.title
+        if shipped.short_title and str(
+            row.get("short_title") or row.get("shortTitle") or ""
+        ).strip() != shipped.short_title.strip():
+            updates["short_title"] = shipped.short_title
+            updates["shortTitle"] = shipped.short_title
+
+        from app.services.classification.document_type_field_defaults import default_validation_profile
+
+        for key, shipped_val in (
+            ("klass", shipped.klass),
+            ("posting", shipped.posting),
+        ):
+            current = str(row.get(key) or "").strip()
+            target = str(shipped_val or "").strip()
+            if target and current != target:
+                updates[key] = target
+
+        shipped_val_profile = default_validation_profile(matrix_code) or (
+            shipped.validation_profile or ""
+        ).strip()
+        current_val_profile = str(
+            row.get("validation_profile") or row.get("validationProfile") or ""
+        ).strip()
+        if shipped_val_profile:
+            if current_val_profile != shipped_val_profile:
+                updates["validation_profile"] = shipped_val_profile
+                updates["validationProfile"] = shipped_val_profile
+                if shipped_val_profile == "non_actionable":
+                    updates["validation_rules"] = []
+                    updates["validationRules"] = []
+        elif (
+            current_val_profile == "non_actionable"
+            and str(shipped.klass or "").strip().lower() == "transactional"
+        ):
+            updates["validation_profile"] = ""
+            updates["validationProfile"] = ""
+            updates["validation_rules"] = []
+            updates["validationRules"] = []
+
+        merged_row = {**row, **updates} if updates else row
+        posting_token = str(
+            merged_row.get("posting") or ""
+        ).strip().lower()
+        if posting_token in {"", "no"}:
+            post = merged_row.get("post_to") if isinstance(merged_row.get("post_to"), dict) else None
+            if post is None and isinstance(merged_row.get("postTo"), dict):
+                post = merged_row.get("postTo")
+            if post and str((post or {}).get("ledger") or "").strip():
+                merged_row = {
+                    **merged_row,
+                    "post_to": {**(post or {}), "ledger": "", "sub_ledger": ""},
+                    "postTo": {**(post or {}), "ledger": "", "subLedger": ""},
+                }
+
+        merged.append(merged_row)
+    data["document_types"] = merged
+    return data
+
+
+def _backfill_extraction_fields_from_shipped_defaults(data: dict[str, Any]) -> dict[str, Any]:
+    """Union shipped + playbook-recommended extraction keys into tenant document types."""
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.services.classification.document_type_catalog import shipped_matrix_slot_for_org_row
+    from app.services.classification.document_type_field_defaults import default_extraction_fields
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+    from app.services.rule_book.extraction_field_config_audit import RECOMMENDED_FIELDS_BY_PLAYBOOK
+
+    types = data.get("document_types")
+    if not isinstance(types, list):
+        return data
+
+    merged: list[Any] = []
+    for row in types:
+        if not isinstance(row, dict):
+            merged.append(row)
+            continue
+        code = str(row.get("code") or "").strip().upper()
+        if not code:
+            merged.append(row)
+            continue
+
+        current = list(row.get("extraction_fields") or row.get("extractionFields") or [])
+        normalized = [str(key).strip() for key in current if str(key or "").strip()]
+        seen = {key.lower() for key in normalized}
+
+        def _append(key: str) -> None:
+            token = str(key or "").strip()
+            if not token:
+                return
+            lowered = token.lower()
+            if lowered in seen:
+                return
+            normalized.append(token)
+            seen.add(lowered)
+
+        try:
+            definition_for_slot = DocumentTypeDefinition.model_validate(row)
+            matrix_code = shipped_matrix_slot_for_org_row(definition_for_slot)
+        except Exception:
+            matrix_code = None
+        if matrix_code:
+            for key in default_extraction_fields(matrix_code):
+                _append(key)
+
+        try:
+            definition = DocumentTypeDefinition.model_validate(row)
+            profile = effective_playbook_profile(definition)
+            for key in RECOMMENDED_FIELDS_BY_PLAYBOOK.get(profile, ()):
+                _append(key)
+            for key in definition.required_fields or []:
+                _append(str(key))
+        except Exception:
+            pass
+
+        if normalized != current:
+            row = {**row, "extraction_fields": normalized, "extractionFields": normalized}
+        merged.append(row)
+
     data["document_types"] = merged
     return data
 
@@ -889,15 +1083,19 @@ def _backfill_document_type_post_to(data: dict[str, Any]) -> dict[str, Any]:
             route_target = str(row.get("route_target") or row.get("routeTarget") or "")
             resolved = default_post_to_ledger(profile, entries, route_target=route_target)
             if resolved:
+                sub = str(
+                    (post or {}).get("sub_ledger") or (post or {}).get("subLedger") or ""
+                )
+                post_payload = {
+                    **(post or {}),
+                    "ledger": resolved,
+                    "sub_ledger": sub,
+                    "subLedger": sub,
+                }
                 row = {
                     **row,
-                    "post_to": {
-                        **(post or {}),
-                        "ledger": resolved,
-                        "sub_ledger": str(
-                            (post or {}).get("sub_ledger") or (post or {}).get("subLedger") or ""
-                        ),
-                    },
+                    "post_to": post_payload,
+                    "postTo": post_payload,
                 }
         merged.append(row)
     data["document_types"] = merged
@@ -932,6 +1130,8 @@ def validate_rule_book_config_payload(data: dict[str, Any]) -> RuleBookConfigPay
         data = migrate_document_types_recognition(data)
         data = _backfill_playbook_profiles(data)
         data = _sync_match_policy_with_playbook(data)
+        data = _backfill_shipped_document_type_identity(data)
+        data = _backfill_extraction_fields_from_shipped_defaults(data)
         data = _backfill_document_type_post_to(data)
         data = _backfill_validation_rules(data)
         data = _migrate_ai_classification(data)

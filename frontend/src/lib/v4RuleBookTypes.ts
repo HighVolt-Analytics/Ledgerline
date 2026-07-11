@@ -247,6 +247,7 @@ export type DocumentSetRule = {
 export type PostingDefaults = {
   taxAccount: string;
   payableAccount: string;
+  receivableAccount: string;
   fallbackAccount: string;
 };
 
@@ -310,35 +311,5 @@ export const ROUTE_TARGETS = [
 ] as const;
 
 export const TEAM_CHANNELS = ["Any", "WhatsApp", "Viber", "Mobile", "Web"] as const;
-
-export const TAX_ACCOUNTS = [
-  "GST Paid",
-  "Sales Tax Paid",
-  "GST Input Credit",
-  "VAT Paid",
-] as const;
-
-export const PAYABLE_ACCOUNTS = ["Accounts Payable"] as const;
-
-export const RECEIVABLE_ACCOUNTS = ["Accounts Receivable"] as const;
-
-export const LEDGER_ACCOUNTS = [
-  "Cloud Hosting Expense",
-  "Software Subscription Expense",
-  "Marketing Expense",
-  "Professional Services Expense",
-  "Travel Expense",
-  "R&D Expense",
-  "Raw Materials",
-  "Logistics",
-  "Office",
-  "Operating Expenses",
-  "Plant & Equipment",
-  "GST Paid",
-  "Accounts Payable",
-  "Suspense Account",
-  "FX Gain/Loss",
-  "Bank",
-] as const;
 
 export const INGEST_ACTION_ROUTE_PLACEHOLDER = "Purchase Management";

@@ -52,20 +52,28 @@ export function newChartOfAccountRow(): ChartOfAccountRowLocal {
 }
 
 function normalizeSubLedgers(
-  value: SubLedgerRow[] | { code: string; name: string }[] | undefined
+  value: SubLedgerRow[] | { code: string; name: string; origin?: string }[] | undefined
 ): SubLedgerRow[] {
   if (!value?.length) return [];
-  return value.map((row) => ({
-    code: (row.code ?? "").trim(),
-    name: (row.name ?? "").trim(),
-  }));
+  return value.map((row) => {
+    const origin = (row as SubLedgerRow).origin;
+    return {
+      code: (row.code ?? "").trim(),
+      name: (row.name ?? "").trim(),
+      ...(origin === "party" || origin === "manual" ? { origin } : {}),
+    };
+  });
 }
 
 export function chartOfAccountRowToPayload(row: ChartOfAccountRow): ChartOfAccountRow & {
   sub_ledgers?: SubLedgerRow[];
 } {
   const subLedgers = (row.subLedgers ?? [])
-    .map((sub) => ({ code: sub.code.trim(), name: sub.name.trim() }))
+    .map((sub) => ({
+      code: sub.code.trim(),
+      name: sub.name.trim(),
+      ...(sub.origin ? { origin: sub.origin } : {}),
+    }))
     .filter((sub) => sub.code || sub.name);
   return {
     code: row.code.trim(),

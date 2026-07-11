@@ -13,26 +13,18 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NumericInput } from "@/components/ui/numeric-input";
 import { Select, toSelectOptions } from "@/components/ui/select";
+import { useCoaAccountOptions } from "@/hooks/useCoaAccountOptions";
 import { cn } from "@/lib/cn";
+import {
+  defaultExpensePostingLedger,
+  mergeCoaOptionsWithSavedValue,
+} from "@/lib/coaAccountOptions";
 import type { EmployeeMaster } from "@/lib/v4RuleBookTypes";
-import { LEDGER_ACCOUNTS } from "@/lib/v4RuleBookTypes";
 import { BankDetailsSection } from "./BankDetailsSection";
 import { BudgetProgressBar } from "./BudgetProgressBar";
 import { FieldLabel } from "./FieldLabel";
 
 const EMPLOYEE_STATUS_OPTIONS = ["Active", "Suspended", "Pending verification"] as const;
-
-const EXPENSE_LEDGER_OPTIONS = LEDGER_ACCOUNTS.filter(
-  (a) =>
-    ![
-      "GST Paid",
-      "Sales Tax Paid",
-      "GST Input Credit",
-      "VAT Paid",
-      "Accounts Payable",
-      "Suspense Account",
-    ].includes(a)
-);
 
 export function EmployeeDetailPanel({
   emp,
@@ -46,6 +38,9 @@ export function EmployeeDetailPanel({
   onToggleMask?: () => void;
 }) {
   const [rulesOpen, setRulesOpen] = useState(false);
+  const { allAccounts, options: ledgerOptions } = useCoaAccountOptions({
+    includeEmpty: false,
+  });
 
   const validationRules = [
     {
@@ -82,7 +77,10 @@ export function EmployeeDetailPanel({
     onChange({
       budget: {
         ...emp.budget,
-        categories: [...emp.budget.categories, { ledger: EXPENSE_LEDGER_OPTIONS[0], cap: 200 }],
+        categories: [
+          ...emp.budget.categories,
+          { ledger: defaultExpensePostingLedger(allAccounts), cap: 200 },
+        ],
       },
     });
   };
@@ -235,7 +233,7 @@ export function EmployeeDetailPanel({
                   <Select
                     value={cat.ledger}
                     onValueChange={(ledger) => updateCategory(index, { ledger })}
-                    options={toSelectOptions(EXPENSE_LEDGER_OPTIONS)}
+                    options={mergeCoaOptionsWithSavedValue(ledgerOptions, cat.ledger)}
                     size="sm"
                     className="w-[10.5rem] text-xs border-0 shadow-none bg-transparent"
                   />

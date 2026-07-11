@@ -132,11 +132,14 @@ def parties_from_llm(
 
 def party_extracted_fields_dict(parties: dict[str, NormalizedParty]) -> dict[str, str]:
     """Canonical extracted_fields keys for seller/buyer parties."""
+    from app.services.master_data.vendor_name_utils import normalize_vendor_name
+
     out: dict[str, str] = {}
     seller = parties.get("seller") or NormalizedParty()
     buyer = parties.get("buyer") or NormalizedParty()
-    if seller.name:
-        out["seller_name"] = seller.name
+    seller_name = normalize_vendor_name(seller.name)
+    if seller_name:
+        out["seller_name"] = seller_name
     if seller.tax_id:
         out["seller_tax_id"] = seller.tax_id
         out["seller_abn"] = seller.tax_id
