@@ -1,4 +1,4 @@
-"""Accounting integration OAuth tests — connect/status/disconnect only."""
+﻿"""Accounting integration OAuth tests â€” connect/status/disconnect only."""
 
 from __future__ import annotations
 
@@ -237,7 +237,7 @@ async def test_exchange_xero_code_stores_encrypted_tokens(
     connections_response = MagicMock()
     connections_response.status_code = 200
     connections_response.json.return_value = [
-        {"tenantId": "org-uuid", "tenantName": "Demo Company"}
+        {"id": "conn-1", "tenantId": "org-uuid", "tenantName": "Demo Company", "tenantType": "ORGANISATION"}
     ]
 
     mock_client = AsyncMock()
@@ -247,7 +247,7 @@ async def test_exchange_xero_code_stores_encrypted_tokens(
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     monkeypatch.setattr(
-        "app.services.accounting_integration_service.httpx.AsyncClient",
+        "app.services.integration.accounting_integration_service.httpx.AsyncClient",
         lambda *args, **kwargs: mock_client,
     )
 
@@ -263,3 +263,4 @@ async def test_exchange_xero_code_stores_encrypted_tokens(
     assert row.provider_tenant_id == "org-uuid"
     assert decrypt_secret(row.access_token_encrypted or "") == "xero-access"
     assert decrypt_secret(row.refresh_token_encrypted or "") == "xero-refresh"
+

@@ -1,11 +1,11 @@
-from collections.abc import AsyncGenerator
+﻿from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.api import (
     accounting_integrations,
@@ -48,6 +48,8 @@ from app.api import (
     vendors,
     viber,
     whatsapp,
+    xero_webhooks,
+    xero_refinement,
 )
 from app.api.deps import CorrelationIdMiddleware, require_super_admin, require_user
 from app.config import get_settings
@@ -59,6 +61,7 @@ from app.services.ingest.inline_mailbox_poller import (
     stop_inline_mailbox_poller,
 )
 from app.services.rule_book.rule_book_save_buffer import flush_all_rule_book_save_buffers
+from app.services.integration.xero_mapping_validation import XeroMappingValidationError
 from app.services.shared.public_app_url import build_oauth_frontend_path
 from app.services.tenant.tenant_context_service import get_or_create_default_tenant, sync_env_mailbox
 from app.services.tenant.tenant_module_service import require_module
@@ -77,7 +80,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     if not settings.auth_required:
         logger.warning(
             "auth_required_disabled",
-            msg="AUTH_REQUIRED=false — API will reject unauthenticated tenant requests; "
+            msg="AUTH_REQUIRED=false â€” API will reject unauthenticated tenant requests; "
             "do not disable in staging or production",
         )
     if settings.application_insights_runtime_enabled:
@@ -111,6 +114,14 @@ app = FastAPI(
     root_path=_settings.root_path,
 )
 
+
+@app.exception_handler(XeroMappingValidationError)
+async def xero_mapping_validation_handler(
+    _request: Request,
+    exc: XeroMappingValidationError,
+) -> JSONResponse:
+    return JSONResponse(status_code=422, content=exc.result.to_dict())
+
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(TenantContextMiddleware)
 app.add_middleware(
@@ -130,14 +141,16 @@ app.include_router(oauth_auth.router, prefix="/api")
 app.include_router(signup.router, prefix="/api")
 # Stripe webhooks — no JWT.
 app.include_router(stripe_webhooks.router, prefix="/api")
+# Xero webhooks — no JWT.
+app.include_router(xero_webhooks.router, prefix="/api")
 app.include_router(billing.public_router, prefix="/api")
-# OAuth Microsoft redirect — no JWT (must be before authenticated mailboxes router).
+# OAuth Microsoft redirect â€” no JWT (must be before authenticated mailboxes router).
 app.include_router(mailboxes.oauth_public_router, prefix="/api")
-# Stripe Connect OAuth callback — no JWT (must be before authenticated payments router).
+# Stripe Connect OAuth callback â€” no JWT (must be before authenticated payments router).
 app.include_router(payments.oauth_public_router, prefix="/api")
-# Accounting OAuth callbacks (Xero, QuickBooks) — no JWT.
+# Accounting OAuth callbacks (Xero, QuickBooks) â€” no JWT.
 app.include_router(accounting_integrations.oauth_public_router, prefix="/api")
-# Meta / WhatsApp OAuth callback and webhooks — no JWT.
+# Meta / WhatsApp OAuth callback and webhooks â€” no JWT.
 # Paths: /webhook/meta, /auth/whatsapp/callback (Front Door routes /ledgerlink/webhook/* and /ledgerlink/auth/*).
 app.include_router(whatsapp.public_router)
 app.include_router(whatsapp.webhook_router)
@@ -180,6 +193,7 @@ app.include_router(dossiers.router, prefix="/api", dependencies=_module_deps("do
 app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
 app.include_router(accounting_integrations.router, prefix="/api", dependencies=_api_deps)
+app.include_router(xero_refinement.router, prefix="/api", dependencies=_api_deps)
 app.include_router(viber.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenant_members.router, prefix="/api", dependencies=_api_deps)
@@ -224,3 +238,4 @@ async def redirect_frontend_app_routes(request: Request) -> RedirectResponse:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+

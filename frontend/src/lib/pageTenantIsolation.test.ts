@@ -7,11 +7,17 @@ import { describe, expect, it } from "vitest";
 
 const PAGES_DIR = join(__dirname, "..", "pages");
 
-/** Pages that do not load tenant-owned list/detail data. */
-const EXEMPT_PAGES = new Set([
+/** Public pages — no tenant-owned data; excluded from isolation guard checks. */
+const PUBLIC_PAGES = new Set([
   "LoginPage.tsx",
+  "SignupPage.tsx",
   "AcceptInvitePage.tsx",
   "ConnectMailboxPage.tsx",
+]);
+
+/** Pages that do not load tenant-owned list/detail data (non-public admin/setup). */
+const EXEMPT_PAGES = new Set([
+  ...PUBLIC_PAGES,
   "SuperAdminEmbedPage.tsx",
   "MatrixPage.tsx",
   "CustomersPage.tsx",

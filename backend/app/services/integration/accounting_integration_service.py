@@ -1,4 +1,4 @@
-"""OAuth connect/disconnect for Xero and QuickBooks Online — no accounting writes yet."""
+﻿"""OAuth connect/disconnect for Xero and QuickBooks Online."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 
 import httpx
 import jwt
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -18,6 +18,12 @@ from app.models.accounting_integration import (
     AccountingIntegration,
     AccountingIntegrationStatus,
     AccountingProvider,
+)
+from app.models.xero_connection import XeroConnection
+
+from app.services.integration.xero_token_service import (
+    STATE_TTL_SECONDS,
+    consume_oauth_jti,
 )
 from app.services.shared.token_vault import decrypt_secret, encrypt_secret
 from app.tenant_ids import parse_tenant_id
@@ -28,10 +34,7 @@ logger = get_logger(__name__)
 STATE_TTL_MINUTES = 20
 XERO_STATE_TYP = "xero_oauth"
 QBO_STATE_TYP = "quickbooks_oauth"
-
-XERO_AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize"
-XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
-XERO_CONNECTIONS_URL = "https://api.xero.com/connections"
+XERO_ORGANISATION_TYPE = "ORGANISATION"
 
 QBO_AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 QBO_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
@@ -43,8 +46,14 @@ _PROVIDER_LABELS = {
 
 
 def xero_configured() -> bool:
-    settings = get_settings()
-    return bool(settings.xero_client_id.strip() and settings.xero_client_secret.strip())
+    return get_settings().xero_configured
+
+
+def resolve_xero_scopes() -> str:
+    scopes = get_settings().xero_scopes_resolved
+    if not scopes:
+        raise ValueError("XERO_SCOPES must be configured")
+    return scopes
 
 
 def quickbooks_configured() -> bool:
@@ -85,6 +94,7 @@ def create_oauth_state(
         "provider": provider,
         "org_id": str(org_id),
         "sub": str(user_id),
+        "jti": str(uuid.uuid4()),
         "exp": expire,
     }
     return jwt.encode(payload, get_settings().jwt_secret, algorithm="HS256")
@@ -99,16 +109,24 @@ def parse_oauth_state(state: str, *, provider: str) -> dict[str, Any]:
     return payload
 
 
+async def validate_oauth_state_replay(state_payload: dict[str, Any]) -> None:
+    jti = str(state_payload.get("jti") or "")
+    if not jti:
+        raise ValueError("OAuth state missing replay guard")
+    if not await consume_oauth_jti(jti, ttl_seconds=STATE_TTL_SECONDS):
+        raise ValueError("OAuth state already used")
+
+
 def build_xero_authorize_url(*, state: str) -> str:
     settings = get_settings()
     params = {
         "response_type": "code",
         "client_id": settings.xero_client_id.strip(),
         "redirect_uri": settings.xero_redirect_uri.strip(),
-        "scope": settings.xero_oauth_scopes,
+        "scope": resolve_xero_scopes(),
         "state": state,
     }
-    return f"{XERO_AUTHORIZE_URL}?{urlencode(params)}"
+    return f"{settings.xero_authorize_url}?{urlencode(params)}"
 
 
 def build_quickbooks_authorize_url(*, state: str) -> str:
@@ -187,12 +205,160 @@ def integration_status_item(
     }
 
 
+async def _list_xero_connection_rows(
+    db: AsyncSession,
+    integration_id: int,
+) -> list[XeroConnection]:
+    rows = (
+        await db.execute(
+            select(XeroConnection)
+            .where(
+                XeroConnection.accounting_integration_id == integration_id,
+                XeroConnection.active.is_(True),
+            )
+            .order_by(XeroConnection.xero_tenant_name.asc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+def _connection_item(row: XeroConnection) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "xero_connection_id": row.xero_connection_id,
+        "xero_tenant_id": row.xero_tenant_id,
+        "xero_tenant_type": row.xero_tenant_type,
+        "xero_tenant_name": row.xero_tenant_name,
+        "selected": row.selected,
+    }
+
+
+async def list_xero_connections(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[dict[str, Any]]:
+    integration = await get_integration(db, tenant_id, AccountingProvider.XERO.value)
+    if integration is None:
+        return []
+    rows = await _list_xero_connection_rows(db, integration.id)
+    return [_connection_item(row) for row in rows]
+
+
+async def get_xero_readiness(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, Any]:
+    integration = await get_integration(db, tenant_id, AccountingProvider.XERO.value)
+    configured = xero_configured()
+    if integration is None:
+        return {
+            "configured": configured,
+            "connected": False,
+            "ready": False,
+            "status": AccountingIntegrationStatus.DISCONNECTED.value,
+            "organisation_selected": False,
+            "provider_tenant_id": None,
+            "display_name": None,
+            "connection_count": 0,
+            "last_error": None,
+        }
+
+    connections = await _list_xero_connection_rows(db, integration.id)
+    organisation_connections = [
+        c for c in connections if (c.xero_tenant_type or "").upper() == XERO_ORGANISATION_TYPE
+    ]
+    selected = any(c.selected for c in organisation_connections)
+    ready = (
+        configured
+        and integration.status == AccountingIntegrationStatus.CONNECTED.value
+        and bool(integration.provider_tenant_id)
+        and selected
+        and bool(integration.access_token_encrypted)
+    )
+    return {
+        "configured": configured,
+        "connected": integration.status
+        in {
+            AccountingIntegrationStatus.CONNECTED.value,
+            AccountingIntegrationStatus.ORGANISATION_SELECTION_REQUIRED.value,
+        },
+        "ready": ready,
+        "status": integration.status,
+        "organisation_selected": selected,
+        "provider_tenant_id": integration.provider_tenant_id,
+        "display_name": integration.display_name,
+        "connection_count": len(organisation_connections),
+        "last_error": integration.last_error,
+    }
+
+
+async def require_xero_ready(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> tuple[AccountingIntegration, str]:
+    readiness = await get_xero_readiness(db, tenant_id)
+    if not readiness["ready"]:
+        if readiness["status"] == AccountingIntegrationStatus.ORGANISATION_SELECTION_REQUIRED.value:
+            raise RuntimeError("Select a Xero organisation before continuing")
+        if readiness["status"] == AccountingIntegrationStatus.NEEDS_REAUTH.value:
+            raise RuntimeError("Xero connection requires re-authentication")
+        raise RuntimeError("Xero integration is not ready")
+    integration = await get_integration(db, tenant_id, AccountingProvider.XERO.value)
+    if integration is None or not integration.provider_tenant_id:
+        raise RuntimeError("Xero integration is not ready")
+    return integration, integration.provider_tenant_id
+
+
+async def select_xero_connection(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    xero_connection_id: str,
+) -> AccountingIntegration:
+    integration = await get_integration(db, tenant_id, AccountingProvider.XERO.value)
+    if integration is None:
+        raise ValueError("Xero is not connected")
+
+    row = (
+        await db.execute(
+            select(XeroConnection).where(
+                XeroConnection.tenant_id == tenant_id,
+                XeroConnection.accounting_integration_id == integration.id,
+                XeroConnection.xero_connection_id == xero_connection_id,
+                XeroConnection.active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise ValueError("Xero connection not found")
+    if (row.xero_tenant_type or "").upper() != XERO_ORGANISATION_TYPE:
+        raise ValueError("Only organisation connections can be selected")
+
+    await db.execute(
+        update(XeroConnection)
+        .where(
+            XeroConnection.accounting_integration_id == integration.id,
+            XeroConnection.tenant_id == tenant_id,
+        )
+        .values(selected=False)
+    )
+    row.selected = True
+    integration.provider_tenant_id = row.xero_tenant_id
+    integration.xero_connection_id = row.xero_connection_id
+    integration.provider_tenant_type = row.xero_tenant_type
+    integration.display_name = row.xero_tenant_name
+    integration.status = AccountingIntegrationStatus.CONNECTED.value
+    integration.last_error = None
+    integration.last_error_code = None
+    await db.flush()
+    return integration
+
+
 async def disconnect_integration(
     db: AsyncSession,
     *,
     tenant_id: uuid.UUID,
     provider: str,
 ) -> AccountingIntegration | None:
+    if provider == AccountingProvider.XERO.value:
+        return await disconnect_xero(db, tenant_id=tenant_id)
     row = await get_integration(db, tenant_id, provider)
     if row is None:
         return None
@@ -205,18 +371,167 @@ async def disconnect_integration(
     return row
 
 
+async def disconnect_xero(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+) -> AccountingIntegration | None:
+    row = await get_integration(db, tenant_id, AccountingProvider.XERO.value)
+    if row is None:
+        return None
+
+    connections = await _list_xero_connection_rows(db, row.id)
+    selected = next((c for c in connections if c.selected), None)
+    target = selected or (connections[0] if len(connections) == 1 else None)
+    if target and row.access_token_encrypted:
+        try:
+            access_token = decrypt_secret(row.access_token_encrypted)
+            if access_token:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    await client.delete(
+                        f"{get_settings().xero_connections_url}/{target.xero_connection_id}",
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Accept": "application/json",
+                        },
+                    )
+        except Exception as exc:
+            logger.warning(
+                "xero_disconnect_remote_failed",
+                tenant_id=str(tenant_id),
+                error=str(exc),
+            )
+
+    now = datetime.now(timezone.utc)
+    for connection in connections:
+        connection.active = False
+        connection.selected = False
+        connection.disconnected_at = now
+
+    row.status = AccountingIntegrationStatus.DISCONNECTED.value
+    row.access_token_encrypted = None
+    row.refresh_token_encrypted = None
+    row.expires_at = None
+    row.provider_tenant_id = None
+    row.xero_connection_id = None
+    row.provider_tenant_type = None
+    row.display_name = None
+    row.last_error = None
+    row.last_error_code = None
+    row.last_successful_sync_at = None
+    row.token_version = 0
+    row.last_refresh_at = None
+
+    from app.services.integration.xero_sync_job_service import cancel_pending_jobs
+
+    await cancel_pending_jobs(db, tenant_id=tenant_id)
+    await db.flush()
+    return row
+
+
+async def _upsert_xero_connections(
+    db: AsyncSession,
+    *,
+    integration: AccountingIntegration,
+    tenant_id: uuid.UUID,
+    connections: list[dict[str, Any]],
+) -> list[XeroConnection]:
+    now = datetime.now(timezone.utc)
+    existing = (
+        await db.execute(
+            select(XeroConnection).where(
+                XeroConnection.accounting_integration_id == integration.id,
+            )
+        )
+    ).scalars().all()
+    by_connection_id = {row.xero_connection_id: row for row in existing}
+    persisted: list[XeroConnection] = []
+    seen_ids: set[str] = set()
+
+    for conn in connections:
+        connection_id = str(conn.get("id") or "")
+        tenant = str(conn.get("tenantId") or "")
+        if not connection_id or not tenant:
+            continue
+        seen_ids.add(connection_id)
+        row = by_connection_id.get(connection_id)
+        if row is None:
+            row = XeroConnection(
+                accounting_integration_id=integration.id,
+                tenant_id=tenant_id,
+                xero_connection_id=connection_id,
+                xero_tenant_id=tenant,
+            )
+            db.add(row)
+        row.xero_tenant_type = str(conn.get("tenantType") or "") or None
+        row.xero_tenant_name = str(conn.get("tenantName") or tenant) or None
+        row.active = True
+        row.connected_at = now
+        row.last_verified_at = now
+        row.disconnected_at = None
+        persisted.append(row)
+
+    for row in existing:
+        if row.xero_connection_id not in seen_ids:
+            row.active = False
+            row.selected = False
+            row.disconnected_at = now
+
+    await db.flush()
+    return persisted
+
+
+async def _apply_xero_org_selection(
+    db: AsyncSession,
+    *,
+    integration: AccountingIntegration,
+    connections: list[XeroConnection],
+) -> AccountingIntegration:
+    organisations = [
+        c
+        for c in connections
+        if c.active and (c.xero_tenant_type or "").upper() == XERO_ORGANISATION_TYPE
+    ]
+    await db.execute(
+        update(XeroConnection)
+        .where(XeroConnection.accounting_integration_id == integration.id)
+        .values(selected=False)
+    )
+    if len(organisations) == 1:
+        org = organisations[0]
+        org.selected = True
+        integration.provider_tenant_id = org.xero_tenant_id
+        integration.xero_connection_id = org.xero_connection_id
+        integration.provider_tenant_type = org.xero_tenant_type
+        integration.display_name = org.xero_tenant_name
+        integration.status = AccountingIntegrationStatus.CONNECTED.value
+    elif len(organisations) > 1:
+        integration.provider_tenant_id = None
+        integration.xero_connection_id = None
+        integration.provider_tenant_type = None
+        integration.display_name = None
+        integration.status = AccountingIntegrationStatus.ORGANISATION_SELECTION_REQUIRED.value
+    else:
+        raise RuntimeError("No Xero organisations available for this account")
+    await db.flush()
+    return integration
+
+
 async def _upsert_integration(
     db: AsyncSession,
     *,
     tenant_id: uuid.UUID,
     provider: str,
     user_id: int,
-    provider_tenant_id: str,
-    display_name: str,
+    provider_tenant_id: str | None,
+    display_name: str | None,
     access_token: str,
     refresh_token: str | None,
     expires_at: datetime | None,
     scopes: str | None,
+    xero_connection_id: str | None = None,
+    provider_tenant_type: str | None = None,
+    status: str | None = None,
 ) -> AccountingIntegration:
     row = await get_integration(db, tenant_id, provider)
     now = datetime.now(timezone.utc)
@@ -226,8 +541,10 @@ async def _upsert_integration(
             provider=provider,
         )
         db.add(row)
-    row.status = AccountingIntegrationStatus.CONNECTED.value
+    row.status = status or AccountingIntegrationStatus.CONNECTED.value
     row.provider_tenant_id = provider_tenant_id
+    row.xero_connection_id = xero_connection_id
+    row.provider_tenant_type = provider_tenant_type
     row.display_name = display_name
     row.access_token_encrypted = encrypt_secret(access_token)
     row.refresh_token_encrypted = encrypt_secret(refresh_token) if refresh_token else None
@@ -236,6 +553,8 @@ async def _upsert_integration(
     row.connected_by_user_id = user_id
     row.connected_at = now
     row.last_error = None
+    row.last_error_code = None
+    row.token_version = int(row.token_version or 0)
     await db.flush()
     return row
 
@@ -270,7 +589,7 @@ async def _exchange_xero_code(
     ).decode("ascii")
     async with httpx.AsyncClient(timeout=30.0) as client:
         token_resp = await client.post(
-            XERO_TOKEN_URL,
+            get_settings().xero_token_url,
             headers={
                 "Authorization": f"Basic {auth}",
                 "Content-Type": "application/x-www-form-urlencoded",
@@ -297,7 +616,7 @@ async def _exchange_xero_code(
         scopes = token_data.get("scope")
 
         connections_resp = await client.get(
-            XERO_CONNECTIONS_URL,
+            get_settings().xero_connections_url,
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/json",
@@ -308,23 +627,30 @@ async def _exchange_xero_code(
         connections = connections_resp.json()
         if not connections:
             raise RuntimeError("No Xero organisations available for this account")
-        org = connections[0]
-        provider_tenant_id = str(org.get("tenantId") or "")
-        display_name = str(org.get("tenantName") or provider_tenant_id or "Xero organisation")
-        if not provider_tenant_id:
-            raise RuntimeError("Xero organisation id missing from connections response")
 
-    return await _upsert_integration(
+    integration = await _upsert_integration(
         db,
         tenant_id=tenant_id,
         provider=AccountingProvider.XERO.value,
         user_id=user_id,
-        provider_tenant_id=provider_tenant_id,
-        display_name=display_name,
+        provider_tenant_id=None,
+        display_name=None,
         access_token=access_token,
         refresh_token=str(refresh_token) if refresh_token else None,
         expires_at=expires_at,
-        scopes=str(scopes) if scopes else settings.xero_oauth_scopes,
+        scopes=str(scopes) if scopes else resolve_xero_scopes(),
+        status=AccountingIntegrationStatus.ORGANISATION_SELECTION_REQUIRED.value,
+    )
+    persisted = await _upsert_xero_connections(
+        db,
+        integration=integration,
+        tenant_id=tenant_id,
+        connections=connections,
+    )
+    return await _apply_xero_org_selection(
+        db,
+        integration=integration,
+        connections=persisted,
     )
 
 
