@@ -985,11 +985,19 @@ async def _apply_parsed_to_invoice(
     invoice.billing_address = parsed.billing_address
     invoice.bank_bsb = parsed.bank_bsb
     invoice.bank_account = parsed.bank_account
-    from app.services.extraction.invoice_no_sanitizer import extract_invoice_no_from_text, sanitize_invoice_no
-
-    invoice.invoice_no = sanitize_invoice_no(parsed.invoice_no) or extract_invoice_no_from_text(
-        parsed.document_text or ""
+    from app.services.extraction.invoice_no_sanitizer import (
+        apply_invoice_no_secondary,
+        extract_invoice_no_from_text,
+        sanitize_invoice_no_parts,
     )
+
+    primary, secondary = sanitize_invoice_no_parts(parsed.invoice_no)
+    if not primary:
+        primary = extract_invoice_no_from_text(parsed.document_text or "")
+        secondary = None
+    invoice.invoice_no = primary
+    parsed.invoice_no = primary
+    parsed.extracted_fields = apply_invoice_no_secondary(parsed.extracted_fields, secondary)
     invoice.po_reference = parsed.po_reference
     invoice.cost_centre = parsed.cost_centre
     invoice.invoice_date = parsed.invoice_date
@@ -1867,7 +1875,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     line_item_trace = resolve_line_item_trace(_trace_settings().runtime_line_item_trace_enabled)
     parsed = ground_parsed_fields(
-        parsed, ocr.text, selected_keys, ocr.payload_json, trace=line_item_trace
+        parsed,
+        ocr.text,
+        selected_keys,
+        ocr.payload_json,
+        trace=line_item_trace,
+        org_country=org.country if org else None,
     )
     parsed = enrich_parsed_from_ocr(parsed, ocr, dt_definition=dt_definition, trace=line_item_trace)
     parsed, gap_fill_detail = await apply_extraction_gap_fill(
@@ -2080,9 +2093,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     invoice.llm_suggested_dt = loaded.llm_suggested_dt
     invoice.llm_confidence = loaded.llm_confidence
 
-    from app.services.invoice.invoice_post_classification_phases import apply_policy_scorer_after_extract
+    from app.services.invoice.invoice_post_classification_phases import (
+        apply_policy_scorer_after_extract,
+        reextract_fields_for_corrected_dt,
+    )
 
-    await apply_policy_scorer_after_extract(
+    policy_result = await apply_policy_scorer_after_extract(
         session,
         invoice=invoice,
         loaded=loaded,
@@ -2093,7 +2109,46 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             loaded.document_type_confidence
             or (gate_result.confirmed_confidence if gate_result is not None else 0.0)
         ),
+        force=True,
+        allow_auto_correct=True,
     )
+
+    if policy_result.auto_corrected and policy_result.corrected_dt:
+        confirmed_dt = policy_result.corrected_dt
+        with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as local_path:
+            parsed, pruned_keys = await reextract_fields_for_corrected_dt(
+                session,
+                invoice=invoice,
+                loaded=loaded,
+                ocr=ocr,
+                file_path=str(local_path),
+                org=org,
+                config=config,
+                confirmed_dt=confirmed_dt,
+                few_shots=few_shots,
+                doc_provider=doc_provider,
+            )
+        policy_result.pruned_field_keys = pruned_keys
+        # Second policy pass: hold on disagreement; never re-extract again.
+        policy_verify = await apply_policy_scorer_after_extract(
+            session,
+            invoice=invoice,
+            loaded=loaded,
+            parsed=parsed,
+            config=config,
+            llm_dt=confirmed_dt,
+            llm_confidence=float(
+                loaded.document_type_confidence or policy_result.policy_confidence or 0.0
+            ),
+            force=True,
+            allow_auto_correct=False,
+        )
+        if policy_verify.oscillation_hold or policy_verify.needs_review:
+            invoice.status = InvoiceStatus.EXCEPTION
+            invoice.evaluation_status = EVAL_NEEDS_REVIEW
+            loaded.evaluation_status = EVAL_NEEDS_REVIEW
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
+            return
 
     await _sync_counterparty_and_evaluate(
         session,
