@@ -156,6 +156,7 @@ export function IngestionTab({
                       <Input
                         value={rule.mailbox}
                         onChange={(e) => updateRule(rule.id, { mailbox: e.target.value })}
+                        placeholder="* for all connected mailboxes"
                         className="h-8 text-sm font-mono"
                       />
                     </label>

@@ -163,7 +163,7 @@ def _email_capture_rule_from_ids(
     rules: list[EmailCaptureRule],
 ) -> EmailCaptureRule | None:
     for token in _parse_matched_rule_ids(matched_rule_ids):
-        if not token.startswith("email:"):
+        if not (token.startswith("email:") or token.startswith("ingest:")):
             continue
         rule_id = token.split(":", 1)[1]
         for rule in rules:

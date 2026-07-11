@@ -95,7 +95,35 @@ def test_ingest_capture_skips_wrong_mailbox(capture_config: RuleBookConfigPayloa
             )
         ],
     )
-    assert evaluate_ingest_capture(email, email.attachments[0], capture_config) is None
+    explicit_mailbox_rule = capture_config.email_capture_rules[0].model_copy(
+        update={"mailbox": "accounts@other-company.com.au"},
+    )
+    scoped_config = capture_config.model_copy(
+        update={"email_capture_rules": [explicit_mailbox_rule]},
+    )
+    assert evaluate_ingest_capture(email, email.attachments[0], scoped_config) is None
+
+
+def test_ingest_capture_matches_legacy_placeholder_mailbox(
+    capture_config: RuleBookConfigPayload,
+) -> None:
+    """Demo/default mailbox placeholder applies to any connected mailbox at ingest."""
+    email = RawEmail(
+        message_id="x",
+        subject="Your AWS invoice for May 2026",
+        sender="billing@amazon.com",
+        mailbox_email="vishnu@highvolt.tech",
+        attachments=[
+            EmailAttachment(
+                filename="AWS-Invoice-May.pdf",
+                content_type="application/pdf",
+                data=b"%PDF",
+            )
+        ],
+    )
+    rule = evaluate_ingest_capture(email, email.attachments[0], capture_config)
+    assert rule is not None
+    assert rule.id == "ec-1"
 
 
 @pytest.mark.asyncio

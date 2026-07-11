@@ -16,6 +16,18 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _has_column(conn, table: str, column: str) -> bool:
+    if not inspect(conn).has_table(table):
+        return False
+    return column in {c["name"] for c in inspect(conn).get_columns(table)}
+
+
+def _has_index(conn, table: str, index_name: str) -> bool:
+    if not inspect(conn).has_table(table):
+        return False
+    return index_name in {idx["name"] for idx in inspect(conn).get_indexes(table)}
+
+
 def _enable_tenant_rls(conn, table: str) -> None:
     if conn.dialect.name != "postgresql":
         return
@@ -38,35 +50,23 @@ def _enable_tenant_rls(conn, table: str) -> None:
 def upgrade() -> None:
     conn = op.get_bind()
 
-    op.add_column(
-        "accounting_integrations",
-        sa.Column("xero_connection_id", sa.String(length=128), nullable=True),
-    )
-    op.add_column(
-        "accounting_integrations",
-        sa.Column("provider_tenant_type", sa.String(length=64), nullable=True),
-    )
-    op.add_column(
-        "accounting_integrations",
-        sa.Column("token_version", sa.Integer(), server_default="0", nullable=False),
-    )
-    op.add_column(
-        "accounting_integrations",
-        sa.Column("last_refresh_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "accounting_integrations",
-        sa.Column("last_successful_sync_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "accounting_integrations",
-        sa.Column("last_error_code", sa.String(length=64), nullable=True),
-    )
-    op.create_index(
-        "ix_accounting_integrations_xero_connection_id",
-        "accounting_integrations",
-        ["xero_connection_id"],
-    )
+    for col, col_type, kwargs in (
+        ("xero_connection_id", sa.String(length=128), {"nullable": True}),
+        ("provider_tenant_type", sa.String(length=64), {"nullable": True}),
+        ("token_version", sa.Integer(), {"server_default": "0", "nullable": False}),
+        ("last_refresh_at", sa.DateTime(timezone=True), {"nullable": True}),
+        ("last_successful_sync_at", sa.DateTime(timezone=True), {"nullable": True}),
+        ("last_error_code", sa.String(length=64), {"nullable": True}),
+    ):
+        if not _has_column(conn, "accounting_integrations", col):
+            op.add_column("accounting_integrations", sa.Column(col, col_type, **kwargs))
+
+    if not _has_index(conn, "accounting_integrations", "ix_accounting_integrations_xero_connection_id"):
+        op.create_index(
+            "ix_accounting_integrations_xero_connection_id",
+            "accounting_integrations",
+            ["xero_connection_id"],
+        )
 
     if not inspect(conn).has_table("xero_connections"):
         op.create_table(
@@ -208,10 +208,15 @@ def downgrade() -> None:
         op.drop_table("external_accounting_refs")
     if inspect(conn).has_table("xero_connections"):
         op.drop_table("xero_connections")
-    op.drop_index("ix_accounting_integrations_xero_connection_id", table_name="accounting_integrations")
-    op.drop_column("accounting_integrations", "last_error_code")
-    op.drop_column("accounting_integrations", "last_successful_sync_at")
-    op.drop_column("accounting_integrations", "last_refresh_at")
-    op.drop_column("accounting_integrations", "token_version")
-    op.drop_column("accounting_integrations", "provider_tenant_type")
-    op.drop_column("accounting_integrations", "xero_connection_id")
+    if _has_index(conn, "accounting_integrations", "ix_accounting_integrations_xero_connection_id"):
+        op.drop_index("ix_accounting_integrations_xero_connection_id", table_name="accounting_integrations")
+    for col in (
+        "last_error_code",
+        "last_successful_sync_at",
+        "last_refresh_at",
+        "token_version",
+        "provider_tenant_type",
+        "xero_connection_id",
+    ):
+        if _has_column(conn, "accounting_integrations", col):
+            op.drop_column("accounting_integrations", col)

@@ -635,7 +635,10 @@ export const RECENT_CLAIM_VALIDATIONS: RecentClaimValidation[] = [
   },
 ];
 
-export const DEFAULT_MAILBOX = "accounts@acme-hospitality.com.au";
+/** Wildcard — ingestion rules apply to every connected mailbox for the org. */
+export const DEFAULT_MAILBOX = "*";
+/** Legacy demo placeholder kept for sample rule fixtures only. */
+export const DEMO_MAILBOX = "accounts@acme-hospitality.com.au";
 
 export const DEFAULT_POSTING_DEFAULTS = {
   taxAccount: "GST Paid",

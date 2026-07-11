@@ -37,6 +37,30 @@ def raw_email_to_sample_email(email: RawEmail, attachment: EmailAttachment) -> S
 
 
 DEFAULT_CATCH_ALL_CAPTURE_RULE_ID = "ec-default"
+# UI / demo placeholder — treat as "any connected mailbox" at ingest time.
+LEGACY_DEFAULT_MAILBOX = "accounts@acme-hospitality.com.au"
+
+
+def _normalize_rule_mailbox(rule_mailbox: str, actual_mailbox: str) -> str:
+    """Map legacy placeholder or wildcard to the mailbox being polled."""
+    normalized = rule_mailbox.strip().lower()
+    if normalized in {"", "*"}:
+        return actual_mailbox
+    if normalized == LEGACY_DEFAULT_MAILBOX.lower():
+        return actual_mailbox
+    return rule_mailbox
+
+
+def _effective_capture_rules(
+    config: RuleBookConfigPayload,
+    actual_mailbox: str,
+) -> list[EmailCaptureRule]:
+    """Resolve rule mailbox filters against the connected mailbox being polled."""
+    mailbox = actual_mailbox.strip().lower()
+    return [
+        rule.model_copy(update={"mailbox": _normalize_rule_mailbox(rule.mailbox, mailbox)})
+        for rule in config.email_capture_rules
+    ]
 
 
 def default_catch_all_capture_rule(mailbox_email: str) -> EmailCaptureRule:
@@ -81,9 +105,10 @@ def evaluate_ingest_capture(
     if not _enabled_capture_rules(config):
         return default_catch_all_capture_rule(email.mailbox_email)
     sample = raw_email_to_sample_email(email, attachment)
+    effective_rules = _effective_capture_rules(config, email.mailbox_email)
     return match_email_capture_rule(
         sample,
-        config.email_capture_rules,
+        effective_rules,
         mailbox=email.mailbox_email,
     )
 

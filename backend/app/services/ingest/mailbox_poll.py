@@ -41,13 +41,10 @@ async def known_message_ids(
 
 
 def _poll_since_timestamp(last_poll_at: datetime | None) -> datetime:
+    """Look back 48h so read messages skipped by rules can be retried."""
+    _ = last_poll_at
     now = datetime.now(timezone.utc)
-    floor = now - _RECENT_POLL_LOOKBACK
-    if last_poll_at is None:
-        return floor
-    if last_poll_at.tzinfo is None:
-        last_poll_at = last_poll_at.replace(tzinfo=timezone.utc)
-    return max(last_poll_at, floor)
+    return now - _RECENT_POLL_LOOKBACK
 
 
 async def _poll_mailbox_emails(
@@ -101,6 +98,7 @@ async def _ingest_mailbox(
             tenant_slug=org.slug,
             connected_mailbox_id=mb.id,
             known_message_ids=known_ids,
+            mark_processed_only_if_ingested=True,
         )
         mb.last_poll_at = datetime.now(timezone.utc)
         return result
