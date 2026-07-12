@@ -56,6 +56,10 @@ EXTRACTED_ONLY_ATTRS: frozenset[str] = frozenset(
         "buyer_address",
         "buyer_abn",
         "so_reference",
+        "grn_reference",
+        "remittance_reference",
+        "statement_reference",
+        "statement_period",
         "account_code",
         "account_name",
         "bank_name",
@@ -115,42 +119,127 @@ def _shipped_defaults_for_definition(defn: DocumentTypeDefinition) -> list[str]:
     return []
 
 
-def configured_extraction_keys(defn: DocumentTypeDefinition) -> list[str]:
-    """Resolved extraction keys for one document type definition."""
-    from app.services.classification.document_type_catalog import (
-        _org_uses_shipped_classification_metadata,
-        _shipped_defaults_lookup_code,
-        extraction_fields_for_dt,
-    )
-    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
+# Commercial header/money keys used when org DT has no extraction_fields configured.
+_COMMERCIAL_EXTRACTION_FALLBACK: tuple[str, ...] = (
+    "vendor",
+    "abn",
+    "invoice_no",
+    "invoice_date",
+    "due_date",
+    "po_reference",
+    "subtotal",
+    "gst",
+    "total",
+    "currency",
+    "billing_address",
+    "line_items",
+)
 
-    keys = extraction_fields_for_dt(defn)
-    if keys:
-        return normalize_extraction_field_keys(keys)
-    org_keys = _normalized_keys_from_definition(defn)
-    if org_keys:
-        return org_keys
-    shipped_lookup = _shipped_defaults_lookup_code(defn.code, defn)
-    if _org_uses_shipped_classification_metadata(defn, shipped_lookup):
-        return _shipped_defaults_for_definition(defn)
-    return []
+_NON_TRANSACTIONAL_PLAYBOOKS = frozenset(
+    {
+        "supporting",
+        "reconciliation",
+        "non_actionable",
+        "informational",
+        "master_data",
+        "compliance_route",
+    }
+)
+
+
+def _playbook_recommended_extraction_keys(defn: DocumentTypeDefinition) -> list[str]:
+    """Playbook/route recommended keys — used as fallback when org list is empty."""
+    from app.services.classification.document_type_field_keys import normalize_extraction_field_keys
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+    from app.services.rule_book.extraction_field_config_audit import (
+        RECOMMENDED_FIELDS_BY_PLAYBOOK,
+        RECOMMENDED_FIELDS_BY_ROUTE,
+    )
+
+    profile = (effective_playbook_profile(defn) or "").strip().lower()
+    if profile in _NON_TRANSACTIONAL_PLAYBOOKS:
+        return []
+    keys: list[str] = []
+    seen: set[str] = set()
+    for raw in RECOMMENDED_FIELDS_BY_PLAYBOOK.get(profile, ()):
+        token = str(raw).strip().lower()
+        if token and token not in seen:
+            seen.add(token)
+            keys.append(token)
+    route = (defn.route_target or "").strip()
+    for raw in RECOMMENDED_FIELDS_BY_ROUTE.get(route, ()):
+        token = str(raw).strip().lower()
+        if token and token not in seen:
+            seen.add(token)
+            keys.append(token)
+    if keys and "line_items" not in seen:
+        keys.append("line_items")
+    return normalize_extraction_field_keys(keys) if keys else []
+
+
+_TRANSACTIONAL_ROUTES = frozenset(
+    {
+        "Purchase Management",
+        "Sales Management",
+        "Expenses Management",
+    }
+)
+
+
+def _looks_transactional_document_type(defn: DocumentTypeDefinition) -> bool:
+    """True when DT metadata implies commercial field extraction is expected."""
+    from app.services.classification.document_type_playbook_profile_service import (
+        effective_playbook_profile,
+    )
+    from app.services.rule_book.extraction_field_config_audit import (
+        RECOMMENDED_FIELDS_BY_PLAYBOOK,
+    )
+
+    profile = (effective_playbook_profile(defn) or "").strip().lower()
+    if profile in _NON_TRANSACTIONAL_PLAYBOOKS:
+        return False
+    if profile in RECOMMENDED_FIELDS_BY_PLAYBOOK:
+        return True
+    posting = str(defn.posting or "").strip().casefold()
+    if posting in {"yes", "y", "true", "1"}:
+        return True
+    klass = str(defn.klass or "").strip().casefold()
+    if "transactional" in klass and "non" not in klass:
+        return True
+    route = (defn.route_target or "").strip()
+    return route in _TRANSACTIONAL_ROUTES
+
+
+def configured_extraction_keys(defn: DocumentTypeDefinition) -> list[str]:
+    """Resolved extraction keys for one document type (via field contracts)."""
+    from app.services.extraction.field_contract_resolver import (
+        resolve_extraction_field_contracts_for_dt,
+    )
+    from app.services.extraction.field_contracts import contracts_to_selected_keys
+
+    contracts = resolve_extraction_field_contracts_for_dt(
+        [defn],
+        defn.code or "",
+        dt_definition=defn,
+    )
+    return contracts_to_selected_keys(contracts)
 
 
 def effective_extraction_field_keys_for_dt(
     document_types: Sequence[DocumentTypeDefinition],
     dt_code: str,
 ) -> list[str]:
-    """Configured extraction keys for one document type — never a generic invoice fallback."""
+    """Configured extraction keys for one document type (contract-backed)."""
+    from app.services.extraction.field_contract_resolver import (
+        selected_keys_from_contracts_for_dt,
+    )
+
     code = (dt_code or "").strip().upper()
     if not code:
         return []
-    for defn in document_types:
-        if not defn.enabled:
-            continue
-        if (defn.code or "").strip().upper() != code:
-            continue
-        return configured_extraction_keys(defn)
-    return []
+    return selected_keys_from_contracts_for_dt(document_types, code)
 
 
 def label_value_backfill_keys(
@@ -613,10 +702,12 @@ def di_party_field_keys() -> tuple[str, ...]:
 
 
 def prebuilt_invoice_scalars_active(payload: dict[str, object] | None) -> bool:
-    """True when prebuilt-invoice enrich wrote invoice_fields into the OCR payload."""
+    """True when prebuilt-invoice enrich wrote non-empty invoice_fields into the OCR payload."""
     if not payload:
         return False
-    return "invoice_fields" in payload
+    if "invoice_fields" not in payload:
+        return False
+    return bool(di_scalar_fields_populated(payload))
 
 
 def _di_invoice_fields_raw(payload: dict[str, object] | None) -> dict[str, object]:
@@ -702,20 +793,34 @@ def di_trusted_scalar_fields(
     ocr_text: str | None,
     selected_keys: Sequence[str],
 ) -> set[str]:
-    """DI-populated scalar keys whose values are OCR-grounded."""
+    """DI-populated scalar keys that are OCR-grounded and pass DI confidence when present."""
     populated = di_scalar_fields_populated(payload)
     if not populated or not ocr_text:
         return set()
     di_data = resolve_scalars_from_ocr_payload(payload, selected_keys)
     if di_data is None:
         return set()
+    conf_map: dict[str, object] = {}
+    if payload and isinstance(payload.get("field_confidence"), dict):
+        conf_map = dict(payload["field_confidence"])  # type: ignore[arg-type]
+    from app.config import get_settings
+
+    di_floor = get_settings().di_field_trust_min_confidence
     trusted: set[str] = set()
     for key in populated:
         if not _field_in_selected_keys(key, selected_keys):
             continue
         value = getattr(di_data, key, None)
-        if _scalar_grounded_for_gap_fill(key, value, ocr_text):
-            trusted.add(key)
+        if not _scalar_grounded_for_gap_fill(key, value, ocr_text, context=di_data):
+            continue
+        conf_raw = conf_map.get(key)
+        if conf_raw is not None:
+            try:
+                if float(conf_raw) < di_floor:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        trusted.add(key)
     return trusted
 
 
@@ -1080,6 +1185,19 @@ def clear_llm_scalars_for_di(
 
 def attach_di_metadata_to_payload(payload: dict[str, object], invoice_data: InvoiceData) -> None:
     """Store DI scalar/party sources alongside invoice_fields for LLM + merge."""
+    attach_extraction_metadata_to_payload(payload, invoice_data)
+
+
+def attach_extraction_metadata_to_payload(
+    payload: dict[str, object],
+    invoice_data: InvoiceData,
+    *,
+    decision: Any = None,
+    strategy_name: str | None = None,
+    models_run: list[str] | None = None,
+    layout_line_mode: str | None = None,
+) -> None:
+    """Store DI scalar/party sources + route/confidence metadata on OCR payload."""
     raw_fields = invoice_data.raw_fields or {}
     scalar_sources = raw_fields.get("di_scalar_sources")
     if isinstance(scalar_sources, dict):
@@ -1107,6 +1225,31 @@ def attach_di_metadata_to_payload(payload: dict[str, object], invoice_data: Invo
         )
     if party_sources:
         payload["di_party_sources"] = party_sources
+
+    field_confidence = raw_fields.get("field_confidence")
+    if isinstance(field_confidence, dict):
+        payload["field_confidence"] = dict(field_confidence)
+    field_sources = raw_fields.get("field_sources")
+    if isinstance(field_sources, dict):
+        payload["field_sources"] = dict(field_sources)
+    line_conf = raw_fields.get("di_line_item_confidences")
+    if isinstance(line_conf, list):
+        payload["di_line_item_confidences"] = list(line_conf)
+
+    if decision is not None:
+        payload["extraction_route"] = getattr(
+            getattr(decision, "route", None), "value", None
+        ) or str(getattr(decision, "route", ""))
+        payload["route_reasons"] = list(getattr(decision, "reasons", ()) or ())
+        hints = list(getattr(decision, "review_hints", ()) or ())
+        if hints:
+            payload["review_hints"] = hints
+    if strategy_name:
+        payload["extraction_strategy"] = strategy_name
+    if models_run is not None:
+        payload["di_models_run"] = list(models_run)
+    if layout_line_mode:
+        payload["layout_line_mode"] = layout_line_mode
 
 
 def filter_invoice_fields_for_keys(
@@ -1566,7 +1709,13 @@ class GapFillMergeResult:
     rejected: tuple[str, ...]
 
 
-def _scalar_grounded_for_gap_fill(key: str, value: object, ocr_text: str | None) -> bool:
+def _scalar_grounded_for_gap_fill(
+    key: str,
+    value: object,
+    ocr_text: str | None,
+    *,
+    context: InvoiceData | None = None,
+) -> bool:
     from datetime import date
     from decimal import Decimal
 
@@ -1574,6 +1723,7 @@ def _scalar_grounded_for_gap_fill(key: str, value: object, ocr_text: str | None)
         _date_grounded_in_ocr,
         _invoice_no_grounded,
         _money_grounded_in_ocr,
+        currency_passes_grounding,
         value_grounded_in_ocr,
     )
 
@@ -1589,7 +1739,11 @@ def _scalar_grounded_for_gap_fill(key: str, value: object, ocr_text: str | None)
         amount = value if isinstance(value, Decimal) else value
         return _money_grounded_in_ocr(amount, ocr_text, field_key=key)
     if key == "currency":
-        return value_grounded_in_ocr(str(value), ocr_text)
+        from dataclasses import replace
+
+        base = context if context is not None else InvoiceData()
+        probe = replace(base, currency=str(value).strip().upper())
+        return currency_passes_grounding(probe, ocr_text)
     return value_grounded_in_ocr(str(value), ocr_text)
 
 
@@ -1621,7 +1775,7 @@ def merge_gap_fill_into_parsed(
             candidate = getattr(gap, key, None)
             if _scalar_empty(candidate):
                 continue
-            if not _scalar_grounded_for_gap_fill(key, candidate, ocr_text):
+            if not _scalar_grounded_for_gap_fill(key, candidate, ocr_text, context=parsed):
                 rejected.append(key)
                 continue
             updates[key] = candidate

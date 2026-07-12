@@ -58,8 +58,21 @@ def _retry_structured_extraction(
     ):
         return []
 
-    candidates: list[ParsedLineItem] = []
-    candidates.extend(resolve_usable_line_items_from_payload(payload, allow_qty_only=qty_only))
+    structured = resolve_usable_line_items_from_payload(payload, allow_qty_only=qty_only)
+    money_structured = [
+        row
+        for row in structured
+        if row.amount is not None or row.unit_price is not None
+    ]
+    # Prefer DI/layout money rows alone — do not union OCR text qty bleed when
+    # authoritative product amounts already exist (e.g. SaaS invoices).
+    if money_structured:
+        tagged = [
+            replace(row, source=row.source or FALLBACK_STRUCTURED) for row in money_structured
+        ]
+        return _usable_rows(tagged, parsed=parsed, allow_qty_only=False)
+
+    candidates: list[ParsedLineItem] = list(structured)
     if document_has_charge_lines(text):
         candidates.extend(parse_charge_lines_from_text(text))
     candidates.extend(enrich_parsed_line_items(parse_line_items_from_text(text, payload)))

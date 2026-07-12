@@ -51,7 +51,9 @@ def _dt_with_classifier(
         shortTitle=code,
         klass="Transactional",
         posting="Yes",
-        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
+        recognition_mode="signals",
+        recognition_signals=[],
+        llm_prompt="",
         routeTarget="Expenses Management",
         enabled=True,
         classifier=DocumentTypeClassifier(
@@ -178,3 +180,197 @@ def test_apply_user_defined_classifier_gate_does_not_crash_on_shipped_dt() -> No
     )
     assert result.passed is True
     assert result.confirmed_dt == "DT-01"
+
+
+def test_recognition_mode_gate_rejects_signals_mismatch() -> None:
+    from app.schemas.ocr_artifact import OcrArtifact
+    from app.services.classification.document_type_recognition_migration import (
+        sync_classifier_from_recognition,
+    )
+    from app.services.invoice.invoice_pipeline_phases import (
+        GatePhaseResult,
+        apply_recognition_mode_gate,
+    )
+
+    defn = sync_classifier_from_recognition(
+        DocumentTypeDefinition.model_validate(
+            {
+                "code": "DT-03",
+                "title": "Tax Invoice",
+                "shortTitle": "Tax Inv",
+                "klass": "Transactional",
+                "posting": "Yes",
+                "recognition_mode": "signals",
+                "recognition_signals": ["heading_invoice"],
+                "llm_prompt": "",
+                "routeTarget": "Purchase Management",
+                "enabled": True,
+            }
+        )
+    )
+    gate = GatePhaseResult(
+        passed=True,
+        confirmed_dt="DT-03",
+        confirmed_confidence=0.9,
+        review_reasons=[],
+        llm_suggested_dt="DT-03",
+        llm_confidence=0.9,
+        min_route_confidence=0.65,
+        org_auto_route_min_confidence=0.65,
+        dt_min_route_confidence=0.65,
+    )
+    ocr = OcrArtifact(text="PACKING LIST\nCarton 1 of 2")
+    result = apply_recognition_mode_gate(
+        gate,
+        invoice=_invoice(),
+        ocr=ocr,
+        document_types=[defn],
+    )
+    assert result.passed is False
+    assert result.confirmed_dt == ""
+    assert "CLASSIFIER_RULE_MISMATCH" in result.review_reasons
+
+
+def test_recognition_mode_gate_allows_matching_signals() -> None:
+    from app.schemas.ocr_artifact import OcrArtifact
+    from app.services.classification.document_type_recognition_migration import (
+        sync_classifier_from_recognition,
+    )
+    from app.services.invoice.invoice_pipeline_phases import (
+        GatePhaseResult,
+        apply_recognition_mode_gate,
+    )
+
+    defn = sync_classifier_from_recognition(
+        DocumentTypeDefinition.model_validate(
+            {
+                "code": "DT-03",
+                "title": "Tax Invoice",
+                "shortTitle": "Tax Inv",
+                "klass": "Transactional",
+                "posting": "Yes",
+                "recognition_mode": "signals",
+                "recognition_signals": ["heading_invoice"],
+                "llm_prompt": "",
+                "routeTarget": "Purchase Management",
+                "enabled": True,
+            }
+        )
+    )
+    gate = GatePhaseResult(
+        passed=True,
+        confirmed_dt="DT-03",
+        confirmed_confidence=0.9,
+        review_reasons=[],
+        llm_suggested_dt="DT-03",
+        llm_confidence=0.9,
+        min_route_confidence=0.65,
+        org_auto_route_min_confidence=0.65,
+        dt_min_route_confidence=0.65,
+    )
+    ocr = OcrArtifact(text="TAX INVOICE\nVendor Acme\nTotal $100.00")
+    result = apply_recognition_mode_gate(
+        gate,
+        invoice=_invoice(),
+        ocr=ocr,
+        document_types=[defn],
+    )
+    assert result.passed is True
+    assert result.confirmed_dt == "DT-03"
+
+
+def test_recognition_mode_gate_skips_prompt_mode() -> None:
+    from app.schemas.ocr_artifact import OcrArtifact
+    from app.services.invoice.invoice_pipeline_phases import (
+        GatePhaseResult,
+        apply_recognition_mode_gate,
+    )
+
+    defn = DocumentTypeDefinition.model_validate(
+        {
+            "code": "DT-16",
+            "title": "Bank Statement",
+            "shortTitle": "Bank Stmt",
+            "klass": "Non-transactional",
+            "posting": "No",
+            "recognition_mode": "prompt",
+            "recognition_signals": [],
+            "llm_prompt": "Bank statement for the account",
+            "routeTarget": "Vault",
+            "enabled": True,
+        }
+    )
+    gate = GatePhaseResult(
+        passed=True,
+        confirmed_dt="DT-16",
+        confirmed_confidence=0.9,
+        review_reasons=[],
+        llm_suggested_dt="DT-16",
+        llm_confidence=0.9,
+        min_route_confidence=0.65,
+        org_auto_route_min_confidence=0.65,
+        dt_min_route_confidence=0.65,
+    )
+    ocr = OcrArtifact(text="Random OCR with no statement keywords")
+    result = apply_recognition_mode_gate(
+        gate,
+        invoice=_invoice(),
+        ocr=ocr,
+        document_types=[defn],
+    )
+    assert result.passed is True
+    assert result.confirmed_dt == "DT-16"
+
+
+def test_backfill_llm_dt_from_policy_signals_only() -> None:
+    from app.schemas.ocr_artifact import OcrArtifact
+    from app.schemas.rule_book_config import AiClassificationConfig
+    from app.services.classification.document_type_recognition_migration import (
+        sync_classifier_from_recognition,
+    )
+    from app.services.invoice.invoice_pipeline_phases import backfill_llm_dt_from_policy
+
+    signals_dt = sync_classifier_from_recognition(
+        DocumentTypeDefinition.model_validate(
+            {
+                "code": "DT-03",
+                "title": "Tax Invoice",
+                "shortTitle": "Tax Inv",
+                "klass": "Transactional",
+                "posting": "Yes",
+                "recognition_mode": "signals",
+                "recognition_signals": ["heading_invoice"],
+                "llm_prompt": "",
+                "routeTarget": "Purchase Management",
+                "enabled": True,
+                "requiredFields": ["vendor", "invoice_no", "total"],
+                "minRouteConfidence": 0.5,
+            }
+        )
+    )
+    prompt_dt = DocumentTypeDefinition.model_validate(
+        {
+            "code": "DT-16",
+            "title": "Bank Statement",
+            "shortTitle": "Bank Stmt",
+            "klass": "Non-transactional",
+            "posting": "No",
+            "recognition_mode": "prompt",
+            "recognition_signals": [],
+            "llm_prompt": "Bank statement",
+            "routeTarget": "Vault",
+            "enabled": True,
+            "minRouteConfidence": 0.5,
+        }
+    )
+    ocr = OcrArtifact(text="TAX INVOICE\nAcme\nINV-1\nTotal 100.00")
+    llm, detail = backfill_llm_dt_from_policy(
+        None,
+        invoice=_invoice(),
+        ocr=ocr,
+        document_types=[signals_dt, prompt_dt],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.5),
+    )
+    assert detail is not None
+    assert llm is not None
+    assert (llm.suggested_dt or "").upper() == "DT-03"

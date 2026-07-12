@@ -128,18 +128,40 @@ async def store_ocr_artifact(
     file_hash: str,
     ocr: OcrArtifact,
 ) -> InvoiceOcrArtifact:
+    payload = dict(ocr.payload_json or {})
+    if ocr.layout_kv:
+        payload["layout_kv"] = dict(ocr.layout_kv)
+    if ocr.text:
+        # Persist full OCR for merge/grounding; text_excerpt stays a short preview
+        payload["ocr_text"] = ocr.text
     row = InvoiceOcrArtifact(
         tenant_id=tenant_id,
         invoice_id=invoice_id,
         file_hash=file_hash,
         di_model=ocr.di_model,
-        payload_json=ocr.payload_json,
+        payload_json=payload,
         text_excerpt=(ocr.text or "")[:8000],
     )
     session.add(row)
     await session.flush()
     return row
 
+
+async def clear_ocr_artifacts_for_invoice(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    invoice_id: int,
+) -> int:
+    """Drop cached OCR rows so reprocess re-runs layout parse with current filters."""
+    result = await session.execute(
+        delete(InvoiceOcrArtifact).where(
+            InvoiceOcrArtifact.tenant_id == tenant_id,
+            InvoiceOcrArtifact.invoice_id == invoice_id,
+        )
+    )
+    await session.flush()
+    return int(result.rowcount or 0)
 
 async def upsert_ocr_artifact_enrichment(
     session: AsyncSession,
@@ -149,9 +171,16 @@ async def upsert_ocr_artifact_enrichment(
     file_hash: str,
     ocr: OcrArtifact,
 ) -> InvoiceOcrArtifact | None:
-    """Persist DI enrich fields onto the latest OCR artifact row (or create one)."""
+    """Persist DI enrich / route metadata onto the latest OCR artifact row (or create one)."""
     payload = dict(ocr.payload_json or {})
-    if "invoice_fields" not in payload:
+    has_enrich = (
+        "invoice_fields" in payload
+        or "extraction_route" in payload
+        or "finance_document" in payload
+        or "di_line_items" in payload
+        or "field_resolution" in payload
+    )
+    if not has_enrich:
         return None
     row = await _latest_ocr_artifact(
         session,
@@ -168,20 +197,56 @@ async def upsert_ocr_artifact_enrichment(
             ocr=ocr,
         )
     merged_payload = dict(row.payload_json or {})
-    for key in (
+    enrich_keys = (
         "invoice_fields",
         "di_line_items",
         "di_scalar_sources",
         "di_party_fields",
         "di_party_sources",
         "table_line_items",
+        "layout_table_grids",
         "document_heading",
-    ):
+        "extraction_route",
+        "extraction_strategy",
+        "di_models_run",
+        "layout_line_mode",
+        "field_confidence",
+        "field_sources",
+        "di_line_item_confidences",
+        "review_hints",
+        "fallback_reason",
+        "route_reasons",
+        "finance_document",
+        "raw_di",
+        "di_model",
+        "provider",
+        "layout_kv",
+        "ocr_text",
+        "field_resolution",
+        "resolved_contracts",
+        "selected_keys",
+        "semantic_fields",
+    )
+    for key in enrich_keys:
         if key in payload:
             merged_payload[key] = payload[key]
+    # When DI/layout line items refresh, drop stale counterparts that were not rewritten
+    if "di_line_items" in payload and "table_line_items" not in payload:
+        # Prefer keeping existing table rows unless grids supersede
+        pass
+    if payload.get("layout_table_grids") or payload.get("di_line_items"):
+        # Replace stale table rows when new structured rows are present
+        if "table_line_items" in payload:
+            merged_payload["table_line_items"] = payload["table_line_items"]
+        if "layout_table_grids" in payload:
+            merged_payload["layout_table_grids"] = payload["layout_table_grids"]
+    if ocr.layout_kv:
+        merged_payload["layout_kv"] = dict(ocr.layout_kv)
+    if ocr.text:
+        merged_payload["ocr_text"] = ocr.text
     row.payload_json = merged_payload
     row.di_model = ocr.di_model or row.di_model
-    if ocr.text and not (row.text_excerpt or "").strip():
+    if ocr.text:
         row.text_excerpt = (ocr.text or "")[:8000]
     await session.flush()
     return row
@@ -207,15 +272,18 @@ async def load_cached_ocr(
     row = (await session.execute(stmt)).scalar_one_or_none()
     if row is None:
         return None
-    text = row.text_excerpt or ""
+    payload = dict(row.payload_json or {}) if isinstance(row.payload_json, dict) else {}
+    text = str(payload.get("ocr_text") or "").strip() or (row.text_excerpt or "")
+    raw_kv = payload.get("layout_kv") if isinstance(payload.get("layout_kv"), dict) else {}
+    layout_kv = {str(k): str(v) for k, v in raw_kv.items() if v is not None}
     return OcrArtifact(
         success=True,
         sparse=len(text.strip()) < 80,
         text=text,
         text_length=len(text),
         di_model=row.di_model or "",
-        layout_kv=(row.payload_json or {}).get("layout_kv", {}) if isinstance(row.payload_json, dict) else {},
-        payload_json=row.payload_json or {},
+        layout_kv=layout_kv,
+        payload_json=payload,
     )
 
 

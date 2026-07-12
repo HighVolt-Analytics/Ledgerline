@@ -14,12 +14,12 @@ import { Card } from "@/components/ui/card";
 import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
 import { matchesListSearch } from "@/lib/listSearch";
-import { money } from "@/lib/format";
+import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import { expenseRulesToCategories, invoiceToBusinessExpense } from "@/lib/routePageAdapters";
-import { fmtAud } from "@/lib/v4MockData";
 
 const ROUTE_TARGET = "Expenses Management";
 const CLAIM_POLL_MS = 15_000;
@@ -27,6 +27,8 @@ const CLAIM_POLL_MS = 15_000;
 export function ExpensesManagementPage() {
   const { data: routed = [], isLoading, refetch } = useRoutedInvoices(ROUTE_TARGET);
   const { data: ruleBook } = useRuleBookConfig();
+  const { data: institution } = useInstitutionSettings();
+  const institutionCurrency = (institution?.currency || "SGD").trim().toUpperCase() || "SGD";
   const actions = useExpenseClaimActions(ROUTE_TARGET);
 
   const claims = useMemo(() => routed.map(invoiceToBusinessExpense), [routed]);
@@ -60,13 +62,15 @@ export function ExpensesManagementPage() {
     const postedInvoices = routed.filter(
       (inv) => inv.status === "processed" && inv.published_to_ledger
     );
-    const postedTotal = postedInvoices.reduce(
-      (s, inv) => s + (parseFloat(String(inv.total ?? 0)) || 0),
-      0
-    );
+    const postedByCurrency: Record<string, number> = {};
+    for (const inv of postedInvoices) {
+      const code = (inv.currency || institutionCurrency).trim().toUpperCase() || institutionCurrency;
+      postedByCurrency[code] =
+        (postedByCurrency[code] ?? 0) + (parseFloat(String(inv.total ?? 0)) || 0);
+    }
     const pending = claims.filter((e) => e.state === "In Review").length;
-    return { open, postedCount: postedInvoices.length, postedTotal, pending };
-  }, [claims, routed]);
+    return { open, postedCount: postedInvoices.length, postedByCurrency, pending };
+  }, [claims, routed, institutionCurrency]);
 
   const selected = claims.find((e) => e.id === selectedId) ?? claims[0] ?? null;
   const filteredClaims = useMemo(
@@ -107,7 +111,7 @@ export function ExpensesManagementPage() {
         <KpiCard label="Open expenses" value={isLoading ? "…" : kpis.open} testid="kpi-biz-open" />
         <KpiCard
           label="Posted this month"
-          value={isLoading ? "…" : fmtAud(kpis.postedTotal)}
+          value={isLoading ? "…" : formatMoneyByCurrencyMap(kpis.postedByCurrency)}
           testid="kpi-biz-posted"
           delta={
             !isLoading && kpis.postedCount > 0
@@ -193,7 +197,12 @@ export function ExpensesManagementPage() {
                       ) : null}
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="tnum font-semibold text-sm">{money(claim.amount)}</div>
+                      <div className="tnum font-semibold text-sm">
+                        {money(
+                          claim.amount,
+                          invoiceById.get(Number(claim.id))?.currency || institutionCurrency
+                        )}
+                      </div>
                       <div className="text-[10px] text-muted-foreground">{claim.submittedTs}</div>
                     </div>
                   </div>

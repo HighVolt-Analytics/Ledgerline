@@ -12,9 +12,11 @@ from app.schemas.llm_document import LlmDocumentResult
 from app.services.classification.document_type_catalog import get_document_type_definition, min_route_confidence_for_document_type
 from app.services.classification.document_type_playbook_service import (
     effective_extraction_fields,
-    resolve_definition_for_invoice,
 )
-from app.services.classification.document_type_rule_engine import build_document_classifier_context
+from app.services.classification.document_type_rule_engine import (
+    is_prompt_recognition_mode,
+    is_signals_recognition_mode,
+)
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.tenant.tenant_org_context import OrgContext, infer_perspective
 
@@ -91,11 +93,21 @@ def compare_classification(
     if llm.confidence < llm_route_min:
         reasons.append(ReviewReason.LLM_LOW_CONF)
 
-    if policy.winner_confidence < policy_route_min or not policy.winner_dt:
-        reasons.append(ReviewReason.POLICY_LOW_CONF)
+    defn = (
+        get_document_type_definition(llm.suggested_dt, document_types=document_types)
+        if llm.suggested_dt
+        else None
+    )
+    prompt_mode = defn is not None and is_prompt_recognition_mode(defn)
+    signals_mode = defn is not None and is_signals_recognition_mode(defn)
 
-    if llm.suggested_dt and policy.winner_dt and llm.suggested_dt != policy.winner_dt:
-        reasons.append(ReviewReason.DT_MISMATCH)
+    # Prompt-mode DTs have no recognition classifier — confirm on LLM alone.
+    # Signals-mode DTs require policy agreement with OCR recognition signals.
+    if signals_mode:
+        if policy.winner_confidence < policy_route_min or not policy.winner_dt:
+            reasons.append(ReviewReason.POLICY_LOW_CONF)
+        if llm.suggested_dt and policy.winner_dt and llm.suggested_dt != policy.winner_dt:
+            reasons.append(ReviewReason.DT_MISMATCH)
 
     perspective = infer_perspective(
         org=org,
@@ -109,19 +121,18 @@ def compare_classification(
     if perspective == "unknown":
         reasons.append(ReviewReason.PERSPECTIVE_AMBIGUOUS)
 
-    defn = (
-        get_document_type_definition(llm.suggested_dt, document_types=document_types)
-        if llm.suggested_dt
-        else None
-    )
     if defn is not None and (defn.posting or "").strip().lower() == "conditional":
         reasons.append(ReviewReason.NEVER_AUTO_POLICY)
 
     confirmed_dt = ""
     confirmed_conf = 0.0
-    if not reasons and llm.suggested_dt and policy.winner_dt:
-        confirmed_dt = llm.suggested_dt
-        confirmed_conf = round(min(llm.confidence, policy.winner_confidence), 4)
+    if not reasons and llm.suggested_dt:
+        if prompt_mode:
+            confirmed_dt = llm.suggested_dt
+            confirmed_conf = round(llm.confidence, 4)
+        elif policy.winner_dt:
+            confirmed_dt = llm.suggested_dt
+            confirmed_conf = round(min(llm.confidence, policy.winner_confidence), 4)
 
     decision.confirmed_dt = confirmed_dt
     decision.confirmed_confidence = confirmed_conf
@@ -178,4 +189,3 @@ def _audit_detail(
         "pre_extract": pre_extract,
         "org_auto_route_min_confidence": org_auto_route_min,
     }
-

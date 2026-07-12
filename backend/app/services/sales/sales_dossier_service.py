@@ -18,7 +18,7 @@ from app.services.sales.sales_match_service import (
     load_sales_order_for_invoice,
     sales_order_to_response,
 )
-from app.services.sales.so_reference import is_plausible_so_reference
+from app.services.sales.so_reference import invoice_so_reference_equals, is_plausible_so_reference
 
 _ROLE_LABELS = {
     SalesDocumentType.SO.value: "Sales Order",
@@ -64,7 +64,7 @@ async def _latest_uploads_for_roles(
             select(Invoice)
             .where(
                 Invoice.tenant_id == tenant_id,
-                Invoice.so_reference == so_reference,
+                invoice_so_reference_equals(so_reference),
                 Invoice.sales_document_type.in_(roles),
                 Invoice.status.not_in(_ACTIVE_STATUSES),
             )
@@ -186,10 +186,17 @@ async def build_sales_dossier(
     if dn_doc_id is None and commercial_match_id is not None:
         loaded_commercial = await _invoice_by_id(session, commercial_match_id)
         if loaded_commercial and loaded_commercial.invoice_no:
+            from app.services.extraction.invoice_no_sanitizer import INVOICE_NO_SECONDARY_KEY
+
+            extracted = loaded_commercial.extracted_fields or {}
+            secondary = (
+                extracted.get(INVOICE_NO_SECONDARY_KEY) if isinstance(extracted, dict) else None
+            )
             dn_matches = await find_dn_invoices_by_invoice_no(
                 session,
                 tenant_id=invoice.tenant_id,
                 invoice_no=loaded_commercial.invoice_no,
+                invoice_no_secondary=str(secondary) if secondary else None,
                 sales_order_id=so_row.id if so_row is not None else None,
             )
             if dn_matches:

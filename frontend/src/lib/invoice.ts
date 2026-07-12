@@ -116,7 +116,9 @@ export function extractionFieldLabelForInvoice(
   inv: Pick<Invoice, "route_target">,
   tax?: { label: string; rate: number | null },
 ): string {
-  if (key === "gst" && tax) return `${tax.label} ${tax.rate ?? 0}%`;
+  if (key === "gst" && tax) {
+    return tax.rate != null ? `${tax.label} ${tax.rate}%` : tax.label;
+  }
   if (key === "vendor") return counterpartyLabel(inv);
   return extractionFieldLabel(key);
 }

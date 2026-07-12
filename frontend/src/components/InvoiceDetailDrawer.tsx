@@ -27,7 +27,7 @@ import {
 import {
   DocumentSummaryPreview,
   formatMoney,
-  taxMeta,
+  invoiceTaxMeta,
 } from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
 import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
@@ -38,7 +38,9 @@ import { PageTabs } from "@/components/PageTabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { documentDisplayRef, vendorInvoiceNo } from "@/lib/format";
+import { Select } from "@/components/ui/select";
+import { documentDisplayRef, normalizeCurrencyCode, vendorInvoiceNo } from "@/lib/format";
+import { COUNTRIES } from "@/lib/settingsData";
 import { fetchDossierById, type DossierSummaryWithInvoiceId } from "@/lib/dossierApi";
 import {
   lineItemGridTemplateColumns,
@@ -252,6 +254,8 @@ function updateDraftExtractionField(
       return { ...draft, gst: value };
     case "total":
       return { ...draft, total: value };
+    case "currency":
+      return { ...draft, currency: value.trim().toUpperCase() };
     default:
       if (!isPresetExtractionFieldKey(key)) {
         return {
@@ -304,10 +308,62 @@ type InvoiceEditDraft = {
   subtotal: string;
   gst: string;
   total: string;
+  currency: string;
   line_items: LineItemDraft[];
   skip_steps: ProcessingOverrideStepId[];
   extractedFields: Record<string, string>;
 };
+
+const COMMON_CURRENCY_OPTIONS: { value: string; label: string }[] = [
+  { value: "AUD", label: "AUD (A$)" },
+  { value: "USD", label: "USD (US$)" },
+  { value: "EUR", label: "EUR (€)" },
+  { value: "GBP", label: "GBP (£)" },
+  { value: "SGD", label: "SGD (S$)" },
+  { value: "INR", label: "INR (₹)" },
+  { value: "NZD", label: "NZD (NZ$)" },
+  { value: "AED", label: "AED (د.إ)" },
+  { value: "CAD", label: "CAD (C$)" },
+  { value: "JPY", label: "JPY (¥)" },
+  { value: "CHF", label: "CHF" },
+  { value: "HKD", label: "HKD (HK$)" },
+  { value: "MYR", label: "MYR (RM)" },
+  { value: "THB", label: "THB (฿)" },
+  { value: "PHP", label: "PHP (₱)" },
+  { value: "CNY", label: "CNY (¥)" },
+];
+
+const INVOICE_CURRENCY_OPTIONS = Array.from(
+  new Map(
+    [
+      ...COMMON_CURRENCY_OPTIONS,
+      ...COUNTRIES.map((country) => ({
+        value: country.currency,
+        label: `${country.currency} (${country.symbol})`,
+      })),
+    ].map((option) => [option.value, option])
+  ).values()
+);
+
+/** True ISO 4217 alpha-3 only — symbols like "$" do not count as set. */
+function isSetInvoiceCurrency(currency: string | null | undefined): boolean {
+  const code = normalizeCurrencyCode(currency);
+  return Boolean(code && /^[A-Z]{3}$/.test(code));
+}
+
+function invoiceCurrencySymbol(inv: InvoiceDetails): string | null {
+  if (isSetInvoiceCurrency(inv.currency)) return null;
+  const symbol = (inv.extracted_fields?.currency_symbol ?? "").trim();
+  return symbol || null;
+}
+
+function currencyNeedsSelection(inv: InvoiceDetails): boolean {
+  return !isSetInvoiceCurrency(inv.currency);
+}
+
+function canSelectCurrency(inv: InvoiceDetails): boolean {
+  return currencyNeedsSelection(inv) || canEdit(inv.status);
+}
 
 function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = []): InvoiceEditDraft {
   const extractedFields: Record<string, string> = {};
@@ -326,6 +382,7 @@ function draftFromInvoice(inv: InvoiceDetails, extractionFieldKeys: string[] = [
     subtotal: strField(inv.subtotal),
     gst: strField(inv.gst),
     total: strField(inv.total),
+    currency: strField(inv.currency).toUpperCase(),
     line_items: inv.line_items.map((line) => ({
       id: line.id,
       description: strField(line.description),
@@ -585,6 +642,7 @@ function payloadFromDraft(draft: InvoiceEditDraft, inv?: InvoiceDetails): Invoic
     subtotal: optionalText(draft.subtotal),
     gst: optionalText(draft.gst),
     total: optionalText(draft.total),
+    currency: optionalText(draft.currency)?.toUpperCase() ?? null,
     line_items: draft.line_items.map((line) => ({
       id: line.id,
       description: optionalText(line.description),
@@ -638,6 +696,56 @@ function FieldRow({
           readOnly={!editable}
         />
         {!editable && <ConfidenceDot value={confidence} />}
+      </div>
+    </div>
+  );
+}
+
+function CurrencySelectRow({
+  value,
+  symbolHint,
+  required,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  symbolHint?: string | null;
+  required?: boolean;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const selected = (value || "").trim().toUpperCase();
+  return (
+    <div className="grid grid-cols-[120px_1fr] gap-3 items-center">
+      <label className="text-xs text-muted-foreground">
+        Currency{required ? " *" : ""}
+      </label>
+      <div className="min-w-0 space-y-1">
+        <Select
+          value={selected}
+          disabled={disabled}
+          onValueChange={onChange}
+          options={INVOICE_CURRENCY_OPTIONS}
+          placeholder={
+            symbolHint
+              ? `Select ISO code (amounts show as ${symbolHint})`
+              : "Select currency"
+          }
+          className={cn(
+            "w-full",
+            required && !selected && "border-destructive"
+          )}
+          data-testid="invoice-currency-select"
+        />
+        {required && !selected ? (
+          <p className="text-[11px] text-destructive">
+            Currency could not be extracted — select one for this invoice.
+          </p>
+        ) : symbolHint && !selected ? (
+          <p className="text-[11px] text-muted-foreground">
+            Detected symbol {symbolHint}; confirm the ISO currency code.
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -1012,9 +1120,10 @@ export function InvoiceDetailDrawer({
 
   if (!mounted) return null;
 
-  const tax = inv ? taxMeta(inv.currency) : { label: "Tax", rate: null };
+  const tax = inv ? invoiceTaxMeta(inv) : { label: "Tax", rate: null };
+  const currencySymbolHint = inv ? invoiceCurrencySymbol(inv) : null;
   const fmt = (v: string | null | undefined) =>
-    inv ? formatMoney(v, inv.currency) : "—";
+    inv ? formatMoney(v, inv.currency, undefined, currencySymbolHint) : "—";
   const sourceKind = inv?.email_sender ? "email" : "upload";
   const docNumber = inv ? (vendorInvoiceNo(inv) ?? documentDisplayRef(inv)) : "—";
 
@@ -1039,6 +1148,28 @@ export function InvoiceDetailDrawer({
       onUpdated?.();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleCurrencySelect(code: string) {
+    if (!inv || !canSelectCurrency(inv)) return;
+    const next = code.trim().toUpperCase();
+    if (!next || !/^[A-Z]{3}$/.test(next)) return;
+    if (editing && draft) {
+      setDraft({ ...draft, currency: next });
+    }
+    setActionBusy(true);
+    try {
+      const updated = await api.updateInvoice(inv.id, { currency: next });
+      setInv(updated);
+      if (editing) {
+        setDraft(draftFromInvoice(updated, extractionFieldKeys));
+      }
+      onUpdated?.();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Currency update failed");
     } finally {
       setActionBusy(false);
     }
@@ -1395,6 +1526,20 @@ export function InvoiceDetailDrawer({
                       }
                     />
                     {extractionFieldKeys.length === 0 ? (
+                      <div className="space-y-3">
+                        {currencyNeedsSelection(inv) ? (
+                          <CurrencySelectRow
+                            value={
+                              editing && draft
+                                ? draft.currency
+                                : strField(inv.currency).toUpperCase()
+                            }
+                            symbolHint={currencySymbolHint}
+                            required
+                            disabled={actionBusy}
+                            onChange={(value) => void handleCurrencySelect(value)}
+                          />
+                        ) : null}
                       <p className="text-sm text-muted-foreground">
                         {classificationConfirmRequired
                           ? "Document type needs review. Confirm or change DT above, then reprocess."
@@ -1404,8 +1549,31 @@ export function InvoiceDetailDrawer({
                               ? `${resolvedDocumentTypeCode} is not in your Rule Book catalogue. Add that document type or confirm a valid DT.`
                               : `No extraction fields configured for ${resolvedDocumentTypeCode}. Set key extraction fields on the document type in Rule Book.`}
                       </p>
+                      </div>
                     ) : (
-                      extractionFieldKeys.map((key) => (
+                      <>
+                        {(currencyNeedsSelection(inv) ||
+                          editing ||
+                          extractionFieldKeys.includes("currency")) && (
+                          <CurrencySelectRow
+                            value={
+                              editing && draft
+                                ? draft.currency
+                                : strField(inv.currency).toUpperCase()
+                            }
+                            symbolHint={currencySymbolHint}
+                            required={currencyNeedsSelection(inv)}
+                            disabled={
+                              actionBusy ||
+                              (!currencyNeedsSelection(inv) &&
+                                !canEdit(inv.status) &&
+                                !editing)
+                            }
+                            onChange={(value) => void handleCurrencySelect(value)}
+                          />
+                        )}
+                        {extractionFieldKeys.map((key) =>
+                          key === "currency" ? null : (
                         <div key={key}>
                           <FieldRow
                             label={extractionFieldDisplayLabel(key, inv, tax)}
@@ -1449,7 +1617,9 @@ export function InvoiceDetailDrawer({
                             </button>
                           ) : null}
                         </div>
-                      ))
+                          )
+                        )}
+                      </>
                     )}
                   </div>
                 )}
@@ -1549,7 +1719,13 @@ export function InvoiceDetailDrawer({
                       <span className="tnum">{fmt(inv.total)}</span>
                     </div>
                     <p className="text-xs text-muted-foreground pt-2">
-                      Tax account: GST Paid. Currency {inv.currency}.
+                      Tax account: {tax.label} Paid. Currency{" "}
+                      {(isSetInvoiceCurrency(inv.currency)
+                        ? normalizeCurrencyCode(inv.currency)
+                        : null) ||
+                        currencySymbolHint ||
+                        "not set"}
+                      .
                     </p>
                   </div>
                 )}

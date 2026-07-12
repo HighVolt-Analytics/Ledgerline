@@ -102,7 +102,8 @@ def test_compare_mismatch_goes_to_review(document_types) -> None:
     )
     if llm.suggested_dt != policy.winner_dt:
         assert decision.auto_eligible is False
-        assert any(r.value == "DT_MISMATCH" for r in decision.review_reasons)
+        reason_values = {r.value for r in decision.review_reasons}
+        assert reason_values & {"DT_MISMATCH", "POLICY_LOW_CONF"}
 
 
 def test_compare_llm_invalid(document_types) -> None:
@@ -118,3 +119,69 @@ def test_compare_llm_invalid(document_types) -> None:
         org=OrgContext(),
     )
     assert decision.auto_eligible is False
+
+
+def test_compare_prompt_mode_confirms_without_policy_winner(document_types) -> None:
+    from app.schemas.classification_decision import PolicyScoreResult
+
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.VALIDATING)
+    parsed = InvoiceData(document_text="Monthly bank statement for account 123")
+    policy = PolicyScoreResult(winner_dt="", winner_confidence=0.0, scores=[])
+    llm = LlmDocumentResult(
+        suggested_dt="DT-16",
+        confidence=0.95,
+        reasoning="Matches bank statement prompt",
+        seller=LlmParty(name="Westpac"),
+        buyer=LlmParty(name="Acme Pty Ltd"),
+        perspective="purchase",
+    )
+    org = OrgContext(legal_name="Acme Pty Ltd", abn="12345678901", default_perspective="buyer")
+    decision = compare_classification(
+        llm=llm,
+        policy=policy,
+        invoice=inv,
+        parsed=parsed,
+        document_types=document_types,
+        org=org,
+    )
+    assert decision.auto_eligible is True
+    assert decision.confirmed_dt == "DT-16"
+    assert not any(r.value in {"POLICY_LOW_CONF", "DT_MISMATCH"} for r in decision.review_reasons)
+
+
+def test_compare_signals_mode_requires_policy_agreement(document_types) -> None:
+    from app.schemas.classification_decision import PolicyScoreResult
+
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.VALIDATING, vendor="X")
+    parsed = InvoiceData(vendor="X", document_text="TAX INVOICE\nTotal 100")
+    policy = PolicyScoreResult(winner_dt="", winner_confidence=0.0, scores=[])
+    llm = LlmDocumentResult(
+        suggested_dt="DT-03",
+        confidence=0.95,
+        reasoning="tax invoice",
+        seller=LlmParty(name="Vendor"),
+        buyer=LlmParty(name="Acme Pty Ltd"),
+        perspective="purchase",
+    )
+    org = OrgContext(legal_name="Acme Pty Ltd", abn="12345678901", default_perspective="buyer")
+    decision = compare_classification(
+        llm=llm,
+        policy=policy,
+        invoice=inv,
+        parsed=parsed,
+        document_types=document_types,
+        org=org,
+    )
+    assert decision.auto_eligible is False
+    assert any(r.value == "POLICY_LOW_CONF" for r in decision.review_reasons)
+
+
+def test_policy_scorer_ignores_prompt_mode_dts(document_types) -> None:
+    inv = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.VALIDATING)
+    parsed = InvoiceData(document_text="Monthly bank statement only")
+    result = score_all_enabled_dts(
+        invoice=inv,
+        parsed=parsed,
+        document_types=document_types,
+    )
+    assert result.winner_dt != "DT-16"

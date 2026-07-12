@@ -129,7 +129,21 @@
     ],
     "field_overrides": {},
     "azure_di_profile": "prebuilt-invoice",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "due_date",
+      "abn",
+      "invoice_date",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-05": {
     "required_fields": [
@@ -157,7 +171,21 @@
     ],
     "field_overrides": {},
     "azure_di_profile": "prebuilt-invoice",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "due_date",
+      "abn",
+      "invoice_date",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-06": {
     "required_fields": [
@@ -204,7 +232,22 @@
     ],
     "field_overrides": {},
     "azure_di_profile": "prebuilt-invoice",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "abn",
+      "invoice_date",
+      "due_date",
+      "po_reference",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-08": {
     "required_fields": [
@@ -233,7 +276,21 @@
     ],
     "field_overrides": {},
     "azure_di_profile": "prebuilt-invoice",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "total",
+      "due_date",
+      "abn",
+      "invoice_no",
+      "invoice_date",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-09": {
     "required_fields": [
@@ -251,8 +308,23 @@
     "negative_hints": [],
     "cross_field_rules": [],
     "field_overrides": {},
-    "azure_di_profile": "",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "azure_di_profile": "prebuilt-invoice",
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "abn",
+      "invoice_date",
+      "due_date",
+      "po_reference",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-10": {
     "required_fields": [
@@ -290,8 +362,23 @@
     "negative_hints": [],
     "cross_field_rules": [],
     "field_overrides": {},
-    "azure_di_profile": "",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "azure_di_profile": "prebuilt-invoice",
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "abn",
+      "invoice_date",
+      "due_date",
+      "po_reference",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-12": {
     "required_fields": [
@@ -318,7 +405,21 @@
     ],
     "field_overrides": {},
     "azure_di_profile": "prebuilt-invoice",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "total",
+      "due_date",
+      "abn",
+      "invoice_no",
+      "invoice_date",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-13": {
     "required_fields": [],
@@ -440,8 +541,23 @@
     "negative_hints": [],
     "cross_field_rules": [],
     "field_overrides": {},
-    "azure_di_profile": "",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "azure_di_profile": "prebuilt-invoice",
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "abn",
+      "invoice_date",
+      "due_date",
+      "po_reference",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-20": {
     "required_fields": [
@@ -460,8 +576,23 @@
     "negative_hints": [],
     "cross_field_rules": [],
     "field_overrides": {},
-    "azure_di_profile": "",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "azure_di_profile": "prebuilt-invoice",
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "po_reference",
+      "abn",
+      "invoice_date",
+      "due_date",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-21": {
     "required_fields": [
@@ -480,8 +611,22 @@
     "negative_hints": [],
     "cross_field_rules": [],
     "field_overrides": {},
-    "azure_di_profile": "",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "azure_di_profile": "prebuilt-invoice",
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "due_date",
+      "abn",
+      "invoice_date",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-22": {
     "required_fields": [],
@@ -572,7 +717,22 @@
     ],
     "field_overrides": {},
     "azure_di_profile": "prebuilt-invoice",
-    "fallback_if_unknown_subtype": "generic_financial_document"
+    "fallback_if_unknown_subtype": "generic_financial_document",
+    "extraction_fields": [
+      "vendor",
+      "invoice_no",
+      "total",
+      "due_date",
+      "abn",
+      "invoice_date",
+      "po_reference",
+      "subtotal",
+      "gst",
+      "currency",
+      "billing_address",
+      "cost_centre",
+      "line_items"
+    ]
   },
   "DT-27": {
     "required_fields": [],

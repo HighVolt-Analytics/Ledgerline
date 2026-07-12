@@ -58,7 +58,7 @@ def build_dossier_match_summary(
     total_deviation = _money(match.total_deviation)
     return DossierMatchSummaryResponse(
         status=match.status,
-        currency=(currency or "SGD").strip() or "SGD",
+        currency=(currency or "").strip(),
         po_number=(po_row.po_number or "").strip() or None,
         po_qty=_money(po_qty) if po_qty is not None else None,
         po_unit_price=_money(po_unit) if po_unit is not None else None,
@@ -107,7 +107,7 @@ def match_summary_from_audit_detail(
     total_deviation = _audit_money(detail, "total_deviation") or 0.0
     return DossierMatchSummaryResponse(
         status=status,
-        currency=(currency or "SGD").strip() or "SGD",
+        currency=(currency or "").strip(),
         po_number=str(detail.get("po_number") or "").strip() or None,
         po_qty=_audit_money(detail, "po_qty"),
         po_unit_price=_audit_money(detail, "po_unit_price"),
@@ -224,7 +224,7 @@ def enrich_match_pipeline_step(
     if match_summary is None and match_log_detail:
         match_summary = match_summary_from_audit_detail(
             match_log_detail,
-            currency=str(match_log_detail.get("currency") or "SGD"),
+            currency=str(match_log_detail.get("currency") or ""),
         )
     if match_summary is None:
         return pipeline

@@ -234,13 +234,13 @@ def _three_way_match_audit_detail(
     inv_qty: float | None = None
     inv_unit: float | None = None
     invoice_no: str | None = None
-    currency = "SGD"
+    currency = ""
     if inv is not None:
         qty, unit, _ = _invoice_qty_and_price(inv)
         inv_qty = float(qty)
         inv_unit = float(unit)
         invoice_no = inv.invoice_no
-        currency = (inv.currency or "SGD").strip() or "SGD"
+        currency = (inv.currency or "").strip()
     return {
         "so_present": so.so_document_id is not None,
         "dn_present": dn is not None,
@@ -921,10 +921,15 @@ async def resolve_ar_match_context(
     invoice_no = (invoice.invoice_no or "").strip()
     dn_candidates: list[Invoice] = []
     if invoice_no:
+        from app.services.extraction.invoice_no_sanitizer import INVOICE_NO_SECONDARY_KEY
+
+        extracted = invoice.extracted_fields or {}
+        secondary = extracted.get(INVOICE_NO_SECONDARY_KEY) if isinstance(extracted, dict) else None
         dn_candidates = await find_dn_invoices_by_invoice_no(
             session,
             tenant_id=invoice.tenant_id,
             invoice_no=invoice_no,
+            invoice_no_secondary=str(secondary) if secondary else None,
             include_linked=True,
         )
 

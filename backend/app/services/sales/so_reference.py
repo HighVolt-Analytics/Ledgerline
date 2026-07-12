@@ -63,6 +63,21 @@ def effective_so_reference(so: str | None) -> str | None:
     return None
 
 
+def normalize_so_link_token(so: str | None) -> str:
+    """Case-folded SO key for sibling / dossier linkage."""
+    return (so or "").strip().upper()
+
+
+def invoice_so_reference_equals(so_reference: str):
+    """SQLAlchemy predicate: Invoice.so_reference equals token case-insensitively."""
+    from sqlalchemy import func
+
+    from app.models.invoice import Invoice
+
+    token = normalize_so_link_token(so_reference)
+    return func.upper(func.coalesce(Invoice.so_reference, "")) == token
+
+
 def extract_so_reference_from_text(text: str | None) -> str | None:
     """Best-effort SO number from OCR body (sales-order layouts)."""
     if not text or not text.strip():

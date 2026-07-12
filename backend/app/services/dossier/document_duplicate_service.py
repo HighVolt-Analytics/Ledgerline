@@ -66,6 +66,32 @@ def normalize_invoice_number(value: str | None) -> str:
     return cleaned
 
 
+def _invoice_data_dup_tokens(data: InvoiceData) -> set[str]:
+    from app.services.extraction.invoice_no_sanitizer import (
+        INVOICE_NO_SECONDARY_KEY,
+        invoice_no_dup_tokens_from_values,
+    )
+
+    secondary = None
+    extracted = data.extracted_fields or {}
+    if isinstance(extracted, dict):
+        secondary = extracted.get(INVOICE_NO_SECONDARY_KEY)
+    return invoice_no_dup_tokens_from_values(data.invoice_no, secondary)
+
+
+def _invoice_row_dup_tokens(row: Invoice) -> set[str]:
+    from app.services.extraction.invoice_no_sanitizer import (
+        INVOICE_NO_SECONDARY_KEY,
+        invoice_no_dup_tokens_from_values,
+    )
+
+    secondary = None
+    extracted = row.extracted_fields or {}
+    if isinstance(extracted, dict):
+        secondary = extracted.get(INVOICE_NO_SECONDARY_KEY)
+    return invoice_no_dup_tokens_from_values(row.invoice_no, secondary)
+
+
 async def normalized_invoice_number_duplicate_exists(
     session: AsyncSession,
     data: InvoiceData,
@@ -73,8 +99,8 @@ async def normalized_invoice_number_duplicate_exists(
     tenant_id: int,
     exclude_id: int | None = None,
 ) -> Invoice | None:
-    target = normalize_invoice_number(data.invoice_no)
-    if not target or not (data.vendor or "").strip():
+    targets = _invoice_data_dup_tokens(data)
+    if not targets or not (data.vendor or "").strip():
         return None
 
     vendor_key = data.vendor.strip().lower()
@@ -91,7 +117,7 @@ async def normalized_invoice_number_duplicate_exists(
         stmt = stmt.where(Invoice.id != exclude_id)
 
     for row in (await session.execute(stmt)).scalars().all():
-        if normalize_invoice_number(row.invoice_no) == target:
+        if _invoice_row_dup_tokens(row) & targets:
             return row
     return None
 

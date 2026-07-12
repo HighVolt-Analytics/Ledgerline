@@ -16,16 +16,16 @@ import { useEmployeeMasters } from "@/hooks/useMasterData";
 import { useExpenseClaimActions } from "@/hooks/useExpenseClaimActions";
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRoutedInvoices } from "@/hooks/useRoutedInvoices";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
 import { matchesListSearch } from "@/lib/listSearch";
-import { money } from "@/lib/format";
+import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import {
   employeeBudgetRows,
   invoiceToTeamClaim,
   teamRulesToCategories,
 } from "@/lib/routePageAdapters";
-import { fmtAud } from "@/lib/v4MockData";
 
 const ROUTE_TARGET = "Team Expenses";
 const CLAIM_POLL_MS = 15_000;
@@ -43,6 +43,8 @@ export function TeamExpensesPage() {
   const { data: routed = [], isLoading, refetch } = useRoutedInvoices(ROUTE_TARGET);
   const { data: employees = [] } = useEmployeeMasters();
   const { data: ruleBook } = useRuleBookConfig();
+  const { data: institution } = useInstitutionSettings();
+  const institutionCurrency = (institution?.currency || "SGD").trim().toUpperCase() || "SGD";
   const actions = useExpenseClaimActions(ROUTE_TARGET);
 
   const claims = useMemo(() => routed.map(invoiceToTeamClaim), [routed]);
@@ -72,17 +74,25 @@ export function TeamExpensesPage() {
     const postedInvoices = routed.filter(
       (inv) => inv.status === "processed" && inv.published_to_ledger
     );
-    const postedTotal = postedInvoices.reduce(
-      (s, inv) => s + (parseFloat(String(inv.total ?? 0)) || 0),
-      0
-    );
+    const postedByCurrency: Record<string, number> = {};
+    for (const inv of postedInvoices) {
+      const code = (inv.currency || institutionCurrency).trim().toUpperCase() || institutionCurrency;
+      postedByCurrency[code] =
+        (postedByCurrency[code] ?? 0) + (parseFloat(String(inv.total ?? 0)) || 0);
+    }
     const pending = claims.filter((e) => e.state === "In Review").length;
     const teamBudgets = budgets.filter((b) => b.period === "Monthly" && b.category === "All categories");
     const totalBudget = teamBudgets.reduce((s, b) => s + b.monthlyBudget, 0);
     const totalUsed = teamBudgets.reduce((s, b) => s + b.used, 0);
     const util = totalBudget > 0 ? Math.round((totalUsed / totalBudget) * 100) : 0;
-    return { open, postedCount: postedInvoices.length, postedTotal, pending, util };
-  }, [claims, budgets, routed]);
+    return {
+      open,
+      postedCount: postedInvoices.length,
+      postedByCurrency,
+      pending,
+      util,
+    };
+  }, [claims, budgets, routed, institutionCurrency]);
 
   const selected = claims.find((e) => e.id === selectedId) ?? claims[0] ?? null;
   const filteredClaims = useMemo(
@@ -130,7 +140,7 @@ export function TeamExpensesPage() {
         />
         <KpiCard
           label="Posted This Month"
-          value={isLoading ? "…" : fmtAud(kpis.postedTotal)}
+          value={isLoading ? "…" : formatMoneyByCurrencyMap(kpis.postedByCurrency)}
           testid="kpi-exp-approved"
           delta={
             !isLoading && kpis.postedCount > 0
@@ -222,7 +232,12 @@ export function TeamExpensesPage() {
                       ) : null}
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="tnum font-semibold text-sm">{fmtAud(claim.amount)}</div>
+                      <div className="tnum font-semibold text-sm">
+                        {money(
+                          claim.amount,
+                          invoiceById.get(Number(claim.id))?.currency || institutionCurrency
+                        )}
+                      </div>
                       <div className="text-[10px] text-muted-foreground">{claim.submittedTs}</div>
                     </div>
                   </div>
@@ -303,10 +318,14 @@ export function TeamExpensesPage() {
                         <td className="px-3 py-2.5 text-muted-foreground">{row.owner}</td>
                         <td className="px-3 py-2.5 text-muted-foreground">{row.period}</td>
                         <td className="px-3 py-2.5 text-right tnum">
-                          {money(row.monthlyBudget)}
+                          {money(row.monthlyBudget, institutionCurrency)}
                         </td>
-                        <td className="px-3 py-2.5 text-right tnum">{money(row.used)}</td>
-                        <td className="px-3 py-2.5 text-right tnum">{money(remaining)}</td>
+                        <td className="px-3 py-2.5 text-right tnum">
+                          {money(row.used, institutionCurrency)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tnum">
+                          {money(remaining, institutionCurrency)}
+                        </td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-2">
                             <BudgetUtilBar used={row.used} total={row.monthlyBudget} />
@@ -347,13 +366,15 @@ export function TeamExpensesPage() {
                   <div>
                     Receipt required over{" "}
                     <span className="tnum text-foreground">
-                      {fmtAud(cat.requiresReceiptOver)}
+                      {money(cat.requiresReceiptOver, institutionCurrency)}
                     </span>
                   </div>
                   <div>
                     Auto-approve under{" "}
                     <span className="tnum text-foreground">
-                      {cat.autoApproveUnder > 0 ? fmtAud(cat.autoApproveUnder) : "—"}
+                      {cat.autoApproveUnder > 0
+                        ? money(cat.autoApproveUnder, institutionCurrency)
+                        : "—"}
                     </span>
                   </div>
                   <div className="pt-1 italic">{cat.policyNote}</div>

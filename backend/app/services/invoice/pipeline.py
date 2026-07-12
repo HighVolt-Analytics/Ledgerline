@@ -72,7 +72,7 @@ from app.services.extraction.document_ai_provider import (
     extract_fields,
 )
 from app.services.invoice.invoice_pipeline_phases import (
-    apply_user_defined_classifier_gate,
+    apply_recognition_mode_gate,
     backfill_llm_dt_from_policy,
     reconcile_llm_dt_with_heading,
     evaluate_confidence_gate,
@@ -939,7 +939,11 @@ async def _apply_parsed_to_invoice(
         _apply_parsed_scalar(invoice, "total", plausible_money(parsed.total))
         from app.services.extraction.gst_rate import resolve_gst_rate_percent
 
-        _apply_parsed_scalar(invoice, "gst_rate", resolve_gst_rate_percent(parsed, allow_inference=False))
+        _apply_parsed_scalar(
+            invoice,
+            "gst_rate",
+            resolve_gst_rate_percent(parsed, allow_inference=True),
+        )
         if _scalar_field_empty(invoice.currency):
             invoice.currency = parsed.currency
         if _scalar_field_empty(invoice.document_text):
@@ -1007,7 +1011,7 @@ async def _apply_parsed_to_invoice(
     invoice.total = plausible_money(parsed.total)
     from app.services.extraction.gst_rate import resolve_gst_rate_percent
 
-    invoice.gst_rate = resolve_gst_rate_percent(parsed, allow_inference=False)
+    invoice.gst_rate = resolve_gst_rate_percent(parsed, allow_inference=True)
     invoice.currency = parsed.currency
     from app.services.extraction.document_text import cap_document_text
     from app.services.purchase.po_reference import ensure_invoice_po_reference, extract_po_reference_from_text
@@ -1631,7 +1635,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             ai_cfg=ai_cfg,
             provider_token=provider_token,
         )
-        gate_result = apply_user_defined_classifier_gate(
+        gate_result = apply_recognition_mode_gate(
             gate_result,
             invoice=invoice,
             ocr=ocr,
@@ -1763,13 +1767,18 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     if extract_result.di_enrich_detail:
         await log_event(
             session,
-            "di_invoice_enrich",
+            "di_route_enrich",
             invoice_id=invoice.id,
             detail=extract_result.di_enrich_detail,
         )
     llm_result = extract_result.llm
     ocr = extract_result.ocr
-    if invoice.file_hash and (ocr.payload_json or {}).get("invoice_fields"):
+    if invoice.file_hash and (
+        (ocr.payload_json or {}).get("invoice_fields")
+        or (ocr.payload_json or {}).get("extraction_route")
+        or (ocr.payload_json or {}).get("finance_document")
+        or (ocr.payload_json or {}).get("di_line_items")
+    ):
         from app.services.classification.classification_learning_service import (
             upsert_ocr_artifact_enrichment,
         )
@@ -1969,6 +1978,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         parsed=parsed,
         invoice=loaded,
         confirmed_dt=confirmed_dt,
+        ocr_payload=dict(ocr.payload_json or {}) if ocr else None,
     )
     await log_event(
         session,

@@ -19,7 +19,7 @@ from app.services.extraction.azure_foundry_vision_client import (
     read_for_classification_azure_foundry,
 )
 from app.services.extraction.di_extract_service import (
-    enrich_ocr_with_invoice_model,
+    enrich_ocr_for_route,
     read_layout_for_classification,
 )
 from app.services.extraction.document_intelligence import is_di_enabled
@@ -153,33 +153,38 @@ async def extract_fields(
         (d for d in document_types if (d.code or "").strip().upper() == dt_token),
         None,
     )
+    # Route-aware DI enrich for every LLM provider when DI is configured so
+    # invoice_fields / semantic_fields / layout grids are present for merge.
+    enriched = ocr
+    di_detail: dict[str, object] | None = None
+    if is_di_enabled() and path.is_file():
+        enriched, di_detail = await asyncio.to_thread(
+            enrich_ocr_for_route,
+            ocr,
+            path,
+            confirmed_dt=dt_token,
+            dt_definition=dt_definition,
+        )
     if provider == DocumentAiProvider.GEMINI_VISION:
         llm = await extract_fields_gemini(
-            ocr,
+            enriched,
             path,
             org=org,
             document_types=document_types,
             confirmed_dt=confirmed_dt,
             few_shots=few_shots,
         )
-        return ExtractFieldsResult(llm=llm, ocr=ocr)
+        return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
         llm = await extract_fields_azure_foundry(
-            ocr,
+            enriched,
             path,
             org=org,
             document_types=document_types,
             confirmed_dt=confirmed_dt,
             few_shots=few_shots,
         )
-        return ExtractFieldsResult(llm=llm, ocr=ocr)
-    enriched, di_detail = await asyncio.to_thread(
-        enrich_ocr_with_invoice_model,
-        ocr,
-        path,
-        confirmed_dt=dt_token,
-        dt_definition=dt_definition,
-    )
+        return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
     llm = await extract_document_fields(
         enriched,
         org=org,

@@ -95,6 +95,28 @@ def test_extract_key_value_fields_from_layout() -> None:
     assert fields.get("po_reference") == "PO-44871"
 
 
+def test_normalize_layout_kv_dict_maps_display_labels() -> None:
+    from app.services.extraction.layout_field_extractor import normalize_layout_kv_dict
+
+    assert normalize_layout_kv_dict(
+        {"Invoice No": "INV-1", "Date of issue": "1 Jan 2026", "Total": "10.00"}
+    ) == {
+        "invoice_no": "INV-1",
+        "invoice_date": "1 Jan 2026",
+        "total": "10.00",
+    }
+
+
+def test_extract_key_value_fields_same_line_labels() -> None:
+    fields = extract_key_value_fields(
+        None,
+        "Invoice No: INV-9911\nVendor: Harbour Supplies\nDue Date: 30/06/2026\n",
+    )
+    assert fields.get("invoice_no") == "INV-9911"
+    assert fields.get("vendor") == "Harbour Supplies"
+    assert "30/06/2026" in (fields.get("due_date") or "")
+
+
 def test_infer_doc_family_hint_po() -> None:
     layout = DocumentLayoutResult(
         content="PURCHASE ORDER",

@@ -62,7 +62,7 @@ def test_map_di_document_vendor_abn_not_customer() -> None:
         {
             "VendorName": _FakeField("Acme Pty Ltd"),
             "VendorTaxId": _FakeField("12 345 678 901"),
-            "CustomerName": _FakeField("Buyer Co"),
+            "CustomerName": _FakeField("Highvolt Pty Ltd"),
             "CustomerTaxId": _FakeField("98 765 432 109"),
             "InvoiceId": _FakeField("INV-1"),
             "InvoiceTotal": _FakeField("110.00"),
@@ -71,7 +71,7 @@ def test_map_di_document_vendor_abn_not_customer() -> None:
     data = _map_di_document(doc)
     assert data.vendor == "Acme Pty Ltd"
     assert data.abn == "12345678901"
-    assert data.extracted_fields.get("buyer_name") == "Buyer Co"
+    assert data.extracted_fields.get("buyer_name") == "Highvolt Pty Ltd"
     assert data.extracted_fields.get("buyer_tax_id") == "98765432109"
     assert data.extracted_fields.get("seller_name") == "Acme Pty Ltd"
 
@@ -89,8 +89,11 @@ def test_map_di_document_no_currency_default() -> None:
 
 
 def test_prebuilt_invoice_scalars_active() -> None:
-    assert prebuilt_invoice_scalars_active({"invoice_fields": {}})
+    assert not prebuilt_invoice_scalars_active({"invoice_fields": {}})
     assert not prebuilt_invoice_scalars_active({})
+    assert prebuilt_invoice_scalars_active(
+        {"invoice_fields": {"vendor": "Acme", "total": "10.00"}}
+    )
 
 
 def test_resolve_scalars_from_ocr_payload() -> None:

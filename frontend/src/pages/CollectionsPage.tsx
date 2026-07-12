@@ -12,7 +12,7 @@ import { useCollections } from "@/hooks/useCollections";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { apiCollectionToRecord } from "@/lib/collectionsQueue";
-import { money } from "@/lib/format";
+import { formatMoneyByCurrencyMap } from "@/lib/format";
 import { collectionsKpis } from "@/lib/routePageAdapters";
 import type { CollectionTab } from "@/lib/v4MockData";
 
@@ -72,7 +72,7 @@ export function CollectionsPage() {
         <KpiCard label="Open receivables" value={isLoading || collectionsBlocked ? "…" : kpis.count} testid="kpi-collections-open" />
         <KpiCard
           label="Outstanding"
-          value={isLoading ? "…" : money(kpis.total)}
+          value={isLoading ? "…" : formatMoneyByCurrencyMap(kpis.totalByCurrency)}
           testid="kpi-collections-total"
         />
         <KpiCard label="Overdue" value={isLoading ? "…" : kpis.overdue} testid="kpi-collections-overdue" />

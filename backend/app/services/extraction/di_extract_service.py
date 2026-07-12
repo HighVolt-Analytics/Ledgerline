@@ -5,10 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import get_settings
+from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.ocr_artifact import OcrArtifact
 from app.services.extraction.document_intelligence import is_di_enabled, parse_with_document_intelligence
 from app.services.extraction.document_layout_service import analyze_layout_via_di
-from app.services.extraction.extraction_field_values import di_scalar_fields_populated, prebuilt_invoice_scalars_active
+from app.services.extraction.extraction_field_values import (
+    di_scalar_fields_populated,
+    prebuilt_invoice_scalars_active,
+)
 from app.services.extraction.extraction_orchestrator import (
     invoice_data_to_payload_fields,
     should_run_prebuilt_invoice_di,
@@ -19,6 +23,11 @@ from app.services.extraction.layout_field_extractor import (
     layout_hint_suggests_invoice,
 )
 from app.services.extraction.line_items_parser import serialize_line_items
+from app.services.extraction.routing import (
+    get_extraction_strategy,
+    route_document_for_extraction,
+)
+from app.services.extraction.routing.decision import DocumentRouteDecision
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -125,12 +134,13 @@ def build_di_enrich_audit_detail(
     confirmed_dt: str = "",
     dt_definition=None,
     failure_reason: str | None = None,
+    decision: DocumentRouteDecision | None = None,
 ) -> dict[str, object]:
-    """Audit payload for prebuilt-invoice enrich attempt."""
-    from app.services.extraction.extraction_field_values import di_scalar_fields_populated
-
+    """Audit payload for DI enrich attempt (route-aware)."""
     settings = get_settings()
-    attempted = True
+    if decision is None:
+        decision = route_document_for_extraction(confirmed_dt, dt_definition)
+
     if not is_di_enabled():
         return {
             "attempted": False,
@@ -138,15 +148,25 @@ def build_di_enrich_audit_detail(
             "failure_reason": "not_configured",
             "di_model": before.di_model,
             "fields_populated": [],
+            "extraction_route": decision.route.value,
+            "confirmed_dt": decision.confirmed_dt,
         }
-    if not should_run_prebuilt_invoice_di(confirmed_dt, dt_definition):
+    if not decision.uses_invoice_model:
+        # Not a failure — route intentionally skipped the invoice model
+        skip = failure_reason or "layout_primary"
         return {
             "attempted": False,
-            "success": False,
-            "failure_reason": "skipped_profile",
+            "success": True,
+            "failure_reason": None,
+            "skip_reason": skip,
             "di_model": before.di_model,
             "fields_populated": [],
+            "extraction_route": decision.route.value,
+            "extraction_strategy": (after.payload_json or {}).get("extraction_strategy"),
+            "confirmed_dt": decision.confirmed_dt,
+            "route_reasons": list(decision.reasons),
         }
+
     after_payload = after.payload_json or {}
     before_payload = before.payload_json or {}
     enriched = "invoice_fields" in after_payload and "invoice_fields" not in before_payload
@@ -155,13 +175,47 @@ def build_di_enrich_audit_detail(
     populated = sorted(di_scalar_fields_populated(after_payload)) if enriched else []
     success = bool(populated) or enriched
     return {
-        "attempted": attempted,
+        "attempted": True,
         "success": success,
         "failure_reason": failure_reason,
         "di_model": after.di_model or settings.azure_di_model_id or "prebuilt-invoice",
         "fields_populated": populated,
-        "confirmed_dt": (confirmed_dt or "").strip().upper(),
+        "confirmed_dt": decision.confirmed_dt or (confirmed_dt or "").strip().upper(),
+        "extraction_route": decision.route.value,
+        "extraction_strategy": after_payload.get("extraction_strategy"),
+        "route_reasons": list(decision.reasons),
     }
+
+
+def enrich_ocr_for_route(
+    ocr: OcrArtifact,
+    file_path: str | Path,
+    *,
+    confirmed_dt: str = "",
+    dt_definition: DocumentTypeDefinition | None = None,
+    decision: DocumentRouteDecision | None = None,
+) -> tuple[OcrArtifact, dict[str, object]]:
+    """Run the route-specific extraction strategy after document type is confirmed."""
+    path = Path(file_path)
+    if decision is None:
+        decision = route_document_for_extraction(
+            confirmed_dt,
+            dt_definition,
+            ocr=ocr,
+            file_path=path if path.is_file() else None,
+        )
+    strategy = get_extraction_strategy(decision.route)
+    result = strategy.enrich(ocr, path, decision)
+    logger.info(
+        "di_route_enrich",
+        route=decision.route.value,
+        strategy=strategy.config.name,
+        success=result.audit.get("success"),
+        failure_reason=result.audit.get("failure_reason"),
+        skip_reason=result.audit.get("skip_reason"),
+        models_run=result.models_run,
+    )
+    return result.ocr, result.audit
 
 
 def enrich_ocr_with_invoice_model(
@@ -171,64 +225,17 @@ def enrich_ocr_with_invoice_model(
     confirmed_dt: str = "",
     dt_definition=None,
 ) -> tuple[OcrArtifact, dict[str, object]]:
-    """Run prebuilt-invoice DI after document type is confirmed (extract phase)."""
-    settings = get_settings()
-    path = Path(file_path)
-    if not path.is_file() or not is_di_enabled():
-        return ocr, build_di_enrich_audit_detail(
-            ocr, ocr, confirmed_dt=confirmed_dt, dt_definition=dt_definition, failure_reason="not_configured"
-        )
-    if not should_run_prebuilt_invoice_di(confirmed_dt, dt_definition):
-        return ocr, build_di_enrich_audit_detail(
-            ocr, ocr, confirmed_dt=confirmed_dt, dt_definition=dt_definition, failure_reason="skipped_profile"
-        )
+    """
+    Backward-compatible enrich entry point.
 
-    from app.services.extraction.line_items_parser import resolve_usable_line_items_from_payload
-
-    if resolve_usable_line_items_from_payload(dict(ocr.payload_json or {})):
-        return ocr, build_di_enrich_audit_detail(
-            ocr,
-            ocr,
-            confirmed_dt=confirmed_dt,
-            dt_definition=dt_definition,
-            failure_reason="skipped_existing_line_items",
-        )
-
-    content_type = _content_type_for_path(path)
-    invoice_data = parse_with_document_intelligence(path, content_type=content_type)
-    if invoice_data is None:
-        return ocr, build_di_enrich_audit_detail(
-            ocr, ocr, confirmed_dt=confirmed_dt, dt_definition=dt_definition, failure_reason="no_documents"
-        )
-
-    text = ocr.text or ""
-    if not text.strip() and invoice_data.document_text:
-        text = invoice_data.document_text.strip()
-
-    layout_kv = dict(ocr.layout_kv)
-    payload = dict(ocr.payload_json)
-    payload["invoice_fields"] = invoice_data_to_payload_fields(invoice_data)
-    if invoice_data.line_items:
-        payload["di_line_items"] = serialize_line_items(invoice_data.line_items)
-    from app.services.extraction.extraction_field_values import attach_di_metadata_to_payload
-
-    attach_di_metadata_to_payload(payload, invoice_data)
-    payload["di_model"] = settings.azure_di_model_id or "prebuilt-invoice"
-    payload["provider"] = "azure_di"
-
-    text_length = len(text)
-    sparse = text_length < settings.ocr_min_text_chars
-    enriched = OcrArtifact(
-        success=True,
-        sparse=sparse,
-        text=text,
-        text_length=text_length,
-        di_model=str(payload["di_model"]),
-        layout_kv=layout_kv,
-        payload_json=payload,
-    )
-    return enriched, build_di_enrich_audit_detail(
-        ocr, enriched, confirmed_dt=confirmed_dt, dt_definition=dt_definition
+    Delegates to route-aware enrich_ocr_for_route. Layout line items no longer
+    block prebuilt-invoice for invoice-family routes.
+    """
+    return enrich_ocr_for_route(
+        ocr,
+        file_path,
+        confirmed_dt=confirmed_dt,
+        dt_definition=dt_definition,
     )
 
 

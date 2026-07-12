@@ -12,7 +12,7 @@ from app.schemas.purchase import PurchaseDossierMember, PurchaseDossierResponse,
 from app.services.dossier.dossier_match_service import build_dossier_match_summary
 from app.services.shared.file_storage import has_stored_path, stored_file_available
 from app.services.dossier.document_ref_service import dossier_public_id
-from app.services.purchase.po_reference import is_plausible_po_reference
+from app.services.purchase.po_reference import invoice_po_reference_equals, is_plausible_po_reference
 from app.services.purchase.purchase_linking_service import find_grn_invoices_by_invoice_no
 from app.services.purchase.purchase_match_service import (
     _latest_grn,
@@ -65,7 +65,7 @@ async def _latest_uploads_for_roles(
             select(Invoice)
             .where(
                 Invoice.tenant_id == tenant_id,
-                Invoice.po_reference == po_reference,
+                invoice_po_reference_equals(po_reference),
                 Invoice.purchase_document_type.in_(roles),
                 Invoice.status.not_in(_ACTIVE_STATUSES),
             )
@@ -187,10 +187,17 @@ async def build_purchase_dossier(
     if grn_doc_id is None and commercial_match_id is not None:
         loaded_commercial = await _invoice_by_id(session, commercial_match_id)
         if loaded_commercial and loaded_commercial.invoice_no:
+            from app.services.extraction.invoice_no_sanitizer import INVOICE_NO_SECONDARY_KEY
+
+            extracted = loaded_commercial.extracted_fields or {}
+            secondary = (
+                extracted.get(INVOICE_NO_SECONDARY_KEY) if isinstance(extracted, dict) else None
+            )
             grn_matches = await find_grn_invoices_by_invoice_no(
                 session,
                 tenant_id=invoice.tenant_id,
                 invoice_no=loaded_commercial.invoice_no,
+                invoice_no_secondary=str(secondary) if secondary else None,
                 purchase_order_id=po_row.id if po_row is not None else None,
             )
             if grn_matches:
@@ -237,7 +244,7 @@ async def build_purchase_dossier(
             po_row=po_row,
             commercial=commercial_for_match,
             match=match,
-            currency=(invoice.currency or "SGD").strip() or "SGD",
+            currency=(invoice.currency or "").strip(),
             po_doc=po_doc,
             grn_doc=grn_doc,
         )

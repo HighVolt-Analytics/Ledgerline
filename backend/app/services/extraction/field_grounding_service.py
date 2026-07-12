@@ -176,7 +176,12 @@ def _label_proximate_grounded(value: str, ocr_text: str, field_key: str) -> bool
     return False
 
 
-def _substring_grounded_in_ocr(value: str, ocr_text: str) -> bool:
+def _substring_grounded_in_ocr(
+    value: str,
+    ocr_text: str,
+    *,
+    field_key: str | None = None,
+) -> bool:
     token = str(value).strip()
     if _is_placeholder(token):
         return False
@@ -188,7 +193,16 @@ def _substring_grounded_in_ocr(value: str, ocr_text: str) -> bool:
 
     if re.fullmatch(r"[\d\s.\-/,]+", token):
         digits = "".join(c for c in token if c.isdigit())
-        if len(digits) >= 8:
+        # Invoice / PO refs are often 4–7 digits; money/other digit runs stay stricter
+        ref_keys = {
+            "invoice_no",
+            "po_reference",
+            "so_reference",
+            "grn_reference",
+            "abn",
+        }
+        min_digits = 4 if (field_key or "") in ref_keys else 8
+        if len(digits) >= min_digits:
             if re.search(rf"(?<!\d){re.escape(digits)}(?!\d)", ocr_text):
                 return True
         return False
@@ -241,7 +255,7 @@ def value_grounded_in_ocr(
                 grounding_debug[key] = "label_proximate"
             return True
 
-    if _substring_grounded_in_ocr(token, ocr_text):
+    if _substring_grounded_in_ocr(token, ocr_text, field_key=key):
         if grounding_debug is not None and key:
             grounding_debug[key] = "substring_fallback"
         return True
@@ -376,25 +390,111 @@ def ground_extracted_fields_map(
     return grounded
 
 
+_UNIQUE_TAX_ID_KINDS: frozenset[str] = frozenset({"abn", "gstin", "uen", "ird"})
+
+
+def _country_for_unique_tax_id_kind(kind: str) -> str | None:
+    """Return country when exactly one jurisdiction pack owns ``kind``."""
+    from app.jurisdiction.loader import get_pack_registry
+
+    token = (kind or "").strip().lower()
+    if not token or token not in _UNIQUE_TAX_ID_KINDS:
+        return None
+    matches = [
+        country
+        for country, pack in get_pack_registry().packs.items()
+        if (pack.tax_id_kind or "").strip().lower() == token
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def currency_implied_by_grounded_tax_id(
+    data: InvoiceData,
+    ocr_text: str | None,
+) -> str | None:
+    """ISO currency implied by a grounded unique tax-ID kind, else None."""
+    abn_raw = (data.abn or "").strip()
+    if not abn_raw or not ocr_text:
+        return None
+    if not value_grounded_in_ocr(abn_raw, ocr_text, field_key="abn"):
+        return None
+
+    for kind in sorted(_UNIQUE_TAX_ID_KINDS):
+        if not is_acceptable_tax_id(abn_raw, tax_id_kind=kind):
+            continue
+        country = _country_for_unique_tax_id_kind(kind)
+        if not country:
+            continue
+        from app.jurisdiction.packs import jurisdiction_pack_for_country
+
+        return jurisdiction_pack_for_country(country).currency.upper()
+    return None
+
+
+def currency_passes_grounding(
+    data: InvoiceData,
+    ocr_text: str | None,
+    *,
+    org_country: str | None = None,
+    grounding_debug: dict[str, str] | None = None,
+) -> bool:
+    """
+    True when currency may be kept.
+
+    Empty always passes. Otherwise require literal ISO in OCR, or a match to
+    the currency implied by a grounded unique tax ID (ABN→AUD, etc.).
+    Tenant org_country may only corroborate an already-matching tax-ID signal.
+    """
+    currency = (data.currency or "").strip().upper()
+    if not currency:
+        return True
+
+    if value_grounded_in_ocr(currency, ocr_text, field_key="currency"):
+        if grounding_debug is not None:
+            grounding_debug["currency"] = "literal_ocr"
+        return True
+
+    implied = currency_implied_by_grounded_tax_id(data, ocr_text)
+    if implied and currency == implied:
+        if grounding_debug is not None:
+            note = "tax_id_context"
+            if org_country:
+                from app.jurisdiction.packs import jurisdiction_pack_for_country
+
+                tenant_ccy = jurisdiction_pack_for_country(org_country).currency.upper()
+                if tenant_ccy == implied:
+                    note = "tax_id_context+org_corroborated"
+            grounding_debug["currency"] = note
+        return True
+    return False
+
+
 def ground_invoice_scalars(
     data: InvoiceData,
     ocr_text: str | None,
     *,
     skip_keys: frozenset[str] | None = None,
+    org_country: str | None = None,
 ) -> InvoiceData:
     """Clear scalar fields that cannot be verified in OCR."""
     skip = skip_keys or frozenset()
     updates: dict[str, object] = {}
     grounding_debug: dict[str, str] = {}
 
-    from app.services.extraction.invoice_no_sanitizer import split_invoice_no_and_date
+    from app.services.extraction.invoice_no_sanitizer import (
+        apply_invoice_no_secondary,
+        split_invoice_no_parts_and_date,
+    )
 
     invoice_no = data.invoice_no
     if "invoice_no" not in skip and invoice_no:
-        clean_no, bleed_date = split_invoice_no_and_date(str(invoice_no))
+        clean_no, secondary, bleed_date = split_invoice_no_parts_and_date(str(invoice_no))
         if clean_no != invoice_no:
             updates["invoice_no"] = clean_no
             invoice_no = clean_no
+        current_extracted = dict(data.extracted_fields or {})
         if (
             bleed_date is not None
             and data.invoice_date is None
@@ -403,6 +503,13 @@ def ground_invoice_scalars(
             updates["invoice_date"] = bleed_date
         if invoice_no and not _invoice_no_grounded(str(invoice_no), ocr_text):
             updates["invoice_no"] = None
+            updates["extracted_fields"] = apply_invoice_no_secondary(current_extracted, None)
+        else:
+            if secondary and not _invoice_no_grounded(str(secondary), ocr_text):
+                secondary = None
+            updated_extracted = apply_invoice_no_secondary(current_extracted, secondary)
+            if updated_extracted != current_extracted:
+                updates["extracted_fields"] = updated_extracted
 
     for field in ("po_reference", "cost_centre", "vendor", "billing_address", "document_heading"):
         if field in skip:
@@ -437,16 +544,9 @@ def ground_invoice_scalars(
     ):
         updates["due_date"] = None
 
-    currency = (data.currency or "").strip()
-    if "currency" not in skip and currency and not value_grounded_in_ocr(
-        currency,
-        ocr_text,
-        field_key="currency",
-        grounding_debug=grounding_debug,
-    ):
-        updates["currency"] = ""
-
+    # Ground ABN before currency so tax-ID context can keep a matching ISO code.
     abn_raw = (data.abn or "").strip()
+    working = data
     if abn_raw and "abn" not in skip:
         if not value_grounded_in_ocr(
             abn_raw,
@@ -455,15 +555,28 @@ def ground_invoice_scalars(
             grounding_debug=grounding_debug,
         ):
             updates["abn"] = None
+            working = replace(data, abn=None)
         else:
             stored = storage_abn(abn_raw)
             if not stored or not is_acceptable_tax_id(abn_raw):
                 if not is_acceptable_tax_id(abn_raw):
                     updates["abn"] = None
+                    working = replace(data, abn=None)
                 else:
                     updates["abn"] = stored
+                    working = replace(data, abn=stored)
             else:
                 updates["abn"] = stored
+                working = replace(data, abn=stored)
+
+    currency = (working.currency or "").strip()
+    if "currency" not in skip and currency and not currency_passes_grounding(
+        working,
+        ocr_text,
+        org_country=org_country,
+        grounding_debug=grounding_debug,
+    ):
+        updates["currency"] = ""
 
     bsb = validate_bank_bsb(data.bank_bsb, ocr_text)
     account = validate_bank_account(data.bank_account, ocr_text)
@@ -497,6 +610,7 @@ def ground_parsed_fields(
     ocr_payload: dict[str, object] | None = None,
     *,
     trace: object | None = None,
+    org_country: str | None = None,
 ) -> InvoiceData:
     """Filter and ground parsed extraction output before OCR backfill."""
     from app.services.extraction.extraction_field_values import (
@@ -505,14 +619,13 @@ def ground_parsed_fields(
         prebuilt_invoice_scalars_active,
     )
     from app.services.extraction.line_items_parser import (
-        deserialize_line_items,
         di_line_items_usable,
         document_has_charge_lines,
         document_has_line_item_table,
     )
 
     filtered = filter_parsed_to_requested_keys(parsed, selected_keys)
-    grounded = ground_invoice_scalars(filtered, ocr_text)
+    grounded = ground_invoice_scalars(filtered, ocr_text, org_country=org_country)
     if prebuilt_invoice_scalars_active(ocr_payload):
         grounded = clear_llm_scalars_for_di_populated_fields(
             grounded, selected_keys, ocr_payload, ocr_text=ocr_text

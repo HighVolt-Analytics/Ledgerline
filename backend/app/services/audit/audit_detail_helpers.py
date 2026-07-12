@@ -188,13 +188,13 @@ def three_way_match_audit_detail(
     inv_qty: float | None = None
     inv_unit: float | None = None
     invoice_no: str | None = None
-    currency = "SGD"
+    currency = ""
     if inv is not None:
         qty, unit, _ = _invoice_qty_and_price(inv)  # type: ignore[arg-type]
         inv_qty = float(qty)
         inv_unit = float(unit)
         invoice_no = getattr(inv, "invoice_no", None)
-        currency = (getattr(inv, "currency", None) or "SGD").strip() or "SGD"
+        currency = (getattr(inv, "currency", None) or "").strip()
     return {
         "po_present": po.po_document_id is not None,
         "grn_present": grn is not None,

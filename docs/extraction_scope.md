@@ -1,5 +1,7 @@
 # Extraction scope (v1 signed-off)
 
+See also: [extraction_routing.md](extraction_routing.md) for multi-document route → strategy architecture.
+
 ## In scope
 
 - PDF, JPG, JPEG, PNG, DOCX attachments via email/WhatsApp/Viber ingest
@@ -7,6 +9,7 @@
 - File validity gate before OCR/DI
 - Shape-driven line items (qty-only vs money tables)
 - Citation grounding with supervisor_review on failure
+- Per-document-type extraction routing (`prebuilt-invoice` vs layout-primary)
 
 ## Out of scope (v1)
 

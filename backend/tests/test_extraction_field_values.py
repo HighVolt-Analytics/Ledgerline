@@ -97,12 +97,33 @@ def test_effective_extraction_field_keys_empty_uses_shipped_template_defaults() 
 
 
 def test_effective_extraction_field_keys_custom_without_config_returns_empty() -> None:
+    """Non-transactional DT with no configured fields stays empty (no invoice dump)."""
     custom = _definition(
         code="ORG-99",
         extraction_fields=[],
         required_fields=[],
     )
     assert effective_extraction_field_keys_for_dt([custom], "ORG-99") == []
+
+
+def test_effective_extraction_field_keys_transactional_empty_uses_playbook_or_commercial() -> None:
+    """Transactional DT with empty extraction_fields still gets a commercial key universe."""
+    custom = _definition(
+        code="ORG-88",
+        title="Custom goods invoice",
+        shortTitle="Custom goods",
+        klass="Transactional",
+        posting="Yes",
+        routeTarget="Purchase Management",
+        playbook_profile="standard_transactional",
+        extraction_fields=[],
+        required_fields=[],
+    )
+    keys = effective_extraction_field_keys_for_dt([custom], "ORG-88")
+    assert "vendor" in keys
+    assert "invoice_no" in keys
+    assert "total" in keys
+    assert "line_items" in keys
 
 
 def test_effective_extraction_field_keys_unknown_code_returns_empty() -> None:

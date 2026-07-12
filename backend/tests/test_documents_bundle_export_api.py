@@ -351,6 +351,52 @@ async def test_documents_bundle_export_dual_linkage_invoice_no_and_po_reference(
     assert_csv_hyperlink(row[po_col], url=vault_view_path(po_sibling.id))
 
 
+@pytest.mark.asyncio
+async def test_documents_bundle_export_po_reference_case_insensitive(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Buyer",
+        document_type_code="DT-01",
+        invoice_no="INV-CASE-BUNDLE",
+        po_reference="PO-Case-Bundle",
+        purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        route_target=ROUTE_PURCHASE,
+        invoice_date=date(2026, 7, 10),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-case-anchor",
+    )
+    po_sibling = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Supplier",
+        document_type_code="DT-02",
+        invoice_no="PO-CASE-ONLY",
+        po_reference="po-case-bundle",
+        purchase_document_type=PurchaseDocumentType.PO.value,
+        invoice_date=date(2026, 7, 8),
+        status=InvoiceStatus.PROCESSED,
+        file_hash="bundle-case-po-sibling",
+    )
+    db_session.add_all([anchor, po_sibling])
+    await db_session.commit()
+
+    res = await client.get(
+        "/api/reports/documents-bundle/export"
+        "?date_from=2026-07-01&date_to=2026-07-31"
+    )
+    assert res.status_code == 200
+    header, data = _read_csv(res.text)
+    row = next(
+        r
+        for r in data
+        if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-CASE-BUNDLE"
+    )
+    po_col = header.index("PO (supporting)")
+    assert_csv_hyperlink(row[po_col], url=vault_view_path(po_sibling.id))
+
+
 def test_linked_docs_helpers_still_support_audit_export() -> None:
     from app.schemas.dossier import DossierLinkedDocumentResponse
 

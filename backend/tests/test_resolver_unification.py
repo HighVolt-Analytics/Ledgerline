@@ -67,3 +67,21 @@ def test_repurposed_dt13_does_not_inherit_shipped_extraction_defaults() -> None:
     )
     keys = configured_extraction_keys(defn)
     assert keys == ["invoice_no", "so_reference", "line_items"]
+
+
+def test_repurposed_packing_list_empty_fields_stays_empty() -> None:
+    """Repurposed non-transactional DT does not inherit invoice field defaults."""
+    defn = DocumentTypeDefinition.model_validate(
+        {
+            "code": "DT-13",
+            "title": "PACKING LIST",
+            "shortTitle": "PACKING LIST",
+            "klass": "Non-transactional",
+            "posting": "No",
+            "recognitionMode": "prompt",
+            "routeTarget": "Vault",
+            "enabled": True,
+            "extractionFields": [],
+        }
+    )
+    assert configured_extraction_keys(defn) == []

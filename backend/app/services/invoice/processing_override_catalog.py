@@ -146,6 +146,11 @@ def set_deferred_full_reset(invoice: Invoice) -> None:
     invoice.processing_overrides = raw
 
 
+def has_deferred_full_reset(invoice: Invoice) -> bool:
+    raw = getattr(invoice, "processing_overrides", None)
+    return isinstance(raw, dict) and bool(raw.get("deferred_full_reset"))
+
+
 def consume_deferred_full_reset(invoice: Invoice) -> bool:
     raw = getattr(invoice, "processing_overrides", None)
     if not isinstance(raw, dict):

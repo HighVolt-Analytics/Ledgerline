@@ -410,20 +410,26 @@ def post_process_parsed_data(
 
     invoice_no = data.invoice_no
     invoice_date = data.invoice_date
+    extracted_fields = dict(data.extracted_fields or {})
     if signals.has_heading_po or signals.has_heading_grn:
         invoice_no = None
     elif invoice_no:
         from app.services.extraction.invoice_no_sanitizer import (
-            split_invoice_no_and_date,
+            apply_invoice_no_secondary,
+            split_invoice_no_parts_and_date,
         )
 
-        clean_no, bleed_date = split_invoice_no_and_date(str(invoice_no))
+        clean_no, secondary, bleed_date = split_invoice_no_parts_and_date(str(invoice_no))
         invoice_no = clean_no
         if bleed_date is not None and invoice_date is None:
             invoice_date = bleed_date
+        extracted_fields = apply_invoice_no_secondary(extracted_fields, secondary)
 
     if invoice_no and not _invoice_no_sane(invoice_no):
         invoice_no = None
+        from app.services.extraction.invoice_no_sanitizer import apply_invoice_no_secondary
+
+        extracted_fields = apply_invoice_no_secondary(extracted_fields, None)
 
     due_date = data.due_date
     if signals.has_heading_po or signals.has_heading_grn:
@@ -478,6 +484,7 @@ def post_process_parsed_data(
         invoice_date=invoice_date,
         due_date=due_date,
         po_reference=po_reference or data.po_reference,
+        extracted_fields=extracted_fields,
         raw_fields=raw_fields,
     )
 
@@ -632,7 +639,7 @@ def _merge_prefer_complete(primary: InvoiceData, secondary: InvoiceData) -> Invo
         invoice_no=primary.invoice_no or secondary.invoice_no,
         invoice_date=primary.invoice_date or secondary.invoice_date,
         due_date=primary.due_date or secondary.due_date,
-        currency=primary.currency or secondary.currency or "SGD",
+        currency=primary.currency or secondary.currency or "",
         subtotal=primary.subtotal or secondary.subtotal,
         gst=primary.gst or secondary.gst,
         total=primary.total or secondary.total,
@@ -720,7 +727,7 @@ def parse_invoice(file_path: str | Path) -> ParseResult:
 
     if suffix in {".jpg", ".jpeg", ".png"}:
         text = ""
-        local = InvoiceData(currency="SGD")
+        local = InvoiceData()
         di_data = parse_with_document_intelligence(
             path, content_type=_content_type_for_path(path)
         )
@@ -897,7 +904,7 @@ def parse_invoice_for_sample(file_path: str | Path) -> ParseResult:
     di_body = (di_data.document_text or "") if di_data is not None else ""
     layout_body = (layout.content or "") if layout is not None else ""
     body_text = _richest_sample_body_text(local_extracted, read_text, layout_body, di_body)
-    local = parse_local_text(body_text) if body_text.strip() else InvoiceData(currency="SGD")
+    local = parse_local_text(body_text) if body_text.strip() else InvoiceData()
 
     if layout is not None:
         before_count = count_present_fields(local)

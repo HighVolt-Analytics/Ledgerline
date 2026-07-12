@@ -691,6 +691,57 @@ def build_llm_user_payload(
         "canonical_extraction_fields": sorted(CANONICAL_EXTRACTION_FIELD_KEYS),
         "ocr": ocr_block,
     }
+    # Attach required_fields + compact custom source hints from contracts
+    if confirmed_dt:
+        dt_token_early = confirmed_dt.strip().upper()
+        for defn in document_types:
+            if (defn.code or "").strip().upper() != dt_token_early:
+                continue
+            try:
+                from app.services.extraction.field_contract_resolver import (
+                    resolve_extraction_field_contracts_for_dt,
+                )
+                from app.services.extraction.field_contracts import (
+                    required_keys_from_contracts,
+                )
+
+                route_hint = None
+                if isinstance(payload_json, dict):
+                    route_hint = payload_json.get("extraction_route")
+                contracts = resolve_extraction_field_contracts_for_dt(
+                    document_types,
+                    dt_token_early,
+                    dt_definition=defn,
+                    route=route_hint,
+                )
+                required_keys = required_keys_from_contracts(contracts)
+                if required_keys:
+                    payload["required_fields"] = required_keys
+                custom_hints = []
+                custom_set = set(custom_keys)
+                for contract in contracts:
+                    if contract.key not in custom_set and contract.field_type.value != "custom":
+                        continue
+                    if not contract.custom_label_aliases:
+                        continue
+                    custom_hints.append(
+                        {
+                            "key": contract.key,
+                            "aliases": list(contract.custom_label_aliases),
+                            "preferred_sources": list(contract.authoritative_source_order)[:3],
+                        }
+                    )
+                if custom_hints:
+                    payload["field_source_hints"] = custom_hints
+            except Exception:  # noqa: BLE001
+                req = [
+                    str(k).strip().lower()
+                    for k in (defn.required_fields or [])
+                    if str(k or "").strip()
+                ]
+                if req:
+                    payload["required_fields"] = req
+            break
     if not di_scalars_active:
         invoice_fields = filter_invoice_fields_for_keys(
             payload_json.get("invoice_fields") if isinstance(payload_json.get("invoice_fields"), dict) else None,
@@ -1150,10 +1201,15 @@ def llm_result_to_invoice_data(
         if not _di_authoritative("invoice_no")
         else None
     )
+    secondary_no = None
     if invoice_no:
-        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+        from app.services.extraction.invoice_no_sanitizer import (
+            apply_invoice_no_secondary,
+            sanitize_invoice_no_parts,
+        )
 
-        invoice_no = sanitize_invoice_no(invoice_no)
+        invoice_no, secondary_no = sanitize_invoice_no_parts(invoice_no)
+        extracted = apply_invoice_no_secondary(extracted, secondary_no)
     invoice_date = (
         _parse_date(llm.invoice_date) if not _di_authoritative("invoice_date") else None
     )
@@ -1206,6 +1262,8 @@ def llm_result_to_invoice_data(
         },
     )
     parsed.gst_rate = resolve_gst_rate_percent(parsed, ocr_text=ocr_text, allow_inference=False)
+    if parsed.gst_rate is None:
+        parsed.gst_rate = resolve_gst_rate_percent(parsed, allow_inference=True)
     if prebuilt_invoice_scalars_active(payload) and keys_list:
         from app.services.extraction.extraction_field_values import (
             apply_di_scalars_authoritative,

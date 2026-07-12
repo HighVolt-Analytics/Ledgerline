@@ -176,3 +176,50 @@ async def test_extract_fields_provider_passes_ocr_to_foundry(tmp_path) -> None:
     call_kwargs = mock_extract.await_args
     assert call_kwargs is not None
     assert call_kwargs.args[0] is ocr
+
+
+@pytest.mark.asyncio
+async def test_extract_fields_enriches_ocr_for_foundry_when_di_enabled(tmp_path, monkeypatch) -> None:
+    pdf_path = tmp_path / "doc.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    ocr = OcrArtifact(success=True, sparse=False, text="Invoice text", text_length=12)
+    enriched = OcrArtifact(
+        success=True,
+        sparse=False,
+        text="Invoice text",
+        text_length=12,
+        payload_json={"invoice_fields": {"vendor": "Acme"}},
+    )
+    expected = LlmDocumentResult(suggested_dt="DT-01", confidence=0.9)
+
+    monkeypatch.setattr(
+        "app.services.extraction.document_ai_provider.is_di_enabled",
+        lambda: True,
+    )
+
+    with (
+        patch(
+            "app.services.extraction.document_ai_provider.enrich_ocr_for_route",
+            return_value=(enriched, {"route": "invoice"}),
+        ) as mock_enrich,
+        patch(
+            "app.services.extraction.document_ai_provider.extract_fields_azure_foundry",
+            new=AsyncMock(return_value=expected),
+        ) as mock_extract,
+    ):
+        result = await extract_fields(
+            ocr,
+            file_path=pdf_path,
+            org=OrgContext(),
+            document_types=[],
+            confirmed_dt="DT-01",
+            few_shots=None,
+            provider=DocumentAiProvider.AZURE_FOUNDRY_VISION,
+        )
+
+    mock_enrich.assert_called_once()
+    mock_extract.assert_awaited_once()
+    assert mock_extract.await_args is not None
+    assert mock_extract.await_args.args[0] is enriched
+    assert result.ocr is enriched
+    assert result.di_enrich_detail == {"route": "invoice"}

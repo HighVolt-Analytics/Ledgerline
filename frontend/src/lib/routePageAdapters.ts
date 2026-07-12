@@ -646,6 +646,7 @@ export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
     invoiceId: String(row.invoice_id),
     vendor: row.vendor ?? "—",
     amount: row.amount,
+    currency: (row.currency || "").trim().toUpperCase(),
     dueDate: row.due_date ?? "—",
     tab: row.tab as PaymentRecord["tab"],
     invoiceApprovedBy: row.invoice_approved_by ? String(row.invoice_approved_by) : "",
@@ -685,17 +686,27 @@ export function apiPaymentToRecord(row: PaymentApi): PaymentRecord {
 export function collectionsKpis(rows: CollectionRecord[], timeZone: string) {
   const open = rows.filter((c) => c.tab === "queue" || c.tab === "awaiting");
   const total = open.reduce((sum, c) => sum + c.amount, 0);
+  const totalByCurrency: Record<string, number> = {};
+  for (const c of open) {
+    const code = (c.currency || "").trim().toUpperCase();
+    totalByCurrency[code] = (totalByCurrency[code] ?? 0) + c.amount;
+  }
   const overdue = open.filter((c) => isOverdueDate(c.dueDate, timeZone)).length;
   const dueSoon = open.filter((c) => isDueWithinDays(c.dueDate, 7, timeZone)).length;
-  return { count: open.length, total, overdue, dueSoon };
+  return { count: open.length, total, totalByCurrency, overdue, dueSoon };
 }
 
 export function paymentsKpis(rows: PaymentRecord[], timeZone: string) {
   const open = rows.filter((p) => p.tab === "queue" || p.tab === "awaiting" || p.tab === "scheduled");
   const total = open.reduce((sum, p) => sum + p.amount, 0);
+  const totalByCurrency: Record<string, number> = {};
+  for (const p of open) {
+    const code = (p.currency || "").trim().toUpperCase();
+    totalByCurrency[code] = (totalByCurrency[code] ?? 0) + p.amount;
+  }
   const overdue = open.filter((p) => isOverdueDate(p.dueDate, timeZone)).length;
   const dueSoon = open.filter((p) => isDueWithinDays(p.dueDate, 7, timeZone)).length;
-  return { count: open.length, total, overdue, dueSoon };
+  return { count: open.length, total, totalByCurrency, overdue, dueSoon };
 }
 
 export function payablesKpis(invoices: Invoice[], timeZone: string) {

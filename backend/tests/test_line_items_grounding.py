@@ -50,9 +50,9 @@ def test_resolve_line_items_prefers_di_over_table() -> None:
     }
     rows = resolve_line_items_from_ocr_payload(payload)
     assert rows is not None
-    assert len(rows) == 2
+    # Invoice-family gap-fill: DI wins; unmatched layout rows are not appended
+    assert len(rows) == 1
     assert rows[0].description == "DI Widget"
-    assert any(row.description == "Table Widget" for row in rows)
 
 
 def test_document_has_product_table_from_di_payload() -> None:
@@ -177,7 +177,9 @@ def test_merge_extraction_sources_empty_when_no_table() -> None:
         line_items_grounding="unverifiable",
     )
     merged = merge_extraction_sources(parsed, ocr, dt_definition=_definition())
-    assert merged.line_items == []
+    # Ungrounded LLM rows must not survive; header lump-sum fallback may apply
+    assert not any((item.source or "") == "llm" for item in merged.line_items)
+    assert not any((item.description or "") == "LLM Wrong" for item in merged.line_items)
 
 
 def test_llm_result_skips_line_items_when_di_present() -> None:

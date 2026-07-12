@@ -74,6 +74,19 @@ def _field_value(field: Any) -> Any:
     return content
 
 
+def _field_confidence(field: Any) -> float | None:
+    """Read Azure DI field confidence when present; otherwise None."""
+    if field is None:
+        return None
+    raw = getattr(field, "confidence", None)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_abn(raw: str | None) -> str | None:
     if not raw:
         return None
@@ -88,6 +101,9 @@ def _map_di_document(doc: Any) -> InvoiceData:
 
     def get(name: str) -> Any:
         return _field_value(fields.get(name))
+
+    def conf(name: str) -> float | None:
+        return _field_confidence(fields.get(name))
 
     vendor = get("VendorName") or get("VendorAddressRecipient")
     if isinstance(vendor, str):
@@ -129,16 +145,29 @@ def _map_di_document(doc: Any) -> InvoiceData:
         party_extracted["buyer_tax_id"] = buyer_tax_id
 
     di_scalar_sources: dict[str, str] = {}
+    field_confidence: dict[str, float | None] = {}
+    field_sources: dict[str, str] = {}
     if vendor:
         di_scalar_sources["vendor"] = "VendorName" if get("VendorName") else "VendorAddressRecipient"
+        field_confidence["vendor"] = conf("VendorName") if get("VendorName") else conf(
+            "VendorAddressRecipient"
+        )
+        field_sources["vendor"] = "semantic_di"
     if vendor_tax_id:
         di_scalar_sources["abn"] = "VendorTaxId"
+        field_confidence["abn"] = conf("VendorTaxId")
+        field_sources["abn"] = "semantic_di"
 
     invoice_no = get("InvoiceId")
+    secondary_no = None
     if isinstance(invoice_no, str):
-        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+        from app.services.extraction.invoice_no_sanitizer import (
+            apply_invoice_no_secondary,
+            sanitize_invoice_no_parts,
+        )
 
-        invoice_no = sanitize_invoice_no(invoice_no.strip()) or None
+        invoice_no, secondary_no = sanitize_invoice_no_parts(invoice_no.strip())
+        party_extracted = apply_invoice_no_secondary(party_extracted, secondary_no)
 
     subtotal = _parse_decimal(get("SubTotal"))
     gst = _parse_decimal(get("TotalTax"))
@@ -147,16 +176,26 @@ def _map_di_document(doc: Any) -> InvoiceData:
     total = _parse_decimal(invoice_total if invoice_total is not None else amount_due)
     if subtotal is not None:
         di_scalar_sources["subtotal"] = "SubTotal"
+        field_confidence["subtotal"] = conf("SubTotal")
+        field_sources["subtotal"] = "semantic_di"
     if gst is not None:
         di_scalar_sources["gst"] = "TotalTax"
+        field_confidence["gst"] = conf("TotalTax")
+        field_sources["gst"] = "semantic_di"
     if total is not None:
         di_scalar_sources["total"] = "InvoiceTotal" if invoice_total is not None else "AmountDue"
+        field_confidence["total"] = (
+            conf("InvoiceTotal") if invoice_total is not None else conf("AmountDue")
+        )
+        field_sources["total"] = "semantic_di"
 
     currency_raw = get("CurrencyCode")
     currency = ""
     if isinstance(currency_raw, str) and currency_raw.strip():
         currency = currency_raw.strip().upper()
         di_scalar_sources["currency"] = "CurrencyCode"
+        field_confidence["currency"] = conf("CurrencyCode")
+        field_sources["currency"] = "semantic_di"
 
     raw_snapshot = {
         k: str(_field_value(v))
@@ -171,6 +210,8 @@ def _map_di_document(doc: Any) -> InvoiceData:
         po_ref = None
     if po_ref:
         di_scalar_sources["po_reference"] = "PurchaseOrder"
+        field_confidence["po_reference"] = conf("PurchaseOrder")
+        field_sources["po_reference"] = "semantic_di"
 
     project_code = get("ProjectCode")
     cost_center = get("CostCenter")
@@ -178,18 +219,28 @@ def _map_di_document(doc: Any) -> InvoiceData:
     if isinstance(project_code, str) and project_code.strip():
         cost_centre = project_code.strip()
         di_scalar_sources["cost_centre"] = "ProjectCode"
+        field_confidence["cost_centre"] = conf("ProjectCode")
+        field_sources["cost_centre"] = "semantic_di"
     elif isinstance(cost_center, str) and cost_center.strip():
         cost_centre = cost_center.strip()
         di_scalar_sources["cost_centre"] = "CostCenter"
+        field_confidence["cost_centre"] = conf("CostCenter")
+        field_sources["cost_centre"] = "semantic_di"
 
     inv_date = _parse_date(get("InvoiceDate"))
     due = _parse_date(get("DueDate"))
     if invoice_no:
         di_scalar_sources["invoice_no"] = "InvoiceId"
+        field_confidence["invoice_no"] = conf("InvoiceId")
+        field_sources["invoice_no"] = "semantic_di"
     if inv_date:
         di_scalar_sources["invoice_date"] = "InvoiceDate"
+        field_confidence["invoice_date"] = conf("InvoiceDate")
+        field_sources["invoice_date"] = "semantic_di"
     if due:
         di_scalar_sources["due_date"] = "DueDate"
+        field_confidence["due_date"] = conf("DueDate")
+        field_sources["due_date"] = "semantic_di"
     if party_extracted.get("billing_address"):
         addr_source = "CustomerAddress"
         if get("BillingAddress"):
@@ -197,8 +248,13 @@ def _map_di_document(doc: Any) -> InvoiceData:
         elif get("ShippingAddress"):
             addr_source = "ShippingAddress"
         di_scalar_sources["billing_address"] = addr_source
+        field_confidence["billing_address"] = conf(addr_source)
+        field_sources["billing_address"] = "semantic_di"
 
     line_items = parse_line_items_from_di_items(fields.get("Items"))
+    line_confidences = [
+        item.source_confidence for item in line_items if item.source_confidence is not None
+    ]
 
     return InvoiceData(
         vendor=vendor if isinstance(vendor, str) else None,
@@ -215,37 +271,47 @@ def _map_di_document(doc: Any) -> InvoiceData:
         cost_centre=cost_centre,
         line_items=line_items,
         extracted_fields=party_extracted,
-        raw_fields={"azure_di": raw_snapshot, "di_scalar_sources": di_scalar_sources},
+        raw_fields={
+            "azure_di": raw_snapshot,
+            "di_scalar_sources": di_scalar_sources,
+            "field_confidence": field_confidence,
+            "field_sources": field_sources,
+            "di_line_item_confidences": line_confidences,
+        },
     )
 
 
-def parse_with_document_intelligence(
+def parse_with_document_intelligence_ex(
     file_path: str | Path,
     *,
     content_type: str = "application/pdf",
-) -> InvoiceData | None:
+    model_id_override: str | None = None,
+) -> tuple[InvoiceData | None, dict[str, Any] | None]:
     """
-    Analyze a PDF with Azure prebuilt-invoice.
+    Analyze a document with Azure DI invoice (or override) model.
 
-    Returns None if DI is not configured or the API call fails.
+    Returns (InvoiceData | None, raw_snapshot | None).
     """
     if not is_di_enabled():
-        return None
+        return None, None
 
     settings = get_settings()
     path = Path(file_path)
     if not path.is_file():
         logger.warning("di_file_missing", path=str(path))
-        return None
+        return None, None
 
     try:
         from azure.ai.documentintelligence import DocumentIntelligenceClient
         from azure.core.credentials import AzureKeyCredential
     except ImportError as exc:
         logger.error("di_sdk_missing", error=str(exc))
-        return None
+        return None, None
 
-    model_id = settings.azure_di_model_id or _MODEL_ID
+    from app.services.extraction.di_raw_persist import serialize_di_analyze_result
+
+    model_id = (model_id_override or settings.azure_di_model_id or _MODEL_ID).strip()
+    raw_snapshot: dict[str, Any] | None = None
     try:
         client = DocumentIntelligenceClient(
             settings.azure_di_endpoint.rstrip("/"),
@@ -258,6 +324,7 @@ def parse_with_document_intelligence(
                 content_type=content_type,
             )
         result = poller.result()
+        raw_snapshot = serialize_di_analyze_result(result)
     except Exception as exc:
         logger.warning(
             "di_analyze_failed",
@@ -265,26 +332,44 @@ def parse_with_document_intelligence(
             model_id=model_id,
             error=str(exc),
         )
-        return None
+        return None, raw_snapshot
 
     documents = getattr(result, "documents", None) or []
     if not documents:
         logger.warning("di_no_documents", path=str(path))
-        return None
+        return None, raw_snapshot
 
     content = (getattr(result, "content", None) or "").strip()
     data = _map_di_document(documents[0])
     if content:
         from app.services.extraction.document_text import cap_document_text
+        from app.services.shared.currency import apply_currency_ocr_fallback
 
         capped = cap_document_text(content)
         data.document_text = capped
         data.raw_fields["document_text"] = capped
+        data = apply_currency_ocr_fallback(data, capped)  # type: ignore[assignment]
     logger.info(
         "di_parse_ok",
         path=str(path),
         model_id=model_id,
         invoice_no=data.invoice_no,
+    )
+    return data, raw_snapshot
+
+
+def parse_with_document_intelligence(
+    file_path: str | Path,
+    *,
+    content_type: str = "application/pdf",
+) -> InvoiceData | None:
+    """
+    Analyze a PDF with Azure prebuilt-invoice.
+
+    Returns None if DI is not configured or the API call fails.
+    """
+    data, _raw = parse_with_document_intelligence_ex(
+        file_path, content_type=content_type
     )
     return data
 

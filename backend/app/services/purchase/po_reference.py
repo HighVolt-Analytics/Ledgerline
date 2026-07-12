@@ -59,6 +59,21 @@ def effective_po_reference(po: str | None) -> str | None:
     return None
 
 
+def normalize_po_link_token(po: str | None) -> str:
+    """Case-folded PO key for sibling / dossier linkage (matches playbook checks)."""
+    return (po or "").strip().upper()
+
+
+def invoice_po_reference_equals(po_reference: str):
+    """SQLAlchemy predicate: Invoice.po_reference equals token case-insensitively."""
+    from sqlalchemy import func
+
+    from app.models.invoice import Invoice
+
+    token = normalize_po_link_token(po_reference)
+    return func.upper(func.coalesce(Invoice.po_reference, "")) == token
+
+
 def extract_po_reference_from_text(text: str | None) -> str | None:
     """Best-effort PO number from OCR body (purchase-order layouts)."""
     if not text or not text.strip():

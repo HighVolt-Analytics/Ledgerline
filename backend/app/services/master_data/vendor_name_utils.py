@@ -58,17 +58,96 @@ _FORM_LABEL_MARKERS = (
     "marks and numbers",
 )
 
+# Role prefixes glued onto real company names by OCR/layout — strip then keep remainder.
+# Longest-first. Transport form markers stay reject-only in is_plausible (not listed here).
+_ROLE_PREFIX_STRIP = (
+    "notify party",
+    "consignee",
+    "shipper",
+    "applicant",
+    "importer",
+    "customer",
+    "client",
+    "buyer",
+    "seller",
+)
+
+_PACKING_QTY_SUFFIX = re.compile(
+    r"(?:=>|->|:|-|–|—|x)\s*\d+(?:[.,]\d+)?\s*"
+    r"(?:cartons?|units?|pcs?|pieces?|boxes?|pallets?|kgs?|lbs?)\s*$",
+    re.I,
+)
+
+_TRAILING_PLOT = re.compile(r"\s+Plot\s+\d+,?\s*$", re.I)
+
 _DOC_REFERENCE_NAME = re.compile(
     r"^(?:GRN|PO|INV|SO|DN|RCP|DEL|ORDER)(?:[\s#:_-]+|\s*number\s*:?\s*)[\w-]*\d",
     re.I,
 )
+
+# Standalone dates mis-extracted as vendor (e.g. invoice_date / due_date bleed).
+_DATE_ONLY_VENDOR = re.compile(
+    r"^(?:"
+    r"\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}"  # 01/07/2026, 15-06-26
+    r"|\d{4}[/.\-]\d{1,2}[/.\-]\d{1,2}"  # 2026-07-01
+    r"|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}"  # 1 July 2026
+    r"|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}"  # July 1, 2026
+    r")$"
+)
+
+
+def strip_vendor_name_contamination(value: str) -> str:
+    """Remove role-prefix / packing / address bleed; never invent a name."""
+    text = re.sub(r"\s+", " ", str(value).strip())
+    if not text:
+        return text
+
+    lower = text.lower()
+    for marker in _ROLE_PREFIX_STRIP:
+        if lower == marker:
+            return ""
+        prefix = f"{marker} "
+        if lower.startswith(prefix):
+            text = text[len(prefix) :].strip()
+            lower = text.lower()
+            break
+
+    text = _PACKING_QTY_SUFFIX.sub("", text).strip(" ,;")
+    if not text:
+        return text
+
+    company = _COMPANY_SUFFIX.match(text)
+    if company:
+        truncated = company.group(1).strip()
+        remainder = text[len(truncated) :].strip(" ,;")
+        if truncated and remainder and (
+            re.match(r"^Plot\s+\d+", remainder, re.I)
+            or _ADDRESSish_LINE.search(remainder)
+            or re.match(r"^\d+\s+\w+", remainder)
+        ):
+            text = truncated
+
+    text = _TRAILING_PLOT.sub("", text).strip(" ,;")
+    if "," in text:
+        head, _, tail = text.rpartition(",")
+        tail = tail.strip()
+        if tail and (
+            _ADDRESSish_LINE.search(tail)
+            or re.match(r"^\d+\s+\w+", tail)
+            or re.match(r"^Plot\s+\d+", tail, re.I)
+        ):
+            text = head.strip(" ,;")
+
+    return text.strip(" ,;")
 
 
 def is_plausible_vendor_name(value: str | None) -> bool:
     """Reject payment footers and other non-vendor strings from OCR/DI."""
     if not value or not str(value).strip():
         return False
-    text = re.sub(r"\s+", " ", str(value).strip())
+    text = strip_vendor_name_contamination(re.sub(r"\s+", " ", str(value).strip()))
+    if not text:
+        return False
     if len(text) < 3 or len(text) > 80:
         return False
     if _VENDOR_REJECT_RE.search(text):
@@ -85,6 +164,8 @@ def is_plausible_vendor_name(value: str | None) -> bool:
     if lower.startswith(("invoice date", "due date", "abn:", "abn ")):
         return False
     if _DOC_REFERENCE_NAME.match(text):
+        return False
+    if _DATE_ONLY_VENDOR.match(text):
         return False
     if text.count(".") >= 1 and len(text) > 55:
         return False
@@ -174,9 +255,10 @@ def normalize_vendor_name(value: str | None) -> str | None:
     if not value:
         return None
     deduped = dedupe_repeated_vendor_phrase(str(value))
-    if not is_plausible_vendor_name(deduped):
+    cleaned = strip_vendor_name_contamination(deduped)
+    if not is_plausible_vendor_name(cleaned):
         return None
-    return re.sub(r"\s+", " ", deduped.strip())
+    return re.sub(r"\s+", " ", cleaned.strip())
 
 
 def extract_header_vendor(text: str) -> str | None:

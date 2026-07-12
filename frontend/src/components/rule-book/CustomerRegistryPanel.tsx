@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
-import { formatTaxId, money, toNumber } from "@/lib/format";
+import { formatMoneyByCurrencyMap, formatTaxId, toNumber } from "@/lib/format";
 import { fetchAllInvoices } from "@/lib/invoices";
 
 const CUSTOMERS_POLL_MS = 30_000;
@@ -28,13 +28,18 @@ function customerMatchesInvoice(customer: Customer, invoiceCustomer: string | nu
   return key === name || key.includes(name) || name.includes(key) || key.includes(slug);
 }
 
-function buildInvoiceStats(invoices: Invoice[]): Map<string, { amount: number; count: number }> {
-  const map = new Map<string, { amount: number; count: number }>();
+function buildInvoiceStats(
+  invoices: Invoice[]
+): Map<string, { amount: number; byCurrency: Record<string, number>; count: number }> {
+  const map = new Map<string, { amount: number; byCurrency: Record<string, number>; count: number }>();
   for (const inv of invoices) {
     const key = normalizeCustomerKey(inv.vendor);
     if (!key) continue;
-    const entry = map.get(key) ?? { amount: 0, count: 0 };
-    entry.amount += toNumber(inv.total);
+    const entry = map.get(key) ?? { amount: 0, byCurrency: {}, count: 0 };
+    const amount = toNumber(inv.total);
+    entry.amount += amount;
+    const code = (inv.currency || "").trim().toUpperCase();
+    entry.byCurrency[code] = (entry.byCurrency[code] ?? 0) + amount;
     entry.count += 1;
     map.set(key, entry);
   }
@@ -102,7 +107,7 @@ export function CustomerRegistryPanel() {
     for (const [key, stats] of statsByCustomer) {
       if (customerMatchesInvoice(customer, key)) return stats;
     }
-    return { amount: 0, count: 0 };
+    return { amount: 0, byCurrency: {}, count: 0 };
   };
 
   const saveCustomer = async (body: Omit<Customer, "id" | "created_at">) => {
@@ -215,7 +220,7 @@ export function CustomerRegistryPanel() {
                     </td>
                     <td className="px-3 py-2.5 text-right tnum">{stats.count}</td>
                     <td className="px-3 py-2.5 text-right tnum font-medium">
-                      {money(stats.amount)}
+                      {formatMoneyByCurrencyMap(stats.byCurrency)}
                     </td>
                     <td className="px-3 py-2.5">
                       <Badge

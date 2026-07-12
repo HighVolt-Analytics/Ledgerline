@@ -18,14 +18,16 @@ _KV_LABELS: list[tuple[str, re.Pattern[str]]] = [
     ("invoice_no", re.compile(r"(?i)^(?:invoice\s*(?:no|number|#)|inv\s*no|tax\s*invoice\s*no)\.?$")),
     ("po_reference", re.compile(r"(?i)^(?:po\s*(?:no|number|#)|purchase\s*order\s*(?:no|number|#)?)\.?$")),
     ("abn", re.compile(r"(?i)^(?:abn|australian\s+business\s+number)\.?$")),
-    ("vendor", re.compile(r"(?i)^(?:vendor|supplier|from|bill\s*from|exporter)\.?$")),
+    ("vendor", re.compile(r"(?i)^(?:vendor(?:\s*name)?|supplier(?:\s*name)?|from|bill\s*from|exporter)\.?$")),
     ("billing_address", re.compile(r"(?i)^(?:bill\s*to|ship\s*to|sold\s*to|billing\s*address|applicant|consignee)\.?$")),
-    ("buyer_name", re.compile(r"(?i)^(?:customer|client|buyer|consignee|applicant(?:'?s?\s+name)?)\.?$")),
-    ("seller_name", re.compile(r"(?i)^(?:seller|supplier|from|exporter|vendor)\.?$")),
+    ("buyer_name", re.compile(r"(?i)^(?:customer(?:\s*name)?|client|buyer(?:\s*name)?|consignee|applicant(?:'?s?\s+name)?)\.?$")),
+    ("seller_name", re.compile(r"(?i)^(?:seller(?:\s*name)?|supplier(?:\s*name)?|from|exporter|vendor(?:\s*name)?)\.?$")),
     ("so_reference", re.compile(r"(?i)^(?:so|sales\s*order)\s*(?:no|number|#)?\.?$")),
     ("account_code", re.compile(r"(?i)^(?:account\s*code|gl\s*code|a/?c\s*code)\.?$")),
     ("invoice_date", re.compile(r"(?i)^(?:invoice\s*date|date\s*of\s*issue|issue\s*date|document\s*date|date)\.?$")),
     ("due_date", re.compile(r"(?i)^(?:due\s*date|date\s*due|payment\s*due(?:\s*date)?)\.?$")),
+    ("currency", re.compile(r"(?i)^(?:currency|ccy|curr)\.?$")),
+    ("cost_centre", re.compile(r"(?i)^(?:cost\s*cent(?:re|er)|project\s*code|cost\s*code|\bcc\b)\.?$")),
     *money_kv_label_patterns(),
     ("grn_reference", re.compile(r"(?i)^(?:grn|goods\s*receipt|delivery\s*note)\s*(?:no|number|#)?\.?$")),
 ]
@@ -88,6 +90,54 @@ def _money_value(raw: str) -> Decimal | None:
         return None
 
 
+def normalize_layout_kv_dict(raw: dict[str, str] | None) -> dict[str, str]:
+    """Map raw Azure/layout labels (e.g. 'Invoice No') to canonical keys (invoice_no)."""
+    if not raw:
+        return {}
+    found: dict[str, str] = {}
+    for label, value in raw.items():
+        token = str(value or "").strip()
+        if not token:
+            continue
+        key = str(label or "").strip()
+        # Already canonical
+        if key in {
+            "invoice_no",
+            "po_reference",
+            "abn",
+            "vendor",
+            "billing_address",
+            "buyer_name",
+            "seller_name",
+            "so_reference",
+            "account_code",
+            "invoice_date",
+            "due_date",
+            "subtotal",
+            "gst",
+            "gst_rate",
+            "total",
+            "currency",
+            "cost_centre",
+            "grn_reference",
+        }:
+            found.setdefault(key, token)
+            continue
+        canonical = _normalize_field_key(key)
+        if canonical:
+            found.setdefault(canonical, token)
+    return found
+
+
+def _kv_label_pattern_for_text(pattern: re.Pattern[str]) -> str:
+    """Drop end-anchor so 'Invoice No: INV-1' on one line can match."""
+    source = pattern.pattern
+    # Patterns are compiled as (?i)^...$ — strip trailing $ only
+    if source.endswith("$"):
+        source = source[:-1]
+    return source
+
+
 def extract_key_value_fields(
     layout: DocumentLayoutResult | None,
     text: str,
@@ -120,9 +170,10 @@ def extract_key_value_fields(
         for field_key, pattern in _KV_LABELS:
             if field_key in found:
                 continue
+            label_re = _kv_label_pattern_for_text(pattern)
             if field_key == "invoice_no":
                 match = re.search(
-                    pattern.pattern + r"\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/_]{2,})",
+                    label_re + r"\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-/_]{2,})",
                     text,
                     re.I | re.M,
                 )
@@ -132,13 +183,13 @@ def extract_key_value_fields(
                         found[field_key] = value
                 continue
             match = re.search(
-                pattern.pattern + r"\s*[:\-]?\s*(.+)",
+                label_re + r"\s*[:\-]?\s*(.+)",
                 text,
                 re.I | re.M,
             )
             if match:
                 value = match.group(1).strip().splitlines()[0].strip()
-                if value:
+                if value and not _normalize_field_key(value):
                     found[field_key] = value
         if "total" not in found:
             freight = re.search(
@@ -353,6 +404,14 @@ def _parse_line_items_from_materialized_grid(
         ):
             continue
 
+        from app.services.extraction.line_item_skip_patterns import should_skip_line_row
+        from app.services.extraction.line_item_noise_patterns import is_noise_line_item_row
+        from app.services.extraction.line_item_trace import row_key_for_item
+
+        skip_key = row_key_for_item(ParsedLineItem(description=desc))
+        if should_skip_line_row(desc, trace=trace, row_key=skip_key):
+            continue
+
         meta_parts: list[str] = []
         for col, header in meta_cols.items():
             value = grid.get((row, col), "").strip()
@@ -386,7 +445,15 @@ def _parse_line_items_from_materialized_grid(
         if amount is None and qty is not None and unit_price is not None:
             amount = plausible_money(qty * unit_price)
 
+        if is_noise_line_item_row(desc, qty, trace=trace, row_key=skip_key):
+            continue
+
         description = _append_meta_suffix(desc, meta_parts)
+        if should_skip_line_row(description, trace=trace, row_key=skip_key):
+            continue
+        if is_noise_line_item_row(description, qty, trace=trace, row_key=skip_key):
+            continue
+
         items.append(
             sanitize_parsed_line_item(
                 ParsedLineItem(

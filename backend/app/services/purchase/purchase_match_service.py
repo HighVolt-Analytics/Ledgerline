@@ -667,10 +667,15 @@ async def resolve_purchase_match_context(
     invoice_no = (invoice.invoice_no or "").strip()
     grn_candidates: list[Invoice] = []
     if invoice_no:
+        from app.services.extraction.invoice_no_sanitizer import INVOICE_NO_SECONDARY_KEY
+
+        extracted = invoice.extracted_fields or {}
+        secondary = extracted.get(INVOICE_NO_SECONDARY_KEY) if isinstance(extracted, dict) else None
         grn_candidates = await find_grn_invoices_by_invoice_no(
             session,
             tenant_id=invoice.tenant_id,
             invoice_no=invoice_no,
+            invoice_no_secondary=str(secondary) if secondary else None,
             include_linked=True,
         )
 

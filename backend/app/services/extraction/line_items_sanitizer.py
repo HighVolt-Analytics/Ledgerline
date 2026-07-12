@@ -71,7 +71,33 @@ def _duplicates_header_value(desc: str, header_values: set[str]) -> bool:
     if normalized in header_values:
         return True
     for value in header_values:
-        if len(value) >= 8 and (value in normalized or normalized in value):
+        if len(value) < 8:
+            continue
+        # Exact containment either way — but ignore misparsed "vendor" blobs that
+        # are really product lines (qty + money) swallowing the real description.
+        if value in normalized or normalized in value:
+            if (
+                normalized in value
+                and len(value) > len(normalized) + 8
+                and re.search(r"\d+\.\d{2}", value)
+                and re.search(r"\b\d+\b", value)
+            ):
+                continue
+            return True
+    return False
+
+
+def _has_money_bearing_rows(items: list[ParsedLineItem]) -> bool:
+    """True when a real product row (not summary/noise) has amount or unit price."""
+    from app.services.extraction.line_item_noise_patterns import is_noise_line_item_row
+
+    for item in items:
+        desc = item.description or ""
+        if should_skip_line_row(desc):
+            continue
+        if is_noise_line_item_row(desc, item.qty):
+            continue
+        if item.amount is not None or item.unit_price is not None:
             return True
     return False
 
@@ -99,6 +125,9 @@ def sanitize_line_items(
         cost_centre=cost_centre,
         extracted_fields=extracted_fields,
     )
+    # When money-bearing product rows already exist, do not keep qty-only OCR bleed
+    # (addresses, page footers, "USD due …") that survived allow_qty_only=True.
+    effective_allow_qty_only = allow_qty_only and not _has_money_bearing_rows(items)
 
     cleaned: list[ParsedLineItem] = []
     for index, item in enumerate(items):
@@ -118,11 +147,19 @@ def sanitize_line_items(
 
         if is_noise_line_item_row(desc, item.qty, trace=trace, row_key=row_key):
             continue
-        if not _passes_minimum_product_row(item, allow_qty_only=allow_qty_only):
+        if not _passes_minimum_product_row(item, allow_qty_only=effective_allow_qty_only):
             if trace is not None:
-                trace.record(row_key, "sanitize", "dropped", "minimum_row")
+                reason = (
+                    "qty_only_with_money_rows"
+                    if allow_qty_only and not effective_allow_qty_only
+                    else "minimum_row"
+                )
+                trace.record(row_key, "sanitize", "dropped", reason)
             continue
         if trace is not None:
             trace.record(row_key, "sanitize", "kept", "product_row")
         cleaned.append(item)
-    return cleaned
+
+    from app.services.extraction.line_items_parser import dedupe_near_duplicate_line_items
+
+    return dedupe_near_duplicate_line_items(cleaned)

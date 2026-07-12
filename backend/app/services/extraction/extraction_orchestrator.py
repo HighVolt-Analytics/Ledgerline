@@ -27,7 +27,10 @@ from app.services.extraction.line_item_parsing_config import (
     DEFAULT_THRESHOLDS,
     LineItemParsingThresholds,
 )
-from app.services.extraction.layout_field_extractor import extract_key_value_fields
+from app.services.extraction.layout_field_extractor import (
+    extract_key_value_fields,
+    normalize_layout_kv_dict,
+)
 from app.services.extraction.pdf_parser import (
     parse_local_text,
     post_process_parsed_data,
@@ -88,40 +91,22 @@ _SCALAR_FILL_FIELDS = (
     "document_heading",
 )
 
-_NON_INVOICE_DI_PROFILES = frozenset(
-    {
-        "supporting",
-        "reconciliation",
-    }
-)
-
 
 def should_run_prebuilt_invoice_di(
     confirmed_dt: str,
     dt_definition: DocumentTypeDefinition | None,
 ) -> bool:
-    if dt_definition is None:
-        return True
-    from app.services.classification.document_type_catalog import (
-        _org_uses_shipped_classification_metadata,
-        _shipped_defaults_lookup_code,
-        playbook_profile_for_dt,
-    )
+    """
+    Backward-compatible gate: True when the extraction router selects an invoice model.
 
-    profile = playbook_profile_for_dt(dt_definition)
-    shipped_lookup = _shipped_defaults_lookup_code(dt_definition.code, dt_definition)
-    repurposed = not _org_uses_shipped_classification_metadata(dt_definition, shipped_lookup)
-    if repurposed and (not profile or profile in _NON_INVOICE_DI_PROFILES):
-        return False
-    if profile in _NON_INVOICE_DI_PROFILES:
-        return False
-    purchase_role = (dt_definition.purchase_bundle_role or "").strip().lower()
-    sales_role = (dt_definition.sales_bundle_role or "").strip().lower()
-    if purchase_role in {"po", "grn"} or sales_role in {"so", "dn"}:
-        return False
-    if profile == "supporting":
-        return False
-    return True
+    Prefer route_document_for_extraction + get_extraction_strategy for new code.
+    """
+    if dt_definition is None and not (confirmed_dt or "").strip():
+        return True
+    from app.services.extraction.routing import route_document_for_extraction
+
+    decision = route_document_for_extraction(confirmed_dt, dt_definition)
+    return decision.uses_invoice_model
 
 
 def _scalar_empty(value: object) -> bool:
@@ -175,10 +160,16 @@ def invoice_data_from_payload_fields(raw: dict[str, Any] | None) -> InvoiceData 
         due = parse_flexible_date(str(due_date) if due_date else None)
 
     invoice_no_raw = str(raw.get("invoice_no")).strip() if raw.get("invoice_no") else None
+    secondary_no = None
+    extracted_fields: dict[str, str] = {}
     if invoice_no_raw:
-        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+        from app.services.extraction.invoice_no_sanitizer import (
+            apply_invoice_no_secondary,
+            sanitize_invoice_no_parts,
+        )
 
-        invoice_no_raw = sanitize_invoice_no(invoice_no_raw)
+        invoice_no_raw, secondary_no = sanitize_invoice_no_parts(invoice_no_raw)
+        extracted_fields = apply_invoice_no_secondary(None, secondary_no)
 
     return InvoiceData(
         vendor=(raw.get("vendor") or None),
@@ -194,6 +185,7 @@ def invoice_data_from_payload_fields(raw: dict[str, Any] | None) -> InvoiceData 
         cost_centre=(str(raw.get("cost_centre")).strip() if raw.get("cost_centre") else None),
         billing_address=(str(raw.get("billing_address")).strip() if raw.get("billing_address") else None),
         line_items=deserialize_line_items(raw.get("line_items")),
+        extracted_fields=extracted_fields,
         raw_fields={"source": "di_payload"},
     )
 
@@ -315,11 +307,18 @@ def _apply_layout_kv(
         if candidate and _value_grounded_for_field("abn", candidate, ocr_text):
             updates["abn"] = candidate
     if _field_configured("invoice_no", configured) and "invoice_no" not in skip and kv.get("invoice_no") and _scalar_empty(data.invoice_no):
-        from app.services.extraction.invoice_no_sanitizer import sanitize_invoice_no
+        from app.services.extraction.invoice_no_sanitizer import (
+            apply_invoice_no_secondary,
+            sanitize_invoice_no_parts,
+        )
 
-        candidate = sanitize_invoice_no(kv["invoice_no"].strip())
+        candidate, secondary = sanitize_invoice_no_parts(kv["invoice_no"].strip())
         if candidate and _value_grounded_for_field("invoice_no", candidate, ocr_text):
             updates["invoice_no"] = candidate
+            if secondary and _value_grounded_for_field("invoice_no", secondary, ocr_text):
+                updates["extracted_fields"] = apply_invoice_no_secondary(
+                    data.extracted_fields, secondary
+                )
     if _field_configured("po_reference", configured) and "po_reference" not in skip and kv.get("po_reference") and _scalar_empty(data.po_reference):
         candidate = kv["po_reference"].strip()
         if _value_grounded_for_field("po_reference", candidate, ocr_text):
@@ -653,14 +652,18 @@ def _authoritative_structured_line_items(
     payload_dict: dict[str, object],
 ) -> list[ParsedLineItem]:
     """Usable rows from layout/DI tables — authoritative when non-empty."""
+    from app.services.extraction.line_items_parser import resolve_line_items_for_strategy
     from app.services.extraction.line_items_sanitizer import _passes_minimum_product_row
 
-    table_rows = resolve_usable_line_items_from_payload(payload_dict, allow_qty_only=True)
+    layout_mode = str(payload_dict.get("layout_line_mode") or "gap_fill").strip().lower()
+    table_rows = resolve_line_items_for_strategy(
+        payload_dict, layout_mode=layout_mode, allow_qty_only=True
+    )
     usable = [row for row in table_rows if _passes_minimum_product_row(row, allow_qty_only=True)]
     if usable:
         return usable
     if di_line_items_usable(payload_dict):
-        di_rows = resolve_usable_line_items_from_payload(payload_dict)
+        di_rows = resolve_line_items_for_strategy(payload_dict, layout_mode="ignore")
         di_usable = [row for row in di_rows if _passes_minimum_product_row(row, allow_qty_only=True)]
         if di_usable:
             return di_usable
@@ -720,16 +723,34 @@ def _merge_line_items_from_sources(
         return structured_qty
 
     if document_has_product_table(text, payload_dict):
+        from app.services.extraction.line_items_parser import (
+            di_line_items_usable,
+            resolve_line_items_for_strategy,
+        )
+
         llm_rows = list(merged.line_items)
-        table_rows = resolve_usable_line_items_from_payload(payload_dict)
-        use_text_fallback = not di_line_items_usable(payload_dict) or not table_rows
+        layout_mode = str(payload_dict.get("layout_line_mode") or "gap_fill").strip().lower()
+        table_rows = resolve_line_items_for_strategy(payload_dict, layout_mode=layout_mode)
+        di_usable = di_line_items_usable(payload_dict)
+        # gap_fill with usable DI: never re-append unmatched OCR/text rows
+        use_text_fallback = (
+            layout_mode not in {"gap_fill", "ignore"}
+            and (not di_usable or not table_rows)
+        ) or (
+            layout_mode == "gap_fill"
+            and not di_usable
+            and not table_rows
+        )
         text_rows = (
             list(enrich_parsed_line_items(parse_line_items_from_text(text, payload_dict)))
             if use_text_fallback
             else []
         )
         llm_enriched = enrich_line_items_from_text(llm_rows, text) if llm_rows else []
-        base = _union_line_item_sources(table_rows, text_rows)
+        if layout_mode == "gap_fill" and di_usable and table_rows:
+            base = list(table_rows)
+        else:
+            base = _union_line_item_sources(table_rows, text_rows)
         table_row_count = len(base)
         if llm_enriched:
             if _llm_line_items_fully_trusted(
@@ -750,8 +771,13 @@ def _merge_line_items_from_sources(
                     return partial
                 return base
         if base:
-            if llm_enriched and _llm_rows_worth_merging(llm_enriched):
+            if llm_enriched and _llm_rows_worth_merging(llm_enriched) and layout_mode != "gap_fill":
                 return _union_line_item_sources(base, llm_enriched)
+            if llm_enriched and _llm_rows_worth_merging(llm_enriched) and layout_mode == "gap_fill":
+                # Prefer structured DI/layout; only gap-fill money from LLM, do not append
+                from app.services.extraction.line_items_parser import merge_line_items_gap_fill_only
+
+                return merge_line_items_gap_fill_only(base, llm_enriched)
             return base
         return _union_line_item_sources(llm_enriched or llm_rows, table_rows, text_rows)
 
@@ -826,8 +852,11 @@ def _collect_line_item_fusion_sources(
     *,
     local: InvoiceData | None = None,
 ) -> dict[str, list[ParsedLineItem]]:
+    from app.services.extraction.line_items_parser import resolve_line_items_for_strategy
+
+    layout_mode = str(payload_dict.get("layout_line_mode") or "gap_fill").strip().lower()
     di_rows = deserialize_line_items(payload_dict.get("di_line_items"))
-    layout_rows = resolve_usable_line_items_from_payload(payload_dict)
+    layout_rows = resolve_line_items_for_strategy(payload_dict, layout_mode=layout_mode)
     regex_rows = (
         list(enrich_parsed_line_items(parse_line_items_from_text(text, payload_dict)))
         if text
@@ -853,13 +882,60 @@ def merge_extraction_sources(
     trace: object | None = None,
 ) -> InvoiceData:
     """Merge LLM/DI/layout/regex into one InvoiceData with DT-aware cleanup."""
+    from app.config import get_settings
+
+    if get_settings().use_field_contract_merge and dt_definition is not None:
+        from app.services.extraction.field_resolvers import merge_via_field_contracts
+
+        merged, _enriched_ocr, results = merge_via_field_contracts(
+            parsed,
+            ocr,
+            dt_definition=dt_definition,
+            trace=trace,
+        )
+        # Keep resolution audit on InvoiceData for persistence/debug without changing return type
+        raw = dict(merged.raw_fields or {})
+        raw["field_resolution"] = {r.key: r.to_audit_dict() for r in results}
+        raw["field_contract_merge"] = True
+        if _enriched_ocr.payload_json:
+            for key in (
+                "field_resolution",
+                "resolved_contracts",
+                "selected_keys",
+                "table_line_items",
+            ):
+                if key in (_enriched_ocr.payload_json or {}):
+                    raw[f"ocr_{key}"] = (_enriched_ocr.payload_json or {}).get(key)
+        from app.services.shared.currency import apply_currency_ocr_fallback
+
+        merged = apply_currency_ocr_fallback(
+            replace(merged, raw_fields=raw),
+            ocr.text or merged.document_text,
+        )  # type: ignore[assignment]
+        return merged  # type: ignore[return-value]
+
     text = (ocr.text or parsed.document_text or "").strip()
     merged = parsed
     configured_keys = _configured_key_set(dt_definition)
     if text and not (merged.document_text or "").strip():
         merged = replace(merged, document_text=text)
 
-    payload = ocr.payload_json or {}
+    payload = dict(ocr.payload_json or {})
+    # Re-derive table rows from grids when present so cached pre-filter rows cannot win
+    if payload.get("layout_table_grids"):
+        from app.services.extraction.line_items_parser import (
+            parse_line_items_from_layout_grids,
+            serialize_line_items,
+        )
+
+        refreshed = sanitize_line_items(
+            parse_line_items_from_layout_grids(payload),
+            allow_qty_only=True,
+        )
+        if refreshed:
+            payload["table_line_items"] = serialize_line_items(refreshed)
+            ocr = ocr.model_copy(update={"payload_json": payload})
+
     di_active = prebuilt_invoice_scalars_active(payload)
     di_populated = di_scalar_fields_populated(payload) if di_active else set()
     selected_keys_list = (
@@ -869,6 +945,10 @@ def merge_extraction_sources(
         if dt_definition
         else []
     )
+    # When DI wrote scalars but the DT has no configured key universe, use the DI
+    # scalar set so trust / authoritative apply still run (empty list skips both).
+    if not selected_keys_list and di_active:
+        selected_keys_list = list(di_scalar_field_keys())
     di_trusted = (
         di_trusted_scalar_fields(payload, text, selected_keys_list)
         if di_active and text
@@ -878,13 +958,22 @@ def merge_extraction_sources(
     if di_active and not di_populated:
         di_active = False
 
-    if not di_active:
+    # Soft DI path: when DI wrote values but none are trusted yet, still gap-fill empties.
+    # Hard authority path (apply_di_scalars_authoritative) runs later for trusted keys only.
+    if (not di_active) or (di_populated and not di_trusted):
         di_from_payload = invoice_data_from_payload_fields(payload.get("invoice_fields"))
         di_candidate = di_data or di_from_payload
         if di_candidate is not None and (not configured_keys or configured_keys & _DI_MERGE_KEYS):
             merged = _merge_di_grounded(merged, di_candidate, text)
 
-    kv = dict(ocr.layout_kv or {})
+    kv = normalize_layout_kv_dict(dict(ocr.layout_kv or {}))
+    # Also accept raw labels stored on payload.layout_kv
+    payload_kv = payload.get("layout_kv") if isinstance(payload.get("layout_kv"), dict) else {}
+    if payload_kv:
+        for key, value in normalize_layout_kv_dict(
+            {str(k): str(v) for k, v in payload_kv.items() if v is not None}  # type: ignore[arg-type]
+        ).items():
+            kv.setdefault(key, value)
     if text:
         kv_from_text = extract_key_value_fields(None, text)
         for key, value in kv_from_text.items():
@@ -1054,6 +1143,23 @@ def merge_extraction_sources(
     )
     merged = _apply_absent_fields(merged, dt_definition)
 
+    # Re-sanitize after header scalars are final so vendor/invoice_no dedupe can drop bleed rows
+    if merged.line_items and (not configured_keys or "line_items" in configured_keys):
+        qty_only_table = document_has_qty_only_table(text, dict(payload)) if text else False
+        resanitized = sanitize_line_items(
+            list(merged.line_items),
+            extracted_fields=merged.extracted_fields,
+            vendor=merged.vendor,
+            invoice_no=merged.invoice_no,
+            po_reference=merged.po_reference,
+            so_reference=(merged.extracted_fields or {}).get("so_reference"),
+            cost_centre=merged.cost_centre,
+            allow_qty_only=qty_only_table,
+            trace=trace,
+        )
+        if resanitized != list(merged.line_items):
+            merged = replace(merged, line_items=resanitized)
+
     from app.services.extraction.party_field_service import sanitize_address
 
     if merged.billing_address:
@@ -1126,4 +1232,7 @@ def merge_extraction_sources(
         raw["_line_items_fallback"] = fallback_tier
         merged = replace(merged, raw_fields=raw)
 
+    from app.services.shared.currency import apply_currency_ocr_fallback
+
+    merged = apply_currency_ocr_fallback(merged, text)  # type: ignore[assignment]
     return merged

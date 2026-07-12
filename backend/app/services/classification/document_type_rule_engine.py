@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, Sequence
 
 from app.models.invoice import Invoice
 from app.schemas.document_type import DocumentTypeDefinition
@@ -133,7 +133,7 @@ def build_document_classifier_context(
     subtotal = parsed.subtotal if parsed.subtotal is not None else invoice.subtotal
     gst = parsed.gst if parsed.gst is not None else invoice.gst
     total = parsed.total if parsed.total is not None else invoice.total
-    currency = (parsed.currency or invoice.currency or "SGD").strip()
+    currency = (parsed.currency or invoice.currency or "").strip()
     extracted_fields = merge_extracted_field_maps(
         extracted_fields_from_invoice(invoice),
         extracted_fields_from_parsed(parsed),
@@ -290,23 +290,93 @@ def _classifier_has_conditions(root: dict[str, Any]) -> bool:
     return classifier_has_actionable_conditions(root)
 
 
+def recognition_mode_of(defn: DocumentTypeDefinition) -> str:
+    mode = (defn.recognition_mode or "signals").strip().lower()
+    return "prompt" if mode == "prompt" else "signals"
+
+
+def is_signals_recognition_mode(defn: DocumentTypeDefinition) -> bool:
+    return recognition_mode_of(defn) == "signals"
+
+
+def is_prompt_recognition_mode(defn: DocumentTypeDefinition) -> bool:
+    return recognition_mode_of(defn) == "prompt"
+
+
+def effective_signals_mode_definition(
+    definition: DocumentTypeDefinition,
+) -> DocumentTypeDefinition | None:
+    """Resolve the classifier used for signals-mode matching.
+
+    Prefer recognition_signals when they compile to the stored tree. Keep a customized
+    match-rules classifier when it differs from the pure signal compilation.
+    """
+    from app.services.classification.document_classifier_builder import (
+        build_classifier_from_signals,
+    )
+    from app.services.classification.document_type_recognition_migration import (
+        sync_classifier_from_recognition,
+    )
+    from app.services.classification.recognition_signal_registry import SIGNAL_CONDITIONS
+
+    if not definition.enabled or not is_signals_recognition_mode(definition):
+        return None
+
+    signals = [s for s in (definition.recognition_signals or []) if s in SIGNAL_CONDITIONS]
+    classifier = definition.classifier
+    has_actionable = bool(
+        classifier.enabled and _classifier_has_conditions(classifier.root)
+    )
+
+    if signals:
+        pure = build_classifier_from_signals(
+            signals,
+            "grouped",
+            priority=classifier.priority or 100,
+            confidence=classifier.confidence or 0.85,
+            enabled=True,
+        )
+        if has_actionable and classifier.model_dump() != pure.model_dump():
+            return definition
+        return definition.model_copy(
+            update={
+                "classifier": pure,
+                "recognition_signals": signals,
+                "llm_prompt": "",
+                "recognition_mode": "signals",
+            }
+        )
+
+    if has_actionable:
+        return definition
+
+    synced = sync_classifier_from_recognition(definition)
+    if synced.classifier.enabled and _classifier_has_conditions(synced.classifier.root):
+        return synced
+    return None
+
+
+def prepare_signals_mode_definitions(
+    document_types: Sequence[DocumentTypeDefinition] | list[DocumentTypeDefinition],
+) -> list[DocumentTypeDefinition]:
+    """Enabled signals-mode DTs with recognition_signals synced into classifier trees."""
+    prepared: list[DocumentTypeDefinition] = []
+    for definition in document_types:
+        effective = effective_signals_mode_definition(definition)
+        if effective is not None:
+            prepared.append(effective)
+    return prepared
+
+
 def list_configured_document_type_matches(
     document_types: list[DocumentTypeDefinition],
     *,
     invoice: Invoice,
     parsed: InvoiceData,
 ) -> list[tuple[DocumentTypeDefinition, str]]:
-    """All enabled classifier matches, ordered by priority (lowest first)."""
+    """All enabled signals-mode classifier matches, ordered by priority (lowest first)."""
     ctx = build_document_classifier_context(invoice=invoice, parsed=parsed)
-    candidates: list[DocumentTypeDefinition] = []
-    for definition in document_types:
-        if not definition.enabled:
-            continue
-        classifier = definition.classifier
-        if not classifier.enabled or not _classifier_has_conditions(classifier.root):
-            continue
-        candidates.append(definition)
-
+    candidates = prepare_signals_mode_definitions(document_types)
     candidates.sort(key=lambda item: item.classifier.priority)
     matches: list[tuple[DocumentTypeDefinition, str]] = []
     for definition in candidates:
@@ -385,7 +455,14 @@ def classifier_rules_match_ocr(
     invoice: Invoice,
     ocr: OcrArtifact,
 ) -> bool:
-    classifier = defn.classifier
+    """True when signals-mode recognition rules match OCR (prompt mode always passes)."""
+    if is_prompt_recognition_mode(defn):
+        return True
+
+    effective = effective_signals_mode_definition(defn)
+    if effective is None:
+        return True
+    classifier = effective.classifier
     if not classifier.enabled or not classifier_has_actionable_conditions(classifier.root):
         return True
     ctx = build_classifier_context_from_ocr(invoice=invoice, ocr=ocr)

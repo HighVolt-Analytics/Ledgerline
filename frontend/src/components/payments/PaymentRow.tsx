@@ -21,8 +21,8 @@ import {
   useValidatePaymentExecutionReadiness,
 } from "@/hooks/usePayments";
 import type { PaymentExecutionReadinessResponse } from "@/api/types";
+import { money } from "@/lib/format";
 import {
-  fmtAud,
   paymentTierLabel,
   type PaymentRecord,
 } from "@/lib/v4MockData";
@@ -145,7 +145,7 @@ function InstructionPanel({ instruction }: { instruction: NonNullable<PaymentRec
         <span>
           Amount:{" "}
           <span className="text-foreground tnum">
-            {fmtAud(instruction.amount)} {instruction.currency}
+            {money(instruction.amount, instruction.currency)} {instruction.currency}
           </span>
         </span>
         <span>
@@ -313,7 +313,9 @@ export function PaymentRow({
           </div>
         </div>
         <div className="text-right">
-          <div className="tnum font-semibold text-sm">{fmtAud(p.amount)}</div>
+          <div className="tnum font-semibold text-sm">
+            {money(p.amount, p.currency)}
+          </div>
           <div className="text-[10px] text-muted-foreground">{paymentTierLabel(p.amount)}</div>
         </div>
       </div>

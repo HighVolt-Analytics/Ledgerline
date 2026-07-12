@@ -33,6 +33,24 @@ _EDITABLE = frozenset(
 )
 
 
+def _currency_is_unset(value: object) -> bool:
+    token = str(value or "").strip().upper()
+    return not (len(token) == 3 and token.isalpha())
+
+
+def _is_currency_fill_only(inv: Invoice, payload: dict) -> bool:
+    """Allow setting ISO currency when it was never extracted, on any status."""
+    if set(payload.keys()) != {"currency"}:
+        return False
+    if not _currency_is_unset(inv.currency):
+        return False
+    raw = payload.get("currency")
+    if not isinstance(raw, str):
+        return False
+    next_code = raw.strip().upper()
+    return len(next_code) == 3 and next_code.isalpha()
+
+
 def _serialise(value: object) -> str | None:
     if value is None:
         return None
@@ -68,13 +86,14 @@ async def update_invoice_fields(
     actor_name: str | None = None,
     actor_email: str | None = None,
 ) -> bool:
-    if inv.status not in _EDITABLE:
+    payload = body.model_dump(exclude_unset=True)
+    currency_fill_only = _is_currency_fill_only(inv, payload)
+    if inv.status not in _EDITABLE and not currency_fill_only:
         raise ValueError(
             f"Invoice status '{inv.status.value}' cannot be edited; "
             "only exception, duplicate, or rejected invoices in the review queue"
         )
 
-    payload = body.model_dump(exclude_unset=True)
     line_items_payload = payload.pop("line_items", None)
     overrides_explicit = "processing_overrides" in body.model_fields_set
     overrides_payload = (
@@ -89,10 +108,17 @@ async def update_invoice_fields(
             value = plausible_money(value)
         elif field == "gst_rate":
             value = plausible_gst_rate_percent(value)
+        elif field == "currency" and isinstance(value, str):
+            value = value.strip().upper() or ""
         old = getattr(inv, field)
         if old != value:
             changes[field] = {"from": _serialise(old), "to": _serialise(value)}
             setattr(inv, field, value)
+            # User-confirmed ISO replaces ambiguous symbol-only display hint.
+            if field == "currency" and value:
+                fields = dict(inv.extracted_fields or {})
+                if fields.pop("currency_symbol", None) is not None:
+                    inv.extracted_fields = fields
 
     if extracted_fields_payload is not None:
         from app.services.extraction.extraction_field_values import merge_invoice_extracted_fields

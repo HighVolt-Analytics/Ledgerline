@@ -87,10 +87,15 @@ def resolve_segment_heading_with_source(
 
 
 def _definition_metadata_blob(definition: DocumentTypeDefinition) -> str:
+    """Catalogue text used for heading→DT scoring.
+
+    Intentionally omits ``llm_prompt``: recognition prompts often mention excluded
+    document kinds (e.g. GRN prompts saying \"tax invoices\"), which must not count
+    as a positive heading match.
+    """
     parts = [
         definition.short_title or "",
         definition.title or "",
-        definition.llm_prompt or "",
         " ".join(definition.extraction or []),
     ]
     return " ".join(parts).lower()
@@ -201,12 +206,33 @@ _TRANSACTIONAL_PLAYBOOK_PROFILES = frozenset(
 _SUPPORTING_DOC_HEADING_KINDS = frozenset(
     {"certificate_of_origin", "customs_permit", "packing_list", "transport_doc"}
 )
+_INVOICE_HEADING_KINDS = frozenset(
+    {"invoice", "tax_invoice", "commercial_invoice", "proforma", "credit_note"}
+)
+_RECEIPT_BUNDLE_ROLES = frozenset({"grn", "po"})
+
+
+def _resolved_bundle_role(definition: DocumentTypeDefinition) -> str:
+    from app.services.classification.document_type_playbook_service import (
+        _infer_purchase_bundle_role,
+    )
+
+    return _infer_purchase_bundle_role(definition)
 
 
 def heading_conflicts_with_definition(
     heading_kind: HeadingKind,
     definition: DocumentTypeDefinition,
 ) -> bool:
+    # Hard role conflicts — do not let negative prompt text fake a metadata match.
+    role = _resolved_bundle_role(definition)
+    if heading_kind in _INVOICE_HEADING_KINDS and role in _RECEIPT_BUNDLE_ROLES:
+        return True
+    if heading_kind == "purchase_order" and role == "grn":
+        return True
+    if heading_kind == "grn" and role == "po":
+        return True
+
     metadata_score = score_document_type_for_heading(definition, heading_kind)
     if metadata_score >= 0.82:
         return False
@@ -252,6 +278,8 @@ def classify_from_segment_heading(
     scored: list[tuple[DocumentTypeDefinition, float]] = []
     for definition in document_types:
         if not definition.enabled:
+            continue
+        if heading_conflicts_with_definition(heading_kind, definition):
             continue
         score = score_document_type_for_heading(definition, heading_kind)
         if score >= 0.82:

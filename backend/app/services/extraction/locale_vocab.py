@@ -1,29 +1,20 @@
-"""Single source of truth for currency codes and unit tokens in extraction regex."""
+"""Locale vocab for currency codes and unit tokens used in extraction regex.
+
+Currency codes come from ISO 4217 via ``pycountry`` (see iso4217_catalog).
+Unit tokens remain app-specific.
+"""
 
 from __future__ import annotations
 
 import re
 
-# Corpus: line_item_skip_patterns + audit additions (CHF, AED); grep-verified in tests.
-SUPPORTED_CURRENCY_CODES: frozenset[str] = frozenset(
-    {
-        "AUD",
-        "USD",
-        "SGD",
-        "NZD",
-        "GBP",
-        "EUR",
-        "CAD",
-        "INR",
-        "MYR",
-        "THB",
-        "HKD",
-        "JPY",
-        "CNY",
-        "CHF",
-        "AED",
-    }
+from app.services.shared.iso4217_catalog import (
+    currency_alternation_regex as iso4217_currency_alternation_regex,
+    iso4217_currency_codes,
 )
+
+# Full ISO 4217 set — single source of truth for "is this a currency code?".
+SUPPORTED_CURRENCY_CODES: frozenset[str] = iso4217_currency_codes()
 
 SUPPORTED_UNIT_TOKENS: frozenset[str] = frozenset(
     {
@@ -49,7 +40,7 @@ SUPPORTED_UNIT_TOKENS: frozenset[str] = frozenset(
     }
 )
 
-_CURRENCY_SYMBOLS = r"[$€£¥]"
+_CURRENCY_SYMBOLS = r"[$€£¥₹₩₪₫₱₽₴₺₦₡₵₲]"
 
 
 def _sorted_alternation(tokens: frozenset[str]) -> str:
@@ -59,7 +50,7 @@ def _sorted_alternation(tokens: frozenset[str]) -> str:
 
 
 def currency_alternation_regex() -> str:
-    return _sorted_alternation(SUPPORTED_CURRENCY_CODES)
+    return iso4217_currency_alternation_regex()
 
 
 def unit_alternation_regex() -> str:

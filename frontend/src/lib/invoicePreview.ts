@@ -1,5 +1,5 @@
 import type { Invoice, InvoiceDetails, LineItem } from "@/api/types";
-import { documentDisplayRef } from "@/lib/format";
+import { documentDisplayRef, money } from "@/lib/format";
 import { extractionFieldLabel } from "@/lib/documentExtractionFields";
 import { counterpartyKind, counterpartyName } from "@/lib/invoice";
 import { COUNTRIES } from "@/lib/settingsData";
@@ -425,16 +425,121 @@ export function isSummaryLineDescription(description: string | null | undefined)
   }
   if (/\b(?:total\s*due|amount\s*due)\b/.test(text)) return true;
   if (/^abn\s*:?\s*\d/.test(text)) return true;
-  if (/^(?:customer|ship(?:ped)?(?:\s*(?:to|date|qty|ped))?|delivery\s*date|invoice\s*(?:no|number|#|date)|po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*(?:no|number|reference)?|bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number)?|payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|consignment|permit|cost\s*cent(?:er|re)|phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention)\s*:?\s*$/.test(text)) {
+  if (
+    /^(?:(?:grand\s+)?(?:sub\s*)?total(?:\s+(?:gst|tax|excl(?:uding)?\s*gst|incl(?:uding)?\s*gst))?|total\s+(?:gst|tax|amount|due)|amount\s*(?:due|payable)|balance\s*(?:due|owing)|net\s*(?:payable|amount|total)|(?:gst|tax)\s*(?:amount|total)?)\b(?:\s*:?\s*\$?\s*[\d,]+\.?\d*)?\s*$/.test(
+      text
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:bank\s*(?:details|name|account)|account\s*name|bsb|swift|iban|remittance\s*(?:advice|to)|please\s*remit|payment\s*to)\b/.test(
+      text
+    ) &&
+    text.length <= 120
+  ) {
+    return true;
+  }
+  // Label-only or Label: value header rows (keep in sync with backend skip patterns)
+  if (
+    /^(?:customer|ship(?:ped)?(?:\s*(?:to|date|qty|ped))?|delivery\s*date|invoice\s*(?:no|number|#|date)|po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*(?:no|number|reference)?|bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number|name)?|payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|consignment|permit|cost\s*cent(?:er|re)|phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention|bank(?:\s*name)?|swift|iban|remittance)\s*:?\s*$/.test(
+      text
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(?:customer|ship(?:ped)?(?:\s*(?:to|date|qty|ped))?|delivery\s*date|invoice\s*(?:no|number|#|date)|po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*(?:no|number|reference)?|bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number|name)?|payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|consignment|permit|cost\s*cent(?:er|re)|phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention|bank(?:\s*name)?)\s*:\s+\S/.test(
+      text
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(?:invoice\s*(?:no|number|#|date)|po\s*(?:no|number|reference)?|so\s*(?:no|number|reference)?|order\s*(?:no|number)?|ship\s*to|bill(?:ed)?\s*to|due\s*date|delivery\s*date|ship(?:ped)?\s*date|payment\s*terms|abn|gstin|bsb|account\s*(?:no|number|name))\s+(?:-+\s+)?\S/.test(
+      text
+    )
+  ) {
     return true;
   }
   if (/^(?:tel(?:ephone)?|phone|mobile|fax)\s*(?:no\.?|number|#)?\s*:?\s*\+?\d/i.test(text)) {
     return true;
   }
-  if (/^(?:description|item|product|qty|quantity|unit\s*price|amount|rate|uom|sku)\s*:?\s*$/.test(text)) {
+  if (
+    /^(?:description|item(?:\s*description)?|product|qty|quantity|unit\s*price|amount|rate|uom|sku|hs\s*code|country\s*of\s*origin|net\s*weight|gross\s*weight)\s*:?\s*$/.test(
+      text
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(?:description|item|product)\b.+\b(?:qty|quantity|amount|unit\s*price|rate)\b/.test(text) &&
+    text.split(/\s+/).length <= 10
+  ) {
     return true;
   }
   if (text.endsWith(":") && text.length <= 40) return true;
+  return false;
+}
+
+/** Keep in sync with backend is_noise_line_item_row. */
+export function isNoiseLineItemRow(
+  description: string | null | undefined,
+  qty?: string | number | null
+): boolean {
+  const desc = String(description ?? "").trim();
+  if (!desc) return true;
+  if (/\b(?:DOCUMENTARY\s+CREDIT|CERTIFICATE|REFERENCE\s+NO|CONTRACT\s+NO|IRC\s+NO|TIN\b|BIN\s+NO)\b/i.test(desc)) {
+    return true;
+  }
+  if (
+    /^(?:page\s*\d+(?:\s*of(?:\s*\d+)?)?|continued(?:\s+on\s+next\s+page)?|end\s+of\s+(?:document|invoice))\s*$/i.test(
+      desc
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(?:\$|€|£)?\s*[\d,]+\.?\d*\s*(?:[A-Z]{3})?\s*due\b|\b(?:amount|balance|total)\s+due\b|\bdue\s+(?:on\s+)?(?:\d{1,2}[/\-.]\d{1,2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(
+      desc
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(?:\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}|\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{2,4})$/i.test(
+      desc
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(?:abn|gstin|acn|tfn)\s*:?\s*[\d\s]{8,}|\b(?:bank\s*(?:details|name|account)|account\s*name|bsb|swift|iban|remittance|please\s*(?:pay|remit)|payment\s*instructions|tel(?:ephone)?|phone|mobile|fax|email|www\.|http)\b/i.test(
+      desc
+    ) &&
+    desc.split(/\s+/).length <= 14
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|drive|dr\.?|lane|ln\.?|boulevard|blvd\.?|straat|gracht|weg|laan|plein|allee|suite|floor|building|unit\s+\d+|henderson|singapore|postal|zip\s*code|australia|nsw|vic|qld|sa|wa|act|tas|nz|new\s+zealand)\b/i.test(
+      desc
+    ) &&
+    (/\b\d{4,6}\b/.test(desc) || desc.split(/\s+/).length <= 8)
+  ) {
+    return true;
+  }
+  if (
+    /^(?:[A-Za-z]+(?:straat|gracht|weg|laan|plein|allee|avenue|street|road|drive|lane))(?:\s+\d+[A-Za-z]?)?$/i.test(
+      desc
+    )
+  ) {
+    return true;
+  }
+  const qtyNum = qty == null || qty === "" ? null : Number(String(qty).replace(/,/g, ""));
+  if (qtyNum != null && Number.isFinite(qtyNum) && qtyNum > 1000 && desc.split(/\s+/).length <= 3) {
+    if (!/\b(?:cpu|chip|part|widget|item|unit|kg|pcs)\b/i.test(desc)) return true;
+  }
   return false;
 }
 
@@ -475,13 +580,70 @@ export function filterLineItemsForPreview(
   items: LineItem[],
   headerValues?: Set<string>
 ): LineItem[] {
-  return items.filter((line) => {
+  const filtered = items.filter((line) => {
     if (isSummaryLineDescription(line.description)) return false;
+    if (isNoiseLineItemRow(line.description, line.qty)) return false;
     if (headerValues && duplicatesHeaderLineDescription(line.description, headerValues)) {
       return false;
     }
     return true;
   });
+  return dedupeNearDuplicateLineItems(filtered);
+}
+
+function lineDescriptionKey(description: string | null | undefined): string {
+  let text = normalizeDescriptionKey(description);
+  const pipe = text.indexOf(" | ");
+  if (pipe > 0) text = text.slice(0, pipe).trim();
+  return text.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function lineItemsNearDuplicate(left: LineItem, right: LineItem): boolean {
+  const leftKey = lineDescriptionKey(left.description);
+  const rightKey = lineDescriptionKey(right.description);
+  if (!leftKey || !rightKey) return false;
+  if (leftKey === rightKey) return true;
+  if (leftKey.startsWith(rightKey) || rightKey.startsWith(leftKey)) return true;
+  const leftAmount = parseNumeric(left.amount);
+  const rightAmount = parseNumeric(right.amount);
+  if (leftAmount != null && rightAmount != null && amountsRoughlyEqual(leftAmount, rightAmount)) {
+    const stem = Math.min(leftKey.length, rightKey.length, 24);
+    if (
+      stem >= 8 &&
+      (leftKey.startsWith(rightKey.slice(0, stem)) || rightKey.startsWith(leftKey.slice(0, stem)))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function lineItemRichness(line: LineItem): number {
+  let score = (line.description ?? "").trim().length;
+  if (hasDisplayValue(line.qty)) score += 10;
+  if (hasDisplayValue(line.unit_price)) score += 10;
+  if (hasDisplayValue(line.amount)) score += 10;
+  return score;
+}
+
+/** Collapse duplicate / near-duplicate product rows (DI + layout merge bleed). */
+export function dedupeNearDuplicateLineItems(items: LineItem[]): LineItem[] {
+  if (items.length < 2) return items;
+  const keep = items.map(() => true);
+  for (let i = 0; i < items.length; i += 1) {
+    if (!keep[i]) continue;
+    for (let j = i + 1; j < items.length; j += 1) {
+      if (!keep[j]) continue;
+      if (!lineItemsNearDuplicate(items[i], items[j])) continue;
+      if (lineItemRichness(items[i]) >= lineItemRichness(items[j])) {
+        keep[j] = false;
+      } else {
+        keep[i] = false;
+        break;
+      }
+    }
+  }
+  return items.filter((_, index) => keep[index]);
 }
 
 function amountsRoughlyEqual(a: number, b: number): boolean {
@@ -1035,20 +1197,15 @@ export function buildDocumentContentProfile(
 
 export function formatPreviewMoney(
   value: string | null | undefined,
-  currency: string,
-  locale?: string
+  currency: string | null | undefined,
+  locale?: string,
+  displaySymbol?: string | null
 ): string {
   if (value == null || value === "") return "—";
   const n = parseFloat(value);
   if (Number.isNaN(n)) return value;
-  try {
-    return new Intl.NumberFormat(locale || DEFAULT_TENANT_LOCALE, {
-      style: "currency",
-      currency: currency || "SGD",
-    }).format(n);
-  } catch {
-    return value;
-  }
+  // Delegate to money() so blank currency never invents SGD; symbol used when no ISO.
+  return money(n, currency, locale || DEFAULT_TENANT_LOCALE, displaySymbol);
 }
 
 export type TaxMeta = { label: string; rate: number | null };
@@ -1061,7 +1218,49 @@ type JurisdictionTaxSource =
       statutory_tax_rate?: number | null;
     };
 
-/** Resolve tax label/rate from country code or institution jurisdiction fields. */
+type DocumentTaxAmounts = {
+  currency?: string | null;
+  gst_rate?: string | number | null;
+  subtotal?: string | number | null;
+  gst?: string | number | null;
+};
+
+const TAX_RATE_PERCENT_RE = /(\d+(?:\.\d+)?)\s*%/;
+
+/** Parse a document tax rate into percentage form (10 = 10%). Never uses jurisdiction defaults. */
+export function parseDocumentTaxRatePercent(raw: string | number | null | undefined): number | null {
+  if (raw == null) return null;
+  let token = String(raw).trim();
+  if (!token) return null;
+  const match = TAX_RATE_PERCENT_RE.exec(token);
+  if (match) token = match[1];
+  else token = token.replace(/%/g, "").trim();
+  if (!token) return null;
+  let value = Number(token);
+  if (!Number.isFinite(value) || value < 0) return null;
+  // Fractions like 0.1 → 10%
+  if (value > 0 && value <= 1) value = value * 100;
+  if (value > 100) return null;
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * Tax % for display: extracted `gst_rate`, else calculate from gst ÷ subtotal.
+ * Does not use country / statutory application defaults.
+ */
+export function resolveDocumentTaxRatePercent(amounts: DocumentTaxAmounts): number | null {
+  const direct = parseDocumentTaxRatePercent(amounts.gst_rate);
+  if (direct != null) return direct;
+
+  const subtotal = Number(amounts.subtotal);
+  const gst = Number(amounts.gst);
+  if (!Number.isFinite(subtotal) || !Number.isFinite(gst) || subtotal <= 0) return null;
+  const inferred = (gst / subtotal) * 100;
+  if (!Number.isFinite(inferred) || inferred < 0 || inferred > 100) return null;
+  return Math.round(inferred * 100) / 100;
+}
+
+/** Resolve tax label only from country / institution (never a default %). */
 export function taxMetaForJurisdiction(countryOrInstitution: JurisdictionTaxSource): TaxMeta {
   if (countryOrInstitution && typeof countryOrInstitution === "object") {
     const countryCode = countryOrInstitution.country?.trim().toUpperCase() ?? "";
@@ -1072,20 +1271,6 @@ export function taxMetaForJurisdiction(countryOrInstitution: JurisdictionTaxSour
       countryOrInstitution.tax_label?.trim() ||
       fromCountry?.taxLabel ||
       (countryCode === "US" ? "Sales Tax" : "Tax");
-
-    if (
-      countryOrInstitution.statutory_tax_rate != null &&
-      !Number.isNaN(Number(countryOrInstitution.statutory_tax_rate))
-    ) {
-      return { label, rate: Number(countryOrInstitution.statutory_tax_rate) };
-    }
-    // US has no single statutory rate.
-    if (countryCode === "US" || fromCountry?.code === "US") {
-      return { label, rate: null };
-    }
-    if (fromCountry) {
-      return { label, rate: fromCountry.taxRate };
-    }
     return { label, rate: null };
   }
 
@@ -1093,17 +1278,22 @@ export function taxMetaForJurisdiction(countryOrInstitution: JurisdictionTaxSour
   if (!code) return { label: "Tax", rate: null };
   const match = COUNTRIES.find((c) => c.code === code);
   if (!match) return { label: "Tax", rate: null };
-  if (match.code === "US") return { label: match.taxLabel, rate: null };
-  return { label: match.taxLabel, rate: match.taxRate };
+  return { label: match.taxLabel, rate: null };
 }
 
-/** Thin currency→country lookup; falls back to generic Tax (no assumed rate). */
+/** Thin currency→country lookup for tax label only (no assumed rate). */
 export function taxMetaForCurrency(currency: string): TaxMeta {
   const code = String(currency ?? "").trim().toUpperCase();
   if (!code) return { label: "Tax", rate: null };
   const match = COUNTRIES.find((c) => c.currency === code);
   if (!match) return { label: "Tax", rate: null };
   return taxMetaForJurisdiction(match.code);
+}
+
+/** Label from jurisdiction/currency + rate from the document (extract or calculate). */
+export function invoiceTaxMeta(amounts: DocumentTaxAmounts): TaxMeta {
+  const { label } = taxMetaForCurrency(String(amounts.currency ?? ""));
+  return { label, rate: resolveDocumentTaxRatePercent(amounts) };
 }
 
 export function previewFilename(inv: Invoice): string {

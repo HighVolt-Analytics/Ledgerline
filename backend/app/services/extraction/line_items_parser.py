@@ -474,11 +474,28 @@ def parse_line_items_from_di_items(items_field: Any) -> list[ParsedLineItem]:
             return getattr(currency, "amount", None)
         return None
 
+    def _field_confidence(field: Any) -> float | None:
+        if field is None:
+            return None
+        raw = getattr(field, "confidence", None)
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
     def _line_prop(item: Any, name: str) -> Any:
         props = getattr(item, "value_object", None) or getattr(item, "valueObject", None)
         if not props:
             return None
         return _field_value(props.get(name))
+
+    def _line_prop_field(item: Any, name: str) -> Any:
+        props = getattr(item, "value_object", None) or getattr(item, "valueObject", None)
+        if not props:
+            return None
+        return props.get(name)
 
     parsed: list[ParsedLineItem] = []
     for item in values:
@@ -491,6 +508,19 @@ def parse_line_items_from_di_items(items_field: Any) -> list[ParsedLineItem]:
         description = str(desc).strip() if desc else None
         if not description or _skip_line_row(description):
             continue
+
+        confidences = [
+            c
+            for c in (
+                _field_confidence(item),
+                _field_confidence(_line_prop_field(item, "Description")),
+                _field_confidence(_line_prop_field(item, "Amount")),
+                _field_confidence(_line_prop_field(item, "Quantity")),
+            )
+            if c is not None
+        ]
+        row_confidence = min(confidences) if confidences else None
+
         parsed.append(
             _make_line_item(
                 description=description,
@@ -499,13 +529,65 @@ def parse_line_items_from_di_items(items_field: Any) -> list[ParsedLineItem]:
                 amount=_money(str(amount)) if amount is not None else None,
                 tax_amount=_money(str(tax)) if tax is not None else None,
                 source="di",
+                source_confidence=row_confidence,
             )
         )
     return parsed
 
 
 def _normalize_line_description(desc: str | None) -> str:
-    return re.sub(r"\s+", " ", (desc or "").strip().lower())
+    text = re.sub(r"\s+", " ", (desc or "").strip().lower())
+    # Layout grids often append " | COO | weight" meta — treat as same product key
+    if " | " in text:
+        text = text.split(" | ", 1)[0].strip()
+    text = re.sub(r"[^\w\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _line_items_near_duplicate(left: ParsedLineItem, right: ParsedLineItem) -> bool:
+    left_key = _normalize_line_description(left.description)
+    right_key = _normalize_line_description(right.description)
+    if not left_key or not right_key:
+        return False
+    if left_key == right_key:
+        return True
+    if left_key.startswith(right_key) or right_key.startswith(left_key):
+        return True
+    # Same amount + overlapping description stem
+    if left.amount is not None and right.amount is not None and left.amount == right.amount:
+        stem = min(len(left_key), len(right_key), 24)
+        if stem >= 8 and (
+            left_key.startswith(right_key[:stem]) or right_key.startswith(left_key[:stem])
+        ):
+            return True
+    return False
+
+
+def dedupe_near_duplicate_line_items(
+    items: list[ParsedLineItem],
+    *,
+    thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
+) -> list[ParsedLineItem]:
+    """Collapse exact / prefix / same-amount near-duplicate product rows."""
+    if len(items) < 2:
+        return items
+    keep = [True] * len(items)
+    for i, left in enumerate(items):
+        if not keep[i]:
+            continue
+        for j in range(i + 1, len(items)):
+            if not keep[j]:
+                continue
+            if not _line_items_near_duplicate(left, items[j]):
+                continue
+            if _line_item_row_score(left, thresholds=thresholds) >= _line_item_row_score(
+                items[j], thresholds=thresholds
+            ):
+                keep[j] = False
+            else:
+                keep[i] = False
+                break
+    return [item for item, kept in zip(items, keep) if kept]
 
 
 def enrich_parsed_line_items(
@@ -514,7 +596,10 @@ def enrich_parsed_line_items(
     thresholds: LineItemParsingThresholds = DEFAULT_THRESHOLDS,
 ) -> list[ParsedLineItem]:
     repaired = [_repair_year_misplaced_as_qty(item, thresholds=thresholds) for item in items]
-    deduped = _dedupe_prefix_fragment_rows(repaired, thresholds=thresholds)
+    deduped = dedupe_near_duplicate_line_items(
+        _dedupe_prefix_fragment_rows(repaired, thresholds=thresholds),
+        thresholds=thresholds,
+    )
     enriched: list[ParsedLineItem] = []
     for item in deduped:
         qty = item.qty
@@ -549,25 +634,58 @@ def merge_line_item_lists(
     if not primary:
         return enrich_parsed_line_items(list(secondary))
 
-    secondary_by_desc = {
-        _normalize_line_description(item.description): item
-        for item in secondary
-        if _normalize_line_description(item.description)
-    }
+    secondary_by_desc: dict[str, list[int]] = {}
+    for index, item in enumerate(secondary):
+        key = _normalize_line_description(item.description)
+        if not key:
+            continue
+        secondary_by_desc.setdefault(key, []).append(index)
+
     merged: list[ParsedLineItem] = []
-    used_secondary: set[str] = set()
+    used_secondary_indices: set[int] = set()
+    used_secondary_keys: set[str] = set()
 
     for index, primary_item in enumerate(primary):
         key = _normalize_line_description(primary_item.description)
-        secondary_item = secondary_by_desc.get(key) if key else None
-        if secondary_item is None and index < len(secondary):
-            secondary_item = secondary[index]
-        if secondary_item and key:
-            used_secondary.add(key)
+        secondary_index: int | None = None
+        secondary_item: ParsedLineItem | None = None
+
+        if key:
+            for candidate_index in secondary_by_desc.get(key, []):
+                if candidate_index not in used_secondary_indices:
+                    secondary_index = candidate_index
+                    secondary_item = secondary[candidate_index]
+                    break
+            if secondary_item is None:
+                # Near-duplicate key match (prefix / meta-stripped)
+                for candidate_index, candidate in enumerate(secondary):
+                    if candidate_index in used_secondary_indices:
+                        continue
+                    if _line_items_near_duplicate(primary_item, candidate):
+                        secondary_index = candidate_index
+                        secondary_item = candidate
+                        break
+
+        if secondary_item is None and index < len(secondary) and index not in used_secondary_indices:
+            # Positional fallback only when descriptions are empty or near-duplicates
+            candidate = secondary[index]
+            if not key or not _normalize_line_description(candidate.description) or _line_items_near_duplicate(
+                primary_item, candidate
+            ):
+                secondary_item = candidate
+                secondary_index = index
 
         if secondary_item is None:
             merged.append(primary_item)
             continue
+
+        if secondary_index is not None:
+            used_secondary_indices.add(secondary_index)
+        sec_key = _normalize_line_description(secondary_item.description)
+        if key:
+            used_secondary_keys.add(key)
+        if sec_key:
+            used_secondary_keys.add(sec_key)
 
         merged_source, merged_confidence, merged_fused = _merge_provenance(primary_item, secondary_item)
         merged.append(
@@ -591,16 +709,20 @@ def merge_line_item_lists(
             )
         )
 
-    for secondary_item in secondary:
+    for secondary_index, secondary_item in enumerate(secondary):
+        if secondary_index in used_secondary_indices:
+            continue
         key = _normalize_line_description(secondary_item.description)
-        if key and key in used_secondary:
+        if key and key in used_secondary_keys:
+            continue
+        # Do not append near-duplicates of already-merged primary rows
+        if any(_line_items_near_duplicate(secondary_item, existing) for existing in merged):
             continue
         if not key and len(merged) >= len(secondary):
             continue
         merged.append(secondary_item)
 
     return enrich_parsed_line_items(merged)
-
 
 def serialize_line_items(items: list[ParsedLineItem]) -> list[dict[str, str | None]]:
     rows: list[dict[str, str | None]] = []
@@ -666,9 +788,14 @@ def line_items_from_ocr_payload(payload: dict[str, object]) -> list[ParsedLineIt
 
 
 def _line_item_row_usable(item: ParsedLineItem, *, allow_qty_only: bool = False) -> bool:
+    from app.services.extraction.line_item_noise_patterns import is_noise_line_item_row
     from app.services.extraction.line_items_sanitizer import _passes_minimum_product_row
 
-    return _passes_minimum_product_row(item, allow_qty_only=allow_qty_only)
+    if not _passes_minimum_product_row(item, allow_qty_only=allow_qty_only):
+        return False
+    if is_noise_line_item_row(item.description, item.qty):
+        return False
+    return True
 
 
 def _usable_line_items(
@@ -714,17 +841,93 @@ def resolve_usable_line_items_from_payload(
     *,
     allow_qty_only: bool = False,
 ) -> list[ParsedLineItem]:
-    """Merge usable DI, layout table, and layout grid rows."""
+    """Merge usable DI and layout rows without appending unmatched layout junk."""
+    return resolve_line_items_for_strategy(
+        payload,
+        layout_mode="gap_fill",
+        allow_qty_only=allow_qty_only,
+    )
+
+
+def merge_line_items_gap_fill_only(
+    primary: list[ParsedLineItem],
+    secondary: list[ParsedLineItem],
+) -> list[ParsedLineItem]:
+    """Fill missing qty/price/amount on primary from matching secondary; do not append extras."""
+    if not secondary:
+        return enrich_parsed_line_items(list(primary))
+    if not primary:
+        return enrich_parsed_line_items(list(primary))
+
+    secondary_by_desc = {
+        _normalize_line_description(item.description): item
+        for item in secondary
+        if _normalize_line_description(item.description)
+    }
+    merged: list[ParsedLineItem] = []
+    for index, primary_item in enumerate(primary):
+        key = _normalize_line_description(primary_item.description)
+        secondary_item = secondary_by_desc.get(key) if key else None
+        if secondary_item is None and index < len(secondary):
+            # Positional match only when descriptions align loosely — avoid header pollution
+            sec_key = _normalize_line_description(secondary[index].description)
+            if key and sec_key and (key in sec_key or sec_key in key):
+                secondary_item = secondary[index]
+        if secondary_item is None:
+            merged.append(primary_item)
+            continue
+        merged_source, merged_confidence, merged_fused = _merge_provenance(
+            primary_item, secondary_item
+        )
+        merged.append(
+            _make_line_item(
+                description=primary_item.description or secondary_item.description,
+                qty=primary_item.qty if primary_item.qty is not None else secondary_item.qty,
+                unit_price=(
+                    primary_item.unit_price
+                    if primary_item.unit_price is not None
+                    else secondary_item.unit_price
+                ),
+                amount=(
+                    primary_item.amount
+                    if primary_item.amount is not None
+                    else secondary_item.amount
+                ),
+                tax_amount=primary_item.tax_amount or secondary_item.tax_amount,
+                source=merged_source,
+                source_confidence=merged_confidence,
+                fused_from=merged_fused,
+            )
+        )
+    return enrich_parsed_line_items(merged)
+
+
+def resolve_line_items_for_strategy(
+    payload: dict[str, object] | None,
+    *,
+    layout_mode: str = "gap_fill",
+    allow_qty_only: bool = False,
+) -> list[ParsedLineItem]:
+    """
+    Resolve line items according to extraction strategy layout mode.
+
+    - gap_fill: DI primary; fill missing money fields from layout; never append unmatched layout rows
+    - gap_fill_append: legacy merge that may append unmatched layout rows
+    - primary: layout/table/grid primary; DI ignored for authoritative list
+    - ignore: DI only (or empty)
+    """
     if not payload:
         return []
     di_items = _usable_line_items(
-        deserialize_line_items(payload.get("di_line_items"), default_source="di")
-    )
-    table_items = deserialize_line_items(payload.get("table_line_items"), default_source="table")
-    grid_items = _usable_line_items(
-        parse_line_items_from_layout_grids(payload),
+        deserialize_line_items(payload.get("di_line_items"), default_source="di"),
         allow_qty_only=allow_qty_only,
     )
+    # Prefer re-parsed layout grids (current filters) over stale cached table_line_items
+    grid_items = parse_line_items_from_layout_grids(payload)
+    if grid_items:
+        table_items = grid_items
+    else:
+        table_items = deserialize_line_items(payload.get("table_line_items"), default_source="table")
     if allow_qty_only:
         table_usable = _usable_line_items(table_items, allow_qty_only=True)
     else:
@@ -734,18 +937,36 @@ def resolve_usable_line_items_from_payload(
             if item.amount is not None or item.unit_price is not None
         ]
         table_usable = _usable_line_items(money_rows) or _usable_line_items(table_items)
-    if not table_usable and grid_items:
-        table_usable = grid_items
-    elif table_usable and grid_items:
-        table_usable = merge_line_item_lists(
-            enrich_parsed_line_items(table_usable),
-            enrich_parsed_line_items(grid_items),
-        )
+
+    mode = (layout_mode or "gap_fill").strip().lower()
+    if mode == "ignore":
+        return enrich_parsed_line_items(di_items) if di_items else []
+    if mode == "primary":
+        if table_usable:
+            return enrich_parsed_line_items(table_usable)
+        # Layout-primary must not fall back to leftover DI invoice rows
+        return []
+    if mode == "gap_fill_append":
+        if di_items and table_usable:
+            return merge_line_item_lists(
+                enrich_parsed_line_items(di_items),
+                enrich_parsed_line_items(table_usable),
+            )
+        if di_items:
+            return enrich_parsed_line_items(di_items)
+        if table_usable:
+            return enrich_parsed_line_items(table_usable)
+        return []
+    # gap_fill (default for invoice family)
     if di_items and table_usable:
-        return merge_line_item_lists(
-            enrich_parsed_line_items(di_items),
-            enrich_parsed_line_items(table_usable),
+        # Qty-only packing lists often have a stub DI header row; prefer richer layout table
+        # only when DI has no money-bearing product rows.
+        di_has_money = any(
+            item.amount is not None or item.unit_price is not None for item in di_items
         )
+        if allow_qty_only and (not di_has_money) and len(table_usable) > len(di_items):
+            return enrich_parsed_line_items(table_usable)
+        return merge_line_items_gap_fill_only(di_items, table_usable)
     if di_items:
         return enrich_parsed_line_items(di_items)
     if table_usable:
@@ -754,8 +975,8 @@ def resolve_usable_line_items_from_payload(
 
 
 def resolve_line_items_from_ocr_payload(payload: dict[str, object] | None) -> list[ParsedLineItem] | None:
-    """Prefer prebuilt-invoice rows; fall back to layout table rows."""
-    usable = resolve_usable_line_items_from_payload(payload)
+    """Prefer prebuilt-invoice rows; fall back to layout table rows (gap-fill, no append)."""
+    usable = resolve_line_items_for_strategy(payload, layout_mode="gap_fill")
     return usable if usable else None
 
 
@@ -993,6 +1214,10 @@ def parse_qty_only_line_items_from_text(text: str) -> list[ParsedLineItem]:
             parsed = _parse_qty_only_row(raw)
         if parsed is None or _skip_line_row(parsed.description or ""):
             continue
+        from app.services.extraction.line_item_noise_patterns import is_noise_line_item_row
+
+        if is_noise_line_item_row(parsed.description, parsed.qty):
+            continue
         if parsed.qty is not None and _is_aggregate_qty_row(parsed.qty, prior_qtys):
             continue
         items.append(parsed)
@@ -1010,6 +1235,11 @@ def document_has_qty_only_table(
     payload_dict = payload or {}
     if di_line_items_usable(payload_dict):
         di_rows = _usable_line_items(deserialize_line_items(payload_dict.get("di_line_items")))
+        # Money-bearing DI product rows win — never treat as qty-only packing list.
+        if di_rows and any(
+            item.amount is not None or item.unit_price is not None for item in di_rows
+        ):
+            return False
         table_rows = deserialize_line_items(payload_dict.get("table_line_items"))
         table_usable = _usable_line_items(table_rows, allow_qty_only=True) if table_rows else []
         if di_rows and len(di_rows) >= len(table_usable):

@@ -224,6 +224,11 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="USE_FIELD_FUSION",
     )
+    use_field_contract_merge: bool = Field(
+        default=False,
+        validation_alias="USE_FIELD_CONTRACT_MERGE",
+        description="Field-contract driven merge (resolve per field); off = legacy layered merge",
+    )
     runtime_line_item_trace_enabled: bool = Field(
         default=False,
         validation_alias="RUNTIME_LINE_ITEM_TRACE_ENABLED",
@@ -244,6 +249,40 @@ class Settings(BaseSettings):
     azure_di_layout_model_id: str = Field(
         default="prebuilt-layout",
         validation_alias="AZURE_DI_LAYOUT_MODEL_ID",
+    )
+    azure_di_receipt_model_id: str = Field(
+        default="",
+        validation_alias="AZURE_DI_RECEIPT_MODEL_ID",
+        description="Optional prebuilt-receipt (or custom) model; empty = layout-primary for receipts",
+    )
+    di_field_trust_min_confidence: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        validation_alias="DI_FIELD_TRUST_MIN_CONFIDENCE",
+    )
+    di_line_item_trust_min_confidence: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        validation_alias="DI_LINE_ITEM_TRUST_MIN_CONFIDENCE",
+    )
+    di_raw_persist_mode: str = Field(
+        default="failures",
+        validation_alias="DI_RAW_PERSIST_MODE",
+        description="failures | sample | always | off",
+    )
+    di_raw_persist_sample_rate: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        validation_alias="DI_RAW_PERSIST_SAMPLE_RATE",
+    )
+    di_raw_max_chars: int = Field(
+        default=500_000,
+        ge=10_000,
+        le=5_000_000,
+        validation_alias="DI_RAW_MAX_CHARS",
     )
     azure_openai_endpoint: str = Field(
         default="",
@@ -1224,6 +1263,7 @@ def flag_enabled_for_dt(
         "use_citation_grounding": settings.use_citation_grounding,
         "use_extraction_self_consistency": settings.use_extraction_self_consistency,
         "use_field_fusion": settings.use_field_fusion,
+        "use_field_contract_merge": settings.use_field_contract_merge,
         "use_composite_routing": settings.use_composite_routing,
     }
     if not global_map.get(flag_key, False):

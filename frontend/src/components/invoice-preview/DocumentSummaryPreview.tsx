@@ -7,25 +7,16 @@ import type { InvoiceDetails, LineItem } from "@/api/types";
 import { counterpartyUnknownLabel } from "@/lib/invoice";
 
 import {
-
   buildDocumentContentProfile,
-
   formatPreviewMoney,
-
+  invoiceTaxMeta,
   isCompactReceiptStyle,
-
   taxMetaForCurrency,
-
   taxMetaForJurisdiction,
-
   type ContentReference,
-
   type DocumentContentProfile,
-
   type PartyPreviewBlock,
-
 } from "@/lib/invoicePreview";
-
 import { counterpartyLabel } from "@/lib/invoice";
 
 import { cn } from "@/lib/cn";
@@ -694,5 +685,10 @@ export function DocumentSummaryPreview({
 
 
 
-export { formatPreviewMoney as formatMoney, taxMetaForCurrency as taxMeta, taxMetaForJurisdiction };
+export {
+  formatPreviewMoney as formatMoney,
+  invoiceTaxMeta,
+  taxMetaForCurrency as taxMeta,
+  taxMetaForJurisdiction,
+};
 

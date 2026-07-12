@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.delivery_note import DeliveryNote
@@ -360,12 +360,15 @@ def missing_optional_extraction_fields(
 
 
 def _normalize_po_ref_token(po_reference: str) -> str:
-    return (po_reference or "").strip().upper()
+    from app.services.purchase.po_reference import normalize_po_link_token
+
+    return normalize_po_link_token(po_reference)
 
 
 def _invoice_po_ref_equals(po_reference: str):
-    token = _normalize_po_ref_token(po_reference)
-    return func.upper(func.coalesce(Invoice.po_reference, "")) == token
+    from app.services.purchase.po_reference import invoice_po_reference_equals
+
+    return invoice_po_reference_equals(po_reference)
 
 
 def _purchase_order_po_ref_equals(po_reference: str):
@@ -432,24 +435,36 @@ async def invoice_dt_present_by_invoice_no(
     dt_code: str,
     exclude_invoice_id: int | None = None,
 ) -> bool:
-    """True when another org document shares invoice_no and has the given DT code."""
-    token = (invoice_no or "").strip()
+    """True when another org document shares invoice_no (or secondary) and has the given DT code."""
+    from app.services.extraction.invoice_no_sanitizer import (
+        invoice_no_link_tokens,
+        invoice_no_link_tokens_from_values,
+    )
+
+    tokens = invoice_no_link_tokens_from_values(invoice_no, None)
     code = (dt_code or "").strip().upper()
-    if not token or not code:
+    if not tokens or not code:
         return False
+    token_list = list(tokens)
     stmt = (
-        select(Invoice.id)
+        select(Invoice)
         .where(
             Invoice.tenant_id == tenant_id,
-            Invoice.invoice_no == token,
             Invoice.document_type_code == code,
             Invoice.status.not_in(_TERMINAL_SKIP_STATUSES),
+            or_(
+                func.upper(Invoice.invoice_no).in_(token_list),
+                Invoice.invoice_no.in_(token_list),
+            ),
         )
-        .limit(1)
+        .limit(20)
     )
     if exclude_invoice_id is not None:
         stmt = stmt.where(Invoice.id != exclude_invoice_id)
-    return (await session.execute(stmt)).scalar_one_or_none() is not None
+    for row in (await session.execute(stmt)).scalars().all():
+        if invoice_no_link_tokens(row) & tokens:
+            return True
+    return False
 
 
 async def _invoice_any_bundle_role_present(

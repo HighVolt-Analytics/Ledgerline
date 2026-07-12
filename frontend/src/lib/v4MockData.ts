@@ -170,6 +170,7 @@ export type PaymentRecord = {
   invoiceId: string;
   vendor: string;
   amount: number;
+  currency: string;
   dueDate: string;
   tab: PaymentTab;
   invoiceApprovedBy: string;
@@ -279,7 +280,12 @@ export const EXPENSE_BUDGETS = raw.budgets as ExpenseBudget[];
 export const EXPENSE_CATEGORIES = raw.categories as ExpenseCategoryPolicy[];
 export const CLAIM_CHANNELS = raw.channels as ClaimChannel[];
 export const INITIAL_PURCHASES = raw.purchases as PurchaseOrder[];
-export const INITIAL_PAYMENTS = raw.payments as PaymentRecord[];
+export const INITIAL_PAYMENTS: PaymentRecord[] = (
+  raw.payments as Array<Omit<PaymentRecord, "currency"> & { currency?: string }>
+).map((p) => ({
+  ...p,
+  currency: (p.currency || "AUD").trim().toUpperCase() || "AUD",
+}));
 export const MOCK_WALLET = raw.wallet as StripeWallet;
 export const LEDGER_INVOICES = raw.ledgerInvoices as LedgerExportRow[];
 export const LEDGER_BILLS = raw.ledgerBills as LedgerExportRow[];

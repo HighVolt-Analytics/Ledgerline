@@ -261,6 +261,89 @@ async def test_reference_linked_docs_appended_for_po_and_invoice_no(
 
 
 @pytest.mark.asyncio
+async def test_po_reference_links_case_insensitive(db_session: AsyncSession) -> None:
+    """Sibling docs with different PO casing must still link (parity with playbook)."""
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Buyer",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-01",
+        invoice_no="INV-CASE-PO-1",
+        po_reference="PO-Case-99",
+        purchase_document_type="invoice",
+        file_hash="po-case-anchor",
+    )
+    sibling = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Supplier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-14",
+        invoice_no="PO-DOC-CASE",
+        po_reference="po-case-99",
+        purchase_document_type="po",
+        file_hash="po-case-sibling",
+    )
+    db_session.add_all([anchor, sibling])
+    await db_session.flush()
+
+    linked = await build_dossier_linked_documents(
+        db_session,
+        anchor,
+        definition=None,
+        document_types=[],
+    )
+
+    linked_ids = {
+        doc.invoice_id
+        for doc in linked.documents
+        if doc.invoice_id is not None and not doc.is_anchor
+    }
+    assert sibling.id in linked_ids
+
+
+@pytest.mark.asyncio
+async def test_fetch_po_siblings_case_insensitive_via_cache(db_session: AsyncSession) -> None:
+    from app.services.dossier.dossier_service import (
+        build_linkage_sibling_cache,
+        fetch_linked_invoices_by_po_reference,
+    )
+
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Buyer",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-01",
+        invoice_no="INV-CACHE-PO",
+        po_reference="PO-Cache-77",
+        file_hash="po-cache-anchor",
+    )
+    sibling = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Supplier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-02",
+        invoice_no="SUPPORT-CACHE-PO",
+        po_reference="po-cache-77",
+        file_hash="po-cache-sibling",
+    )
+    db_session.add_all([anchor, sibling])
+    await db_session.flush()
+
+    direct = await fetch_linked_invoices_by_po_reference(db_session, anchor)
+    assert {row.id for row in direct} == {sibling.id}
+
+    cache = await build_linkage_sibling_cache(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        anchors=[anchor],
+    )
+    cached = await fetch_linked_invoices_by_po_reference(
+        db_session, anchor, linkage_cache=cache
+    )
+    assert {row.id for row in cached} == {sibling.id}
+
+
+@pytest.mark.asyncio
 async def test_sales_so_dossier_links_so_and_dn_members(db_session: AsyncSession) -> None:
     from app.schemas.document_type import DocumentTypeDefinition
 
@@ -351,3 +434,62 @@ async def test_sales_so_dossier_links_so_and_dn_members(db_session: AsyncSession
     assert by_role["invoice"].invoice_id == anchor.id
     assert by_role["so"].document_type_code == "DT-07"
     assert by_role["dn"].document_type_code == "DT-08"
+
+
+@pytest.mark.asyncio
+async def test_so_reference_links_case_insensitive(db_session: AsyncSession) -> None:
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.services.dossier.dossier_service import fetch_linked_invoices_by_so_reference
+
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Hotel",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-06",
+        route_target="Sales Management",
+        so_reference="SO-Case-55",
+        sales_document_type="invoice",
+        invoice_no="INV-SO-CASE",
+        file_hash="so-case-anchor",
+    )
+    sibling = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Hotel",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-07",
+        route_target="Sales Management",
+        so_reference="so-case-55",
+        sales_document_type="so",
+        invoice_no="SO-DOC-CASE",
+        file_hash="so-case-sibling",
+    )
+    db_session.add_all([anchor, sibling])
+    await db_session.flush()
+
+    rows = await fetch_linked_invoices_by_so_reference(db_session, anchor)
+    assert {row.id for row in rows} == {sibling.id}
+
+    definition = DocumentTypeDefinition(
+        code="DT-06",
+        title="Customer invoice",
+        short_title="Customer invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
+        route_target="Sales Management",
+        playbook_profile="ar_goods",
+    )
+    linked = await build_dossier_linked_documents(
+        db_session,
+        anchor,
+        definition=definition,
+        document_types=[definition],
+    )
+    linked_ids = {
+        doc.invoice_id
+        for doc in linked.documents
+        if doc.invoice_id is not None and not doc.is_anchor
+    }
+    assert sibling.id in linked_ids

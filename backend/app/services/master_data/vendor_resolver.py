@@ -15,35 +15,6 @@ UNKNOWN_SLUG = "unknown"
 MAX_STORAGE_SLUG_LEN = 50
 _MAX_VENDOR_NAME_LEN = 100
 
-# Parsed PDF text often mis-labels boilerplate as "vendor"; never slugify these.
-_INSTRUCTION_MARKERS = (
-    "please reference",
-    "please quote",
-    "payment terms",
-    "invoice date",
-    "due date",
-    "bank details",
-    "remittance",
-    "tax invoice",
-    "abn:",
-    "total amount",
-    "amount due",
-)
-
-# Bill of lading / transport form labels — not company names.
-_FORM_LABEL_MARKERS = (
-    "pre-carriage",
-    "pre carriage",
-    "place of",
-    "port of",
-    "vessel",
-    "notify party",
-    "consignee",
-    "shipper",
-    "freight payable",
-    "marks and numbers",
-)
-
 
 def is_plausible_vendor_name(name: str | None) -> bool:
     from app.services.master_data.vendor_name_utils import is_plausible_vendor_name as _is_plausible

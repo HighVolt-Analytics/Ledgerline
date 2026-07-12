@@ -5,7 +5,8 @@ import { ApprovalPolicyNote } from "@/components/ApprovalPolicyNote";
 import { DocumentAuditTrail } from "@/components/DocumentAuditTrail";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
-import { fmtAud, type PaymentRecord } from "@/lib/v4MockData";
+import { money } from "@/lib/format";
+import { type PaymentRecord } from "@/lib/v4MockData";
 
 function ReceiptRow({
   label,
@@ -103,10 +104,21 @@ export function PaymentReceiptSheet({
         <div className="flex-1 overflow-y-auto p-5">
           <Card className="p-4 bg-muted/30 space-y-2 text-sm">
             <ReceiptRow label="Payment intent" value={payment.paymentIntent ?? "—"} mono />
-            <ReceiptRow label="Amount" value={fmtAud(payment.amount)} strong />
+            <ReceiptRow
+              label="Amount"
+              value={money(payment.amount, payment.currency)}
+              strong
+            />
             <ReceiptRow label="Source document" value={payment.invoiceId} />
             <ReceiptRow label="Paid" value={payment.paidDate ?? "—"} />
-            <ReceiptRow label="Method" value="Stripe Wallet (AUD)" />
+            <ReceiptRow
+              label="Method"
+              value={
+                payment.currency?.trim()
+                  ? `Stripe Wallet (${payment.currency.trim().toUpperCase()})`
+                  : "Stripe Wallet"
+              }
+            />
             <ReceiptRow label="Status" value="Succeeded" />
           </Card>
 
@@ -126,13 +138,17 @@ export function PaymentReceiptSheet({
                 <tbody>
                   <tr className="border-t border-border/60">
                     <td className="px-3 py-1.5">Accounts Payable</td>
-                    <td className="px-3 py-1.5 text-right tnum">{fmtAud(payment.amount)}</td>
+                    <td className="px-3 py-1.5 text-right tnum">
+                      {money(payment.amount, payment.currency)}
+                    </td>
                     <td className="px-3 py-1.5 text-right tnum">—</td>
                   </tr>
                   <tr className="border-t border-border/60">
                     <td className="px-3 py-1.5">Stripe Wallet</td>
                     <td className="px-3 py-1.5 text-right tnum">—</td>
-                    <td className="px-3 py-1.5 text-right tnum">{fmtAud(payment.amount)}</td>
+                    <td className="px-3 py-1.5 text-right tnum">
+                      {money(payment.amount, payment.currency)}
+                    </td>
                   </tr>
                 </tbody>
               </table>

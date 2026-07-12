@@ -8,15 +8,22 @@ import {
   enrichLineItemsForPreview,
   enrichLineItemsFromDocumentText,
   filterLineItemsForPreview,
+  formatPreviewMoney,
+  invoiceTaxMeta,
   isCompactReceiptStyle,
   isSummaryLineDescription,
   lineItemColumnsForPreview,
+  parseDocumentTaxRatePercent,
   previewFilename,
+  resolveDocumentTaxRatePercent,
   sanitizeLineItemValues,
   shouldIncludeInSummary,
   shouldShowDocumentTextExcerpt,
   shouldSuppressField,
+  taxMetaForCurrency,
+  taxMetaForJurisdiction,
 } from "@/lib/invoicePreview";
+import { money } from "@/lib/format";
 import { ROUTE_PURCHASE, ROUTE_SALES } from "@/lib/invoice";
 
 const baseInvoice = {
@@ -825,5 +832,60 @@ describe("buildPreviewFooter", () => {
     } as InvoiceDetails;
     expect(previewFilename(inv)).toBe("scan-001.pdf");
     expect(buildPreviewFooter(inv, "email")).toBe("scan-001.pdf · captured via email");
+  });
+});
+
+describe("formatPreviewMoney", () => {
+  it("matches money() disambiguating symbols for drawer totals", () => {
+    expect(formatPreviewMoney("99.00", "AUD", "en-SG")).toBe(money(99, "AUD", "en-SG"));
+    expect(formatPreviewMoney("99.00", "SGD", "en-SG")).toBe(money(99, "SGD", "en-SG"));
+    expect(formatPreviewMoney("99.00", "USD", "en-SG")).toBe(money(99, "USD", "en-SG"));
+    expect(formatPreviewMoney("99.00", "AUD", "en-SG")).toContain("A$");
+    expect(formatPreviewMoney("99.00", "USD", "en-SG")).toContain("US$");
+  });
+
+  it("matches money() for blank currency without inventing S$", () => {
+    const preview = formatPreviewMoney("299.00", "", "en-SG");
+    expect(preview).toBe(money(299, "", "en-SG"));
+    expect(preview).toMatch(/299\.00/);
+    expect(preview).not.toContain("S$");
+  });
+});
+
+describe("invoiceTaxMeta / resolveDocumentTaxRatePercent", () => {
+  it("uses extracted gst_rate, not country default", () => {
+    expect(
+      invoiceTaxMeta({
+        currency: "INR",
+        gst_rate: "12",
+        subtotal: "100",
+        gst: "18",
+      })
+    ).toEqual({ label: "GST", rate: 12 });
+  });
+
+  it("calculates rate from amounts when gst_rate missing", () => {
+    expect(
+      resolveDocumentTaxRatePercent({
+        currency: "INR",
+        gst_rate: null,
+        subtotal: "1000",
+        gst: "180",
+      })
+    ).toBe(18);
+  });
+
+  it("does not invent a rate from jurisdiction when amounts are missing", () => {
+    expect(invoiceTaxMeta({ currency: "INR" })).toEqual({ label: "GST", rate: null });
+    expect(taxMetaForCurrency("INR")).toEqual({ label: "GST", rate: null });
+    expect(taxMetaForJurisdiction({ country: "IN", statutory_tax_rate: 18 })).toEqual({
+      label: "GST",
+      rate: null,
+    });
+  });
+
+  it("parses percent strings and fraction rates", () => {
+    expect(parseDocumentTaxRatePercent("10%")).toBe(10);
+    expect(parseDocumentTaxRatePercent("0.1")).toBe(10);
   });
 });

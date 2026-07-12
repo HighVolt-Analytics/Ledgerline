@@ -75,3 +75,44 @@ Total                                             550.00
     assert tier == "fallback_structured"
     assert len(updated.line_items) >= 1
     assert updated.line_items[0].amount == Decimal("500")
+
+
+def test_structured_fallback_ignores_text_qty_bleed_when_di_money_present() -> None:
+    text = (
+        "Weaviate B.V.\nPrinsengracht 769\n"
+        "Minimum amount Apr 1-Apr 30, 2026 1 44.61\n"
+        "$45.03 USD due May 1, 2026\n"
+        "Page 1 of 2\n"
+    )
+    payload = {
+        "di_line_items": [
+            {
+                "description": "Minimum amount Apr 1-Apr 30, 2026",
+                "qty": "1",
+                "unit_price": "44.61",
+                "amount": "44.61",
+            },
+            {
+                "description": "Flex Shared - Storage GBs (backups)",
+                "qty": "1",
+                "unit_price": "0.02",
+                "amount": "0.02",
+            },
+        ],
+        "table_line_items": [
+            {
+                "description": "Minimum amount Apr 1-Apr 30, 2026",
+                "qty": "1",
+                "unit_price": "44.61",
+                "amount": "44.61",
+            }
+        ],
+    }
+    parsed = InvoiceData(vendor="Weaviate B.V.", total=Decimal("45.03"), document_text=text)
+    updated, tier = apply_line_items_fallback(parsed, ocr_text=text, ocr_payload=payload)
+    assert tier == "fallback_structured"
+    assert len(updated.line_items) == 2
+    assert all(row.amount is not None for row in updated.line_items)
+    assert not any("Prinsengracht" in (row.description or "") for row in updated.line_items)
+    assert not any("due" in (row.description or "").lower() for row in updated.line_items)
+    assert not any((row.description or "").lower().startswith("page") for row in updated.line_items)

@@ -63,24 +63,19 @@ export function documentTypeLabelForCode(
   return row.title?.trim() || row.shortTitle?.trim() || normalized;
 }
 
-/** Compact label for document-type status chips (kanban cards, tables, headers). */
-const DOCUMENT_TYPE_CHIP_LABEL_BY_CODE: Record<string, string> = {
-  "DT-01": "Goods invoice",
-  "DT-03": "GRN",
-  "DT-28": "Delivery note",
-};
-
-function normalizeChipLabelFromText(label: string): string | null {
-  const token = label.trim().toLowerCase();
-  if (!token) return null;
-  if (token.includes("po-based goods invoice") || token.includes("po goods invoice")) {
-    return "Goods invoice";
-  }
-  if (token.includes("goods receipt") || token.startsWith("grn")) return "GRN";
-  if (token.includes("delivery note")) return "Delivery note";
-  return null;
+/** Compact chip label — prefers org Rule Book shortTitle. */
+export function documentTypeShortLabelForCode(
+  documentTypes: DocumentTypeDefinition[],
+  code: string | null | undefined
+): string | null {
+  const normalized = (code ?? "").trim().toUpperCase();
+  if (!normalized) return null;
+  const row = documentTypes.find((dt) => dt.code.toUpperCase() === normalized);
+  if (!row) return normalized;
+  return row.shortTitle?.trim() || row.title?.trim() || normalized;
 }
 
+/** Compact label for document-type status chips (kanban cards, tables, headers). */
 export function documentTypeChipDisplayLabel(input: {
   code?: string | null;
   purchaseKind?: string | null;
@@ -88,29 +83,15 @@ export function documentTypeChipDisplayLabel(input: {
   documentTypes?: DocumentTypeDefinition[] | null;
 }): string {
   const code = (input.code ?? "").trim().toUpperCase();
-  if (code && DOCUMENT_TYPE_CHIP_LABEL_BY_CODE[code]) {
-    return DOCUMENT_TYPE_CHIP_LABEL_BY_CODE[code]!;
-  }
-
-  const fromLabel = input.label ? normalizeChipLabelFromText(input.label) : null;
-  if (fromLabel) return fromLabel;
-
-  const purchaseType = (input.purchaseKind ?? "").trim().toLowerCase();
-  if (purchaseType === "grn") return "GRN";
 
   if (code && input.documentTypes?.length) {
-    const row = input.documentTypes.find((dt) => dt.code.toUpperCase() === code);
-    const short = row?.shortTitle?.trim();
-    if (short) {
-      const fromShort = normalizeChipLabelFromText(short);
-      if (fromShort) return fromShort;
-      return short;
-    }
+    const fromOrg = documentTypeShortLabelForCode(input.documentTypes, code);
+    if (fromOrg) return fromOrg;
   }
 
-  if (code) return code;
   const label = input.label?.trim();
   if (label) return label;
+  if (code) return code;
   return "Unclassified";
 }
 

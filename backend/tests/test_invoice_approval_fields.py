@@ -254,3 +254,39 @@ async def test_patch_billing_address(client: AsyncClient, db_session: AsyncSessi
     data = res.json()["data"]
     assert data["billing_address"] == "LedgerLine Test Tenant"
     assert data["vendor"] == "ram"
+
+
+@pytest.mark.asyncio
+async def test_currency_fill_allowed_when_unset_on_processed(
+    db_session: AsyncSession,
+) -> None:
+    from app.schemas.invoice import InvoiceUpdateRequest
+    from app.services.invoice.invoice_edit_service import update_invoice_fields
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="",
+        file_hash="currency-fill-1",
+        extracted_fields={"currency_symbol": "$"},
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    changed = await update_invoice_fields(
+        db_session,
+        inv,
+        InvoiceUpdateRequest(currency="USD"),
+        actor_name="tester",
+    )
+    assert changed is True
+    assert inv.currency == "USD"
+    assert "currency_symbol" not in (inv.extracted_fields or {})
+
+    with pytest.raises(ValueError, match="cannot be edited"):
+        await update_invoice_fields(
+            db_session,
+            inv,
+            InvoiceUpdateRequest(currency="EUR"),
+            actor_name="tester",
+        )

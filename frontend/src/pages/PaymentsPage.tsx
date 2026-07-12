@@ -24,9 +24,10 @@ import {
   useStripeReadiness,
   useStripeTransactions,
 } from "@/hooks/useStripe";
+import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import type { StripeAccount, StripeBalanceAmount, StripeReadinessResponse } from "@/api/types";
-import { money } from "@/lib/format";
+import { formatMoneyByCurrencyMap, money } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { apiPaymentToRecord, paymentsKpis } from "@/lib/routePageAdapters";
 import { paymentTierLabel, type PaymentRecord, type PaymentTab } from "@/lib/v4MockData";
@@ -57,30 +58,35 @@ function maskStripeAccountId(id: string): string {
   return `${id.slice(0, 8)}…${id.slice(-4)}`;
 }
 
-function formatBalanceLine(label: string, items: StripeBalanceAmount[]): string {
+function formatBalanceLine(
+  label: string,
+  items: StripeBalanceAmount[],
+  fallbackCurrency: string
+): string {
   if (!items.length) return `${label}: —`;
   const parts = items
     .filter((item) => item.amount != null)
-    .map((item) => money(item.amount, item.currency ?? "SGD"));
+    .map((item) => money(item.amount, item.currency || fallbackCurrency));
   return `${label}: ${parts.length ? parts.join(" · ") : "—"}`;
+}
+
+function sumStripeBalanceAmounts(
+  items: StripeBalanceAmount[],
+  fallbackCurrency: string
+): { total: number; currency: string } {
+  const withAmount = items.filter((item) => item.amount != null);
+  if (!withAmount.length) {
+    return { total: 0, currency: fallbackCurrency };
+  }
+  const currency = withAmount[0]?.currency || fallbackCurrency;
+  const total = withAmount.reduce((sum, item) => sum + (item.amount ?? 0), 0);
+  return { total, currency };
 }
 
 function stripeModeLabel(livemode: boolean | undefined): string {
   if (livemode === true) return "Live mode";
   if (livemode === false) return "Test mode";
   return "Sandbox";
-}
-
-function sumStripeBalanceAmounts(
-  items: StripeBalanceAmount[]
-): { total: number; currency: string } {
-  const withAmount = items.filter((item) => item.amount != null);
-  if (!withAmount.length) {
-    return { total: 0, currency: "SGD" };
-  }
-  const currency = withAmount[0]?.currency ?? "SGD";
-  const total = withAmount.reduce((sum, item) => sum + (item.amount ?? 0), 0);
-  return { total, currency };
 }
 
 function globalPayoutsAccessLabel(status: string | undefined): string {
@@ -155,6 +161,8 @@ export function PaymentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const stripeReturnHandled = useRef(false);
   const { timeZone } = useTenantTime();
+  const { data: institution } = useInstitutionSettings();
+  const institutionCurrency = (institution?.currency || "SGD").trim().toUpperCase() || "SGD";
   const { data: paymentRows = [], isLoading: paymentsLoading, isError, blocked: paymentsBlocked } =
     usePayments();
   const { data: appSettings, blocked: settingsBlocked } = useAppSettings();
@@ -192,8 +200,14 @@ export function PaymentsPage() {
     [payments, tab]
   );
   const needsOnboarding = stripeAccount ? stripeNeedsOnboarding(stripeAccount) : false;
-  const stripeWalletAvailable = sumStripeBalanceAmounts(stripeBalance?.available ?? []);
-  const stripeWalletPending = sumStripeBalanceAmounts(stripeBalance?.pending ?? []);
+  const stripeWalletAvailable = sumStripeBalanceAmounts(
+    stripeBalance?.available ?? [],
+    institutionCurrency
+  );
+  const stripeWalletPending = sumStripeBalanceAmounts(
+    stripeBalance?.pending ?? [],
+    institutionCurrency
+  );
   const readinessBanner = stripeReadinessBanner(stripeReadiness);
   const environmentBanner = paymentEnvironmentBanner(
     appSettings,
@@ -349,7 +363,7 @@ export function PaymentsPage() {
         />
         <KpiCard
           label="Queue total"
-          value={isLoading ? "…" : money(kpis.total)}
+          value={isLoading ? "…" : formatMoneyByCurrencyMap(kpis.totalByCurrency)}
           testid="kpi-pay-paid"
         />
         <WalletCard
@@ -517,8 +531,8 @@ export function PaymentsPage() {
                 <span className="text-muted-foreground">Loading balance…</span>
               ) : stripeBalance ? (
                 <div className="space-y-1 tnum">
-                  <div>{formatBalanceLine("Available", stripeBalance.available)}</div>
-                  <div>{formatBalanceLine("Pending", stripeBalance.pending)}</div>
+                  <div>{formatBalanceLine("Available", stripeBalance.available, institutionCurrency)}</div>
+                  <div>{formatBalanceLine("Pending", stripeBalance.pending, institutionCurrency)}</div>
                 </div>
               ) : (
                 <span className="text-muted-foreground">Balance unavailable</span>
@@ -570,7 +584,7 @@ export function PaymentsPage() {
                           </td>
                           <td className="px-3 py-2 text-xs text-right tnum whitespace-nowrap">
                             {txn.amount != null
-                              ? money(txn.amount, txn.currency ?? "SGD")
+                              ? money(txn.amount, txn.currency || institutionCurrency)
                               : "—"}
                           </td>
                           <td className="px-3 py-2 text-xs text-muted-foreground">

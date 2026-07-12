@@ -319,6 +319,23 @@ async def reextract_fields_for_corrected_dt(
     )
     llm_result = extract_result.llm
     ocr_out = extract_result.ocr
+    if invoice.file_hash and (
+        (ocr_out.payload_json or {}).get("invoice_fields")
+        or (ocr_out.payload_json or {}).get("extraction_route")
+        or (ocr_out.payload_json or {}).get("finance_document")
+        or (ocr_out.payload_json or {}).get("di_line_items")
+    ):
+        from app.services.classification.classification_learning_service import (
+            upsert_ocr_artifact_enrichment,
+        )
+
+        await upsert_ocr_artifact_enrichment(
+            session,
+            tenant_id=invoice.tenant_id,
+            invoice_id=invoice.id,
+            file_hash=invoice.file_hash,
+            ocr=ocr_out,
+        )
     selected_keys = effective_extraction_field_keys_for_dt(
         config.document_types, confirmed_dt
     )

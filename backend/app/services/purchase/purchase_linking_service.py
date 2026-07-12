@@ -29,8 +29,17 @@ def po_ref_for_invoice(invoice: Invoice) -> str | None:
 
 
 def invoice_no_for_link(invoice: Invoice) -> str | None:
-    token = normalize_doc_ref(invoice.invoice_no)
-    return token or None
+    tokens = invoice_no_link_token_set(invoice)
+    primary = normalize_doc_ref(invoice.invoice_no)
+    if primary and primary in tokens:
+        return primary
+    return next(iter(sorted(tokens)), None)
+
+
+def invoice_no_link_token_set(invoice: Invoice) -> set[str]:
+    from app.services.extraction.invoice_no_sanitizer import invoice_no_link_tokens
+
+    return invoice_no_link_tokens(invoice)
 
 
 async def grn_linked_to_po(session: AsyncSession, grn_invoice_id: int) -> GoodsReceipt | None:
@@ -48,14 +57,17 @@ async def find_grn_invoices_by_invoice_no(
     invoice_no: str | None,
     purchase_order_id: int | None = None,
     include_linked: bool = True,
+    invoice_no_secondary: str | None = None,
 ) -> list[Invoice]:
     """
     Find GRN upload rows whose invoice_no matches the commercial invoice number.
 
     When purchase_order_id is set, prefer GRNs already bridged to that PO.
     """
-    token = normalize_doc_ref(invoice_no)
-    if not token:
+    from app.services.extraction.invoice_no_sanitizer import invoice_no_link_tokens_from_values
+
+    tokens = invoice_no_link_tokens_from_values(invoice_no, invoice_no_secondary)
+    if not tokens:
         return []
 
     rows = (
@@ -70,7 +82,7 @@ async def find_grn_invoices_by_invoice_no(
         )
     ).scalars().all()
 
-    matches = [row for row in rows if invoice_no_for_link(row) == token]
+    matches = [row for row in rows if invoice_no_link_token_set(row) & tokens]
     if not matches:
         return []
 
@@ -153,11 +165,16 @@ async def bridge_orphan_grns_via_commercial_invoice(
     """
     from app.services.purchase.purchase_coding_service import inherit_po_coding_to_invoice
 
+    from app.services.extraction.invoice_no_sanitizer import INVOICE_NO_SECONDARY_KEY
+
     linked: list[Invoice] = []
+    extracted = commercial.extracted_fields or {}
+    secondary = extracted.get(INVOICE_NO_SECONDARY_KEY) if isinstance(extracted, dict) else None
     candidates = await find_grn_invoices_by_invoice_no(
         session,
         tenant_id=commercial.tenant_id,
         invoice_no=commercial.invoice_no,
+        invoice_no_secondary=str(secondary) if secondary else None,
         include_linked=False,
     )
     for grn_invoice in candidates:

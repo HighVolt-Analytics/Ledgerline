@@ -34,7 +34,6 @@ from app.services.classification.document_type_catalog import (
 )
 from app.services.classification.document_type_rule_engine import (
     classifier_rules_match_ocr,
-    is_user_defined_document_type,
 )
 from app.services.shared.file_storage import open_pdf_for_reading, repair_invoice_stored_path, stored_file_available
 from app.services.tenant.tenant_org_context import OrgContext
@@ -164,14 +163,20 @@ async def phase_ocr(
     human_locked_dt: str | None,
 ) -> OcrArtifact:
     """OCR / layout read only — no field extraction."""
+    from app.services.invoice.processing_override_catalog import has_deferred_full_reset
+
     ocr: OcrArtifact | None = None
-    if invoice.file_hash:
+    # Reprocess must not reuse pre-filter table_line_items / truncated text excerpts
+    bypass_cache = has_deferred_full_reset(invoice)
+    cache_hit = False
+    if invoice.file_hash and not bypass_cache:
         ocr = await load_cached_ocr(
             session,
             tenant_id=invoice.tenant_id,
             invoice_id=invoice.id,
             file_hash=invoice.file_hash,
         )
+        cache_hit = ocr is not None
 
     if ocr is None:
         with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
@@ -203,6 +208,8 @@ async def phase_ocr(
             "di_model": ocr.di_model,
             "document_ai_provider": provider_token,
             "sparse": ocr.sparse,
+            "ocr_cache_hit": cache_hit,
+            "ocr_cache_bypassed": bypass_cache,
         },
     )
     return ocr
@@ -333,12 +340,47 @@ def reconcile_llm_dt_with_heading(
         document_text=document_text,
         document_heading=heading_text.strip(),
     )
+    previous_dt = (llm.suggested_dt if llm is not None else "") or ""
+    previous_dt = previous_dt.strip().upper()
+    llm_defn = (
+        get_document_type_definition(previous_dt, document_types=document_types)
+        if previous_dt
+        else None
+    )
+    llm_conflicts = bool(
+        llm_defn is not None and heading_conflicts_with_definition(heading_kind, llm_defn)
+    )
+
     heading_match = classify_from_segment_heading(
         heading_kind=heading_kind,
         document_types=document_types,
         invoice=invoice,
         parsed=parsed,
     )
+
+    # Invoice-like heading vs GRN/PO (etc.): never keep the conflicting LLM pick.
+    if llm_conflicts and (heading_match is None or heading_match.needs_review):
+        cleared = (llm or LlmDocumentResult()).model_copy(
+            update={
+                "suggested_dt": "",
+                "confidence": 0.0,
+                "reasoning": (
+                    f"Cleared {previous_dt}: conflicts with segment heading ({heading_kind})"
+                ),
+                "document_heading": (heading_text or "").strip()
+                or ((llm.document_heading if llm else "") or ""),
+            }
+        )
+        return cleared, {
+            "heading_kind": heading_kind,
+            "heading_source": inferred.source,
+            "previous_dt": previous_dt or None,
+            "adopted_dt": None,
+            "heading_confidence": None,
+            "reason": "heading_conflicts_with_llm_dt",
+            "cleared_conflicting_llm_dt": True,
+        }
+
     if heading_match is None or heading_match.needs_review:
         return llm, None
 
@@ -353,29 +395,25 @@ def reconcile_llm_dt_with_heading(
     if heading_match.confidence < route_min:
         return llm, None
 
-    previous_dt = (llm.suggested_dt if llm is not None else "") or ""
-    previous_dt = previous_dt.strip().upper()
     adopt_reason: str | None = None
 
-    if not previous_dt:
-        adopt_reason = "empty_llm_suggested_dt"
-    else:
-        llm_defn = get_document_type_definition(previous_dt, document_types=document_types)
-        if llm_defn is not None and heading_conflicts_with_definition(heading_kind, llm_defn):
-            adopt_reason = "heading_conflicts_with_llm_dt"
-        elif previous_dt != adopted_code:
-            heading_defn = get_document_type_definition(adopted_code, document_types=document_types)
-            if heading_defn is not None:
-                from app.services.classification.segment_heading_classification import (
-                    score_document_type_for_heading,
-                )
+    if not previous_dt or llm_conflicts:
+        adopt_reason = (
+            "heading_conflicts_with_llm_dt" if llm_conflicts else "empty_llm_suggested_dt"
+        )
+    elif previous_dt != adopted_code:
+        heading_defn = get_document_type_definition(adopted_code, document_types=document_types)
+        if heading_defn is not None:
+            from app.services.classification.segment_heading_classification import (
+                score_document_type_for_heading,
+            )
 
-                llm_score = (
-                    score_document_type_for_heading(llm_defn, heading_kind) if llm_defn else 0.0
-                )
-                heading_score = score_document_type_for_heading(heading_defn, heading_kind)
-                if heading_score >= float(ai_cfg.heading_catalogue_match_min) and heading_score > llm_score:
-                    adopt_reason = "heading_stronger_than_llm_dt"
+            llm_score = (
+                score_document_type_for_heading(llm_defn, heading_kind) if llm_defn else 0.0
+            )
+            heading_score = score_document_type_for_heading(heading_defn, heading_kind)
+            if heading_score >= float(ai_cfg.heading_catalogue_match_min) and heading_score > llm_score:
+                adopt_reason = "heading_stronger_than_llm_dt"
 
     if adopt_reason is None:
         return llm, None
@@ -526,22 +564,61 @@ def evaluate_confidence_gate(
     )
 
 
-def apply_user_defined_classifier_gate(
+def apply_recognition_mode_gate(
     gate_result: GatePhaseResult,
     *,
     invoice: Invoice,
     ocr: OcrArtifact,
     document_types: Sequence[DocumentTypeDefinition],
 ) -> GatePhaseResult:
-    """Fail auto-route when LLM picks a custom type whose match rules don't fit OCR."""
+    """Enforce recognition_mode: signals DTs must match OCR; prompt DTs skip signal check."""
     if not gate_result.passed or not gate_result.confirmed_dt:
         return gate_result
 
     defn = get_document_type_definition(gate_result.confirmed_dt, document_types=document_types)
-    if defn is None or not is_user_defined_document_type(defn):
+    if defn is None:
         return gate_result
 
-    if classifier_rules_match_ocr(defn, invoice=invoice, ocr=ocr):
+    from app.services.classification.document_type_rule_engine import (
+        effective_signals_mode_definition,
+        is_prompt_recognition_mode,
+    )
+    from app.services.classification.segment_heading_classification import (
+        heading_conflicts_with_definition,
+        resolve_segment_heading_with_source,
+    )
+
+    inferred = resolve_segment_heading_with_source(document_text=ocr.text or "")
+    if (
+        inferred is not None
+        and inferred.source != "body_keyword"
+        and heading_conflicts_with_definition(inferred.kind, defn)
+    ):
+        reasons = list(gate_result.review_reasons)
+        if ReviewReason.CLASSIFIER_RULE_MISMATCH.value not in reasons:
+            reasons.append(ReviewReason.CLASSIFIER_RULE_MISMATCH.value)
+        return GatePhaseResult(
+            passed=False,
+            confirmed_dt="",
+            confirmed_confidence=0.0,
+            review_reasons=reasons,
+            llm_suggested_dt=gate_result.llm_suggested_dt,
+            llm_confidence=gate_result.llm_confidence,
+            llm_reasoning=gate_result.llm_reasoning,
+            min_route_confidence=gate_result.min_route_confidence,
+            org_auto_route_min_confidence=gate_result.org_auto_route_min_confidence,
+            dt_min_route_confidence=gate_result.dt_min_route_confidence,
+        )
+
+    if is_prompt_recognition_mode(defn):
+        return gate_result
+
+    effective = effective_signals_mode_definition(defn)
+    # No configured signals / match rules → nothing to verify.
+    if effective is None:
+        return gate_result
+
+    if classifier_rules_match_ocr(effective, invoice=invoice, ocr=ocr):
         return gate_result
 
     reasons = list(gate_result.review_reasons)
@@ -559,6 +636,22 @@ def apply_user_defined_classifier_gate(
         min_route_confidence=gate_result.min_route_confidence,
         org_auto_route_min_confidence=gate_result.org_auto_route_min_confidence,
         dt_min_route_confidence=gate_result.dt_min_route_confidence,
+    )
+
+
+def apply_user_defined_classifier_gate(
+    gate_result: GatePhaseResult,
+    *,
+    invoice: Invoice,
+    ocr: OcrArtifact,
+    document_types: Sequence[DocumentTypeDefinition],
+) -> GatePhaseResult:
+    """Back-compat alias: recognition_mode gate covers user-defined signals DTs."""
+    return apply_recognition_mode_gate(
+        gate_result,
+        invoice=invoice,
+        ocr=ocr,
+        document_types=document_types,
     )
 
 
@@ -620,12 +713,15 @@ def evaluate_field_confidence_gate(
     parsed: InvoiceData | None = None,
     invoice: Invoice | None = None,
     confirmed_dt: str = "",
+    ocr_payload: dict[str, object] | None = None,
 ) -> FieldConfidenceGateResult:
-    """Flag DT compulsory fields below per-field LLM confidence threshold."""
+    """Flag DT compulsory fields below per-field LLM or DI confidence threshold."""
+    from app.config import get_settings
     from app.services.classification.document_type_field_checks import field_is_present
     from app.services.classification.document_type_rule_engine import build_document_classifier_context
 
     floor = ai_cfg.min_field_extract_confidence
+    di_floor = get_settings().di_field_trust_min_confidence
     gate_fields = confidence_gate_fields(dt_definition)
     dt_code = (confirmed_dt or (dt_definition.code if dt_definition else "") or "").strip().upper()
 
@@ -639,21 +735,61 @@ def evaluate_field_confidence_gate(
             if not field_is_present(key, invoice=invoice, parsed=parsed, ctx=ctx):
                 missing_gate_fields.append(key)
 
+    low: dict[str, float] = {}
+    skipped_after_merge: list[str] = []
+
+    # Azure DI / layout field confidence — any key present in payload, plus DT gate fields.
+    # Prefer route-neutral keys (document_number, vendor_name) alongside legacy invoice aliases.
+    di_conf_map: dict[str, object] = {}
+    if isinstance(ocr_payload, dict):
+        raw = ocr_payload.get("field_confidence")
+        if isinstance(raw, dict):
+            di_conf_map = raw
+    core_trust_keys = {
+        "subtotal",
+        "gst",
+        "tax",
+        "total",
+        "amount_due",
+        "vendor",
+        "vendor_name",
+        "invoice_no",
+        "document_number",
+        "po_reference",
+        "grn_reference",
+        "line_items",
+    }
+    check_keys = set(gate_fields) | (core_trust_keys & set(di_conf_map.keys()))
+    for key in check_keys:
+        if key not in core_trust_keys and key not in gate_fields:
+            continue
+        conf_raw = di_conf_map.get(key)
+        if conf_raw is None:
+            continue
+        try:
+            conf = float(conf_raw)
+        except (TypeError, ValueError):
+            continue
+        if conf < di_floor:
+            low[f"di:{key}"] = round(conf, 4)
+
     if llm is None or not llm.field_confidence:
+        reasons: list[str] = []
+        if low:
+            reasons.append(ReviewReason.FIELD_CONFIDENCE_LOW.value)
         return FieldConfidenceGateResult(
-            passed=True,
+            passed=not low,
+            low_confidence_fields=low,
             min_confidence=floor,
             gate_fields=gate_fields,
             confirmed_dt=dt_code,
             missing_gate_fields=missing_gate_fields,
-            review_reasons=[],
+            review_reasons=reasons,
             skipped_fields_present_after_merge=[
                 key for key in gate_fields if key not in missing_gate_fields
             ],
         )
 
-    low: dict[str, float] = {}
-    skipped_after_merge: list[str] = []
     for key in gate_fields:
         conf = llm.field_confidence.get(key)
         if conf is None:
@@ -665,7 +801,7 @@ def evaluate_field_confidence_gate(
         if _llm_field_has_value(key, llm) and conf < floor:
             low[key] = round(conf, 4)
 
-    reasons: list[str] = []
+    reasons = []
     if low:
         reasons.append(ReviewReason.FIELD_CONFIDENCE_LOW.value)
     return FieldConfidenceGateResult(

@@ -306,3 +306,125 @@ def test_title_line_commercial_invoice_still_adopts() -> None:
     assert detail.get("heading_source") == "title_line"
     assert updated is not None
     assert updated.suggested_dt == "DT-CI"
+
+
+_GRN_PROMPT = (
+    "Goods Receipt Note (GRN), delivery docket, delivery note, or goods received note "
+    "confirming physical receipt of goods. Typically shows GRN/delivery number, "
+    "receipt/delivery date, PO reference, and received quantities per line. It records "
+    "what was received, not what is owed — usually no invoice number, tax invoice wording, "
+    "payment terms, or amount due. Do not classify purchase orders, tax invoices, packing "
+    "lists alone, or credit notes as this type."
+)
+
+
+def test_grn_negative_prompt_does_not_score_tax_invoice_heading() -> None:
+    from app.services.classification.segment_heading_classification import (
+        score_document_type_for_heading,
+    )
+
+    grn = _dt(
+        code="DT-02",
+        title="Goods receipt note (GRN) / delivery docket",
+        shortTitle="GRN",
+        purchaseBundleRole="grn",
+        recognition_mode="prompt",
+        llm_prompt=_GRN_PROMPT,
+        playbookProfile="supporting",
+        klass="Non-transactional",
+        posting="No",
+    )
+    assert score_document_type_for_heading(grn, "tax_invoice") < 0.82
+    assert heading_conflicts_with_definition("tax_invoice", grn) is True
+
+
+def test_tax_invoice_heading_clears_llm_grn_suggestion() -> None:
+    ocr = OcrArtifact(
+        success=True,
+        text="TAX INVOICE\nVendor Acme\nLine item consulting\nTotal 450.00",
+        text_length=60,
+    )
+    llm = LlmDocumentResult(
+        suggested_dt="DT-02",
+        confidence=0.95,
+        reasoning="Looks like GRN",
+        perspective="purchase",
+        document_heading="TAX INVOICE",
+    )
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING)
+    grn = _dt(
+        code="DT-02",
+        title="Goods receipt note (GRN) / delivery docket",
+        shortTitle="GRN",
+        purchaseBundleRole="grn",
+        recognition_mode="prompt",
+        llm_prompt=_GRN_PROMPT,
+        playbookProfile="supporting",
+        klass="Non-transactional",
+        posting="No",
+        requiredFields=[],
+        extractionFields=["vendor"],
+    )
+    expense = _dt(
+        code="DT-EXP",
+        title="Expense bills",
+        shortTitle="Expense bill",
+        recognition_mode="prompt",
+        llm_prompt=(
+            "Expense bills will mostly be in the tenant's name with multiple line items "
+            "showing the description of expenses."
+        ),
+        playbookProfile="direct_expense",
+        requiredFields=[],
+        extractionFields=["vendor", "total"],
+    )
+    updated, detail = reconcile_llm_dt_with_heading(
+        llm,
+        invoice=invoice,
+        ocr=ocr,
+        document_types=[grn, expense],
+        ai_cfg=AiClassificationConfig(auto_route_min_confidence=0.65),
+    )
+    assert detail is not None
+    assert detail["reason"] == "heading_conflicts_with_llm_dt"
+    assert updated is not None
+    assert (updated.suggested_dt or "") != "DT-02"
+
+
+def test_recognition_gate_blocks_grn_on_tax_invoice_heading() -> None:
+    from app.schemas.ocr_artifact import OcrArtifact as OA
+    from app.services.invoice.invoice_pipeline_phases import (
+        GatePhaseResult,
+        apply_recognition_mode_gate,
+    )
+
+    grn = _dt(
+        code="DT-02",
+        title="Goods receipt note (GRN) / delivery docket",
+        shortTitle="GRN",
+        purchaseBundleRole="grn",
+        recognition_mode="prompt",
+        llm_prompt=_GRN_PROMPT,
+        playbookProfile="supporting",
+        klass="Non-transactional",
+        posting="No",
+    )
+    gate = GatePhaseResult(
+        passed=True,
+        confirmed_dt="DT-02",
+        confirmed_confidence=0.95,
+        review_reasons=[],
+        llm_suggested_dt="DT-02",
+        llm_confidence=0.95,
+        min_route_confidence=0.85,
+        org_auto_route_min_confidence=0.85,
+        dt_min_route_confidence=0.65,
+    )
+    result = apply_recognition_mode_gate(
+        gate,
+        invoice=Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING),
+        ocr=OA(success=True, text="TAX INVOICE\nExpense line\nTotal 100"),
+        document_types=[grn],
+    )
+    assert result.passed is False
+    assert "CLASSIFIER_RULE_MISMATCH" in result.review_reasons

@@ -10,7 +10,7 @@ import {
 } from "@/lib/tenantSession";
 import { Building2, ClipboardCheck, Pencil, Plus, RefreshCw, Search, Trash2, AlertTriangle } from "lucide-react";
 import { api } from "@/api/client";
-import type { Invoice, TopVendorRow, Vendor } from "@/api/types";
+import type { Invoice, Vendor } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { VendorFormDialog } from "@/components/VendorFormDialog";
@@ -23,18 +23,34 @@ import { Input } from "@/components/ui/input";
 import { usePendingVendors, usePromotePendingVendor } from "@/hooks/useMasterData";
 import { useVisibilityPolling } from "@/hooks/useVisibilityPolling";
 import { cn } from "@/lib/cn";
-import { formatTaxId, money, toNumber } from "@/lib/format";
+import { formatMoneyByCurrencyMap, formatTaxId, toNumber } from "@/lib/format";
 
 const VENDORS_POLL_MS = 30_000;
 import { fetchAllInvoices } from "@/lib/invoices";
 
 type VendorInvoiceStats = {
   amount: number;
+  byCurrency: Record<string, number>;
   count: number;
   email: string | null;
   defaultAccount: string;
   netDays: number | null;
 };
+
+type TopVendorSpendRow = {
+  vendor: string;
+  byCurrency: Record<string, number>;
+  invoice_count: number;
+};
+
+function addAmountByCurrency(
+  map: Record<string, number>,
+  currency: string | null | undefined,
+  amount: number
+): void {
+  const code = (currency || "").trim().toUpperCase();
+  map[code] = (map[code] ?? 0) + amount;
+}
 
 function normalizeVendorKey(name: string | null | undefined): string {
   return (name ?? "").trim().toLowerCase();
@@ -66,13 +82,16 @@ function buildInvoiceStats(invoices: Invoice[]): Map<string, VendorInvoiceStats>
 
     const entry = map.get(key) ?? {
       amount: 0,
+      byCurrency: {},
       count: 0,
       email: null,
       defaultAccount: "Suspense Account",
       netDays: null,
     };
 
-    entry.amount += toNumber(inv.total);
+    const amount = toNumber(inv.total);
+    entry.amount += amount;
+    addAmountByCurrency(entry.byCurrency, inv.currency, amount);
     entry.count += 1;
     if (inv.email_sender) entry.email = inv.email_sender;
     if (inv.account_name) entry.defaultAccount = inv.account_name;
@@ -94,6 +113,7 @@ function lookupVendorStats(
   }
   return {
     amount: 0,
+    byCurrency: {},
     count: 0,
     email: null,
     defaultAccount: "Suspense Account",
@@ -101,21 +121,27 @@ function lookupVendorStats(
   };
 }
 
-function topVendorsBySpend(invoices: Invoice[], limit = 5): TopVendorRow[] {
-  const totals = new Map<string, { amount: number; count: number }>();
+function topVendorsBySpend(invoices: Invoice[], limit = 5): TopVendorSpendRow[] {
+  const totals = new Map<string, { byCurrency: Record<string, number>; count: number }>();
 
   for (const inv of invoices) {
     const name = (inv.vendor ?? "Unknown").trim() || "Unknown";
-    const entry = totals.get(name) ?? { amount: 0, count: 0 };
-    entry.amount += toNumber(inv.total);
+    const entry = totals.get(name) ?? { byCurrency: {}, count: 0 };
+    addAmountByCurrency(entry.byCurrency, inv.currency, toNumber(inv.total));
     entry.count += 1;
     totals.set(name, entry);
   }
 
   return [...totals.entries()]
-    .sort((a, b) => b[1].amount - a[1].amount)
+    .map(([vendor, { byCurrency, count }]) => ({
+      vendor,
+      byCurrency,
+      invoice_count: count,
+      sortTotal: Object.values(byCurrency).reduce((sum, n) => sum + n, 0),
+    }))
+    .sort((a, b) => b.sortTotal - a.sortTotal)
     .slice(0, limit)
-    .map(([vendor, { amount, count }]) => ({ vendor, amount, invoice_count: count }));
+    .map(({ vendor, byCurrency, invoice_count }) => ({ vendor, byCurrency, invoice_count }));
 }
 
 function vendorDisplayEmail(vendor: Vendor, stats: VendorInvoiceStats): string {
@@ -144,7 +170,6 @@ export function VendorsPage() {
   const { user } = useAuth();
   const { data: pendingQueue = [] } = usePendingVendors(Boolean(user));
   const promoteMutation = usePromotePendingVendor();
-  const currency = "SGD";
   const [rows, setRows] = useState<Vendor[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -209,10 +234,13 @@ export function VendorsPage() {
 
   const statsByVendor = useMemo(() => buildInvoiceStats(invoices), [invoices]);
   const topVendors = useMemo(() => topVendorsBySpend(invoices, 5), [invoices]);
-  const totalSpend = useMemo(
-    () => invoices.reduce((sum, inv) => sum + toNumber(inv.total), 0),
-    [invoices]
-  );
+  const totalSpendByCurrency = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const inv of invoices) {
+      addAmountByCurrency(totals, inv.currency, toNumber(inv.total));
+    }
+    return totals;
+  }, [invoices]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -228,7 +256,9 @@ export function VendorsPage() {
 
   const activeCount = rows.filter((v) => v.approved).length;
   const onHoldCount = rows.length - activeCount;
-  const topMax = toNumber(topVendors[0]?.amount);
+  const topMax = topVendors[0]
+    ? Object.values(topVendors[0].byCurrency).reduce((sum, n) => sum + n, 0)
+    : 0;
 
   const openAddVendor = () => {
     setEditVendor(null);
@@ -376,22 +406,25 @@ export function VendorsPage() {
             <p className="text-sm text-muted-foreground">No invoice spend recorded yet.</p>
           ) : (
             <div className="space-y-2.5">
-              {topVendors.map((row) => (
+              {topVendors.map((row) => {
+                const rowTotal = Object.values(row.byCurrency).reduce((sum, n) => sum + n, 0);
+                return (
                 <div key={row.vendor} className="flex items-center gap-3">
                   <span className="text-sm truncate w-40 shrink-0">{row.vendor}</span>
                   <div className="flex-1 h-2.5 rounded-full bg-muted overflow-hidden">
                     <div
                       className="h-full rounded-full bg-primary"
                       style={{
-                        width: `${topMax ? (toNumber(row.amount) / topMax) * 100 : 0}%`,
+                        width: `${topMax ? (rowTotal / topMax) * 100 : 0}%`,
                       }}
                     />
                   </div>
                   <span className="tnum text-sm font-medium w-28 text-right shrink-0">
-                    {money(row.amount, currency)}
+                    {formatMoneyByCurrencyMap(row.byCurrency)}
                   </span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>
@@ -402,7 +435,7 @@ export function VendorsPage() {
             <SummaryRow label="Active vendors" value={String(activeCount)} />
             <SummaryRow label="On hold" value={String(onHoldCount)} />
             <SummaryRow label="Total vendors" value={String(rows.length)} />
-            <SummaryRow label="Spend (loaded)" value={money(totalSpend, currency)} />
+            <SummaryRow label="Spend (loaded)" value={formatMoneyByCurrencyMap(totalSpendByCurrency)} />
           </div>
         </Card>
       </div>
@@ -516,7 +549,7 @@ export function VendorsPage() {
                       </td>
                       <td className="px-3 py-2.5 text-right tnum">{stats.count}</td>
                       <td className="px-4 py-2.5 text-right tnum font-medium">
-                        {money(stats.amount, currency)}
+                        {formatMoneyByCurrencyMap(stats.byCurrency)}
                       </td>
                       <td className="px-3 py-2.5 text-right">
                         <div className="flex justify-end gap-1">

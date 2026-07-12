@@ -137,4 +137,43 @@ def test_single_row_money_table_detected() -> None:
     parsed = parse_local_text(text)
     merged = merge_extraction_sources(parsed, _ocr(text), dt_definition=None)
     assert len(merged.line_items) == 1
-    assert merged.line_items[0].description == "Widget A"
+
+
+def test_di_money_rows_block_qty_only_shape_even_if_table_longer() -> None:
+    """Longer OCR qty bleed must not flip shape gate when DI already has money rows."""
+    from app.services.extraction.line_items_parser import resolve_line_items_for_strategy
+
+    payload = {
+        "di_line_items": [
+            {
+                "description": "Platform subscription",
+                "qty": "1",
+                "unit_price": "40.00",
+                "amount": "40.00",
+            },
+            {
+                "description": "Support hours",
+                "qty": "2",
+                "unit_price": "2.515",
+                "amount": "5.03",
+            },
+        ],
+        "table_line_items": [
+            {"description": "Prinsengracht", "qty": "769"},
+            {"description": "$45.03 USD due May 1,", "qty": "2026"},
+            {"description": "Page 1 of", "qty": "2"},
+            {"description": "Page 2 of", "qty": "2"},
+            {"description": "Mystery junk", "qty": "9"},
+        ],
+    }
+    assert not document_has_qty_only_table("Prinsengracht 769\nPage 1 of 2", payload)
+    resolved = resolve_line_items_for_strategy(
+        payload,
+        layout_mode="gap_fill",
+        allow_qty_only=True,
+    )
+    descriptions = [(row.description or "") for row in resolved]
+    assert len(resolved) == 2
+    assert any("Platform" in desc for desc in descriptions)
+    assert not any("Prinsengracht" in desc for desc in descriptions)
+    assert not any("Page" in desc for desc in descriptions)

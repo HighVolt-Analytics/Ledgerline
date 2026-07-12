@@ -9,7 +9,11 @@ from app.schemas.classification_decision import PolicyDtScore, PolicyScoreResult
 from app.schemas.document_type import DocumentTypeDefinition
 from app.services.classification.document_type_field_checks import field_is_absent, field_is_present
 from app.services.classification.document_type_playbook_service import effective_extraction_fields
-from app.services.classification.document_type_rule_engine import build_document_classifier_context
+from app.services.classification.document_type_rule_engine import (
+    build_document_classifier_context,
+    is_signals_recognition_mode,
+    prepare_signals_mode_definitions,
+)
 from app.services.invoice.invoice_data import InvoiceData, ParseConfidence
 from app.services.rule_book.rule_engine import classifier_has_actionable_conditions
 
@@ -17,6 +21,7 @@ from app.services.rule_book.rule_engine import classifier_has_actionable_conditi
 def _definition_has_classifier(defn: DocumentTypeDefinition) -> bool:
     return bool(
         defn.enabled
+        and is_signals_recognition_mode(defn)
         and defn.classifier.enabled
         and classifier_has_actionable_conditions(defn.classifier.root)
     )
@@ -25,7 +30,7 @@ def _definition_has_classifier(defn: DocumentTypeDefinition) -> bool:
 def _catalogue_has_enabled_classifiers(
     document_types: Sequence[DocumentTypeDefinition],
 ) -> bool:
-    return any(_definition_has_classifier(defn) for defn in document_types)
+    return bool(prepare_signals_mode_definitions(document_types))
 
 
 def policy_score_from_classifiers(
@@ -118,9 +123,10 @@ def score_all_enabled_dts(
             return classifier_policy
         return PolicyScoreResult(winner_dt="", winner_confidence=0.0, scores=[])
 
+    # No signals-mode classifiers — do not let prompt-mode DTs win via field completeness.
     scores: list[PolicyDtScore] = []
     for defn in document_types:
-        if not defn.enabled:
+        if not defn.enabled or not is_signals_recognition_mode(defn):
             continue
         scores.append(
             _score_definition(defn, invoice=invoice, parsed=parsed)

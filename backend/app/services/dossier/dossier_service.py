@@ -28,8 +28,18 @@ from app.services.sales.counterparty_service import (
 )
 from app.services.dossier.document_ref_service import display_document_ref, dossier_public_id, parse_dossier_id_token
 from app.services.classification.document_type_catalog import ROUTE_SALES
-from app.services.purchase.po_reference import effective_po_reference, is_plausible_po_reference
-from app.services.sales.so_reference import is_plausible_so_reference, resolve_so_reference_from_invoice
+from app.services.purchase.po_reference import (
+    effective_po_reference,
+    invoice_po_reference_equals,
+    is_plausible_po_reference,
+    normalize_po_link_token,
+)
+from app.services.sales.so_reference import (
+    invoice_so_reference_equals,
+    is_plausible_so_reference,
+    normalize_so_link_token,
+    resolve_so_reference_from_invoice,
+)
 from app.services.classification.document_type_playbook_service import resolve_definition_for_invoice
 from app.services.dossier.dossier_approval_service import build_dossier_approval_chain
 from app.services.dossier.dossier_linked_documents_service import build_dossier_linked_documents
@@ -198,31 +208,47 @@ async def build_linkage_sibling_cache(
     anchors: list[Invoice],
 ) -> LinkageSiblingCache:
     """Load all invoices that may link to any anchor via invoice_no or PO/SO reference."""
+    from sqlalchemy import func, or_
+
+    from app.services.extraction.invoice_no_sanitizer import invoice_no_link_tokens
+
     invoice_nos: set[str] = set()
     po_refs: set[str] = set()
     so_refs: set[str] = set()
 
     for anchor in anchors:
-        inv_no = (anchor.invoice_no or "").strip()
-        if inv_no:
-            invoice_nos.add(inv_no)
+        invoice_nos.update(invoice_no_link_tokens(anchor))
+        primary = (anchor.invoice_no or "").strip()
+        if primary:
+            invoice_nos.add(primary)
         po_ref = effective_po_reference(anchor.po_reference)
         if po_ref and is_plausible_po_reference(po_ref):
-            po_refs.add(po_ref)
+            po_refs.add(normalize_po_link_token(po_ref))
         so_ref = resolve_so_reference_from_invoice(anchor)
         if so_ref and is_plausible_so_reference(so_ref):
-            so_refs.add(so_ref)
+            so_refs.add(normalize_so_link_token(so_ref))
 
     if not invoice_nos and not po_refs and not so_refs:
         return LinkageSiblingCache()
 
     clauses = []
     if invoice_nos:
-        clauses.append(Invoice.invoice_no.in_(invoice_nos))
+        token_list = list(invoice_nos)
+        upper_invoice_nos = [t.upper() for t in token_list]
+        clauses.append(
+            or_(
+                func.upper(func.coalesce(Invoice.invoice_no, "")).in_(upper_invoice_nos),
+                Invoice.invoice_no.in_(token_list),
+            )
+        )
     if po_refs:
-        clauses.append(Invoice.po_reference.in_(po_refs))
+        clauses.append(
+            func.upper(func.coalesce(Invoice.po_reference, "")).in_(list(po_refs))
+        )
     if so_refs:
-        clauses.append(Invoice.so_reference.in_(so_refs))
+        clauses.append(
+            func.upper(func.coalesce(Invoice.so_reference, "")).in_(list(so_refs))
+        )
 
     rows = (
         await session.execute(
@@ -234,9 +260,18 @@ async def build_linkage_sibling_cache(
 
     cache = LinkageSiblingCache()
     for row in rows:
-        _index_linkage_sibling(cache.by_invoice_no, row.invoice_no, row)
-        _index_linkage_sibling(cache.by_po_reference, row.po_reference, row)
-        _index_linkage_sibling(cache.by_so_reference, row.so_reference, row)
+        for token in invoice_no_link_tokens(row):
+            _index_linkage_sibling(cache.by_invoice_no, token, row)
+        primary = (row.invoice_no or "").strip()
+        if primary:
+            _index_linkage_sibling(cache.by_invoice_no, primary, row)
+        # Index PO/SO under case-folded keys so lookups match playbook equality.
+        _index_linkage_sibling(
+            cache.by_po_reference, normalize_po_link_token(row.po_reference) or None, row
+        )
+        _index_linkage_sibling(
+            cache.by_so_reference, normalize_so_link_token(row.so_reference) or None, row
+        )
     return cache
 
 
@@ -246,24 +281,49 @@ async def fetch_linked_invoices_by_invoice_no(
     *,
     linkage_cache: LinkageSiblingCache | None = None,
 ) -> list[Invoice]:
-    """Sibling invoices sharing the same invoice_no as the anchor dossier."""
-    token = (anchor.invoice_no or "").strip()
-    if not token:
+    """Sibling invoices sharing any invoice_no token (primary or secondary) with the anchor."""
+    from sqlalchemy import func, or_
+
+    from app.services.extraction.invoice_no_sanitizer import invoice_no_link_tokens
+
+    tokens = invoice_no_link_tokens(anchor)
+    if not tokens:
         return []
     if linkage_cache is not None:
-        return [row for row in linkage_cache.by_invoice_no.get(token, []) if row.id != anchor.id]
+        siblings: list[Invoice] = []
+        seen: set[int] = set()
+        for token in tokens:
+            for row in linkage_cache.by_invoice_no.get(token, []):
+                if row.id == anchor.id or row.id in seen:
+                    continue
+                if invoice_no_link_tokens(row) & tokens:
+                    siblings.append(row)
+                    seen.add(row.id)
+            # Cache keys may be original-case primary only.
+            for row in linkage_cache.by_invoice_no.get(token.lower(), []):
+                if row.id == anchor.id or row.id in seen:
+                    continue
+                if invoice_no_link_tokens(row) & tokens:
+                    siblings.append(row)
+                    seen.add(row.id)
+        return siblings
+
+    token_list = list(tokens)
     rows = (
         await session.execute(
             select(Invoice)
             .where(
                 Invoice.tenant_id == anchor.tenant_id,
-                Invoice.invoice_no == token,
                 Invoice.id != anchor.id,
+                or_(
+                    func.upper(Invoice.invoice_no).in_(token_list),
+                    Invoice.invoice_no.in_(token_list),
+                ),
             )
             .order_by(Invoice.id.asc())
         )
     ).scalars().all()
-    return list(rows)
+    return [row for row in rows if invoice_no_link_tokens(row) & tokens]
 
 
 async def fetch_linked_invoices_by_po_reference(
@@ -276,14 +336,19 @@ async def fetch_linked_invoices_by_po_reference(
     po_ref = effective_po_reference(anchor.po_reference)
     if not po_ref or not is_plausible_po_reference(po_ref):
         return []
+    po_token = normalize_po_link_token(po_ref)
     if linkage_cache is not None:
-        return [row for row in linkage_cache.by_po_reference.get(po_ref, []) if row.id != anchor.id]
+        return [
+            row
+            for row in linkage_cache.by_po_reference.get(po_token, [])
+            if row.id != anchor.id
+        ]
     rows = (
         await session.execute(
             select(Invoice)
             .where(
                 Invoice.tenant_id == anchor.tenant_id,
-                Invoice.po_reference == po_ref,
+                invoice_po_reference_equals(po_ref),
                 Invoice.id != anchor.id,
             )
             .order_by(Invoice.id.asc())
@@ -302,14 +367,19 @@ async def fetch_linked_invoices_by_so_reference(
     so_ref = resolve_so_reference_from_invoice(anchor)
     if not so_ref or not is_plausible_so_reference(so_ref):
         return []
+    so_token = normalize_so_link_token(so_ref)
     if linkage_cache is not None:
-        return [row for row in linkage_cache.by_so_reference.get(so_ref, []) if row.id != anchor.id]
+        return [
+            row
+            for row in linkage_cache.by_so_reference.get(so_token, [])
+            if row.id != anchor.id
+        ]
     rows = (
         await session.execute(
             select(Invoice)
             .where(
                 Invoice.tenant_id == anchor.tenant_id,
-                Invoice.so_reference == so_ref,
+                invoice_so_reference_equals(so_ref),
                 Invoice.id != anchor.id,
             )
             .order_by(Invoice.id.asc())
@@ -643,7 +713,7 @@ async def build_dossier_summary(
         invoice_ref=(invoice.invoice_no or display_document_ref(invoice)).strip(),
         capture_channel=dossier_capture_channel(invoice),
         invoice_date=inv_date,
-        currency=(invoice.currency or "SGD").strip() or "SGD",
+        currency=(invoice.currency or "").strip(),
         subtotal=_money(invoice.subtotal),
         tax=_money(invoice.gst),
         total=_money(invoice.total),

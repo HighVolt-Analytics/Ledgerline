@@ -2,7 +2,7 @@ import { DEFAULT_TENANT_LOCALE } from "@/lib/tenantTime";
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
   AUD: "A$",
-  USD: "$",
+  USD: "US$",
   GBP: "£",
   NZD: "NZ$",
   EUR: "€",
@@ -11,8 +11,17 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   AED: "د.إ",
 };
 
+/** Uppercase ISO code, or null when blank/unknown (never invents SGD). */
+export function normalizeCurrencyCode(
+  currency: string | null | undefined
+): string | null {
+  const code = (currency ?? "").trim().toUpperCase();
+  return code || null;
+}
+
 export function currencySymbol(currency = "SGD"): string {
-  return CURRENCY_SYMBOLS[currency] ?? currency;
+  const code = normalizeCurrencyCode(currency) ?? "SGD";
+  return CURRENCY_SYMBOLS[code] ?? code;
 }
 
 /** Compact axis labels — matches v3 `hR(amount, symbol)`. */
@@ -28,22 +37,87 @@ export function compactMoney(v: number, currency = "SGD"): string {
   return axisMoney(v, currencySymbol(currency));
 }
 
+function formatPlainAmount(n: number, locale: string): string {
+  return new Intl.NumberFormat(locale || DEFAULT_TENANT_LOCALE, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
+function formatAmountWithRawSymbol(n: number, symbol: string, locale: string): string {
+  return `${symbol}${formatPlainAmount(n, locale)}`;
+}
+
+function formatMoneyWithSymbol(
+  n: number,
+  currency: string,
+  locale: string
+): string {
+  const symbol = currencySymbol(currency);
+  const parts = new Intl.NumberFormat(locale || DEFAULT_TENANT_LOCALE, {
+    style: "currency",
+    currency,
+  }).formatToParts(n);
+  return parts.map((part) => (part.type === "currency" ? symbol : part.value)).join("");
+}
+
+/**
+ * Format money by priority: ISO code → raw display symbol (e.g. `$`) → plain amount.
+ * Never invents a tenant default when currency is blank.
+ */
 export function money(
   v: string | number | null | undefined,
-  currency = "SGD",
-  locale: string = DEFAULT_TENANT_LOCALE
+  currency: string | null | undefined = "SGD",
+  locale: string = DEFAULT_TENANT_LOCALE,
+  displaySymbol?: string | null
 ): string {
   if (v == null || v === "") return "—";
   const n = typeof v === "string" ? parseFloat(v) : v;
   if (Number.isNaN(n)) return String(v);
+  const loc = locale || DEFAULT_TENANT_LOCALE;
+  const code = normalizeCurrencyCode(currency);
+  const symbol = (displaySymbol ?? "").trim();
   try {
-    return new Intl.NumberFormat(locale || DEFAULT_TENANT_LOCALE, {
-      style: "currency",
-      currency: currency || "SGD",
-    }).format(n);
+    if (code) return formatMoneyWithSymbol(n, code, loc);
+    if (symbol) return formatAmountWithRawSymbol(n, symbol, loc);
+    return formatPlainAmount(n, loc);
   } catch {
     return String(v);
   }
+}
+
+/** Prefer invoices.currency; fall back to extracted_fields.currency_symbol. */
+export function currencyDisplaySymbol(
+  currency: string | null | undefined,
+  extractedFields?: Record<string, string | null | undefined> | null
+): string | null {
+  if (normalizeCurrencyCode(currency)) return null;
+  const symbol = (extractedFields?.currency_symbol ?? "").trim();
+  return symbol || null;
+}
+
+export function invoiceMoney(
+  v: string | number | null | undefined,
+  inv: {
+    currency?: string | null;
+    extracted_fields?: Record<string, string | null | undefined> | null;
+  },
+  locale: string = DEFAULT_TENANT_LOCALE
+): string {
+  return money(v, inv.currency, locale, currencyDisplaySymbol(inv.currency, inv.extracted_fields));
+}
+
+/** Format a multi-currency total map; single code or joined breakdown (no FX). */
+export function formatMoneyByCurrencyMap(
+  totals: Record<string, number>,
+  locale: string = DEFAULT_TENANT_LOCALE
+): string {
+  const entries = Object.entries(totals)
+    .map(([code, amount]) => [normalizeCurrencyCode(code) ?? "", amount] as const)
+    .filter(([, amount]) => Number.isFinite(amount))
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) return "—";
+  return entries.map(([code, amount]) => money(amount, code || null, locale)).join(" · ");
 }
 
 /** Stable org document label (document register ref). */

@@ -68,6 +68,16 @@ async def reset_invoice_for_reprocess(
     ).scalars().all():
         await session.delete(line)
 
+    from app.services.classification.classification_learning_service import (
+        clear_ocr_artifacts_for_invoice,
+    )
+
+    await clear_ocr_artifacts_for_invoice(
+        session,
+        tenant_id=inv.tenant_id,
+        invoice_id=inv.id,
+    )
+
     await session.flush()
 
 
@@ -144,6 +154,9 @@ async def requeue_invoice_for_pipeline(
         await reset_invoice_for_approval(session, inv)
         return
     from app.models.journal import JournalEntry
+    from app.services.classification.classification_learning_service import (
+        clear_ocr_artifacts_for_invoice,
+    )
     from app.services.invoice.processing_override_catalog import set_deferred_full_reset
 
     inv.status = InvoiceStatus.PENDING
@@ -159,5 +172,11 @@ async def requeue_invoice_for_pipeline(
     ).scalars().all():
         await session.delete(entry)
 
+    # Clear before pipeline so phase_ocr cannot reuse pre-filter table_line_items
+    await clear_ocr_artifacts_for_invoice(
+        session,
+        tenant_id=inv.tenant_id,
+        invoice_id=inv.id,
+    )
     set_deferred_full_reset(inv)
     await session.flush()

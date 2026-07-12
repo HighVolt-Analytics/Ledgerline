@@ -45,6 +45,65 @@ def test_merge_extraction_sources_apollo_dates() -> None:
     assert merged.due_date == date(2026, 4, 20)
 
 
+def test_merge_extraction_sources_soft_fills_di_when_untrusted() -> None:
+    """DI-populated but untrusted scalars still gap-fill empty LLM fields."""
+    text = (
+        "TAX INVOICE\n"
+        "Acme Trading Pty Ltd\n"
+        "ABN 12 345 678 901\n"
+        "Invoice Number: INV-4421\n"
+        "Invoice Date: 11/03/2026\n"
+        "Total AUD 250.00\n"
+    )
+    parsed = InvoiceData()  # empty LLM harvest
+    ocr = OcrArtifact(
+        success=True,
+        text=text,
+        text_length=len(text),
+        payload_json={
+            "invoice_fields": {
+                "vendor": "Acme Trading Pty Ltd",
+                "invoice_no": "INV-4421",
+                "invoice_date": "2026-03-11",
+                "total": "250.00",
+                "currency": "AUD",
+            },
+            "di_scalar_sources": {
+                "vendor": "VendorName",
+                "invoice_no": "InvoiceId",
+                "invoice_date": "InvoiceDate",
+                "total": "InvoiceTotal",
+                "currency": "CurrencyCode",
+            },
+        },
+    )
+    merged = merge_extraction_sources(parsed, ocr)
+    assert merged.vendor == "Acme Trading Pty Ltd"
+    assert merged.invoice_no == "INV-4421"
+    assert merged.total == Decimal("250.00")
+    assert merged.currency == "AUD"
+
+
+def test_merge_extraction_sources_fills_from_raw_layout_kv_labels() -> None:
+    """Azure layout_kv uses display labels; merge must map them to canonical keys."""
+    parsed = InvoiceData()
+    ocr = OcrArtifact(
+        success=True,
+        text="Tax Invoice\nInvoice No: INV-7788\nVendor: Acme Supplies\nTotal: 100.00\n",
+        text_length=80,
+        layout_kv={
+            "Invoice No": "INV-7788",
+            "Vendor Name": "Acme Supplies",
+            "Invoice Date": "12/03/2026",
+            "Total": "100.00",
+        },
+    )
+    merged = merge_extraction_sources(parsed, ocr)
+    assert merged.invoice_no == "INV-7788"
+    assert merged.vendor and "Acme" in merged.vendor
+    assert merged.total == Decimal("100.00")
+
+
 def test_merge_extraction_sources_fills_from_regex_when_llm_empty() -> None:
     parsed = InvoiceData(vendor="ZenLeads Inc.")
     ocr = OcrArtifact(success=True, text=APOLLO_TEXT, text_length=len(APOLLO_TEXT))

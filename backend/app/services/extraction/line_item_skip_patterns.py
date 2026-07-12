@@ -26,29 +26,83 @@ HEADER_DEDUP_EXTRACTED_FIELD_KEYS: tuple[str, ...] = (
 )
 
 # Optional prefix for money columns in OCR line-item rows (shared with frontend invoicePreview.ts).
-from app.services.extraction.locale_vocab import OPTIONAL_CURRENCY_MONEY_PREFIX  # noqa: E402
+from app.services.extraction.locale_vocab import OPTIONAL_CURRENCY_MONEY_PREFIX  # noqa: E402,F401
 
-# Metadata field labels that must never appear as product line rows.
-_METADATA_LABEL = re.compile(
-    r"^(?:"
+__all__ = (
+    "HEADER_DEDUP_EXTRACTED_FIELD_KEYS",
+    "OPTIONAL_CURRENCY_MONEY_PREFIX",
+    "has_trusted_line_items",
+    "is_metadata_line_description",
+    "is_summary_line_description",
+    "should_skip_line_row",
+)
+# Known header / party / payment labels (label-only or Label: value).
+_HEADER_LABEL_TOKEN = (
     r"customer|ship(?:ped)?\s*(?:to|date|qty|ped)?|delivery\s*date|invoice\s*(?:no|number|#|date)|"
     r"po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*(?:no|number|reference)?|"
-    r"bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number)?|"
+    r"bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number|name)?|"
     r"payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|"
     r"consignment|permit|cost\s*cent(?:er|re)|"
-    r"phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention"
-    r")\s*:?\s*$",
+    r"phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention|"
+    r"bank(?:\s*name)?|swift|iban|remittance|page\s*\d+(?:\s*of\s*\d+)?"
+)
+
+# Metadata field labels that must never appear as product line rows (label only).
+_METADATA_LABEL = re.compile(
+    rf"^(?:{_HEADER_LABEL_TOKEN})\s*:?\s*$",
     re.I,
 )
 
+# Header Label: value (colon required for ambiguous labels like customer/vendor).
+_METADATA_LABEL_VALUE_COLON = re.compile(
+    rf"^(?:{_HEADER_LABEL_TOKEN})\s*:\s*\S",
+    re.I,
+)
+
+# Space/dash form only for unambiguous document headers (OCR often drops ':').
+_METADATA_LABEL_VALUE_SPACE = re.compile(
+    r"^(?:"
+    r"invoice\s*(?:no|number|#|date)|"
+    r"po\s*(?:no|number|reference)?|"
+    r"so\s*(?:no|number|reference)?|"
+    r"order\s*(?:no|number)?|"
+    r"ship\s*to|bill(?:ed)?\s*to|"
+    r"due\s*date|delivery\s*date|ship(?:ped)?\s*date|"
+    r"payment\s*terms|abn|gstin|bsb|"
+    r"account\s*(?:no|number|name)"
+    r")\s*(?:-+|\s+)\S",
+    re.I,
+)
+
+# Bare table header cells that still look like product rows when joined.
 _TABLE_HEADER = re.compile(
-    r"^(?:description|item|product|qty|quantity|unit\s*price|amount|rate|uom|sku)\s*:?\s*$",
+    r"^(?:description|item(?:\s*description)?|product|qty|quantity|unit\s*price|amount|rate|uom|sku|"
+    r"hs\s*code|country\s*of\s*origin|net\s*weight|gross\s*weight)\s*:?\s*$",
     re.I,
 )
 
 # Phone / fax fragments (e.g. "Tel No:+91" from OCR header bleed into line tables).
 _PHONE_LINE = re.compile(
     r"^(?:tel(?:ephone)?|phone|mobile|fax)\s*(?:no\.?|number|#)?\s*:?\s*\+?\d",
+    re.I,
+)
+
+_SUMMARY_MONEY_FOOTER = re.compile(
+    r"^(?:"
+    r"(?:grand\s+)?(?:sub\s*)?total(?:\s+(?:gst|tax|excl(?:uding)?\s*gst|incl(?:uding)?\s*gst))?|"
+    r"total\s+(?:gst|tax|amount|due)|"
+    r"amount\s*(?:due|payable)|"
+    r"balance\s*(?:due|owing)|"
+    r"net\s*(?:payable|amount|total)|"
+    r"(?:gst|tax)\s*(?:amount|total)?"
+    r")\b"
+    r"(?:\s*:?\s*\$?\s*[\d,]+\.?\d*)?\s*$",
+    re.I,
+)
+
+_BANK_REMITTANCE_LINE = re.compile(
+    r"\b(?:bank\s*(?:details|name|account)|account\s*name|bsb|swift|iban|"
+    r"remittance\s*(?:advice|to)|please\s*remit|payment\s*to)\b",
     re.I,
 )
 
@@ -60,7 +114,7 @@ def is_summary_line_description(desc: str | None) -> bool:
         return True
     if re.match(r"^sub\s*total\s*:?\s*$", text, re.I):
         return True
-    if re.match(r"^(?:grand\s+)?total\s*:?\s*$", text, re.I):
+    if re.match(r"^(?:grand\s+)?totals?\s*:?\s*$", text, re.I):
         return True
     if re.match(r"^(?:gst|tax)\s*:?\s*$", text, re.I):
         return True
@@ -69,6 +123,11 @@ def is_summary_line_description(desc: str | None) -> bool:
     if re.search(r"\b(?:total\s*due|amount\s*due)\b", text, re.I):
         return True
     if re.match(r"^abn\s*:?\s*\d", text, re.I):
+        return True
+    # Money-bearing footer labels with optional trailing amount only
+    if _SUMMARY_MONEY_FOOTER.match(text):
+        return True
+    if _BANK_REMITTANCE_LINE.search(text) and len(text) <= 120:
         return True
     return False
 
@@ -82,9 +141,20 @@ def is_metadata_line_description(desc: str | None) -> bool:
         return True
     if _METADATA_LABEL.match(text):
         return True
+    if _METADATA_LABEL_VALUE_COLON.match(text):
+        return True
+    if _METADATA_LABEL_VALUE_SPACE.match(text):
+        return True
     if _TABLE_HEADER.match(text):
         return True
     if _PHONE_LINE.match(text):
+        return True
+    # Multi-cell OCR header bleed: "Description Qty Unit Price Amount"
+    if re.match(
+        r"^(?:description|item|product)\b.+\b(?:qty|quantity|amount|unit\s*price|rate)\b",
+        text,
+        re.I,
+    ) and len(text.split()) <= 10:
         return True
     return False
 
@@ -108,13 +178,11 @@ def should_skip_line_row(
 
 
 def has_trusted_line_items(items: list) -> bool:
-    """True when LLM (or primary) rows already have product lines with money fields."""
+    """True when at least one row looks like a real product line with money."""
     for item in items:
-        desc = getattr(item, "description", None) or ""
+        desc = getattr(item, "description", None)
         if not str(desc).strip() or should_skip_line_row(str(desc)):
             continue
-        amount = getattr(item, "amount", None)
-        unit_price = getattr(item, "unit_price", None)
-        if amount is not None or unit_price is not None:
+        if getattr(item, "amount", None) is not None or getattr(item, "unit_price", None) is not None:
             return True
     return False

@@ -193,7 +193,9 @@ async def vr05_abn(
 
 def vr07_currency(data: InvoiceData, *, expected_currency: str) -> ValidationResult:
     expected = expected_currency.strip().upper()
-    currency = (data.currency or expected).upper()
+    currency = (data.currency or "").strip().upper()
+    if not currency:
+        return ValidationResult("VR07", False, "Currency missing")
     if currency == expected:
         return ValidationResult("VR07", True, f"Currency is {expected}")
     if data.gst is None and data.abn is None:
@@ -212,8 +214,9 @@ def vr08_gst(
     tax_label: str = "Tax",
 ) -> ValidationResult:
     expected = expected_currency.strip().upper()
+    doc_currency = (data.currency or "").strip().upper()
     if data.gst is None:
-        if data.subtotal is not None and (data.currency or expected).upper() != expected:
+        if data.subtotal is not None and doc_currency and doc_currency != expected:
             return ValidationResult("VR08", True, f"{tax_label} not applicable for foreign invoice")
         return ValidationResult(
             "VR08", True, f"Skipped — subtotal and {tax_label} required", skipped=True
@@ -223,8 +226,6 @@ def vr08_gst(
             "VR08", True, f"Skipped — subtotal and {tax_label} required", skipped=True
         )
     rate = resolve_gst_rate_percent(data)
-    if rate is None and statutory_tax_rate is not None:
-        rate = statutory_tax_rate
     if rate is None:
         return ValidationResult(
             "VR08", True, f"Skipped — {tax_label} rate could not be determined", skipped=True

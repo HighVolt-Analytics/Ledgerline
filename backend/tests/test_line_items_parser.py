@@ -28,6 +28,47 @@ def test_merge_line_item_lists_fills_missing_prices() -> None:
     assert merged[0].amount == Decimal("500")
 
 
+def test_merge_does_not_append_positional_near_duplicate() -> None:
+    """DI row + layout row with meta suffix must not become two lines."""
+    primary = [
+        ParsedLineItem(
+            description="CPU CHIPS 14 Gen",
+            qty=Decimal("150"),
+            unit_price=Decimal("10"),
+            amount=Decimal("1500"),
+            source="di",
+        ),
+    ]
+    secondary = [
+        ParsedLineItem(
+            description="CPU CHIPS 14 Gen | CHINA | 9.70 | 10.60",
+            qty=Decimal("150"),
+            unit_price=Decimal("10"),
+            amount=Decimal("1500"),
+            source="table",
+        ),
+    ]
+    merged = merge_line_item_lists(primary, secondary)
+    assert len(merged) == 1
+    assert "CPU CHIPS" in (merged[0].description or "")
+
+
+def test_dedupe_near_duplicate_same_amount_stem() -> None:
+    from app.services.extraction.line_items_parser import dedupe_near_duplicate_line_items
+
+    items = [
+        ParsedLineItem(description="Fresh Produce Box", qty=Decimal("10"), amount=Decimal("500")),
+        ParsedLineItem(
+            description="Fresh Produce Box Mixed",
+            qty=Decimal("10"),
+            amount=Decimal("500"),
+            source="table",
+        ),
+    ]
+    deduped = dedupe_near_duplicate_line_items(items)
+    assert len(deduped) == 1
+
+
 def test_enrich_line_items_from_text_fills_missing_prices() -> None:
     items = [
         ParsedLineItem(description="Western Digital 4TB HDD", qty=Decimal("80"), unit_price=None, amount=None),

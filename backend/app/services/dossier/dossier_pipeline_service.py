@@ -1274,7 +1274,7 @@ def _resolve_match(
 
     match_checks: list = []
     if match_log and isinstance(match_log.detail, dict):
-        currency = str(match_log.detail.get("currency") or inv.currency or "SGD")
+        currency = str(match_log.detail.get("currency") or inv.currency or "")
         summary = match_summary_from_audit_detail(match_log.detail, currency=currency)
         if summary is not None:
             match_checks = match_checks_from_summary(summary)

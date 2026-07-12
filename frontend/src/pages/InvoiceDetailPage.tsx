@@ -145,7 +145,7 @@ export function InvoiceDetailPage() {
               {inv.account_code} {inv.account_name}
             </dd>
             <dt className="text-muted-foreground">Total</dt>
-            <dd className="tnum font-semibold">{money(inv.total)}</dd>
+            <dd className="tnum font-semibold">{money(inv.total, inv.currency)}</dd>
           </dl>
         </Card>
 
@@ -183,8 +183,8 @@ export function InvoiceDetailPage() {
                   <td className="px-3 py-2.5">
                     {j.account_code} {j.account_name}
                   </td>
-                  <td className="px-3 py-2.5 tnum text-right">{money(j.debit)}</td>
-                  <td className="px-3 py-2.5 tnum text-right">{money(j.credit)}</td>
+                  <td className="px-3 py-2.5 tnum text-right">{money(j.debit, inv.currency)}</td>
+                  <td className="px-3 py-2.5 tnum text-right">{money(j.credit, inv.currency)}</td>
                 </tr>
               ))}
             </tbody>
