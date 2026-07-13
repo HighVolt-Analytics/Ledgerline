@@ -219,6 +219,7 @@ export function UploadPage() {
     source,
     q: debouncedSearch,
     mailboxId: selectedMailboxId,
+    captureSource: channelTab,
     enabled:
       canRenderTenantOwnedUi(tenantScope) &&
       viewTab === "detailed" &&
