@@ -1,4 +1,5 @@
-export const LEDGERLINK_LOGO_SRC = "/ledgerlinklogo-Photoroom.png";
+/** Public-folder logo; must respect Vite `base` (e.g. /ledgerlink/ on staging). */
+export const LEDGERLINK_LOGO_SRC = `${import.meta.env.BASE_URL}ledgerlinklogo-Photoroom.png`;
 
 export function Logo({ size = 28, className = "" }: { size?: number; className?: string }) {
   return (
@@ -6,7 +7,7 @@ export function Logo({ size = 28, className = "" }: { size?: number; className?:
       src={LEDGERLINK_LOGO_SRC}
       width={size}
       height={size}
-      alt=""
+      alt="Ledgerline"
       className={["shrink-0 object-contain", className].filter(Boolean).join(" ")}
       decoding="async"
     />
