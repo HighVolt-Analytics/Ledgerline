@@ -48,11 +48,11 @@ async def test_finalize_preskip_moves_exception(
         return True
 
     monkeypatch.setattr(
-        "app.services.graph_mail_folders.folder_moves_enabled",
+        "app.services.ingest.graph_mail_folders.folder_moves_enabled",
         lambda: True,
     )
     monkeypatch.setattr(
-        "app.services.graph_mail_folders.move_message_to_folder",
+        "app.services.ingest.graph_mail_folders.move_message_to_folder",
         fake_move,
     )
 
@@ -69,11 +69,11 @@ def test_move_falls_back_to_mark_read_when_disabled(monkeypatch: pytest.MonkeyPa
     marked: list[str] = []
 
     monkeypatch.setattr(
-        "app.services.graph_mail_folders.folder_moves_enabled",
+        "app.services.ingest.graph_mail_folders.folder_moves_enabled",
         lambda: False,
     )
     monkeypatch.setattr(
-        "app.services.graph_mail_folders.mark_message_read",
+        "app.services.ingest.graph_mail_folders.mark_message_read",
         lambda mid, mailbox_email, access_token=None: marked.append(mid) or True,
     )
 

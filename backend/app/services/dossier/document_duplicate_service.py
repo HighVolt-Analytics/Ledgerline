@@ -50,6 +50,14 @@ _DUPLICATE_LOOKUP_IGNORE_STATUSES = frozenset(
     }
 )
 
+# Ingest duplicate checks must see in-flight rows so a batch cannot insert the same
+# content_fingerprint twice before the first row commits (DB unique constraint).
+_INGEST_FINGERPRINT_LOOKUP_IGNORE_STATUSES = frozenset(
+    {
+        InvoiceStatus.DUPLICATE_SKIPPED,
+    }
+)
+
 VR02_IGNORE_STATUSES = frozenset(
     {
         InvoiceStatus.REJECTED,
@@ -225,6 +233,24 @@ async def find_invoice_by_content_fingerprint(
     return (await session.execute(stmt)).scalars().first()
 
 
+async def find_invoice_by_content_fingerprint_for_ingest(
+    session: AsyncSession,
+    content_fingerprint: str,
+    *,
+    tenant_id: int,
+) -> Invoice | None:
+    stmt = (
+        select(Invoice)
+        .where(
+            Invoice.content_fingerprint == content_fingerprint,
+            Invoice.tenant_id == tenant_id,
+            Invoice.status.notin_(_INGEST_FINGERPRINT_LOOKUP_IGNORE_STATUSES),
+        )
+        .order_by(Invoice.created_at.desc())
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
 async def find_invoice_by_business_fingerprint(
     session: AsyncSession,
     business_fingerprint: str,
@@ -237,6 +263,24 @@ async def find_invoice_by_business_fingerprint(
             Invoice.business_fingerprint == business_fingerprint,
             Invoice.tenant_id == tenant_id,
             Invoice.status.notin_(_DUPLICATE_LOOKUP_IGNORE_STATUSES),
+        )
+        .order_by(Invoice.created_at.desc())
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def find_invoice_by_business_fingerprint_for_ingest(
+    session: AsyncSession,
+    business_fingerprint: str,
+    *,
+    tenant_id: int,
+) -> Invoice | None:
+    stmt = (
+        select(Invoice)
+        .where(
+            Invoice.business_fingerprint == business_fingerprint,
+            Invoice.tenant_id == tenant_id,
+            Invoice.status.notin_(_INGEST_FINGERPRINT_LOOKUP_IGNORE_STATUSES),
         )
         .order_by(Invoice.created_at.desc())
     )
@@ -423,7 +467,7 @@ async def find_existing_ingest_duplicate(
     if existing is not None:
         return existing
     if business_fingerprint:
-        existing = await find_invoice_by_business_fingerprint(
+        existing = await find_invoice_by_business_fingerprint_for_ingest(
             session,
             business_fingerprint,
             tenant_id=tenant_id,
@@ -431,7 +475,7 @@ async def find_existing_ingest_duplicate(
         if existing is not None:
             return existing
     if content_fingerprint:
-        existing = await find_invoice_by_content_fingerprint(
+        existing = await find_invoice_by_content_fingerprint_for_ingest(
             session,
             content_fingerprint,
             tenant_id=tenant_id,

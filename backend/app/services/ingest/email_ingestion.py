@@ -14,6 +14,8 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_EXCEPTIONS_POLL_CAP = 25
+
 
 @dataclass
 class EmailAttachment:
@@ -30,6 +32,8 @@ class RawEmail:
     mailbox_email: str
     attachments: list[EmailAttachment] = field(default_factory=list)
     graph_access_token: str | None = None
+    poll_folder: str = "inbox"
+    received_at: datetime | None = None
 
 
 def mailbox_api_path(mailbox_email: str, segment: str) -> str:
@@ -59,20 +63,21 @@ def build_historical_inbox_filter(from_day: date, to_day: date) -> str:
     )
 
 
-def _list_inbox_message_pages(
+def _list_message_pages(
     mailbox_email: str,
     *,
+    messages_path: str,
     access_token: str | None,
     odata_filter: str,
     page_size: int,
     max_messages: int | None = None,
 ) -> Iterator[list[dict[str, object]]]:
-    """Yield inbox message pages from Graph, following @odata.nextLink."""
+    """Yield message pages from Graph for a mailbox folder path, following @odata.nextLink."""
     if not is_graph_enabled():
         return
 
     mailbox = mailbox_email.strip().lower()
-    path = mailbox_api_path(mailbox, "/mailFolders/inbox/messages")
+    path = mailbox_api_path(mailbox, messages_path)
     params: dict[str, str] | None = {
         "$filter": odata_filter,
         "$select": "id,subject,from,hasAttachments,receivedDateTime",
@@ -111,32 +116,51 @@ def _list_inbox_message_pages(
         params = None
 
 
+def _list_inbox_message_pages(
+    mailbox_email: str,
+    *,
+    access_token: str | None,
+    odata_filter: str,
+    page_size: int,
+    max_messages: int | None = None,
+) -> Iterator[list[dict[str, object]]]:
+    """Yield inbox message pages from Graph, following @odata.nextLink."""
+    yield from _list_message_pages(
+        mailbox_email,
+        messages_path="/mailFolders/inbox/messages",
+        access_token=access_token,
+        odata_filter=odata_filter,
+        page_size=page_size,
+        max_messages=max_messages,
+    )
+
+
+def _list_folder_message_pages(
+    mailbox_email: str,
+    folder_id: str,
+    *,
+    access_token: str | None,
+    odata_filter: str,
+    page_size: int,
+    max_messages: int | None = None,
+) -> Iterator[list[dict[str, object]]]:
+    """Yield message pages for a specific mail folder id."""
+    yield from _list_message_pages(
+        mailbox_email,
+        messages_path=f"/mailFolders/{folder_id}/messages",
+        access_token=access_token,
+        odata_filter=odata_filter,
+        page_size=page_size,
+        max_messages=max_messages,
+    )
+
+
 def build_recent_inbox_filter(since: datetime) -> str:
     """Graph filter for messages received since a timestamp (read + unread)."""
     return (
         f"receivedDateTime ge {_graph_datetime(since)} and "
         f"hasAttachments eq true"
     )
-
-
-def _list_recent_messages(
-    mailbox_email: str,
-    *,
-    access_token: str | None = None,
-    since: datetime,
-) -> list[dict[str, object]]:
-    """Fetch inbox messages with attachments received on or after since."""
-    limit = get_settings().graph_max_messages
-    rows: list[dict[str, object]] = []
-    for page in _list_inbox_message_pages(
-        mailbox_email,
-        access_token=access_token,
-        odata_filter=build_recent_inbox_filter(since),
-        page_size=limit,
-        max_messages=limit,
-    ):
-        rows.extend(page)
-    return rows
 
 
 def _merge_emails_by_message_id(*batches: list[RawEmail]) -> list[RawEmail]:
@@ -153,6 +177,7 @@ def _messages_to_emails(
     *,
     access_token: str | None = None,
     known_message_ids: frozenset[str] | None = None,
+    poll_folder: str = "inbox",
 ) -> list[RawEmail]:
     known = known_message_ids or frozenset()
     emails: list[RawEmail] = []
@@ -160,24 +185,148 @@ def _messages_to_emails(
         message_id = str(msg.get("id") or "")
         if not message_id or message_id in known:
             continue
-        raw = _raw_email_from_message(mailbox_email, msg, access_token=access_token)
+        raw = _raw_email_from_message(
+            mailbox_email,
+            msg,
+            access_token=access_token,
+            poll_folder=poll_folder,
+        )
         if raw:
             emails.append(raw)
     return emails
 
-def _list_unread_messages(mailbox_email: str, *, access_token: str | None = None) -> list[dict[str, object]]:
-    """Fetch unread inbox messages that have attachments."""
+def _list_unread_messages(
+    mailbox_email: str,
+    *,
+    access_token: str | None = None,
+    folder_id: str | None = None,
+) -> list[dict[str, object]]:
+    """Fetch unread messages that have attachments from inbox or a child folder."""
     limit = get_settings().graph_max_messages
     rows: list[dict[str, object]] = []
-    for page in _list_inbox_message_pages(
-        mailbox_email,
-        access_token=access_token,
-        odata_filter="isRead eq false and hasAttachments eq true",
-        page_size=limit,
-        max_messages=limit,
-    ):
+    pages = (
+        _list_folder_message_pages(
+            mailbox_email,
+            folder_id,
+            access_token=access_token,
+            odata_filter="isRead eq false and hasAttachments eq true",
+            page_size=limit,
+            max_messages=limit,
+        )
+        if folder_id
+        else _list_inbox_message_pages(
+            mailbox_email,
+            access_token=access_token,
+            odata_filter="isRead eq false and hasAttachments eq true",
+            page_size=limit,
+            max_messages=limit,
+        )
+    )
+    for page in pages:
         rows.extend(page)
     return rows
+
+
+def _list_recent_messages(
+    mailbox_email: str,
+    *,
+    access_token: str | None = None,
+    since: datetime,
+    folder_id: str | None = None,
+) -> list[dict[str, object]]:
+    """Fetch messages with attachments received on or after since."""
+    limit = get_settings().graph_max_messages
+    rows: list[dict[str, object]] = []
+    pages = (
+        _list_folder_message_pages(
+            mailbox_email,
+            folder_id,
+            access_token=access_token,
+            odata_filter=build_recent_inbox_filter(since),
+            page_size=limit,
+            max_messages=limit,
+        )
+        if folder_id
+        else _list_inbox_message_pages(
+            mailbox_email,
+            access_token=access_token,
+            odata_filter=build_recent_inbox_filter(since),
+            page_size=limit,
+            max_messages=limit,
+        )
+    )
+    for page in pages:
+        rows.extend(page)
+    return rows
+
+
+def _poll_folder_messages(
+    mailbox_email: str,
+    *,
+    access_token: str | None = None,
+    since: datetime | None,
+    known_message_ids: frozenset[str] | None,
+    folder_id: str | None = None,
+    folder_label: str = "inbox",
+) -> tuple[list[RawEmail], dict[str, int]]:
+    """Fetch unread + recent messages for one folder; return emails and raw counts."""
+    unread_messages = _list_unread_messages(
+        mailbox_email,
+        access_token=access_token,
+        folder_id=folder_id,
+    )
+    unread_emails = _messages_to_emails(
+        mailbox_email,
+        unread_messages,
+        access_token=access_token,
+        known_message_ids=known_message_ids,
+        poll_folder=folder_label,
+    )
+    recent_emails: list[RawEmail] = []
+    recent_messages: list[dict[str, object]] = []
+    if since is not None:
+        recent_messages = _list_recent_messages(
+            mailbox_email,
+            access_token=access_token,
+            since=since,
+            folder_id=folder_id,
+        )
+        recent_emails = _messages_to_emails(
+            mailbox_email,
+            recent_messages,
+            access_token=access_token,
+            known_message_ids=known_message_ids,
+            poll_folder=folder_label,
+        )
+    merged = _merge_emails_by_message_id(unread_emails, recent_emails)
+    counts = {
+        "folder": folder_label,
+        "message_count": len(merged),
+        "unread_count": len(unread_emails),
+        "recent_count": len(recent_emails),
+        "raw_unread_count": len(unread_messages),
+        "raw_recent_count": len(recent_messages),
+        "known_filtered_unread": len(unread_messages) - len(unread_emails),
+        "known_filtered_recent": len(recent_messages) - len(recent_emails),
+    }
+    return merged, counts
+
+
+def _exceptions_folder_id(
+    mailbox_email: str,
+    *,
+    access_token: str | None = None,
+) -> str | None:
+    from app.services.ingest.graph_mail_folders import get_child_folder_id
+
+    settings = get_settings()
+    if not settings.graph_folder_moves_enabled:
+        return None
+    return get_child_folder_id(
+        mailbox_email,
+        settings.graph_exceptions_folder,
+        access_token=access_token,
+    )
 
 
 def _list_attachments(
@@ -223,11 +372,22 @@ def _sender_from_message(msg: dict[str, object]) -> str:
     return ""
 
 
+def _received_at_from_message(msg: dict[str, object]) -> datetime | None:
+    raw = msg.get("receivedDateTime")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _raw_email_from_message(
     mailbox_email: str,
     msg: dict[str, object],
     *,
     access_token: str | None = None,
+    poll_folder: str = "inbox",
 ) -> RawEmail | None:
     message_id = str(msg.get("id", ""))
     if not message_id:
@@ -248,6 +408,8 @@ def _raw_email_from_message(
         mailbox_email=mailbox_email.strip().lower(),
         attachments=attachments,
         graph_access_token=access_token,
+        poll_folder=poll_folder,
+        received_at=_received_at_from_message(msg),
     )
 
 
@@ -261,6 +423,9 @@ def poll_inbox(
     """
     Poll a mailbox for unread and recent messages with attachments.
 
+    Scans Inbox and the Exceptions child folder (when folder moves are enabled)
+    so messages moved out of Inbox after a failed ingest can still be retried.
+
     When since is set, also includes read messages received after that time
     that are not already in known_message_ids.
 
@@ -271,30 +436,44 @@ def poll_inbox(
         return []
 
     mailbox = mailbox_email.strip().lower()
-    unread_emails = _messages_to_emails(
-        mailbox,
-        _list_unread_messages(mailbox, access_token=access_token),
-        access_token=access_token,
-        known_message_ids=known_message_ids,
-    )
-    recent_emails: list[RawEmail] = []
-    if since is not None:
-        recent_emails = _messages_to_emails(
-            mailbox,
-            _list_recent_messages(mailbox, access_token=access_token, since=since),
-            access_token=access_token,
-            known_message_ids=known_message_ids,
-        )
+    folder_specs: list[tuple[str, str | None]] = [("inbox", None)]
+    exceptions_id = _exceptions_folder_id(mailbox, access_token=access_token)
+    if exceptions_id:
+        folder_specs.append(("exceptions", exceptions_id))
 
-    emails = _merge_emails_by_message_id(unread_emails, recent_emails)
+    all_emails: list[RawEmail] = []
+    folder_stats: list[dict[str, int | str]] = []
+    for folder_label, folder_id in folder_specs:
+        folder_emails, counts = _poll_folder_messages(
+            mailbox,
+            access_token=access_token,
+            since=since,
+            known_message_ids=known_message_ids,
+            folder_id=folder_id,
+            folder_label=folder_label,
+        )
+        all_emails = _merge_emails_by_message_id(all_emails, folder_emails)
+        folder_stats.append(counts)
+
+    inbox_emails = [email for email in all_emails if email.poll_folder == "inbox"]
+    exception_emails = [email for email in all_emails if email.poll_folder == "exceptions"]
+    exception_emails.sort(
+        key=lambda email: email.received_at or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    if len(exception_emails) > _EXCEPTIONS_POLL_CAP:
+        exception_emails = exception_emails[:_EXCEPTIONS_POLL_CAP]
+    all_emails = inbox_emails + exception_emails
+
     logger.info(
         "poll_inbox_fetched",
         mailbox=mailbox,
-        message_count=len(emails),
-        unread_count=len(unread_emails),
-        recent_count=len(recent_emails),
+        message_count=len(all_emails),
+        since=_graph_datetime(since) if since is not None else None,
+        folders=folder_stats,
+        exceptions_folder_polled=exceptions_id is not None,
     )
-    return emails
+    return all_emails
 
 
 def poll_recent_inbox(

@@ -214,6 +214,6 @@ async def test_bundle_segment_matches_prior_standalone_fingerprint(
     assert result.duplicate_handled is True
 
     rows = (await db_session.execute(select(Invoice))).scalars().all()
-    assert len(rows) == 3
+    assert len(rows) == 2
     assert any(r.status == InvoiceStatus.DUPLICATE_SKIPPED for r in rows)
     assert any(r.status == InvoiceStatus.PROCESSED for r in rows)

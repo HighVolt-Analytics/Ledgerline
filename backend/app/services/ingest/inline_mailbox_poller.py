@@ -40,6 +40,8 @@ async def _poll_once() -> None:
                 await session.rollback()
                 raise
 
+        logger.info("inline_mailbox_poll_cycle_started", tenant_count=len(tenant_ids))
+
         for tid in tenant_ids:
             if _shutting_down:
                 return

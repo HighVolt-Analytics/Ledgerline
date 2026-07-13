@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,7 +28,11 @@ from app.services.dossier.document_duplicate_service import (
     resolve_ingest_duplicate,
 )
 from app.services.dossier.document_ref_service import assign_document_ref, audit_document_detail
-from app.services.ingest.ingest_capture_service import apply_ingest_capture, evaluate_ingest_capture
+from app.services.ingest.ingest_capture_service import (
+    apply_ingest_capture,
+    evaluate_ingest_capture,
+    log_ingest_capture_decision,
+)
 from app.services.approval.approval_pipeline_service import (
     human_approval_may_bypass_validation,
     human_approved_payable_bypass,
@@ -116,6 +121,7 @@ from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_
 from app.services.ingest.attachment_filter import filter_invoice_attachments
 from app.services.audit.audit_detail_helpers import validation_audit_detail
 from app.services.audit.audit_service import log_event
+from app.utils.logger import get_logger
 from app.services.ingest.capture_channel import infer_capture_channel, is_staff_claim_sender
 from app.services.ingest.email_ingestion import RawEmail, mark_message_read
 from app.services.shared.file_storage import open_pdf_for_reading
@@ -279,6 +285,9 @@ class EmailIngestResult:
     ingested_count: int = 0
     message_ids: list[str] = field(default_factory=list)
     preskip_exceptions: dict[str, str] = field(default_factory=dict)
+
+
+logger = get_logger(__name__)
 
 
 def _filename_from_stored(stored: str, invoice_id: int, file_hash: str) -> str:
@@ -568,11 +577,30 @@ async def ingest_email_attachments(
     tenant_name = org.name if org else None
 
     capture_config = await load_config_for_tenant(session, tenant_id)
+    enabled_capture_rules = [r for r in capture_config.email_capture_rules if r.enabled]
+    logger.info(
+        "email_ingest_batch_started",
+        tenant_id=str(tenant_id),
+        connected_mailbox_id=connected_mailbox_id,
+        email_count=len(emails),
+        enabled_capture_rule_count=len(enabled_capture_rules),
+        known_message_id_count=len(known_message_ids or ()),
+        mark_processed_only_if_ingested=mark_processed_only_if_ingested,
+    )
+
+    seen_message_ids: set[str] = set(known_message_ids or ())
 
     for email in emails:
         result.message_ids.append(email.message_id)
 
-        if known_message_ids and email.message_id in known_message_ids:
+        if email.message_id in seen_message_ids:
+            logger.info(
+                "email_ingest_skipped",
+                reason="message_already_imported",
+                message_id=email.message_id,
+                mailbox=email.mailbox_email,
+                subject=email.subject,
+            )
             await log_event(
                 session,
                 "email_skipped",
@@ -584,186 +612,78 @@ async def ingest_email_attachments(
             result.preskip_exceptions[email.message_id] = "message_already_imported"
             continue
 
-        ingested_before = result.ingested_count
-
-        if not email.attachments:
-            await log_event(
-                session,
-                "email_skipped",
-                detail={"reason": "no_attachments", "message_id": email.message_id},
-            )
-            result.preskip_exceptions[email.message_id] = "no_attachments"
-            _maybe_finish_email_message(
-                email,
-                mark_processed=mark_processed,
-                mark_processed_only_if_ingested=mark_processed_only_if_ingested,
-                ingested_before=ingested_before,
-                ingested_after=result.ingested_count,
-            )
-            continue
-
-        attachments = filter_invoice_attachments(email)
-        if not attachments:
-            await log_event(
-                session,
-                "email_skipped",
-                detail={"reason": "no_invoice_attachments", "message_id": email.message_id},
-            )
-            result.preskip_exceptions[email.message_id] = "no_invoice_attachments"
-            _maybe_finish_email_message(
-                email,
-                mark_processed=mark_processed,
-                mark_processed_only_if_ingested=mark_processed_only_if_ingested,
-                ingested_before=ingested_before,
-                ingested_after=result.ingested_count,
-            )
-            continue
-
-        capture_rule_blocked = False
-        for att in attachments:
-            capture_rule = evaluate_ingest_capture(email, att, capture_config)
-            if not capture_rule:
-                capture_rule_blocked = True
-                await log_event(
+        try:
+            async with session.begin_nested():
+                await _ingest_single_email(
                     session,
-                    "email_skipped",
-                    detail={
-                        "reason": "no_capture_rule_match",
-                        "message_id": email.message_id,
-                        "sender": email.sender,
-                        "subject": email.subject,
-                        "attachment": att.filename,
-                        "mailbox": email.mailbox_email,
-                    },
-                )
-                continue
-
-            file_hash = compute_sha256_bytes(att.data)
-            content_fingerprint: str | None = None
-            business_fingerprint: str | None = None
-            identity_fields: dict[str, str] | None = None
-            prefetched_extraction = None
-            if att.filename and att.filename.lower().endswith(".pdf"):
-                import tempfile
-                from pathlib import Path
-
-                from app.services.extraction.document_identity_service import (
-                    compute_business_fingerprint_from_pages,
-                    extract_identity_fields_from_pages,
-                    identity_field_keys_from_catalogue,
-                )
-                from app.services.extraction.pdf_content_fingerprint import (
-                    compute_pdf_content_fingerprint_from_pages,
-                )
-                from app.services.extraction.pdf_page_text_service import extract_pdf_page_texts
-
-                custom_keys = identity_field_keys_from_catalogue(capture_config.document_types)
-                tmp_path: Path | None = None
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
-                        handle.write(att.data)
-                        tmp_path = Path(handle.name)
-                    prefetched_extraction = extract_pdf_page_texts(tmp_path)
-                    pages_for_fp = prefetched_extraction.pages
-                    content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages_for_fp)
-                    identity_fields = extract_identity_fields_from_pages(
-                        pages_for_fp,
-                        custom_field_keys=custom_keys,
-                    )
-                    business_fingerprint = compute_business_fingerprint_from_pages(
-                        pages_for_fp,
-                        custom_field_keys=custom_keys,
-                    )
-                finally:
-                    if tmp_path is not None:
-                        tmp_path.unlink(missing_ok=True)
-            existing = await find_existing_ingest_duplicate(
-                session,
-                tenant_id=tenant_id,
-                file_hash=file_hash,
-                content_fingerprint=content_fingerprint,
-                business_fingerprint=business_fingerprint,
-                identity_fields=identity_fields,
-            )
-            if existing is not None:
-                outcome = await resolve_ingest_duplicate(
-                    session,
+                    email,
+                    result=result,
                     tenant_id=tenant_id,
-                    existing=existing,
-                    file_hash=file_hash,
-                    content_fingerprint=content_fingerprint,
-                    business_fingerprint=business_fingerprint,
-                    capture_source="email",
+                    tenant_slug=tenant_slug,
+                    tenant_name=tenant_name,
                     connected_mailbox_id=connected_mailbox_id,
-                    email_sender=email.sender or None,
-                    email_subject=email.subject or None,
-                    email_attachment_name=att.filename,
-                    email_message_id=email.message_id,
-                    extra_detail={
-                        "filename": att.filename,
-                        "message_id": email.message_id,
-                        "mailbox": email.mailbox_email,
-                        "source": "email",
-                    },
+                    enabled_capture_rules=enabled_capture_rules,
+                    capture_config=capture_config,
+                    mark_processed=mark_processed,
+                    mark_processed_only_if_ingested=mark_processed_only_if_ingested,
                 )
-                if outcome.handled:
-                    if outcome.action == "reingest_rejected" and outcome.invoice_id is not None:
-                        inv = await session.get(Invoice, outcome.invoice_id)
-                        if inv is not None:
-                            from app.services.sales.so_reference import ensure_invoice_so_reference
-
-                            ensure_invoice_so_reference(inv)
-                            await apply_ingest_capture(session, inv, email, att)
-                            result.ingested_count += 1
-                    continue
-
-            vendor_slug = await resolve_capture_slug(
-                session, email.sender, tenant_id=tenant_id
+        except IntegrityError as exc:
+            logger.warning(
+                "email_ingest_integrity_error",
+                message_id=email.message_id,
+                mailbox=email.mailbox_email,
+                subject=email.subject,
+                error=str(exc),
             )
-            fanout = await ingest_file_with_fanout(
-                session,
-                tenant_id=tenant_id,
-                tenant_slug=tenant_slug,
-                tenant_name=tenant_name,
-                filename=att.filename,
-                data=att.data,
-                source=IngestSourceMetadata(
-                    storage_vendor_slug=vendor_slug,
-                    email_sender=email.sender or None,
-                    email_subject=email.subject or None,
-                    email_message_id=email.message_id,
-                    email_attachment_name=att.filename,
-                    connected_mailbox_id=connected_mailbox_id,
-                    capture_source="email",
-                ),
-                prefetched_extraction=prefetched_extraction,
-            )
+            result.preskip_exceptions[email.message_id] = "integrity_error"
+            continue
 
-            for segment_index, invoice_id in enumerate(fanout.invoice_ids):
-                inv = await session.get(Invoice, invoice_id)
-                assert inv is not None
-                await apply_ingest_capture(session, inv, email, att)
-                await log_event(
-                    session,
-                    "email_ingested",
-                    invoice_id=inv.id,
-                    detail={
-                        "subject": email.subject,
-                        "sender": email.sender,
-                        "message_id": email.message_id,
-                        "vendor_slug": vendor_slug,
-                        "storage": inv.raw_file_path,
-                        "parent_file_hash": fanout.parent_file_hash,
-                        "segment_index": segment_index,
-                        "segment_count": fanout.segment_count,
-                    },
-                )
+        seen_message_ids.add(email.message_id)
 
-            result.ingested_count += len(fanout.invoice_ids)
+    logger.info(
+        "email_ingest_batch_done",
+        tenant_id=str(tenant_id),
+        connected_mailbox_id=connected_mailbox_id,
+        ingested_count=result.ingested_count,
+        message_count=len(result.message_ids),
+        skip_count=len(result.preskip_exceptions),
+        skip_reasons=dict(result.preskip_exceptions),
+    )
 
-        if capture_rule_blocked and result.ingested_count == ingested_before:
-            result.preskip_exceptions[email.message_id] = "no_capture_rule_match"
+    return result
 
+
+async def _ingest_single_email(
+    session: AsyncSession,
+    email: RawEmail,
+    *,
+    result: EmailIngestResult,
+    tenant_id: int,
+    tenant_slug: str,
+    tenant_name: str | None,
+    connected_mailbox_id: int | None,
+    enabled_capture_rules: list,
+    capture_config: RuleBookConfigPayload,
+    mark_processed: bool,
+    mark_processed_only_if_ingested: bool,
+) -> None:
+    _ = enabled_capture_rules
+    ingested_before = result.ingested_count
+
+    if not email.attachments:
+        logger.info(
+            "email_ingest_skipped",
+            reason="no_attachments",
+            message_id=email.message_id,
+            mailbox=email.mailbox_email,
+            subject=email.subject,
+        )
+        await log_event(
+            session,
+            "email_skipped",
+            detail={"reason": "no_attachments", "message_id": email.message_id},
+        )
+        result.preskip_exceptions[email.message_id] = "no_attachments"
         _maybe_finish_email_message(
             email,
             mark_processed=mark_processed,
@@ -771,8 +691,189 @@ async def ingest_email_attachments(
             ingested_before=ingested_before,
             ingested_after=result.ingested_count,
         )
+        return
 
-    return result
+    attachments = filter_invoice_attachments(email)
+    if not attachments:
+        raw_names = [att.filename for att in email.attachments]
+        logger.info(
+            "email_ingest_skipped",
+            reason="no_invoice_attachments",
+            message_id=email.message_id,
+            mailbox=email.mailbox_email,
+            subject=email.subject,
+            attachment_names=raw_names,
+        )
+        await log_event(
+            session,
+            "email_skipped",
+            detail={"reason": "no_invoice_attachments", "message_id": email.message_id},
+        )
+        result.preskip_exceptions[email.message_id] = "no_invoice_attachments"
+        _maybe_finish_email_message(
+            email,
+            mark_processed=mark_processed,
+            mark_processed_only_if_ingested=mark_processed_only_if_ingested,
+            ingested_before=ingested_before,
+            ingested_after=result.ingested_count,
+        )
+        return
+
+    capture_rule_blocked = False
+    for att in attachments:
+        capture_rule = evaluate_ingest_capture(email, att, capture_config)
+        if not capture_rule:
+            capture_rule_blocked = True
+            log_ingest_capture_decision(email, att, capture_config, matched_rule=None)
+            await log_event(
+                session,
+                "email_skipped",
+                detail={
+                    "reason": "no_capture_rule_match",
+                    "message_id": email.message_id,
+                    "sender": email.sender,
+                    "subject": email.subject,
+                    "attachment": att.filename,
+                    "mailbox": email.mailbox_email,
+                },
+            )
+            continue
+
+        log_ingest_capture_decision(email, att, capture_config, matched_rule=capture_rule)
+
+        file_hash = compute_sha256_bytes(att.data)
+        content_fingerprint: str | None = None
+        business_fingerprint: str | None = None
+        identity_fields: dict[str, str] | None = None
+        prefetched_extraction = None
+        if att.filename and att.filename.lower().endswith(".pdf"):
+            import tempfile
+            from pathlib import Path
+
+            from app.services.extraction.document_identity_service import (
+                compute_business_fingerprint_from_pages,
+                extract_identity_fields_from_pages,
+                identity_field_keys_from_catalogue,
+            )
+            from app.services.extraction.pdf_content_fingerprint import (
+                compute_pdf_content_fingerprint_from_pages,
+            )
+            from app.services.extraction.pdf_page_text_service import extract_pdf_page_texts
+
+            custom_keys = identity_field_keys_from_catalogue(capture_config.document_types)
+            tmp_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+                    handle.write(att.data)
+                    tmp_path = Path(handle.name)
+                prefetched_extraction = extract_pdf_page_texts(tmp_path)
+                pages_for_fp = prefetched_extraction.pages
+                content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages_for_fp)
+                identity_fields = extract_identity_fields_from_pages(
+                    pages_for_fp,
+                    custom_field_keys=custom_keys,
+                )
+                business_fingerprint = compute_business_fingerprint_from_pages(
+                    pages_for_fp,
+                    custom_field_keys=custom_keys,
+                )
+            finally:
+                if tmp_path is not None:
+                    tmp_path.unlink(missing_ok=True)
+        existing = await find_existing_ingest_duplicate(
+            session,
+            tenant_id=tenant_id,
+            file_hash=file_hash,
+            content_fingerprint=content_fingerprint,
+            business_fingerprint=business_fingerprint,
+            identity_fields=identity_fields,
+        )
+        if existing is not None:
+            outcome = await resolve_ingest_duplicate(
+                session,
+                tenant_id=tenant_id,
+                existing=existing,
+                file_hash=file_hash,
+                content_fingerprint=content_fingerprint,
+                business_fingerprint=business_fingerprint,
+                capture_source="email",
+                connected_mailbox_id=connected_mailbox_id,
+                email_sender=email.sender or None,
+                email_subject=email.subject or None,
+                email_attachment_name=att.filename,
+                email_message_id=email.message_id,
+                extra_detail={
+                    "filename": att.filename,
+                    "message_id": email.message_id,
+                    "mailbox": email.mailbox_email,
+                    "source": "email",
+                },
+            )
+            if outcome.handled:
+                if outcome.action == "reingest_rejected" and outcome.invoice_id is not None:
+                    inv = await session.get(Invoice, outcome.invoice_id)
+                    if inv is not None:
+                        from app.services.sales.so_reference import ensure_invoice_so_reference
+
+                        ensure_invoice_so_reference(inv)
+                        await apply_ingest_capture(session, inv, email, att)
+                        result.ingested_count += 1
+                continue
+
+        vendor_slug = await resolve_capture_slug(
+            session, email.sender, tenant_id=tenant_id
+        )
+        fanout = await ingest_file_with_fanout(
+            session,
+            tenant_id=tenant_id,
+            tenant_slug=tenant_slug,
+            tenant_name=tenant_name,
+            filename=att.filename,
+            data=att.data,
+            source=IngestSourceMetadata(
+                storage_vendor_slug=vendor_slug,
+                email_sender=email.sender or None,
+                email_subject=email.subject or None,
+                email_message_id=email.message_id,
+                email_attachment_name=att.filename,
+                connected_mailbox_id=connected_mailbox_id,
+                capture_source="email",
+            ),
+            prefetched_extraction=prefetched_extraction,
+        )
+
+        for segment_index, invoice_id in enumerate(fanout.invoice_ids):
+            inv = await session.get(Invoice, invoice_id)
+            assert inv is not None
+            await apply_ingest_capture(session, inv, email, att)
+            await log_event(
+                session,
+                "email_ingested",
+                invoice_id=inv.id,
+                detail={
+                    "subject": email.subject,
+                    "sender": email.sender,
+                    "message_id": email.message_id,
+                    "vendor_slug": vendor_slug,
+                    "storage": inv.raw_file_path,
+                    "parent_file_hash": fanout.parent_file_hash,
+                    "segment_index": segment_index,
+                    "segment_count": fanout.segment_count,
+                },
+            )
+
+        result.ingested_count += len(fanout.invoice_ids)
+
+    if capture_rule_blocked and result.ingested_count == ingested_before:
+        result.preskip_exceptions[email.message_id] = "no_capture_rule_match"
+
+    _maybe_finish_email_message(
+        email,
+        mark_processed=mark_processed,
+        mark_processed_only_if_ingested=mark_processed_only_if_ingested,
+        ingested_before=ingested_before,
+        ingested_after=result.ingested_count,
+    )
 
 
 async def _maybe_reprocess_held_commercial_siblings(

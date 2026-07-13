@@ -54,7 +54,17 @@ async def _poll_mailbox_emails(
     known_ids: frozenset[str],
 ) -> list:
     since = _poll_since_timestamp(mb.last_poll_at)
-    return await asyncio.to_thread(
+    logger.info(
+        "poll_mailbox_fetch_started",
+        tenant_id=str(mb.tenant_id),
+        mailbox_id=mb.id,
+        mailbox=mb.email,
+        mail_provider=mb.mail_provider,
+        since=since.isoformat(),
+        known_message_id_count=len(known_ids),
+        last_poll_at=mb.last_poll_at.isoformat() if mb.last_poll_at else None,
+    )
+    emails = await asyncio.to_thread(
         poll_connected_mailbox,
         mb.email,
         access_token=access_token,
@@ -62,6 +72,17 @@ async def _poll_mailbox_emails(
         since=since,
         known_message_ids=known_ids,
     )
+    attachment_count = sum(len(email.attachments) for email in emails)
+    logger.info(
+        "poll_mailbox_fetch_done",
+        tenant_id=str(mb.tenant_id),
+        mailbox_id=mb.id,
+        mailbox=mb.email,
+        email_count=len(emails),
+        attachment_count=attachment_count,
+        message_ids=[email.message_id for email in emails],
+    )
+    return emails
 
 
 async def _recover_poll_session_if_needed(session: AsyncSession, tenant_id: uuid.UUID) -> None:
@@ -101,6 +122,16 @@ async def _ingest_mailbox(
             mark_processed_only_if_ingested=True,
         )
         mb.last_poll_at = datetime.now(timezone.utc)
+        logger.info(
+            "poll_mailbox_ingest_done",
+            tenant_id=str(mb.tenant_id),
+            mailbox_id=mb.id,
+            mailbox=mb.email,
+            ingested_count=result.ingested_count,
+            fetched_email_count=len(emails),
+            skip_count=len(result.preskip_exceptions),
+            skip_reasons=dict(result.preskip_exceptions),
+        )
         return result
     except Exception as exc:
         logger.warning("poll_mailbox_ingest_failed", mailbox=mb.email, error=str(exc))
@@ -123,6 +154,14 @@ async def poll_all_and_ingest(
     if tenant_id is not None:
         stmt = stmt.where(ConnectedMailbox.tenant_id == tenant_id)
     mailboxes = (await session.execute(stmt)).scalars().all()
+
+    logger.info(
+        "poll_all_mailboxes_started",
+        tenant_id=str(tenant_id) if tenant_id else None,
+        active_mailbox_count=len(mailboxes),
+        pollable_mailbox_count=sum(1 for mb in mailboxes if mb.is_pollable),
+        mailbox_emails=[mb.email for mb in mailboxes if mb.is_pollable],
+    )
 
     scoped_tenant_id = tenant_id
     if scoped_tenant_id is None and mailboxes:
@@ -153,6 +192,15 @@ async def poll_all_and_ingest(
         merged.message_ids.extend(result.message_ids)
         merged.preskip_exceptions.update(result.preskip_exceptions)
         known_ids = known_ids | mb_known_ids
+
+    logger.info(
+        "poll_all_mailboxes_done",
+        tenant_id=str(tenant_id) if tenant_id else None,
+        ingested_count=merged.ingested_count,
+        message_count=len(merged.message_ids),
+        skip_count=len(merged.preskip_exceptions),
+        skip_reasons=dict(merged.preskip_exceptions),
+    )
 
     return merged
 

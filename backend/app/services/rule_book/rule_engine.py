@@ -232,6 +232,45 @@ def match_email_capture_rule(
     return None
 
 
+def diagnose_email_capture_match(
+    email: SampleEmail,
+    rules: list[EmailCaptureRule],
+    *,
+    mailbox: str | None = None,
+) -> dict[str, Any]:
+    """Explain which ingestion rules were considered and why they matched or failed."""
+    actual_mailbox = (mailbox or email.to or "").strip().lower()
+    checks: list[dict[str, Any]] = []
+    matched_rule: EmailCaptureRule | None = None
+
+    for rule in _iter_email_capture_rules(rules, enabled_only=True):
+        mailbox_ok = _mailbox_matches(rule.mailbox, actual_mailbox)
+        conditions_ok = mailbox_ok and eval_condition_group(email, rule.root.model_dump())
+        checks.append(
+            {
+                "rule_id": rule.id,
+                "rule_name": rule.name,
+                "priority": rule.priority,
+                "rule_mailbox": rule.mailbox,
+                "mailbox_ok": mailbox_ok,
+                "conditions_ok": conditions_ok,
+            }
+        )
+        if conditions_ok and matched_rule is None:
+            matched_rule = rule
+
+    return {
+        "mailbox": actual_mailbox,
+        "sender": email.from_addr,
+        "subject": email.subject,
+        "attachment": email.attachment_name,
+        "enabled_rule_count": len(checks),
+        "matched_rule_id": matched_rule.id if matched_rule else None,
+        "matched_rule_name": matched_rule.name if matched_rule else None,
+        "rule_checks": checks,
+    }
+
+
 def match_disabled_email_capture_rule(
     email: SampleEmail,
     rules: list[EmailCaptureRule],

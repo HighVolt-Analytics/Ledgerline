@@ -14,7 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.services.rule_book.rule_book_mapper import clear_classification_config_cache
 from app.models.invoice import Invoice, InvoiceStatus
-from app.services.dossier.document_duplicate_service import evaluate_file_hash_duplicate
+from app.services.dossier.document_duplicate_service import (
+    evaluate_file_hash_duplicate,
+    find_existing_ingest_duplicate,
+)
 from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.invoice.pipeline import ingest_email_attachments
@@ -76,6 +79,30 @@ def test_evaluate_file_hash_duplicate(status: InvoiceStatus, expected: str) -> N
     decision = evaluate_file_hash_duplicate(existing)
     assert decision.action == expected
     assert decision.existing is existing
+
+
+@pytest.mark.asyncio
+async def test_find_existing_ingest_duplicate_includes_pending_content_fingerprint(
+    db_session: AsyncSession,
+) -> None:
+    pending = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PENDING,
+        currency="AUD",
+        file_hash="pending-hash",
+        content_fingerprint="shared-content-fp",
+    )
+    db_session.add(pending)
+    await db_session.flush()
+
+    found = await find_existing_ingest_duplicate(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        file_hash="different-hash",
+        content_fingerprint="shared-content-fp",
+    )
+    assert found is not None
+    assert found.id == pending.id
 
 
 @pytest.mark.asyncio

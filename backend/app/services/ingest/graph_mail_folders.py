@@ -45,6 +45,20 @@ def _list_inbox_child_folders(
     return list(data.get("value") or [])
 
 
+def get_child_folder_id(
+    mailbox_email: str,
+    display_name: str,
+    *,
+    access_token: str | None = None,
+) -> str | None:
+    """Return Graph folder id for an Inbox child folder (e.g. Exceptions, Processed)."""
+    for folder in _list_inbox_child_folders(mailbox_email, access_token=access_token):
+        if folder.get("displayName") == display_name:
+            folder_id = folder.get("id")
+            return str(folder_id) if folder_id else None
+    return None
+
+
 def _get_or_create_child_folder(
     mailbox_email: str,
     display_name: str,

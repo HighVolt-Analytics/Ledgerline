@@ -60,6 +60,10 @@ def test_poll_parses_messages() -> None:
     with (
         patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
         patch(
+            "app.services.ingest.email_ingestion._exceptions_folder_id",
+            return_value=None,
+        ),
+        patch(
             "app.services.ingest.email_ingestion._list_unread_messages",
             return_value=messages,
         ),
@@ -89,6 +93,10 @@ def test_poll_skips_known_message_ids() -> None:
 
     with (
         patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
+        patch(
+            "app.services.ingest.email_ingestion._exceptions_folder_id",
+            return_value=None,
+        ),
         patch(
             "app.services.ingest.email_ingestion._list_unread_messages",
             return_value=messages,
@@ -140,6 +148,10 @@ def test_poll_merges_unread_and_recent_without_duplicates() -> None:
     with (
         patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
         patch(
+            "app.services.ingest.email_ingestion._exceptions_folder_id",
+            return_value=None,
+        ),
+        patch(
             "app.services.ingest.email_ingestion._list_unread_messages",
             return_value=unread,
         ),
@@ -158,6 +170,61 @@ def test_poll_merges_unread_and_recent_without_duplicates() -> None:
         )
 
     assert {email.message_id for email in emails} == {"msg-1", "msg-2"}
+
+
+def test_poll_includes_exceptions_folder_when_enabled() -> None:
+    inbox_messages = [
+        {
+            "id": "msg-inbox",
+            "subject": "Inbox",
+            "from": {"emailAddress": {"address": "vendor@example.com"}},
+            "hasAttachments": True,
+        }
+    ]
+    exception_messages = [
+        {
+            "id": "msg-exc",
+            "subject": "Exception retry",
+            "from": {"emailAddress": {"address": "vendor@example.com"}},
+            "hasAttachments": True,
+        }
+    ]
+    attachments = [
+        {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": "invoice.pdf",
+            "contentType": "application/pdf",
+            "contentBytes": base64.b64encode(b"%PDF-1.4").decode(),
+        }
+    ]
+
+    def list_unread(mailbox: str, *, access_token=None, folder_id=None):
+        if folder_id == "exceptions-folder-id":
+            return exception_messages
+        return inbox_messages
+
+    with (
+        patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
+        patch(
+            "app.services.ingest.email_ingestion._exceptions_folder_id",
+            return_value="exceptions-folder-id",
+        ),
+        patch(
+            "app.services.ingest.email_ingestion._list_unread_messages",
+            side_effect=list_unread,
+        ),
+        patch(
+            "app.services.ingest.email_ingestion._list_recent_messages",
+            return_value=[],
+        ),
+        patch(
+            "app.services.ingest.email_ingestion._list_attachments",
+            return_value=attachments,
+        ),
+    ):
+        emails = poll_inbox("vendor@example.com")
+
+    assert {email.message_id for email in emails} == {"msg-inbox", "msg-exc"}
 
 
 def test_filter_invoice_pdf() -> None:

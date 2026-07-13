@@ -21,7 +21,14 @@ from app.schemas.rule_book_config import (
 from app.services.audit.audit_service import log_event
 from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
 from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
-from app.services.rule_book.rule_engine import SampleEmail, match_email_capture_rule
+from app.services.rule_book.rule_engine import (
+    SampleEmail,
+    diagnose_email_capture_match,
+    match_email_capture_rule,
+)
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def raw_email_to_sample_email(email: RawEmail, attachment: EmailAttachment) -> SampleEmail:
@@ -94,6 +101,82 @@ def default_catch_all_capture_rule(mailbox_email: str) -> EmailCaptureRule:
 
 def _enabled_capture_rules(config: RuleBookConfigPayload) -> list[EmailCaptureRule]:
     return [rule for rule in config.email_capture_rules if rule.enabled]
+
+
+def _mailbox_mapping_summary(
+    config: RuleBookConfigPayload,
+    actual_mailbox: str,
+) -> list[dict[str, str]]:
+    """Show configured vs effective mailbox per enabled rule (for logs)."""
+    effective = _effective_capture_rules(config, actual_mailbox)
+    effective_by_id = {rule.id: rule for rule in effective}
+    rows: list[dict[str, str]] = []
+    for rule in _enabled_capture_rules(config):
+        effective_rule = effective_by_id.get(rule.id)
+        rows.append(
+            {
+                "rule_id": rule.id,
+                "configured_mailbox": rule.mailbox,
+                "effective_mailbox": effective_rule.mailbox if effective_rule else rule.mailbox,
+            }
+        )
+    return rows
+
+
+def log_ingest_capture_decision(
+    email: RawEmail,
+    attachment: EmailAttachment,
+    config: RuleBookConfigPayload,
+    *,
+    matched_rule: EmailCaptureRule | None,
+) -> None:
+    """Structured log for ingest-time email capture rule evaluation."""
+    base = {
+        "message_id": email.message_id,
+        "mailbox": email.mailbox_email,
+        "sender": email.sender,
+        "subject": email.subject,
+        "attachment": attachment.filename,
+    }
+    enabled = _enabled_capture_rules(config)
+    if not enabled:
+        logger.info(
+            "ingest_capture_decision",
+            outcome="catch_all_default",
+            enabled_rule_count=0,
+            matched_rule_id=DEFAULT_CATCH_ALL_CAPTURE_RULE_ID,
+            **base,
+        )
+        return
+
+    sample = raw_email_to_sample_email(email, attachment)
+    effective_rules = _effective_capture_rules(config, email.mailbox_email)
+    diagnosis = diagnose_email_capture_match(
+        sample,
+        effective_rules,
+        mailbox=email.mailbox_email,
+    )
+    diagnosis_payload = {
+        key: value
+        for key, value in diagnosis.items()
+        if key not in {"matched_rule_id", "matched_rule_name"}
+    }
+    if matched_rule:
+        logger.info(
+            "ingest_capture_decision",
+            outcome="matched",
+            matched_rule_id=matched_rule.id,
+            matched_rule_name=matched_rule.name,
+            mailbox_mappings=_mailbox_mapping_summary(config, email.mailbox_email),
+            **diagnosis_payload,
+        )
+    else:
+        logger.warning(
+            "ingest_capture_decision",
+            outcome="no_match",
+            mailbox_mappings=_mailbox_mapping_summary(config, email.mailbox_email),
+            **diagnosis,
+        )
 
 
 def evaluate_ingest_capture(

@@ -16,7 +16,7 @@ from app.schemas.rule_book_config import (
     RuleCondition,
     RuleConditionGroup,
 )
-from app.services.rule_book.rule_engine import SampleEmail, match_email_capture_rule
+from app.services.rule_book.rule_engine import SampleEmail, diagnose_email_capture_match, match_email_capture_rule
 from app.services.purchase.team_expense_service import record_team_expense_processed
 from app.tenant_ids import TESTING_TENANT_UUID
 
@@ -79,6 +79,26 @@ def test_email_capture_respects_mailbox() -> None:
     )
     assert match_email_capture_rule(email, [rule], mailbox="other@example.com") is None
     assert match_email_capture_rule(email, [rule], mailbox="accounts@acme-hospitality.com.au") is not None
+
+
+def test_diagnose_email_capture_match_explains_rule_checks(capture_config: RuleBookConfigPayload) -> None:
+    email = SampleEmail(
+        id="msg-1",
+        from_addr="billing@amazon.com",
+        to="accounts@acme-hospitality.com.au",
+        subject="Your AWS invoice for May 2026",
+        body="",
+        attachment_name="AWS-Invoice-May.pdf",
+        attachment_mime="application/pdf",
+    )
+    diagnosis = diagnose_email_capture_match(
+        email,
+        capture_config.email_capture_rules,
+        mailbox="accounts@acme-hospitality.com.au",
+    )
+    assert diagnosis["matched_rule_id"] == "ec-1"
+    assert diagnosis["enabled_rule_count"] >= 1
+    assert any(check["rule_id"] == "ec-1" and check["conditions_ok"] for check in diagnosis["rule_checks"])
 
 
 def test_ingest_capture_skips_wrong_mailbox(capture_config: RuleBookConfigPayload) -> None:
