@@ -1121,15 +1121,133 @@ export interface XeroSelectConnectionResult {
   provider_tenant_id: string | null;
 }
 
+export interface XeroEntitySyncCounts {
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  deactivated: number;
+  failed: number;
+  persisted_total: number;
+}
+
 export interface XeroSyncSettingsResult {
-  organisation: number;
+  organisation: XeroEntitySyncCounts;
+  accounts: XeroEntitySyncCounts;
+  tax_rates: XeroEntitySyncCounts;
+  currencies: XeroEntitySyncCounts;
+  organisation_count: number;
   account: number;
   tax_rate: number;
   currency: number;
+  committed: boolean;
+  job_id: number | null;
 }
 
 export interface XeroSyncContactsResult {
+  contacts: XeroEntitySyncCounts;
   contact: number;
+  committed: boolean;
+  job_id: number | null;
+}
+
+export interface XeroMasterListMeta {
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface XeroAccountRow {
+  id: number;
+  xero_account_id: string;
+  xero_tenant_id: string;
+  code: string | null;
+  name: string | null;
+  account_type: string | null;
+  status: string | null;
+  sync_status: string;
+  last_synced_at: string | null;
+  created_at: string | null;
+  source_system: string;
+  source_label: string;
+  external_id: string | null;
+  imported_at: string | null;
+}
+
+export interface XeroTaxRateRow {
+  id: number;
+  tax_type: string;
+  xero_tenant_id: string;
+  name: string | null;
+  status: string | null;
+  effective_rate: number | null;
+  sync_status: string;
+  last_synced_at: string | null;
+  created_at: string | null;
+  source_system: string;
+  source_label: string;
+  external_id: string | null;
+  imported_at: string | null;
+}
+
+export interface XeroContactRow {
+  id: number;
+  xero_contact_id: string;
+  xero_tenant_id: string;
+  name: string | null;
+  email_address: string | null;
+  is_supplier: boolean;
+  is_customer: boolean;
+  mapping_status: string;
+  sync_status: string;
+  last_synced_at: string | null;
+  created_at: string | null;
+  source_system: string;
+  source_label: string;
+  external_id: string | null;
+  imported_at: string | null;
+}
+
+export interface XeroSyncHistoryRow {
+  id: number;
+  job_type: string;
+  direction: string | null;
+  status: string;
+  trigger_type: string | null;
+  records_fetched: number;
+  records_created: number;
+  records_updated: number;
+  records_unchanged: number;
+  records_failed: number;
+  records_persisted: number;
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
+  created_at: string | null;
+}
+
+export interface XeroExportHistoryRow {
+  id: number;
+  invoice_id: number | null;
+  external_entity_id: string | null;
+  external_number: string | null;
+  external_status: string | null;
+  sync_direction: string | null;
+  sync_status: string | null;
+  reconciliation_status: string | null;
+  last_pushed_at: string | null;
+  last_reconciled_at: string | null;
+  amount_due: number | null;
+  amount_paid: number | null;
+  is_fully_paid: boolean | null;
+  sync_error_message: string | null;
+}
+
+export interface XeroMasterTotals {
+  accounts: number;
+  tax_rates: number;
+  contacts: number;
+  currencies: number;
 }
 
 export interface XeroPushResult {
@@ -1140,6 +1258,9 @@ export interface XeroPushResult {
   external_number: string | null;
   external_status: string | null;
   xero_type: string | null;
+  synced?: boolean;
+  committed?: boolean;
+  last_pushed_at?: string | null;
 }
 
 export interface XeroInvoiceStatus {
@@ -1152,6 +1273,12 @@ export interface XeroInvoiceStatus {
   last_error_code: string | null;
   last_error_message: string | null;
   payload_hash: string | null;
+  sync_status?: string | null;
+  reconciliation_status?: string | null;
+  last_reconciled_at?: string | null;
+  amount_due?: number | null;
+  amount_paid?: number | null;
+  is_fully_paid?: boolean | null;
 }
 
 export interface StripeGlobalPayoutsReadinessResponse {

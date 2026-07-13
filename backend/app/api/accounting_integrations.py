@@ -48,7 +48,11 @@ from app.services.integration.accounting_integration_service import (
 from app.services.integration.xero_client import XeroApiError
 from app.services.integration.xero_push_service import get_invoice_xero_status, push_invoice_to_xero
 from app.services.integration.xero_readiness import get_xero_readiness_enriched
-from app.services.integration.xero_sync_service import sync_contacts, sync_settings
+from app.services.integration.xero_sync_service import (
+    mark_sync_committed,
+    sync_contacts,
+    sync_settings,
+)
 from app.services.audit.audit_service import log_event
 from app.tenant_ids import parse_tenant_id
 from app.utils.logger import get_logger
@@ -198,7 +202,7 @@ async def xero_sync_settings_route(
     except XeroApiError as exc:
         raise HTTPException(exc.status_code or 502, exc.message) from exc
     await db.commit()
-    return ApiEnvelope(data=XeroSyncSettingsResponse.model_validate(counts))
+    return ApiEnvelope(data=XeroSyncSettingsResponse.model_validate(mark_sync_committed(counts)))
 
 
 @router.post("/xero/sync/contacts", response_model=ApiEnvelope[XeroSyncContactsResponse])
@@ -213,7 +217,7 @@ async def xero_sync_contacts_route(
     except XeroApiError as exc:
         raise HTTPException(exc.status_code or 502, exc.message) from exc
     await db.commit()
-    return ApiEnvelope(data=XeroSyncContactsResponse.model_validate(counts))
+    return ApiEnvelope(data=XeroSyncContactsResponse.model_validate(mark_sync_committed(counts)))
 
 
 @router.post(
@@ -240,6 +244,8 @@ async def xero_push_invoice(
         await db.commit()
         raise HTTPException(exc.status_code or 502, exc.message) from exc
     await db.commit()
+    result["synced"] = True
+    result["committed"] = True
     return ApiEnvelope(data=XeroPushInvoiceResponse.model_validate(result))
 
 

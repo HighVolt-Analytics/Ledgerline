@@ -20,8 +20,8 @@ from app.services.integration.accounting_integration_service import require_xero
 from app.services.integration.xero_client import XeroApiError, XeroClient
 from app.services.integration.xero_mapping_validation import (
     XeroMappingValidationError,
+    find_xero_contact_id,
     validate_invoice_xero_mappings,
-    _normalize_contact_key,
 )
 from app.services.invoice.invoice_evaluation_service import ROUTE_SALES
 from app.utils.logger import get_logger
@@ -48,22 +48,18 @@ async def _contact_id_for_invoice(
     db: AsyncSession,
     *,
     tenant_id: uuid.UUID,
+    xero_tenant_id: str,
     invoice: Invoice,
 ) -> str | None:
     contact_name = (invoice.vendor or "").strip()
     if not contact_name:
         return None
-    row = (
-        await db.execute(
-            select(ExternalAccountingRef).where(
-                ExternalAccountingRef.tenant_id == tenant_id,
-                ExternalAccountingRef.provider == _PROVIDER,
-                ExternalAccountingRef.entity_type == "contact",
-                ExternalAccountingRef.internal_entity_id == _normalize_contact_key(contact_name),
-            )
-        )
-    ).scalar_one_or_none()
-    return row.external_entity_id if row else None
+    return await find_xero_contact_id(
+        db,
+        tenant_id=tenant_id,
+        xero_tenant_id=xero_tenant_id,
+        vendor_name=contact_name,
+    )
 
 
 def _build_invoice_payload(invoice: Invoice, *, contact_id: str) -> dict[str, Any]:
@@ -165,6 +161,13 @@ async def get_invoice_xero_status(
         "last_synced_at": ref.last_synced_at,
         "sync_error_code": ref.sync_error_code,
         "sync_error_message": ref.sync_error_message,
+        "sync_direction": ref.sync_direction,
+        "source_system": ref.source_system,
+        "reconciliation_status": ref.reconciliation_status,
+        "last_reconciled_at": ref.last_reconciled_at,
+        "amount_due": float(ref.amount_due) if ref.amount_due is not None else None,
+        "amount_paid": float(ref.amount_paid) if ref.amount_paid is not None else None,
+        "is_fully_paid": ref.is_fully_paid,
     }
 
 
@@ -198,7 +201,12 @@ async def push_invoice_to_xero(
     if not validation.valid:
         raise XeroMappingValidationError(validation)
 
-    contact_id = await _contact_id_for_invoice(db, tenant_id=tenant_id, invoice=invoice)
+    contact_id = validation.contact_id or await _contact_id_for_invoice(
+        db,
+        tenant_id=tenant_id,
+        xero_tenant_id=xero_tenant_id,
+        invoice=invoice,
+    )
     if not contact_id:
         raise XeroMappingValidationError(validation)
 
@@ -259,6 +267,9 @@ async def push_invoice_to_xero(
         ref.sync_status = "synced"
         ref.sync_error_code = None
         ref.sync_error_message = None
+        ref.sync_direction = "outbound"
+        ref.source_system = "ledgerlink"
+        ref.reconciliation_status = "pending"
         ref.metadata_json = json.dumps(
             {"xero_type": payload["Type"], "route_target": invoice.route_target}
         )
@@ -270,6 +281,9 @@ async def push_invoice_to_xero(
             "external_number": ref.external_number,
             "external_status": ref.external_status,
             "xero_type": payload["Type"],
+            "synced": True,
+            "committed": False,
+            "last_pushed_at": ref.last_pushed_at,
         }
     except XeroApiError as exc:
         ref.payload_hash = payload_hash

@@ -1,4 +1,4 @@
-"""Xero webhook receiver — no JWT; HMAC signature verification."""
+"""Xero webhook receiver — HMAC validation, dedupe, enqueue reconcile jobs."""
 
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import bind_db_to_tenant, cross_tenant_db_lookup, get_db
 from app.config import get_settings
+from app.models.accounting_sync_job import JOB_TYPE_RECONCILE
 from app.models.xero_connection import XeroConnection
 from app.models.xero_webhook_event import XeroWebhookEvent
+from app.services.integration.xero_sync_job_service import enqueue_sync_job
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -76,6 +78,7 @@ async def xero_webhook(
 
     events = payload.get("events") or []
     payload_text = raw.decode("utf-8") if raw else None
+    enqueued_reconcile = 0
 
     if not events:
         logger.info("xero_webhook_intent_received", signature_valid=signature_valid)
@@ -99,6 +102,8 @@ async def xero_webhook(
             )
         await db.commit()
         return {"status": "ok"}
+
+    tenants_needing_reconcile: set[uuid.UUID] = set()
 
     for event in events:
         xero_tenant_id = str(event.get("tenantId") or "")
@@ -141,6 +146,24 @@ async def xero_webhook(
                 event_category=category,
                 event_type=event_type,
             )
+            if category.upper() in {"INVOICE", "CREDITNOTE", "PAYMENT"}:
+                tenants_needing_reconcile.add(tenant_id)
+
+    for tenant_id in tenants_needing_reconcile:
+        await bind_db_to_tenant(db, tenant_id)
+        await enqueue_sync_job(
+            db,
+            tenant_id=tenant_id,
+            job_type=JOB_TYPE_RECONCILE,
+            direction="inbound",
+            entity_type="invoice",
+            trigger_type="webhook",
+        )
+        enqueued_reconcile += 1
+        logger.info(
+            "xero_webhook_reconcile_enqueued",
+            tenant_id=str(tenant_id),
+        )
 
     await db.commit()
-    return {"status": "ok"}
+    return {"status": "ok", "reconcile_jobs_enqueued": str(enqueued_reconcile)}

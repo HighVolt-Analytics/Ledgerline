@@ -18,6 +18,8 @@ JOB_STATUS_CANCELLED = "cancelled"
 
 JOB_TYPE_SETTINGS = "settings"
 JOB_TYPE_CONTACTS = "contacts"
+JOB_TYPE_RECONCILE = "reconcile"
+JOB_TYPE_EXPORT = "export"
 
 
 class AccountingSyncJob(Base):
@@ -31,6 +33,8 @@ class AccountingSyncJob(Base):
     )
     provider: Mapped[str] = mapped_column(String(32), index=True)
     job_type: Mapped[str] = mapped_column(String(32), index=True)
+    direction: Mapped[str | None] = mapped_column(String(16), index=True)
+    entity_type: Mapped[str | None] = mapped_column(String(32), index=True)
     status: Mapped[str] = mapped_column(String(32), default=JOB_STATUS_PENDING, index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -39,6 +43,15 @@ class AccountingSyncJob(Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(String(512))
     payload_hash: Mapped[str | None] = mapped_column(String(64))
+    records_fetched: Mapped[int] = mapped_column(Integer, default=0)
+    records_created: Mapped[int] = mapped_column(Integer, default=0)
+    records_updated: Mapped[int] = mapped_column(Integer, default=0)
+    records_unchanged: Mapped[int] = mapped_column(Integer, default=0)
+    records_failed: Mapped[int] = mapped_column(Integer, default=0)
+    records_persisted: Mapped[int] = mapped_column(Integer, default=0)
+    correlation_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    initiated_by: Mapped[int | None] = mapped_column(Integer)
+    trigger_type: Mapped[str | None] = mapped_column(String(32), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

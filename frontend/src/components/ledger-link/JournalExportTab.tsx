@@ -177,12 +177,18 @@ export function JournalExportTab({
           true
         );
       }
+      if (!result.external_entity_id || result.committed === false) {
+        return applyOutcome(
+          "failed",
+          "Xero accepted the request but the reference was not committed",
+          false,
+          false
+        );
+      }
       const label =
         result.external_number != null
-          ? `Pushed to Xero · ${result.external_number}`
-          : result.external_status
-            ? `Pushed to Xero · ${result.external_status}`
-            : "Pushed to Xero";
+          ? `Exported to Xero · ${result.external_number} · ${result.external_status || "DRAFT"}`
+          : `Exported to Xero · ${result.external_entity_id}`;
       return applyOutcome("sent", label, true, false);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Push failed";

@@ -15,7 +15,13 @@ DECLARE
     'stripe_accounts', 'stripe_balance_snapshots', 'stripe_transactions', 'vendor_payment_methods',
     'invoice_ocr_artifacts', 'classification_learning_events',
     'accounting_integrations',
+    'accounting_sync_jobs',
     'xero_connections',
+    'xero_accounts',
+    'xero_tax_rates',
+    'xero_contacts',
+    'xero_currencies',
+    'xero_webhook_events',
     'external_accounting_refs',
     'connected_viber_accounts', 'payment_execution_instructions',
     'customer_masters', 'customer_registry', 'sales_orders', 'delivery_notes', 'collections'
