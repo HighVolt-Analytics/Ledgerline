@@ -79,15 +79,10 @@ class XeroSelectConnectionResponse(BaseModel):
     provider_tenant_id: str | None = None
 
 
-class XeroSyncSettingsResponse(BaseModel):
-    organisation: int = 0
-    account: int = 0
-    tax_rate: int = 0
-    currency: int = 0
-
-
-class XeroSyncContactsResponse(BaseModel):
-    contact: int = 0
+from app.schemas.xero_master_data import (  # noqa: E402
+    XeroSyncContactsResponse,
+    XeroSyncSettingsResponse,
+)
 
 
 class XeroPushInvoiceResponse(BaseModel):
@@ -98,6 +93,9 @@ class XeroPushInvoiceResponse(BaseModel):
     external_number: str | None = None
     external_status: str | None = None
     xero_type: str | None = None
+    synced: bool = False
+    committed: bool = False
+    last_pushed_at: datetime | None = None
 
 
 class XeroInvoiceStatusResponse(BaseModel):
@@ -110,3 +108,14 @@ class XeroInvoiceStatusResponse(BaseModel):
     last_error_code: str | None = None
     last_error_message: str | None = None
     payload_hash: str | None = None
+    sync_status: str | None = None
+    last_synced_at: datetime | None = None
+    sync_error_code: str | None = None
+    sync_error_message: str | None = None
+    sync_direction: str | None = None
+    source_system: str | None = None
+    reconciliation_status: str | None = None
+    last_reconciled_at: datetime | None = None
+    amount_due: float | None = None
+    amount_paid: float | None = None
+    is_fully_paid: bool | None = None

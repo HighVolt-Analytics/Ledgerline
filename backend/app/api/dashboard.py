@@ -37,11 +37,19 @@ async def stats(
 
 @router.get("/overview", response_model=ApiEnvelope[DashboardOverview])
 async def overview(
-    params: Annotated[DashboardOverviewRequest, Query()],
+    activity_limit: Annotated[int, Query(ge=1, le=50)] = 8,
+    month: Annotated[
+        str | None,
+        Query(
+            description="Period as YYYY-MM (defaults to current month)",
+            pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
+        ),
+    ] = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[DashboardOverview]:
     """Full dashboard payload (stats, activity, charts) in one request."""
+    params = DashboardOverviewRequest(activity_limit=activity_limit, month=month)
     return ApiEnvelope(
         data=await build_overview(
             db,
@@ -54,10 +62,11 @@ async def overview(
 
 @router.get("/activity", response_model=ApiEnvelope[list[ActivityItem]])
 async def activity(
-    params: Annotated[DashboardActivityRequest, Query()],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[ActivityItem]]:
+    params = DashboardActivityRequest(limit=limit)
     return ApiEnvelope(
         data=await fetch_activity(db, params.limit, tenant_id=ctx.tenant_id)
     )

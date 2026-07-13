@@ -47,6 +47,7 @@ from app.api import (
     whatsapp,
     xero_webhooks,
     xero_refinement,
+    xero_master_data,
 )
 from app.api.deps import CorrelationIdMiddleware, require_super_admin, require_user
 from app.config import get_settings
@@ -56,6 +57,10 @@ from app.middleware.tenant_context_middleware import TenantContextMiddleware
 from app.services.ingest.inline_mailbox_poller import (
     start_inline_mailbox_poller,
     stop_inline_mailbox_poller,
+)
+from app.services.integration.xero_background_sync import (
+    start_xero_background_sync,
+    stop_xero_background_sync,
 )
 from app.services.rule_book.rule_book_save_buffer import flush_all_rule_book_save_buffers
 from app.services.integration.xero_mapping_validation import XeroMappingValidationError
@@ -87,9 +92,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         await session.commit()
     logger.info("app_started")
     start_inline_mailbox_poller()
+    start_xero_background_sync()
     yield
     await flush_all_rule_book_save_buffers()
     await stop_inline_mailbox_poller()
+    await stop_xero_background_sync()
     logger.info("app_stopped")
 
 
@@ -177,6 +184,7 @@ app.include_router(mailboxes.router, prefix="/api", dependencies=_api_deps)
 app.include_router(whatsapp.router, prefix="/api", dependencies=_api_deps)
 app.include_router(accounting_integrations.router, prefix="/api", dependencies=_api_deps)
 app.include_router(xero_refinement.router, prefix="/api", dependencies=_api_deps)
+app.include_router(xero_master_data.router, prefix="/api", dependencies=_api_deps)
 app.include_router(viber.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenants.router, prefix="/api", dependencies=_api_deps)
 app.include_router(tenant_members.router, prefix="/api", dependencies=_api_deps)

@@ -50,6 +50,10 @@ from app.models.pending_vendor import PendingVendor
 from app.models.vendor import VendorRegistry
 from app.models.vendor_master import VendorMasterRecord
 from app.models.xero_connection import XeroConnection
+from app.models.xero_account import XeroAccount
+from app.models.xero_contact import XeroContact
+from app.models.xero_currency import XeroCurrency
+from app.models.xero_tax_rate import XeroTaxRate
 from app.models.xero_webhook_event import XeroWebhookEvent
 
 import app.tenant_child_tables  # noqa: F401 â€” register child-table tenant listeners
@@ -105,6 +109,10 @@ __all__ = [
     "VendorPaymentMethod",
     "VendorRegistry",
     "XeroConnection",
+    "XeroAccount",
+    "XeroContact",
+    "XeroCurrency",
+    "XeroTaxRate",
     "XeroWebhookEvent",
 ]
 

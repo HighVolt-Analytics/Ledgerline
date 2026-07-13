@@ -1,4 +1,4 @@
-"""Enqueue and track manual Xero sync jobs."""
+"""Enqueue and track Xero sync jobs."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from app.models.accounting_sync_job import (
     AccountingSyncJob,
 )
 from app.models.accounting_integration import AccountingProvider
+from app.utils.logger import correlation_id_ctx
 
 
 def _payload_hash(job_type: str) -> str:
@@ -30,13 +31,22 @@ async def enqueue_sync_job(
     tenant_id: uuid.UUID,
     job_type: str,
     provider: str = AccountingProvider.XERO.value,
+    direction: str | None = None,
+    entity_type: str | None = None,
+    trigger_type: str | None = "manual",
+    initiated_by: int | None = None,
 ) -> AccountingSyncJob:
     job = AccountingSyncJob(
         tenant_id=tenant_id,
         provider=provider,
         job_type=job_type,
+        direction=direction,
+        entity_type=entity_type,
         status=JOB_STATUS_PENDING,
         payload_hash=_payload_hash(job_type),
+        trigger_type=trigger_type,
+        initiated_by=initiated_by,
+        correlation_id=correlation_id_ctx.get(),
     )
     db.add(job)
     await db.flush()
@@ -104,8 +114,28 @@ async def get_latest_sync_job(
     *,
     tenant_id: uuid.UUID,
     provider: str = AccountingProvider.XERO.value,
+    job_type: str | None = None,
 ) -> AccountingSyncJob | None:
+    stmt = select(AccountingSyncJob).where(
+        AccountingSyncJob.tenant_id == tenant_id,
+        AccountingSyncJob.provider == provider,
+    )
+    if job_type:
+        stmt = stmt.where(AccountingSyncJob.job_type == job_type)
     return (
+        await db.execute(stmt.order_by(AccountingSyncJob.id.desc()).limit(1))
+    ).scalar_one_or_none()
+
+
+async def list_sync_jobs(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    provider: str = AccountingProvider.XERO.value,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[AccountingSyncJob]:
+    rows = (
         await db.execute(
             select(AccountingSyncJob)
             .where(
@@ -113,6 +143,8 @@ async def get_latest_sync_job(
                 AccountingSyncJob.provider == provider,
             )
             .order_by(AccountingSyncJob.id.desc())
-            .limit(1)
+            .offset(max(offset, 0))
+            .limit(min(max(limit, 1), 200))
         )
-    ).scalar_one_or_none()
+    ).scalars().all()
+    return list(rows)

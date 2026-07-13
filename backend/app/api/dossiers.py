@@ -22,10 +22,21 @@ router = APIRouter(prefix="/dossiers", tags=["dossiers"])
 
 @router.get("", response_model=ApiEnvelope[list[DossierSummaryResponse]])
 async def list_dossiers(
-    params: Annotated[DossierListRequest, Query()],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 12,
+    document_type_code: Annotated[str | None, Query()] = None,
+    q: Annotated[
+        str | None, Query(description="Search vendor, ref, PO, document type")
+    ] = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[DossierSummaryResponse]]:
+    params = DossierListRequest(
+        page=page,
+        page_size=page_size,
+        document_type_code=document_type_code,
+        q=q,
+    )
     data, meta = await list_dossier_summaries(db, tenant_id=ctx.tenant_id, params=params)
     return ApiEnvelope(data=data, meta=meta)
 

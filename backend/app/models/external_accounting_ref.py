@@ -4,8 +4,20 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -48,9 +60,17 @@ class ExternalAccountingRef(Base):
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     last_error_message: Mapped[str | None] = mapped_column(String(512))
     sync_status: Mapped[str | None] = mapped_column(String(32), index=True)
-    sync_attempts: Mapped[int] = mapped_column(default=0)
+    sync_attempts: Mapped[int] = mapped_column(Integer, default=0)
     sync_error_code: Mapped[str | None] = mapped_column(String(64))
     sync_error_message: Mapped[str | None] = mapped_column(String(512))
+    sync_direction: Mapped[str | None] = mapped_column(String(16), index=True)
+    source_system: Mapped[str | None] = mapped_column(String(32))
+    last_remote_modified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reconciliation_status: Mapped[str | None] = mapped_column(String(32), index=True)
+    amount_due: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    amount_paid: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    is_fully_paid: Mapped[bool | None] = mapped_column(Boolean)
     metadata_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
