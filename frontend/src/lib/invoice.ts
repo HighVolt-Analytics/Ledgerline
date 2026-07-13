@@ -655,6 +655,16 @@ export function invoiceSourceLabel(source: InvoiceSource): string {
   return "Direct upload";
 }
 
+/** Match an invoice to an Upload page channel tab (Upload / Email / WhatsApp / Viber). */
+export function invoiceMatchesCaptureChannel(
+  inv: Invoice,
+  channel: "upload" | "email" | "whatsapp" | "viber"
+): boolean {
+  const kind = invoiceSourceKind(inv);
+  if (channel === "upload") return kind === "upload" || kind === "onedrive";
+  return kind === channel;
+}
+
 export type InvoiceDocType = "invoice" | "credit_note" | "po" | "grn";
 
 export function invoiceDocumentType(inv: Invoice): InvoiceDocType {

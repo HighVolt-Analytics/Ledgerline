@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { keepPreviousData, type QueryClient } from "@tanstack/react-query";
+import { type QueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { Invoice } from "@/api/types";
 import { useTenantQuery } from "@/hooks/useTenantQuery";
@@ -40,10 +40,20 @@ export function useUploadInvoiceList(options: {
   source: string;
   q: string;
   mailboxId: number | null;
+  captureSource: "upload" | "email" | "whatsapp" | "viber";
   enabled?: boolean;
   processingIds?: ReadonlySet<number>;
 }) {
-  const { page, pageSize, source, q, mailboxId, enabled = true, processingIds } = options;
+  const {
+    page,
+    pageSize,
+    source,
+    q,
+    mailboxId,
+    captureSource,
+    enabled = true,
+    processingIds,
+  } = options;
   const visibility = useSyncExternalStore(
     subscribeVisibility,
     getVisibility,
@@ -52,14 +62,21 @@ export function useUploadInvoiceList(options: {
   const [pollInterval, setPollInterval] = useState(INBOX_POLL_MS);
 
   const query = useTenantQuery<UploadInvoiceListData>({
-    queryKey: queryKeys.uploadDocuments(page, pageSize, source, q, mailboxId),
+    queryKey: queryKeys.uploadDocuments(page, pageSize, source, q, mailboxId, captureSource),
     enabled,
-    // Avoid clearing the list (and unmounting the search input) while q/page changes.
-    placeholderData: keepPreviousData,
+    // Keep prior rows while search/page changes, but not when the channel tab changes.
+    placeholderData: (previousData, previousQuery) => {
+      if (!previousData || !previousQuery) return undefined;
+      const prevKey = previousQuery.queryKey;
+      const prevCapture = prevKey[prevKey.length - 1];
+      if (prevCapture !== captureSource) return undefined;
+      return previousData;
+    },
     queryFn: async () => {
       const params: Record<string, string> = {
         page: String(page),
         page_size: String(pageSize),
+        capture_source: captureSource,
       };
       if (mailboxId != null) {
         params.connected_mailbox_id = String(mailboxId);
@@ -80,10 +97,9 @@ export function useUploadInvoiceList(options: {
 
   useEffect(() => {
     const rows = query.data?.rows ?? [];
-    setPollInterval(
-      uploadListHasActiveProcessing(rows, processingIds) ? INBOX_POLL_FAST_MS : INBOX_POLL_MS
-    );
-  }, [query.data, processingIds]);
+    const busy = uploadListHasActiveProcessing(rows, processingIds);
+    setPollInterval(busy ? INBOX_POLL_FAST_MS : INBOX_POLL_MS);
+  }, [query.data?.rows, processingIds]);
 
   return query;
 }

@@ -10,6 +10,13 @@ export type ReportDateFilter = {
   dateTo: string;
 };
 
+export type ReportDownloadPeriod = "month" | "range" | "all";
+
+export type OptionalReportDateFilter = {
+  dateFrom?: string;
+  dateTo?: string;
+};
+
 export function monthToDateRange(month: string): ReportDateFilter {
   const [yearS, monthS] = month.split("-");
   const year = Number(yearS);
@@ -19,6 +26,29 @@ export function monthToDateRange(month: string): ReportDateFilter {
     dateFrom: `${month}-01`,
     dateTo: `${month}-${String(lastDay).padStart(2, "0")}`,
   };
+}
+
+/** Resolve API date filter for download. `undefined` = all dates. */
+export function resolveDownloadFilter(
+  period: ReportDownloadPeriod,
+  month: string,
+  dateFrom: string,
+  dateTo: string
+): OptionalReportDateFilter | undefined {
+  if (period === "all") return undefined;
+  if (period === "range") return { dateFrom, dateTo };
+  return monthToDateRange(month);
+}
+
+export function downloadPeriodLabel(
+  period: ReportDownloadPeriod,
+  month: string,
+  dateFrom: string,
+  dateTo: string
+): string {
+  if (period === "all") return "all";
+  if (period === "range") return `${dateFrom}_to_${dateTo}`;
+  return month;
 }
 
 function escapeCsvCell(value: string | number): string {
@@ -57,18 +87,21 @@ export function downloadCsvFile(csv: string, filename: string): void {
 
 export function downloadDocumentRegisterCsv(
   rows: ReportDocumentRow[],
-  month: string
+  periodLabel: string
 ): void {
   const csv = buildReportsCsv(rows.map(mapReportDocument));
-  downloadCsvFile(csv, `document_register_${month}.csv`);
+  downloadCsvFile(csv, `document_register_${periodLabel}.csv`);
 }
 
-export function downloadGlSummaryCsv(analytics: ReportsAnalytics, month: string): void {
+export function downloadGlSummaryCsv(analytics: ReportsAnalytics, periodLabel: string): void {
   const csv = buildGlAccountCsv(analytics.by_gl_account ?? []);
-  downloadCsvFile(csv, `gl_summary_${month}.csv`);
+  downloadCsvFile(csv, `gl_summary_${periodLabel}.csv`);
 }
 
-export function downloadVendorSummaryCsv(analytics: ReportsAnalytics, month: string): void {
+export function downloadVendorSummaryCsv(
+  analytics: ReportsAnalytics,
+  periodLabel: string
+): void {
   const csv = buildVendorSpendCsv(analytics.top_vendors ?? []);
-  downloadCsvFile(csv, `vendor_summary_${month}.csv`);
+  downloadCsvFile(csv, `vendor_summary_${periodLabel}.csv`);
 }

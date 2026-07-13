@@ -1491,35 +1491,35 @@ export const api = {
     );
     saveBlobAsFile(blob, filename);
   },
-  downloadAuditLogCsv: async (month: string) => {
+  downloadAuditLogCsv: async (filter?: ReportDateFilter) => {
     const params = new URLSearchParams({
-      month,
       document_only: "true",
       dedupe: "true",
     });
+    if (filter?.dateFrom) params.set("date_from", filter.dateFrom);
+    if (filter?.dateTo) params.set("date_to", filter.dateTo);
     const { blob, filename } = await requestBlob(
       `/api/audit-log/export?${params.toString()}`,
       undefined,
-      `audit_log_${month}.csv`
+      defaultAuditLogFilename(filter)
     );
     saveBlobAsFile(blob, filename);
   },
   downloadDocumentsBundleCsv: async (
-    dateFrom: string,
-    dateTo: string,
+    filter?: ReportDateFilter,
     options?: { format?: "excel" | "plain" }
   ) => {
-    const params = new URLSearchParams({
-      date_from: dateFrom,
-      date_to: dateTo,
-    });
+    const params = new URLSearchParams();
+    if (filter?.dateFrom) params.set("date_from", filter.dateFrom);
+    if (filter?.dateTo) params.set("date_to", filter.dateTo);
     if (options?.format) {
       params.set("format", options.format);
     }
+    const query = params.toString();
     const { blob, filename } = await requestBlob(
-      `/api/reports/documents-bundle/export?${params.toString()}`,
+      `/api/reports/documents-bundle/export${query ? `?${query}` : ""}`,
       undefined,
-      `documents_bundle_${dateFrom.slice(0, 7)}.csv`
+      defaultDocumentsBundleFilename(filter)
     );
     const text = await blob.text();
     const dataRows = Math.max(0, text.trim().split(/\r?\n/).length - 1);
@@ -1748,4 +1748,24 @@ function defaultReportFilename(filter?: ReportDateFilter): string {
   }
   if (dateFrom) return `output_workbook_from_${dateFrom}.xlsx`;
   return `output_workbook_to_${dateTo}.xlsx`;
+}
+
+function defaultAuditLogFilename(filter?: ReportDateFilter): string {
+  const { dateFrom, dateTo } = filter ?? {};
+  if (!dateFrom && !dateTo) return "audit_log.csv";
+  if (dateFrom && dateTo && dateFrom === dateTo) return `audit_log_${dateFrom}.csv`;
+  if (dateFrom && dateTo) return `audit_log_${dateFrom}_to_${dateTo}.csv`;
+  if (dateFrom) return `audit_log_from_${dateFrom}.csv`;
+  return `audit_log_to_${dateTo}.csv`;
+}
+
+function defaultDocumentsBundleFilename(filter?: ReportDateFilter): string {
+  const { dateFrom, dateTo } = filter ?? {};
+  if (!dateFrom && !dateTo) return "documents_bundle.csv";
+  if (dateFrom && dateTo && dateFrom === dateTo) {
+    return `documents_bundle_${dateFrom}.csv`;
+  }
+  if (dateFrom && dateTo) return `documents_bundle_${dateFrom}_to_${dateTo}.csv`;
+  if (dateFrom) return `documents_bundle_from_${dateFrom}.csv`;
+  return `documents_bundle_to_${dateTo}.csv`;
 }

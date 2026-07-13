@@ -12,34 +12,25 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api } from "@/api/client";
 import { EmptyState } from "@/components/EmptyState";
 import { ChartTooltip } from "@/components/ChartTooltip";
-import { ExportWorkbookDialog } from "@/components/ExportWorkbookDialog";
 import { SubledgerBalanceTable } from "@/components/reports/SubledgerBalanceTable";
 import { ReportDownloadMenu } from "@/components/reports/ReportDownloadMenu";
 import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
-import { YearMonthPeriodPicker } from "@/components/YearMonthPeriodPicker";
 import { Card } from "@/components/ui/card";
 import { useTenantTime } from "@/hooks/useTenantTime";
-import { useReportDocuments, useReportsAnalytics } from "@/hooks/useReportsAnalytics";
+import { useReportsAnalytics } from "@/hooks/useReportsAnalytics";
 import { useApBalances, useArBalances } from "@/hooks/useSubledgerBalances";
 import { axisMoney, currencySymbol, money, toNumber } from "@/lib/format";
-import {
-  buildMonthsForYear,
-  buildReconYears,
-  yearFromPeriod,
-} from "@/lib/reconciliation";
-import { monthToDateRange } from "@/lib/reportExports";
 import {
   REPORT_CHART_COLORS,
   defaultReportPeriod,
   mapGlAccountRow,
   mapVendorSpendRow,
 } from "@/lib/reportsData";
-import { tenantMonthStartIso, tenantTodayIso } from "@/lib/tenantTime";
+import { tenantTodayIso } from "@/lib/tenantTime";
 
 const CHART_MARGIN = { top: 4, right: 12, left: 8, bottom: 0 };
 const PIE_HOVER_OFFSET = 6;
@@ -96,54 +87,20 @@ function countDelta(delta: number | null | undefined) {
 
 export function ReportsPage() {
   const { timeZone, locale } = useTenantTime();
-  const [monthOverride, setMonthOverride] = useState<string | null>(null);
-  const month = monthOverride ?? defaultReportPeriod(timeZone);
-  const setMonth = setMonthOverride;
+  const month = defaultReportPeriod(timeZone);
   const [toast, setToast] = useState<string | null>(null);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [exportMode, setExportMode] = useState<"range" | "all">("range");
-  const [dateFrom, setDateFrom] = useState(() => tenantMonthStartIso(timeZone));
-  const [dateTo, setDateTo] = useState(() => tenantTodayIso(timeZone));
-  const [exportBusy, setExportBusy] = useState(false);
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const [activePieIndex, setActivePieIndex] = useState<number | null>(null);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(null), 3500);
+  };
 
   const { data: analytics, isLoading, error } = useReportsAnalytics(month);
   const subledgerAsOf = tenantTodayIso(timeZone);
   const { data: apBalances, isLoading: apLoading } = useApBalances(subledgerAsOf);
   const { data: arBalances, isLoading: arLoading } = useArBalances(subledgerAsOf);
-  const rangeInvalid = exportMode === "range" && dateFrom > dateTo;
-
-  const yearOptions = useMemo(() => buildReconYears(null, timeZone), [timeZone]);
-  const selectedYear = month ? yearFromPeriod(month) : yearOptions[0] ?? "";
-  const monthOptions = useMemo(
-    () => (selectedYear ? buildMonthsForYear(selectedYear, timeZone, locale) : []),
-    [selectedYear, timeZone, locale]
-  );
-
-  const handleYearChange = (year: string) => {
-    const months = buildMonthsForYear(year, timeZone, locale);
-    if (months.length === 0) {
-      setMonth("");
-      return;
-    }
-    const monthPart = month.slice(5, 7);
-    const keepMonth = months.find((m) => m.value.endsWith(`-${monthPart}`));
-    setMonth((keepMonth ?? months[0]).value);
-  };
-
-  const handleMonthChange = (monthKey: string) => {
-    setMonth(monthKey);
-  };
-
-  const exportFilter = useMemo(() => {
-    if (!exportOpen || rangeInvalid) return null;
-    if (exportMode === "all") return {};
-    return { dateFrom, dateTo };
-  }, [exportOpen, exportMode, dateFrom, dateTo, rangeInvalid]);
-
-  const { data: exportDocs } = useReportDocuments(exportFilter, Boolean(exportFilter));
-  const { data: allDocs } = useReportDocuments({}, exportOpen && exportMode === "all");
 
   const currency = analytics?.base_currency ?? "SGD";
   const taxLabel = analytics?.tax_label ?? "Tax";
@@ -165,59 +122,12 @@ export function ReportsPage() {
   const documentCount = analytics?.document_count ?? 0;
   const trends = analytics?.kpi_trends;
 
-  const exportCount = exportDocs?.length ?? 0;
-  const totalDocuments = exportMode === "all" ? (allDocs?.length ?? exportCount) : exportCount;
-
-  async function exportWorkbook() {
-    if (rangeInvalid || exportBusy) return;
-
-    setExportBusy(true);
-    try {
-      const filter = exportMode === "all" ? undefined : { dateFrom, dateTo };
-      const { filename } = await api.generateReport(filter);
-      await api.downloadReport(filter, filename);
-      setToast("Workbook downloaded.");
-      setExportOpen(false);
-      window.setTimeout(() => setToast(null), 3500);
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : "Workbook export failed.");
-      window.setTimeout(() => setToast(null), 3500);
-    } finally {
-      setExportBusy(false);
-    }
-  }
-
-  const periodSelector = (
-    <YearMonthPeriodPicker
-      year={selectedYear}
-      monthKey={month}
-      yearOptions={yearOptions}
-      monthOptions={monthOptions}
-      onYearChange={handleYearChange}
-      onMonthChange={handleMonthChange}
-      disabled={isLoading}
-      yearId="report-year"
-      monthId="report-month"
-      yearTestId="select-report-year"
-      monthTestId="select-report-month"
-      pickerTestId="report-period-picker"
-    />
-  );
-
   const headerActions = (
     <ReportDownloadMenu
       month={month}
       analytics={analytics}
-      periodSelector={periodSelector}
       disabled={isLoading}
-      onCustomWorkbook={() => {
-        const range = monthToDateRange(month);
-        setDateFrom(range.dateFrom);
-        setDateTo(range.dateTo);
-        setExportMode("range");
-        setExportOpen(true);
-      }}
-      onToast={setToast}
+      onToast={showToast}
     />
   );
 
@@ -257,7 +167,7 @@ export function ReportsPage() {
           actions={headerActions}
         />
         <EmptyState
-          title="No processed invoices for this period"
+          title="No processed invoices this month"
           hint="Reports include processed invoices only. Process documents in Upload or Approvals, then return here."
         />
       </div>
@@ -274,24 +184,6 @@ export function ReportsPage() {
 
       {toast && (
         <Card className="p-3 mb-4 text-sm border-primary/30 bg-primary/5">{toast}</Card>
-      )}
-
-      {exportOpen && (
-        <ExportWorkbookDialog
-          open={exportOpen}
-          onClose={() => setExportOpen(false)}
-          exportMode={exportMode}
-          onExportModeChange={setExportMode}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
-          onDateFromChange={setDateFrom}
-          onDateToChange={setDateTo}
-          exportCount={exportCount}
-          totalDocuments={totalDocuments}
-          rangeInvalid={rangeInvalid}
-          busy={exportBusy}
-          onExport={() => void exportWorkbook()}
-        />
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-6">

@@ -39,7 +39,7 @@ def test_heading_alignment_grn_dt03() -> None:
         shortTitle="GRN",
         klass="Non-transactional",
         posting="No",
-        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
+        recognition_mode="signals", recognition_signals=["heading_grn"], llm_prompt="",
         routeTarget="Purchase Management",
         purchaseBundleRole="grn",
     )
@@ -58,7 +58,7 @@ def test_heading_alignment_contract_penalises_invoice_header() -> None:
         shortTitle="Contract",
         klass="Non-transactional",
         posting="No",
-        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
+        recognition_mode="signals", recognition_signals=["heading_contract"], llm_prompt="",
         routeTarget="Vault",
         playbook_profile="master_data",
     )

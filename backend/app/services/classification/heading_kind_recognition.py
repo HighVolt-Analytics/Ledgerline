@@ -32,11 +32,15 @@ HEADING_KIND_SIGNALS: dict[HeadingKind, frozenset[RecognitionSignalId]] = {
     "commercial_invoice": frozenset({"heading_invoice"}),
     "invoice": frozenset({"heading_invoice"}),
     "purchase_order": frozenset({"heading_po"}),
+    "sales_order": frozenset({"heading_so"}),
     "grn": frozenset({"heading_grn"}),
-    "credit_note": frozenset({"text_credit_note"}),
+    "credit_note": frozenset({"text_credit_note", "text_debit_note"}),
     "quote": frozenset({"text_quote"}),
     "proforma": frozenset({"text_proforma"}),
     "contract": frozenset({"heading_contract"}),
+    "statement": frozenset({"text_statement"}),
+    "remittance": frozenset({"text_remittance"}),
+    "timesheet": frozenset({"text_timesheet"}),
 }
 
 HEADING_KIND_PLAYBOOK: dict[HeadingKind, str] = {

@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
@@ -166,6 +166,10 @@ async def list_invoices(
     connected_mailbox_id: int | None = Query(
         None, description="Filter by connected mailbox (inbox source)"
     ),
+    capture_source: str | None = Query(
+        None,
+        description="Filter by capture channel: upload, email, whatsapp, or viber",
+    ),
     invoice_date_from: date | None = None,
     invoice_date_to: date | None = None,
     route_target: str | None = Query(None, description="Filter by rule book route target"),
@@ -196,6 +200,27 @@ async def list_invoices(
             query = query.where(Invoice.invoice_date <= invoice_date_to)
         if connected_mailbox_id is not None:
             query = query.where(Invoice.connected_mailbox_id == connected_mailbox_id)
+        if capture_source and capture_source.strip():
+            src = capture_source.strip().lower()
+            if src in {"upload", "email", "whatsapp", "viber"}:
+                if src == "upload":
+                    # Explicit uploads plus legacy rows with no channel markers.
+                    query = query.where(
+                        or_(
+                            func.lower(Invoice.capture_source) == "upload",
+                            and_(
+                                or_(
+                                    Invoice.capture_source.is_(None),
+                                    Invoice.capture_source == "",
+                                ),
+                                Invoice.connected_mailbox_id.is_(None),
+                                Invoice.whatsapp_connection_id.is_(None),
+                                Invoice.viber_connection_id.is_(None),
+                            ),
+                        )
+                    )
+                else:
+                    query = query.where(func.lower(Invoice.capture_source) == src)
         if route_target and route_target.strip():
             query = query.where(Invoice.route_target == route_target.strip())
             # Rejected / duplicate docs belong on Approvals, not management pages.

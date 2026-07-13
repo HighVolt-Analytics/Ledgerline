@@ -335,7 +335,75 @@ def test_grn_negative_prompt_does_not_score_tax_invoice_heading() -> None:
         posting="No",
     )
     assert score_document_type_for_heading(grn, "tax_invoice") < 0.82
+    assert score_document_type_for_heading(grn, "grn") >= 0.82
     assert heading_conflicts_with_definition("tax_invoice", grn) is True
+
+
+def test_heading_scores_via_recognition_signals_not_title() -> None:
+    from app.services.classification.segment_heading_classification import (
+        classify_from_segment_heading,
+        score_document_type_for_heading,
+    )
+
+    # Title says invoice, but recognition is GRN-only — must not adopt on invoice heading.
+    mislabeled = _dt(
+        code="DT-MIS",
+        title="Looks like invoice",
+        shortTitle="Invoice copy",
+        recognition_mode="signals",
+        recognition_signals=["heading_grn", "text_grn"],
+        playbookProfile="supporting",
+        klass="Non-transactional",
+        posting="No",
+        purchaseBundleRole="grn",
+        requiredFields=[],
+        extractionFields=["vendor"],
+    )
+    real_invoice = _dt(
+        code="DT-INV",
+        title="Standard AP bill",
+        shortTitle="AP bill",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice", "text_invoice"],
+        playbookProfile="direct_expense",
+        requiredFields=[],
+        extractionFields=["vendor", "total"],
+    )
+    assert score_document_type_for_heading(mislabeled, "invoice") < 0.82
+    assert score_document_type_for_heading(real_invoice, "invoice") >= 0.82
+
+    invoice = Invoice(tenant_id=TESTING_TENANT_UUID, status=InvoiceStatus.PENDING)
+    match = classify_from_segment_heading(
+        heading_kind="invoice",
+        document_types=[mislabeled, real_invoice],
+        invoice=invoice,
+        parsed=InvoiceData(document_text="INVOICE\nTotal 10"),
+    )
+    assert match is not None
+    assert match.code == "DT-INV"
+    assert "recognition signals" in (match.reason or "")
+
+
+def test_heading_scores_via_recognition_prompt() -> None:
+    from app.services.classification.segment_heading_classification import (
+        score_document_type_for_heading,
+    )
+
+    expense = _dt(
+        code="DT-EXP",
+        title="Miscellaneous spend",
+        shortTitle="Misc",
+        recognition_mode="prompt",
+        llm_prompt=(
+            "Tax invoice or commercial invoice for day-to-day expenses without a PO. "
+            "Do not classify goods receipt notes or purchase orders as this type."
+        ),
+        playbookProfile="direct_expense",
+        requiredFields=[],
+        extractionFields=["vendor", "total"],
+    )
+    assert score_document_type_for_heading(expense, "tax_invoice") >= 0.82
+    assert score_document_type_for_heading(expense, "grn") < 0.82
 
 
 def test_tax_invoice_heading_clears_llm_grn_suggestion() -> None:

@@ -55,8 +55,10 @@ const baseKeys = {
     pageSize: number,
     source: string,
     q: string,
-    mailboxId: number | null
-  ) => ["invoices", "upload", page, pageSize, source, q, mailboxId ?? "all"] as const,
+    mailboxId: number | null,
+    captureSource: string
+  ) =>
+    ["invoices", "upload", page, pageSize, source, q, mailboxId ?? "all", captureSource] as const,
   purchases: ["purchases"] as const,
   purchasesTwoWay: ["purchases", "two-way"] as const,
   sales: ["sales"] as const,
@@ -112,8 +114,12 @@ export const queryKeys = {
     pageSize: number,
     source: string,
     q: string,
-    mailboxId: number | null
-  ) => tenantQueryKey(baseKeys.uploadDocuments(page, pageSize, source, q, mailboxId)),
+    mailboxId: number | null,
+    captureSource: string
+  ) =>
+    tenantQueryKey(
+      baseKeys.uploadDocuments(page, pageSize, source, q, mailboxId, captureSource)
+    ),
   purchases: () => tenantQueryKey(baseKeys.purchases),
   purchasesTwoWay: () => tenantQueryKey(baseKeys.purchasesTwoWay),
   sales: () => tenantQueryKey(baseKeys.sales),

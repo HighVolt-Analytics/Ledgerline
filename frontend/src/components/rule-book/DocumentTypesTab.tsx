@@ -31,11 +31,14 @@ import {
   BundleRulesEditor,
 } from "@/components/rule-book/BundleRulesEditor";
 import {
+  customFieldLinkingConflictError,
   extractionFieldKeyError,
   extractionFieldLabel,
   formatExtractionFieldKeyInput,
+  isLinkingStandardExtractionFieldKey,
   isPresetExtractionFieldKey,
   isStandardExtractionFieldKey,
+  linkingStandardFieldForCustomAlias,
   normalizeExtractionFieldKeys,
   reconcileExtractionFieldsForRoute,
   routeCompulsoryBaseline,
@@ -379,6 +382,23 @@ function ExtractionFieldsPicker({
       setCustomError(extractionFieldKeyError(customInput) ?? "Invalid field name.");
       return;
     }
+    const linkingConflict = customFieldLinkingConflictError(key);
+    if (linkingConflict) {
+      const alias = linkingStandardFieldForCustomAlias(key);
+      const standardKey = alias ?? (isLinkingStandardExtractionFieldKey(key) ? key : null);
+      if (
+        standardKey &&
+        !selected.has(standardKey) &&
+        routeStandardKeys.includes(standardKey as (typeof routeStandardKeys)[number])
+      ) {
+        addStandardField(standardKey);
+        setCustomInput("");
+        setCustomError(null);
+        return;
+      }
+      setCustomError(linkingConflict);
+      return;
+    }
     if (selected.has(key)) {
       setCustomError("That field is already listed.");
       return;
@@ -400,7 +420,7 @@ function ExtractionFieldsPicker({
 
   const vaultEmptyHint =
     routeTarget === "Vault"
-      ? " For Vault routes, document heading and attachment name are common standard fields."
+      ? " For Vault routes, document heading, attachment name, vendor, invoice date, and linking fields (invoice number, PO/SO reference) are common standard fields — invoice date fills year/month folders."
       : "";
 
   return (
@@ -413,10 +433,11 @@ function ExtractionFieldsPicker({
         <div>
           <p className="text-[11px] font-medium text-foreground">Standard fields (pipeline)</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Workspace route controls which standard fields you can add. Star fields you want
-            compulsory — only when VR03 (Compulsory fields) is enabled in Validation below. Unstarred
-            fields stay extracted but optional. Route recommendations are hints; use Apply route
-            recommendations to star them.
+            Workspace route controls which standard fields you can add. Invoice number, PO reference,
+            and SO reference are always available — use those for dossier bundling (not custom
+            fields). Star fields you want compulsory — only when VR03 (Compulsory fields) is enabled
+            in Validation below. Unstarred fields stay extracted but optional. Route recommendations
+            are hints; use Apply route recommendations to star them.
           </p>
           {routeBaselineHint ? (
             <p className="mt-1 text-[11px] text-muted-foreground">{routeBaselineHint}</p>
@@ -499,7 +520,9 @@ function ExtractionFieldsPicker({
         <div>
           <FieldLabel htmlFor={`${id}-custom`}>Custom extraction fields</FieldLabel>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            OCR + LLM only. Stored in extracted_fields; does not create invoice DB columns.
+            OCR + LLM only. Stored in extracted_fields; does not create invoice DB columns. Do not use
+            custom fields for invoice number / PO / SO — add those under Standard fields so documents
+            can bundle.
           </p>
         </div>
         {selectedCustom.length > 0 ? (

@@ -94,6 +94,7 @@ async def reject_invoice_route(
         raise http_not_found(exc) from exc
     except ValueError as exc:
         raise http_bad_request(exc) from exc
+    await db.commit()
     return ApiEnvelope(data=response)
 
 

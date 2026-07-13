@@ -86,13 +86,38 @@ def resolve_segment_heading_with_source(
     return infer_page_document_kind_with_source(document_text or "")
 
 
-def _definition_metadata_blob(definition: DocumentTypeDefinition) -> str:
-    """Catalogue text used for heading→DT scoring.
+_NEGATION_SENTENCE = re.compile(
+    r"(?i)^(?:do\s+not|don't|never|exclude|must\s+not|should\s+not)\b"
+)
+_NEGATION_INLINE = re.compile(
+    r"(?i)\b(?:no|not|without|never)\b[^.!?\n—–-]{0,100}"
+)
+_DO_NOT_CLASSIFY = re.compile(r"(?i)\bdo\s+not\s+classify\b")
 
-    Intentionally omits ``llm_prompt``: recognition prompts often mention excluded
-    document kinds (e.g. GRN prompts saying \"tax invoices\"), which must not count
-    as a positive heading match.
+
+def _positive_prompt_blob(prompt: str) -> str:
+    """Recognition-prompt text kept for heading scoring (exclusions removed).
+
+    Prompts often say \"Do not classify ... tax invoices ...\" or \"usually no tax
+    invoice wording\" — those must not count as a positive heading match.
     """
+    text = (prompt or "").strip()
+    if not text:
+        return ""
+    cut = _DO_NOT_CLASSIFY.search(text)
+    if cut:
+        text = text[: cut.start()]
+    kept: list[str] = []
+    for part in re.split(r"(?<=[.!?])\s+", text):
+        token = part.strip()
+        if not token or _NEGATION_SENTENCE.search(token):
+            continue
+        kept.append(_NEGATION_INLINE.sub(" ", token))
+    return " ".join(kept).lower()
+
+
+def _definition_metadata_blob(definition: DocumentTypeDefinition) -> str:
+    """Legacy title/extraction blob when a DT has no recognition signals/prompt."""
     parts = [
         definition.short_title or "",
         definition.title or "",
@@ -129,12 +154,81 @@ def _token_matches_blob(token: str, blob: str) -> bool:
     return token in blob
 
 
-def score_document_type_for_heading(
+def _token_score_against_blob(tokens: tuple[str, ...], blob: str) -> float:
+    if not tokens or not blob:
+        return 0.0
+    best = 0.0
+    for token in tokens:
+        token = token.strip().lower()
+        if not token:
+            continue
+        if _token_matches_blob(token, blob):
+            best = max(best, 0.88)
+        for part in re.split(r"[\s/·]+", blob):
+            if part and token == part:
+                best = max(best, 0.95)
+    return best
+
+
+def _family_signals_for_heading(heading_kind: HeadingKind) -> frozenset[str]:
+    from app.services.classification.heading_kind_recognition import signals_for_heading_kind
+    from app.services.classification.recognition_signal_registry import SIGNAL_PICK_GROUPS
+
+    direct = set(signals_for_heading_kind(heading_kind))
+    if not direct:
+        return frozenset()
+    expanded = set(direct)
+    for group in SIGNAL_PICK_GROUPS:
+        if direct & set(group):
+            expanded.update(group)
+    return frozenset(expanded)
+
+
+def _score_via_recognition_signals(
+    definition: DocumentTypeDefinition,
+    heading_kind: HeadingKind,
+) -> float:
+    from app.services.classification.heading_kind_recognition import signals_for_heading_kind
+    from app.services.classification.recognition_signal_registry import SIGNAL_CONDITIONS
+
+    dt_signals = {
+        signal_id
+        for signal_id in (definition.recognition_signals or [])
+        if signal_id in SIGNAL_CONDITIONS
+    }
+    if not dt_signals:
+        return 0.0
+
+    direct = signals_for_heading_kind(heading_kind)
+    if dt_signals & direct:
+        # Prefer explicit heading_* / kind-mapped signals.
+        return 1.0
+
+    family = _family_signals_for_heading(heading_kind)
+    if dt_signals & family:
+        return 0.9
+    return 0.0
+
+
+def _score_via_recognition_prompt(
     definition: DocumentTypeDefinition,
     heading_kind: HeadingKind,
 ) -> float:
     tokens = HEADING_KIND_TOKENS.get(heading_kind, ())
-    if not tokens or not definition.enabled:
+    prompt_blob = _positive_prompt_blob(definition.llm_prompt or "")
+    if not tokens or not prompt_blob:
+        return 0.0
+    best = _token_score_against_blob(tokens, prompt_blob)
+    # Slightly prefer prompt matches over bare title fallback.
+    return min(1.0, best + 0.02) if best >= 0.82 else best
+
+
+def _score_via_title_fallback(
+    definition: DocumentTypeDefinition,
+    heading_kind: HeadingKind,
+) -> float:
+    tokens = HEADING_KIND_TOKENS.get(heading_kind, ())
+    if not tokens:
         return 0.0
 
     metadata = _definition_metadata_blob(definition)
@@ -158,6 +252,32 @@ def score_document_type_for_heading(
                 best = max(best, 0.95)
 
     return best
+
+
+def score_document_type_for_heading(
+    definition: DocumentTypeDefinition,
+    heading_kind: HeadingKind,
+) -> float:
+    """Score heading→DT alignment using the DT's recognition config.
+
+    Prefer recognition signals (signals mode) or the positive recognition prompt
+    (prompt mode). Fall back to title/shortTitle only when recognition is empty.
+    """
+    if not definition.enabled:
+        return 0.0
+
+    from app.services.classification.document_type_rule_engine import (
+        is_prompt_recognition_mode,
+        is_signals_recognition_mode,
+    )
+
+    if is_signals_recognition_mode(definition) and (definition.recognition_signals or []):
+        return _score_via_recognition_signals(definition, heading_kind)
+
+    if is_prompt_recognition_mode(definition) and (definition.llm_prompt or "").strip():
+        return _score_via_recognition_prompt(definition, heading_kind)
+
+    return _score_via_title_fallback(definition, heading_kind)
 
 
 def _classifier_field(ctx, field: str) -> str:
@@ -301,10 +421,19 @@ def classify_from_segment_heading(
         rule_strength=min(1.0, 0.78 + score * 0.15),
         parse_confidence=parse_confidence,
     )
+    from app.services.classification.document_type_rule_engine import recognition_mode_of
+
+    mode = recognition_mode_of(definition)
+    if mode == "prompt" and (definition.llm_prompt or "").strip():
+        match_basis = "recognition prompt"
+    elif (definition.recognition_signals or []):
+        match_basis = "recognition signals"
+    else:
+        match_basis = "document type catalogue"
     return DocumentTypeClassification(
         definition.code,
         breakdown.confidence,
-        f"Segment heading ({heading_kind}) matched document type catalogue",
+        f"Segment heading ({heading_kind}) matched {match_basis}",
         min_route_confidence=breakdown.min_route_confidence,
         score_breakdown=breakdown,
     )

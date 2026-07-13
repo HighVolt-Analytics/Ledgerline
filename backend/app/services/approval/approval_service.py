@@ -91,6 +91,10 @@ async def reject_invoice(
     actor_email: str | None = None,
 ) -> None:
     """Mark invoice rejected and move stored file to rejected/{org}/{vendor}/{year}/{month}/."""
+    from app.utils.logger import get_logger
+
+    logger = get_logger(__name__)
+
     if inv.status == InvoiceStatus.REJECTED:
         return
     if inv.status not in _REJECTABLE:
@@ -99,54 +103,68 @@ async def reject_invoice(
     org = await session.get(Tenant, inv.tenant_id)
     tenant_slug = org.slug if org else "default"
     tenant_name = org.name if org else None
-    config = await load_config_for_tenant(session, inv.tenant_id)
-    short_title, title = vault_document_type_titles_for_invoice(inv, list(config.document_types))
-
     previous_status = inv.status.value
     old_path = inv.raw_file_path
 
-    await repair_invoice_stored_path(session, inv)
-    resolved = (
-        await asyncio.to_thread(
-            resolve_readable_stored,
-            inv.raw_file_path,
-            tenant_id=inv.tenant_id,
-            tenant_slug=tenant_slug,
-            tenant_name=tenant_name,
-        )
-        if inv.raw_file_path
-        else None
-    )
-    if resolved:
-        inv.raw_file_path = resolved
+    # File may already sit under rejected/ after a prior partial reject (blob moved,
+    # DB rolled back). Skip Azure round-trips so we don't hold the DB session idle.
+    if not is_rejected_storage_path(inv.raw_file_path):
+        try:
+            config = await load_config_for_tenant(session, inv.tenant_id)
+            short_title, title = vault_document_type_titles_for_invoice(
+                inv, list(config.document_types)
+            )
 
-    if inv.raw_file_path and await asyncio.to_thread(
-        stored_file_available,
-        inv.raw_file_path,
-        tenant_id=inv.tenant_id,
-        tenant_slug=tenant_slug,
-        tenant_name=tenant_name,
-    ):
-        filename = filename_from_stored(inv.raw_file_path)
-        new_path = await asyncio.to_thread(
-            relocate_invoice_to_rejected,
-            inv.raw_file_path,
-            inv.tenant_id,
-            tenant_slug,
-            inv.id,
-            filename,
-            tenant_name=tenant_name,
-            vendor_name=inv.vendor,
-            storage_vendor_slug=inv.storage_vendor_slug,
-            invoice_no=inv.invoice_no,
-            invoice_date=inv.invoice_date,
-            route_target=inv.route_target,
-            document_type_code=inv.document_type_code,
-            document_type_short_title=short_title,
-            document_type_title=title,
-        )
-        if new_path != inv.raw_file_path:
-            inv.raw_file_path = new_path
+            await repair_invoice_stored_path(session, inv)
+            resolved = (
+                await asyncio.to_thread(
+                    resolve_readable_stored,
+                    inv.raw_file_path,
+                    tenant_id=inv.tenant_id,
+                    tenant_slug=tenant_slug,
+                    tenant_name=tenant_name,
+                )
+                if inv.raw_file_path
+                else None
+            )
+            if resolved:
+                inv.raw_file_path = resolved
+
+            if inv.raw_file_path and await asyncio.to_thread(
+                stored_file_available,
+                inv.raw_file_path,
+                tenant_id=inv.tenant_id,
+                tenant_slug=tenant_slug,
+                tenant_name=tenant_name,
+            ):
+                filename = filename_from_stored(inv.raw_file_path)
+                new_path = await asyncio.to_thread(
+                    relocate_invoice_to_rejected,
+                    inv.raw_file_path,
+                    inv.tenant_id,
+                    tenant_slug,
+                    inv.id,
+                    filename,
+                    tenant_name=tenant_name,
+                    vendor_name=inv.vendor,
+                    storage_vendor_slug=inv.storage_vendor_slug,
+                    invoice_no=inv.invoice_no,
+                    invoice_date=inv.invoice_date,
+                    route_target=inv.route_target,
+                    document_type_code=inv.document_type_code,
+                    document_type_short_title=short_title,
+                    document_type_title=title,
+                )
+                if new_path != inv.raw_file_path:
+                    inv.raw_file_path = new_path
+        except Exception as exc:
+            # Status must still flip to rejected; blob can be repaired later.
+            logger.warning(
+                "reject_blob_relocate_failed",
+                invoice_id=inv.id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
     if inv.status == InvoiceStatus.PROCESSED:
         await clear_invoice_posting_artifacts(session, inv)

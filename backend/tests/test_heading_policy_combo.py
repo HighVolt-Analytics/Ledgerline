@@ -61,6 +61,9 @@ async def test_heading_title_then_policy_reextract_once() -> None:
         shortTitle="Certificate of Origin",
         klass="Non-actionable",
         posting="NEVER",
+        # Empty signals → heading adopt uses title; policy uses packing's classifier.
+        recognition_signals=[],
+        playbookProfile="import_dossier",
         requiredFields=[],
         extractionFields=["vendor", "invoice_no"],
         classifier=_classifier(priority=40),
@@ -71,6 +74,8 @@ async def test_heading_title_then_policy_reextract_once() -> None:
         shortTitle="Packing list",
         klass="Non-actionable",
         posting="NEVER",
+        recognition_signals=[],
+        playbookProfile="import_dossier",
         requiredFields=["vendor", "permit_no"],
         extractionFields=["vendor", "permit_no"],
         classifier=_classifier(

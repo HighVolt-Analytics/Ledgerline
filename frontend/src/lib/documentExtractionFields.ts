@@ -74,10 +74,60 @@ export const INFRASTRUCTURE_ONLY_EXTRACTION_FIELD_KEYS = new Set<ExtractionField
   "document_text",
 ]);
 
+/**
+ * Dossier bundling keys — always offered under Add standard field for every route.
+ * Values land in invoice columns (not extracted_fields JSON), which linking uses.
+ */
+export const LINKING_STANDARD_EXTRACTION_FIELD_KEYS = [
+  "invoice_no",
+  "po_reference",
+  "so_reference",
+] as const satisfies readonly ExtractionFieldKey[];
+
 const PRESET_KEYS = new Set(EXTRACTION_FIELD_OPTIONS.map((row) => row.key));
 
+/** Common custom-key aliases that should use linking standard fields instead. */
+const LINKING_FIELD_CUSTOM_ALIASES: Record<string, (typeof LINKING_STANDARD_EXTRACTION_FIELD_KEYS)[number]> =
+  {
+    invoice_number: "invoice_no",
+    inv_no: "invoice_no",
+    inv_number: "invoice_no",
+    invoice_num: "invoice_no",
+    invoice_ref: "invoice_no",
+    po_number: "po_reference",
+    po_ref: "po_reference",
+    purchase_order: "po_reference",
+    purchase_order_no: "po_reference",
+    purchase_order_number: "po_reference",
+    so_number: "so_reference",
+    so_ref: "so_reference",
+    sales_order: "so_reference",
+    sales_order_no: "so_reference",
+    sales_order_number: "so_reference",
+  };
+
+const AMBIGUOUS_LINKING_CUSTOM_KEYS = new Set([
+  "reference_no",
+  "reference_number",
+  "ref_no",
+  "ref_number",
+  "doc_reference",
+  "document_reference",
+]);
+
+function withLinkingStandardFields(keys: ExtractionFieldKey[]): ExtractionFieldKey[] {
+  const seen = new Set(keys);
+  const out = [...keys];
+  for (const key of LINKING_STANDARD_EXTRACTION_FIELD_KEYS) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
 const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKey[]> = {
-  "Purchase Management": [
+  "Purchase Management": withLinkingStandardFields([
     "vendor",
     "abn",
     "invoice_no",
@@ -92,8 +142,8 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "line_items",
     "billing_address",
     "bank_details",
-  ],
-  "Sales Management": [
+  ]),
+  "Sales Management": withLinkingStandardFields([
     "vendor",
     "abn",
     "invoice_no",
@@ -113,8 +163,8 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "buyer_address",
     "billing_address",
     "bank_details",
-  ],
-  "Expenses Management": [
+  ]),
+  "Expenses Management": withLinkingStandardFields([
     "vendor",
     "abn",
     "invoice_no",
@@ -125,8 +175,8 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "gst",
     "gst_rate",
     "total",
-  ],
-  "Team Expenses": [
+  ]),
+  "Team Expenses": withLinkingStandardFields([
     "vendor",
     "abn",
     "invoice_no",
@@ -137,8 +187,15 @@ const STANDARD_EXTRACTION_FIELDS_BY_ROUTE: Record<RouteTarget, ExtractionFieldKe
     "gst",
     "gst_rate",
     "total",
-  ],
-  Vault: ["document_heading", "attachment_name"],
+  ]),
+  // invoice_date feeds Vault year/month folders; vendor feeds the vendor folder.
+  Vault: withLinkingStandardFields([
+    "document_heading",
+    "attachment_name",
+    "vendor",
+    "invoice_no",
+    "invoice_date",
+  ]),
 };
 
 /** Route-level recommended compulsory fields — Rule Book UI guidance only (saved via required_fields). */
@@ -229,6 +286,36 @@ export function isStandardExtractionFieldKey(key: string): boolean {
     isPresetExtractionFieldKey(key) &&
     !INFRASTRUCTURE_ONLY_EXTRACTION_FIELD_KEYS.has(key as ExtractionFieldKey)
   );
+}
+
+export function isLinkingStandardExtractionFieldKey(key: string): boolean {
+  return (LINKING_STANDARD_EXTRACTION_FIELD_KEYS as readonly string[]).includes(key);
+}
+
+/** Map a custom key to the linking standard field users should add instead. */
+export function linkingStandardFieldForCustomAlias(
+  key: string
+): (typeof LINKING_STANDARD_EXTRACTION_FIELD_KEYS)[number] | null {
+  const token = sanitizeExtractionFieldKey(key);
+  if (!token) return null;
+  return LINKING_FIELD_CUSTOM_ALIASES[token] ?? null;
+}
+
+/** Error when a custom key should be a bundling standard field instead. */
+export function customFieldLinkingConflictError(raw: string): string | null {
+  const token = sanitizeExtractionFieldKey(raw);
+  if (!token) return null;
+  if (isLinkingStandardExtractionFieldKey(token)) {
+    return `“${extractionFieldLabel(token)}” is a standard field — add it under Add standard field so bundling can use it.`;
+  }
+  const alias = LINKING_FIELD_CUSTOM_ALIASES[token];
+  if (alias) {
+    return `Use standard field “${extractionFieldLabel(alias)}” (${alias}) instead — custom keys are not used for dossier bundling.`;
+  }
+  if (AMBIGUOUS_LINKING_CUSTOM_KEYS.has(token)) {
+    return `For bundling, add Invoice number, PO reference, or SO reference under Add standard field — not a custom “${token}” field.`;
+  }
+  return null;
 }
 
 function normalizeRouteTarget(routeTarget?: string | null): RouteTarget {

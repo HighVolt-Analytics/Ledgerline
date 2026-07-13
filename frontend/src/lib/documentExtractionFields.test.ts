@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  customFieldLinkingConflictError,
   extractionFieldKeyError,
   formatExtractionFieldKeyInput,
+  linkingStandardFieldForCustomAlias,
   mergeRouteCompulsoryIntoConfig,
   missingRouteRecommendations,
   reconcileExtractionFieldsForRoute,
@@ -76,18 +78,65 @@ describe("standardExtractionFieldsForRoute", () => {
   it("returns purchase-oriented fields for Purchase Management", () => {
     const keys = standardExtractionFieldsForRoute("Purchase Management");
     expect(keys).toContain("po_reference");
-    expect(keys).not.toContain("so_reference");
+    expect(keys).toContain("invoice_no");
+    expect(keys).toContain("so_reference");
   });
 
   it("returns sales-oriented fields for Sales Management", () => {
     const keys = standardExtractionFieldsForRoute("Sales Management");
     expect(keys).toContain("so_reference");
-    expect(keys).not.toContain("po_reference");
+    expect(keys).toContain("invoice_no");
+    expect(keys).toContain("po_reference");
+  });
+
+  it("always includes linking fields on every route", () => {
+    for (const route of [
+      "Purchase Management",
+      "Sales Management",
+      "Expenses Management",
+      "Team Expenses",
+      "Vault",
+    ] as const) {
+      const keys = standardExtractionFieldsForRoute(route);
+      expect(keys).toEqual(expect.arrayContaining(["invoice_no", "po_reference", "so_reference"]));
+    }
   });
 
   it("falls back to Vault catalogue for unknown routes", () => {
     const keys = standardExtractionFieldsForRoute("Unknown");
-    expect(keys).toEqual(["document_heading", "attachment_name"]);
+    expect(keys).toEqual([
+      "document_heading",
+      "attachment_name",
+      "vendor",
+      "invoice_no",
+      "invoice_date",
+      "po_reference",
+      "so_reference",
+    ]);
+  });
+
+  it("offers vendor and invoice date for Vault filing folders", () => {
+    const keys = standardExtractionFieldsForRoute("Vault");
+    expect(keys).toEqual(
+      expect.arrayContaining(["vendor", "invoice_date", "invoice_no", "document_heading"])
+    );
+  });
+});
+
+describe("customFieldLinkingConflictError", () => {
+  it("redirects invoice/po/so aliases to standard linking fields", () => {
+    expect(customFieldLinkingConflictError("invoice_number")).toMatch(/invoice number/i);
+    expect(linkingStandardFieldForCustomAlias("invoice_number")).toBe("invoice_no");
+    expect(linkingStandardFieldForCustomAlias("po_number")).toBe("po_reference");
+    expect(linkingStandardFieldForCustomAlias("so_number")).toBe("so_reference");
+  });
+
+  it("blocks ambiguous reference custom keys", () => {
+    expect(customFieldLinkingConflictError("reference_no")).toMatch(/bundling/i);
+  });
+
+  it("allows unrelated custom keys", () => {
+    expect(customFieldLinkingConflictError("contract_party")).toBeNull();
   });
 });
 
@@ -104,15 +153,15 @@ describe("splitExtractionFields", () => {
 });
 
 describe("reconcileExtractionFieldsForRoute", () => {
-  it("prunes incompatible standard fields when route changes", () => {
+  it("keeps linking standard fields when route changes", () => {
     const result = reconcileExtractionFieldsForRoute({
       extractionFields: ["vendor", "po_reference", "permit_no"],
       requiredFields: ["vendor", "po_reference"],
       nextRoute: "Sales Management",
     });
-    expect(result.extractionFields).toEqual(["vendor", "permit_no"]);
-    expect(result.requiredFields).toEqual(["vendor"]);
-    expect(result.removedStandardFields).toEqual(["po_reference"]);
+    expect(result.extractionFields).toEqual(["vendor", "po_reference", "permit_no"]);
+    expect(result.requiredFields).toEqual(["vendor", "po_reference"]);
+    expect(result.removedStandardFields).toEqual([]);
   });
 
   it("keeps custom fields when route changes", () => {
@@ -121,9 +170,20 @@ describe("reconcileExtractionFieldsForRoute", () => {
       requiredFields: [],
       nextRoute: "Sales Management",
     });
-    expect(result.extractionFields).toEqual(["contract_party"]);
+    expect(result.extractionFields).toEqual(["po_reference", "contract_party"]);
     expect(result.requiredFields).toEqual([]);
-    expect(result.removedStandardFields).toEqual(["po_reference"]);
+    expect(result.removedStandardFields).toEqual([]);
+  });
+
+  it("still prunes non-linking route-specific fields", () => {
+    const result = reconcileExtractionFieldsForRoute({
+      extractionFields: ["vendor", "seller_name", "permit_no"],
+      requiredFields: ["vendor", "seller_name"],
+      nextRoute: "Purchase Management",
+    });
+    expect(result.extractionFields).toEqual(["vendor", "permit_no"]);
+    expect(result.requiredFields).toEqual(["vendor"]);
+    expect(result.removedStandardFields).toEqual(["seller_name"]);
   });
 });
 
