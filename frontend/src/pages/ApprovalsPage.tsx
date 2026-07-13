@@ -587,13 +587,18 @@ export function ApprovalsPage() {
                     key={inv.id}
                     className="approvals-kanban-card"
                     data-testid={`card-approval-${inv.id}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openDrawer(inv)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openDrawer(inv);
+                      }
+                    }}
+                    aria-label={`Open ${inv.vendor ?? "document"} ${documentDisplayRef(inv)}`}
                   >
-                    <button
-                      type="button"
-                      className="approvals-kanban-card__hit"
-                      onClick={() => openDrawer(inv)}
-                      aria-label={`Open ${inv.vendor ?? "document"} ${documentDisplayRef(inv)}`}
-                    >
+                    <div className="approvals-kanban-card__body">
                       <div className="approvals-kanban-card__top">
                         <span className="approvals-kanban-card__vendor">{inv.vendor ?? "—"}</span>
                         <DocumentTypeChip
@@ -610,7 +615,7 @@ export function ApprovalsPage() {
                           {documentDisplayRef(inv)}
                         </span>
                       </div>
-                    </button>
+                    </div>
                     <div className="approvals-kanban-card__actions">
                       {canShowReprocessOnBoard(inv, col.key) && (
                         <ActionChip

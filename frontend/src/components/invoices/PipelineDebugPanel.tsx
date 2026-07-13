@@ -318,9 +318,8 @@ export function PipelineDebugPanel({ invoice }: PipelineDebugPanelProps) {
         </div>
         <Button
           type="button"
-          variant="outline"
+          variant="surface"
           size="sm"
-          className="bg-card"
           disabled={loading}
           onClick={() => void load()}
         >

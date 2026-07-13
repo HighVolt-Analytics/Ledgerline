@@ -33,6 +33,7 @@ import {
 import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { sortInvoicesNewestFirst } from "@/lib/invoices";
+import { useNavBadges } from "@/hooks/useNavBadges";
 import {
   invalidateUploadInvoiceList,
   useUploadInvoiceList,
@@ -72,10 +73,10 @@ function parseChannelTab(value: string | null): ChannelTab {
 }
 
 function parseViewTab(searchParams: URLSearchParams): ViewTab {
-  if (searchParams.get("tab") === "matrix" || searchParams.get("view") === "summary") {
-    return "summary";
+  if (searchParams.get("view") === "detailed" || searchParams.get("tab") === "detailed") {
+    return "detailed";
   }
-  return "detailed";
+  return "summary";
 }
 
 const UPLOAD_LOAD_HINT =
@@ -160,6 +161,7 @@ export function UploadPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const channelTab = parseChannelTab(searchParams.get("channel"));
   const viewTab = parseViewTab(searchParams);
+  const { data: navBadges } = useNavBadges();
   const [matrixFlagged, setMatrixFlagged] = useState(0);
   const matrixRefreshRef = useRef<(() => void) | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -201,11 +203,9 @@ export function UploadPage() {
   const mailboxes = canRenderTenantOwnedUi(tenantScope) && !mailboxesBlocked ? mailboxQueryData : [];
 
   const selectedMailboxId = useMemo(() => {
-    if (channelTab !== "email" || source === "all") return null;
+    if (source === "all") return null;
     return mailboxes.find((mb) => mb.email === source)?.id ?? null;
-  }, [channelTab, source, mailboxes]);
-
-  const listEnabled = canRenderTenantOwnedUi(tenantScope);
+  }, [source, mailboxes]);
 
   const {
     data: listData,
@@ -219,8 +219,10 @@ export function UploadPage() {
     source,
     q: debouncedSearch,
     mailboxId: selectedMailboxId,
-    captureSource: channelTab,
-    enabled: listEnabled,
+    enabled:
+      canRenderTenantOwnedUi(tenantScope) &&
+      viewTab === "detailed" &&
+      channelTab === "upload",
     processingIds,
   });
 
@@ -262,19 +264,13 @@ export function UploadPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [source, debouncedSearch, channelTab]);
+  }, [source, debouncedSearch]);
 
-  // Clear merged rows only on page/source/channel changes. Search keeps previous rows via
+  // Clear merged rows only on page/source changes. Search keeps previous rows via
   // keepPreviousData so the list (and search input) do not unmount mid-keystroke.
   useEffect(() => {
     prevMergedRef.current = [];
-  }, [page, source, channelTab]);
-
-  useEffect(() => {
-    if (channelTab !== "email") {
-      setSource("all");
-    }
-  }, [channelTab]);
+  }, [page, source]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -341,6 +337,17 @@ export function UploadPage() {
     setDrawerOpen(true);
   };
 
+  const docsPerChannel = useMemo(() => {
+    let whatsapp = 0;
+    let viber = 0;
+    for (const inv of captured) {
+      const src = (inv.capture_source ?? "").toLowerCase();
+      if (src.includes("whatsapp")) whatsapp += 1;
+      if (src.includes("viber")) viber += 1;
+    }
+    return { whatsapp, viber };
+  }, [captured]);
+
   const setChannelTab = (tab: ChannelTab) => {
     const next = new URLSearchParams(searchParams);
     if (tab === "upload") next.delete("channel");
@@ -351,10 +358,12 @@ export function UploadPage() {
   const setViewTab = (tab: ViewTab) => {
     const next = new URLSearchParams(searchParams);
     next.delete("tab");
-    if (tab === "summary") next.set("view", "summary");
+    if (tab === "detailed") next.set("view", "detailed");
     else next.delete("view");
     setSearchParams(next, { replace: true });
   };
+
+  const inboxCount = navBadges?.inbox_count ?? 0;
 
   async function sendMailboxInvite(body: {
     email: string;
@@ -578,76 +587,78 @@ export function UploadPage() {
     await runUpload(selected);
   }
 
+  const headerActions =
+    channelTab === "email" && isAdmin ? (
+      <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
+        <Plus className="h-4 w-4 mr-1.5 shrink-0" />
+        Add mailbox
+      </Button>
+    ) : channelTab === "upload" && viewTab === "summary" ? (
+      <Button
+        variant="surface"
+        size="sm"
+        data-testid="button-matrix-refresh"
+        onClick={() => matrixRefreshRef.current?.()}
+      >
+        <RefreshCw className="h-4 w-4 mr-1" />
+        Refresh
+      </Button>
+    ) : null;
+
   const workspaceShell = (content: ReactNode) => (
     <div>
       <PageHeader
-        actions={
-          channelTab === "email" && isAdmin ? (
-            <Button data-testid="button-add-mailbox" onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-1.5 shrink-0" />
-              Add mailbox
-            </Button>
-          ) : viewTab === "summary" ? (
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="button-matrix-refresh"
-              onClick={() => matrixRefreshRef.current?.()}
-            >
-              <RefreshCw className="h-4 w-4 mr-1" />
-              Refresh
-            </Button>
-          ) : null
+        actions={headerActions}
+        headline={
+          <PageTabs
+            value={channelTab}
+            onChange={(value) => setChannelTab(value as ChannelTab)}
+            data-testid="upload-channel-tabs"
+            tabs={[
+              {
+                value: "upload",
+                testid: "tab-upload-upload",
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    <CloudUpload className="h-4 w-4 text-primary" />
+                    Upload
+                  </span>
+                ),
+              },
+              {
+                value: "email",
+                testid: "tab-upload-email",
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    <IntegrationBrandIcon id="graph" size={16} />
+                    Email
+                  </span>
+                ),
+              },
+              {
+                value: "whatsapp",
+                testid: "tab-upload-whatsapp",
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    <IntegrationBrandIcon id="whatsapp" size={16} />
+                    WhatsApp
+                  </span>
+                ),
+              },
+              {
+                value: "viber",
+                testid: "tab-upload-viber",
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    <IntegrationBrandIcon id="viber" size={16} />
+                    Viber
+                  </span>
+                ),
+              },
+            ]}
+          />
         }
-      >
-        <PageTabs
-          value={channelTab}
-          onChange={(value) => setChannelTab(value as ChannelTab)}
-          data-testid="upload-channel-tabs"
-          tabs={[
-            {
-              value: "upload",
-              testid: "tab-upload-upload",
-              label: (
-                <span className="inline-flex items-center gap-2">
-                  <CloudUpload className="h-4 w-4 text-primary" />
-                  Upload
-                </span>
-              ),
-            },
-            {
-              value: "email",
-              testid: "tab-upload-email",
-              label: (
-                <span className="inline-flex items-center gap-2">
-                  <IntegrationBrandIcon id="graph" size={16} />
-                  Email
-                </span>
-              ),
-            },
-            {
-              value: "whatsapp",
-              testid: "tab-upload-whatsapp",
-              label: (
-                <span className="inline-flex items-center gap-2">
-                  <IntegrationBrandIcon id="whatsapp" size={16} />
-                  WhatsApp
-                </span>
-              ),
-            },
-            {
-              value: "viber",
-              testid: "tab-upload-viber",
-              label: (
-                <span className="inline-flex items-center gap-2">
-                  <IntegrationBrandIcon id="viber" size={16} />
-                  Viber
-                </span>
-              ),
-            },
-          ]}
-        />
-      </PageHeader>
+      />
       {channelTab === "email" ? (
         <UploadEmailChannelPanel
           mailboxes={mailboxes}
@@ -665,9 +676,9 @@ export function UploadPage() {
           isPollable={isMailboxPollable}
         />
       ) : channelTab === "whatsapp" ? (
-        <UploadWhatsappChannelPanel docCount={totalInvoices} />
+        <UploadWhatsappChannelPanel docCount={docsPerChannel.whatsapp} />
       ) : channelTab === "viber" ? (
-        <UploadViberChannelPanel docCount={totalInvoices} />
+        <UploadViberChannelPanel docCount={docsPerChannel.viber} />
       ) : null}
 
       {channelTab === "upload" ? (
@@ -680,6 +691,14 @@ export function UploadPage() {
             files={uploadFiles}
             onFiles={(files) => void runUpload(files)}
             onBrowse={() => uploadInputRef.current?.click()}
+          />
+          <DocumentMatrixPanel
+            embedded
+            showControls={false}
+            showTable={false}
+            showLegend={false}
+            onFlaggedCount={setMatrixFlagged}
+            refreshRef={matrixRefreshRef}
           />
           <input
             ref={uploadInputRef}
@@ -709,57 +728,51 @@ export function UploadPage() {
           )}
         </>
       ) : null}
-      <DocumentMatrixPanel
-        embedded
-        showControls={false}
-        showTable={false}
-        showLegend={false}
-        captureSource={channelTab}
-        onFlaggedCount={setMatrixFlagged}
-        refreshRef={matrixRefreshRef}
-      />
-      <PageTabs
-        className="mb-5"
-        value={viewTab}
-        onChange={(value) => setViewTab(value as ViewTab)}
-        data-testid="upload-view-tabs"
-        tabs={[
-          {
-            value: "summary",
-            testid: "tab-upload-summary",
-            label: (
-              <>
-                Summary
-                {matrixFlagged > 0 ? (
-                  <Badge variant="destructive" className="ml-1.5 tnum font-normal">
-                    {matrixFlagged}
-                  </Badge>
-                ) : null}
-              </>
-            ),
-          },
-          {
-            value: "detailed",
-            testid: "tab-upload-detailed",
-            label: (
-              <>
-                Detailed
-                {totalInvoices > 0 ? (
-                  <Badge variant="secondary" className="ml-1.5 tnum font-normal">
-                    {totalInvoices}
-                  </Badge>
-                ) : null}
-              </>
-            ),
-          },
-        ]}
-      />
+      {channelTab === "upload" ? (
+        <PageTabs
+          className="mb-5"
+          value={viewTab}
+          onChange={(value) => setViewTab(value as ViewTab)}
+          data-testid="upload-view-tabs"
+          tabs={[
+            {
+              value: "summary",
+              testid: "tab-upload-summary",
+              label: (
+                <>
+                  Summary
+                  {matrixFlagged > 0 ? (
+                    <Badge variant="destructive" className="ml-1.5 tnum font-normal">
+                      {matrixFlagged}
+                    </Badge>
+                  ) : null}
+                </>
+              ),
+            },
+            {
+              value: "detailed",
+              testid: "tab-upload-detailed",
+              label: (
+                <>
+                  Detailed
+                  {inboxCount > 0 ? (
+                    <Badge variant="secondary" className="ml-1.5 tnum font-normal">
+                      {inboxCount}
+                    </Badge>
+                  ) : null}
+                </>
+              ),
+            },
+          ]}
+        />
+      ) : null}
       {content}
     </div>
   );
 
   if (
     error &&
+    channelTab === "upload" &&
     viewTab === "detailed" &&
     captured.length === 0 &&
     !loading
@@ -777,37 +790,18 @@ export function UploadPage() {
     );
   }
 
-  const emptyHint =
-    channelTab === "upload"
-      ? "Upload documents from the drop zone above, or switch to Email, WhatsApp, or Viber to capture from those channels."
-      : channelTab === "email"
-        ? "Connect a mailbox and fetch mail to capture documents here."
-        : channelTab === "whatsapp"
-          ? "Connect WhatsApp to capture documents here."
-          : "Connect Viber to capture documents here.";
-
-  const emptyTitle =
-    channelTab === "upload"
-      ? "No documents yet"
-      : channelTab === "email"
-        ? "No email documents yet"
-        : channelTab === "whatsapp"
-          ? "No WhatsApp documents yet"
-          : "No Viber documents yet";
-
   return workspaceShell(
-    viewTab === "summary" ? (
+    channelTab === "upload" && viewTab === "summary" ? (
       <>
         <DocumentMatrixPanel
           embedded
           showKpis={false}
-          captureSource={channelTab}
           onFlaggedCount={setMatrixFlagged}
           onGoUpload={() => setViewTab("detailed")}
           refreshRef={matrixRefreshRef}
         />
       </>
-    ) : (
+    ) : channelTab !== "upload" ? null : (
       <>
       <ConnectMailboxDialog
         open={addOpen}
@@ -827,10 +821,14 @@ export function UploadPage() {
         <InlineTableSkeleton rows={8} columns={6} />
       ) : !showCapturedChrome ? (
         <EmptyState
-          title={emptyTitle}
-          hint={emptyHint}
+          title="No documents yet"
+          hint={
+            channelTab === "upload"
+              ? "Upload documents from the Upload tab, or capture documents from Email, WhatsApp, or Viber."
+              : "Capture documents from Email, WhatsApp, or Viber. To upload files, switch to the Upload tab."
+          }
           action={
-            channelTab === "email" && isAdmin ? (
+            isAdmin ? (
               <Button size="sm" onClick={() => setAddOpen(true)}>
                 <Plus className="h-4 w-4 mr-1" />
                 Add mailbox
@@ -867,24 +865,22 @@ export function UploadPage() {
                 { value: "needs_review", label: "Needs review only" },
               ]}
             />
-            {channelTab === "email" ? (
-              <Select
-                value={source}
-                onValueChange={(value) => {
-                  setSource(value);
-                  setPage(1);
-                }}
-                data-testid="select-source-filter"
-                className="w-full sm:w-[220px] h-8 text-xs"
-                options={[
-                  { value: "all", label: "All mailboxes" },
-                  ...mailboxes.map((mb) => ({
-                    value: mb.email,
-                    label: mailboxNickname(mb),
-                  })),
-                ]}
-              />
-            ) : null}
+            <Select
+              value={source}
+              onValueChange={(value) => {
+                setSource(value);
+                setPage(1);
+              }}
+              data-testid="select-source-filter"
+              className="w-full sm:w-[220px] h-8 text-xs"
+              options={[
+                { value: "all", label: "All sources" },
+                ...mailboxes.map((mb) => ({
+                  value: mb.email,
+                  label: mailboxNickname(mb),
+                })),
+              ]}
+            />
             </div>
           </div>
 
@@ -915,11 +911,13 @@ export function UploadPage() {
           </div>
 
           <div className="hidden md:block overflow-x-auto">
-            <table className="w-full min-w-[980px] text-sm">
+            <table className="w-full min-w-[1180px] text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
                   <th className="px-4 py-2 font-medium">Document</th>
+                  <th className="px-3 py-2 font-medium">Type</th>
                   <th className="px-3 py-2 font-medium">{counterpartyColumnLabel({ mixed: true })}</th>
+                  <th className="px-3 py-2 font-medium">Source</th>
                   <th className="px-3 py-2 font-medium">Route</th>
                   <th className="px-3 py-2 font-medium">GL account</th>
                   <th className="px-3 py-2 font-medium">Stage</th>
@@ -940,7 +938,7 @@ export function UploadPage() {
               <tbody>
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
                       {hasActiveSearch
                         ? "No documents match your search."
                         : "No documents match this filter."}

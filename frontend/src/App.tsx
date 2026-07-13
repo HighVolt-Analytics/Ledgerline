@@ -6,7 +6,7 @@ import { Layout } from "@/components/Layout";
 import { SuperAdminLayout } from "@/components/SuperAdminLayout";
 import { SuperAdminRoute } from "@/components/SuperAdminRoute";
 import { TenantRoute } from "@/components/TenantRoute";
-import { PageLoader } from "@/components/PageLoader";
+import { PageLoader, type PageLoaderVariant } from "@/components/PageLoader";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { getRouterBasename } from "@/lib/routerBasename";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -113,8 +113,14 @@ const TenantSettingsPage = lazy(() =>
   }))
 );
 
-function LazyPage({ children }: { children: React.ReactNode }) {
-  return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
+function LazyPage({
+  children,
+  loaderVariant,
+}: {
+  children: React.ReactNode;
+  loaderVariant?: PageLoaderVariant;
+}) {
+  return <Suspense fallback={<PageLoader variant={loaderVariant} />}>{children}</Suspense>;
 }
 
 const routerBasename = getRouterBasename();
@@ -236,7 +242,7 @@ export default function App() {
               path="dossiers/:dossierId"
               element={
                 <ModuleRoute moduleKey="dossiers">
-                  <LazyPage>
+                  <LazyPage loaderVariant="dossier-detail">
                     <DossierDetailPage />
                   </LazyPage>
                 </ModuleRoute>

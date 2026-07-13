@@ -490,8 +490,7 @@ export function PaymentsPage() {
               <Button
                 type="button"
                 size="sm"
-                variant="ghost"
-                className="h-7 text-xs px-2"
+                variant="surface"
                 onClick={() => void handleRefreshStripeStatus()}
                 disabled={stripeConnectBusy}
                 data-testid="button-refresh-stripe-status"

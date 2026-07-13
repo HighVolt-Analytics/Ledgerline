@@ -6,6 +6,7 @@ import {
   RouteTargetBadge,
 } from "@/components/inbox/EvaluationStatusBadge";
 import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
+import { InboxSourceBadge } from "@/components/inbox/InboxSourceBadge";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { UploadColumnCell } from "@/components/upload/UploadColumnCell";
 import { documentDisplayRef, money } from "@/lib/format";
@@ -14,6 +15,7 @@ import {
   counterpartyMatchLabel,
   counterpartyName,
   invoiceCounterpartyConfidence,
+  invoiceSourceKind,
   invoiceValidationConfidence,
   vendorMatchApplicable,
 } from "@/lib/invoice";
@@ -41,6 +43,7 @@ function rowColumnModes(
   const opts = { processingIds, documentTypes };
   return {
     documentMeta: uploadColumnDisplayMode(inv, "documentMeta", opts),
+    documentType: uploadColumnDisplayMode(inv, "documentType", opts),
     counterparty: uploadColumnDisplayMode(inv, "counterparty", opts),
     route: uploadColumnDisplayMode(inv, "route", opts),
     glAccount: uploadColumnDisplayMode(inv, "glAccount", opts),
@@ -52,6 +55,20 @@ function rowColumnModes(
 }
 
 function DocumentMetaLine({
+  inv,
+  mode,
+}: {
+  inv: Invoice;
+  mode: ColumnDisplayMode;
+}) {
+  return (
+    <UploadColumnCell mode={mode} className="text-xs text-muted-foreground tnum">
+      {inv.invoice_no ? <span className="truncate">{inv.invoice_no}</span> : null}
+    </UploadColumnCell>
+  );
+}
+
+function DocumentTypeLine({
   inv,
   documentTypes,
   mode,
@@ -66,17 +83,14 @@ function DocumentMetaLine({
   const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
 
   return (
-    <UploadColumnCell mode={mode} className="text-xs text-muted-foreground tnum">
-      <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
-        {inv.invoice_no ? <span className="truncate">{inv.invoice_no}</span> : null}
-        <DocumentTypeChip
-          code={code}
-          label={typeLabel}
-          title={typeLabel}
-          purchaseKind={inv.purchase_document_type}
-          documentTypes={documentTypes}
-        />
-      </span>
+    <UploadColumnCell mode={mode}>
+      <DocumentTypeChip
+        code={code}
+        label={typeLabel}
+        title={typeLabel}
+        purchaseKind={inv.purchase_document_type}
+        documentTypes={documentTypes}
+      />
     </UploadColumnCell>
   );
 }
@@ -105,7 +119,10 @@ export function UploadInvoiceMobileRow({
       <div className="flex items-start justify-between gap-3 min-w-0">
         <div className="min-w-0 flex-1">
           <div className="font-medium tnum">{documentDisplayRef(inv)}</div>
-          <DocumentMetaLine inv={inv} documentTypes={documentTypes} mode={modes.documentMeta} />
+          <DocumentMetaLine inv={inv} mode={modes.documentMeta} />
+          <div className="mt-1">
+            <DocumentTypeLine inv={inv} documentTypes={documentTypes} mode={modes.documentType} />
+          </div>
           <UploadColumnCell mode={modes.counterparty} className="text-sm truncate mt-0.5 block">
             {counterpartyName(inv)}
           </UploadColumnCell>
@@ -122,6 +139,7 @@ export function UploadInvoiceMobileRow({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1.5 mt-2">
+        <InboxSourceBadge kind={invoiceSourceKind(inv)} />
         <UploadColumnCell mode={modes.route}>
           <RouteTargetBadge route={inv.route_target} />
         </UploadColumnCell>
@@ -179,10 +197,16 @@ export function UploadInvoiceTableRow({
     >
       <td className="px-4 py-2.5">
         <div className="font-medium tnum">{documentDisplayRef(inv)}</div>
-        <DocumentMetaLine inv={inv} documentTypes={documentTypes} mode={modes.documentMeta} />
+        <DocumentMetaLine inv={inv} mode={modes.documentMeta} />
+      </td>
+      <td className="px-3 py-2.5 whitespace-nowrap">
+        <DocumentTypeLine inv={inv} documentTypes={documentTypes} mode={modes.documentType} />
       </td>
       <td className="px-3 py-2.5 max-w-[160px] truncate">
         <UploadColumnCell mode={modes.counterparty}>{counterpartyName(inv)}</UploadColumnCell>
+      </td>
+      <td className="px-3 py-2.5">
+        <InboxSourceBadge kind={invoiceSourceKind(inv)} />
       </td>
       <td className="px-3 py-2.5">
         <UploadColumnCell mode={modes.route}>

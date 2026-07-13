@@ -33,9 +33,7 @@
   flex-shrink: 0;
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: 0.625rem;
-  background-color: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
+  background: transparent;
 }
 
 .auth-brand-text {

@@ -65,6 +65,7 @@ export function OnboardingChecklistProvider({
       setState(next);
       if (next.complete) {
         localStorage.setItem(STORAGE_KEY, "complete");
+        setExpanded(false);
         await fetch(`${resolveApiBase()}/api/tenants/current/setup-checklist/complete`, {
           method: "POST",
           headers: getScopedAuthHeadersForToken(accessToken),
@@ -112,10 +113,7 @@ export function notifyOnboardingStatusRefresh() {
 export function OnboardingChecklistWidget() {
   const { state, loading, expanded, setExpanded } = useOnboardingChecklist();
 
-  // Always render the minimized "Get started" button so it never disappears due to
-  // transient loading / API errors. When state is unavailable we show 0% until it loads.
-  // Note: we intentionally do NOT hide the minimized button based on `state.show`.
-  // The server can still choose to hide the expanded panel contents by returning no items.
+  // Minimized "Get set up" until required steps reach 100%, then the widget is removed.
 
   const items = state?.items ?? [];
   const doneCount = items.filter((i) => i.done && !i.optional).length;
@@ -126,6 +124,20 @@ export function OnboardingChecklistWidget() {
       ? Math.round((doneCount / totalRequired) * 100)
       : state?.progress ?? (loading ? 0 : 0);
 
+  const isComplete =
+    state?.complete === true ||
+    state?.show === false ||
+    (totalRequired > 0 && doneCount >= totalRequired) ||
+    progressPct >= 100;
+
+  const locallyDismissed =
+    typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY) === "complete";
+
+  // Hide permanently once required setup hits 100%.
+  if (locallyDismissed || isComplete) {
+    return null;
+  }
+
   const ringSize = 34;
   const ringStroke = 4;
   const r = (ringSize - ringStroke) / 2;
@@ -133,15 +145,11 @@ export function OnboardingChecklistWidget() {
   const dash = (progressPct / 100) * c;
 
   const ui = (
-    <div
-      className="fixed bottom-4 right-4 z-40 max-w-[calc(100vw-2rem)]"
-      // Fallback styles so the button is visible even if Tailwind isn't generating CSS.
-      style={{ position: "fixed", right: 16, bottom: 16, zIndex: 40, maxWidth: "calc(100vw - 2rem)" }}
-    >
+    <div className="onboarding-checklist-anchor">
       {expanded ? (
-        <div className="onboarding-get-started-surface w-80 rounded-xl border shadow-lg overflow-hidden">
+        <div className="onboarding-get-started-surface onboarding-checklist-panel">
           <div className="onboarding-get-started-surface__header px-4 py-3 border-b">
-            <div className="flex items-center gap-3">
+            <div className="onboarding-checklist-panel__header-row">
               <button
                 type="button"
                 className="onboarding-get-started-surface__muted text-sm hover:opacity-80"
@@ -164,60 +172,59 @@ export function OnboardingChecklistWidget() {
                 ✕
               </button>
             </div>
-            <div className="mt-2 flex items-center gap-3">
-              <div className="onboarding-get-started-surface__track flex-1 h-2 rounded-full overflow-hidden">
+            <div className="onboarding-checklist-panel__progress-row">
+              <div className="onboarding-get-started-surface__track onboarding-checklist-panel__progress-track">
                 <div
-                  className="h-full rounded-full"
-                  style={{ width: `${progressPct}%`, backgroundColor: "hsl(var(--nav-accent))" }}
+                  className="onboarding-checklist-panel__progress-fill"
+                  style={{ width: `${progressPct}%` }}
                 />
               </div>
-              <div className="onboarding-get-started-surface__muted text-xs tnum w-10 text-right">
+              <div className="onboarding-get-started-surface__muted onboarding-checklist-panel__progress-label tnum">
                 {progressPct}%
               </div>
             </div>
           </div>
-          <ul className="max-h-72 overflow-y-auto onboarding-get-started-surface__divide">
-            {(state?.items ?? []).map((item) => (
-              <li key={item.id}>
-                <Link
-                  to={withRouterBasename(item.route)}
-                  className="onboarding-get-started-surface__row flex items-start justify-between gap-3 px-4 py-2.5 text-sm"
-                  onClick={() => setExpanded(false)}
-                >
-                  <span className="min-w-0 flex items-start gap-2">
-                    <span
-                      className={item.done ? "text-[hsl(var(--nav-accent))]" : "onboarding-get-started-surface__muted"}
-                      aria-hidden
-                    >
-                      {item.done ? "●" : "○"}
-                    </span>
-                    <span className={cn("min-w-0", item.done && "onboarding-get-started-surface__muted line-through")}>
-                      {item.label}
-                      {item.optional ? " (optional)" : ""}
-                    </span>
-                  </span>
-                  <span className="onboarding-get-started-surface__muted" aria-hidden>
-                    ›
-                  </span>
-                </Link>
+          <ul className="onboarding-checklist-panel__list onboarding-get-started-surface__divide">
+            {items.length === 0 ? (
+              <li className="onboarding-get-started-surface__muted px-4 py-3 text-sm">
+                {loading ? "Loading checklist…" : "No setup steps to show right now."}
               </li>
-            ))}
+            ) : (
+              items.map((item) => (
+                <li key={item.id}>
+                  <Link
+                    to={withRouterBasename(item.route)}
+                    className="onboarding-get-started-surface__row onboarding-checklist-panel__item-link"
+                    onClick={() => setExpanded(false)}
+                  >
+                    <span className="onboarding-checklist-panel__item-main">
+                      <span
+                        className={item.done ? "text-[hsl(var(--nav-accent))]" : "onboarding-get-started-surface__muted"}
+                        aria-hidden
+                      >
+                        {item.done ? "●" : "○"}
+                      </span>
+                      <span className={cn("min-w-0", item.done && "onboarding-get-started-surface__muted line-through")}>
+                        {item.label}
+                        {item.optional ? " (optional)" : ""}
+                      </span>
+                    </span>
+                    <span className="onboarding-get-started-surface__muted" aria-hidden>
+                      ›
+                    </span>
+                  </Link>
+                </li>
+              ))
+            )}
           </ul>
         </div>
       ) : (
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="onboarding-get-started-surface inline-flex w-[260px] flex-col items-stretch gap-2 rounded-xl border px-4 py-3 shadow-lg hover:opacity-95"
-          style={{
-            display: "inline-flex",
-            width: 260,
-            padding: "12px 16px",
-            borderRadius: 14,
-            boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
-          }}
+          className="onboarding-get-started-surface onboarding-checklist-trigger"
         >
-          <div className="flex items-center gap-3">
+          <div className="onboarding-checklist-trigger__row">
             <svg
               width={18}
               height={18}

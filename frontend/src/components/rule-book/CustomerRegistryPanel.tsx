@@ -135,7 +135,7 @@ export function CustomerRegistryPanel() {
           GL defaults and billing live under Customer masters.
         </p>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => void load({ fresh: true })}>
+          <Button size="sm" variant="surface" onClick={() => void load({ fresh: true })}>
             <RefreshCw className="h-4 w-4 mr-1" />
             Refresh
           </Button>

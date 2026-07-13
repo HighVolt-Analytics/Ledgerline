@@ -15,11 +15,17 @@ import { Button } from "@/components/ui/button";
 import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
-import { counterpartyColumnLabel, counterpartyName, invoiceMatchesCaptureChannel } from "@/lib/invoice";
+import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
+import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
+import {
+  effectiveDocumentTypeCode,
+  invoiceDocumentTypeDisplayLabel,
+} from "@/lib/documentTypeResolve";
 import { CounterpartyColumnHeaderLink } from "@/components/upload/CounterpartyCreationsLink";
 import { MATRIX_STAGES, matrixStageSettled, type MatrixCellState, type MatrixStage } from "@/lib/matrix";
 import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
 import type { MatrixFlagType, MatrixPaymentStatus } from "@/lib/v4MatrixMockData";
+import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
 import { cn } from "@/lib/cn";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { approveAndProcess, validateInvoiceReadyForApproval } from "@/lib/invoiceActions";
@@ -130,13 +136,31 @@ function rowFromApi(row: MatrixRow): MatrixTableRow {
   };
 }
 
+function matrixDocumentTypeChip(
+  inv: Invoice,
+  documentTypes?: DocumentTypeDefinition[] | null
+) {
+  const code = documentTypes?.length
+    ? effectiveDocumentTypeCode(inv, documentTypes)
+    : (inv.document_type_code ?? "").trim();
+  const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
+  return (
+    <DocumentTypeChip
+      code={code}
+      label={typeLabel}
+      title={typeLabel}
+      purchaseKind={inv.purchase_document_type}
+      documentTypes={documentTypes}
+    />
+  );
+}
+
 export function DocumentMatrixPanel({
   embedded = false,
   showKpis = true,
   showControls = true,
   showTable = true,
   showLegend = true,
-  captureSource,
   onFlaggedCount,
   onGoUpload,
   refreshRef,
@@ -146,14 +170,13 @@ export function DocumentMatrixPanel({
   showControls?: boolean;
   showTable?: boolean;
   showLegend?: boolean;
-  /** When set, only show documents for this Upload channel tab. */
-  captureSource?: "upload" | "email" | "whatsapp" | "viber";
   onFlaggedCount?: (count: number) => void;
   onGoUpload?: () => void;
   refreshRef?: MutableRefObject<(() => void) | null>;
 }) {
   const { user } = useAuth();
   const { data: ruleBook } = useRuleBookConfig();
+  const documentTypes = ruleBook?.documentTypes;
   const queryClient = useQueryClient();
 
   const invalidateManagementCaches = useCallback(async () => {
@@ -257,16 +280,10 @@ export function DocumentMatrixPanel({
     return () => clearTimeout(t);
   }, [toast]);
 
-  const matrixRows = useMemo<MatrixTableRow[]>(() => {
-    const scoped = captureSource
-      ? matrixData.filter((row) => invoiceMatchesCaptureChannel(row.invoice, captureSource))
-      : matrixData;
-    return sortMatrixRowsNewestFirst(scoped).map(rowFromApi);
-  }, [matrixData, captureSource]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [captureSource]);
+  const matrixRows = useMemo<MatrixTableRow[]>(
+    () => sortMatrixRowsNewestFirst(matrixData).map(rowFromApi),
+    [matrixData]
+  );
 
   const hasActiveProcessing = useMemo(
     () => matrixRows.some((row) => isInvoicePipelineActive(row.inv)),
@@ -423,28 +440,14 @@ export function DocumentMatrixPanel({
 
       {loading && matrixData.length === 0 ? (
         <TableSkeleton rows={6} columns={5} />
-      ) : matrixRows.length === 0 && showTable ? (
+      ) : matrixData.length === 0 ? (
         <EmptyState
-          title={
-            captureSource === "email"
-              ? "No email documents in the matrix"
-              : captureSource === "whatsapp"
-                ? "No WhatsApp documents in the matrix"
-                : captureSource === "viber"
-                  ? "No Viber documents in the matrix"
-                  : captureSource === "upload"
-                    ? "No upload documents in the matrix"
-                    : "No documents in the matrix"
-          }
-          hint={
-            captureSource && captureSource !== "upload"
-              ? "Documents captured on this channel will appear here."
-              : "Connect a mailbox and fetch documents, or upload an invoice."
-          }
+          title="No documents in the matrix"
+          hint="Connect a mailbox and fetch documents, or upload an invoice."
           action={
             onGoUpload ? (
               <Button onClick={onGoUpload} data-testid="button-matrix-go-upload">
-                {captureSource && captureSource !== "upload" ? "View detailed list" : "Go to Upload"}
+                Go to Upload
               </Button>
             ) : undefined
           }
@@ -538,7 +541,8 @@ export function DocumentMatrixPanel({
                     <div className="flex items-start justify-between gap-3 min-w-0">
                       <div className="min-w-0 flex-1">
                         <div className="font-medium tnum">{docRef}</div>
-                        <div className="text-xs text-muted-foreground truncate">
+                        <div className="mt-1">{matrixDocumentTypeChip(inv, documentTypes)}</div>
+                        <div className="text-xs text-muted-foreground truncate mt-1">
                           {inv.invoice_no ?? "—"} · {counterpartyName(inv)}
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-1">
@@ -581,6 +585,7 @@ export function DocumentMatrixPanel({
                     <th className="px-4 py-2.5 text-left font-medium sticky left-0 bg-card z-10">
                       Document
                     </th>
+                    <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">Type</th>
                     <th className="px-3 py-2.5 text-left font-medium">
                       <CounterpartyColumnHeaderLink
                         label={counterpartyColumnLabel({ mixed: true })}
@@ -602,7 +607,7 @@ export function DocumentMatrixPanel({
                   {pagedRows.length === 0 && (
                     <tr>
                       <td
-                        colSpan={MATRIX_STAGES.length + 5}
+                        colSpan={MATRIX_STAGES.length + 6}
                         className="matrix-table-empty text-sm"
                       >
                         No documents match your search.
@@ -624,6 +629,9 @@ export function DocumentMatrixPanel({
                           <div className="text-xs text-muted-foreground tnum">
                             {inv.invoice_no ?? "—"}
                           </div>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {matrixDocumentTypeChip(inv, documentTypes)}
                         </td>
                         <td className="px-3 py-2 max-w-[150px] truncate text-muted-foreground">
                           {counterpartyName(inv)}

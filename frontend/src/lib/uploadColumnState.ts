@@ -12,6 +12,7 @@ import { buildMatrixCells, type MatrixStage } from "@/lib/matrix";
 
 export type UploadListColumnId =
   | "documentMeta"
+  | "documentType"
   | "counterparty"
   | "route"
   | "glAccount"
@@ -24,6 +25,7 @@ export type ColumnDisplayMode = "value" | "processing" | "empty";
 
 const COLUMN_STAGE: Record<UploadListColumnId, MatrixStage> = {
   documentMeta: "Parsed",
+  documentType: "Parsed",
   counterparty: "Parsed",
   route: "Parsed",
   glAccount: "Mapped",
@@ -58,9 +60,10 @@ export function columnHasDisplayValue(
 ): boolean {
   switch (column) {
     case "documentMeta":
+      return Boolean(inv.invoice_no?.trim());
+    case "documentType":
       return Boolean(
-        inv.invoice_no?.trim() ||
-          inv.document_type_code?.trim() ||
+        inv.document_type_code?.trim() ||
           inv.purchase_document_type?.trim()
       );
     case "counterparty": {

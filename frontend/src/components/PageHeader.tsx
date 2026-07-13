@@ -6,37 +6,49 @@ export function PageHeader({
   subtitle,
   eyebrow,
   actions,
+  headline,
   children,
 }: {
   title?: string;
   subtitle?: string;
   eyebrow?: string;
   actions?: ReactNode;
+  /** Replaces title/subtitle in the headline row (e.g. page-level tabs). */
+  headline?: ReactNode;
   /** Tabs or toolbar rendered inside the sticky page header region */
   children?: ReactNode;
 }) {
-  const hasIntro = Boolean(title || eyebrow || subtitle);
+  const hasIntro = Boolean(title || eyebrow || subtitle || headline);
   const hasHeaderRow = hasIntro || actions;
 
   return (
     <div className="page-top-sticky">
       {hasHeaderRow ? (
-        <div className="page-header flex flex-wrap items-start justify-between gap-4">
+        <div
+          className={cn(
+            "page-header flex flex-wrap justify-between gap-4",
+            headline ? "items-end" : "items-start"
+          )}
+        >
           {hasIntro ? (
             <div className="page-header__main min-w-0 flex-1">
               {eyebrow ? (
                 <p className={cn("type-caption font-medium text-muted-foreground mb-1.5")}>{eyebrow}</p>
               ) : null}
-              <div className="page-header__intro">
-                {title ? (
-                  <h1 className="page-header__headline type-headline text-foreground">{title}</h1>
-                ) : null}
-                {subtitle ? (
-                  <p className={cn("page-header__subline text-muted-foreground max-w-3xl")}>
-                    {subtitle}
-                  </p>
-                ) : null}
-              </div>
+              {headline ? (
+                <div className="page-header__headline-tabs">{headline}</div>
+              ) : (
+                <div className="page-header__intro">
+                  {title ? (
+                    <h1 className="page-header__headline type-headline text-foreground">{title}</h1>
+                  ) : null}
+                  {subtitle ? (
+                    <p className={cn("page-header__subline text-muted-foreground max-w-3xl")}>
+                      {subtitle}
+                    </p>
+                  ) : null}
+                </div>
+              )}
             </div>
           ) : (
             <div className="min-w-0 flex-1" aria-hidden />

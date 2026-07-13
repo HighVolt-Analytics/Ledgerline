@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Link2,
+  Pin,
   PinOff,
   Plug,
   Receipt,
@@ -162,7 +163,8 @@ const MOBILE_NAV: NavItem[] = [
 ];
 
 const TRUST = ["SOC 2 Type II", "ISO 27001", "Bank-level encryption", "7-year retention"];
-const PIN_STORAGE_KEY = "ledgerline_sidebar_pinned";
+
+const SIDEBAR_PIN_STORAGE_KEY = "ledgerline_sidebar_pinned";
 
 function navTestId(label: string) {
   return `nav-${label.toLowerCase().replace(/\s+|&/g, "-")}`;
@@ -278,24 +280,16 @@ export function Layout() {
     sectionForPath(pathname)
   );
   const [searchOpen, setSearchOpen] = useState(false);
-  const [primaryPinned, setPrimaryPinned] = useState(() => {
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(() => {
     try {
-      return localStorage.getItem(PIN_STORAGE_KEY) !== "false";
+      return localStorage.getItem(SIDEBAR_PIN_STORAGE_KEY) === "true";
     } catch {
-      return true;
+      return false;
     }
   });
-  const sidebarCollapsed = !primaryPinned;
   const prevPathname = useRef(pathname);
   const accessToken = getAccessToken();
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(PIN_STORAGE_KEY, String(primaryPinned));
-    } catch {
-      /* ignore */
-    }
-  }, [primaryPinned]);
 
   const routeSection = sectionForPath(pathname);
 
@@ -307,6 +301,20 @@ export function Layout() {
     prevPathname.current = pathname;
   }, [pathname]);
 
+  useEffect(() => {
+    if (sidebarHovered || sidebarPinned) {
+      setExpandedSection(routeSection);
+    }
+  }, [sidebarHovered, sidebarPinned, routeSection]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_PIN_STORAGE_KEY, String(sidebarPinned));
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarPinned]);
+
   const handleSectionTopicClick = (id: string) => {
     setExpandedSection((prev) => (prev === id ? null : id));
   };
@@ -315,6 +323,15 @@ export function Layout() {
 
   const visibleSettingsGroups = useMemo(
     () => visibleGroupsForSection(SETTINGS_SECTION, canShowNavItem),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [enabledModules, permissions]
+  );
+
+  const visiblePrimarySections = useMemo(
+    () =>
+      MAIN_PRIMARY_SECTIONS.filter(
+        (section) => visibleGroupsForSection(section, canShowNavItem).length > 0
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [enabledModules, permissions]
   );
@@ -358,24 +375,6 @@ export function Layout() {
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabledModules, permissions]);
-
-  const collapsedNavItems = useMemo(
-    () => [
-      ...(canShowNavItem(DASHBOARD_ITEM)
-        ? [{ ...DASHBOARD_ITEM, level: "subfield" as const }]
-        : []),
-      ...MAIN_PRIMARY_SECTIONS.flatMap((section) =>
-        visibleGroupsForSection(section, canShowNavItem).flatMap((group) =>
-          group.items.map((item) => ({
-            ...item,
-            level: group.nested ? ("nested" as const) : ("subfield" as const),
-          }))
-        )
-      ),
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabledModules, permissions]
-  );
 
   const renderPrimaryNavItem = (
     item: NavItem,
@@ -450,95 +449,111 @@ export function Layout() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.navBadges() });
   };
 
-  const primarySidebarInner = (
+  const sidebarExpanded = sidebarPinned || sidebarHovered;
+
+  const toggleSidebarPin = () => {
+    if (sidebarPinned) {
+      setSidebarPinned(false);
+      setSidebarHovered(false);
+      return;
+    }
+    setSidebarPinned(true);
+    setSidebarHovered(true);
+  };
+
+  const renderSidebarBody = (iconOnly: boolean) => (
     <>
       <div className="primary-sidebar__header">
         <div className="primary-sidebar__header-brand">
           <div
-            className={cn("primary-sidebar__logo", sidebarCollapsed && "primary-sidebar__logo--collapsed")}
-            role={sidebarCollapsed ? "button" : undefined}
-            tabIndex={sidebarCollapsed ? 0 : undefined}
-            onClick={sidebarCollapsed ? () => setPrimaryPinned(true) : undefined}
-            onKeyDown={
-              sidebarCollapsed
-                ? (event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setPrimaryPinned(true);
-                    }
-                  }
-                : undefined
-            }
-            data-sidebar-tip={sidebarCollapsed ? "Expand sidebar" : undefined}
-            aria-label={sidebarCollapsed ? "Expand sidebar" : undefined}
+            className={cn("primary-sidebar__logo", iconOnly && "primary-sidebar__logo--collapsed")}
           >
-            <span className="text-sidebar-foreground shrink-0 primary-sidebar__logo-mark">
-              <Logo size={sidebarCollapsed ? 30 : 24} />
+            <span className="shrink-0 primary-sidebar__logo-mark">
+              <Logo size={iconOnly ? 30 : 24} />
             </span>
-            {!sidebarCollapsed && (
+            {!iconOnly && (
               <div className="primary-sidebar__logo-label flex flex-col min-w-0 leading-none">
                 <span className="font-semibold text-[13px] tracking-tight truncate">Ledgerline</span>
               </div>
             )}
           </div>
-          {!sidebarCollapsed && (
+          {!iconOnly && (
             <button
               type="button"
               className="primary-sidebar__pin"
-              onClick={() => setPrimaryPinned(false)}
-              aria-label="Collapse sidebar"
+              onClick={toggleSidebarPin}
+              aria-label={sidebarPinned ? "Unpin sidebar" : "Pin sidebar open"}
+              aria-pressed={sidebarPinned}
               data-testid="button-sidebar-collapse"
             >
-              <PinOff className="h-4 w-4" />
+              {sidebarPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
             </button>
           )}
         </div>
       </div>
 
-      {sidebarCollapsed ? (
-        <nav className="primary-sidebar__nav primary-sidebar__nav--collapsed-icons" aria-label="Main navigation">
-          <div className="primary-sidebar__collapsed-list">
-            {collapsedNavItems.map((item) => renderPrimaryNavItem(item, item.level, true))}
+      <nav className="primary-sidebar__nav" aria-label="Main sections">
+        {canShowNavItem(DASHBOARD_ITEM) && (
+          <NavLink
+            to={DASHBOARD_ITEM.to}
+            end
+            aria-label={iconOnly ? DASHBOARD_ITEM.label : undefined}
+            data-sidebar-tip={iconOnly ? DASHBOARD_ITEM.label : undefined}
+            data-testid={navTestId(DASHBOARD_ITEM.label)}
+            className={cn(
+              "primary-sidebar__topic primary-sidebar__topic--dashboard",
+              iconOnly && "primary-sidebar__topic--icon-only",
+              isNavItemActive(pathname, DASHBOARD_ITEM.to) && "primary-sidebar__topic--active"
+            )}
+          >
+            <DASHBOARD_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
+            {!iconOnly && (
+              <>
+                <span className="primary-sidebar__topic-label">{DASHBOARD_ITEM.label}</span>
+                <ChevronRight className="primary-sidebar__topic-chevron" aria-hidden />
+              </>
+            )}
+          </NavLink>
+        )}
+        {visiblePrimarySections.map(({ id, label, icon: Icon, groups }) => (
+          <div key={id} className="primary-sidebar__section">
+            <button
+              type="button"
+              className={cn(
+                "primary-sidebar__topic",
+                iconOnly && "primary-sidebar__topic--icon-only",
+                routeSection === id && "primary-sidebar__topic--active"
+              )}
+              onClick={iconOnly ? undefined : () => handleSectionTopicClick(id)}
+              aria-label={iconOnly ? label : undefined}
+              aria-current={!iconOnly && routeSection === id ? "true" : undefined}
+              aria-expanded={!iconOnly ? expandedSection === id : undefined}
+              data-sidebar-tip={iconOnly ? label : undefined}
+              data-testid={`nav-section-${id}`}
+            >
+              <Icon className="primary-sidebar__topic-icon" />
+              {!iconOnly && (
+                <>
+                  <span className="primary-sidebar__topic-label truncate">{label}</span>
+                  <ChevronRight
+                    className={cn(
+                      "primary-sidebar__topic-chevron",
+                      expandedSection === id && "primary-sidebar__topic-chevron--open"
+                    )}
+                    aria-hidden
+                  />
+                </>
+              )}
+            </button>
+            {!iconOnly &&
+              shouldShowSectionSubnav(id) &&
+              renderPrimarySubnav(
+                visibleGroupsForSection({ id, label, icon: Icon, groups }, canShowNavItem),
+                false
+              )}
           </div>
-        </nav>
-      ) : (
-        <nav className="primary-sidebar__nav" aria-label="Main sections">
-          <div className="primary-sidebar__subnav-flat primary-sidebar__subnav-flat--dashboard">
-            {canShowNavItem(DASHBOARD_ITEM) &&
-              renderPrimaryNavItem(DASHBOARD_ITEM, "subfield", false)}
-          </div>
-          {MAIN_PRIMARY_SECTIONS.map(({ id, label, icon: Icon, groups }) => (
-            <div key={id} className="primary-sidebar__section">
-              <button
-                type="button"
-                className={cn(
-                  "primary-sidebar__topic",
-                  routeSection === id && "primary-sidebar__topic--active"
-                )}
-                onClick={() => handleSectionTopicClick(id)}
-                aria-current={routeSection === id ? "true" : undefined}
-                aria-expanded={expandedSection === id}
-                data-testid={`nav-section-${id}`}
-              >
-                <Icon className="primary-sidebar__topic-icon" />
-                <span className="primary-sidebar__topic-label truncate">{label}</span>
-                <ChevronRight
-                  className={cn(
-                    "primary-sidebar__topic-chevron",
-                    expandedSection === id && "primary-sidebar__topic-chevron--open"
-                  )}
-                  aria-hidden
-                />
-              </button>
-              {shouldShowSectionSubnav(id) &&
-                renderPrimarySubnav(
-                  visibleGroupsForSection({ id, label, icon: Icon, groups }, canShowNavItem),
-                  false
-                )}
-            </div>
-          ))}
-        </nav>
-      )}
+        ))}
+      </nav>
 
       <div className="primary-sidebar__footer">
         <button
@@ -548,22 +563,22 @@ export function Layout() {
             searchOpen && "primary-sidebar__topic--active"
           )}
           data-testid="button-global-search"
-          data-sidebar-tip={sidebarCollapsed ? "Search" : undefined}
+          data-sidebar-tip={iconOnly ? "Search" : undefined}
           aria-label="Search"
           aria-haspopup="dialog"
           aria-expanded={searchOpen}
           onClick={() => setSearchOpen(true)}
         >
           <Search className="primary-sidebar__topic-icon" />
-          {!sidebarCollapsed && <span className="primary-sidebar__topic-label">Search</span>}
+          {!iconOnly && <span className="primary-sidebar__topic-label">Search</span>}
         </button>
         <SettingsSidebarMenu
-          collapsed={sidebarCollapsed}
+          collapsed={iconOnly}
           items={settingsMenuItems}
           isActive={routeSection === "settings"}
         />
-        <NotificationBell collapsed={sidebarCollapsed} />
-        <ProfileSidebarMenu collapsed={sidebarCollapsed} />
+        <NotificationBell collapsed={iconOnly} />
+        <ProfileSidebarMenu collapsed={iconOnly} />
       </div>
     </>
   );
@@ -573,16 +588,33 @@ export function Layout() {
     <div
       className={cn(
         "app-shell app-shell--basic-sidebar grid-cols-1",
-        sidebarCollapsed && "app-shell--primary-collapsed"
+        !sidebarPinned && "app-shell--primary-collapsed",
+        sidebarPinned && "app-shell--primary-pinned"
       )}
     >
       <aside
-        className="primary-sidebar"
+        className={cn(
+          "primary-sidebar",
+          !sidebarPinned && "primary-sidebar--icon-rail",
+          !sidebarPinned && sidebarHovered && "primary-sidebar--hover-expanded",
+          sidebarPinned && "primary-sidebar--pinned"
+        )}
         data-testid="primary-sidebar"
-        onPointerOver={sidebarCollapsed ? onSidebarTipIntent : undefined}
-        onFocusCapture={sidebarCollapsed ? onSidebarTipIntent : undefined}
+        onMouseEnter={!sidebarPinned ? () => setSidebarHovered(true) : undefined}
+        onMouseLeave={!sidebarPinned ? () => setSidebarHovered(false) : undefined}
+        onPointerOver={!sidebarPinned && !sidebarHovered ? onSidebarTipIntent : undefined}
+        onFocusCapture={!sidebarPinned && !sidebarHovered ? onSidebarTipIntent : undefined}
       >
-        {primarySidebarInner}
+        {sidebarPinned ? (
+          renderSidebarBody(false)
+        ) : (
+          <>
+            <div className="primary-sidebar__rail">{renderSidebarBody(true)}</div>
+            <div className="primary-sidebar__flyout" aria-hidden={!sidebarExpanded}>
+              {renderSidebarBody(false)}
+            </div>
+          </>
+        )}
       </aside>
 
       <GlobalSearchDialog

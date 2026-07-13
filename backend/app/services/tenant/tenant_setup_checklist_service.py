@@ -151,9 +151,6 @@ async def build_setup_checklist_state(
     user_role: str,
     is_support_session: bool,
 ) -> SetupChecklistStateResponse:
-    if tenant_setup_checklist_complete(tenant):
-        return SetupChecklistStateResponse(complete=True, show=False, progress=100, items=[])
-
     if is_support_session:
         return SetupChecklistStateResponse(complete=False, show=False, progress=0, items=[])
 
@@ -177,8 +174,10 @@ async def build_setup_checklist_state(
     required = [i for i in items if not i.optional]
     required_done = sum(1 for i in required if i.done)
     progress = int((required_done / len(required)) * 100) if required else 100
+    if tenant_setup_checklist_complete(tenant):
+        progress = 100
     all_required_done = all(i.done for i in required)
-    complete = all_required_done
+    complete = all_required_done or tenant_setup_checklist_complete(tenant)
 
     # The checklist is the "get started" surface; show it until completion.
     show = not complete

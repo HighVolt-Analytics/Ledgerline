@@ -1,6 +1,7 @@
 import {
   BillingPageSkeleton,
   DashboardPageSkeleton,
+  DossierDetailPageSkeleton,
   GenericPageSkeleton,
   IntegrationsPageSkeleton,
   KanbanBoardSkeleton,
@@ -23,7 +24,8 @@ export type PageLoaderVariant =
   | "billing"
   | "rules"
   | "vault"
-  | "upload";
+  | "upload"
+  | "dossier-detail";
 
 export function PageLoader({
   variant = "default",
@@ -53,6 +55,8 @@ export function PageLoader({
       return <VaultPageSkeleton />;
     case "upload":
       return <UploadPageSkeleton />;
+    case "dossier-detail":
+      return <DossierDetailPageSkeleton />;
     default:
       return <GenericPageSkeleton />;
   }

@@ -1,6 +1,8 @@
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/skeleton/Skeleton";
 import { cn } from "@/lib/cn";
+import { ArrowLeft } from "lucide-react";
+import { Link } from "react-router-dom";
 
 export function KpiGridSkeleton({
   count = 4,
@@ -497,6 +499,92 @@ export function CreationsEmployeesTabSkeleton() {
         </div>
         <InlineTableSkeleton rows={4} columns={4} />
       </Card>
+    </div>
+  );
+}
+
+export function DossierDetailPageSkeleton() {
+  return (
+    <div data-testid="page-dossier-detail-loading" aria-busy aria-label="Loading dossier">
+      <div className="page-top-sticky">
+        <div className="dossier-page-header">
+          <div className="dossier-page-header__main">
+            <div className="dossier-page-intro dossier-page-intro--with-leading">
+              <Link
+                to="/dossiers"
+                className="dossier-detail-back"
+                aria-label="Back"
+                data-testid="link-back-dossiers"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+              <div className="dossier-page-intro__content min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-7 w-48 max-w-full" />
+                <Skeleton className="h-3 w-full max-w-md" />
+                <Skeleton className="h-3 w-2/3 max-w-sm" />
+              </div>
+            </div>
+          </div>
+          <div className="dossier-page-actions flex flex-wrap gap-2">
+            <Skeleton pill className="h-7 w-20" />
+            <Skeleton pill className="h-7 w-24" />
+          </div>
+        </div>
+      </div>
+
+      <div className="dossier-kpi-grid">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="dossier-kpi-card space-y-2">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-6 w-28" />
+            <Skeleton className="h-3 w-full max-w-[10rem]" />
+          </div>
+        ))}
+      </div>
+
+      <div className="dossier-detail-grid">
+        <section className="dossier-section dossier-detail-grid__main">
+          <div className="dossier-section__head space-y-2 mb-4">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-3 w-full max-w-lg" />
+          </div>
+          <div className="space-y-4">
+            {Array.from({ length: 5 }).map((_, phase) => (
+              <div key={phase} className="space-y-2">
+                <Skeleton className="h-3 w-28" />
+                <div className="flex flex-wrap gap-2">
+                  {Array.from({ length: 4 }).map((__, stage) => (
+                    <Skeleton key={stage} className="h-10 flex-1 min-w-[5.5rem] max-w-[8rem] rounded-lg" />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="dossier-detail-rail-col">
+          <div className="dossier-detail-rail">
+            <Card className="overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <Skeleton className="h-4 w-36" />
+              </div>
+              <InlineListSkeleton rows={4} />
+            </Card>
+            <Card className="overflow-hidden p-4 space-y-3">
+              <Skeleton className="h-4 w-32" />
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Skeleton circle className="h-8 w-8 shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-3 w-16" />
+                  </div>
+                </div>
+              ))}
+            </Card>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
