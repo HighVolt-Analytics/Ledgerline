@@ -22,7 +22,7 @@ from app.services.extraction.llm_document_service import (
     build_structure_extract_prompts,
 )
 from app.services.tenant.tenant_org_context import OrgContext
-from app.services.extraction.vision_pdf import pdf_page_images
+from app.services.extraction.vision_pdf import resolve_pdf_page_images
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -127,11 +127,12 @@ async def read_for_classification_gemini(
     *,
     org: OrgContext,
     document_types: Sequence[DocumentTypeDefinition],
+    vision_page_images: list[bytes] | None = None,
 ) -> OcrArtifact:
     """Vision OCR only — headings/text excerpt, no document-type classification."""
     settings = get_settings()
     path = Path(file_path)
-    images = pdf_page_images(path)
+    images = resolve_pdf_page_images(path, vision_page_images)
     if not images:
         raise ValueError("gemini_no_pages")
 
@@ -180,11 +181,12 @@ async def classify_only_gemini(
     org: OrgContext,
     document_types: Sequence[DocumentTypeDefinition],
     few_shots: Sequence[dict[str, str]] | None = None,
+    vision_page_images: list[bytes] | None = None,
 ) -> LlmDocumentResult | None:
     """Separate classify step with catalogue + few-shots (post-OCR)."""
     settings = get_settings()
     path = Path(file_path)
-    images = pdf_page_images(path)
+    images = resolve_pdf_page_images(path, vision_page_images)
     if not images:
         return None
 
@@ -232,6 +234,7 @@ async def extract_fields_gemini(
     document_types: Sequence[DocumentTypeDefinition],
     confirmed_dt: str,
     few_shots: Sequence[dict[str, str]] | None = None,
+    vision_page_images: list[bytes] | None = None,
 ) -> LlmDocumentResult | None:
     settings = get_settings()
     dt_token = confirmed_dt.strip().upper()
@@ -250,7 +253,7 @@ async def extract_fields_gemini(
     parts: list[dict[str, Any]] = [{"text": user_text}]
     if ocr.sparse and file_path is not None:
         path = Path(file_path)
-        images = pdf_page_images(path)
+        images = resolve_pdf_page_images(path, vision_page_images)
         if images:
             parts = _image_parts(images) + parts
 

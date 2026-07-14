@@ -137,6 +137,22 @@ export type ThreeWayMatchDisplay = {
   matchExplanation?: string | null;
 };
 
+export type LineMatchResult = {
+  status: string;
+  description?: string | null;
+  sku?: string | null;
+  orderQty?: number | null;
+  orderUom?: string | null;
+  orderUnitPrice?: number | null;
+  receivedQty?: number | null;
+  receivedUom?: string | null;
+  invoiceQty?: number | null;
+  invoiceUom?: string | null;
+  invoiceUnitPrice?: number | null;
+  qtyVarianceValue?: number;
+  priceVarianceValue?: number;
+};
+
 export type ThreeWayMatch = {
   status: MatchStatus;
   qtyVarianceValue: number;
@@ -147,6 +163,7 @@ export type ThreeWayMatch = {
   invoiceGst: number;
   invoiceTotal: number;
   display?: ThreeWayMatchDisplay | null;
+  lineResults?: LineMatchResult[];
 };
 
 export type PaymentTab = "queue" | "awaiting" | "scheduled" | "paid" | "failed";

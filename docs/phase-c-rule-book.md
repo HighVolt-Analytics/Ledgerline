@@ -39,9 +39,7 @@ Adapters: `frontend/src/lib/routePageAdapters.ts`
 
 ## C.6 Live Evaluation — disabled rules
 
-Backend returns `email_rule_disabled` when a disabled email capture rule would have matched.
-
-`LiveEvaluation.tsx` shows **Would match: {name}** with a dashed amber badge.
+Backend `/api/rule-book/evaluate` returns `email_rule_disabled` when a disabled email capture rule would have matched. The Rule Book UI no longer surfaces a Live evaluation panel; outcomes are visible on Upload / Inbox invoices.
 
 ## Verify
 

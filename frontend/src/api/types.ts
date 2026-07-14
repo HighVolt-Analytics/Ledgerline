@@ -494,6 +494,24 @@ export interface MatchAmountLineApi {
   line_value?: number | null;
 }
 
+export interface LineMatchResultApi {
+  status: string;
+  description?: string | null;
+  sku?: string | null;
+  order_qty?: number | null;
+  order_uom?: string | null;
+  order_unit_price?: number | null;
+  received_qty?: number | null;
+  received_uom?: string | null;
+  invoice_qty?: number | null;
+  invoice_uom?: string | null;
+  invoice_unit_price?: number | null;
+  qty_variance_value?: number;
+  price_variance_value?: number;
+  order_line_key?: number | string | null;
+  invoice_line_key?: number | string | null;
+}
+
 export interface ThreeWayMatchDisplayApi {
   base_uom?: string | null;
   po_on_document: MatchAmountLineApi;
@@ -515,6 +533,7 @@ export interface ThreeWayMatchApi {
   invoice_gst: number;
   invoice_total: number;
   display?: ThreeWayMatchDisplayApi | null;
+  line_results?: LineMatchResultApi[];
 }
 
 export interface PurchaseDossierMember {
@@ -1623,30 +1642,6 @@ export type RuleBookRulesPayload = Omit<
   "vendor_masters" | "employee_masters"
 >;
 
-export interface RuleBookEvaluationRow {
-  document: {
-    id: string;
-    doc_number: string;
-    invoice_no: string;
-    vendor: string;
-    primary_account: string;
-    document_type_code?: string | null;
-    route_target?: string | null;
-  };
-  email_rule: { id: string; name: string } | null;
-  email_rule_disabled: { id: string; name: string } | null;
-  vendor_match: { vendor_id: string; vendor_name: string; confidence: number } | null;
-  counterparty_match?: {
-    kind: "vendor" | "customer" | string;
-    master_id: string;
-    master_name: string;
-    confidence: number;
-  } | null;
-  category_rule: { label: string; kind: string } | null;
-  category_rule_disabled: { label: string; kind: string } | null;
-  auto_coded: boolean;
-}
-
 export interface DocumentTypeRecognitionTestRequest {
   draft_document_type: Record<string, unknown>;
   document_text?: string;
@@ -1661,17 +1656,6 @@ export interface DocumentTypeRecognitionTestResponse {
   exclude_rules_passed: boolean;
   summary: string;
   classifier_enabled: boolean;
-}
-
-export interface RuleBookEvaluateResult {
-  source: "invoices" | "sample";
-  rows: RuleBookEvaluationRow[];
-}
-
-export interface RuleBookEvaluateRequest {
-  config?: RuleBookRulesPayload;
-  invoice_ids?: number[];
-  limit?: number;
 }
 
 export interface DailyReconciliation {

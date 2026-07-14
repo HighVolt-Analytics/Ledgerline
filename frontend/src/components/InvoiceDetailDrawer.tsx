@@ -97,6 +97,7 @@ import {
   effectiveDocumentTypeCode,
 } from "@/lib/documentTypeResolve";
 import { requiresClassificationConfirm } from "@/lib/classificationAuditDisplay";
+import { shouldApplyDrawerInvoiceUpdate } from "@/lib/invoiceDrawerSync";
 
 const TABS = ["fields", "lines", "po", "tax", "audit", "overrides", "pipeline"] as const;
 export type InvoiceDrawerTab = (typeof TABS)[number];
@@ -805,8 +806,23 @@ export function InvoiceDetailDrawer({
   const [dossierLoading, setDossierLoading] = useState(false);
   const [drawerDossier, setDrawerDossier] = useState<DossierSummaryWithInvoiceId | null>(null);
   const [drawerDossierLoading, setDrawerDossierLoading] = useState(false);
+  /** Invoice id currently shown; async pipeline callbacks must not overwrite a newer selection. */
+  const activeInvoiceIdRef = useRef<number | null>(null);
+  const openRef = useRef(open);
+  /** Pipeline op in flight for this id (approve/reprocess); busy UI only applies while still viewing it. */
+  const pipelineBusyIdRef = useRef<number | null>(null);
 
   const activeInvoiceId = viewId ?? invoiceId;
+  activeInvoiceIdRef.current = activeInvoiceId;
+  openRef.current = open;
+
+  const isStillViewing = useCallback((id: number | null | undefined) => {
+    return shouldApplyDrawerInvoiceUpdate({
+      open: openRef.current,
+      activeInvoiceId: activeInvoiceIdRef.current,
+      updatedId: id,
+    });
+  }, []);
 
   const catalogueCodes = useMemo(
     () =>
@@ -823,16 +839,18 @@ export function InvoiceDetailDrawer({
 
   const resolveClassification = async (confirmedDt: string) => {
     if (!activeInvoiceId) return;
+    const targetId = activeInvoiceId;
     setActionBusy(true);
     try {
-      await api.resolveInvoiceClassification(activeInvoiceId, {
+      await api.resolveInvoiceClassification(targetId, {
         confirmed_dt: confirmedDt,
         reprocess: true,
       });
       const [freshInv, freshAudit] = await Promise.all([
-        api.getInvoice(activeInvoiceId, { fresh: true }),
-        api.getInvoiceClassificationAudit(activeInvoiceId, { fresh: true }),
+        api.getInvoice(targetId, { fresh: true }),
+        api.getInvoiceClassificationAudit(targetId, { fresh: true }),
       ]);
+      if (!isStillViewing(targetId)) return;
       setInv(freshInv);
       setClassificationAudit(freshAudit);
       onUpdated?.();
@@ -912,10 +930,12 @@ export function InvoiceDetailDrawer({
       setClassificationAudit(null);
       return;
     }
+    const targetId = inv.id;
     setClassificationLoading(true);
     api
-      .getInvoiceClassificationAudit(inv.id, { fresh: true })
+      .getInvoiceClassificationAudit(targetId, { fresh: true })
       .then((detail) => {
+        if (activeInvoiceIdRef.current !== targetId) return;
         const hasAudit =
           detail &&
           (detail.document_type_code ||
@@ -923,8 +943,13 @@ export function InvoiceDetailDrawer({
             (Array.isArray(detail.review_reasons) && detail.review_reasons.length > 0));
         setClassificationAudit(hasAudit ? detail : null);
       })
-      .catch(() => setClassificationAudit(null))
-      .finally(() => setClassificationLoading(false));
+      .catch(() => {
+        if (activeInvoiceIdRef.current !== targetId) return;
+        setClassificationAudit(null);
+      })
+      .finally(() => {
+        if (activeInvoiceIdRef.current === targetId) setClassificationLoading(false);
+      });
   }, [inv?.id]);
 
   useEffect(() => {
@@ -992,6 +1017,9 @@ export function InvoiceDetailDrawer({
     setEditing(false);
     setDraft(null);
     startInEditAppliedRef.current = null;
+    // A pipeline/save started on another invoice must not leave this one stuck busy.
+    setActionBusy(false);
+    setAttachBusy(false);
   }, [activeInvoiceId]);
 
   useEffect(() => {
@@ -1127,21 +1155,26 @@ export function InvoiceDetailDrawer({
   const sourceKind = inv?.email_sender ? "email" : "upload";
   const docNumber = inv ? (vendorInvoiceNo(inv) ?? documentDisplayRef(inv)) : "—";
 
-  async function reloadInvoice() {
-    if (!inv) return;
-    const updated = await api.getInvoice(inv.id);
+  async function reloadInvoice(expectedId?: number) {
+    const id = expectedId ?? activeInvoiceIdRef.current;
+    if (id == null) return;
+    const updated = await api.getInvoice(id, { fresh: true });
+    if (!isStillViewing(id)) return;
     setInv(updated);
     if (tab === "audit") {
-      const steps = await api.getInvoicePipeline(inv.id, { fresh: true });
+      const steps = await api.getInvoicePipeline(id, { fresh: true });
+      if (!isStillViewing(id)) return;
       setPipelineSteps(steps);
     }
   }
 
   async function handleSaveEdits() {
     if (!inv || !draft) return;
+    const targetId = inv.id;
     setActionBusy(true);
     try {
-      const updated = await api.updateInvoice(inv.id, payloadFromDraft(draft, inv));
+      const updated = await api.updateInvoice(targetId, payloadFromDraft(draft, inv));
+      if (!isStillViewing(targetId)) return;
       setInv(updated);
       setEditing(false);
       setDraft(null);
@@ -1155,6 +1188,7 @@ export function InvoiceDetailDrawer({
 
   async function handleCurrencySelect(code: string) {
     if (!inv || !canSelectCurrency(inv)) return;
+    const targetId = inv.id;
     const next = code.trim().toUpperCase();
     if (!next || !/^[A-Z]{3}$/.test(next)) return;
     if (editing && draft) {
@@ -1162,7 +1196,8 @@ export function InvoiceDetailDrawer({
     }
     setActionBusy(true);
     try {
-      const updated = await api.updateInvoice(inv.id, { currency: next });
+      const updated = await api.updateInvoice(targetId, { currency: next });
+      if (!isStillViewing(targetId)) return;
       setInv(updated);
       if (editing) {
         setDraft(draftFromInvoice(updated, extractionFieldKeys));
@@ -1177,10 +1212,12 @@ export function InvoiceDetailDrawer({
 
   async function handleAttachPdf(file: File) {
     if (!inv) return;
+    const targetId = inv.id;
     setAttachBusy(true);
     try {
-      await api.attachInvoiceFile(inv.id, file);
-      const updated = await api.getInvoice(inv.id);
+      await api.attachInvoiceFile(targetId, file);
+      const updated = await api.getInvoice(targetId, { fresh: true });
+      if (!isStillViewing(targetId)) return;
       setInv(updated);
       if (editing && draft) {
         setDraft(draftFromInvoice(updated, extractionFieldKeys));
@@ -1246,11 +1283,12 @@ export function InvoiceDetailDrawer({
   async function handleReject() {
     if (!inv || !canRejectClaim(inv.status)) return;
     if (!window.confirm(`Reject ${inv.vendor ?? documentDisplayRef(inv)}?`)) return;
+    const targetId = inv.id;
     setActionBusy(true);
     try {
-      await api.reject(inv.id);
+      await api.reject(targetId);
       onUpdated?.();
-      onClose();
+      if (isStillViewing(targetId)) onClose();
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) {
         alert("Your role does not have permission to reject documents.");
@@ -1264,11 +1302,12 @@ export function InvoiceDetailDrawer({
 
   async function handleRequestApproval() {
     if (!inv || !canRequestInfo(inv.status)) return;
+    const targetId = inv.id;
     setActionBusy(true);
     try {
-      await api.requestApproval(inv.id);
+      await api.requestApproval(targetId);
       onUpdated?.();
-      onClose();
+      if (isStillViewing(targetId)) onClose();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Request failed");
     } finally {
@@ -1289,30 +1328,37 @@ export function InvoiceDetailDrawer({
       alert("Upload a PDF before reprocessing this invoice.");
       return;
     }
+    const targetId = inv.id;
+    pipelineBusyIdRef.current = targetId;
     setActionBusy(true);
     onPipelineStart?.(inv);
     try {
       if (editing && draft) {
-        await api.updateInvoice(inv.id, payloadFromDraft(draft, inv));
-        setEditing(false);
-        setDraft(null);
+        await api.updateInvoice(targetId, payloadFromDraft(draft, inv));
+        if (isStillViewing(targetId)) {
+          setEditing(false);
+          setDraft(null);
+        }
       }
-      await reprocessAndWatch(inv.id, async () => {
+      await reprocessAndWatch(targetId, async () => {
         onUpdated?.();
-        await reloadInvoice();
+        await reloadInvoice(targetId);
       });
       onUpdated?.();
     } catch (e) {
       alert(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Reprocess failed");
     } finally {
-      onPipelineEnd?.(inv.id);
+      if (pipelineBusyIdRef.current === targetId) pipelineBusyIdRef.current = null;
+      onPipelineEnd?.(targetId);
       setActionBusy(false);
     }
   }
 
   async function handleApproveAndProcess() {
     if (!inv) return;
-    const fresh = await api.getInvoice(inv.id, { fresh: true });
+    const targetId = inv.id;
+    const fresh = await api.getInvoice(targetId, { fresh: true });
+    if (!isStillViewing(targetId)) return;
     setInv(fresh);
     if (!canApproveFromDrawer(fresh.status)) {
       alert(
@@ -1341,39 +1387,43 @@ export function InvoiceDetailDrawer({
 
     const pendingEdits = draft ? payloadFromDraft(draft, fresh) : undefined;
 
+    pipelineBusyIdRef.current = targetId;
     setActionBusy(true);
     onPipelineStart?.(fresh);
     try {
       const result = await approveAndProcess(
-        inv.id,
+        targetId,
         async () => {
           onUpdated?.();
-          await reloadInvoice();
+          await reloadInvoice(targetId);
         },
         pendingEdits
       );
+      onUpdated?.();
+      if (!isStillViewing(targetId)) return;
       if (pendingEdits) {
         setEditing(false);
         setDraft(null);
       }
       setInv(result.invoice);
-      onUpdated?.();
       onClose();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Approve failed");
     } finally {
-      onPipelineEnd?.(inv.id);
+      if (pipelineBusyIdRef.current === targetId) pipelineBusyIdRef.current = null;
+      onPipelineEnd?.(targetId);
       setActionBusy(false);
     }
   }
 
   async function publish() {
     if (!inv || !invoiceCanPublishToLedger(inv)) return;
+    const targetId = inv.id;
     setActionBusy(true);
     try {
-      await api.publishInvoice(inv.id);
+      await api.publishInvoice(targetId);
       onUpdated?.();
-      await reloadInvoice();
+      await reloadInvoice(targetId);
     } catch (e) {
       if (e instanceof ApiError && e.status === 402) {
         alert("Not enough credits to post — top up billing or contact an admin.");

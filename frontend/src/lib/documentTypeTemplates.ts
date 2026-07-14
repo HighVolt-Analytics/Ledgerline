@@ -41,6 +41,7 @@ import {
   mergeRouteCompulsoryIntoConfig,
 } from "@/lib/documentExtractionFields";
 import { matchRulesFormForTemplate } from "@/lib/shippedTemplateMatchRules";
+import { defaultLlmPromptForCode } from "@/lib/documentTypeDefaultPrompts";
 import { syncClassifierFromRecognition } from "@/lib/documentTypeRecognition";
 
 export type { RouteConfidencePreset, RecognitionSignalOption };
@@ -107,6 +108,7 @@ export type DocumentTypeTemplate = {
   defaultSignalIds: RecognitionSignalId[];
   defaultExtractionFields: string[];
   defaultRouteConfidence: RouteConfidencePreset;
+  defaultLlmPrompt: string;
   validationProfile: string;
   usesShippedClassifier: boolean;
 };
@@ -167,6 +169,7 @@ function buildTemplateFromShippedRow(row: ShippedCatalogRow): DocumentTypeTempla
     defaultSignalIds,
     defaultExtractionFields: extractionFieldsForCode(code, signalMeta?.extractionFields),
     defaultRouteConfidence: routeConfidence,
+    defaultLlmPrompt: defaultLlmPromptForCode(code),
     validationProfile: defaults.validation_profile ?? "",
     usesShippedClassifier: Boolean(preset),
   };
@@ -191,6 +194,7 @@ export const DOCUMENT_TYPE_TEMPLATES: DocumentTypeTemplate[] = [
     defaultSignalIds: [],
     defaultExtractionFields: [],
     defaultRouteConfidence: "standard",
+    defaultLlmPrompt: "",
     validationProfile: "",
     usesShippedClassifier: false,
   },
@@ -282,16 +286,9 @@ export function documentTypeFromTemplate(
   const defaults = template.shippedCode ? defaultsRowForCode(template.shippedCode) : {};
   const matchForm =
     templateId === "custom" ? null : matchRulesFormForTemplate(template);
-  const defaultSignals = [...template.defaultSignalIds];
-  const classifier =
-    templateId === "custom"
-      ? base.classifier
-      : buildClassifierFromSignals(defaultSignals, template.classifierLayout, {
-          priority: CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]?.priority ??
-            template.classifierPriority,
-          confidence: CLASSIFIER_PRESETS[template.shippedCode.toUpperCase()]?.confidence ?? 0.85,
-          enabled: defaultSignals.length > 0,
-        });
+  const shippedPrompt = template.defaultLlmPrompt.trim();
+  const usePromptMode = templateId !== "custom" && shippedPrompt.length > 0;
+  const classifier = base.classifier;
   const code = orgCodeForNewType(existing);
   const matrixTemplateCode =
     templateId !== "custom" && template.shippedCode ? template.shippedCode.toUpperCase() : "";
@@ -323,9 +320,9 @@ export function documentTypeFromTemplate(
     code,
     title: shipped?.title ?? (templateId === "custom" ? "" : template.label),
     shortTitle: shipped?.shortTitle ?? (templateId === "custom" ? "" : template.label),
-    recognitionMode: "signals",
-    recognitionSignals: templateId === "custom" ? [] : [...defaultSignals],
-    llmPrompt: "",
+    recognitionMode: usePromptMode ? "prompt" : "signals",
+    recognitionSignals: [],
+    llmPrompt: usePromptMode ? shippedPrompt : "",
     klass: template.klass,
     posting: template.posting,
     routeTarget: template.routeTarget,
@@ -363,10 +360,6 @@ export function documentTypeFromTemplate(
       ledger: "",
     },
   };
-
-  if (templateId === "custom") {
-    return syncClassifierFromRecognition(payload);
-  }
 
   return syncClassifierFromRecognition({
     ...payload,

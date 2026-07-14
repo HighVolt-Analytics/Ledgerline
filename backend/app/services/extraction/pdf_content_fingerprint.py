@@ -20,6 +20,49 @@ def normalize_pdf_text_blob(text: str) -> str:
     return _WHITESPACE_RE.sub(" ", cleaned).strip()
 
 
+def pdf_text_token_set(text: str) -> frozenset[str]:
+    """Word bag from the same normalization used for content fingerprints."""
+    normalized = normalize_pdf_text_blob(text)
+    if not normalized:
+        return frozenset()
+    return frozenset(normalized.split())
+
+
+def jaccard_token_similarity(left: str, right: str) -> float:
+    """Jaccard similarity over normalized word bags (0–1)."""
+    a = pdf_text_token_set(left)
+    b = pdf_text_token_set(right)
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def boost_confidence_with_content_similarity(
+    base_confidence: float,
+    left_text: str | None,
+    right_text: str | None,
+    *,
+    threshold: float | None = None,
+    boost: float = 0.15,
+) -> tuple[float, float | None]:
+    """If similarity >= threshold, raise confidence (capped at 1.0). Returns (confidence, similarity)."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.content_similarity_check_enabled:
+        return base_confidence, None
+    if not (left_text or "").strip() or not (right_text or "").strip():
+        return base_confidence, None
+    if threshold is None:
+        threshold = float(settings.content_similarity_threshold)
+    sim = jaccard_token_similarity(left_text or "", right_text or "")
+    if sim >= threshold:
+        return min(1.0, round(base_confidence + boost, 4)), sim
+    return base_confidence, sim
+
+
 def compute_pdf_content_fingerprint(
     pages: list[PdfPageText],
     start_page: int,

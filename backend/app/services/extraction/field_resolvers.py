@@ -371,7 +371,7 @@ def resolve_all_fields(
     *,
     parsed: InvoiceData,
     ocr: OcrArtifact,
-) -> list[FieldResolutionResult]:
+) -> tuple[list[FieldResolutionResult], dict[str, list[FieldCandidate]]]:
     keys = [c.key for c in contracts]
     text = (ocr.text or parsed.document_text or "").strip() or None
     payload = dict(ocr.payload_json or {})
@@ -392,7 +392,7 @@ def resolve_all_fields(
     results: list[FieldResolutionResult] = []
     for contract in contracts:
         results.append(resolve_field_value(contract, by_key.get(contract.key, [])))
-    return results
+    return results, by_key
 
 
 def project_resolution_to_invoice_data(
@@ -519,7 +519,7 @@ def merge_via_field_contracts(
             payload["table_line_items"] = serialize_line_items(refreshed)
             ocr = ocr.model_copy(update={"payload_json": payload})
 
-    results = resolve_all_fields(contracts, parsed=parsed, ocr=ocr)
+    results, candidates_by_key = resolve_all_fields(contracts, parsed=parsed, ocr=ocr)
     merged = project_resolution_to_invoice_data(parsed, results, contracts=contracts)
     text = (ocr.text or merged.document_text or "").strip()
     if text and not (merged.document_text or "").strip():
@@ -586,4 +586,15 @@ def merge_via_field_contracts(
                 merged = replace(merged, **clear)
 
     ocr = attach_field_resolution_audit(ocr, results, contracts=contracts)
+    from app.services.extraction.field_resolution_telemetry import (
+        attach_field_resolution_telemetry,
+        build_posting_critical_telemetry,
+    )
+
+    telemetry = build_posting_critical_telemetry(
+        results,
+        candidates_by_key,
+        ocr=ocr,
+    )
+    merged = attach_field_resolution_telemetry(merged, telemetry)
     return merged, ocr, results

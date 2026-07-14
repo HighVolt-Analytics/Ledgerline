@@ -77,8 +77,11 @@ def derive_matrix_flag(inv: Invoice) -> tuple[str, str | None]:
             return "Clean", None
         return "Anomaly Detected", "Unknown expense vendor under registration threshold"
     if inv.evaluation_status == "needs_review":
-        route = inv.route_target or "review"
-        return "Anomaly Detected", f"Rule book routing needs review ({route})"
+        route = (inv.route_target or "").strip()
+        # Vault is storage-only; routing review is not an actionable anomaly.
+        if route == "Vault":
+            return "Clean", None
+        return "Anomaly Detected", f"Rule book routing needs review ({route or 'review'})"
     failure = _first_validation_failure(inv)
     if failure:
         return "Anomaly Detected", failure

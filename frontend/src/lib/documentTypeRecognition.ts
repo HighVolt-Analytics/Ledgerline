@@ -32,20 +32,36 @@ function classifierLayoutForDraft(draft: DocumentTypeDefinition): ClassifierLayo
 export function hydrateRecognitionFromClassifier(
   draft: DocumentTypeDefinition
 ): DocumentTypeDefinition {
+  const storedMode = String(draft.recognitionMode ?? "")
+    .trim()
+    .toLowerCase();
+  const hasPrompt = (draft.llmPrompt ?? "").trim().length > 0;
+
+  if (storedMode === "prompt" && hasPrompt) {
+    return syncClassifierFromRecognition({
+      ...draft,
+      recognitionMode: "prompt",
+      recognitionSignals: [],
+      llmPrompt: draft.llmPrompt,
+    });
+  }
+
   const allowed = allowedRecognitionSignalIds();
   let signals = [...(draft.recognitionSignals ?? [])] as RecognitionSignalId[];
   if (signals.length === 0 && draft.classifier.enabled) {
     signals = parseSignalsFromClassifier(draft.classifier.root, allowed);
   }
 
-  let recognitionMode: RecognitionMode = draft.recognitionMode ?? "signals";
-  const hasPrompt = (draft.llmPrompt ?? "").trim().length > 0;
+  let recognitionMode: RecognitionMode =
+    storedMode === "signals" || storedMode === "prompt" ? storedMode : "signals";
   const hasClassifierChildren = (draft.classifier.root.children?.length ?? 0) > 0;
 
-  if (signals.length > 0 || (draft.classifier.enabled && hasClassifierChildren)) {
-    recognitionMode = "signals";
-  } else if (hasPrompt) {
-    recognitionMode = "prompt";
+  if (recognitionMode !== "prompt") {
+    if (signals.length > 0 || (draft.classifier.enabled && hasClassifierChildren)) {
+      recognitionMode = "signals";
+    } else if (hasPrompt) {
+      recognitionMode = "prompt";
+    }
   }
 
   const hydrated: DocumentTypeDefinition = {

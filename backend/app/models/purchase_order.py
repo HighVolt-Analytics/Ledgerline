@@ -15,6 +15,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.goods_receipt import GoodsReceipt
+    from app.models.purchase_order_line import PurchaseOrderLine
 
 
 class PurchaseOrderStatus(str, enum.Enum):
@@ -68,4 +69,9 @@ class PurchaseOrder(Base):
     goods_receipts: Mapped[list[GoodsReceipt]] = relationship(
         back_populates="purchase_order",
         cascade="all, delete-orphan",
+    )
+    lines: Mapped[list["PurchaseOrderLine"]] = relationship(
+        back_populates="purchase_order",
+        cascade="all, delete-orphan",
+        order_by="PurchaseOrderLine.line_no",
     )

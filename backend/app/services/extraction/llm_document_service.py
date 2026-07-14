@@ -1258,6 +1258,9 @@ def llm_result_to_invoice_data(
             "buyer": llm.buyer.model_dump(),
             "layout_kv": ocr.layout_kv,
             "extracted_fields": extracted,
+            "counterparty_ambiguous": bool(finance.get("counterparty_ambiguous")),
+            "counterparty_review_reasons": list(finance.get("counterparty_review_reasons") or []),
+            "party_labels_swapped": bool(finance.get("party_labels_swapped")),
             "_line_items_confidence": (llm.field_confidence or {}).get("line_items"),
         },
     )

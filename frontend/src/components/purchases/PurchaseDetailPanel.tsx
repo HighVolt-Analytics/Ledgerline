@@ -65,6 +65,53 @@ function fmtMoneyOrDash(v: number | null | undefined): string {
   return fmtAud(v);
 }
 
+function LineMatchTable({
+  lines,
+  receiptLabel = "GRN qty",
+}: {
+  lines: NonNullable<ThreeWayMatch["lineResults"]>;
+  receiptLabel?: string;
+}) {
+  if (!lines.length) return null;
+  return (
+    <div className="rounded-md border border-border overflow-x-auto mb-3">
+      <table className="w-full text-[11px]">
+        <thead>
+          <tr className="bg-muted/40 text-muted-foreground text-left">
+            <th className="px-2 py-1.5 font-medium">Item</th>
+            <th className="px-2 py-1.5 font-medium">Order qty</th>
+            <th className="px-2 py-1.5 font-medium">{receiptLabel}</th>
+            <th className="px-2 py-1.5 font-medium">Inv qty</th>
+            <th className="px-2 py-1.5 font-medium">Order $</th>
+            <th className="px-2 py-1.5 font-medium">Inv $</th>
+            <th className="px-2 py-1.5 font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((row, idx) => (
+            <tr key={`${row.sku ?? row.description ?? "line"}-${idx}`} className="border-t border-border">
+              <td className="px-2 py-1.5 max-w-[10rem] truncate" title={row.description ?? undefined}>
+                {row.sku ? `${row.sku} · ` : ""}
+                {row.description || "—"}
+              </td>
+              <td className="px-2 py-1.5 font-mono">{row.orderQty ?? "—"}</td>
+              <td className="px-2 py-1.5 font-mono">{row.receivedQty ?? "—"}</td>
+              <td className="px-2 py-1.5 font-mono">{row.invoiceQty ?? "—"}</td>
+              <td className="px-2 py-1.5 font-mono">
+                {row.orderUnitPrice != null ? fmtAud(row.orderUnitPrice) : "—"}
+              </td>
+              <td className="px-2 py-1.5 font-mono">
+                {row.invoiceUnitPrice != null ? fmtAud(row.invoiceUnitPrice) : "—"}
+              </td>
+              <td className="px-2 py-1.5">{row.status.replace(/_/g, " ")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function shouldShowCompared(onDoc: MatchAmountLine, forMatch: MatchAmountLine): boolean {
   const uomA = (onDoc.uom || "EA").toUpperCase();
   const uomB = (forMatch.uom || "EA").toUpperCase();
@@ -326,6 +373,7 @@ export function PurchaseDetailContent({
   onOpenGrnDocument?: () => void;
 }) {
   const display = match.display;
+  const lineResults = match.lineResults ?? [];
   const varianceSubQty = "(inv_qty − grn_qty) × inv_unit_price";
   const varianceSubPrice = "(inv_unit_price − po_unit_price) × inv_qty";
 
@@ -347,6 +395,8 @@ export function PurchaseDetailContent({
             </Button>
           )}
         </div>
+
+        <LineMatchTable lines={lineResults} receiptLabel="—" />
 
         <div className="grid grid-cols-2 gap-2">
           <MatchDocCard
@@ -436,6 +486,8 @@ export function PurchaseDetailContent({
           </Button>
         )}
       </div>
+
+      <LineMatchTable lines={lineResults} receiptLabel="GRN qty" />
 
       <div className="grid grid-cols-3 gap-2">
         <MatchDocCard

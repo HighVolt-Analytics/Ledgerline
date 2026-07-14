@@ -164,7 +164,7 @@ export function SimpleClassifierSection({
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
         <p className="text-xs text-muted-foreground">
-          Upload a sample on the Upload page, then check Live evaluation at the bottom of Rule Book.
+          Upload a sample on the Upload page, then review routing on the invoice in Upload or Inbox.
         </p>
         <Button type="button" size="sm" variant="outline" className="h-8" onClick={onOpenAdvanced}>
           <Settings2 className="h-3.5 w-3.5 mr-1" />

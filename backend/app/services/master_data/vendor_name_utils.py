@@ -258,7 +258,54 @@ def normalize_vendor_name(value: str | None) -> str | None:
     cleaned = strip_vendor_name_contamination(deduped)
     if not is_plausible_vendor_name(cleaned):
         return None
-    return re.sub(r"\s+", " ", cleaned.strip())
+    collapsed = re.sub(r"\s+", " ", cleaned.strip())
+    return _strip_legal_suffixes(collapsed) or collapsed
+
+
+_SUFFIX_ALIASES_CACHE: list[str] | None = None
+
+
+def _load_legal_suffixes() -> list[str]:
+    global _SUFFIX_ALIASES_CACHE
+    if _SUFFIX_ALIASES_CACHE is not None:
+        return _SUFFIX_ALIASES_CACHE
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "data" / "vendor_suffix_aliases.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        suffixes = [str(s).strip().lower() for s in payload.get("legal_suffixes", []) if str(s).strip()]
+    except (OSError, json.JSONDecodeError, TypeError):
+        suffixes = [
+            "private limited",
+            "pvt ltd",
+            "ltd",
+            "limited",
+            "inc",
+            "llc",
+            "llp",
+            "co",
+        ]
+    # Longest first so "private limited" wins over "limited"
+    _SUFFIX_ALIASES_CACHE = sorted(suffixes, key=len, reverse=True)
+    return _SUFFIX_ALIASES_CACHE
+
+
+def _strip_legal_suffixes(name: str) -> str:
+    """Remove trailing legal-entity suffixes using data/vendor_suffix_aliases.json."""
+    text = re.sub(r"[.,]+", " ", name)
+    text = re.sub(r"\s+", " ", text).strip()
+    lower = text.lower()
+    for suffix in _load_legal_suffixes():
+        if lower == suffix:
+            return ""
+        if lower.endswith(" " + suffix):
+            text = text[: -(len(suffix) + 1)].strip(" ,.")
+            lower = text.lower()
+            # Allow chained suffixes (e.g. rare "Co Ltd") — one pass after longest match is enough
+            break
+    return re.sub(r"\s+", " ", text).strip(" ,.")
 
 
 def extract_header_vendor(text: str) -> str | None:

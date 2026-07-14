@@ -18,7 +18,8 @@ from app.services.classification.document_type_rule_engine import (
     is_signals_recognition_mode,
 )
 from app.services.invoice.invoice_data import InvoiceData
-from app.services.tenant.tenant_org_context import OrgContext, infer_perspective
+from app.services.tenant.tenant_org_context import OrgContext, infer_perspective, party_matches_tenant
+from app.services.master_data.vendor_name_utils import normalize_vendor_name
 
 
 def _dt_enabled(code: str, document_types: Sequence[DocumentTypeDefinition]) -> bool:
@@ -120,6 +121,22 @@ def compare_classification(
     decision.perspective = perspective
     if perspective == "unknown":
         reasons.append(ReviewReason.PERSPECTIVE_AMBIGUOUS)
+
+    extracted = parsed.extracted_fields if isinstance(parsed.extracted_fields, dict) else {}
+    raw = parsed.raw_fields if isinstance(parsed.raw_fields, dict) else {}
+    ambiguous_flag = (
+        str(extracted.get("counterparty_ambiguous") or "").strip().lower() in {"1", "true", "yes"}
+        or bool(raw.get("counterparty_ambiguous"))
+    )
+    vendor_token = normalize_vendor_name(parsed.vendor) or ""
+    vendor_is_self = bool(vendor_token) and party_matches_tenant(
+        vendor_token,
+        (parsed.abn or "").strip(),
+        org,
+    )
+    if ambiguous_flag or vendor_is_self:
+        if ReviewReason.COUNTERPARTY_AMBIGUOUS not in reasons:
+            reasons.append(ReviewReason.COUNTERPARTY_AMBIGUOUS)
 
     if defn is not None and (defn.posting or "").strip().lower() == "conditional":
         reasons.append(ReviewReason.NEVER_AUTO_POLICY)

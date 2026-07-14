@@ -262,7 +262,8 @@ async def _run_universal_duplicate(ctx: ValidationRunContext) -> ValidationResul
         ctx.exclude_id,
         tenant_id=ctx.tenant_id,
     )
-    return _with_severity(raw, "block")
+    # Preserve VR02 severity: hard block for exact/normalized/identity; warn for fuzzy-only.
+    return raw
 
 
 async def _run_enabled_rules(ctx: ValidationRunContext) -> list[ValidationResult]:

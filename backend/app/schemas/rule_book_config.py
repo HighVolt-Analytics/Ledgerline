@@ -811,9 +811,165 @@ def _backfill_playbook_profiles(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _title_matches_shipped_identity(
+    org_title: str,
+    org_short: str,
+    shipped: DocumentTypeDefinition,
+) -> bool:
+    title = org_title.strip().casefold()
+    short = org_short.strip().casefold()
+    shipped_title = str(shipped.title or "").strip().casefold()
+    shipped_short = str(shipped.short_title or "").strip().casefold()
+    if not title and not short:
+        return False
+    return title in {shipped_title, shipped_short} or short in {shipped_title, shipped_short}
+
+
+def _matrix_template_title_corruption(
+    org_title: str,
+    org_short: str,
+    matrix_code: str,
+    shipped_by_code: dict[str, DocumentTypeDefinition],
+) -> bool:
+    """True when visible titles belong to a different shipped template than matrix_template_code."""
+    shipped = shipped_by_code.get(matrix_code)
+    if shipped is None:
+        return False
+    if _title_matches_shipped_identity(org_title, org_short, shipped):
+        return False
+    for code, other in shipped_by_code.items():
+        if code == matrix_code:
+            continue
+        if _title_matches_shipped_identity(org_title, org_short, other):
+            return True
+    return False
+
+
+def _full_shipped_identity_updates(
+    row: dict[str, Any],
+    shipped: DocumentTypeDefinition,
+    matrix_code: str,
+) -> dict[str, Any]:
+    """Realign a corrupted org row to the shipped matrix template identity."""
+    from app.services.classification.document_type_field_defaults import default_validation_profile
+    from app.services.classification.playbook_profile_catalog import default_playbook_profile_for_code
+
+    updates: dict[str, Any] = {}
+
+    shipped_role = (shipped.purchase_bundle_role or "").strip().lower()
+    current_role = str(
+        row.get("purchase_bundle_role") or row.get("purchaseBundleRole") or ""
+    ).strip().lower()
+    if shipped_role != current_role:
+        updates["purchase_bundle_role"] = shipped_role
+        updates["purchaseBundleRole"] = shipped_role
+
+    shipped_playbook = default_playbook_profile_for_code(matrix_code)
+    current_playbook = str(
+        row.get("playbook_profile") or row.get("playbookProfile") or ""
+    ).strip()
+    if shipped_playbook and current_playbook != shipped_playbook:
+        updates["playbook_profile"] = shipped_playbook
+        updates["playbookProfile"] = shipped_playbook
+
+    if shipped.title and str(row.get("title") or "").strip() != shipped.title.strip():
+        updates["title"] = shipped.title
+    if shipped.short_title and str(
+        row.get("short_title") or row.get("shortTitle") or ""
+    ).strip() != shipped.short_title.strip():
+        updates["short_title"] = shipped.short_title
+        updates["shortTitle"] = shipped.short_title
+
+    for key, shipped_val in (
+        ("klass", shipped.klass),
+        ("posting", shipped.posting),
+    ):
+        current = str(row.get(key) or "").strip()
+        target = str(shipped_val or "").strip()
+        if target and current != target:
+            updates[key] = target
+
+    shipped_val_profile = default_validation_profile(matrix_code) or (
+        shipped.validation_profile or ""
+    ).strip()
+    current_val_profile = str(
+        row.get("validation_profile") or row.get("validationProfile") or ""
+    ).strip()
+    if shipped_val_profile:
+        if current_val_profile != shipped_val_profile:
+            updates["validation_profile"] = shipped_val_profile
+            updates["validationProfile"] = shipped_val_profile
+            if shipped_val_profile == "non_actionable":
+                updates["validation_rules"] = []
+                updates["validationRules"] = []
+    elif (
+        current_val_profile == "non_actionable"
+        and str(shipped.klass or "").strip().lower() == "transactional"
+    ):
+        updates["validation_profile"] = ""
+        updates["validationProfile"] = ""
+        updates["validation_rules"] = []
+        updates["validationRules"] = []
+
+    return updates
+
+
+def _missing_shipped_identity_updates(
+    row: dict[str, Any],
+    shipped: DocumentTypeDefinition,
+    matrix_code: str,
+) -> dict[str, Any]:
+    """Fill only empty identity fields — preserve org edits on template-linked types."""
+    from app.services.classification.document_type_field_defaults import default_validation_profile
+    from app.services.classification.playbook_profile_catalog import default_playbook_profile_for_code
+
+    updates: dict[str, Any] = {}
+
+    if not str(row.get("purchase_bundle_role") or row.get("purchaseBundleRole") or "").strip():
+        shipped_role = (shipped.purchase_bundle_role or "").strip().lower()
+        if shipped_role:
+            updates["purchase_bundle_role"] = shipped_role
+            updates["purchaseBundleRole"] = shipped_role
+
+    if not str(row.get("playbook_profile") or row.get("playbookProfile") or "").strip():
+        shipped_playbook = default_playbook_profile_for_code(matrix_code)
+        if shipped_playbook:
+            updates["playbook_profile"] = shipped_playbook
+            updates["playbookProfile"] = shipped_playbook
+
+    if not str(row.get("title") or "").strip() and shipped.title:
+        updates["title"] = shipped.title
+    if not str(row.get("short_title") or row.get("shortTitle") or "").strip() and shipped.short_title:
+        updates["short_title"] = shipped.short_title
+        updates["shortTitle"] = shipped.short_title
+
+    for key, shipped_val in (
+        ("klass", shipped.klass),
+        ("posting", shipped.posting),
+    ):
+        if not str(row.get(key) or "").strip() and str(shipped_val or "").strip():
+            updates[key] = str(shipped_val).strip()
+
+    if not str(row.get("validation_profile") or row.get("validationProfile") or "").strip():
+        shipped_val_profile = default_validation_profile(matrix_code) or (
+            shipped.validation_profile or ""
+        ).strip()
+        if shipped_val_profile:
+            updates["validation_profile"] = shipped_val_profile
+            updates["validationProfile"] = shipped_val_profile
+            if shipped_val_profile == "non_actionable":
+                updates["validation_rules"] = []
+                updates["validationRules"] = []
+
+    return updates
+
+
 def _backfill_shipped_document_type_identity(data: dict[str, Any]) -> dict[str, Any]:
-    """Align tenant DT rows with shipped catalogue identity when linked to a matrix template."""
-    from app.schemas.document_type import DocumentTypeDefinition
+    """Align tenant DT rows with shipped catalogue identity when linked to a matrix template.
+
+    Full realign runs only for corrupted rows (titles from a different shipped template).
+    Otherwise only missing identity fields are backfilled so org edits survive save/load.
+    """
     from app.services.classification.document_type_catalog import (
         load_shipped_default_document_types,
         shipped_matrix_slot_for_org_row,
@@ -831,7 +987,6 @@ def _backfill_shipped_document_type_identity(data: dict[str, Any]) -> dict[str, 
         if not isinstance(row, dict):
             merged.append(row)
             continue
-        code = str(row.get("code") or "").strip().upper()
         try:
             definition = DocumentTypeDefinition.model_validate(row)
             matrix_code = shipped_matrix_slot_for_org_row(definition)
@@ -845,65 +1000,18 @@ def _backfill_shipped_document_type_identity(data: dict[str, Any]) -> dict[str, 
             merged.append(row)
             continue
 
-        updates: dict[str, Any] = {}
-        from app.services.classification.playbook_profile_catalog import default_playbook_profile_for_code
-
-        shipped_role = (shipped.purchase_bundle_role or "").strip().lower()
-        current_role = str(
-            row.get("purchase_bundle_role") or row.get("purchaseBundleRole") or ""
-        ).strip().lower()
-        if shipped_role != current_role:
-            updates["purchase_bundle_role"] = shipped_role
-            updates["purchaseBundleRole"] = shipped_role
-
-        shipped_playbook = default_playbook_profile_for_code(matrix_code)
-        current_playbook = str(
-            row.get("playbook_profile") or row.get("playbookProfile") or ""
-        ).strip()
-        if shipped_playbook and current_playbook != shipped_playbook:
-            updates["playbook_profile"] = shipped_playbook
-            updates["playbookProfile"] = shipped_playbook
-
-        if shipped.title and str(row.get("title") or "").strip() != shipped.title.strip():
-            updates["title"] = shipped.title
-        if shipped.short_title and str(
-            row.get("short_title") or row.get("shortTitle") or ""
-        ).strip() != shipped.short_title.strip():
-            updates["short_title"] = shipped.short_title
-            updates["shortTitle"] = shipped.short_title
-
-        from app.services.classification.document_type_field_defaults import default_validation_profile
-
-        for key, shipped_val in (
-            ("klass", shipped.klass),
-            ("posting", shipped.posting),
+        org_title = str(row.get("title") or "")
+        org_short = str(row.get("short_title") or row.get("shortTitle") or "")
+        if not _title_matches_shipped_identity(org_title, org_short, shipped) and not _matrix_template_title_corruption(
+            org_title, org_short, matrix_code, shipped_by_code
         ):
-            current = str(row.get(key) or "").strip()
-            target = str(shipped_val or "").strip()
-            if target and current != target:
-                updates[key] = target
+            merged.append(row)
+            continue
 
-        shipped_val_profile = default_validation_profile(matrix_code) or (
-            shipped.validation_profile or ""
-        ).strip()
-        current_val_profile = str(
-            row.get("validation_profile") or row.get("validationProfile") or ""
-        ).strip()
-        if shipped_val_profile:
-            if current_val_profile != shipped_val_profile:
-                updates["validation_profile"] = shipped_val_profile
-                updates["validationProfile"] = shipped_val_profile
-                if shipped_val_profile == "non_actionable":
-                    updates["validation_rules"] = []
-                    updates["validationRules"] = []
-        elif (
-            current_val_profile == "non_actionable"
-            and str(shipped.klass or "").strip().lower() == "transactional"
-        ):
-            updates["validation_profile"] = ""
-            updates["validationProfile"] = ""
-            updates["validation_rules"] = []
-            updates["validationRules"] = []
+        if _matrix_template_title_corruption(org_title, org_short, matrix_code, shipped_by_code):
+            updates = _full_shipped_identity_updates(row, shipped, matrix_code)
+        else:
+            updates = _missing_shipped_identity_updates(row, shipped, matrix_code)
 
         merged_row = {**row, **updates} if updates else row
         posting_token = str(
@@ -951,6 +1059,9 @@ def _backfill_extraction_fields_from_shipped_defaults(data: dict[str, Any]) -> d
 
         current = list(row.get("extraction_fields") or row.get("extractionFields") or [])
         normalized = [str(key).strip() for key in current if str(key or "").strip()]
+        if normalized:
+            merged.append(row)
+            continue
         seen = {key.lower() for key in normalized}
 
         def _append(key: str) -> None:

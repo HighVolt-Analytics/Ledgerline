@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, FileText, Loader2 } from "lucide-react";
 import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,10 @@ export function useInvoiceFilePreview(invoiceId: number | null, enabled: boolean
   const [preview, setPreview] = useState<InvoiceFilePreviewResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestSeq = useRef(0);
 
   const clear = useCallback(() => {
+    requestSeq.current += 1;
     setPreview((prev) => {
       if (prev?.url) URL.revokeObjectURL(prev.url);
       return null;
@@ -27,22 +29,28 @@ export function useInvoiceFilePreview(invoiceId: number | null, enabled: boolean
 
   const load = useCallback(async () => {
     if (!invoiceId || !enabled) return;
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
     try {
       const next = await api.previewInvoiceFile(invoiceId);
+      if (seq !== requestSeq.current) {
+        URL.revokeObjectURL(next.url);
+        return;
+      }
       setPreview((prev) => {
         if (prev?.url) URL.revokeObjectURL(prev.url);
         return next;
       });
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setPreview((prev) => {
         if (prev?.url) URL.revokeObjectURL(prev.url);
         return null;
       });
       setError(err instanceof Error ? err.message : "Could not load document");
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }, [invoiceId, enabled]);
 

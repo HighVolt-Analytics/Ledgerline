@@ -18,3 +18,20 @@ def pdf_page_images(path: Path, *, max_pages: int = 8) -> list[bytes]:
         return images
     finally:
         doc.close()
+
+
+def resolve_pdf_page_images(
+    path: Path,
+    cache: list[bytes] | None = None,
+    *,
+    max_pages: int = 8,
+) -> list[bytes]:
+    """Return rasterized page PNGs, reusing *cache* when already populated."""
+    if cache is not None and len(cache) > 0:
+        return cache
+    images = pdf_page_images(path, max_pages=max_pages)
+    if cache is not None:
+        cache.clear()
+        cache.extend(images)
+        return cache
+    return images

@@ -38,6 +38,7 @@ import {
 import type { PurchaseBundleRole, SalesBundleRole } from "@/lib/documentBundleConfig";
 import { normalizeDtCodeList } from "@/lib/documentBundleConfig";
 import { hydrateRecognitionFromClassifier } from "@/lib/documentTypeRecognition";
+import { withSerialPriorities } from "@/lib/rulePriority";
 import {
   mergeConfigurableRules,
   normalizeValidationRules,
@@ -828,7 +829,7 @@ export function ruleBookConfigToApi(state: RuleBookConfigState): RuleBookRulesPa
     },
     org_context: orgContextToApi(state.orgContext),
     document_types: state.documentTypes.map(documentTypeToApi),
-    email_capture_rules: state.emailCaptureRules.map((rule) => ({
+    email_capture_rules: withSerialPriorities(state.emailCaptureRules).map((rule) => ({
       id: rule.id,
       name: rule.name,
       enabled: rule.enabled,

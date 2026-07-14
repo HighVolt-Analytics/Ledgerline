@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -114,14 +116,10 @@ async def attach_dn_invoice_to_so(
     so,
 ) -> DeliveryNote:
     """Create or refresh DN register row for an uploaded delivery note document."""
+    from app.services.matching.line_sync import ensure_so_lines, populate_dn_lines_from_invoice
     from app.services.sales.sales_match_service import _invoice_qty_and_price
 
     existing = await dn_linked_to_so(session, dn_invoice.id)
-    if existing is not None:
-        if existing.sales_order_id != so.id:
-            existing.sales_order_id = so.id
-        return existing
-
     loaded = (
         await session.execute(
             select(Invoice)
@@ -130,12 +128,26 @@ async def attach_dn_invoice_to_so(
         )
     ).scalar_one_or_none()
     dn_invoice = loaded or dn_invoice
-    qty, _, _ = _invoice_qty_and_price(dn_invoice)
+    ensure_so_lines(so)
+    await session.flush()
+    qty, _, _ = _invoice_qty_and_price(dn_invoice, invent_qty=False)
+
+    if existing is not None:
+        if existing.sales_order_id != so.id:
+            existing.sales_order_id = so.id
+        if qty > 0 and qty != existing.dn_qty:
+            existing.dn_qty = qty
+        if not existing.lines:
+            populate_dn_lines_from_invoice(
+                existing, so=so, invoice=dn_invoice, fallback_qty=qty if qty > 0 else None
+            )
+            await session.flush()
+        return existing
 
     dn = DeliveryNote(
         tenant_id=so.tenant_id,
         sales_order_id=so.id,
-        dn_qty=qty,
+        dn_qty=qty if qty > 0 else Decimal("0"),
         dn_currency=getattr(dn_invoice, "currency", None) or None,
         dn_date=dn_invoice.invoice_date,
         shipper=None,
@@ -143,6 +155,10 @@ async def attach_dn_invoice_to_so(
         dn_invoice_id=dn_invoice.id,
     )
     session.add(dn)
+    await session.flush()
+    populate_dn_lines_from_invoice(
+        dn, so=so, invoice=dn_invoice, fallback_qty=qty if qty > 0 else None
+    )
     await session.flush()
     return dn
 

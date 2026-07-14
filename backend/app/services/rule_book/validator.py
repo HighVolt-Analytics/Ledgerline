@@ -273,7 +273,8 @@ async def vr02_unique(
 
     """Document identity must be unique per vendor within an organisation (brief §4.1)."""
 
-    if not get_settings().duplicate_invoice_check_enabled:
+    settings = get_settings()
+    if not settings.duplicate_invoice_check_enabled:
         return ValidationResult("VR02", True, "Duplicate check disabled")
 
     from app.services.dossier.document_duplicate_service import identity_duplicate_exists
@@ -288,19 +289,56 @@ async def vr02_unique(
     config = await load_config_for_tenant(session, tenant_id)
     custom_keys = identity_field_keys_from_catalogue(config.document_types)
 
-    duplicate = await identity_duplicate_exists(
+    match = await identity_duplicate_exists(
         session,
         data,
         tenant_id=tenant_id,
         exclude_id=exclude_id,
         custom_field_keys=custom_keys,
     )
-    if duplicate is not None:
+    if match is not None:
+        duplicate = match.invoice
         ref = duplicate.invoice_no or duplicate.po_reference or duplicate.id
+        if match.kind == "fuzzy":
+            from app.services.audit.audit_service import log_event
+            from app.services.extraction.pdf_content_fingerprint import (
+                boost_confidence_with_content_similarity,
+            )
+
+            confidence = match.confidence_score or 0.0
+            content_sim = None
+            confidence, content_sim = boost_confidence_with_content_similarity(
+                confidence,
+                data.document_text,
+                duplicate.document_text,
+            )
+            detail = {
+                "matched_invoice_id": duplicate.id,
+                "confidence_score": confidence,
+                "layer": "fuzzy",
+                "vendor": data.vendor,
+            }
+            if content_sim is not None:
+                detail["content_similarity"] = content_sim
+            await log_event(
+                session,
+                "fuzzy_duplicate_suspected",
+                invoice_id=exclude_id,
+                detail=detail,
+            )
+            return ValidationResult(
+                "VR02",
+                False,
+                f"Possible duplicate (fuzzy review): vendor {data.vendor or duplicate.vendor}, "
+                f"matched {ref} (confidence={confidence})",
+                severity="warn",
+            )
         return ValidationResult(
             "VR02",
             False,
-            f"Duplicate document identity for vendor {data.vendor or duplicate.vendor}: {ref}",
+            f"Duplicate document identity ({match.kind}) for vendor "
+            f"{data.vendor or duplicate.vendor}: {ref}",
+            severity="block",
         )
 
     identity_present = bool((data.invoice_no or "").strip() or (data.po_reference or "").strip())
@@ -319,7 +357,10 @@ async def vr02_unique(
     if not (data.vendor or "").strip():
         return ValidationResult("VR02", False, "Vendor required for duplicate check")
 
-    return ValidationResult("VR02", True, "No duplicate detected (identity, exact, normalized, fuzzy)")
+    layers = "identity, exact, normalized"
+    if settings.fuzzy_duplicate_check_enabled:
+        layers = f"{layers}, fuzzy"
+    return ValidationResult("VR02", True, f"No duplicate detected ({layers})")
 
 
 

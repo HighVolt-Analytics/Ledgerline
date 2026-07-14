@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -79,6 +80,18 @@ def _normalize_money(value: str) -> str:
         return f"{amount.quantize(Decimal('0.01'))}"
     except (InvalidOperation, ValueError):
         return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def dates_within_tolerance(
+    left: date | None,
+    right: date | None,
+    *,
+    days: int = 7,
+) -> bool:
+    """True if either date is missing, or abs calendar-day delta <= days (no timezone)."""
+    if left is None or right is None:
+        return True
+    return abs((left - right).days) <= days
 
 
 def normalize_identity_value(key: str, value: str) -> str:

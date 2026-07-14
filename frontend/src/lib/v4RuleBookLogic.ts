@@ -329,39 +329,3 @@ export function detectVendorFromSample(
   );
 }
 
-export type LiveEvalRow = {
-  doc: EvalDocument;
-  emailRule: EmailCaptureRule | null;
-  vendor: VendorMatch;
-  categoryRule: { label: string; kind: "Sales" | "Purchase" | "Expense" } | null;
-  matched: boolean;
-};
-
-export function buildLiveEvaluation(
-  docs: EvalDocument[],
-  rules: {
-    emailCaptureRules: EmailCaptureRule[];
-    salesRules: SalesRule[];
-    purchaseRules: PurchaseRule[];
-    expenseRules: ExpenseRule[];
-    vendorMasters: VendorMaster[];
-    vendorDetectionConfig: VendorDetectionConfig;
-  }
-): LiveEvalRow[] {
-  return docs.map((doc) => {
-    const emailRule = matchEmailCaptureRule(docToSampleEmail(doc), rules.emailCaptureRules);
-    const vendor = detectVendor(doc, rules.vendorMasters, rules.vendorDetectionConfig);
-    const sales = matchSalesRule(doc, rules.salesRules);
-    const purchase = matchPurchaseRule(doc, rules.purchaseRules);
-    const expense = matchExpenseRule(doc, rules.expenseRules);
-    const categoryRule = sales
-      ? { label: sales.name, kind: "Sales" as const }
-      : purchase
-        ? { label: purchase.name, kind: "Purchase" as const }
-        : expense
-          ? { label: expense.name, kind: "Expense" as const }
-          : null;
-    const matched = vendor.confidence >= rules.vendorDetectionConfig.threshold;
-    return { doc, emailRule, vendor, categoryRule, matched };
-  });
-}

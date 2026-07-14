@@ -1,12 +1,10 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { Building2, Check, ChevronDown, Shield } from "lucide-react";
 import { AddOrganisationDialog } from "@/components/AddOrganisationDialog";
@@ -15,6 +13,8 @@ import { useAuth } from "@/context/AuthContext";
 import { fetchMyMemberships, type TenantAccountSummary } from "@/lib/authApi";
 import { getAccessToken, loadMembershipsFromSession, persistMemberships, PROFILE_UPDATED_EVENT } from "@/lib/authSession";
 import { cn } from "@/lib/cn";
+import { formatTenantRole } from "@/lib/tenantRoles";
+import { SUPER_ADMIN_ROLE } from "@/lib/roles";
 
 type TenantSwitcherProps = {
   /** @deprecated styling is responsive; prop is ignored */
@@ -24,37 +24,8 @@ type TenantSwitcherProps = {
   isCollapsed?: boolean;
 };
 
-const MENU_WIDTH = 288;
-const MENU_GAP = 8;
-
-import { formatTenantRole } from "@/lib/tenantRoles";
-import { SUPER_ADMIN_ROLE } from "@/lib/roles";
-
 function switchableMemberships(rows: TenantAccountSummary[]): TenantAccountSummary[] {
   return rows.filter((m) => !m.is_platform || m.role === SUPER_ADMIN_ROLE);
-}
-
-function computeMenuPosition(rect: DOMRect, menuHeight: number) {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-
-  let left = rect.left;
-  const width = Math.max(rect.width, MENU_WIDTH);
-  if (left + width > vw - MENU_GAP) {
-    left = rect.right - width;
-  }
-  left = Math.max(MENU_GAP, Math.min(left, vw - width - MENU_GAP));
-
-  const spaceBelow = vh - rect.bottom - MENU_GAP;
-  const spaceAbove = rect.top - MENU_GAP;
-  let top: number;
-  if (spaceBelow >= menuHeight || spaceBelow >= spaceAbove) {
-    top = rect.bottom + MENU_GAP;
-  } else {
-    top = Math.max(MENU_GAP, rect.top - menuHeight - MENU_GAP);
-  }
-
-  return { top, left, width };
 }
 
 export function TenantSwitcher({
@@ -71,7 +42,6 @@ export function TenantSwitcher({
   );
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [menuStyle, setMenuStyle] = useState({ top: 0, left: 0, width: MENU_WIDTH });
 
   const refreshMemberships = useCallback(async () => {
     const token = getAccessToken();
@@ -108,24 +78,6 @@ export function TenantSwitcher({
     () => visibleMemberships.find((m) => m.tenant_id === currentTenantId),
     [visibleMemberships, currentTenantId]
   );
-
-  const updatePosition = useCallback(() => {
-    const rect = triggerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const menuHeight = menuRef.current?.offsetHeight ?? 320;
-    setMenuStyle(computeMenuPosition(rect, menuHeight));
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [open, updatePosition, visibleMemberships.length, showManageActions, error]);
 
   useEffect(() => {
     if (!open) return;
@@ -168,44 +120,39 @@ export function TenantSwitcher({
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid="button-tenant-switcher"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="Switch organization"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 h-9 min-w-0 max-w-[10rem] sm:max-w-[12rem] px-3 rounded-full border border-border bg-card text-sm hover-elevate shrink-0"
-      >
-        {current?.is_platform ? (
-          <Shield className="h-4 w-4 ds-warning-icon shrink-0" />
-        ) : (
-          <Building2 className="h-4 w-4 text-primary shrink-0" />
-        )}
-        <span className="truncate font-medium flex-1 text-left">{displayName}</span>
-        <ChevronDown
-          className={cn(
-            "h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform duration-150",
-            open && "rotate-180"
+      <div className="relative shrink-0">
+        <button
+          ref={triggerRef}
+          type="button"
+          data-testid="button-tenant-switcher"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label="Switch organization"
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center gap-2 h-9 min-w-0 max-w-[10rem] sm:max-w-[12rem] px-3 rounded-full border border-border bg-card text-sm hover-elevate shrink-0"
+        >
+          {current?.is_platform ? (
+            <Shield className="h-4 w-4 ds-warning-icon shrink-0" />
+          ) : (
+            <Building2 className="h-4 w-4 text-primary shrink-0" />
           )}
-        />
-      </button>
+          <span className="truncate font-medium flex-1 text-left">{displayName}</span>
+          <ChevronDown
+            className={cn(
+              "h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform duration-150",
+              open && "rotate-180"
+            )}
+          />
+        </button>
 
-      {open &&
-        createPortal(
+        {open && (
           <>
-            <div className="fixed inset-0 z-[240]" aria-hidden onClick={() => setOpen(false)} />
+            <div className="fixed inset-0 z-40" aria-hidden onClick={() => setOpen(false)} />
             <div
               ref={menuRef}
               role="listbox"
               data-testid="menu-tenant-switcher"
-              className="fixed z-[250] rounded-lg border border-border bg-popover shadow-float text-sm overflow-hidden"
-              style={{
-                top: menuStyle.top,
-                left: menuStyle.left,
-                width: menuStyle.width,
-              }}
+              className="absolute left-0 top-full mt-1 z-50 w-72 rounded-lg border border-border bg-popover shadow-float text-sm overflow-hidden"
             >
               {error && (
                 <p className="px-3 py-2 text-xs text-destructive bg-destructive/10 border-b border-border">
@@ -295,9 +242,9 @@ export function TenantSwitcher({
                 </>
               )}
             </div>
-          </>,
-          document.body
+          </>
         )}
+      </div>
 
       {showManageActions && (
         <AddOrganisationDialog

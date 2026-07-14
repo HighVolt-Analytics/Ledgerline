@@ -427,7 +427,9 @@ export function PurchaseRegisterPanel({
               />
               {!loading && registerRows.length > 0 ? (
                 <p className="px-4 py-3 text-xs text-muted-foreground border-t border-border">
-                  A clean three-way match requires PO quantity = GRN quantity = Invoice quantity,
+                  A clean three-way match requires per-line PO qty = GRN qty = Invoice qty
+                  (headers are rollups),
+
                   and PO unit price = Invoice unit price. Variances route for tiered approval before
                   payment.
                 </p>

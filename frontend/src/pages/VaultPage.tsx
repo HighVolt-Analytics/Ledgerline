@@ -677,7 +677,10 @@ export function VaultPage() {
         invoiceId={drawerId}
         open={drawerOpen}
         initialTab={drawerInitialTab}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => {
+          setDrawerOpen(false);
+          setDrawerId(null);
+        }}
         onUpdated={() => load({ fresh: true })}
       />
     </div>

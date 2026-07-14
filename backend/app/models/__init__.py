@@ -9,11 +9,13 @@ from app.models.connected_mailbox import ConnectedMailbox
 from app.models.customer import CustomerRegistry
 from app.models.customer_master import CustomerMasterRecord
 from app.models.delivery_note import DeliveryNote
+from app.models.delivery_note_line import DeliveryNoteLine
 from app.models.connected_viber import ConnectedViberAccount
 from app.models.connected_whatsapp import ConnectedWhatsapp
 from app.models.meta_webhook_dedupe import MetaWebhookDedupe
 from app.models.dossier_manual_link import DossierManualLink
 from app.models.goods_receipt import GoodsReceipt
+from app.models.goods_receipt_line import GoodsReceiptLine
 from app.models.invoice import Invoice
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
@@ -38,7 +40,9 @@ from app.models.stripe_payments import (
     VendorPaymentMethod,
 )
 from app.models.sales_order import SalesOrder
+from app.models.sales_order_line import SalesOrderLine
 from app.models.purchase_order import PurchaseOrder
+from app.models.purchase_order_line import PurchaseOrderLine
 from app.models.reconciliation import DailyReconciliation
 from app.models.tenant_member_invite import TenantMemberInvite
 from app.models.user import User, UserRole
@@ -69,6 +73,7 @@ __all__ = [
     "CustomerMasterRecord",
     "CustomerRegistry",
     "DeliveryNote",
+    "DeliveryNoteLine",
     "ConnectedMailbox",
     "ConnectedViberAccount",
     "ConnectedWhatsapp",
@@ -77,6 +82,7 @@ __all__ = [
     "DossierManualLink",
     "EmployeeMasterRecord",
     "GoodsReceipt",
+    "GoodsReceiptLine",
     "InvoiceOcrArtifact",
     "Invoice",
     "JournalEntry",
@@ -88,7 +94,9 @@ __all__ = [
     "PaymentExecutionInstruction",
     "PendingVendor",
     "PurchaseOrder",
+    "PurchaseOrderLine",
     "SalesOrder",
+    "SalesOrderLine",
     "StripeAccount",
     "StripeBalanceSnapshot",
     "StripeTransaction",

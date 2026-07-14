@@ -19,6 +19,26 @@ class MatchAmountLine(BaseModel):
     line_value: float | None = None
 
 
+class LineMatchResultOut(BaseModel):
+    """Per-line three-way / two-way match outcome."""
+
+    status: str
+    description: str | None = None
+    sku: str | None = None
+    order_qty: float | None = None
+    order_uom: str | None = None
+    order_unit_price: float | None = None
+    received_qty: float | None = None
+    received_uom: str | None = None
+    invoice_qty: float | None = None
+    invoice_uom: str | None = None
+    invoice_unit_price: float | None = None
+    qty_variance_value: float = 0.0
+    price_variance_value: float = 0.0
+    order_line_key: int | str | None = None
+    invoice_line_key: int | str | None = None
+
+
 class ThreeWayMatchDisplay(BaseModel):
     """Human-readable document amounts for each leg of the match."""
 
@@ -42,6 +62,7 @@ class ThreeWayMatchResult(BaseModel):
     invoice_gst: float
     invoice_total: float
     display: ThreeWayMatchDisplay | None = None
+    line_results: list[LineMatchResultOut] = Field(default_factory=list)
 
 
 class PurchaseOrderResponse(BaseModel):

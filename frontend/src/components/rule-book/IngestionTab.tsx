@@ -3,12 +3,17 @@ import {
   Activity,
   ChevronDown,
   ChevronRight,
-  GripVertical,
+  ChevronUp,
   Inbox,
   Plus,
   Trash2,
 } from "lucide-react";
-import { nextRulePriority } from "@/lib/rulePriority";
+import {
+  moveRuleInPriorityOrder,
+  nextSerialPriority,
+  sortByPriority,
+  withSerialPriorities,
+} from "@/lib/rulePriority";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -39,7 +44,7 @@ export function IngestionTab({
       id,
       name: "New ingestion rule",
       enabled: true,
-      priority: nextRulePriority(rules),
+      priority: nextSerialPriority(rules),
       mailbox: DEFAULT_MAILBOX,
       root: {
         type: "group",
@@ -54,21 +59,27 @@ export function IngestionTab({
       matchedCount: 0,
       lastMatched: "—",
     };
-    onChange([...rules, next]);
+    onChange(withSerialPriorities([...rules, next]));
     setExpandedId(id);
   };
 
-  const removeRule = (id: string) => onChange(rules.filter((r) => r.id !== id));
+  const removeRule = (id: string) =>
+    onChange(withSerialPriorities(rules.filter((r) => r.id !== id)));
 
-  const sorted = [...rules].sort((a, b) => a.priority - b.priority);
+  const moveRule = (id: string, direction: -1 | 1) => {
+    onChange(moveRuleInPriorityOrder(rules, id, direction));
+  };
+
+  const sorted = sortByPriority(rules);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Gate which email attachments enter the document pipeline. Matching rules accept
-          attachments for OCR only — they do not route to Purchase, Expenses, or Team workspaces.
-          Upload and WhatsApp use separate channel gates.
+          Gate which email attachments enter the document pipeline. Rules are checked in S.No
+          order — first match wins. Matching rules accept attachments for OCR only — they do not
+          route to Purchase, Expenses, or Team workspaces. Upload and WhatsApp use separate channel
+          gates.
         </p>
         <Button size="sm" onClick={addRule} data-testid="button-new-email-rule">
           <Plus className="h-4 w-4 mr-1" /> New Rule
@@ -76,15 +87,45 @@ export function IngestionTab({
       </div>
 
       <div className="space-y-3">
-        {sorted.map((rule) => {
+        {sorted.map((rule, index) => {
           const open = expandedId === rule.id;
+          const serial = index + 1;
           return (
             <Card key={rule.id} className="overflow-hidden" data-testid={`email-rule-${rule.id}`}>
               <div className="flex items-start gap-3 p-3">
-                <div className="flex items-center gap-1.5 pt-0.5">
-                  <GripVertical className="h-4 w-4 text-muted-foreground/50" aria-hidden />
-                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-muted text-xs font-semibold tnum">
-                    {rule.priority}
+                <div className="flex items-center gap-1 pt-0.5">
+                  <div className="flex flex-col">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 w-5 p-0 text-muted-foreground"
+                      disabled={index === 0}
+                      onClick={() => moveRule(rule.id, -1)}
+                      aria-label={`Move rule ${serial} up`}
+                      data-testid={`move-up-email-${rule.id}`}
+                    >
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 w-5 p-0 text-muted-foreground"
+                      disabled={index === sorted.length - 1}
+                      onClick={() => moveRule(rule.id, 1)}
+                      aria-label={`Move rule ${serial} down`}
+                      data-testid={`move-down-email-${rule.id}`}
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <span
+                    className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-muted px-1 text-xs font-semibold tnum"
+                    title="S.No — check order (first match wins)"
+                    aria-label={`S.No ${serial}`}
+                  >
+                    {serial}
                   </span>
                 </div>
                 <button

@@ -286,6 +286,7 @@ async def reextract_fields_for_corrected_dt(
     confirmed_dt: str,
     few_shots: Sequence[dict[str, str]],
     doc_provider: DocumentAiProvider,
+    vision_page_images: list[bytes] | None = None,
 ) -> tuple[InvoiceData, list[str]]:
     """Re-run extract for ``confirmed_dt``, apply fields, prune old-schema keys."""
     from dataclasses import replace
@@ -316,6 +317,7 @@ async def reextract_fields_for_corrected_dt(
         confirmed_dt=confirmed_dt,
         few_shots=few_shots,
         provider=doc_provider,
+        vision_page_images=vision_page_images,
     )
     llm_result = extract_result.llm
     ocr_out = extract_result.ocr
@@ -370,6 +372,25 @@ async def reextract_fields_for_corrected_dt(
         org_country=org.country if org else None,
     )
     parsed = enrich_parsed_from_ocr(parsed, ocr_out, dt_definition=dt_definition)
+
+    from app.config import get_settings as _telemetry_settings
+    from app.services.audit.audit_service import log_event
+    from app.services.extraction.field_resolution_telemetry import detail_from_parsed_telemetry
+
+    if _telemetry_settings().log_field_resolution_telemetry:
+        telemetry_detail = detail_from_parsed_telemetry(parsed)
+        if telemetry_detail:
+            await log_event(
+                session,
+                "field_resolution_telemetry",
+                invoice_id=invoice.id,
+                detail={
+                    **telemetry_detail,
+                    "document_ai_provider": doc_provider.value,
+                    "policy_reextract": True,
+                },
+            )
+
     parsed, _gap = await apply_extraction_gap_fill(
         parsed,
         ocr=ocr_out,

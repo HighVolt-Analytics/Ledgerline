@@ -1,0 +1,31 @@
+{
+  "legal_suffixes": [
+    "private limited",
+    "pvt. ltd.",
+    "pvt. ltd",
+    "pvt ltd.",
+    "pvt ltd",
+    "pty. ltd.",
+    "pty. ltd",
+    "pty ltd.",
+    "pty ltd",
+    "limited",
+    "ltd.",
+    "ltd",
+    "incorporated",
+    "inc.",
+    "inc",
+    "corporation",
+    "corp.",
+    "corp",
+    "llc",
+    "llp",
+    "l.l.c.",
+    "l.l.p.",
+    "co.",
+    "co",
+    "plc",
+    "gmbh",
+    "company"
+  ]
+}

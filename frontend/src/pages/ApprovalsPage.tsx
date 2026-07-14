@@ -710,6 +710,7 @@ export function ApprovalsPage() {
         open={drawerOpen}
         onClose={() => {
           setDrawerOpen(false);
+          setDrawerInvoice(null);
           setDrawerEditMode(false);
           setDrawerEditing(false);
         }}

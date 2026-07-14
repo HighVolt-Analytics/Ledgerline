@@ -232,16 +232,45 @@ def invoice_no_link_tokens_from_values(
     return {part.upper() for part in _parts_from_primary_secondary(primary, secondary)}
 
 
+def normalize_invoice_number_token(value: str | None) -> str:
+    """Strip punctuation/spaces, lowercase, collapse leading zeros in digit runs."""
+    if not value:
+        return ""
+    cleaned = re.sub(r"[^a-z0-9]", "", str(value).strip().lower())
+    cleaned = re.sub(r"(?<![0-9])0+(?=[0-9])", "", cleaned)
+    return cleaned
+
+
 def invoice_no_dup_tokens_from_values(
     primary: str | None,
     secondary: str | None = None,
 ) -> set[str]:
-    """Alphanumeric-lowercased tokens for duplicate comparison."""
+    """Alphanumeric-lowercased tokens for duplicate comparison.
+
+    Includes:
+    - primary normalized form (separators stripped, leading zeros collapsed)
+    - digits-only core (INV2345 ↔ 2345)
+    - form without a single trailing letter suffix (INV2345A ↔ INV2345 via core 2345)
+
+    Over-match risk is mitigated by VR02 requiring the same vendor.
+    """
     out: set[str] = set()
     for part in _parts_from_primary_secondary(primary, secondary):
-        norm = re.sub(r"[^a-z0-9]", "", part.lower())
-        if norm:
-            out.add(norm)
+        norm = normalize_invoice_number_token(part)
+        if not norm:
+            continue
+        out.add(norm)
+        digits = re.sub(r"[^0-9]", "", norm)
+        if digits:
+            out.add(digits)
+        # Trailing revision letter: inv2345a → also inv2345 + 2345
+        if len(norm) > 1 and norm[-1].isalpha() and any(ch.isdigit() for ch in norm[:-1]):
+            stem = norm[:-1]
+            if stem:
+                out.add(stem)
+                stem_digits = re.sub(r"[^0-9]", "", stem)
+                if stem_digits:
+                    out.add(stem_digits)
     return out
 
 

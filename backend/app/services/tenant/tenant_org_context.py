@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -107,17 +108,46 @@ def _normalize_abn(value: str) -> str:
     return "".join(c for c in value if c.isdigit())
 
 
+_LEGAL_SUFFIX_RE = re.compile(
+    r"\b(?:pty\.?\s*ltd\.?|pvt\.?\s*ltd\.?|limited|ltd\.?|inc\.?|corp\.?|"
+    r"corporation|company|co\.?|llc|gmbh|plc)\b",
+    re.I,
+)
+
+
+def _canon_party_name(value: str) -> str:
+    """Lowercase alphanumeric tokens with legal suffixes stripped for matching."""
+    from app.services.master_data.vendor_detection import normalize_match_text
+
+    cleaned = _LEGAL_SUFFIX_RE.sub(" ", value or "")
+    return normalize_match_text(cleaned)
+
+
 def party_matches_tenant(name: str, abn: str, org: OrgContext) -> bool:
+    """True when the party is the tenant org (tax id, fuzzy name, or alias)."""
     if org.abn and abn:
         if _normalize_abn(org.abn) == _normalize_abn(abn):
             return True
-    legal = org.legal_name.lower()
-    token = name.strip().lower()
-    if legal and token and legal in token:
-        return True
-    for alias in org.aliases:
-        al = alias.strip().lower()
-        if al and token and al in token:
+
+    token = _canon_party_name(name)
+    if len(token) < 4:
+        return False
+
+    from app.services.master_data.vendor_detection import NAME_FUZZY_MIN_RATIO, levenshtein_ratio
+
+    candidates = [org.legal_name, *org.aliases]
+    for entry in candidates:
+        hay = _canon_party_name(entry)
+        if len(hay) < 4:
+            continue
+        if token == hay:
+            return True
+        # Bidirectional containment only for longer anchors (avoids "Co"/"Pty" FPs).
+        if len(hay) >= 8 and (hay in token or token in hay):
+            return True
+        if len(token) >= 8 and (token in hay or hay in token):
+            return True
+        if levenshtein_ratio(token, hay) >= NAME_FUZZY_MIN_RATIO:
             return True
     return False
 
@@ -133,6 +163,9 @@ def infer_perspective(
 ) -> str:
     seller_match = party_matches_tenant(seller_name, seller_abn, org)
     buyer_match = party_matches_tenant(buyer_name, buyer_abn, org)
+    # Both sides look like us → ambiguous (do not guess).
+    if seller_match and buyer_match:
+        return "unknown"
     if seller_match and not buyer_match:
         return "sales"
     if buyer_match and not seller_match:

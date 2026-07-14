@@ -446,6 +446,7 @@ _REVIEW_REASON_LABELS: dict[str, str] = {
     "DT_MISMATCH": "LLM and policy classifiers disagree",
     "POLICY_LOW_CONF": "Policy classifier confidence is too low",
     "PERSPECTIVE_AMBIGUOUS": "Could not determine purchase vs sales perspective",
+    "COUNTERPARTY_AMBIGUOUS": "Could not determine the counterparty (vendor/customer)",
     "EXTRACTION_GAP": "Required fields missing for suggested document type",
     "NEVER_AUTO_POLICY": "Document type is configured to always require review",
     "PROVIDER_UNAVAILABLE": "Document AI provider unavailable",

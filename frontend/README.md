@@ -55,7 +55,7 @@ API calls are proxied to port 8001 (see `vite.config.ts`).
 | `/upload` | Upload + mailbox capture |
 | `/approvals` | Approval queue |
 | `/vendors` | Vendor registry |
-| `/rules` | Rule book editor + live evaluation |
+| `/rules` | Rule book editor |
 | `/purchases` | Purchase management (routed invoices) |
 | `/team-expenses` | Team expense claims |
 | `/payments` | Payables queue |

@@ -67,11 +67,10 @@ VR02_IGNORE_STATUSES = frozenset(
 
 
 def normalize_invoice_number(value: str | None) -> str:
-    """Strip punctuation/spaces for duplicate comparison."""
-    if not value:
-        return ""
-    cleaned = re.sub(r"[^a-z0-9]", "", value.strip().lower())
-    return cleaned
+    """Strip punctuation/spaces for duplicate comparison (leading zeros collapsed)."""
+    from app.services.extraction.invoice_no_sanitizer import normalize_invoice_number_token
+
+    return normalize_invoice_number_token(value)
 
 
 def _invoice_data_dup_tokens(data: InvoiceData) -> set[str]:
@@ -136,10 +135,18 @@ async def fuzzy_business_duplicate_exists(
     *,
     tenant_id: int,
     exclude_id: int | None = None,
-    amount_pct: Decimal = Decimal("0.005"),
-    date_window_days: int = 7,
+    amount_pct: Decimal | None = None,
+    date_window_days: int | None = None,
 ) -> Invoice | None:
     """Same vendor, similar amount (±pct), invoice date within ±days."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    if amount_pct is None:
+        amount_pct = Decimal(str(settings.fuzzy_amount_tolerance_pct))
+    if date_window_days is None:
+        date_window_days = int(settings.fuzzy_date_window_days)
+
     if not (data.vendor or "").strip() or data.total is None or data.invoice_date is None:
         return None
 
@@ -173,6 +180,46 @@ async def fuzzy_business_duplicate_exists(
             continue
         return row
     return None
+
+
+def fuzzy_match_confidence(
+    data: InvoiceData,
+    other: Invoice,
+    *,
+    amount_pct: Decimal | None = None,
+    date_window_days: int | None = None,
+) -> float:
+    """Weighted 0–1 score from amount + date closeness (Layer 4)."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    if amount_pct is None:
+        amount_pct = Decimal(str(settings.fuzzy_amount_tolerance_pct))
+    if date_window_days is None:
+        date_window_days = int(settings.fuzzy_date_window_days)
+
+    amount_score = 0.0
+    if data.total is not None and other.total is not None and amount_pct > 0:
+        base = abs(data.total) if data.total != 0 else Decimal("0.01")
+        rel = abs(data.total - other.total) / base
+        amount_score = max(0.0, float(1 - (rel / amount_pct)))
+
+    date_score = 0.0
+    if data.invoice_date is not None and other.invoice_date is not None and date_window_days > 0:
+        days = abs((data.invoice_date - other.invoice_date).days)
+        date_score = max(0.0, 1.0 - (days / float(date_window_days)))
+
+    return round(0.5 * amount_score + 0.5 * date_score, 4)
+
+
+DuplicateMatchKind = Literal["identity_overlap", "exact", "normalized", "fuzzy"]
+
+
+@dataclass(frozen=True)
+class BusinessDuplicateMatch:
+    invoice: Invoice
+    kind: DuplicateMatchKind
+    confidence_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -397,7 +444,8 @@ async def identity_duplicate_exists(
     tenant_id: int,
     exclude_id: int | None = None,
     custom_field_keys: list[str] | None = None,
-) -> Invoice | None:
+) -> BusinessDuplicateMatch | None:
+    from app.config import get_settings
     from app.services.extraction.document_identity_service import (
         extract_identity_fields,
         is_identity_field_key,
@@ -431,7 +479,7 @@ async def identity_duplicate_exists(
         exclude_id=exclude_id,
     )
     if overlap is not None:
-        return overlap
+        return BusinessDuplicateMatch(invoice=overlap, kind="identity_overlap")
 
     duplicate = await invoice_number_duplicate_exists(
         session,
@@ -440,14 +488,31 @@ async def identity_duplicate_exists(
         exclude_id=exclude_id,
     )
     if duplicate is not None:
-        return duplicate
+        return BusinessDuplicateMatch(invoice=duplicate, kind="exact")
 
-    return await normalized_invoice_number_duplicate_exists(
+    normalized = await normalized_invoice_number_duplicate_exists(
         session,
         data,
         tenant_id=tenant_id,
         exclude_id=exclude_id,
     )
+    if normalized is not None:
+        return BusinessDuplicateMatch(invoice=normalized, kind="normalized")
+
+    if get_settings().fuzzy_duplicate_check_enabled:
+        fuzzy = await fuzzy_business_duplicate_exists(
+            session,
+            data,
+            tenant_id=tenant_id,
+            exclude_id=exclude_id,
+        )
+        if fuzzy is not None:
+            return BusinessDuplicateMatch(
+                invoice=fuzzy,
+                kind="fuzzy",
+                confidence_score=fuzzy_match_confidence(data, fuzzy),
+            )
+    return None
 
 
 async def find_existing_ingest_duplicate(
@@ -665,7 +730,11 @@ async def resolve_ingest_duplicate(
             session,
             "duplicate_skipped",
             invoice_id=existing.id,
-            detail={**detail, "note": "repeat submission ignored"},
+            detail={
+                **detail,
+                "note": "repeat submission ignored",
+                "original_invoice_id": existing.id,
+            },
         )
         return IngestDuplicateOutcome(
             handled=True,

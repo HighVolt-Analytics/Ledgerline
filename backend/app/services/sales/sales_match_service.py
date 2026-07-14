@@ -14,12 +14,58 @@ from sqlalchemy.orm import selectinload
 from app.models.delivery_note import DeliveryNote
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.sales_order import SalesOrder, SalesOrderStatus
-from app.schemas.purchase import MatchAmountLine, ThreeWayMatchDisplay, ThreeWayMatchResult
+from app.schemas.purchase import (
+    LineMatchResultOut,
+    MatchAmountLine,
+    ThreeWayMatchDisplay,
+    ThreeWayMatchResult,
+)
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.schemas.sales import DeliveryNoteCreate, SalesOrderResponse, TwoWaySalesMatchResponse
 from app.schemas.uom_conversion import PurchaseMatchConfig
 from app.services.audit.audit_service import log_event
 from app.services.invoice.invoice_evaluation_service import ROUTE_SALES, parse_matched_rule_ids
+from app.services.matching.line_match_engine import (
+    compute_line_match,
+    sum_received_by_order_line,
+)
+
+
+def _redistribute_header_receipt(
+    order_lines: list,
+    recv_qtys: dict,
+    recv_uoms: dict,
+    *,
+    total_received: Decimal,
+) -> tuple[dict, dict]:
+    """When receipt has only a header qty but order has many lines, allocate by order qty."""
+    if len(order_lines) <= 1 or total_received <= 0:
+        return recv_qtys, recv_uoms
+    if len(recv_qtys) > 1:
+        return recv_qtys, recv_uoms
+    order_total = sum((ln.qty or Decimal("0")) for ln in order_lines)
+    if order_total <= 0:
+        return recv_qtys, recv_uoms
+    new_qtys: dict = {}
+    new_uoms: dict = {}
+    uom = next(iter(recv_uoms.values()), None) if recv_uoms else None
+    allocated = Decimal("0")
+    keyed = [ln for ln in order_lines if ln.key is not None]
+    for i, ln in enumerate(keyed):
+        if i == len(keyed) - 1:
+            q = total_received - allocated
+        else:
+            share = (ln.qty or Decimal("0")) / order_total
+            q = (total_received * share).quantize(Decimal("0.0001"))
+            allocated += q
+        new_qtys[ln.key] = q
+        new_uoms[ln.key] = uom
+    return new_qtys, new_uoms
+from app.services.matching.line_sync import (
+    ensure_so_lines,
+    invoice_match_inputs,
+    order_match_inputs_from_so,
+)
 from app.services.rule_book.rule_book_mapper import load_classification_config, resolve_config_mapping
 from app.services.sales.sales_coding_service import code_so_from_invoice, inherit_so_coding_to_invoice
 
@@ -60,18 +106,28 @@ def _qty_over_billing(
 def _latest_dn(so: SalesOrder) -> DeliveryNote | None:
     if not so.delivery_notes:
         return None
-    return max(so.delivery_notes, key=lambda row: row.id)
+    return max(so.delivery_notes, key=lambda row: (row.id is not None, row.id or 0))
 
 
-def _invoice_qty_and_price(inv: Invoice) -> tuple[Decimal, Decimal, float]:
+def _invoice_qty_and_price(
+    inv: Invoice,
+    *,
+    invent_qty: bool = False,
+) -> tuple[Decimal, Decimal, float]:
     qty = Decimal("0")
-    for line in inv.line_items:
+    value = Decimal("0")
+    for line in inv.line_items or []:
         if line.qty is not None:
             qty += line.qty
-    if qty <= 0:
+        if line.amount is not None:
+            value += line.amount
+        elif line.unit_price is not None and line.qty is not None:
+            value += line.unit_price * line.qty
+    if qty <= 0 and invent_qty:
         qty = Decimal("1")
-    subtotal = inv.subtotal or Decimal("0")
-    unit_price = subtotal / qty if qty else Decimal("0")
+    if value <= 0:
+        value = inv.subtotal or Decimal("0")
+    unit_price = value / qty if qty else Decimal("0")
     from app.services.extraction.gst_rate import invoice_gst_rate_fraction
 
     gst_rate = invoice_gst_rate_fraction(inv)
@@ -80,12 +136,86 @@ def _invoice_qty_and_price(inv: Invoice) -> tuple[Decimal, Decimal, float]:
     return qty, unit_price, gst_rate
 
 
+def _line_results_out(rollup) -> list[LineMatchResultOut]:
+    return [
+        LineMatchResultOut(
+            status=row.status,
+            description=row.description,
+            sku=row.sku,
+            order_qty=row.order_qty,
+            order_uom=row.order_uom,
+            order_unit_price=row.order_unit_price,
+            received_qty=row.received_qty,
+            received_uom=row.received_uom,
+            invoice_qty=row.invoice_qty,
+            invoice_uom=row.invoice_uom,
+            invoice_unit_price=row.invoice_unit_price,
+            qty_variance_value=row.qty_variance_value,
+            price_variance_value=row.price_variance_value,
+            order_line_key=row.order_line_key,
+            invoice_line_key=row.invoice_line_key,
+        )
+        for row in rollup.line_results
+    ]
+
+
+def _all_dn_lines(so: SalesOrder) -> list:
+    rows = []
+    ensure_so_lines(so)
+    first = so.lines[0] if so.lines else None
+    first_key = first.id if first is not None and first.id is not None else (
+        f"line-{first.line_no}" if first is not None else None
+    )
+    for dn in so.delivery_notes or []:
+        if dn.lines:
+            for dl in dn.lines:
+                if dl.sales_order_line_id is None and first_key is not None and len(so.lines) == 1:
+
+                    class _Linked:
+                        sales_order_line_id = first_key
+                        qty = dl.qty
+                        uom = dl.uom
+
+                    rows.append(_Linked())
+                else:
+                    oid = dl.sales_order_line_id
+                    if oid is None:
+                        rows.append(dl)
+                        continue
+                    key = oid
+                    for ln in so.lines:
+                        if ln.id == oid:
+                            key = ln.id if ln.id is not None else f"line-{ln.line_no}"
+                            break
+
+                    class _Mapped:
+                        sales_order_line_id = key
+                        qty = dl.qty
+                        uom = dl.uom
+
+                    rows.append(_Mapped())
+        elif first_key is not None:
+
+            class _Tmp:
+                sales_order_line_id = first_key
+                qty = dn.dn_qty
+                uom = getattr(dn, "dn_uom", None)
+
+            rows.append(_Tmp())
+    return rows
+
+
 def build_three_way_match_display(
     so: SalesOrder,
     inv: Invoice | None,
     match: ThreeWayMatchResult,
 ) -> ThreeWayMatchDisplay:
-    dn = _latest_dn(so)
+    received_total = Decimal("0")
+    received_uom: str | None = None
+    for dn in so.delivery_notes or []:
+        received_total += Decimal(str(dn.dn_qty or 0))
+        if received_uom is None:
+            received_uom = getattr(dn, "dn_uom", None)
 
     so_qty = Decimal(str(so.so_qty or 0))
     so_unit = Decimal(str(so.so_unit_price or 0))
@@ -98,21 +228,20 @@ def build_three_way_match_display(
 
     invoice_line: MatchAmountLine | None = None
     if inv is not None:
-        inv_qty, inv_unit, _ = _invoice_qty_and_price(inv)
+        inv_qty, inv_unit, _ = _invoice_qty_and_price(inv, invent_qty=False)
         inv_uom = getattr(inv.line_items[0], "uom", None) if inv.line_items else None
         invoice_line = _amount_line(
-            qty=inv_qty,
+            qty=inv_qty if inv_qty > 0 else 0,
             uom=inv_uom,
             unit_price=inv_unit,
             line_value=match.invoice_value,
         )
 
     dn_line: MatchAmountLine | None = None
-    if dn is not None:
-        dn_qty = Decimal(str(dn.dn_qty or 0))
+    if (so.delivery_notes or []) or received_total > 0:
         dn_line = _amount_line(
-            qty=dn_qty,
-            uom=getattr(dn, "dn_uom", None),
+            qty=received_total,
+            uom=received_uom,
             unit_price=None,
             line_value=None,
         )
@@ -124,6 +253,7 @@ def build_three_way_match_display(
         grn_for_match=dn_line,
         invoice_on_document=invoice_line,
         invoice_for_match=invoice_line,
+        match_explanation="Per-line SO ↔ DN (summed) ↔ Invoice; headers are rollups",
     )
 
 
@@ -146,15 +276,46 @@ def compute_three_way_match(
 ) -> ThreeWayMatchResult:
     cfg = match_config or PurchaseMatchConfig()
     tolerance = cfg.qty_tolerance_pct if qty_tolerance_pct is None else qty_tolerance_pct
-    dn = _latest_dn(so)
+    receipt_present = bool(so.delivery_notes)
 
-    so_qty = Decimal(str(so.so_qty or 0))
-    so_unit = Decimal(str(so.so_unit_price or 0))
-    so_value = _round2(so_qty * so_unit)
+    ensure_so_lines(so)
+    order_lines = order_match_inputs_from_so(so)
+    invoice_lines = invoice_match_inputs(inv)
+
+    recv_qtys, recv_uoms = sum_received_by_order_line(
+        _all_dn_lines(so),
+        order_line_id_attr="sales_order_line_id",
+    )
+    if receipt_present and not recv_qtys and len(order_lines) == 1 and order_lines[0].key is not None:
+        total = sum((Decimal(str(d.dn_qty or 0)) for d in so.delivery_notes), Decimal("0"))
+        recv_qtys[order_lines[0].key] = total
+        if so.delivery_notes:
+            recv_uoms[order_lines[0].key] = getattr(so.delivery_notes[0], "dn_uom", None)
+    if receipt_present:
+        total_recv = sum((Decimal(str(d.dn_qty or 0)) for d in so.delivery_notes), Decimal("0"))
+        recv_qtys, recv_uoms = _redistribute_header_receipt(
+            order_lines, recv_qtys, recv_uoms, total_received=total_recv
+        )
+
+    from app.services.extraction.gst_rate import invoice_gst_rate_fraction
+
+    gst_rate = 0.0
+    if inv is not None:
+        g = invoice_gst_rate_fraction(inv)
+        if g is not None:
+            gst_rate = g
 
     if inv is None:
+        so_value = _round2(
+            sum(
+                ((ln.qty or Decimal("0")) * (ln.unit_price or Decimal("0")) for ln in order_lines),
+                Decimal("0"),
+            )
+        )
+        if so_value == 0:
+            so_value = _round2(Decimal(str(so.so_qty or 0)) * Decimal(str(so.so_unit_price or 0)))
         return ThreeWayMatchResult(
-            status="No DN" if dn is None else "Qty Variance",
+            status="No DN" if not receipt_present else "Qty Variance",
             qty_variance_value=0.0,
             price_variance_value=0.0,
             total_deviation=0.0,
@@ -162,48 +323,33 @@ def compute_three_way_match(
             invoice_value=0.0,
             invoice_gst=0.0,
             invoice_total=0.0,
+            line_results=[],
         )
 
-    inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
-    invoice_value = _round2(inv_qty * inv_unit)
-    invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
-    invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
-
-    if dn is None:
-        return ThreeWayMatchResult(
-            status="No DN",
-            qty_variance_value=0.0,
-            price_variance_value=0.0,
-            total_deviation=0.0,
-            po_value=so_value,
-            invoice_value=invoice_value,
-            invoice_gst=invoice_gst,
-            invoice_total=invoice_total,
-        )
-
-    dn_qty = Decimal(str(dn.dn_qty or 0))
-    qty_variance = _round2((float(inv_qty) - float(dn_qty)) * float(inv_unit))
-    price_variance = _round2((float(inv_unit) - float(so_unit)) * float(inv_qty))
-    total_deviation = _round2(qty_variance + price_variance)
-
-    if so.variance_approved:
-        status = "3-Way Match"
-    elif price_variance != 0:
-        status = "Price Variance"
-    elif _qty_over_billing(inv_qty, dn_qty, tolerance_pct=tolerance):
-        status = "Qty Variance"
-    else:
-        status = "3-Way Match"
-
+    rollup = compute_line_match(
+        order_lines=order_lines,
+        invoice_lines=invoice_lines,
+        received_qty_by_order_key=recv_qtys,
+        received_uom_by_order_key=recv_uoms,
+        require_receipt=True,
+        receipt_present=receipt_present,
+        variance_approved=bool(so.variance_approved),
+        qty_tolerance_pct=tolerance,
+        missing_receipt_status="No DN",
+        gst_rate=gst_rate,
+    )
+    invoice_gst = _round2(Decimal(str(rollup.invoice_value)) * Decimal(str(gst_rate)))
+    invoice_total = _round2(Decimal(str(rollup.invoice_value)) + Decimal(str(invoice_gst)))
     return ThreeWayMatchResult(
-        status=status,
-        qty_variance_value=qty_variance,
-        price_variance_value=price_variance,
-        total_deviation=total_deviation,
-        po_value=so_value,
-        invoice_value=invoice_value,
+        status=rollup.status,
+        qty_variance_value=rollup.qty_variance_value,
+        price_variance_value=rollup.price_variance_value,
+        total_deviation=rollup.total_deviation,
+        po_value=rollup.order_value,
+        invoice_value=rollup.invoice_value,
         invoice_gst=invoice_gst,
         invoice_total=invoice_total,
+        line_results=_line_results_out(rollup),
     )
 
 
@@ -478,7 +624,10 @@ async def list_sales_orders(
         await db.execute(
             select(SalesOrder)
             .where(SalesOrder.tenant_id == tenant_id)
-            .options(selectinload(SalesOrder.delivery_notes))
+            .options(
+                selectinload(SalesOrder.delivery_notes).selectinload(DeliveryNote.lines),
+                selectinload(SalesOrder.lines),
+            )
             .order_by(SalesOrder.created_at.desc())
         )
     ).scalars().all()
@@ -630,7 +779,10 @@ async def load_sales_order_for_invoice(
                 SalesOrder.tenant_id == invoice.tenant_id,
                 SalesOrder.so_number == so_number,
             )
-            .options(selectinload(SalesOrder.delivery_notes))
+            .options(
+                selectinload(SalesOrder.delivery_notes).selectinload(DeliveryNote.lines),
+                selectinload(SalesOrder.lines),
+            )
         )
     ).scalar_one_or_none()
 
@@ -648,7 +800,10 @@ async def record_delivery_note(
                 SalesOrder.id == sales_order_id,
                 SalesOrder.tenant_id == tenant_id,
             )
-            .options(selectinload(SalesOrder.delivery_notes))
+            .options(
+                selectinload(SalesOrder.delivery_notes).selectinload(DeliveryNote.lines),
+                selectinload(SalesOrder.lines),
+            )
         )
     ).scalar_one_or_none()
     if so is None:
@@ -664,7 +819,13 @@ async def record_delivery_note(
     )
     db.add(dn)
     await db.flush()
-    await db.refresh(so, attribute_names=["delivery_notes"])
+    from app.services.matching.line_sync import ensure_so_lines, populate_dn_lines_from_invoice
+
+    ensure_so_lines(so)
+    await db.flush()
+    populate_dn_lines_from_invoice(dn, so=so, invoice=None, fallback_qty=Decimal(str(body.dn_qty)))
+    await db.flush()
+    await db.refresh(so, attribute_names=["delivery_notes", "lines"])
 
     inv: Invoice | None = None
     if so.invoice_id:
@@ -699,7 +860,10 @@ async def approve_sales_variance(
                 SalesOrder.id == sales_order_id,
                 SalesOrder.tenant_id == tenant_id,
             )
-            .options(selectinload(SalesOrder.delivery_notes))
+            .options(
+                selectinload(SalesOrder.delivery_notes).selectinload(DeliveryNote.lines),
+                selectinload(SalesOrder.lines),
+            )
         )
     ).scalar_one_or_none()
     if so is None:
@@ -784,88 +948,40 @@ def compute_two_way_so_match(
     match_config: PurchaseMatchConfig | None = None,
 ) -> ThreeWayMatchResult:
     """SO ↔ invoice match when no delivery note exists on the dossier."""
-    from app.services.classification.document_type_match_service import (
-        PRICE_MATCH_CAP_AUD,
-        PRICE_MATCH_PCT,
-        _price_variance_exceeds_tolerance,
+    cfg = match_config or PurchaseMatchConfig()
+    ensure_so_lines(so)
+    order_lines = order_match_inputs_from_so(so)
+    invoice_lines = invoice_match_inputs(inv)
+    from app.services.extraction.gst_rate import invoice_gst_rate_fraction
+
+    gst_rate = invoice_gst_rate_fraction(inv) or 0.0
+    rollup = compute_line_match(
+        order_lines=order_lines,
+        invoice_lines=invoice_lines,
+        received_qty_by_order_key={},
+        require_receipt=False,
+        receipt_present=False,
+        variance_approved=bool(so.variance_approved),
+        qty_tolerance_pct=cfg.qty_tolerance_pct,
+        missing_receipt_status="No DN",
+        gst_rate=gst_rate,
     )
-
-    inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
-    so_qty = Decimal(str(so.so_qty or 0))
-    so_unit = Decimal(str(so.so_unit_price or 0))
-    so_value = _round2(so_qty * so_unit)
-    invoice_value = _round2(inv_qty * inv_unit)
-    invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
-    invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
-
-    if so.variance_approved:
-        return ThreeWayMatchResult(
-            status="2-Way Match",
-            qty_variance_value=0.0,
-            price_variance_value=0.0,
-            total_deviation=0.0,
-            po_value=so_value,
-            invoice_value=invoice_value,
-            invoice_gst=invoice_gst,
-            invoice_total=invoice_total,
-        )
-
-    inv_qty_f = float(inv_qty)
-    inv_unit_f = float(inv_unit)
-    so_qty_f = float(so_qty)
-    so_unit_f = float(so_unit)
-    price_variance = _round2((inv_unit_f - so_unit_f) * inv_qty_f)
-
-    if _price_variance_exceeds_tolerance(
-        price_variance=price_variance,
-        po_unit=so_unit_f,
-        po_qty=so_qty_f,
-    ):
-        return ThreeWayMatchResult(
-            status="Price Variance",
-            qty_variance_value=0.0,
-            price_variance_value=price_variance,
-            total_deviation=price_variance,
-            po_value=so_value,
-            invoice_value=invoice_value,
-            invoice_gst=invoice_gst,
-            invoice_total=invoice_total,
-        )
-
-    if inv_qty_f > so_qty_f:
-        return ThreeWayMatchResult(
-            status="Qty Variance",
-            qty_variance_value=_round2((inv_qty_f - so_qty_f) * inv_unit_f),
-            price_variance_value=0.0,
-            total_deviation=_round2((inv_qty_f - so_qty_f) * inv_unit_f),
-            po_value=so_value,
-            invoice_value=invoice_value,
-            invoice_gst=invoice_gst,
-            invoice_total=invoice_total,
-        )
-
-    inv_total = float(inv.subtotal or inv.total or Decimal("0"))
-    if inv_total > 0 and so_value > 0 and inv_total > so_value * 1.02 + float(PRICE_MATCH_CAP_AUD):
-        return ThreeWayMatchResult(
-            status="Qty Variance",
-            qty_variance_value=_round2(inv_total - so_value),
-            price_variance_value=0.0,
-            total_deviation=_round2(inv_total - so_value),
-            po_value=so_value,
-            invoice_value=invoice_value,
-            invoice_gst=invoice_gst,
-            invoice_total=invoice_total,
-        )
-
+    # Map engine "3-Way Match" / qty/price to 2-way labels
+    status = rollup.status
+    if status == "3-Way Match":
+        status = "2-Way Match"
+    invoice_gst = _round2(Decimal(str(rollup.invoice_value)) * Decimal(str(gst_rate)))
+    invoice_total = _round2(Decimal(str(rollup.invoice_value)) + Decimal(str(invoice_gst)))
     return ThreeWayMatchResult(
-        status="2-Way Match",
-        qty_variance_value=0.0,
-        price_variance_value=price_variance,
-        total_deviation=price_variance,
-        po_value=so_value,
-        invoice_value=invoice_value,
+        status=status,
+        qty_variance_value=rollup.qty_variance_value,
+        price_variance_value=rollup.price_variance_value,
+        total_deviation=rollup.total_deviation,
+        po_value=rollup.order_value,
+        invoice_value=rollup.invoice_value,
         invoice_gst=invoice_gst,
         invoice_total=invoice_total,
+        line_results=_line_results_out(rollup),
     )
 
 
@@ -881,7 +997,7 @@ async def _load_dn_invoice_qty(
         )
     ).scalar_one_or_none()
     row = loaded or dn_invoice
-    qty, _, _ = _invoice_qty_and_price(row)
+    qty, _, _ = _invoice_qty_and_price(row, invent_qty=False)
     dn_uom = getattr(row.line_items[0], "uom", None) if row.line_items else None
     return qty, dn_uom
 

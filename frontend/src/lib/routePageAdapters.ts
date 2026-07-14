@@ -27,8 +27,9 @@ import type {
   ThreeWayMatch,
   ThreeWayMatchDisplay,
   MatchAmountLine,
+  LineMatchResult,
 } from "@/lib/v4MockData";
-import type { PaymentApi, PurchaseOrderApi, SalesOrderApi, MatchAmountLineApi, ThreeWayMatchApi, ThreeWayMatchDisplayApi, TwoWaySalesMatchApi } from "@/api/types";
+import type { PaymentApi, PurchaseOrderApi, SalesOrderApi, MatchAmountLineApi, LineMatchResultApi, ThreeWayMatchApi, ThreeWayMatchDisplayApi, TwoWaySalesMatchApi } from "@/api/types";
 
 export const SALES_TWO_WAY_MODE = "two_way_dn_invoice";
 export const SALES_THREE_WAY_MODE = "three_way_so_dn";
@@ -508,6 +509,23 @@ function mapMatchDisplay(d: ThreeWayMatchDisplayApi): ThreeWayMatchDisplay {
 }
 
 export function mapThreeWayMatchFromApi(match: ThreeWayMatchApi): ThreeWayMatch {
+  const lineResults: LineMatchResult[] | undefined = match.line_results?.map(
+    (row: LineMatchResultApi) => ({
+      status: row.status,
+      description: row.description,
+      sku: row.sku,
+      orderQty: row.order_qty,
+      orderUom: row.order_uom,
+      orderUnitPrice: row.order_unit_price,
+      receivedQty: row.received_qty,
+      receivedUom: row.received_uom,
+      invoiceQty: row.invoice_qty,
+      invoiceUom: row.invoice_uom,
+      invoiceUnitPrice: row.invoice_unit_price,
+      qtyVarianceValue: row.qty_variance_value,
+      priceVarianceValue: row.price_variance_value,
+    }),
+  );
   return {
     status: match.status as MatchStatus,
     qtyVarianceValue: match.qty_variance_value,
@@ -518,6 +536,7 @@ export function mapThreeWayMatchFromApi(match: ThreeWayMatchApi): ThreeWayMatch 
     invoiceGst: match.invoice_gst,
     invoiceTotal: match.invoice_total,
     display: match.display ? mapMatchDisplay(match.display) : null,
+    lineResults,
   };
 }
 

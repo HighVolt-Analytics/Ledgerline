@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.delivery_note_line import DeliveryNoteLine
     from app.models.sales_order import SalesOrder
 
 
@@ -45,3 +46,7 @@ class DeliveryNote(Base):
     )
 
     sales_order: Mapped["SalesOrder"] = relationship(back_populates="delivery_notes")
+    lines: Mapped[list["DeliveryNoteLine"]] = relationship(
+        back_populates="delivery_note",
+        cascade="all, delete-orphan",
+    )

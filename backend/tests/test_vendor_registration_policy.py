@@ -9,6 +9,7 @@ from app.services.classification.document_type_catalog import ROUTE_PURCHASE, RO
 from app.services.classification.document_type_validation_service import PROFILE_NON_ACTIONABLE
 from app.services.purchase.expense_vendor_policy import vendor_detection_evaluation_status
 from app.services.invoice.invoice_evaluation_service import (
+    EVAL_AUTO_CODED,
     EVAL_NEEDS_REVIEW,
     EVAL_PENDING_VENDOR,
     evaluate_invoice_routing,
@@ -173,5 +174,5 @@ def test_evaluate_routing_vault_contract_needs_review_not_pending_vendor(
     )
     result = evaluate_invoice_routing(inv, config, route_override=ROUTE_VAULT)
     assert result.evaluation_status != EVAL_PENDING_VENDOR
-    assert result.evaluation_status in {EVAL_NEEDS_REVIEW, "auto_coded"}
+    assert result.evaluation_status == EVAL_AUTO_CODED
     assert result.vendor_confidence is None

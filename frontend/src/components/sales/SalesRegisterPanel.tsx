@@ -437,7 +437,9 @@ export function SalesRegisterPanel({
               />
               {!loading && registerRows.length > 0 ? (
                 <p className="px-4 py-3 text-xs text-muted-foreground border-t border-border">
-                  A clean three-way match requires SO quantity = DN quantity = Invoice quantity,
+                  A clean three-way match requires per-line SO qty = DN qty = Invoice qty
+                  (headers are rollups),
+
                   and SO unit price = Invoice unit price. Variances route for tiered approval before collections.
                 </p>
               ) : null}

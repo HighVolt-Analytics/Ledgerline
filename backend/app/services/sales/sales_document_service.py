@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -190,7 +191,10 @@ async def _get_or_load_so(
                 SalesOrder.tenant_id == invoice.tenant_id,
                 SalesOrder.so_number == so_number,
             )
-            .options(selectinload(SalesOrder.delivery_notes))
+            .options(
+                selectinload(SalesOrder.delivery_notes),
+                selectinload(SalesOrder.lines),
+            )
         )
     ).scalar_one_or_none()
 
@@ -203,8 +207,11 @@ async def _create_or_update_so_from_invoice(
     so_document_id: int | None = None,
 ) -> tuple[SalesOrder, bool]:
     """Create or update a sales order row from invoice line data. Returns (so, created)."""
+    from app.services.matching.line_sync import replace_so_lines_from_invoice
+    from app.services.sales.sales_match_service import _invoice_qty_and_price
+
     invoice = await _load_invoice_with_lines(db, invoice)
-    qty, unit, _ = _invoice_qty_and_price(invoice)
+    qty, unit, _ = _invoice_qty_and_price(invoice, invent_qty=False)
     first_line = invoice.line_items[0] if invoice.line_items else None
 
     so = await _get_or_load_so(db, invoice, so_number)
@@ -216,7 +223,7 @@ async def _create_or_update_so_from_invoice(
             customer=invoice.vendor,
             so_date=invoice.invoice_date,
             item=first_line.description if first_line else None,
-            so_qty=qty,
+            so_qty=qty if qty > 0 else Decimal("0"),
             so_unit_price=unit,
             so_currency=invoice.currency,
             so_document_id=so_document_id,
@@ -227,17 +234,23 @@ async def _create_or_update_so_from_invoice(
             await db.execute(
                 select(SalesOrder)
                 .where(SalesOrder.id == so.id)
-                .options(selectinload(SalesOrder.delivery_notes))
+                .options(selectinload(SalesOrder.delivery_notes), selectinload(SalesOrder.lines))
             )
         ).scalar_one()
+        replace_so_lines_from_invoice(so, invoice)
+        await db.flush()
     else:
         if so_document_id is not None:
             so.so_document_id = so_document_id
         if not so.customer:
             so.customer = invoice.vendor
-        if so.so_qty <= 0:
-            so.so_qty = qty
-        if so.so_unit_price <= 0:
+        if not so.lines:
+            replace_so_lines_from_invoice(so, invoice)
+            await db.flush()
+        elif so.so_qty <= 0 and qty > 0:
+            replace_so_lines_from_invoice(so, invoice)
+            await db.flush()
+        if so.so_unit_price <= 0 and unit > 0 and not so.lines:
             so.so_unit_price = unit
         if not so.so_currency and invoice.currency:
             so.so_currency = invoice.currency

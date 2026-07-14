@@ -95,7 +95,7 @@ async def test_foundry_extract_ocr_first_skips_images_when_not_sparse(tmp_path) 
         new=AsyncMock(side_effect=_fake_vision),
     ):
         with patch(
-            "app.services.extraction.azure_foundry_vision_client.pdf_page_images",
+            "app.services.extraction.azure_foundry_vision_client.resolve_pdf_page_images",
         ) as mock_pages:
             result = await extract_fields_azure_foundry(
                 ocr,
@@ -137,7 +137,7 @@ async def test_foundry_extract_sparse_attaches_images(tmp_path) -> None:
         new=AsyncMock(side_effect=_fake_vision),
     ):
         with patch(
-            "app.services.extraction.azure_foundry_vision_client.pdf_page_images",
+            "app.services.extraction.azure_foundry_vision_client.resolve_pdf_page_images",
             return_value=[b"page1"],
         ) as mock_pages:
             result = await extract_fields_azure_foundry(

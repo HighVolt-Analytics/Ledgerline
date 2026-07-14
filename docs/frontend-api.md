@@ -22,7 +22,7 @@ Endpoints used by the React app. All responses use `{ data, error, meta }`. Auth
 |--------|------|---------|
 | GET | `/api/rule-book/config` | Org rule book JSON (v4 schema + masters) |
 | PUT | `/api/rule-book/config` | Save config (**admin**); writes audit `rule_book_updated` |
-| POST | `/api/rule-book/evaluate` | Live evaluation preview |
+| POST | `/api/rule-book/evaluate` | Rule evaluation preview (API; not shown in UI) |
 | GET | `/api/rule-book/changelog` | Recent rule saves and remaps |
 | POST | `/api/invoices/remap` | Re-apply rules to invoices (**admin**) |
 

@@ -229,6 +229,11 @@ class Settings(BaseSettings):
         validation_alias="USE_FIELD_CONTRACT_MERGE",
         description="Field-contract driven merge (resolve per field); off = legacy layered merge",
     )
+    log_field_resolution_telemetry: bool = Field(
+        default=True,
+        validation_alias="LOG_FIELD_RESOLUTION_TELEMETRY",
+        description="Emit field_resolution_telemetry audit events (measurement only)",
+    )
     runtime_line_item_trace_enabled: bool = Field(
         default=False,
         validation_alias="RUNTIME_LINE_ITEM_TRACE_ENABLED",
@@ -409,6 +414,32 @@ class Settings(BaseSettings):
     duplicate_invoice_check_enabled: bool = Field(
         default=True,
         validation_alias="DUPLICATE_INVOICE_CHECK_ENABLED",
+    )
+    fuzzy_duplicate_check_enabled: bool = Field(
+        default=False,
+        validation_alias="FUZZY_DUPLICATE_CHECK_ENABLED",
+    )
+    fuzzy_amount_tolerance_pct: float = Field(
+        default=0.005,
+        ge=0.0,
+        le=0.2,
+        validation_alias="FUZZY_AMOUNT_TOLERANCE_PCT",
+    )
+    fuzzy_date_window_days: int = Field(
+        default=7,
+        ge=1,
+        le=90,
+        validation_alias="FUZZY_DATE_WINDOW_DAYS",
+    )
+    content_similarity_check_enabled: bool = Field(
+        default=False,
+        validation_alias="CONTENT_SIMILARITY_CHECK_ENABLED",
+    )
+    content_similarity_threshold: float = Field(
+        default=0.90,
+        ge=0.5,
+        le=1.0,
+        validation_alias="CONTENT_SIMILARITY_THRESHOLD",
     )
 
     azure_storage_connection_string: str = Field(

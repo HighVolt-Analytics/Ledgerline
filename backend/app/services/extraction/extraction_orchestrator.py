@@ -1235,4 +1235,22 @@ def merge_extraction_sources(
     from app.services.shared.currency import apply_currency_ocr_fallback
 
     merged = apply_currency_ocr_fallback(merged, text)  # type: ignore[assignment]
+
+    from app.services.extraction.field_resolution_telemetry import (
+        attach_field_resolution_telemetry,
+        build_legacy_merge_telemetry,
+    )
+
+    di_parsed_for_telemetry = di_data or invoice_data_from_payload_fields(
+        payload.get("invoice_fields")
+    )
+    legacy_telemetry = build_legacy_merge_telemetry(
+        field_keys=selected_keys_list,
+        llm_parsed=parsed,
+        di_parsed=di_parsed_for_telemetry,
+        merged=merged,
+        ocr=ocr,
+    )
+    merged = attach_field_resolution_telemetry(merged, legacy_telemetry)
+
     return merged

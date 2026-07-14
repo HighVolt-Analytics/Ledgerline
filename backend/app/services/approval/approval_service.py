@@ -60,6 +60,24 @@ _DELETABLE = frozenset(
 )
 
 
+def resolution_for_review_action(
+    *,
+    action: str,
+    previous_status: str,
+) -> str:
+    """Map approve/reject/delete to Layer 7 feedback labels (stored in audit detail)."""
+    action_key = (action or "").strip().lower()
+    if action_key == "approve":
+        return "not_duplicate"
+    if action_key == "reject":
+        return "confirmed_duplicate"
+    if action_key in {"delete", "permanently_delete"}:
+        if previous_status == InvoiceStatus.DUPLICATE_SKIPPED.value:
+            return "confirmed_duplicate"
+        return "merged"
+    return "not_duplicate"
+
+
 async def _tenant_storage_context(session: AsyncSession, inv: Invoice) -> tuple[str, str | None]:
     org = await session.get(Tenant, inv.tenant_id)
     tenant_slug = org.slug if org else "default"
@@ -179,6 +197,10 @@ async def reject_invoice(
             "previous_status": previous_status,
             "old_path": old_path,
             "new_path": inv.raw_file_path,
+            "resolution": resolution_for_review_action(
+                action="reject",
+                previous_status=previous_status,
+            ),
         },
         actor_name=actor_name,
         actor_email=actor_email,
@@ -289,7 +311,13 @@ async def approve_invoice_for_reprocess(
         session,
         "invoice_approved",
         invoice_id=inv.id,
-        detail={"previous_status": previous_status},
+        detail={
+            "previous_status": previous_status,
+            "resolution": resolution_for_review_action(
+                action="approve",
+                previous_status=previous_status,
+            ),
+        },
         actor_name=actor_name,
         actor_email=actor_email,
     )
@@ -335,6 +363,7 @@ async def permanently_delete_invoice(session: AsyncSession, inv: Invoice) -> Non
             "Reject the document first, then delete it from the Rejected column."
         )
 
+    previous_status = inv.status.value
     stored_path = inv.raw_file_path
     prefer_rejected = inv.status in _DELETABLE or is_rejected_storage_path(stored_path)
     await log_event(
@@ -342,10 +371,14 @@ async def permanently_delete_invoice(session: AsyncSession, inv: Invoice) -> Non
         "invoice_permanently_deleted",
         invoice_id=inv.id,
         detail={
-            "status": inv.status.value,
+            "status": previous_status,
             "vendor": inv.vendor,
             "invoice_no": inv.invoice_no,
             "stored_path": stored_path,
+            "resolution": resolution_for_review_action(
+                action="delete",
+                previous_status=previous_status,
+            ),
         },
     )
     delete_stored_file(

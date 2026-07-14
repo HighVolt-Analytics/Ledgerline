@@ -766,8 +766,7 @@ export function UploadPage() {
             },
           ]}
         />
-      ) : null}
-      {content}
+      ) : null}      {content}
     </div>
   );
 
@@ -1005,7 +1004,10 @@ export function UploadPage() {
       <InvoiceDetailDrawer
         invoiceId={drawerId}
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => {
+          setDrawerOpen(false);
+          setDrawerId(null);
+        }}
         onUpdated={() => void invalidateUploadInvoiceList(queryClient)}
       />
       </>

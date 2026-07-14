@@ -16,6 +16,7 @@ from app.models.purchase_order import PurchaseOrder, PurchaseOrderStatus
 from app.schemas.purchase import (
     GoodsReceiptCreate,
     PurchaseOrderResponse,
+    LineMatchResultOut,
     MatchAmountLine,
     ThreeWayMatchDisplay,
     ThreeWayMatchResult,
@@ -23,6 +24,15 @@ from app.schemas.purchase import (
 from app.schemas.rule_book_config import RuleBookConfigPayload
 from app.schemas.uom_conversion import PurchaseMatchConfig
 from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE, parse_matched_rule_ids
+from app.services.matching.line_match_engine import (
+    compute_line_match,
+    sum_received_by_order_line,
+)
+from app.services.matching.line_sync import (
+    ensure_po_lines,
+    invoice_match_inputs,
+    order_match_inputs_from_po,
+)
 from app.services.purchase.purchase_coding_service import (
     code_po_from_invoice,
     inherit_po_coding_to_invoice,
@@ -69,12 +79,40 @@ def _amount_line(
     )
 
 
+def _line_results_out(rollup) -> list[LineMatchResultOut]:
+    return [
+        LineMatchResultOut(
+            status=row.status,
+            description=row.description,
+            sku=row.sku,
+            order_qty=row.order_qty,
+            order_uom=row.order_uom,
+            order_unit_price=row.order_unit_price,
+            received_qty=row.received_qty,
+            received_uom=row.received_uom,
+            invoice_qty=row.invoice_qty,
+            invoice_uom=row.invoice_uom,
+            invoice_unit_price=row.invoice_unit_price,
+            qty_variance_value=row.qty_variance_value,
+            price_variance_value=row.price_variance_value,
+            order_line_key=row.order_line_key,
+            invoice_line_key=row.invoice_line_key,
+        )
+        for row in rollup.line_results
+    ]
+
+
 def build_three_way_match_display(
     po: PurchaseOrder,
     inv: Invoice | None,
     match: ThreeWayMatchResult,
 ) -> ThreeWayMatchDisplay:
-    grn = _latest_grn(po)
+    received_total = Decimal("0")
+    received_uom: str | None = None
+    for grn in po.goods_receipts or []:
+        received_total += Decimal(str(grn.grn_qty or 0))
+        if received_uom is None:
+            received_uom = getattr(grn, "grn_uom", None)
 
     po_qty = Decimal(str(po.po_qty or 0))
     po_unit = Decimal(str(po.po_unit_price or 0))
@@ -87,23 +125,22 @@ def build_three_way_match_display(
 
     invoice_line: MatchAmountLine | None = None
     if inv is not None:
-        inv_qty, inv_unit, _ = _invoice_qty_and_price(inv)
+        inv_qty, inv_unit, _ = _invoice_qty_and_price(inv, invent_qty=False)
         inv_uom = None
         if inv.line_items:
             inv_uom = getattr(inv.line_items[0], "uom", None)
         invoice_line = _amount_line(
-            qty=inv_qty,
+            qty=inv_qty if inv_qty > 0 else 0,
             uom=inv_uom,
             unit_price=inv_unit,
             line_value=match.invoice_value,
         )
 
     grn_line: MatchAmountLine | None = None
-    if grn is not None:
-        grn_qty = Decimal(str(grn.grn_qty or 0))
+    if (po.goods_receipts or []) or received_total > 0:
         grn_line = _amount_line(
-            qty=grn_qty,
-            uom=getattr(grn, "grn_uom", None),
+            qty=received_total,
+            uom=received_uom,
             unit_price=None,
             line_value=None,
         )
@@ -115,6 +152,7 @@ def build_three_way_match_display(
         grn_for_match=grn_line,
         invoice_on_document=invoice_line,
         invoice_for_match=invoice_line,
+        match_explanation="Per-line PO ↔ GRN (summed) ↔ Invoice; headers are rollups",
     )
 
 
@@ -127,15 +165,26 @@ def _attach_match_display(
     return match.model_copy(update={"display": display})
 
 
-def _invoice_qty_and_price(inv: Invoice) -> tuple[Decimal, Decimal, float]:
+def _invoice_qty_and_price(
+    inv: Invoice,
+    *,
+    invent_qty: bool = False,
+) -> tuple[Decimal, Decimal, float]:
+    """Sum invoice line qtys. Never invent qty=1 for match unless invent_qty=True (legacy display)."""
     qty = Decimal("0")
-    for line in inv.line_items:
+    value = Decimal("0")
+    for line in inv.line_items or []:
         if line.qty is not None:
             qty += line.qty
-    if qty <= 0:
+        if line.amount is not None:
+            value += line.amount
+        elif line.unit_price is not None and line.qty is not None:
+            value += line.unit_price * line.qty
+    if qty <= 0 and invent_qty:
         qty = Decimal("1")
-    subtotal = inv.subtotal or Decimal("0")
-    unit_price = subtotal / qty if qty else Decimal("0")
+    if value <= 0:
+        value = inv.subtotal or Decimal("0")
+    unit_price = value / qty if qty else Decimal("0")
     from app.services.extraction.gst_rate import invoice_gst_rate_fraction
 
     gst_rate = invoice_gst_rate_fraction(inv)
@@ -176,7 +225,87 @@ def resolve_grn_received_qty(
 def _latest_grn(po: PurchaseOrder) -> GoodsReceipt | None:
     if not po.goods_receipts:
         return None
-    return max(po.goods_receipts, key=lambda row: row.id)
+    return max(po.goods_receipts, key=lambda row: (row.id is not None, row.id or 0))
+
+
+def _all_grn_lines(po: PurchaseOrder) -> list:
+    rows = []
+    ensure_po_lines(po)
+    first = po.lines[0] if po.lines else None
+    first_key = first.id if first is not None and first.id is not None else (
+        f"line-{first.line_no}" if first is not None else None
+    )
+    for grn in po.goods_receipts or []:
+        if grn.lines:
+            for gl in grn.lines:
+                if gl.purchase_order_line_id is None and first_key is not None and len(po.lines) == 1:
+                    class _Linked:
+                        purchase_order_line_id = first_key
+                        qty = gl.qty
+                        uom = gl.uom
+
+                    rows.append(_Linked())
+                else:
+                    # Map DB id → order line key including line-no fallback
+                    oid = gl.purchase_order_line_id
+                    if oid is None:
+                        rows.append(gl)
+                        continue
+                    key = oid
+                    for ln in po.lines:
+                        if ln.id == oid:
+                            key = ln.id if ln.id is not None else f"line-{ln.line_no}"
+                            break
+
+                    class _Mapped:
+                        purchase_order_line_id = key
+                        qty = gl.qty
+                        uom = gl.uom
+
+                    rows.append(_Mapped())
+        else:
+            if first_key is not None:
+
+                class _Tmp:
+                    purchase_order_line_id = first_key
+                    qty = grn.grn_qty
+                    uom = getattr(grn, "grn_uom", None)
+
+                rows.append(_Tmp())
+    return rows
+
+
+def _redistribute_header_receipt(
+    order_lines: list,
+    recv_qtys: dict,
+    recv_uoms: dict,
+    *,
+    total_received: Decimal,
+) -> tuple[dict, dict]:
+    """When receipt has only a header qty (one key) but order has many lines, allocate by order qty."""
+    if len(order_lines) <= 1 or total_received <= 0:
+        return recv_qtys, recv_uoms
+    if len(recv_qtys) > 1:
+        return recv_qtys, recv_uoms
+    order_total = sum((ln.qty or Decimal("0")) for ln in order_lines)
+    if order_total <= 0:
+        return recv_qtys, recv_uoms
+    # Only redistribute when a single lump maps to one key (legacy header GRN/DN).
+    new_qtys: dict = {}
+    new_uoms: dict = {}
+    uom = next(iter(recv_uoms.values()), None) if recv_uoms else None
+    allocated = Decimal("0")
+    keyed = [ln for ln in order_lines if ln.key is not None]
+    for i, ln in enumerate(keyed):
+        if i == len(keyed) - 1:
+            q = total_received - allocated
+        else:
+            share = (ln.qty or Decimal("0")) / order_total
+            q = (total_received * share).quantize(Decimal("0.0001"))
+            allocated += q
+        new_qtys[ln.key] = q
+        new_uoms[ln.key] = uom
+    return new_qtys, new_uoms
 
 
 def compute_three_way_match(
@@ -189,15 +318,46 @@ def compute_three_way_match(
 ) -> ThreeWayMatchResult:
     cfg = match_config or PurchaseMatchConfig()
     tolerance = cfg.qty_tolerance_pct if qty_tolerance_pct is None else qty_tolerance_pct
-    grn = _latest_grn(po)
+    receipt_present = bool(po.goods_receipts)
 
-    po_qty = Decimal(str(po.po_qty or 0))
-    po_unit = Decimal(str(po.po_unit_price or 0))
-    po_value = _round2(po_qty * po_unit)
+    ensure_po_lines(po)
+    order_lines = order_match_inputs_from_po(po)
+    invoice_lines = invoice_match_inputs(inv)
+
+    recv_qtys, recv_uoms = sum_received_by_order_line(
+        _all_grn_lines(po),
+        order_line_id_attr="purchase_order_line_id",
+    )
+    if receipt_present and not recv_qtys and len(order_lines) == 1 and order_lines[0].key is not None:
+        total = sum((Decimal(str(g.grn_qty or 0)) for g in po.goods_receipts), Decimal("0"))
+        recv_qtys[order_lines[0].key] = total
+        if po.goods_receipts:
+            recv_uoms[order_lines[0].key] = getattr(po.goods_receipts[0], "grn_uom", None)
+    if receipt_present:
+        total_recv = sum((Decimal(str(g.grn_qty or 0)) for g in po.goods_receipts), Decimal("0"))
+        recv_qtys, recv_uoms = _redistribute_header_receipt(
+            order_lines, recv_qtys, recv_uoms, total_received=total_recv
+        )
+
+    from app.services.extraction.gst_rate import invoice_gst_rate_fraction
+
+    gst_rate = 0.0
+    if inv is not None:
+        g = invoice_gst_rate_fraction(inv)
+        if g is not None:
+            gst_rate = g
 
     if inv is None:
+        po_value = _round2(
+            sum(
+                ((ln.qty or Decimal("0")) * (ln.unit_price or Decimal("0")) for ln in order_lines),
+                Decimal("0"),
+            )
+        )
+        if po_value == 0:
+            po_value = _round2(Decimal(str(po.po_qty or 0)) * Decimal(str(po.po_unit_price or 0)))
         return ThreeWayMatchResult(
-            status="No GRN" if grn is None else "Qty Variance",
+            status="No GRN" if not receipt_present else "Qty Variance",
             qty_variance_value=0.0,
             price_variance_value=0.0,
             total_deviation=0.0,
@@ -205,48 +365,33 @@ def compute_three_way_match(
             invoice_value=0.0,
             invoice_gst=0.0,
             invoice_total=0.0,
+            line_results=[],
         )
 
-    inv_qty, inv_unit, gst_rate = _invoice_qty_and_price(inv)
-    invoice_value = _round2(inv_qty * inv_unit)
-    invoice_gst = _round2(Decimal(str(invoice_value)) * Decimal(str(gst_rate)))
-    invoice_total = _round2(Decimal(str(invoice_value)) + Decimal(str(invoice_gst)))
-
-    if grn is None:
-        return ThreeWayMatchResult(
-            status="No GRN",
-            qty_variance_value=0.0,
-            price_variance_value=0.0,
-            total_deviation=0.0,
-            po_value=po_value,
-            invoice_value=invoice_value,
-            invoice_gst=invoice_gst,
-            invoice_total=invoice_total,
-        )
-
-    grn_qty = Decimal(str(grn.grn_qty or 0))
-    qty_variance = _round2((float(inv_qty) - float(grn_qty)) * float(inv_unit))
-    price_variance = _round2((float(inv_unit) - float(po_unit)) * float(inv_qty))
-    total_deviation = _round2(qty_variance + price_variance)
-
-    if po.variance_approved:
-        status = "3-Way Match"
-    elif price_variance != 0:
-        status = "Price Variance"
-    elif _qty_over_billing(inv_qty, grn_qty, tolerance_pct=tolerance):
-        status = "Qty Variance"
-    else:
-        status = "3-Way Match"
-
+    rollup = compute_line_match(
+        order_lines=order_lines,
+        invoice_lines=invoice_lines,
+        received_qty_by_order_key=recv_qtys,
+        received_uom_by_order_key=recv_uoms,
+        require_receipt=True,
+        receipt_present=receipt_present,
+        variance_approved=bool(po.variance_approved),
+        qty_tolerance_pct=tolerance,
+        missing_receipt_status="No GRN",
+        gst_rate=gst_rate,
+    )
+    invoice_gst = _round2(Decimal(str(rollup.invoice_value)) * Decimal(str(gst_rate)))
+    invoice_total = _round2(Decimal(str(rollup.invoice_value)) + Decimal(str(invoice_gst)))
     return ThreeWayMatchResult(
-        status=status,
-        qty_variance_value=qty_variance,
-        price_variance_value=price_variance,
-        total_deviation=total_deviation,
-        po_value=po_value,
-        invoice_value=invoice_value,
+        status=rollup.status,
+        qty_variance_value=rollup.qty_variance_value,
+        price_variance_value=rollup.price_variance_value,
+        total_deviation=rollup.total_deviation,
+        po_value=rollup.order_value,
+        invoice_value=rollup.invoice_value,
         invoice_gst=invoice_gst,
         invoice_total=invoice_total,
+        line_results=_line_results_out(rollup),
     )
 
 
@@ -502,7 +647,8 @@ async def list_purchase_orders(
             select(PurchaseOrder)
             .where(PurchaseOrder.tenant_id == tenant_id)
             .options(
-                selectinload(PurchaseOrder.goods_receipts),
+                selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
+                selectinload(PurchaseOrder.lines),
             )
             .order_by(PurchaseOrder.created_at.desc())
         )
@@ -837,7 +983,10 @@ async def load_purchase_order_for_invoice(
                 PurchaseOrder.tenant_id == invoice.tenant_id,
                 PurchaseOrder.po_number == po_number,
             )
-            .options(selectinload(PurchaseOrder.goods_receipts))
+            .options(
+                selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
+                selectinload(PurchaseOrder.lines),
+            )
         )
     ).scalar_one_or_none()
 
@@ -855,7 +1004,10 @@ async def record_goods_receipt(
                 PurchaseOrder.id == purchase_order_id,
                 PurchaseOrder.tenant_id == tenant_id,
             )
-            .options(selectinload(PurchaseOrder.goods_receipts))
+            .options(
+                selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
+                selectinload(PurchaseOrder.lines),
+            )
         )
     ).scalar_one_or_none()
     if po is None:
@@ -871,7 +1023,13 @@ async def record_goods_receipt(
     )
     db.add(grn)
     await db.flush()
-    await db.refresh(po, attribute_names=["goods_receipts"])
+    from app.services.matching.line_sync import ensure_po_lines, populate_grn_lines_from_invoice
+
+    ensure_po_lines(po)
+    await db.flush()
+    populate_grn_lines_from_invoice(grn, po=po, invoice=None, fallback_qty=Decimal(str(body.grn_qty)))
+    await db.flush()
+    await db.refresh(po, attribute_names=["goods_receipts", "lines"])
 
     inv: Invoice | None = None
     if po.invoice_id:
@@ -906,7 +1064,10 @@ async def approve_purchase_variance(
                 PurchaseOrder.id == purchase_order_id,
                 PurchaseOrder.tenant_id == tenant_id,
             )
-            .options(selectinload(PurchaseOrder.goods_receipts))
+            .options(
+                selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
+                selectinload(PurchaseOrder.lines),
+            )
         )
     ).scalar_one_or_none()
     if po is None:
@@ -941,7 +1102,10 @@ async def approve_purchase_variance(
                 PurchaseOrder.id == purchase_order_id,
                 PurchaseOrder.tenant_id == tenant_id,
             )
-            .options(selectinload(PurchaseOrder.goods_receipts))
+            .options(
+                selectinload(PurchaseOrder.goods_receipts).selectinload(GoodsReceipt.lines),
+                selectinload(PurchaseOrder.lines),
+            )
         )
     ).scalar_one()
 

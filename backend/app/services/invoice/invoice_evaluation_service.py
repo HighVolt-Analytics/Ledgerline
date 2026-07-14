@@ -271,6 +271,13 @@ def evaluate_invoice_routing(
     else:
         evaluation_status = EVAL_NEEDS_REVIEW
 
+    # Vault is archive-only (no GL coding). Do not hold for missing category rules / ledger.
+    if (
+        (route_override or route_target or "").strip() == ROUTE_VAULT
+        and evaluation_status == EVAL_NEEDS_REVIEW
+    ):
+        evaluation_status = EVAL_AUTO_CODED
+
     if is_sales_route:
         if known_master and f"customer:{known_master.id}" not in matched_rule_ids:
             matched_rule_ids.append(f"customer:{known_master.id}")

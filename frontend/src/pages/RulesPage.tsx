@@ -8,7 +8,6 @@ import { Card } from "@/components/ui/card";
 import { DocumentTypesTab } from "@/components/rule-book/DocumentTypesTab";
 import { AiClassificationSettingsPanel } from "@/components/rule-book/AiClassificationSettingsPanel";
 import { IngestionTab } from "@/components/rule-book/IngestionTab";
-import { LiveEvaluation } from "@/components/rule-book/LiveEvaluation";
 import { RuleChangeHistory } from "@/components/rule-book/RuleChangeHistory";
 import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
 import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
@@ -16,7 +15,6 @@ import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
 import { useRuleBookConfig, useDeleteRuleBookDocumentType, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { useRecognitionSignalCatalog } from "@/hooks/useRecognitionSignalCatalog";
-import { useEmployeeMasters, useVendorMasters } from "@/hooks/useMasterData";
 import type { RuleBookConfigState } from "@/lib/v4RuleBookTypes";
 import { removeDocumentTypeFromCatalog } from "@/lib/documentTypeLifecycle";
 import {
@@ -61,8 +59,6 @@ export function RulesPage() {
     refetch,
   } = useRuleBookConfig(Boolean(user));
   useRecognitionSignalCatalog(Boolean(user));
-  const { data: vendorMasters = [] } = useVendorMasters(Boolean(user));
-  const { data: employeeMasters = [] } = useEmployeeMasters(Boolean(user));
   const saveMutation = useSaveRuleBookConfig();
   const deleteDocumentTypeMutation = useDeleteRuleBookDocumentType();
 
@@ -335,14 +331,6 @@ export function RulesPage() {
       </div>
 
       <RuleChangeHistory />
-
-      <LiveEvaluation
-        ruleBook={{
-          ...ruleBook,
-          vendorMasters: vendorMasters.length ? vendorMasters : ruleBook.vendorMasters,
-          employeeMasters: employeeMasters.length ? employeeMasters : ruleBook.employeeMasters,
-        }}
-      />
     </div>
   );
 }

@@ -161,6 +161,7 @@ async def phase_ocr(
     doc_provider: DocumentAiProvider,
     provider_token: str,
     human_locked_dt: str | None,
+    vision_page_images: list[bytes] | None = None,
 ) -> OcrArtifact:
     """OCR / layout read only — no field extraction."""
     from app.services.invoice.processing_override_catalog import has_deferred_full_reset
@@ -187,6 +188,7 @@ async def phase_ocr(
                 provider=doc_provider,
                 org=org,
                 document_types=document_types,
+                vision_page_images=vision_page_images,
             )
         if invoice.file_hash:
             await store_ocr_artifact(
@@ -277,6 +279,7 @@ async def phase_llm_classify(
     doc_provider: DocumentAiProvider,
     provider_token: str,
     file_path: str | Path,
+    vision_page_images: list[bytes] | None = None,
 ) -> LlmDocumentResult | None:
     """LLM document-type classification with org prompt + few-shots."""
     settings = get_settings()
@@ -287,6 +290,7 @@ async def phase_llm_classify(
         document_types=document_types,
         few_shots=few_shots,
         provider=doc_provider,
+        vision_page_images=vision_page_images,
     )
 
     if result is not None:

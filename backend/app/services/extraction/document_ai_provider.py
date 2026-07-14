@@ -85,6 +85,7 @@ async def read_for_classification(
     provider: DocumentAiProvider,
     org: OrgContext,
     document_types: Sequence[DocumentTypeDefinition],
+    vision_page_images: list[bytes] | None = None,
 ) -> OcrArtifact:
     path = Path(file_path)
     if provider == DocumentAiProvider.GEMINI_VISION:
@@ -92,12 +93,14 @@ async def read_for_classification(
             path,
             org=org,
             document_types=document_types,
+            vision_page_images=vision_page_images,
         )
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
         return await read_for_classification_azure_foundry(
             path,
             org=org,
             document_types=document_types,
+            vision_page_images=vision_page_images,
         )
     return await asyncio.to_thread(read_layout_for_classification, path)
 
@@ -110,6 +113,7 @@ async def classify_only(
     document_types: Sequence[DocumentTypeDefinition],
     few_shots: Sequence[dict[str, str]] | None,
     provider: DocumentAiProvider,
+    vision_page_images: list[bytes] | None = None,
 ) -> LlmDocumentResult | None:
     if provider in (DocumentAiProvider.GEMINI_VISION, DocumentAiProvider.AZURE_FOUNDRY_VISION):
         if not file_path:
@@ -121,6 +125,7 @@ async def classify_only(
                 org=org,
                 document_types=document_types,
                 few_shots=few_shots,
+                vision_page_images=vision_page_images,
             )
         return await classify_only_azure_foundry(
             file_path,
@@ -128,6 +133,7 @@ async def classify_only(
             org=org,
             document_types=document_types,
             few_shots=few_shots,
+            vision_page_images=vision_page_images,
         )
     return await classify_document_only(
         ocr,
@@ -146,6 +152,7 @@ async def extract_fields(
     confirmed_dt: str,
     few_shots: Sequence[dict[str, str]] | None,
     provider: DocumentAiProvider,
+    vision_page_images: list[bytes] | None = None,
 ) -> ExtractFieldsResult:
     path = Path(file_path)
     dt_token = confirmed_dt.strip().upper()
@@ -173,6 +180,7 @@ async def extract_fields(
             document_types=document_types,
             confirmed_dt=confirmed_dt,
             few_shots=few_shots,
+            vision_page_images=vision_page_images,
         )
         return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
@@ -183,6 +191,7 @@ async def extract_fields(
             document_types=document_types,
             confirmed_dt=confirmed_dt,
             few_shots=few_shots,
+            vision_page_images=vision_page_images,
         )
         return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
     llm = await extract_document_fields(

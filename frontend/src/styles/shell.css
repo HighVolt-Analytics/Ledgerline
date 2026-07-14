@@ -1498,7 +1498,9 @@
   border-bottom: 1px solid hsl(var(--border));
   background-color: hsl(var(--card));
   flex-shrink: 0;
+  /* Above main so header menus (tenant switcher, profile) paint over content */
   z-index: 10;
+  overflow: visible;
 }
 
 @media (min-width: 768px) {

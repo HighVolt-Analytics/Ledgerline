@@ -44,7 +44,7 @@ async def test_gemini_extract_ocr_first_skips_images_when_not_sparse(tmp_path) -
         new=AsyncMock(side_effect=_fake_generate),
     ):
         with patch(
-            "app.services.extraction.gemini_vision_client.pdf_page_images",
+            "app.services.extraction.gemini_vision_client.resolve_pdf_page_images",
         ) as mock_pages:
             result = await extract_fields_gemini(
                 ocr,
@@ -81,7 +81,7 @@ async def test_gemini_extract_sparse_attaches_images(tmp_path) -> None:
         new=AsyncMock(side_effect=_fake_generate),
     ):
         with patch(
-            "app.services.extraction.gemini_vision_client.pdf_page_images",
+            "app.services.extraction.gemini_vision_client.resolve_pdf_page_images",
             return_value=[b"page1"],
         ) as mock_pages:
             result = await extract_fields_gemini(

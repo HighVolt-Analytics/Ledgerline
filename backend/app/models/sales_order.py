@@ -15,6 +15,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.delivery_note import DeliveryNote
+    from app.models.sales_order_line import SalesOrderLine
 
 
 class SalesOrderStatus(str, enum.Enum):
@@ -69,4 +70,9 @@ class SalesOrder(Base):
     delivery_notes: Mapped[list["DeliveryNote"]] = relationship(
         back_populates="sales_order",
         cascade="all, delete-orphan",
+    )
+    lines: Mapped[list["SalesOrderLine"]] = relationship(
+        back_populates="sales_order",
+        cascade="all, delete-orphan",
+        order_by="SalesOrderLine.line_no",
     )

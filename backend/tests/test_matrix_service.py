@@ -41,3 +41,16 @@ def test_derive_matrix_payment_status_on_hold() -> None:
         evaluation_status="needs_review",
     )
     assert derive_matrix_payment_status(inv, None) == "On Hold"
+
+
+def test_derive_matrix_flag_vault_needs_review_is_clean() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Archive Co",
+        status=InvoiceStatus.PROCESSED,
+        route_target="Vault",
+        evaluation_status="needs_review",
+    )
+    flag, reason = derive_matrix_flag(inv)
+    assert flag == "Clean"
+    assert reason is None

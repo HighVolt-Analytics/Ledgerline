@@ -181,61 +181,85 @@ def _three_way_outcome(match_mode: str, match) -> DocumentMatchOutcome:
 
 
 def compute_two_way_po_match(po: PurchaseOrder, inv: Invoice) -> DocumentMatchOutcome:
-    inv_qty, inv_unit, _gst = _invoice_qty_and_price(inv)
-    po_qty = float(po.po_qty)
-    po_unit = float(po.po_unit_price)
-    inv_qty_f = float(inv_qty)
-    inv_unit_f = float(inv_unit)
+    from app.services.matching.line_match_engine import compute_line_match
+    from app.services.matching.line_sync import (
+        ensure_po_lines,
+        invoice_match_inputs,
+        order_match_inputs_from_po,
+    )
 
-    if po.variance_approved:
+    ensure_po_lines(po)
+    order_lines = order_match_inputs_from_po(po)
+    invoice_lines = invoice_match_inputs(inv)
+    rollup = compute_line_match(
+        order_lines=order_lines,
+        invoice_lines=invoice_lines,
+        received_qty_by_order_key={},
+        require_receipt=False,
+        receipt_present=False,
+        variance_approved=bool(po.variance_approved),
+        qty_tolerance_pct=0.0,
+        missing_receipt_status="No GRN",
+    )
+    status = rollup.status
+    if status == "3-Way Match":
+        status = "2-Way Match"
+
+    if po.variance_approved or status == "2-Way Match":
         return DocumentMatchOutcome(
             passed=True,
             status="2-Way Match",
             message="2-Way Match",
             match_mode="two_way_po_ses",
-            detail={"variance_approved": True},
+            detail={
+                "variance_approved": bool(po.variance_approved),
+                "price_variance_value": rollup.price_variance_value,
+                "line_results": [
+                    {
+                        "status": r.status,
+                        "description": r.description,
+                        "sku": r.sku,
+                        "qty_variance_value": r.qty_variance_value,
+                        "price_variance_value": r.price_variance_value,
+                    }
+                    for r in rollup.line_results
+                ],
+            },
         )
 
-    price_variance = _round2((inv_unit_f - po_unit) * inv_qty_f)
-    if _price_variance_exceeds_tolerance(
-        price_variance=price_variance,
-        po_unit=po_unit,
-        po_qty=po_qty,
-    ):
+    if status == "Price Variance":
+        po_unit = float(po.po_unit_price or 0)
+        po_qty = float(po.po_qty or 0)
+        if not _price_variance_exceeds_tolerance(
+            price_variance=rollup.price_variance_value,
+            po_unit=po_unit,
+            po_qty=po_qty,
+        ):
+            return DocumentMatchOutcome(
+                passed=True,
+                status="2-Way Match",
+                message="2-Way Match",
+                match_mode="two_way_po_ses",
+                detail={"price_variance_value": rollup.price_variance_value, "within_tolerance": True},
+            )
         return DocumentMatchOutcome(
             passed=False,
             status="Price Variance",
-            message=f"Price variance {price_variance} exceeds tolerance",
+            message=f"Price variance {rollup.price_variance_value} exceeds tolerance",
             match_mode="two_way_po_ses",
-            detail={"price_variance_value": price_variance},
-        )
-
-    if inv_qty_f > po_qty:
-        return DocumentMatchOutcome(
-            passed=False,
-            status="Qty Variance",
-            message="Qty over-billing — invoice qty exceeds PO (0% tolerance)",
-            match_mode="two_way_po_ses",
-            detail={"invoice_qty": inv_qty_f, "po_qty": po_qty},
-        )
-
-    inv_total = float(inv.subtotal or inv.total or Decimal("0"))
-    po_value = po_qty * po_unit
-    if inv_total > 0 and po_value > 0 and inv_total > po_value * 1.02 + float(PRICE_MATCH_CAP_AUD):
-        return DocumentMatchOutcome(
-            passed=False,
-            status="Amount Variance",
-            message="Invoice amount exceeds PO value beyond tolerance",
-            match_mode="two_way_po_ses",
-            detail={"invoice_total": inv_total, "po_value": po_value},
+            detail={"price_variance_value": rollup.price_variance_value},
         )
 
     return DocumentMatchOutcome(
-        passed=True,
-        status="2-Way Match",
-        message="2-Way Match",
+        passed=False,
+        status="Qty Variance",
+        message="Qty over-billing or unmatched invoice lines",
         match_mode="two_way_po_ses",
-        detail={"price_variance_value": price_variance},
+        detail={
+            "qty_variance_value": rollup.qty_variance_value,
+            "invoice_qty": rollup.invoice_qty_total,
+            "po_qty": rollup.order_qty_total,
+        },
     )
 
 

@@ -8,12 +8,16 @@ from sqlalchemy import event, select
 from sqlalchemy.engine import Connection
 
 from app.models.delivery_note import DeliveryNote
+from app.models.delivery_note_line import DeliveryNoteLine
 from app.models.goods_receipt import GoodsReceipt
+from app.models.goods_receipt_line import GoodsReceiptLine
 from app.models.invoice import Invoice
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.purchase_order import PurchaseOrder
+from app.models.purchase_order_line import PurchaseOrderLine
 from app.models.sales_order import SalesOrder
+from app.models.sales_order_line import SalesOrderLine
 
 
 class TenantChildMismatchError(ValueError):
@@ -123,6 +127,70 @@ def _sync_goods_receipt_tenant(_mapper, connection: Connection, target: GoodsRec
         tenant_id=target.tenant_id,
         purchase_order_id=target.purchase_order_id,
     )
+
+
+@event.listens_for(PurchaseOrderLine, "before_insert")
+@event.listens_for(PurchaseOrderLine, "before_update")
+def _sync_po_line_tenant(_mapper, connection: Connection, target: PurchaseOrderLine) -> None:
+    target.tenant_id = _resolve_po_child_tenant(
+        connection,
+        tenant_id=target.tenant_id,
+        purchase_order_id=target.purchase_order_id,
+    )
+
+
+def _load_grn_tenant(connection: Connection, goods_receipt_id: int) -> uuid.UUID | None:
+    return connection.execute(
+        select(GoodsReceipt.tenant_id).where(GoodsReceipt.id == goods_receipt_id)
+    ).scalar_one_or_none()
+
+
+@event.listens_for(GoodsReceiptLine, "before_insert")
+@event.listens_for(GoodsReceiptLine, "before_update")
+def _sync_grn_line_tenant(_mapper, connection: Connection, target: GoodsReceiptLine) -> None:
+    parent = _load_grn_tenant(connection, target.goods_receipt_id)
+    if parent is None:
+        raise TenantChildMismatchError(
+            f"goods receipt line: goods receipt {target.goods_receipt_id} not found"
+        )
+    if target.tenant_id is None:
+        target.tenant_id = parent
+    elif target.tenant_id != parent:
+        raise TenantChildMismatchError(
+            f"goods receipt line: tenant_id {target.tenant_id} does not match GRN tenant {parent}"
+        )
+
+
+@event.listens_for(SalesOrderLine, "before_insert")
+@event.listens_for(SalesOrderLine, "before_update")
+def _sync_so_line_tenant(_mapper, connection: Connection, target: SalesOrderLine) -> None:
+    target.tenant_id = _resolve_so_child_tenant(
+        connection,
+        tenant_id=target.tenant_id,
+        sales_order_id=target.sales_order_id,
+    )
+
+
+def _load_dn_tenant(connection: Connection, delivery_note_id: int) -> uuid.UUID | None:
+    return connection.execute(
+        select(DeliveryNote.tenant_id).where(DeliveryNote.id == delivery_note_id)
+    ).scalar_one_or_none()
+
+
+@event.listens_for(DeliveryNoteLine, "before_insert")
+@event.listens_for(DeliveryNoteLine, "before_update")
+def _sync_dn_line_tenant(_mapper, connection: Connection, target: DeliveryNoteLine) -> None:
+    parent = _load_dn_tenant(connection, target.delivery_note_id)
+    if parent is None:
+        raise TenantChildMismatchError(
+            f"delivery note line: delivery note {target.delivery_note_id} not found"
+        )
+    if target.tenant_id is None:
+        target.tenant_id = parent
+    elif target.tenant_id != parent:
+        raise TenantChildMismatchError(
+            f"delivery note line: tenant_id {target.tenant_id} does not match DN tenant {parent}"
+        )
 
 
 def line_items_for_invoice(tenant_id: uuid.UUID, invoice_id: int) -> tuple:

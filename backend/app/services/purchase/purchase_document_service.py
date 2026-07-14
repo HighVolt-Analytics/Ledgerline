@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -185,14 +186,20 @@ async def _get_or_load_po(
                 PurchaseOrder.tenant_id == invoice.tenant_id,
                 PurchaseOrder.po_number == po_number,
             )
-            .options(selectinload(PurchaseOrder.goods_receipts))
+            .options(
+                selectinload(PurchaseOrder.goods_receipts),
+                selectinload(PurchaseOrder.lines),
+            )
         )
     ).scalar_one_or_none()
 
 
 async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) -> PurchaseOrder:
+    from app.services.matching.line_sync import replace_po_lines_from_invoice
+    from app.services.purchase.purchase_match_service import _invoice_qty_and_price
+
     invoice = await _load_invoice_with_lines(db, invoice)
-    qty, unit, _ = _invoice_qty_and_price(invoice)
+    qty, unit, _ = _invoice_qty_and_price(invoice, invent_qty=False)
     first_line = invoice.line_items[0] if invoice.line_items else None
 
     po = await _get_or_load_po(db, invoice, po_number)
@@ -204,7 +211,7 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
             vendor=vendor_name,
             po_date=invoice.invoice_date,
             item=first_line.description if first_line else None,
-            po_qty=qty,
+            po_qty=qty if qty > 0 else Decimal("0"),
             po_unit_price=unit,
             po_document_id=invoice.id,
         )
@@ -214,17 +221,23 @@ async def _sync_po_document(db: AsyncSession, invoice: Invoice, po_number: str) 
             await db.execute(
                 select(PurchaseOrder)
                 .where(PurchaseOrder.id == po.id)
-                .options(selectinload(PurchaseOrder.goods_receipts))
+                .options(selectinload(PurchaseOrder.goods_receipts), selectinload(PurchaseOrder.lines))
             )
         ).scalar_one()
+        replace_po_lines_from_invoice(po, invoice)
+        await db.flush()
     else:
         po.po_document_id = invoice.id
         repaired_vendor = plausible_register_vendor(invoice.vendor)
         if repaired_vendor and not plausible_register_vendor(po.vendor):
             po.vendor = repaired_vendor
-        if po.po_qty <= 0:
-            po.po_qty = qty
-        if po.po_unit_price <= 0:
+        if not po.lines:
+            replace_po_lines_from_invoice(po, invoice)
+            await db.flush()
+        elif po.po_qty <= 0 and qty > 0:
+            replace_po_lines_from_invoice(po, invoice)
+            await db.flush()
+        if po.po_unit_price <= 0 and unit > 0 and not po.lines:
             po.po_unit_price = unit
 
     config = await load_classification_config(db, invoice.tenant_id)

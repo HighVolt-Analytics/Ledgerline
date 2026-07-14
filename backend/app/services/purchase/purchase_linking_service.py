@@ -116,6 +116,7 @@ async def attach_grn_invoice_to_po(
     po,
 ) -> GoodsReceipt:
     """Create or refresh GRN register row for an uploaded GRN document."""
+    from app.services.matching.line_sync import ensure_po_lines, populate_grn_lines_from_invoice
     from app.services.purchase.purchase_match_service import resolve_grn_received_qty
 
     existing = await grn_linked_to_po(session, grn_invoice.id)
@@ -127,8 +128,10 @@ async def attach_grn_invoice_to_po(
         )
     ).scalar_one_or_none()
     grn_invoice = loaded or grn_invoice
+    ensure_po_lines(po)
+    await session.flush()
     po_qty = Decimal(str(po.po_qty or 0)) if po is not None else None
-    qty = resolve_grn_received_qty(grn_invoice, po_qty=po_qty if po_qty > 0 else None)
+    qty = resolve_grn_received_qty(grn_invoice, po_qty=po_qty if po_qty and po_qty > 0 else None)
     if qty <= 1 and po_qty is not None and po_qty > qty:
         qty = po_qty
 
@@ -137,18 +140,27 @@ async def attach_grn_invoice_to_po(
             existing.purchase_order_id = po.id
         if qty > 0 and qty != existing.grn_qty:
             existing.grn_qty = qty
+        if not existing.lines:
+            populate_grn_lines_from_invoice(
+                existing, po=po, invoice=grn_invoice, fallback_qty=qty if qty > 0 else None
+            )
+            await session.flush()
         return existing
 
     grn = GoodsReceipt(
         tenant_id=po.tenant_id,
         purchase_order_id=po.id,
-        grn_qty=qty if qty > 0 else Decimal("1"),
+        grn_qty=qty if qty > 0 else Decimal("0"),
         grn_date=grn_invoice.invoice_date,
         receiver=None,
         condition_note="Linked via invoice_no bridge",
         grn_invoice_id=grn_invoice.id,
     )
     session.add(grn)
+    await session.flush()
+    populate_grn_lines_from_invoice(
+        grn, po=po, invoice=grn_invoice, fallback_qty=qty if qty > 0 else None
+    )
     await session.flush()
     return grn
 

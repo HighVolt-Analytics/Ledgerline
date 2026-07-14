@@ -412,7 +412,7 @@ async def test_gemini_ocr_read_does_not_classify(
         _fake_generate,
     )
     monkeypatch.setattr(
-        "app.services.extraction.gemini_vision_client.pdf_page_images",
+        "app.services.extraction.gemini_vision_client.resolve_pdf_page_images",
         lambda *_args, **_kwargs: [b"fake-png"],
     )
 

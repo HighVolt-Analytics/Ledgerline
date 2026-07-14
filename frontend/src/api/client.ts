@@ -72,8 +72,6 @@ import type {
   RegistryFieldsResponse,
   RuleBookChangelogEntry,
   RuleBookRulesPayload,
-  RuleBookEvaluateRequest,
-  RuleBookEvaluateResult,
   ReconciliationOverview,
   ReconciliationDayDetail,
   TokenResponse,
@@ -1412,12 +1410,6 @@ export const api = {
       }>;
       playbook_recommended_identity: Record<string, string[]>;
     }>("/api/rule-book/recognition-signals"),
-  evaluateRuleBook: (body: RuleBookEvaluateRequest = {}) =>
-    request<RuleBookEvaluateResult>("/api/rule-book/evaluate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
   testDocumentTypeRecognition: (body: import("@/api/types").DocumentTypeRecognitionTestRequest) =>
     request<import("@/api/types").DocumentTypeRecognitionTestResponse>(
       "/api/rule-book/document-types/test-recognition",

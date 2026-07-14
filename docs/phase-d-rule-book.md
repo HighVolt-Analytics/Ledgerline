@@ -32,7 +32,7 @@ UI: `RuleChangeHistory` on the Rules page.
 | Edit rule book config | **Admin** |
 | Remap invoices | **Admin** |
 | Vendor / employee master writes | **Admin** |
-| Live evaluation preview | Any authenticated user |
+| Rule book evaluate API | Any authenticated user |
 
 Members see a read-only banner on the Rules page; edits are blocked in the UI and return **403** from the API.
 

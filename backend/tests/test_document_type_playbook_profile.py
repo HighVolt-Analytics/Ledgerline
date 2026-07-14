@@ -320,6 +320,88 @@ def test_repurposed_org_code_not_overwritten_by_shipped_matrix_identity() -> Non
     assert row.playbook_profile == "standard_transactional"
 
 
+def test_matrix_template_linked_edits_survive_save() -> None:
+    """Template-linked org types must keep user edits (prompt, playbook, title) on save/load."""
+    from app.schemas.rule_book_config import validate_rule_book_config_for_save
+
+    custom_prompt = (
+        "Handwritten delivery docket from warehouse — no invoice totals. "
+        "Often photographed on mobile."
+    )
+    payload = validate_rule_book_config_for_save(
+        {
+            "document_types": [
+                {
+                    "code": "DT-05",
+                    "matrixTemplateCode": "DT-03",
+                    "title": "Warehouse GRN (handwritten)",
+                    "shortTitle": "Handwritten GRN",
+                    "klass": "Non-transactional",
+                    "posting": "No",
+                    "recognition_mode": "prompt",
+                    "llm_prompt": custom_prompt,
+                    "playbookProfile": "supporting",
+                    "validationProfile": "non_actionable",
+                    "routeTarget": "Purchase Management",
+                    "extractionFields": ["vendor", "po_reference"],
+                }
+            ]
+        }
+    )
+    row = payload.document_types[0]
+    assert row.title == "Warehouse GRN (handwritten)"
+    assert row.short_title == "Handwritten GRN"
+    assert row.playbook_profile == "supporting"
+    assert row.llm_prompt == custom_prompt
+    assert row.recognition_mode == "prompt"
+    assert row.classifier.enabled is False
+    assert row.extraction_fields == ["vendor", "po_reference"]
+
+
+def test_matrix_template_prompt_survives_when_classifier_stale() -> None:
+    from app.schemas.rule_book_config import validate_rule_book_config_payload
+
+    payload = validate_rule_book_config_payload(
+        {
+            "document_types": [
+                {
+                    "code": "DT-01",
+                    "matrixTemplateCode": "DT-01",
+                    "title": "PO-based goods invoice",
+                    "shortTitle": "PO goods invoice",
+                    "klass": "Transactional",
+                    "posting": "Yes",
+                    "recognition_mode": "prompt",
+                    "llm_prompt": "Custom PO invoice prompt for our vendors.",
+                    "playbookProfile": "po_goods",
+                    "routeTarget": "Purchase Management",
+                    "classifier": {
+                        "enabled": True,
+                        "priority": 180,
+                        "confidence": 0.88,
+                        "root": {
+                            "type": "group",
+                            "operator": "AND",
+                            "children": [
+                                {
+                                    "type": "condition",
+                                    "field": "has_po_reference",
+                                    "operator": "equals",
+                                    "value": "true",
+                                }
+                            ],
+                        },
+                    },
+                }
+            ]
+        }
+    )
+    row = payload.document_types[0]
+    assert row.recognition_mode == "prompt"
+    assert "Custom PO invoice prompt" in row.llm_prompt
+    assert row.classifier.enabled is False
+
+
 def test_backfill_playbook_profile_on_save() -> None:
     from app.schemas.rule_book_config import validate_rule_book_config_payload
 

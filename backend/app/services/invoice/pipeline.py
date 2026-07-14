@@ -1558,6 +1558,8 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     vendor_drift_result = None
     confirmed_dt = human_locked_dt or (locked_dt_code if classification_override else "")
 
+    vision_page_images: list[bytes] = []
+
     try:
         ocr = await phase_ocr(
             session,
@@ -1567,6 +1569,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             doc_provider=doc_provider,
             provider_token=provider_token,
             human_locked_dt=human_locked_dt,
+            vision_page_images=vision_page_images,
         )
     except OcrFailed as exc:
         invoice.status = InvoiceStatus.EXCEPTION
@@ -1671,6 +1674,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 doc_provider=doc_provider,
                 provider_token=provider_token,
                 file_path=path,
+                vision_page_images=vision_page_images,
             )
             if classify_llm is not None:
                 persist_llm_party_context(invoice, classify_llm, org)
@@ -1864,6 +1868,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             confirmed_dt=confirmed_dt,
             few_shots=few_shots,
             provider=doc_provider,
+            vision_page_images=vision_page_images,
         )
     if extract_result.di_enrich_detail:
         await log_event(
@@ -1911,7 +1916,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         document_types=config.document_types,
         tenant_id=invoice.tenant_id,
     )
-    citation_review_required = False
     citation_results: list = []
     if llm_result is not None:
         from app.config import get_settings as _get_settings
@@ -1993,6 +1997,25 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         org_country=org.country if org else None,
     )
     parsed = enrich_parsed_from_ocr(parsed, ocr, dt_definition=dt_definition, trace=line_item_trace)
+
+    from app.config import get_settings as _telemetry_settings
+    from app.services.extraction.field_resolution_telemetry import detail_from_parsed_telemetry
+
+    if _telemetry_settings().log_field_resolution_telemetry:
+        telemetry_detail = detail_from_parsed_telemetry(parsed)
+        if telemetry_detail:
+            if isinstance(telemetry_detail, dict):
+                telemetry_detail = {
+                    **telemetry_detail,
+                    "document_ai_provider": provider_token,
+                }
+            await log_event(
+                session,
+                "field_resolution_telemetry",
+                invoice_id=invoice.id,
+                detail=telemetry_detail,
+            )
+
     parsed, gap_fill_detail = await apply_extraction_gap_fill(
         parsed,
         ocr=ocr,
@@ -2058,7 +2081,6 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 confirmed_dt,
                 tenant_id=invoice.tenant_id,
             ):
-                citation_review_required = True
                 loaded.evaluation_status = EVAL_NEEDS_REVIEW
                 invoice.evaluation_status = EVAL_NEEDS_REVIEW
                 await log_event(
@@ -2240,6 +2262,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 confirmed_dt=confirmed_dt,
                 few_shots=few_shots,
                 doc_provider=doc_provider,
+                vision_page_images=vision_page_images,
             )
         policy_result.pruned_field_keys = pruned_keys
         # Second policy pass: hold on disagreement; never re-extract again.
@@ -2615,9 +2638,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
     if (invoice.route_target or "").strip() == ROUTE_VAULT:
         _mark_invoice_processed(invoice)
-        if not citation_review_required:
-            invoice.evaluation_status = EVAL_STATUS_AUTO_CODED
-            loaded.evaluation_status = EVAL_STATUS_AUTO_CODED
+        # Archive route: never leave needs_review — no GL / rule-book coding applies.
+        invoice.evaluation_status = EVAL_STATUS_AUTO_CODED
+        loaded.evaluation_status = EVAL_STATUS_AUTO_CODED
         await log_event(
             session,
             "vault_stored",
