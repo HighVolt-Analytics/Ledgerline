@@ -1,5 +1,7 @@
 import { useRef } from 'react';
 import { motion, useInView } from 'framer-motion';
+import SectionLabel from '../ui/SectionLabel';
+import SectionTitle from '../ui/SectionTitle';
 
 const EASE = [0.16, 1, 0.3, 1];
 
@@ -36,12 +38,12 @@ export default function PromiseSection() {
       />
 
       <div className="relative mx-auto max-w-[1200px] px-5 text-center sm:px-8">
-        <p className="font-mono text-[12px] uppercase tracking-[0.28em] text-white/50">The promise</p>
-        <h2 className="mx-auto mt-5 max-w-3xl font-mono text-2xl font-medium leading-tight tracking-tight text-white sm:text-4xl">
+        <SectionLabel>The promise</SectionLabel>
+        <SectionTitle className="mx-auto mt-4 max-w-3xl text-3xl sm:text-4xl md:text-5xl">
           Σ debits = Σ credits = Σ invoices.
           <br />
-          <span className="text-white/55">Every day. No exceptions.</span>
-        </h2>
+          <span className="text-muted-foreground">Every day. No exceptions.</span>
+        </SectionTitle>
 
         <div className="mt-16 flex items-end justify-center gap-10 sm:gap-20">
           <BalanceBars label="Invoices" count={5} delay={0} />

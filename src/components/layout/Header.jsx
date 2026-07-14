@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Menu, X } from 'lucide-react';
 import Logo from '../ui/Logo';
-import { navLinks } from '../../data/navigation';
+import { navLinks, externalLinks } from '../../data/navigation';
 import { scrollToSection } from '../../utils/scroll';
 
 export default function Header() {
@@ -62,18 +62,18 @@ export default function Header() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <button
-              onClick={() => goTo('pricing')}
+            <a
+              href={externalLinks.signup}
               className="hidden rounded-full px-4 py-2 text-sm text-muted-foreground hover-elevate active-elevate-2 sm:inline-flex"
             >
               Sign in
-            </button>
-            <button
-              onClick={() => goTo('pricing')}
+            </a>
+            <a
+              href={externalLinks.getStarted}
               className="hidden rounded-full bg-primary px-5 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-transform duration-200 hover:scale-[1.02] active:scale-100 sm:inline-flex"
             >
               Start free
-            </button>
+            </a>
             <button
               onClick={() => setMenuOpen((o) => !o)}
               aria-label="Toggle menu"
@@ -115,12 +115,13 @@ export default function Header() {
                 {link.label}
               </button>
             ))}
-            <button
-              onClick={() => goTo('pricing')}
+            <a
+              href={externalLinks.getStarted}
+              onClick={() => setMenuOpen(false)}
               className="mt-auto rounded-full bg-primary px-4 py-3.5 text-center text-base font-medium text-primary-foreground"
             >
               Start free
-            </button>
+            </a>
           </div>
         </div>
       )}

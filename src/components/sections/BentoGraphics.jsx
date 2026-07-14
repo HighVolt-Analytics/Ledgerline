@@ -118,19 +118,58 @@ function IconMarqueeRow({ logos, direction, className = '' }) {
   );
 }
 
-export function ReceivedChannelsGraphic() {
-  const fullTrack = [...topRowLogos, ...bottomRowLogos];
+function BentoFeatureImage({ src, shift = 'default', zoom = false }) {
+  const classes = [
+    'bento-card-image',
+    shift === 'high' && 'bento-card-image--high',
+    zoom === true && 'bento-card-image--zoom',
+    zoom === 'doc' && 'bento-card-image--zoom-doc',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <div
-      className="-mx-5 flex w-[calc(100%+2.5rem)] flex-col gap-2.5 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:gap-3"
-      aria-hidden="true"
-    >
-      <IconMarqueeRow logos={fullTrack} direction="left" className="pl-5 sm:pl-6" />
-      <IconMarqueeRow logos={[...middleRowLogos, ...topRowLogos]} direction="right" className="-ml-1 sm:pl-2" />
-      <IconMarqueeRow logos={fullTrack} direction="left" className="-ml-2 sm:-ml-1" />
+    <div className={classes} aria-hidden="true">
+      <img src={src} alt="" className="bento-card-image__img" />
+      <div className="bento-card-image__blend" aria-hidden="true" />
     </div>
   );
+}
+
+export function ReceivedChannelsGraphic() {
+  return <BentoFeatureImage src="/feature%20images/received%20image.png" />;
+}
+
+export function ExtractedGraphic() {
+  return <BentoFeatureImage src="/feature%20images/extract%20(2).png" zoom="doc" />;
+}
+
+export function MatchedGraphic() {
+  return <BentoFeatureImage src="/feature%20images/EXTRACT.png" />;
+}
+
+export function ClassifiedGraphic() {
+  return <BentoFeatureImage src="/feature%20images/CLASSIFIED.png" zoom />;
+}
+
+export function DuplicateCheckImageGraphic() {
+  return <BentoFeatureImage src="/feature%20images/duplicate%20(2).png" />;
+}
+
+export function PendingApprovalGraphic() {
+  return <BentoFeatureImage src="/feature%20images/PENDING.png" />;
+}
+
+export function ApprovedGraphic() {
+  return <BentoFeatureImage src="/feature%20images/APPROVED.png" zoom />;
+}
+
+export function ThreeWayMatchedGraphic() {
+  return <BentoFeatureImage src="/feature%20images/3-WAY.png" />;
+}
+
+export function PaymentQueuedGraphic() {
+  return <BentoFeatureImage src="/feature%20images/payment%20que.png" />;
 }
 
 function ClassifiedTag({ label, icon: Icon, active = false }) {
@@ -193,12 +232,9 @@ const classifiedTagRows = [
 
 export function ClassifiedBandsGraphic() {
   return (
-    <div
-      className="-mr-5 flex w-[calc(100%+1.25rem)] flex-col justify-center gap-2 sm:-mr-6 sm:w-[calc(100%+1.5rem)] sm:gap-2.5"
-      aria-hidden="true"
-    >
+    <div className="flex h-full w-full flex-col justify-start gap-2 pt-2 sm:gap-2.5 sm:pt-3" aria-hidden="true">
       <TagMarqueeRow tags={classifiedTagRows[0]} direction="left" className="pl-3 sm:pl-4" />
-      <TagMarqueeRow tags={classifiedTagRows[1]} direction="right" className="-ml-2" />
+      <TagMarqueeRow tags={classifiedTagRows[1]} direction="right" />
       <TagMarqueeRow tags={classifiedTagRows[2]} direction="left" className="pl-1 sm:pl-2" />
     </div>
   );
@@ -300,8 +336,8 @@ export function DuplicateCheckGraphic({ layout = 'bento' }) {
 
 export function PaymentApprovedGraphic() {
   return (
-    <div className="flex h-full min-h-[128px] items-center justify-center px-1" aria-hidden="true">
-      <div className="payment-approved-panel relative w-full max-w-[240px] overflow-hidden rounded-2xl border border-card-border/80 bg-[hsl(220_30%_5%)] px-4 py-4 shadow-[0_12px_40px_rgba(0,0,0,0.45)] sm:px-5 sm:py-5">
+    <div className="flex h-full w-full items-center justify-center px-2" aria-hidden="true">
+      <div className="payment-approved-panel relative w-full max-w-[240px] overflow-hidden rounded-2xl border border-card-border/80 bg-[hsl(220_30%_5%)] px-4 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.45)] sm:px-5 sm:py-4">
         <div
           className="pointer-events-none absolute inset-x-0 bottom-0 h-20 rounded-b-2xl opacity-70 transition-opacity duration-400 group-hover:opacity-100"
           style={{
@@ -335,10 +371,16 @@ export function PaymentApprovedGraphic() {
 }
 
 const bentoGraphicConfig = {
-  Received: { component: ReceivedChannelsGraphic, placement: 'center' },
-  Classified: { component: ClassifiedBandsGraphic, placement: 'right' },
-  'Duplicate-checked': { component: DuplicateCheckGraphic, placement: 'right' },
-  'Payment approved': { component: PaymentApprovedGraphic, placement: 'right' },
+  Received: { component: ReceivedChannelsGraphic, type: 'image' },
+  Extracted: { component: ExtractedGraphic, type: 'image' },
+  Matched: { component: MatchedGraphic, type: 'image' },
+  Classified: { component: ClassifiedGraphic, type: 'image' },
+  'Duplicate-checked': { component: DuplicateCheckImageGraphic, type: 'image' },
+  'Pending approval': { component: PendingApprovalGraphic, type: 'image' },
+  Approved: { component: ApprovedGraphic, type: 'image' },
+  'Three-way matched': { component: ThreeWayMatchedGraphic, type: 'image' },
+  'Payment queued': { component: PaymentQueuedGraphic, type: 'image' },
+  'Payment approved': { component: PaymentApprovedGraphic },
 };
 
 export function getBentoGraphicConfig(title) {

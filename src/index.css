@@ -229,6 +229,140 @@
     mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
   }
 
+  .bento-carousel-card {
+    width: min(280px, calc(100vw - 2.5rem));
+    height: 360px;
+  }
+
+  @media (min-width: 640px) {
+    .bento-carousel-card {
+      width: 300px;
+      height: 380px;
+    }
+  }
+
+  .bento-card-graphic {
+    position: relative;
+    left: -1.25rem;
+    width: calc(100% + 2.5rem);
+    overflow: hidden;
+  }
+
+  .bento-card-graphic:not(:has(.bento-card-image)) {
+    height: 9.25rem;
+    flex-shrink: 0;
+  }
+
+  .bento-card-graphic--image {
+    position: relative;
+    left: -1.25rem;
+    width: calc(100% + 2.5rem);
+    flex-shrink: 0;
+    height: 9.5rem;
+    margin-bottom: 1rem;
+    overflow: hidden;
+  }
+
+  .bento-card-footer {
+    position: relative;
+    z-index: 30;
+    flex-shrink: 0;
+    padding-top: 0;
+    background: hsl(var(--card));
+  }
+
+  @media (min-width: 640px) {
+    .bento-card-graphic--image {
+      left: -1.5rem;
+      width: calc(100% + 3rem);
+      height: 10rem;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .bento-card-graphic:not(.bento-card-graphic--image) {
+      left: -1.5rem;
+      width: calc(100% + 3rem);
+    }
+  }
+
+  .bento-card-image {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .bento-card-image__img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 60%;
+    transform: translateY(4%);
+  }
+
+  .bento-card-image--high .bento-card-image__img {
+    object-position: center 48%;
+    transform: translateY(-2%);
+  }
+
+  .bento-card-image--zoom .bento-card-image__img {
+    transform: translateY(4%) scale(1.45);
+    transform-origin: center center;
+  }
+
+  .bento-card-image--zoom-doc .bento-card-image__img {
+    transform: translateY(4%) scale(1.45);
+    transform-origin: 22% center;
+    object-position: left center;
+  }
+
+  .bento-card-image__blend {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background:
+      linear-gradient(
+        to bottom,
+        hsl(var(--card)) 0%,
+        hsl(var(--card) / 0.9) 8%,
+        hsl(var(--card) / 0.45) 18%,
+        transparent 36%
+      ),
+      linear-gradient(
+        to right,
+        hsl(var(--card)) 0%,
+        hsl(var(--card) / 0.5) 6%,
+        transparent 14%,
+        transparent 86%,
+        hsl(var(--card) / 0.5) 94%,
+        hsl(var(--card)) 100%
+      );
+  }
+
+  .bento-carousel-track {
+    transition: transform 0.8s cubic-bezier(0.33, 1, 0.38, 1);
+    will-change: transform;
+  }
+
+  .bento-carousel-track--instant {
+    transition: none;
+  }
+
+  .bento-carousel-bleed {
+    width: 100vw;
+    max-width: 100vw;
+    margin-left: calc(50% - 50vw);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bento-carousel-track {
+      transition: none;
+    }
+  }
+
   @keyframes received-marquee-left {
     from {
       transform: translateX(0);
@@ -671,6 +805,85 @@
 
   .capture-ref-card:hover .capture-brand-logo {
     transform: scale(1.06);
+  }
+
+  /* Lifecycle schedule → reconciliation showcase */
+  .lifecycle-visual-card {
+    background:
+      radial-gradient(ellipse 80% 60% at 30% 20%, hsl(var(--primary) / 0.12), transparent 55%),
+      radial-gradient(ellipse 60% 50% at 90% 90%, hsl(211 75% 40% / 0.1), transparent 58%),
+      hsl(220 28% 5.5%);
+  }
+
+  .lifecycle-showcase-dots {
+    background-image: radial-gradient(hsl(var(--foreground) / 0.14) 1px, transparent 1px);
+    background-size: 18px 18px;
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 50%, black 20%, transparent 80%);
+    opacity: 0.45;
+  }
+
+  .lifecycle-visual-fade {
+    background:
+      linear-gradient(
+        to top,
+        hsl(220 28% 5.5% / 0.55) 0%,
+        transparent 28%
+      ),
+      linear-gradient(
+        to right,
+        hsl(220 28% 5.5% / 0.25) 0%,
+        transparent 18%
+      );
+  }
+
+  .lifecycle-visual-viewport {
+    overflow: hidden;
+    clip-path: inset(0);
+  }
+
+  .lifecycle-visual-track {
+    height: 100%;
+    transition: transform 0.8s cubic-bezier(0.32, 0.72, 0, 1);
+    will-change: transform;
+  }
+
+  .lifecycle-visual-track--instant {
+    transition: none;
+  }
+
+  .lifecycle-visual-slide {
+    isolation: isolate;
+    backface-visibility: hidden;
+    overflow: hidden;
+  }
+
+  .lifecycle-visual-img--paid {
+    width: 88%;
+    max-height: 88%;
+    object-fit: contain;
+    border-radius: 1.25rem;
+    mix-blend-mode: lighten;
+  }
+
+  .lifecycle-visual-img--posted {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    mix-blend-mode: lighten;
+  }
+
+  .lifecycle-feature-point {
+    transition:
+      border-color 0.25s ease,
+      background-color 0.25s ease,
+      transform 0.25s ease;
+  }
+
+  .lifecycle-feature-point:hover {
+    border-color: hsl(var(--primary) / 0.35);
+    background: hsl(var(--muted) / 0.7);
+    transform: translateY(-1px);
   }
 
   /* Procurement · v4 — interactive showcase */

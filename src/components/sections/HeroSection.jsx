@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { ArrowRight, Play } from 'lucide-react';
 import HeroFloatingVisual from './HeroFloatingVisual';
+import { externalLinks } from '../../data/navigation';
 
 const EASE = [0.16, 1, 0.3, 1];
 
@@ -51,10 +52,13 @@ export default function HeroSection() {
               transition={{ duration: 0.7, ease: EASE, delay: 0.22 }}
               className="mx-auto mt-7 flex w-full max-w-[300px] flex-col items-center justify-center gap-2.5 sm:mt-8 sm:max-w-none sm:flex-row sm:gap-3"
             >
-              <button className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground shadow-md transition-transform duration-200 hover:scale-[1.02] active:scale-100 sm:w-auto sm:px-6 sm:py-3.5 sm:text-sm">
-                Start free — 500 documents + wallet
+              <a
+                href={externalLinks.getStarted}
+                className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground shadow-md transition-transform duration-200 hover:scale-[1.02] active:scale-100 sm:w-auto sm:px-6 sm:py-3.5 sm:text-sm"
+              >
+                Start free tier today
                 <ArrowRight className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5 sm:h-4 sm:w-4" />
-              </button>
+              </a>
               <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card/40 px-4 py-2.5 text-[13px] text-foreground hover-elevate active-elevate-2 sm:w-auto sm:px-6 sm:py-3.5 sm:text-sm">
                 <Play className="h-3 w-3 fill-current sm:h-3.5 sm:w-3.5" />
                 Watch 60s demo

@@ -9,3 +9,8 @@ export const navLinks = [
 
 export const footerProductLinks = ['Product', 'How it works', 'Pricing', 'Changelog', 'Status'];
 export const footerCompanyLinks = ['Company', 'Security', 'Privacy', 'Terms', 'Contact'];
+
+export const externalLinks = {
+  signup: 'https://staging.highvolt.tech/ledgerlink/signup',
+  getStarted: 'https://staging.highvolt.tech/ledgerlink/get-started',
+};

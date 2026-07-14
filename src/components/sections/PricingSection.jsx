@@ -3,7 +3,14 @@ import FadeIn from '../ui/FadeIn';
 import SectionLabel from '../ui/SectionLabel';
 import SectionTitle from '../ui/SectionTitle';
 import usePricingRegion from '../../hooks/usePricingRegion';
+import { externalLinks } from '../../data/navigation';
 import { pricingByCurrency } from '../../data/pricing';
+
+function getCtaHref(cta) {
+  if (cta === 'Get started') return externalLinks.getStarted;
+  if (cta === 'Get it now') return externalLinks.signup;
+  return null;
+}
 
 function PricingCard({ plan }) {
   const isPopular = plan.popular;
@@ -56,12 +63,21 @@ function PricingCard({ plan }) {
         ))}
       </ul>
 
-      <button
-        type="button"
-        className={`pricing-card-cta mt-8 w-full ${isPopular ? 'pricing-card-cta--popular' : ''}`}
-      >
-        {plan.cta}
-      </button>
+      {getCtaHref(plan.cta) ? (
+        <a
+          href={getCtaHref(plan.cta)}
+          className={`pricing-card-cta mt-8 w-full ${isPopular ? 'pricing-card-cta--popular' : ''}`}
+        >
+          {plan.cta}
+        </a>
+      ) : (
+        <button
+          type="button"
+          className={`pricing-card-cta mt-8 w-full ${isPopular ? 'pricing-card-cta--popular' : ''}`}
+        >
+          {plan.cta}
+        </button>
+      )}
     </div>
   );
 }
