@@ -1,6 +1,7 @@
 """Download generated Excel workbooks and spend analytics."""
 
-from typing import Annotated
+from datetime import date
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -35,11 +36,18 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 @router.get("/analytics", response_model=ApiEnvelope[ReportsAnalytics])
 async def reports_analytics(
-    params: Annotated[ReportsAnalyticsRequest, Query()],
+    month: Annotated[
+        str | None,
+        Query(
+            description="Period as YYYY-MM (defaults to current month)",
+            pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
+        ),
+    ] = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[ReportsAnalytics]:
     """Spend analytics, GL distribution, and vendor summary for the Reports page."""
+    params = ReportsAnalyticsRequest(month=month)
     return ApiEnvelope(
         data=await build_analytics(db, tenant_id=ctx.tenant_id, month=params.month)
     )
@@ -47,11 +55,17 @@ async def reports_analytics(
 
 @router.get("/documents", response_model=ApiEnvelope[list[ReportDocumentRow]])
 async def reports_documents(
-    params: Annotated[ReportsDocumentsRequest, Query()],
+    date_from: Annotated[
+        date | None, Query(description="Inclusive start of invoice date range")
+    ] = None,
+    date_to: Annotated[
+        date | None, Query(description="Inclusive end of invoice date range")
+    ] = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[ReportDocumentRow]]:
     """Processed invoice rows for CSV export."""
+    params = ReportsDocumentsRequest(date_from=date_from, date_to=date_to)
     try:
         rows = await list_documents(
             db,
@@ -104,11 +118,25 @@ async def reports_ar_balances(
 
 @router.get("/documents-bundle/export")
 async def export_documents_bundle_csv(
-    params: Annotated[DocumentsBundleExportRequest, Query()],
+    date_from: Annotated[
+        date | None, Query(description="Inclusive start of invoice date range")
+    ] = None,
+    date_to: Annotated[
+        date | None, Query(description="Inclusive end of invoice date range")
+    ] = None,
+    format: Annotated[
+        Literal["excel", "plain"],
+        Query(description="Cell format: excel (HYPERLINK formulas) or plain (label | url)"),
+    ] = "excel",
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> Response:
     """Download documents bundle matrix CSV for auditors."""
+    params = DocumentsBundleExportRequest(
+        date_from=date_from,
+        date_to=date_to,
+        format=format,
+    )
     try:
         payload = await build_documents_bundle_export(
             db,
@@ -130,11 +158,25 @@ async def export_documents_bundle_csv(
 @router.post("/generate", response_model=ApiEnvelope[dict[str, str]])
 async def generate_report(
     background_tasks: BackgroundTasks,
-    params: Annotated[ReportsWorkbookRequest, Query()],
+    workbook_date: Annotated[
+        date | None,
+        Query(description="Legacy: single invoice date (same as date_from=date_to)"),
+    ] = None,
+    date_from: Annotated[
+        date | None, Query(description="Inclusive start of invoice date range")
+    ] = None,
+    date_to: Annotated[
+        date | None, Query(description="Inclusive end of invoice date range")
+    ] = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[dict[str, str]]:
     """Build or refresh the output workbook from current database state."""
+    params = ReportsWorkbookRequest(
+        workbook_date=workbook_date,
+        date_from=date_from,
+        date_to=date_to,
+    )
     try:
         d_from, d_to = resolve_workbook_date_filter(
             params.workbook_date, params.date_from, params.date_to
@@ -153,10 +195,24 @@ async def generate_report(
 
 @router.get("/download")
 async def download_report(
-    params: Annotated[ReportsWorkbookRequest, Query()],
+    workbook_date: Annotated[
+        date | None,
+        Query(description="Legacy: single invoice date (same as date_from=date_to)"),
+    ] = None,
+    date_from: Annotated[
+        date | None, Query(description="Inclusive start of invoice date range")
+    ] = None,
+    date_to: Annotated[
+        date | None, Query(description="Inclusive end of invoice date range")
+    ] = None,
     ctx: AuthContext = Depends(get_auth_context),
 ) -> FileResponse:
     """Download the generated workbook file."""
+    params = ReportsWorkbookRequest(
+        workbook_date=workbook_date,
+        date_from=date_from,
+        date_to=date_to,
+    )
     try:
         d_from, d_to = resolve_workbook_date_filter(
             params.workbook_date, params.date_from, params.date_to

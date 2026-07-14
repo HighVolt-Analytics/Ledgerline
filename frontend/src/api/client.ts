@@ -21,6 +21,13 @@ import type {
   XeroSyncContactsResult,
   XeroSyncSettingsResult,
   XeroVerifyResult,
+  XeroAccountRow,
+  XeroTaxRateRow,
+  XeroContactRow,
+  XeroSyncHistoryRow,
+  XeroExportHistoryRow,
+  XeroMasterTotals,
+  XeroMasterListMeta,
   AuthUser,
   ConnectedMailbox,
   MailboxBackfillJob,
@@ -881,6 +888,79 @@ export const api = {
     bustGetCacheByPrefix("/api/integrations/xero");
     return request<XeroSyncContactsResult>("/api/integrations/xero/sync/contacts", {
       method: "POST",
+    });
+  },
+  getXeroAccounts: (params?: { search?: string; status?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroAccountRow[] }>(
+      `/api/integrations/xero/accounts${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroTaxRates: (params?: { search?: string; status?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroTaxRateRow[] }>(
+      `/api/integrations/xero/tax-rates${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroContactsList: (params?: {
+    search?: string;
+    status?: string;
+    mapping_status?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.mapping_status) qs.set("mapping_status", params.mapping_status);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroContactRow[] }>(
+      `/api/integrations/xero/contacts${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroSyncHistory: (params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroSyncHistoryRow[] }>(
+      `/api/integrations/xero/sync-history${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroExportHistory: (params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<XeroMasterListMeta & { items: XeroExportHistoryRow[] }>(
+      `/api/integrations/xero/export-history${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroMasterTotals: () =>
+    request<XeroMasterTotals>("/api/integrations/xero/master-totals"),
+  reconcileXero: (ref_id?: number) => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<{
+      job_id: number | null;
+      reconciled: number;
+      failed: number;
+      committed: boolean;
+    }>("/api/integrations/xero/reconcile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ref_id != null ? { ref_id } : {}),
     });
   },
   pushXeroInvoice: (invoiceId: number) => {

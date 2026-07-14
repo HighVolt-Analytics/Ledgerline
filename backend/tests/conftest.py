@@ -10,6 +10,29 @@ os.environ["DEFAULT_TENANT_NAME"] = "High Volt Analytics"
 os.environ.pop("PUBLIC_TUNNEL_URL", None)
 os.environ.pop("NGROK_URL", None)
 
+# passlib + bcrypt>=4.1 / 5.x: unit tests must still hash passwords without a real Redis/auth stack.
+# Production auth_service is unchanged; this only keeps CryptContext.hash usable under pytest.
+try:
+    import bcrypt as _bcrypt
+
+    if not hasattr(_bcrypt, "__about__"):
+        _bcrypt.__about__ = type(  # type: ignore[attr-defined]
+            "about",
+            (),
+            {"__version__": getattr(_bcrypt, "__version__", "4.0.1")},
+        )()
+    _orig_hashpw = _bcrypt.hashpw
+
+    def _hashpw_compat(password: bytes | bytearray, salt: bytes) -> bytes:
+        # bcrypt 5 refuses >72-byte secrets; passlib's wrap-bug probe uses a long string.
+        if isinstance(password, (bytes, bytearray)) and len(password) > 72:
+            password = bytes(password[:72])
+        return _orig_hashpw(password, salt)
+
+    _bcrypt.hashpw = _hashpw_compat  # type: ignore[method-assign]
+except Exception:
+    pass
+
 from collections.abc import AsyncGenerator
 from datetime import date
 from decimal import Decimal
@@ -26,7 +49,6 @@ from tests.legacy_tenant_support import install_legacy_tenant_coercion
 from tests.auth_test_helpers import seed_admin_user, tenant_auth_headers
 
 install_legacy_tenant_coercion()
-from app.main import app
 
 get_settings.cache_clear()
 from app.models.audit import AuditLog
@@ -38,6 +60,13 @@ from app.tenant_ids import TESTING_TENANT_UUID
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
 
 TEST_DB = "sqlite+aiosqlite:///:memory:"
+
+
+def _get_app():
+    """Lazy-import FastAPI app so unit tests that only need DB can run without all routers."""
+    from app.main import app
+
+    return app
 
 
 @pytest.fixture
@@ -149,6 +178,7 @@ async def anon_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, N
         yield db_session
         await db_session.commit()
 
+    app = _get_app()
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_preauth_db] = override_get_preauth_db
     async with AsyncClient(
@@ -171,6 +201,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield db_session
         await db_session.commit()
 
+    app = _get_app()
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_preauth_db] = override_get_preauth_db
 

@@ -39,11 +39,13 @@ async def list_approvals_board_route(
 
 @router.get("", response_model=ApiEnvelope[list[InvoiceResponse]])
 async def list_approvals(
-    params: Annotated[ApprovalListRequest, Query()],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[list[InvoiceResponse]]:
     """Invoices in the approval queue (exceptions, duplicates, rejected)."""
+    params = ApprovalListRequest(page=page, page_size=page_size)
     result = await list_approvals_queue(db, tenant_id=ctx.tenant_id, params=params)
     return ApiEnvelope(data=result.rows, meta=result.meta)
 

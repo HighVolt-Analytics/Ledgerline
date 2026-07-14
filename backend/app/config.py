@@ -587,6 +587,10 @@ class Settings(BaseSettings):
         default="",
         validation_alias="XERO_OAUTH_FRONTEND_RETURN_URL",
     )
+    xero_background_sync_enabled: bool = Field(
+        default=False,
+        validation_alias="XERO_BACKGROUND_SYNC_ENABLED",
+    )
 
     # QuickBooks Online accounting OAuth (optional)
     quickbooks_client_id: str = Field(default="", validation_alias="QUICKBOOKS_CLIENT_ID")

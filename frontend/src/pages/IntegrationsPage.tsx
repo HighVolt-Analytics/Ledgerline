@@ -43,6 +43,7 @@ import { useStripeAccount, useStripeReadiness } from "@/hooks/useStripe";
 import { useAccountingIntegrations } from "@/hooks/useAccountingIntegrations";
 import { IntegrationBrandIcon } from "@/components/integrations/IntegrationBrandIcon";
 import type { IntegrationBrandId } from "@/components/integrations/IntegrationBrandIcon";
+import { XeroEvidencePanel } from "@/components/integrations/XeroEvidencePanel";
 
 const INTEGRATION_BRANDS: Partial<Record<string, IntegrationBrandId>> = {
   graph: "graph",
@@ -581,9 +582,18 @@ export function IntegrationsPage() {
     setAccountingError(null);
     try {
       const result = await syncXeroSettings();
+      if (!result.committed) {
+        toast({
+          title: "Xero records were fetched but could not be stored.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const accounts = result.accounts ?? { fetched: result.account, persisted_total: result.account };
+      const taxRates = result.tax_rates ?? { fetched: result.tax_rate, persisted_total: result.tax_rate };
       toast({
-        title: "Xero settings synced",
-        description: `${result.account} accounts · ${result.tax_rate} tax rates · ${result.currency} currencies`,
+        title: "Settings sync committed",
+        description: `${accounts.fetched} accounts fetched, ${accounts.persisted_total} stored · ${taxRates.fetched} tax rates fetched, ${taxRates.persisted_total} stored`,
       });
     } catch (err) {
       setAccountingError(err instanceof Error ? err.message : "Settings sync failed");
@@ -636,9 +646,17 @@ export function IntegrationsPage() {
     setAccountingError(null);
     try {
       const result = await syncXeroContacts();
+      if (!result.committed) {
+        toast({
+          title: "Xero records were fetched but could not be stored.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const contacts = result.contacts ?? { fetched: result.contact, persisted_total: result.contact };
       toast({
-        title: "Xero contacts synced",
-        description: `${result.contact} contacts updated`,
+        title: "Contacts sync committed",
+        description: `${contacts.fetched} contacts fetched, ${contacts.persisted_total} stored`,
       });
     } catch (err) {
       setAccountingError(err instanceof Error ? err.message : "Contacts sync failed");
@@ -1737,6 +1755,8 @@ export function IntegrationsPage() {
             </Button>
           </div>
         )}
+
+        {xeroReady && <XeroEvidencePanel enabled={xeroReady} />}
       </Card>
 
       <Card className="p-5">

@@ -1,21 +1,30 @@
-"""Manual sync of Xero organisation settings and contacts into external refs."""
+"""Manual sync of Xero organisation settings and contacts into master tables."""
 
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.accounting_integration import AccountingProvider
-from app.models.external_accounting_ref import ExternalAccountingRef
 from app.models.accounting_sync_job import JOB_TYPE_CONTACTS, JOB_TYPE_SETTINGS
+from app.models.xero_account import SOURCE_SYSTEM_XERO, XeroAccount
+from app.models.xero_contact import MAPPING_UNMAPPED, XeroContact
+from app.models.xero_currency import XeroCurrency
+from app.models.xero_tax_rate import XeroTaxRate
 from app.services.integration.accounting_integration_service import require_xero_ready
 from app.services.integration.xero_client import XeroApiError, XeroClient
+from app.services.integration.xero_sync_counts import (
+    ContactsSyncResult,
+    EntitySyncCounters,
+    SettingsSyncResult,
+    payload_hash,
+)
 from app.services.integration.xero_sync_job_service import (
     enqueue_sync_job,
     mark_job_completed,
@@ -28,138 +37,321 @@ logger = get_logger(__name__)
 
 _PROVIDER = AccountingProvider.XERO.value
 _CONTACT_PAGE_SIZE = 100
+_SYNC_ACTIVE = "active"
+_SYNC_INACTIVE = "inactive"
 
 
-def _normalize_contact_key(name: str) -> str:
-    collapsed = re.sub(r"\s+", " ", (name or "").strip().lower())
-    return collapsed[:255] or "unknown"
+def _parse_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
-async def _upsert_ref(
-    db: AsyncSession,
-    *,
-    tenant_id: uuid.UUID,
-    entity_type: str,
-    internal_entity_id: str,
-    external_entity_id: str,
-    external_number: str | None = None,
-    external_status: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> ExternalAccountingRef:
-    row = (
-        await db.execute(
-            select(ExternalAccountingRef).where(
-                ExternalAccountingRef.tenant_id == tenant_id,
-                ExternalAccountingRef.provider == _PROVIDER,
-                ExternalAccountingRef.entity_type == entity_type,
-                ExternalAccountingRef.internal_entity_id == internal_entity_id,
-            )
-        )
-    ).scalar_one_or_none()
-    now = datetime.now(timezone.utc)
-    if row is None:
-        row = ExternalAccountingRef(
-            tenant_id=tenant_id,
-            provider=_PROVIDER,
-            entity_type=entity_type,
-            internal_entity_id=internal_entity_id,
-            external_entity_id=external_entity_id,
-        )
-        db.add(row)
-    row.external_entity_id = external_entity_id
-    row.external_number = external_number
-    row.external_status = external_status
-    row.last_synced_at = now
-    row.last_error_code = None
-    row.last_error_message = None
-    row.sync_status = "synced"
-    row.sync_attempts = int(row.sync_attempts or 0) + 1
-    row.sync_error_code = None
-    row.sync_error_message = None
-    if metadata is not None:
-        row.metadata_json = json.dumps(metadata)
-    await db.flush()
-    return row
+def _decimal(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
 
 
-async def _run_settings_sync(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, int]:
+def _phone_from_contact(payload: dict[str, Any]) -> str | None:
+    phones = payload.get("Phones") or []
+    for phone in phones:
+        number = str(phone.get("PhoneNumber") or "").strip()
+        if number:
+            return number[:64]
+    return None
+
+
+async def _run_settings_sync(db: AsyncSession, tenant_id: uuid.UUID) -> SettingsSyncResult:
     integration, xero_tenant_id = await require_xero_ready(db, tenant_id)
     client = XeroClient(db=db, tenant_id=tenant_id, xero_tenant_id=xero_tenant_id)
-    counts = {"organisation": 0, "account": 0, "tax_rate": 0, "currency": 0}
+    result = SettingsSyncResult()
+    now = datetime.now(timezone.utc)
+    seen_account_ids: set[str] = set()
+    seen_tax_types: set[str] = set()
+    seen_currency_codes: set[str] = set()
 
     org_payload = await client.get_json("Organisation")
     organisations = org_payload.get("Organisations") or []
     for org in organisations:
-        org_id = str(org.get("OrganisationID") or xero_tenant_id)
-        await _upsert_ref(
-            db,
-            tenant_id=tenant_id,
-            entity_type="organisation",
-            internal_entity_id=org_id,
-            external_entity_id=org_id,
-            external_number=org.get("ShortCode"),
-            metadata=org,
-        )
-        counts["organisation"] += 1
+        result.organisation.fetched += 1
+        result.organisation.unchanged += 1
         for currency in org.get("Currencies") or []:
-            code = str(currency.get("Code") or "").strip()
+            code = str(currency.get("Code") or "").strip().upper()
             if not code:
                 continue
-            await _upsert_ref(
-                db,
-                tenant_id=tenant_id,
-                entity_type="currency",
-                internal_entity_id=code,
-                external_entity_id=code,
-                metadata=currency,
-            )
-            counts["currency"] += 1
+            result.currencies.fetched += 1
+            try:
+                seen_currency_codes.add(code)
+                hash_value = payload_hash(currency)
+                existing = (
+                    await db.execute(
+                        select(XeroCurrency).where(
+                            XeroCurrency.tenant_id == tenant_id,
+                            XeroCurrency.xero_tenant_id == xero_tenant_id,
+                            XeroCurrency.code == code,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    db.add(
+                        XeroCurrency(
+                            tenant_id=tenant_id,
+                            accounting_integration_id=integration.id,
+                            xero_tenant_id=xero_tenant_id,
+                            code=code,
+                            description=str(currency.get("Description") or "")[:255] or None,
+                            source_system=SOURCE_SYSTEM_XERO,
+                            sync_status=_SYNC_ACTIVE,
+                            payload_hash=hash_value,
+                            raw_payload_json=json.dumps(currency, default=str),
+                            last_seen_at=now,
+                            last_synced_at=now,
+                        )
+                    )
+                    result.currencies.created += 1
+                elif existing.payload_hash == hash_value and existing.sync_status == _SYNC_ACTIVE:
+                    existing.last_seen_at = now
+                    existing.last_synced_at = now
+                    result.currencies.unchanged += 1
+                else:
+                    existing.description = str(currency.get("Description") or "")[:255] or None
+                    existing.sync_status = _SYNC_ACTIVE
+                    existing.payload_hash = hash_value
+                    existing.raw_payload_json = json.dumps(currency, default=str)
+                    existing.last_seen_at = now
+                    existing.last_synced_at = now
+                    result.currencies.updated += 1
+            except Exception as exc:
+                result.currencies.failed += 1
+                logger.warning(
+                    "xero_currency_upsert_failed",
+                    tenant_id=str(tenant_id),
+                    code=code,
+                    error=str(exc),
+                )
 
     accounts_payload = await client.get_json("Accounts")
     for account in accounts_payload.get("Accounts") or []:
-        account_id = str(account.get("AccountID") or "")
-        code = str(account.get("Code") or account_id)
+        account_id = str(account.get("AccountID") or "").strip()
         if not account_id:
             continue
-        await _upsert_ref(
-            db,
-            tenant_id=tenant_id,
-            entity_type="account",
-            internal_entity_id=code,
-            external_entity_id=account_id,
-            external_number=code,
-            external_status=account.get("Status"),
-            metadata=account,
-        )
-        counts["account"] += 1
+        result.accounts.fetched += 1
+        try:
+            seen_account_ids.add(account_id)
+            hash_value = payload_hash(account)
+            existing = (
+                await db.execute(
+                    select(XeroAccount).where(
+                        XeroAccount.tenant_id == tenant_id,
+                        XeroAccount.xero_tenant_id == xero_tenant_id,
+                        XeroAccount.xero_account_id == account_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            fields = {
+                "code": str(account.get("Code") or "")[:64] or None,
+                "name": str(account.get("Name") or "")[:255] or None,
+                "account_type": str(account.get("Type") or "")[:64] or None,
+                "account_class": str(account.get("Class") or "")[:64] or None,
+                "status": str(account.get("Status") or "")[:32] or None,
+                "tax_type": str(account.get("TaxType") or "")[:64] or None,
+                "currency_code": str(account.get("CurrencyCode") or "")[:8] or None,
+                "enable_payments_to_account": bool(account["EnablePaymentsToAccount"])
+                if "EnablePaymentsToAccount" in account
+                else None,
+                "show_in_expense_claims": bool(account["ShowInExpenseClaims"])
+                if "ShowInExpenseClaims" in account
+                else None,
+                "description": str(account.get("Description") or "")[:512] or None,
+                "last_remote_modified_at": _parse_dt(account.get("UpdatedDateUTC")),
+            }
+            if existing is None:
+                db.add(
+                    XeroAccount(
+                        tenant_id=tenant_id,
+                        accounting_integration_id=integration.id,
+                        xero_tenant_id=xero_tenant_id,
+                        xero_account_id=account_id,
+                        source_system=SOURCE_SYSTEM_XERO,
+                        sync_status=_SYNC_ACTIVE,
+                        payload_hash=hash_value,
+                        raw_payload_json=json.dumps(account, default=str),
+                        last_seen_at=now,
+                        last_synced_at=now,
+                        **fields,
+                    )
+                )
+                result.accounts.created += 1
+            elif existing.payload_hash == hash_value and existing.sync_status == _SYNC_ACTIVE:
+                existing.last_seen_at = now
+                existing.last_synced_at = now
+                result.accounts.unchanged += 1
+            else:
+                for key, value in fields.items():
+                    setattr(existing, key, value)
+                existing.sync_status = _SYNC_ACTIVE
+                existing.payload_hash = hash_value
+                existing.raw_payload_json = json.dumps(account, default=str)
+                existing.last_seen_at = now
+                existing.last_synced_at = now
+                result.accounts.updated += 1
+        except Exception as exc:
+            result.accounts.failed += 1
+            logger.warning(
+                "xero_account_upsert_failed",
+                tenant_id=str(tenant_id),
+                account_id=account_id,
+                error=str(exc),
+            )
 
     tax_payload = await client.get_json("TaxRates")
     for tax in tax_payload.get("TaxRates") or []:
-        tax_type = str(tax.get("TaxType") or "")
-        name = str(tax.get("Name") or tax_type)
+        tax_type = str(tax.get("TaxType") or "").strip()
         if not tax_type:
             continue
-        await _upsert_ref(
-            db,
-            tenant_id=tenant_id,
-            entity_type="tax_rate",
-            internal_entity_id=tax_type,
-            external_entity_id=tax_type,
-            external_number=name,
-            metadata=tax,
+        result.tax_rates.fetched += 1
+        try:
+            seen_tax_types.add(tax_type)
+            hash_value = payload_hash(tax)
+            existing = (
+                await db.execute(
+                    select(XeroTaxRate).where(
+                        XeroTaxRate.tenant_id == tenant_id,
+                        XeroTaxRate.xero_tenant_id == xero_tenant_id,
+                        XeroTaxRate.tax_type == tax_type,
+                    )
+                )
+            ).scalar_one_or_none()
+            fields = {
+                "name": str(tax.get("Name") or tax_type)[:255] or None,
+                "status": str(tax.get("Status") or "")[:32] or None,
+                "effective_rate": _decimal(tax.get("EffectiveRate")),
+                "display_tax_rate": _decimal(tax.get("DisplayTaxRate")),
+                "can_apply_to_assets": bool(tax["CanApplyToAssets"])
+                if "CanApplyToAssets" in tax
+                else None,
+                "can_apply_to_equity": bool(tax["CanApplyToEquity"])
+                if "CanApplyToEquity" in tax
+                else None,
+                "can_apply_to_expenses": bool(tax["CanApplyToExpenses"])
+                if "CanApplyToExpenses" in tax
+                else None,
+                "can_apply_to_liabilities": bool(tax["CanApplyToLiabilities"])
+                if "CanApplyToLiabilities" in tax
+                else None,
+                "can_apply_to_revenue": bool(tax["CanApplyToRevenue"])
+                if "CanApplyToRevenue" in tax
+                else None,
+            }
+            if existing is None:
+                db.add(
+                    XeroTaxRate(
+                        tenant_id=tenant_id,
+                        accounting_integration_id=integration.id,
+                        xero_tenant_id=xero_tenant_id,
+                        tax_type=tax_type,
+                        source_system=SOURCE_SYSTEM_XERO,
+                        sync_status=_SYNC_ACTIVE,
+                        payload_hash=hash_value,
+                        raw_payload_json=json.dumps(tax, default=str),
+                        last_seen_at=now,
+                        last_synced_at=now,
+                        **fields,
+                    )
+                )
+                result.tax_rates.created += 1
+            elif existing.payload_hash == hash_value and existing.sync_status == _SYNC_ACTIVE:
+                existing.last_seen_at = now
+                existing.last_synced_at = now
+                result.tax_rates.unchanged += 1
+            else:
+                for key, value in fields.items():
+                    setattr(existing, key, value)
+                existing.sync_status = _SYNC_ACTIVE
+                existing.payload_hash = hash_value
+                existing.raw_payload_json = json.dumps(tax, default=str)
+                existing.last_seen_at = now
+                existing.last_synced_at = now
+                result.tax_rates.updated += 1
+        except Exception as exc:
+            result.tax_rates.failed += 1
+            logger.warning(
+                "xero_tax_rate_upsert_failed",
+                tenant_id=str(tenant_id),
+                tax_type=tax_type,
+                error=str(exc),
+            )
+
+    # Deactivate rows missing from this complete sync
+    for row in (
+        await db.execute(
+            select(XeroAccount).where(
+                XeroAccount.tenant_id == tenant_id,
+                XeroAccount.xero_tenant_id == xero_tenant_id,
+                XeroAccount.sync_status == _SYNC_ACTIVE,
+            )
         )
-        counts["tax_rate"] += 1
+    ).scalars():
+        if row.xero_account_id not in seen_account_ids:
+            row.sync_status = _SYNC_INACTIVE
+            row.last_synced_at = now
+            result.accounts.deactivated += 1
 
-    integration.last_successful_sync_at = datetime.now(timezone.utc)
+    for row in (
+        await db.execute(
+            select(XeroTaxRate).where(
+                XeroTaxRate.tenant_id == tenant_id,
+                XeroTaxRate.xero_tenant_id == xero_tenant_id,
+                XeroTaxRate.sync_status == _SYNC_ACTIVE,
+            )
+        )
+    ).scalars():
+        if row.tax_type not in seen_tax_types:
+            row.sync_status = _SYNC_INACTIVE
+            row.last_synced_at = now
+            result.tax_rates.deactivated += 1
+
+    for row in (
+        await db.execute(
+            select(XeroCurrency).where(
+                XeroCurrency.tenant_id == tenant_id,
+                XeroCurrency.xero_tenant_id == xero_tenant_id,
+                XeroCurrency.sync_status == _SYNC_ACTIVE,
+            )
+        )
+    ).scalars():
+        if row.code not in seen_currency_codes:
+            row.sync_status = _SYNC_INACTIVE
+            row.last_synced_at = now
+            result.currencies.deactivated += 1
+
+    integration.last_successful_sync_at = now
     await db.flush()
-    return counts
+    return result
 
 
-async def _run_contacts_sync(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, int]:
+async def _run_contacts_sync(db: AsyncSession, tenant_id: uuid.UUID) -> ContactsSyncResult:
     integration, xero_tenant_id = await require_xero_ready(db, tenant_id)
     client = XeroClient(db=db, tenant_id=tenant_id, xero_tenant_id=xero_tenant_id)
-    synced = 0
+    result = ContactsSyncResult()
+    now = datetime.now(timezone.utc)
+    seen_ids: set[str] = set()
     page = 1
+
     while True:
         payload = await client.get_json(
             "Contacts",
@@ -169,55 +361,192 @@ async def _run_contacts_sync(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str
         if not contacts:
             break
         for contact in contacts:
-            contact_id = str(contact.get("ContactID") or "")
-            name = str(contact.get("Name") or contact_id)
+            contact_id = str(contact.get("ContactID") or "").strip()
             if not contact_id:
                 continue
-            await _upsert_ref(
-                db,
-                tenant_id=tenant_id,
-                entity_type="contact",
-                internal_entity_id=_normalize_contact_key(name),
-                external_entity_id=contact_id,
-                external_number=contact.get("ContactNumber"),
-                external_status=contact.get("ContactStatus"),
-                metadata={"name": name, "contact_id": contact_id},
-            )
-            synced += 1
+            result.contacts.fetched += 1
+            try:
+                seen_ids.add(contact_id)
+                hash_value = payload_hash(contact)
+                existing = (
+                    await db.execute(
+                        select(XeroContact).where(
+                            XeroContact.tenant_id == tenant_id,
+                            XeroContact.xero_tenant_id == xero_tenant_id,
+                            XeroContact.xero_contact_id == contact_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                fields = {
+                    "name": str(contact.get("Name") or "")[:255] or None,
+                    "first_name": str(contact.get("FirstName") or "")[:128] or None,
+                    "last_name": str(contact.get("LastName") or "")[:128] or None,
+                    "email_address": str(contact.get("EmailAddress") or "")[:255] or None,
+                    "phone": _phone_from_contact(contact),
+                    "contact_status": str(contact.get("ContactStatus") or "")[:32] or None,
+                    "is_supplier": bool(contact.get("IsSupplier")),
+                    "is_customer": bool(contact.get("IsCustomer")),
+                    "tax_number": str(contact.get("TaxNumber") or "")[:64] or None,
+                    "default_currency": str(contact.get("DefaultCurrency") or "")[:8] or None,
+                    "accounts_payable_tax_type": str(contact.get("AccountsPayableTaxType") or "")[:64]
+                    or None,
+                    "accounts_receivable_tax_type": str(
+                        contact.get("AccountsReceivableTaxType") or ""
+                    )[:64]
+                    or None,
+                    "last_remote_modified_at": _parse_dt(contact.get("UpdatedDateUTC")),
+                }
+                if existing is None:
+                    db.add(
+                        XeroContact(
+                            tenant_id=tenant_id,
+                            accounting_integration_id=integration.id,
+                            xero_tenant_id=xero_tenant_id,
+                            xero_contact_id=contact_id,
+                            mapping_status=MAPPING_UNMAPPED,
+                            source_system=SOURCE_SYSTEM_XERO,
+                            sync_status=_SYNC_ACTIVE,
+                            payload_hash=hash_value,
+                            raw_payload_json=json.dumps(contact, default=str),
+                            last_seen_at=now,
+                            last_synced_at=now,
+                            **fields,
+                        )
+                    )
+                    result.contacts.created += 1
+                elif existing.payload_hash == hash_value and existing.sync_status == _SYNC_ACTIVE:
+                    existing.last_seen_at = now
+                    existing.last_synced_at = now
+                    result.contacts.unchanged += 1
+                else:
+                    for key, value in fields.items():
+                        setattr(existing, key, value)
+                    existing.sync_status = _SYNC_ACTIVE
+                    existing.payload_hash = hash_value
+                    existing.raw_payload_json = json.dumps(contact, default=str)
+                    existing.last_seen_at = now
+                    existing.last_synced_at = now
+                    result.contacts.updated += 1
+            except Exception as exc:
+                result.contacts.failed += 1
+                logger.warning(
+                    "xero_contact_upsert_failed",
+                    tenant_id=str(tenant_id),
+                    contact_id=contact_id,
+                    error=str(exc),
+                )
         if len(contacts) < _CONTACT_PAGE_SIZE:
             break
         page += 1
 
-    integration.last_successful_sync_at = datetime.now(timezone.utc)
+    for row in (
+        await db.execute(
+            select(XeroContact).where(
+                XeroContact.tenant_id == tenant_id,
+                XeroContact.xero_tenant_id == xero_tenant_id,
+                XeroContact.sync_status == _SYNC_ACTIVE,
+            )
+        )
+    ).scalars():
+        if row.xero_contact_id not in seen_ids:
+            row.sync_status = _SYNC_INACTIVE
+            row.last_synced_at = now
+            result.contacts.deactivated += 1
+
+    integration.last_successful_sync_at = now
     await db.flush()
-    return {"contact": synced}
+    return result
 
 
-async def sync_settings(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, int]:
-    job = await enqueue_sync_job(db, tenant_id=tenant_id, job_type=JOB_TYPE_SETTINGS)
+async def sync_settings(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, Any]:
+    job = await enqueue_sync_job(
+        db,
+        tenant_id=tenant_id,
+        job_type=JOB_TYPE_SETTINGS,
+        direction="inbound",
+        entity_type="settings",
+        trigger_type="manual",
+    )
     await mark_job_running(db, job)
     try:
-        counts = await _run_settings_sync(db, tenant_id)
+        result = await _run_settings_sync(db, tenant_id)
+        await _apply_settings_job_counts(job, result)
         await mark_job_completed(db, job)
-        counts["job_id"] = job.id
-        return counts
+        result.job_id = job.id
+        # Caller must commit; mark intended commit flag after successful flush only
+        result.committed = False
+        return result.to_response()
     except (RuntimeError, XeroApiError) as exc:
         code = getattr(exc, "error_code", None) or "sync_failed"
-        message = str(exc)
-        await mark_job_failed(db, job, error_code=str(code), error_message=message)
+        await mark_job_failed(db, job, error_code=str(code), error_message=str(exc))
         raise
 
 
-async def sync_contacts(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, int]:
-    job = await enqueue_sync_job(db, tenant_id=tenant_id, job_type=JOB_TYPE_CONTACTS)
+async def sync_contacts(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, Any]:
+    job = await enqueue_sync_job(
+        db,
+        tenant_id=tenant_id,
+        job_type=JOB_TYPE_CONTACTS,
+        direction="inbound",
+        entity_type="contact",
+        trigger_type="manual",
+    )
     await mark_job_running(db, job)
     try:
-        counts = await _run_contacts_sync(db, tenant_id)
+        result = await _run_contacts_sync(db, tenant_id)
+        await _apply_contacts_job_counts(job, result)
         await mark_job_completed(db, job)
-        counts["job_id"] = job.id
-        return counts
+        result.job_id = job.id
+        result.committed = False
+        return result.to_response()
     except (RuntimeError, XeroApiError) as exc:
         code = getattr(exc, "error_code", None) or "sync_failed"
-        message = str(exc)
-        await mark_job_failed(db, job, error_code=str(code), error_message=message)
+        await mark_job_failed(db, job, error_code=str(code), error_message=str(exc))
         raise
+
+
+async def _apply_settings_job_counts(job: Any, result: SettingsSyncResult) -> None:
+    accounts = result.accounts.to_dict()
+    tax_rates = result.tax_rates.to_dict()
+    currencies = result.currencies.to_dict()
+    job.direction = "inbound"
+    job.entity_type = "settings"
+    job.trigger_type = "manual"
+    job.records_fetched = (
+        accounts["fetched"] + tax_rates["fetched"] + currencies["fetched"]
+    )
+    job.records_created = (
+        accounts["created"] + tax_rates["created"] + currencies["created"]
+    )
+    job.records_updated = (
+        accounts["updated"] + tax_rates["updated"] + currencies["updated"]
+    )
+    job.records_unchanged = (
+        accounts["unchanged"] + tax_rates["unchanged"] + currencies["unchanged"]
+    )
+    job.records_failed = accounts["failed"] + tax_rates["failed"] + currencies["failed"]
+    job.records_persisted = (
+        accounts["persisted_total"]
+        + tax_rates["persisted_total"]
+        + currencies["persisted_total"]
+    )
+
+
+async def _apply_contacts_job_counts(job: Any, result: ContactsSyncResult) -> None:
+    data = result.contacts.to_dict()
+    job.direction = "inbound"
+    job.entity_type = "contact"
+    job.trigger_type = "manual"
+    job.records_fetched = data["fetched"]
+    job.records_created = data["created"]
+    job.records_updated = data["updated"]
+    job.records_unchanged = data["unchanged"]
+    job.records_failed = data["failed"]
+    job.records_persisted = data["persisted_total"]
+
+
+def mark_sync_committed(response: dict[str, Any]) -> dict[str, Any]:
+    """Call after successful DB commit so clients never see uncommitted success."""
+    response = dict(response)
+    response["committed"] = True
+    return response

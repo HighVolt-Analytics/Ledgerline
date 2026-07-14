@@ -66,6 +66,11 @@ def _xero_env(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setenv("XERO_WEBHOOK_KEY", "whsec_test_key")
     monkeypatch.setenv("XERO_API_BASE_URL", "https://api.xero.com")
+    # Unit tests only — production JWT secret is unchanged.
+    monkeypatch.setenv(
+        "JWT_SECRET",
+        "unit-test-jwt-secret-key-32b-minimum!!",
+    )
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -93,8 +98,9 @@ async def test_oauth_state_replay_rejected(monkeypatch: pytest.MonkeyPatch) -> N
         user_id=1,
     )
     payload = parse_oauth_state(state, provider=AccountingProvider.XERO.value)
+    # Patch where the symbol is bound (import site), not the defining module.
     monkeypatch.setattr(
-        "app.services.integration.xero_token_service.consume_oauth_jti",
+        "app.services.integration.accounting_integration_service.consume_oauth_jti",
         AsyncMock(return_value=False),
     )
     with pytest.raises(ValueError, match="already used"):

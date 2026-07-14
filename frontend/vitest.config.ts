@@ -46,6 +46,7 @@ export default defineConfig({
       "src/lib/signupForm.test.ts",
       "src/pages/SetupPage.test.tsx",
       "src/pages/IntegrationsPage.test.tsx",
+      "src/components/integrations/XeroEvidencePanel.test.tsx",
       "src/hooks/useAccountingIntegrations.test.ts",
       "src/api/client.test.ts",
       "src/api/clientInvitePaths.test.ts",
