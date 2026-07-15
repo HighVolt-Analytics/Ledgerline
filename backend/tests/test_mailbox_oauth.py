@@ -40,11 +40,12 @@ def test_oauth_state_roundtrip() -> None:
     assert payload["typ"] == "mailbox_oauth"
 
 
-def test_invite_authorize_url_requests_consent() -> None:
+def test_invite_authorize_url_uses_select_account() -> None:
     from app.services.ingest.mailbox_oauth_service import build_invite_authorize_url
 
     url = build_invite_authorize_url(tenant_id=TESTING_TENANT_UUID, invite_request_id=42)
-    assert "prompt=consent" in url
+    assert "prompt=select_account" in url
+    assert "prompt=consent" not in url
 
 
 def test_oauth_state_rejects_tampering() -> None:

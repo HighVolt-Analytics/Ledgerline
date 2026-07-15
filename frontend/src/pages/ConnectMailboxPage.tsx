@@ -155,6 +155,14 @@ export function ConnectMailboxPage() {
             : "Choose the provider that hosts this mailbox, then sign in with the invited email address."}
         </p>
 
+        {providers.includes("microsoft") && (
+          <p className="text-xs text-muted-foreground rounded-md border border-amber-500/40 bg-amber-500/5 p-2">
+            If Microsoft shows &quot;Need admin approval&quot;, a Microsoft 365 Global
+            Administrator must grant org-wide consent once from LedgerLink →
+            Integrations → Open Microsoft admin consent. Then retry this link.
+          </p>
+        )}
+
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <div className="flex flex-col gap-2">

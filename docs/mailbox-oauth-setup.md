@@ -34,9 +34,11 @@ Must match `GRAPH_OAUTH_REDIRECT_URI` exactly (scheme, host, port, path).
 
 - `Mail.ReadWrite` — read mail, mark read, move to Processed / Exceptions
 - `User.Read` — resolve signed-in user email from `/me`
-- `offline_access` — refresh token for background polling
+- Under **OpenId permissions**: `openid`, `profile`, `offline_access` — sign-in + refresh token for background polling
 
-Grant **admin consent** if your tenant requires it for these scopes.
+Then click **Grant admin consent for &lt;tenant&gt;** so every row shows **Granted**.
+
+If invite users still see **Need admin approval** while `Mail.ReadWrite` / `User.Read` already show Granted, you almost always still need the OpenId trio (`openid`, `profile`, `offline_access`) added and re-consented — LedgerLink requests those scopes on every mailbox connect.
 
 > Application permissions for `GRAPH_MAILBOX`:
 > - `Mail.Read` / `Mail.ReadWrite` — inbox polling (see [phase1-graph.md](./phase1-graph.md))

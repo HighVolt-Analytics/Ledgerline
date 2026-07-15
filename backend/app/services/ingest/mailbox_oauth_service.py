@@ -107,10 +107,13 @@ def build_authorize_url(*, tenant_id: uuid.UUID | str | int, user_id: int) -> st
 
 
 def build_invite_authorize_url(*, tenant_id: uuid.UUID | str | int, invite_request_id: int) -> str:
+    # Use select_account (not prompt=consent). Forced consent re-triggers
+    # "Need admin approval" when the org disables user consent; refresh tokens
+    # still come from the offline_access scope once org/admin consent exists.
     return _build_authorize_url(
         tenant_id=tenant_id,
         state=create_oauth_state(tenant_id=tenant_id, invite_request_id=invite_request_id),
-        prompt="consent",
+        prompt="select_account",
     )
 
 
@@ -147,8 +150,8 @@ def _build_authorize_url(
         "response_mode": "query",
         "scope": " ".join(GRAPH_DELEGATED_SCOPES),
         "state": state,
-        # Invite/reconnect flows use consent so Microsoft returns a refresh token.
-        # Direct admin connect keeps select_account to avoid the admin-approval wall.
+        # Prefer select_account: forced prompt=consent hits "Need admin approval"
+        # when the tenant disables user consent. offline_access still yields refresh tokens.
         "prompt": prompt,
     }
     return f"{_authority(multi_tenant=multi_tenant)}/oauth2/v2.0/authorize?{urlencode(params)}"
