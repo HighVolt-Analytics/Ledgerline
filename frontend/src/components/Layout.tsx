@@ -80,7 +80,6 @@ const WORKSPACE_GROUPS: NavGroup[] = [
       { to: "/creations", label: "Creations", icon: Users },
       { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
       { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
     ],
   },
 ];
@@ -89,11 +88,6 @@ const OPERATIONS_GROUPS: NavGroup[] = [
   {
     label: "",
     nested: false,
-    items: [{ to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" }],
-  },
-  {
-    label: "Management",
-    nested: true,
     items: [
       { to: "/team-expenses", label: "Team Expenses", icon: Receipt, badge: "team_expenses", moduleKey: "team_expenses" },
       { to: "/expenses", label: "Expenses Management", icon: Coins, badge: "business_expenses", moduleKey: "expenses" },
@@ -115,9 +109,19 @@ const FINANCE_GROUPS: NavGroup[] = [
   {
     label: "Treasury",
     nested: true,
-    items: [{ to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" }],
+    items: [
+      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
+      { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
+    ],
   },
 ];
+
+const REPORTS_ITEM: NavItem = {
+  to: "/reports",
+  label: "Reports",
+  icon: BarChart3,
+  moduleKey: "reports",
+};
 
 const SETTINGS_GROUPS: NavGroup[] = [
   {
@@ -175,6 +179,7 @@ function pathMatchesItem(pathname: string, to: string) {
 
 function sectionForPath(pathname: string): string {
   if (pathname === "/") return "";
+  if (pathMatchesItem(pathname, REPORTS_ITEM.to)) return "";
   let bestSection = "workspace";
   let bestPathLen = -1;
   for (const section of ALL_SECTIONS) {
@@ -192,17 +197,18 @@ function sectionForPath(pathname: string): string {
 
 function isNavItemActive(pathname: string, to: string): boolean {
   if (!pathMatchesItem(pathname, to)) return false;
-  for (const section of ALL_SECTIONS) {
-    for (const group of section.groups) {
-      for (const item of group.items) {
-        if (
-          item.to !== to &&
-          item.to.length > to.length &&
-          pathMatchesItem(pathname, item.to)
-        ) {
-          return false;
-        }
-      }
+  const allItems = [
+    DASHBOARD_ITEM,
+    REPORTS_ITEM,
+    ...ALL_SECTIONS.flatMap((section) => section.groups.flatMap((group) => group.items)),
+  ];
+  for (const item of allItems) {
+    if (
+      item.to !== to &&
+      item.to.length > to.length &&
+      pathMatchesItem(pathname, item.to)
+    ) {
+      return false;
     }
   }
   return true;
@@ -210,12 +216,13 @@ function isNavItemActive(pathname: string, to: string): boolean {
 
 function navLinkEnd(to: string): boolean {
   if (to === "/") return true;
-  for (const section of ALL_SECTIONS) {
-    for (const group of section.groups) {
-      for (const item of group.items) {
-        if (item.to !== to && item.to.startsWith(`${to}/`)) return true;
-      }
-    }
+  const allItems = [
+    DASHBOARD_ITEM,
+    REPORTS_ITEM,
+    ...ALL_SECTIONS.flatMap((section) => section.groups.flatMap((group) => group.items)),
+  ];
+  for (const item of allItems) {
+    if (item.to !== to && item.to.startsWith(`${to}/`)) return true;
   }
   return false;
 }
@@ -369,6 +376,13 @@ export function Layout() {
         }
       }
     }
+    if (canShowNavItem(REPORTS_ITEM)) {
+      items.push({
+        ...REPORTS_ITEM,
+        icon: REPORTS_ITEM.icon as FlatNavItem["icon"],
+        group: "Reports",
+      });
+    }
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabledModules, permissions]);
@@ -405,7 +419,6 @@ export function Layout() {
             {count > 0 && (
               <span className="primary-sidebar__nav-item-badge">{count}</span>
             )}
-            <ChevronRight className="primary-sidebar__nav-item-chevron" aria-hidden />
           </>
         )}
         {iconOnly && count > 0 && (
@@ -505,10 +518,7 @@ export function Layout() {
           >
             <DASHBOARD_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
             {!iconOnly && (
-              <>
-                <span className="primary-sidebar__topic-label">{DASHBOARD_ITEM.label}</span>
-                <ChevronRight className="primary-sidebar__topic-chevron" aria-hidden />
-              </>
+              <span className="primary-sidebar__topic-label">{DASHBOARD_ITEM.label}</span>
             )}
           </NavLink>
         )}
@@ -550,6 +560,25 @@ export function Layout() {
               )}
           </div>
         ))}
+        {canShowNavItem(REPORTS_ITEM) && (
+          <NavLink
+            to={REPORTS_ITEM.to}
+            end={navLinkEnd(REPORTS_ITEM.to)}
+            aria-label={iconOnly ? REPORTS_ITEM.label : undefined}
+            data-sidebar-tip={iconOnly ? REPORTS_ITEM.label : undefined}
+            data-testid={navTestId(REPORTS_ITEM.label)}
+            className={cn(
+              "primary-sidebar__topic",
+              iconOnly && "primary-sidebar__topic--icon-only",
+              isNavItemActive(pathname, REPORTS_ITEM.to) && "primary-sidebar__topic--active"
+            )}
+          >
+            <REPORTS_ITEM.icon className="primary-sidebar__topic-icon" aria-hidden />
+            {!iconOnly && (
+              <span className="primary-sidebar__topic-label">{REPORTS_ITEM.label}</span>
+            )}
+          </NavLink>
+        )}
       </nav>
 
       <div className="primary-sidebar__footer">

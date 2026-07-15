@@ -18,7 +18,7 @@ export function AuthCenteredCard({
             <Logo size={26} />
           </span>
           <div className="auth-brand-text">
-            <span className="auth-brand-name">Ledgerline</span>
+            <span className="auth-brand-name">Ledgerlink</span>
             <span className="auth-brand-tag">Invoice to Ledger</span>
           </div>
         </div>

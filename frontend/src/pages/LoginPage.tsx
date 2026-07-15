@@ -172,7 +172,7 @@ export function LoginPage() {
     <AuthCenteredCard
       title={
         step === "credentials"
-          ? "Sign in to Ledgerline"
+          ? "Sign in to Ledgerlink"
           : step === "otp"
             ? "Verify your email"
             : "Choose organisation"

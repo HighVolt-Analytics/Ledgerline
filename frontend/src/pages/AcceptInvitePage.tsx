@@ -73,7 +73,7 @@ export function AcceptInvitePage() {
 
   return (
     <AuthCenteredCard
-      title={done ? "Account created" : "Sign up for Ledgerline"}
+      title={done ? "Account created" : "Sign up for Ledgerlink"}
       subtitle={
         done
           ? "Your account is ready. Sign in to continue."

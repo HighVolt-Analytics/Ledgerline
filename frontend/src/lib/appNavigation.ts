@@ -45,13 +45,15 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: "/creations", label: "Creations", icon: Users },
       { to: "/approvals", label: "Approvals", icon: CheckCircle2, badge: "approvals" },
       { to: "/rules", label: "Rule Book", icon: BookOpen, moduleKey: "rule_book" },
-      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
     ],
+  },
+  {
+    label: "Reports",
+    items: [{ to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" }],
   },
   {
     label: "Operations",
     items: [
-      { to: "/reports", label: "Reports", icon: BarChart3, moduleKey: "reports" },
       {
         to: "/team-expenses",
         label: "Team Expenses",
@@ -92,6 +94,7 @@ export const NAV_GROUPS: NavGroup[] = [
         moduleKey: "sales",
       },
       { to: "/ledger-link", label: "Accounting", icon: Link2, moduleKey: "ledger_link" },
+      { to: "/payments", label: "Payments", icon: Wallet, badge: "payments", moduleKey: "payments" },
       { to: "/vault", label: "Vault", icon: Vault, moduleKey: "vault" },
     ],
   },

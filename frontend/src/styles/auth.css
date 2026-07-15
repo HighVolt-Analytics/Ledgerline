@@ -18,7 +18,7 @@
   align-items: stretch;
 }
 
-/* Brand — logo mark + Ledgerline name */
+/* Brand — logo mark + Ledgerlink name */
 .auth-brand {
   display: flex;
   align-items: center;

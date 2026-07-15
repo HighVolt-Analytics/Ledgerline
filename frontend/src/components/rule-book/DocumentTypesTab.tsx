@@ -61,6 +61,7 @@ import {
 import { bundleConfigWarnings } from "@/lib/documentTypeBundleValidation";
 import { normalizeBundleConditional } from "@/lib/documentBundleConfig";
 import { DocumentRecognitionEditor } from "@/components/rule-book/DocumentRecognitionEditor";
+import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import { documentTypeReadiness } from "@/lib/documentMatchRules";
 import { recognitionSummary } from "@/lib/documentTypeRecognition";
 import {
@@ -198,7 +199,7 @@ function DetailChipList({
     return <p className="text-sm text-muted-foreground">{emptyLabel}</p>;
   }
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-2">
       {items.map((item, index) => (
         <ToneBadge key={index} tone={tone}>
           {item}
@@ -696,14 +697,13 @@ function DocumentTypeDetailDialog({
             </DetailCard>
           </div>
 
-          <DetailCard
-            title="Supporting document requirements"
-            hint="Required when playbook enforces dossier completeness"
-          >
-            <BundleRulesDetailSection docType={docType} documentTypes={documentTypes} />
-          </DetailCard>
-
           <div className="grid gap-3 sm:grid-cols-2">
+            <DetailCard
+              title="Supporting document requirements"
+              hint="Required when playbook enforces dossier completeness"
+            >
+              <BundleRulesDetailSection docType={docType} documentTypes={documentTypes} />
+            </DetailCard>
             <DetailCard
               title="Validation"
               hint="Standard, custom, and duplicate checks"
@@ -719,15 +719,15 @@ function DocumentTypeDetailDialog({
           </div>
 
           <DetailCard title="Extraction fields" hint="Shown in invoice drawer → Fields tab">
-            <div className="space-y-3">
-              <div>
+            <div className="space-y-5">
+              <div className="space-y-2">
                 <p className="text-[11px] font-medium text-foreground">Compulsory</p>
                 <DetailChipList
                   items={docType.requiredFields.map((key) => extractionFieldLabel(key))}
                   emptyLabel="None — no fields required to approve"
                 />
               </div>
-              <div>
+              <div className="space-y-2">
                 <p className="text-[11px] font-medium text-foreground">Optional extract</p>
                 <DetailChipList
                   items={optionalExtractionFields(
@@ -738,7 +738,7 @@ function DocumentTypeDetailDialog({
                 />
               </div>
               {docType.absentFields.length > 0 ? (
-                <div>
+                <div className="space-y-2">
                   <p className="text-[11px] font-medium text-foreground">Must not appear</p>
                   <DetailChipList
                     items={docType.absentFields.map((key) => extractionFieldLabel(key))}
@@ -1264,7 +1264,7 @@ export function DocumentTypesTab({
   }, [documentTypes, isNew, selectedCode]);
 
   return (
-    <div className="space-y-4">
+    <div className="document-types-tab space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground max-w-2xl">
           Configure document types for recognition, validation, Post to GL accounts, and supporting-document rules.
@@ -1283,6 +1283,13 @@ export function DocumentTypesTab({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        <ListSearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search types…"
+          testId="input-document-types-search"
+          className="w-72 min-w-[18rem]"
+        />
         {DOCUMENT_TYPE_CLASSES.map((klass) => (
           <button
             key={klass}
@@ -1299,13 +1306,6 @@ export function DocumentTypesTab({
             {klass === "all" ? "All classes" : klass}
           </button>
         ))}
-        <ListSearchInput
-          value={searchQuery}
-          onChange={setSearchQuery}
-          placeholder="Search types…"
-          testId="input-document-types-search"
-          className="ml-auto"
-        />
       </div>
 
       {filtered.length === 0 ? (
@@ -1330,25 +1330,35 @@ export function DocumentTypesTab({
                 !docType.enabled && "opacity-60"
               )}
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-start justify-between gap-2">
                 <span className="text-sm font-semibold text-foreground">{docType.code}</span>
+                <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
+                  <ClassBadge klass={docType.klass} />
+                  <ToneBadge tone={cardPostingTone(docType.posting)}>
+                    Post: {docType.posting}
+                  </ToneBadge>
+                </div>
               </div>
-              <div className="mt-1 text-sm font-medium text-foreground">
-                {docType.title || docType.shortTitle}
+              <div className="mt-2.5">
+                <DocumentTypeChip
+                  code={docType.code}
+                  label={docType.title || docType.shortTitle}
+                  display={docType.title || docType.shortTitle}
+                  documentTypes={documentTypes}
+                  className="document-types-name-chip"
+                />
               </div>
               <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
                 {recognitionSummary(docType)}
               </p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <ClassBadge klass={docType.klass} />
-                <ToneBadge tone={cardPostingTone(docType.posting)}>
-                  Post: {docType.posting}
-                </ToneBadge>
-                {postToMissingOnCard(docType, coaAccounts) ? (
-                  <ToneBadge tone="warn">GL missing</ToneBadge>
-                ) : null}
-                {!docType.enabled ? <ToneBadge tone="fail">Off</ToneBadge> : null}
-              </div>
+              {(postToMissingOnCard(docType, coaAccounts) || !docType.enabled) && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {postToMissingOnCard(docType, coaAccounts) ? (
+                    <ToneBadge tone="warn">GL missing</ToneBadge>
+                  ) : null}
+                  {!docType.enabled ? <ToneBadge tone="fail">Off</ToneBadge> : null}
+                </div>
+              )}
             </button>
           ))}
         </div>

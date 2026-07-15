@@ -83,7 +83,7 @@ async def get_public_signup_link() -> ApiEnvelope[SignupLinkResponse]:
             path=PUBLIC_SIGNUP_PATH,
             url=url,
             aliases=list(PUBLIC_SIGNUP_ALIASES),
-            embed_html=f'<a href="{url}">Get started with Ledgerline</a>',
+            embed_html=f'<a href="{url}">Get started with Ledgerlink</a>',
         )
     )
 

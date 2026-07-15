@@ -252,4 +252,4 @@ async def test_public_signup_link(client: AsyncClient, monkeypatch: pytest.Monke
     assert body["path"] == "/signup"
     assert body["url"] == "http://localhost:5173/signup"
     assert "/start" in body["aliases"]
-    assert "Get started with Ledgerline" in body["embed_html"]
+    assert "Get started with Ledgerlink" in body["embed_html"]

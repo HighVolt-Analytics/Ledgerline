@@ -7,7 +7,7 @@ export function Logo({ size = 28, className = "" }: { size?: number; className?:
       src={LEDGERLINK_LOGO_SRC}
       width={size}
       height={size}
-      alt="Ledgerline"
+      alt="Ledgerlink"
       className={["shrink-0 object-contain", className].filter(Boolean).join(" ")}
       decoding="async"
     />

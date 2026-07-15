@@ -106,32 +106,32 @@
 /* KPI status chips — filled pills matching approvals-action-chip + dashboard icon palette */
 .approvals-action-chip--kpi-violet {
   background: rgb(91 58 125 / 0.14);
-  color: #5b3a7d;
+  color: #7a49ad;
 }
 
 .approvals-action-chip--kpi-blue {
   background: rgb(36 94 141 / 0.14);
-  color: #245e8d;
+  color: #2a78b5;
 }
 
 .approvals-action-chip--kpi-teal {
   background: rgb(39 92 112 / 0.14);
-  color: #275c70;
+  color: #2e7f99;
 }
 
 .approvals-action-chip--kpi-green {
   background: hsl(142 71% 45% / 0.16);
-  color: hsl(142 64% 32%);
+  color: hsl(142 58% 34%);
 }
 
 .approvals-action-chip--kpi-sage {
   background: rgb(51 115 98 / 0.14);
-  color: #337362;
+  color: #2f8f74;
 }
 
 .approvals-action-chip--kpi-cyan {
   background: rgb(185 222 226 / 0.5);
-  color: #3b6f73;
+  color: #2f858b;
 }
 
 .approvals-action-chip--kpi-rust {
@@ -139,47 +139,47 @@
 }
 
 .approvals-action-chip--static.approvals-action-chip--kpi-rust {
-  color: #9c4e2a;
+  color: #c05d2e;
 }
 
 .approvals-action-chip--kpi-rust:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
   .approvals-action-chip__icon {
-  color: #9c4e2a;
+  color: #c05d2e;
 }
 
 .approvals-action-chip--kpi-rose {
   background: rgb(139 69 96 / 0.14);
-  color: #8b4560;
+  color: #b05374;
 }
 
 .dark .approvals-action-chip--kpi-violet {
   background: rgb(207 184 236 / 0.18);
-  color: #cfb8ec;
+  color: #f2e9fb;
 }
 
 .dark .approvals-action-chip--kpi-blue {
   background: rgb(168 217 243 / 0.18);
-  color: #a8d9f3;
+  color: #e5f5fc;
 }
 
 .dark .approvals-action-chip--kpi-teal {
   background: rgb(182 237 245 / 0.18);
-  color: #b6edf5;
+  color: #e4f8fb;
 }
 
 .dark .approvals-action-chip--kpi-green {
   background: hsl(142 71% 45% / 0.2);
-  color: hsl(142 65% 68%);
+  color: hsl(142 55% 86%);
 }
 
 .dark .approvals-action-chip--kpi-sage {
   background: rgb(178 223 209 / 0.18);
-  color: #b2dfd1;
+  color: #e2f5ee;
 }
 
 .dark .approvals-action-chip--kpi-cyan {
   background: rgb(185 222 226 / 0.18);
-  color: #b9dee2;
+  color: #e6f7f9;
 }
 
 .dark .approvals-action-chip--kpi-rust {
@@ -187,21 +187,22 @@
 }
 
 .dark .approvals-action-chip--static.approvals-action-chip--kpi-rust {
-  color: #edc0a6;
+  color: #fbe6d6;
 }
 
 .dark
   .approvals-action-chip--kpi-rust:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
   .approvals-action-chip__icon {
-  color: #edc0a6;
+  color: #fbe6d6;
 }
 
 .dark .approvals-action-chip--kpi-rose {
   background: rgb(231 182 195 / 0.18);
-  color: #e7b6c3;
+  color: #fbe6ec;
 }
 
-/* Status tags (stage / evaluation) — regular weight, single line, not action buttons */
+/* Status tags (stage / evaluation / doc type) — regular weight beats action-chip 600 */
+.approvals-action-chip.status-chip,
 .status-chip {
   height: auto;
   min-height: 1.25rem;

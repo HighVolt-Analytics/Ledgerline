@@ -502,7 +502,7 @@
 }
 
 .approvals-action-chip--static.approvals-action-chip--edit {
-  color: hsl(262 70% 48%);
+  color: hsl(262 72% 52%);
 }
 
 .approvals-action-chip--edit:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
@@ -515,7 +515,7 @@
 }
 
 .approvals-action-chip--static.approvals-action-chip--approve {
-  color: hsl(142 64% 32%);
+  color: hsl(142 55% 34%);
 }
 
 .approvals-action-chip--approve:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
@@ -530,7 +530,7 @@
 
 .approvals-action-chip--static.approvals-action-chip--reject,
 .approvals-action-chip--static.approvals-action-chip--delete {
-  color: hsl(0 65% 44%);
+  color: hsl(0 68% 48%);
 }
 
 .approvals-action-chip--reject:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
@@ -558,7 +558,7 @@
 }
 
 .approvals-action-chip--static.approvals-action-chip--post {
-  color: hsl(199 82% 38%);
+  color: hsl(199 78% 42%);
 }
 
 .approvals-action-chip--post:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
@@ -571,7 +571,7 @@
 }
 
 .approvals-action-chip--static.approvals-action-chip--review {
-  color: hsl(192 91% 36%);
+  color: hsl(192 78% 38%);
 }
 
 .approvals-action-chip--review:not(.approvals-action-chip--outline):not(.approvals-action-chip--static)
@@ -581,7 +581,11 @@
 
 .approvals-action-chip--muted {
   background: hsl(var(--muted));
-  color: hsl(var(--muted-foreground));
+  color: hsl(220 14% 42%);
+}
+
+.dark .approvals-action-chip--muted {
+  color: hsl(220 16% 88%);
 }
 
 .dark .approvals-action-chip--edit {

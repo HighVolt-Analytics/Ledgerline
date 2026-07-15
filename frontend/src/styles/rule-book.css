@@ -35,3 +35,15 @@
   line-height: 1.45;
   color: hsl(var(--muted-foreground));
 }
+
+/* Document Types cards — name tags match the old plain title size (text-sm / 14px) */
+.document-types-tab .document-types-name-chip.approvals-action-chip.status-chip,
+.document-types-tab .document-types-name-chip.status-chip {
+  height: auto;
+  min-height: 0;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  letter-spacing: normal;
+}

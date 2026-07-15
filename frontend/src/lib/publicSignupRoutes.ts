@@ -58,7 +58,7 @@ export function buildPublicSignupAnchorHtml(
   origin?: string,
   params?: PublicSignupLinkParams & { label?: string },
 ): string {
-  const label = params?.label ?? "Get started with Ledgerline";
+  const label = params?.label ?? "Get started with Ledgerlink";
   const href = buildPublicSignupUrl(origin, params);
   return `<a href="${href}">${label}</a>`;
 }

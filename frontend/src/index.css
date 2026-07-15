@@ -1249,6 +1249,20 @@ input.app-numeric-input {
   overflow: hidden;
 }
 
+/* Match Approvals kanban COLUMN (big card), not the small invoice cards */
+.v5-dialog-content.document-type-detail-dialog,
+.v5-dialog-content.document-type-edit-dialog {
+  background: hsl(var(--sidebar));
+  color: hsl(var(--foreground));
+}
+
+.dark .v5-dialog-content.document-type-detail-dialog,
+.dark .v5-dialog-content.document-type-edit-dialog {
+  background: hsl(var(--nav-secondary));
+  color: hsl(var(--nav-secondary-foreground));
+  border-color: hsl(var(--nav-secondary-border));
+}
+
 .document-type-detail-dialog .detail-dialog-header {
   flex-shrink: 0;
   border-bottom: 1px solid hsl(var(--border));
@@ -1293,8 +1307,12 @@ input.app-numeric-input {
   justify-content: flex-end;
   gap: 0.5rem;
   border-top: 1px solid hsl(var(--border));
-  background: hsl(var(--background));
+  background: hsl(var(--sidebar));
   padding: 1rem 1.5rem;
+}
+
+.dark .document-type-edit-dialog .detail-dialog-footer {
+  background: hsl(var(--nav-secondary));
 }
 
 .v5-dialog-root {
