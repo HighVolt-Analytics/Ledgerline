@@ -82,7 +82,10 @@ def sanitize_parsed_line_item(
     trace: object | None = None,
     row_key: str | None = None,
 ) -> ParsedLineItem:
-    """Clamp parsed line numerics before persistence."""
+    """Clamp parsed line numerics before persistence.
+
+    Grounded-only: never invent missing unit_price/amount from qty×price math.
+    """
     qty = plausible_qty(item.qty)
     unit_price = plausible_money(item.unit_price)
     amount = plausible_money(item.amount)
@@ -94,10 +97,13 @@ def sanitize_parsed_line_item(
             trace.record(row_key, "amount_sanity", "adjusted", "implausible_money")
         if item.amount is not None and amount is None:
             trace.record(row_key, "amount_sanity", "adjusted", "implausible_money")
-    if amount is None and qty is not None and unit_price is not None:
-        amount = plausible_money(qty * unit_price)
-    if unit_price is None and amount is not None and qty is not None and qty > 0:
-        unit_price = plausible_money(amount / qty)
+        if (
+            qty is not None
+            and unit_price is not None
+            and amount is not None
+            and (qty * unit_price - amount).copy_abs() > Decimal("0.05")
+        ):
+            trace.record(row_key, "amount_sanity", "kept", "printed_arithmetic_mismatch")
     return ParsedLineItem(
         description=item.description,
         qty=qty,

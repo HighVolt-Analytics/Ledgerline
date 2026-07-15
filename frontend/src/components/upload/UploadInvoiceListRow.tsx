@@ -6,7 +6,6 @@ import {
   RouteTargetBadge,
 } from "@/components/inbox/EvaluationStatusBadge";
 import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
-import { InboxSourceBadge } from "@/components/inbox/InboxSourceBadge";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { UploadColumnCell } from "@/components/upload/UploadColumnCell";
 import { documentDisplayRef, money } from "@/lib/format";
@@ -15,7 +14,6 @@ import {
   counterpartyMatchLabel,
   counterpartyName,
   invoiceCounterpartyConfidence,
-  invoiceSourceKind,
   invoiceValidationConfidence,
   vendorMatchApplicable,
 } from "@/lib/invoice";
@@ -139,7 +137,6 @@ export function UploadInvoiceMobileRow({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1.5 mt-2">
-        <InboxSourceBadge kind={invoiceSourceKind(inv)} />
         <UploadColumnCell mode={modes.route}>
           <RouteTargetBadge route={inv.route_target} />
         </UploadColumnCell>
@@ -204,9 +201,6 @@ export function UploadInvoiceTableRow({
       </td>
       <td className="px-3 py-2.5 max-w-[160px] truncate">
         <UploadColumnCell mode={modes.counterparty}>{counterpartyName(inv)}</UploadColumnCell>
-      </td>
-      <td className="px-3 py-2.5">
-        <InboxSourceBadge kind={invoiceSourceKind(inv)} />
       </td>
       <td className="px-3 py-2.5">
         <UploadColumnCell mode={modes.route}>

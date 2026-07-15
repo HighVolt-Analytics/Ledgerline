@@ -911,13 +911,12 @@ export function UploadPage() {
           </div>
 
           <div className="hidden md:block overflow-x-auto">
-            <table className="w-full min-w-[1180px] text-sm">
+            <table className="w-full min-w-[1100px] text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
                   <th className="px-4 py-2 font-medium">Document</th>
                   <th className="px-3 py-2 font-medium">Type</th>
                   <th className="px-3 py-2 font-medium">{counterpartyColumnLabel({ mixed: true })}</th>
-                  <th className="px-3 py-2 font-medium">Source</th>
                   <th className="px-3 py-2 font-medium">Route</th>
                   <th className="px-3 py-2 font-medium">GL account</th>
                   <th className="px-3 py-2 font-medium">Stage</th>
@@ -938,7 +937,7 @@ export function UploadPage() {
               <tbody>
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
                       {hasActiveSearch
                         ? "No documents match your search."
                         : "No documents match this filter."}

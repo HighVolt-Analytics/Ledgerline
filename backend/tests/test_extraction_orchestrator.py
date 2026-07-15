@@ -241,6 +241,105 @@ def test_trusted_llm_does_not_block_larger_table() -> None:
     assert len(merged.line_items) == 5
 
 
+def test_primary_qty_only_adapter_keeps_layout_rows() -> None:
+    from app.services.extraction.finance_document_adapters import invoice_data_from_layout_payload
+
+    grids = [
+        [
+            ["Name", "Accepted", "PO Qty"],
+            ["CPU Tray A", "100", "120"],
+            ["CPU Tray B", "20", "20"],
+        ]
+    ]
+    data = invoice_data_from_layout_payload(
+        {
+            "layout_line_mode": "primary",
+            "layout_table_grids": grids,
+            "di_line_items": [],
+        },
+        text="Goods Receipt\nName Accepted PO Qty\nCPU Tray A 100 120\n",
+    )
+    assert len(data.line_items) == 2
+    assert data.line_items[0].qty == Decimal("100")
+    assert data.line_items[0].unit_price is None
+    assert data.line_items[1].qty == Decimal("20")
+
+
+def test_gap_fill_money_di_does_not_append_ocr_junk() -> None:
+    text = (
+        "TAX INVOICE\n"
+        "Description Qty Unit Price Amount\n"
+        "Widget Pro 2 50.00 100.00\n"
+        "Ship To: Somewhere Else 9 9.00 81.00\n"
+        "Mystery junk row not a product 1 1.00 1.00\n"
+    )
+    parsed = InvoiceData(line_items=[])
+    ocr = OcrArtifact(
+        success=True,
+        text=text,
+        text_length=len(text),
+        payload_json={
+            "layout_line_mode": "gap_fill",
+            "di_line_items": [
+                {
+                    "description": "Widget Pro",
+                    "qty": "2",
+                    "unit_price": "50.00",
+                    "amount": "100.00",
+                }
+            ],
+            "table_line_items": [
+                {
+                    "description": "Widget Pro",
+                    "qty": "2",
+                    "unit_price": "50.00",
+                    "amount": "100.00",
+                }
+            ],
+        },
+    )
+    merged = merge_extraction_sources(parsed, ocr)
+    assert len(merged.line_items) == 1
+    assert "Widget Pro" in (merged.line_items[0].description or "")
+    assert all("Mystery" not in (item.description or "") for item in merged.line_items)
+    assert all("Ship To" not in (item.description or "") for item in merged.line_items)
+
+
+def test_qty_only_ignore_mode_prefers_layout_grids_over_regex() -> None:
+    """GRN artifacts often set layout_line_mode=ignore; grids must still beat OCR noise."""
+    text = (
+        "GOODS RECEIPT NOTE\n"
+        "Acme Corp Pvt Ltd 123 Business Park, Hyderabad - 500081\n"
+        "Supplier Global Supplies Ltd | PO Ref: PO-2025-0101 Delivered 1122\n"
+        "Steel Rods 12mm TMT\n"
+        "Hydraulic Hose 3/4\"\n"
+    )
+    grids = [
+        [
+            ["S.No", "Item Description", "PO Qty", "Recd Qty", "Accepted", "Rejected"],
+            ["1", "Steel Rods 12mm TMT", "500 Kg", "500 Kg", "500 Kg", "0"],
+            ["2", 'Hydraulic Hose 3/4"', "150 Nos", "150 Nos", "147 Nos", "3 Nos"],
+        ]
+    ]
+    parsed = InvoiceData(line_items=[])
+    ocr = OcrArtifact(
+        success=True,
+        text=text,
+        text_length=len(text),
+        payload_json={
+            "layout_line_mode": "ignore",
+            "layout_table_grids": grids,
+            "di_line_items": [],
+        },
+    )
+    merged = merge_extraction_sources(parsed, ocr)
+    assert len(merged.line_items) == 2
+    assert "Steel Rods" in (merged.line_items[0].description or "")
+    assert merged.line_items[0].qty == Decimal("500")
+    assert merged.line_items[1].qty == Decimal("147")
+    assert all("Acme Corp" not in (item.description or "") for item in merged.line_items)
+
+
 def test_partial_di_unions_with_qty_only_table() -> None:
     from pathlib import Path
 

@@ -26,7 +26,7 @@ export type ReportDownloadKind =
 const TYPE_OPTIONS: SelectOption[] = [
   { value: "workbook", label: "Excel workbook" },
   { value: "documents", label: "Document register (CSV)" },
-  { value: "documents-bundle", label: "Documents bundle (CSV)" },
+  { value: "documents-bundle", label: "Documents bundle (Excel)" },
   { value: "gl", label: "GL account summary (CSV)" },
   { value: "vendors", label: "Top vendors (CSV)" },
   { value: "audit", label: "Audit trail (CSV)" },
@@ -109,7 +109,7 @@ export function ReportDownloadMenu({
           break;
         }
         case "documents-bundle": {
-          const { dataRows } = await api.downloadDocumentsBundleCsv(filter);
+          const { dataRows } = await api.downloadDocumentsBundle(filter);
           if (dataRows === 0) {
             onToast("No transactional posting documents in this period to export.");
             return;

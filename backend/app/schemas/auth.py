@@ -86,3 +86,22 @@ class PortalEmbedLoginResponse(BaseModel):
     token_type: str = "bearer"
     user: UserResponse
     memberships: list[TenantAccountSummary] = Field(default_factory=list)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str = (
+        "If an account exists for that email, you will receive a password reset link shortly."
+    )
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=8)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class ResetPasswordResponse(BaseModel):
+    message: str = "Password updated. You can sign in with your new password."

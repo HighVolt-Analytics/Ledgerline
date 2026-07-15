@@ -76,13 +76,15 @@ def _duplicates_header_value(desc: str, header_values: set[str]) -> bool:
         # Exact containment either way — but ignore misparsed "vendor" blobs that
         # are really product lines (qty + money) swallowing the real description.
         if value in normalized or normalized in value:
-            if (
-                normalized in value
-                and len(value) > len(normalized) + 8
-                and re.search(r"\d+\.\d{2}", value)
-                and re.search(r"\b\d+\b", value)
-            ):
-                continue
+            if normalized in value and len(value) > len(normalized) + 8:
+                # Decimals may be OCR-normalized away ("50.00" → "50 00"); still
+                # treat multi-numeric tails as product-line bleed, not vendor labels.
+                looks_like_line_bleed = bool(
+                    re.search(r"\d+\.\d{2}", value)
+                    or re.search(r"\b\d+\b(?:\s+\d+){2,}", value)
+                )
+                if looks_like_line_bleed and re.search(r"\b\d+\b", value):
+                    continue
             return True
     return False
 

@@ -28,7 +28,7 @@ class DocumentsBundleExportRequest(ReportsDocumentsRequest):
 
     format: Literal["excel", "plain"] = Field(
         "excel",
-        description="Cell format: excel (HYPERLINK formulas) or plain (label | url)",
+        description="Link cells: excel (clickable hyperlinks) or plain (label | url text)",
     )
 
 

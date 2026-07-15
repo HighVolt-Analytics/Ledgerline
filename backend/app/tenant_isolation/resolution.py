@@ -40,6 +40,8 @@ _SKIP_DEFAULT_PATHS = (
     "/health",
     "/connect-mailbox",
     "/accept-invite",
+    "/forgot-password",
+    "/reset-password",
     "/signup",
     "/start",
     "/get-started",

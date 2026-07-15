@@ -50,8 +50,6 @@ import {
   splitExtractionFields,
   standardExtractionFieldsForRoute,
 } from "@/lib/documentExtractionFields";
-import { orgTitleDivergesFromShippedTemplate } from "@/lib/documentTypeTemplateMeta";
-import shippedCatalog from "@/lib/v5DocumentTypes.json";
 import {
   ensureExtractionSuperset,
   normalizeCompulsoryFields,
@@ -780,20 +778,8 @@ function DocumentTypeEditDialog({
   }) => void;
 }) {
   useDialogLock();
-  const [showAdvancedIdentity, setShowAdvancedIdentity] = useState(!isNew);
   const [routePruneNotice, setRoutePruneNotice] = useState<string | null>(null);
   const { data: coaAccounts = [] } = useChartOfAccounts();
-
-  const titleDivergenceWarning = useMemo(
-    () =>
-      orgTitleDivergesFromShippedTemplate(
-        draft.code,
-        draft.title,
-        draft.shortTitle,
-        shippedCatalog as Array<{ code?: string; title?: string; shortTitle?: string }>,
-      ),
-    [draft.code, draft.title, draft.shortTitle],
-  );
 
   const readiness = useMemo(
     () =>
@@ -912,126 +898,97 @@ function DocumentTypeEditDialog({
                   className="h-9 text-sm"
                 />
               </div>
-              {titleDivergenceWarning ? (
-                <p
-                  className="sm:col-span-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100"
-                  data-testid="dt-title-divergence-warning"
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="dt-code">Code</FieldLabel>
+                <Input
+                  id="dt-code"
+                  value={draft.code}
+                  onChange={(e) => onChange({ ...draft, code: e.target.value.toUpperCase() })}
+                  className="h-9 font-mono text-sm"
+                />
+                {codeTaken ? (
+                  <p className="text-xs text-destructive">That code is already in use.</p>
+                ) : null}
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="dt-klass">Class</FieldLabel>
+                <select
+                  id="dt-klass"
+                  value={draft.klass}
+                  onChange={(e) =>
+                    onChange(applyDraftChange(draft, { klass: e.target.value as DocumentTypeClass }))
+                  }
+                  className={selectClass}
                 >
-                  This document name differs from the shipped template for {draft.code}. Shipped
-                  extraction defaults and playbook metadata will not apply — only org-configured
-                  fields and prompts are used. Silent layout/shape drift is not detected here.
-                </p>
-              ) : null}
-              {(showAdvancedIdentity || !isNew) && (
-                <div className="space-y-1.5">
-                  <FieldLabel htmlFor="dt-code">Code</FieldLabel>
-                  <Input
-                    id="dt-code"
-                    value={draft.code}
-                    onChange={(e) => onChange({ ...draft, code: e.target.value.toUpperCase() })}
-                    className="h-9 font-mono text-sm"
-                  />
-                  {codeTaken ? (
-                    <p className="text-xs text-destructive">That code is already in use.</p>
-                  ) : null}
-                </div>
-              )}
-              {isNew && !showAdvancedIdentity ? (
-                <div className="sm:col-span-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={() => setShowAdvancedIdentity(true)}
-                  >
-                    Show code, class, posting
-                  </Button>
-                </div>
-              ) : null}
-              {(showAdvancedIdentity || !isNew) && (
-                <>
-                  <div className="space-y-1.5">
-                    <FieldLabel htmlFor="dt-klass">Class</FieldLabel>
-                    <select
-                      id="dt-klass"
-                      value={draft.klass}
-                      onChange={(e) =>
-                        onChange(applyDraftChange(draft, { klass: e.target.value as DocumentTypeClass }))
-                      }
-                      className={selectClass}
-                    >
-                      {KLASS_OPTIONS.map((klass) => (
-                        <option key={klass} value={klass}>
-                          {klass}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <FieldLabel htmlFor="dt-posting">Posting</FieldLabel>
-                    <select
-                      id="dt-posting"
-                      value={derivedPostingForDraft(draft)}
-                      disabled
-                      aria-readonly="true"
-                      className={cn(selectClass, "cursor-default opacity-80")}
-                    >
-                      <option value={derivedPostingForDraft(draft)}>
-                        {derivedPostingForDraft(draft)}
-                      </option>
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <FieldLabel htmlFor="dt-route">Workspace route</FieldLabel>
-                    <select
-                      id="dt-route"
-                      value={draft.routeTarget}
-                      onChange={(e) => {
-                        const nextRoute = e.target.value;
-                        const next = applyRoutePlaybookAndBundleDefaults(
-                          draft,
-                          nextRoute,
-                          documentTypes
-                        );
-                        const posting = derivePostingFromKlassAndProfile(
-                          next.klass,
-                          next.playbookProfile,
-                          next.posting
-                        );
-                        const reconciled = reconcileExtractionFieldsForRoute({
-                          extractionFields: next.extractionFields,
-                          requiredFields: next.requiredFields,
-                          nextRoute,
-                        });
-                        if (reconciled.removedStandardFields.length > 0) {
-                          const count = reconciled.removedStandardFields.length;
-                          setRoutePruneNotice(
-                            `${count} standard field${count === 1 ? "" : "s"} removed because ${
-                              count === 1 ? "it is" : "they are"
-                            } not valid on ${nextRoute}.`
-                          );
-                        } else {
-                          setRoutePruneNotice(null);
-                        }
-                        onChange({
-                          ...next,
-                          posting,
-                          extractionFields: reconciled.extractionFields,
-                          requiredFields: reconciled.requiredFields,
-                        });
-                      }}
-                      className={selectClass}
-                    >
-                      {ROUTE_TARGETS.map((route) => (
-                        <option key={route} value={route}>
-                          {route}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
+                  {KLASS_OPTIONS.map((klass) => (
+                    <option key={klass} value={klass}>
+                      {klass}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="dt-posting">Posting</FieldLabel>
+                <select
+                  id="dt-posting"
+                  value={derivedPostingForDraft(draft)}
+                  disabled
+                  aria-readonly="true"
+                  className={cn(selectClass, "cursor-default opacity-80")}
+                >
+                  <option value={derivedPostingForDraft(draft)}>
+                    {derivedPostingForDraft(draft)}
+                  </option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="dt-route">Workspace route</FieldLabel>
+                <select
+                  id="dt-route"
+                  value={draft.routeTarget}
+                  onChange={(e) => {
+                    const nextRoute = e.target.value;
+                    const next = applyRoutePlaybookAndBundleDefaults(
+                      draft,
+                      nextRoute,
+                      documentTypes
+                    );
+                    const posting = derivePostingFromKlassAndProfile(
+                      next.klass,
+                      next.playbookProfile,
+                      next.posting
+                    );
+                    const reconciled = reconcileExtractionFieldsForRoute({
+                      extractionFields: next.extractionFields,
+                      requiredFields: next.requiredFields,
+                      nextRoute,
+                    });
+                    if (reconciled.removedStandardFields.length > 0) {
+                      const count = reconciled.removedStandardFields.length;
+                      setRoutePruneNotice(
+                        `${count} standard field${count === 1 ? "" : "s"} removed because ${
+                          count === 1 ? "it is" : "they are"
+                        } not valid on ${nextRoute}.`
+                      );
+                    } else {
+                      setRoutePruneNotice(null);
+                    }
+                    onChange({
+                      ...next,
+                      posting,
+                      extractionFields: reconciled.extractionFields,
+                      requiredFields: reconciled.requiredFields,
+                    });
+                  }}
+                  className={selectClass}
+                >
+                  {ROUTE_TARGETS.map((route) => (
+                    <option key={route} value={route}>
+                      {route}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </DetailCard>
 

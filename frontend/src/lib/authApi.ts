@@ -58,6 +58,31 @@ export async function apiLogin(email: string, password: string): Promise<LoginCh
   return json.data as LoginChallengeResponse;
 }
 
+export async function apiForgotPassword(email: string): Promise<{ message: string }> {
+  const res = await fetch(`${BASE}/api/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const json = await res.json();
+  return json.data as { message: string };
+}
+
+export async function apiResetPassword(
+  token: string,
+  password: string
+): Promise<{ message: string }> {
+  const res = await fetch(`${BASE}/api/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, password }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const json = await res.json();
+  return json.data as { message: string };
+}
+
 export async function apiVerifyOtp(
   challengeToken: string,
   otp: string

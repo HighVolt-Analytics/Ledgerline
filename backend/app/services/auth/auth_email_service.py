@@ -283,3 +283,87 @@ async def send_tenant_invite_email(
         )
 
     return smtp_result
+
+
+async def send_password_reset_email(*, to_email: str, reset_url: str) -> InviteEmailResult:
+    """Send password-reset link — Graph Mail.Send when configured, else SMTP."""
+    settings = get_settings()
+    masked = mask_email_for_log(to_email)
+
+    if not settings.is_production:
+        logger.info(
+            "dev_password_reset_email",
+            extra={"email_masked": masked, "reset_url": reset_url},
+        )
+        return InviteEmailResult(sent=True)
+
+    validate_deliverable_email_or_raise(to_email)
+
+    subject = "Reset your LedgerLink password"
+    body_text = (
+        "We received a request to reset your LedgerLink password.\n\n"
+        f"Reset your password using this link:\n{reset_url}\n\n"
+        "This link expires in 30 minutes.\n\n"
+        "If you did not request a password reset, you can ignore this email."
+    )
+    body_html = (
+        "<p>We received a request to reset your LedgerLink password.</p>"
+        f'<p><a href="{reset_url}">Reset your password</a></p>'
+        "<p>This link expires in 30 minutes.</p>"
+        "<p>If you did not request a password reset, you can ignore this email.</p>"
+    )
+
+    if graph_mail_send_configured():
+        logger.info(
+            "password_reset_send_attempt",
+            extra={"email_masked": masked, "channel": "graph"},
+        )
+        graph_result = send_graph_mail(
+            to_email=to_email,
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
+        )
+        if graph_result.sent:
+            logger.info(
+                "password_reset_send_succeeded",
+                extra={"email_masked": masked, "channel": "graph"},
+            )
+            return InviteEmailResult(sent=True)
+        logger.warning(
+            "password_reset_graph_failed",
+            extra={
+                "email_masked": masked,
+                "channel": "graph",
+                "error": graph_result.error,
+            },
+        )
+        if not settings.smtp_allowed_for_outbound:
+            return InviteEmailResult(
+                sent=False,
+                error=graph_result.error or "Microsoft Graph could not send the reset email.",
+            )
+        smtp_result = _send_via_smtp(
+            to_email=to_email,
+            subject=subject,
+            body_text=body_text,
+        )
+        if smtp_result.sent:
+            return InviteEmailResult(sent=True)
+        return InviteEmailResult(
+            sent=False,
+            error=graph_result.error or smtp_result.error,
+        )
+
+    if settings.is_production:
+        return InviteEmailResult(
+            sent=False,
+            error="Microsoft Graph mail is not configured for production password reset delivery.",
+        )
+
+    smtp_result = _send_via_smtp(
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+    )
+    return smtp_result

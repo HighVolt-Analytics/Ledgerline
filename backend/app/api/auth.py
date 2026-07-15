@@ -12,11 +12,15 @@ from app.models.auth_account import AuthAccount
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.auth import (
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginChallengeResponse,
     LoginRequest,
     PortalEmbedLoginRequest,
     PortalEmbedLoginResponse,
     RefreshTokenRequest,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     SelectTenantRequest,
     SwitchTenantRequest,
     TenantAccountSummary,
@@ -33,13 +37,16 @@ from app.schemas.tenant_member import (
 )
 from app.schemas.common import ApiEnvelope
 from app.services.auth.auth_account_service import resolve_login_account
-from app.services.auth.auth_email_service import send_login_otp_email
+from app.services.auth.auth_email_service import send_login_otp_email, send_password_reset_email
 from app.services.auth.auth_service import (
+    PASSWORD_RESET_TOKEN_MINUTES,
     TOKEN_TYPE_CHALLENGE,
+    TOKEN_TYPE_PASSWORD_RESET,
     TOKEN_TYPE_REFRESH,
     TOKEN_TYPE_TENANT_SELECT,
     create_access_token,
     create_challenge_token,
+    create_password_reset_token,
     create_refresh_token,
     create_tenant_select_token,
     decode_token,
@@ -48,16 +55,21 @@ from app.services.auth.auth_service import (
 )
 from app.services.auth.auth_session_service import (
     clear_otp,
+    consume_password_reset_jti,
     generate_otp,
     is_user_revoked,
     new_jti,
     register_refresh_session,
+    revoke_all_user_sessions,
     revoke_refresh_jti,
     grace_revoke_refresh_jti,
     store_otp,
+    store_password_reset_jti,
     validate_refresh_jti,
     verify_otp,
 )
+from app.services.shared.public_app_url import build_public_app_path
+from app.services.signup.signup_fulfillment_service import is_oauth_only_auth_account
 from app.services.auth.membership_enumeration import (
     filter_switchable_memberships,
     list_memberships_for_auth_account,
@@ -84,6 +96,9 @@ logger = get_logger(__name__)
 
 _OTP_EMAIL_FAILURE_MESSAGE = (
     "Could not send verification email. Please try again later or contact your administrator."
+)
+_FORGOT_PASSWORD_MESSAGE = (
+    "If an account exists for that email, you will receive a password reset link shortly."
 )
 
 
@@ -257,6 +272,106 @@ async def portal_embed_login(
             memberships=memberships,
         )
     )
+
+
+@router.post("/forgot-password", response_model=ApiEnvelope[ForgotPasswordResponse])
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[ForgotPasswordResponse]:
+    """Always returns the same message to avoid email enumeration."""
+    email = body.email.lower().strip()
+    logger.info("forgot_password_started", email=email)
+
+    account = await resolve_login_account(db, body.email)
+    if (
+        account
+        and not account.is_blocked
+        and not is_oauth_only_auth_account(account.password_hash)
+    ):
+        jti = new_jti()
+        token = create_password_reset_token(
+            auth_account_id=account.id,
+            email=account.email,
+            jti=jti,
+        )
+        await store_password_reset_jti(
+            jti=jti,
+            auth_account_id=account.id,
+            ttl_seconds=PASSWORD_RESET_TOKEN_MINUTES * 60,
+        )
+        reset_url = build_public_app_path(f"/reset-password?token={token}")
+        delivery = await send_password_reset_email(
+            to_email=account.email,
+            reset_url=reset_url,
+        )
+        if not delivery.sent:
+            logger.warning(
+                "forgot_password_email_failed",
+                email=email,
+                auth_account_id=account.id,
+                error=delivery.error,
+            )
+        else:
+            logger.info(
+                "forgot_password_email_sent",
+                email=email,
+                auth_account_id=account.id,
+            )
+    else:
+        logger.info(
+            "forgot_password_noop",
+            email=email,
+            reason="account_unavailable_or_oauth_only",
+        )
+
+    return ApiEnvelope(data=ForgotPasswordResponse(message=_FORGOT_PASSWORD_MESSAGE))
+
+
+@router.post("/reset-password", response_model=ApiEnvelope[ResetPasswordResponse])
+async def reset_password(
+    body: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApiEnvelope[ResetPasswordResponse]:
+    payload = decode_token(body.token)
+    if not payload or payload.get("type") != TOKEN_TYPE_PASSWORD_RESET:
+        raise HTTPException(400, "Invalid or expired reset link")
+
+    try:
+        auth_account_id = int(payload["sub"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(400, "Invalid or expired reset link") from exc
+
+    jti = payload.get("jti")
+    if not jti or not isinstance(jti, str):
+        raise HTTPException(400, "Invalid or expired reset link")
+
+    if not await consume_password_reset_jti(jti=jti, auth_account_id=auth_account_id):
+        raise HTTPException(400, "Invalid or expired reset link")
+
+    account = await db.get(AuthAccount, auth_account_id)
+    if not account or account.is_blocked:
+        raise HTTPException(400, "Invalid or expired reset link")
+
+    email_from_token = str(payload.get("email") or "").lower()
+    if email_from_token and email_from_token != account.email.lower():
+        raise HTTPException(400, "Invalid or expired reset link")
+
+    account.password_hash = hash_password(body.password)
+    await db.flush()
+
+    memberships = await list_memberships_for_auth_account(
+        db, auth_account_id=account.id
+    )
+    for membership in memberships:
+        await revoke_all_user_sessions(membership.user_id)
+
+    logger.info(
+        "password_reset_ok",
+        email=account.email,
+        auth_account_id=account.id,
+    )
+    return ApiEnvelope(data=ResetPasswordResponse())
 
 
 @router.post("/login", response_model=ApiEnvelope[LoginChallengeResponse])

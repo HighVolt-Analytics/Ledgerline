@@ -47,6 +47,8 @@ def test_noise_pattern_flags_address_and_reference_rows() -> None:
     assert is_noise_line_item_row("$45.03 USD due May 1,", Decimal("2026"))
     assert is_noise_line_item_row("Prinsengracht", Decimal("769"))
     assert is_noise_line_item_row("Prinsengracht 769")
+    assert is_noise_line_item_row("60 Box", Decimal("60"))
+    assert is_noise_line_item_row("195 Pair", Decimal("195"))
 
 
 def test_noise_pattern_allows_product_row() -> None:

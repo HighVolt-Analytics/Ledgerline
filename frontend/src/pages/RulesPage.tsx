@@ -8,7 +8,6 @@ import { Card } from "@/components/ui/card";
 import { DocumentTypesTab } from "@/components/rule-book/DocumentTypesTab";
 import { AiClassificationSettingsPanel } from "@/components/rule-book/AiClassificationSettingsPanel";
 import { IngestionTab } from "@/components/rule-book/IngestionTab";
-import { RuleChangeHistory } from "@/components/rule-book/RuleChangeHistory";
 import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
 import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
 import { useToast } from "@/context/ToastContext";
@@ -329,8 +328,6 @@ export function RulesPage() {
         />
       </PageTabPanel>
       </div>
-
-      <RuleChangeHistory />
     </div>
   );
 }

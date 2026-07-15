@@ -9,6 +9,20 @@ from app.schemas.document_layout import DocumentLayoutResult, LayoutParagraph
 from app.services.shared.amount_sanity import plausible_money, plausible_qty, sanitize_parsed_line_item
 from app.services.extraction.document_heading_utils import extract_document_heading_signals, is_doc_title_line
 from app.services.extraction.finance_field_labels import money_kv_label_patterns
+from app.services.extraction.line_item_header_vocab import (
+    DESC_HEADER_PREFERENCE_RE as _DESC_HEADER_PREFERENCE_RE,
+    DESC_HEADER_RE as _DESC_HEADER_RE,
+    META_HEADER_RE as _META_HEADER_RE,
+    SERIAL_HEADER_RE as _SERIAL_HEADER_RE,
+    UNIT_PRICE_HEADER_RE as _UNIT_PRICE_HEADER_RE,
+    UOM_HEADER_RE as _UOM_HEADER_RE,
+    is_amount_column_header,
+    is_tax_column_header,
+    is_unit_price_column_header,
+    prefers_amount_header,
+    qty_header_rank,
+    select_best_qty_column,
+)
 from app.services.extraction.locale_vocab import optional_currency_code_group
 from app.services.invoice.invoice_data import ParsedLineItem
 
@@ -183,13 +197,24 @@ def extract_key_value_fields(
                         found[field_key] = value
                 continue
             match = re.search(
-                label_re + r"\s*[:\-]?\s*(.+)",
+                label_re + r"\s*[:\-]?\s*(.*)",
                 text,
                 re.I | re.M,
             )
             if match:
                 value = match.group(1).strip().splitlines()[0].strip()
+                if not value:
+                    # Newline KV: Label\nvalue
+                    tail = text[match.end() :]
+                    for line in tail.splitlines():
+                        token = line.strip()
+                        if token and not _normalize_field_key(token):
+                            value = token
+                            break
                 if value and not _normalize_field_key(value):
+                    # Money keys must carry a printable amount — reject "TAX INVOICE" bleed.
+                    if field_key in {"subtotal", "gst", "total"} and _money_value(value) is None:
+                        continue
                     found[field_key] = value
         if "total" not in found:
             freight = re.search(
@@ -251,18 +276,16 @@ def _append_meta_suffix(description: str, meta_parts: list[str]) -> str:
     return f"{description} | {suffix}"
 
 
-_DESC_HEADER_RE = re.compile(
-    r"desc|item|product|service|part|component|cpu|material|goods|line|details|sku|uom|part\s*no",
-    re.I,
-)
-
-
 def _detect_headerless_line_item_columns(
     grid: dict[tuple[int, int], str],
     row_count: int,
     column_count: int,
-) -> tuple[int, int, int, int] | None:
-    """Infer desc/qty/price/amount columns from data rows when headers are missing."""
+) -> tuple[int, int, int, int, int] | None:
+    """Infer desc/qty/price/amount columns from data rows when headers are missing.
+
+    Returns (desc_col, qty_col, unit_price_col, tax_col, amount_col).
+    tax_col stays -1 without a GST/tax header (no inferred tax).
+    """
     if row_count < 2 or column_count < 2:
         return None
     sample_rows = min(row_count - 1, 4)
@@ -288,6 +311,7 @@ def _detect_headerless_line_item_columns(
 
     qty_col = -1
     unit_price_col = -1
+    tax_col = -1
     amount_col = -1
     if len(numeric_cols) == 1:
         amount_col = numeric_cols[0]
@@ -298,7 +322,80 @@ def _detect_headerless_line_item_columns(
         qty_col = numeric_cols[0]
         unit_price_col = numeric_cols[1]
         amount_col = numeric_cols[-1]
-    return (0, qty_col, unit_price_col, amount_col)
+    return (0, qty_col, unit_price_col, tax_col, amount_col)
+
+
+def _is_totals_summary_table(
+    grid: dict[tuple[int, int], str],
+    row_count: int,
+    column_count: int,
+) -> bool:
+    """True for 2-col Sub Total / CGST / Grand Total blocks (not product lines)."""
+    if column_count != 2 or row_count < 2:
+        return False
+    from app.services.extraction.line_item_skip_patterns import is_summary_line_description
+
+    summary_hits = 0
+    sampled = 0
+    for row in range(row_count):
+        label = grid.get((row, 0), "").strip()
+        if not label:
+            continue
+        sampled += 1
+        if is_summary_line_description(label) or re.match(
+            r"^(?:(?:grand\s+)?(?:sub\s*)?totals?|[csi]?gst|igst|utgst|vat|cess|"
+            r"round\s*off|taxable\s*(?:amount|value)|(?:freight|discount)\s*totals?)\b",
+            label,
+            re.I,
+        ):
+            summary_hits += 1
+    if sampled < 2:
+        return False
+    return summary_hits >= max(2, (sampled + 1) // 2)
+
+
+def _is_kv_metadata_table(
+    grid: dict[tuple[int, int], str],
+    row_count: int,
+    column_count: int,
+) -> bool:
+    """True when the table is a 2-col label→value block, not a product line table."""
+    if column_count != 2 or row_count < 2:
+        return False
+    if _is_totals_summary_table(grid, row_count, column_count):
+        return True
+    from app.services.extraction.line_item_skip_patterns import (
+        is_metadata_line_description,
+        is_summary_line_description,
+    )
+
+    # Product tables advertise qty/price/amount headers — keep those.
+    header0 = grid.get((0, 0), "").strip()
+    header1 = grid.get((0, 1), "").strip()
+    header_join = f"{header0} {header1}".lower()
+    if re.search(
+        r"\b(?:qty|quantity|unit\s*price|amount|rate|description|item|product)\b",
+        header_join,
+        re.I,
+    ):
+        return False
+
+    label_hits = 0
+    sampled = 0
+    for row in range(row_count):
+        label = grid.get((row, 0), "").strip()
+        if not label:
+            continue
+        sampled += 1
+        if (
+            is_metadata_line_description(label)
+            or _normalize_field_key(label)
+            or is_summary_line_description(label)
+        ):
+            label_hits += 1
+    if sampled < 2:
+        return False
+    return label_hits >= max(2, (sampled + 1) // 2)
 
 
 def _parse_line_items_from_materialized_grid(
@@ -310,51 +407,63 @@ def _parse_line_items_from_materialized_grid(
 ) -> list[ParsedLineItem]:
     if row_count < 2 or column_count < 2:
         return []
+    if _is_kv_metadata_table(grid, row_count, column_count):
+        return []
 
     items: list[ParsedLineItem] = []
-    desc_col = 0
+    desc_col = -1
     desc_cols: list[int] = []
     qty_col = -1
     unit_price_col = -1
+    tax_col = -1
     amount_col = -1
     meta_cols: dict[int, str] = {}
+    qty_headers: dict[int, str] = {}
     headers_detected = False
     for col in range(column_count):
-        header = grid.get((0, col), "").lower()
-        if _DESC_HEADER_RE.search(header):
-            desc_cols.append(col)
-            desc_col = col
+        header = grid.get((0, col), "").lower().strip()
+        if _SERIAL_HEADER_RE.match(header):
             headers_detected = True
-        elif re.search(r"model", header):
-            desc_cols.append(col)
-            if desc_col == 0 and not grid.get((0, desc_col), "").strip():
-                desc_col = col
-            headers_detected = True
-        if re.search(r"qty|quantity|q'?ty|pcs", header):
-            qty_col = col
-            headers_detected = True
-        if re.search(r"unit\s*price|rate|price\s*ea|price\s*excl|unit\s*cost|(?:^|\s)each(?:\s|$)", header):
-            unit_price_col = col
-            headers_detected = True
-        elif re.search(r"amount|line\s*total|extended|line\s*amount|value|ex\s*gst", header) and not re.search(
-            r"subtotal|grand", header
-        ):
-            amount_col = col
-            headers_detected = True
-        elif re.search(r"^total$", header):
-            amount_col = col
-            headers_detected = True
-        elif re.search(r"^price$|\bprice\b", header) and unit_price_col < 0 and amount_col < 0:
-            unit_price_col = col
-            headers_detected = True
-        elif re.search(r"\bplt|pallet|dimension|coo|origin|weight|hs|harmonized", header):
+            continue
+        if _UOM_HEADER_RE.match(header) and not _UNIT_PRICE_HEADER_RE.search(header):
             meta_cols[col] = header
             headers_detected = True
+            continue
+        if _DESC_HEADER_RE.search(header) or re.search(r"\bmodel\b", header):
+            desc_cols.append(col)
+            # Prefer Name/Description over earlier weaker matches.
+            if desc_col < 0 or _DESC_HEADER_PREFERENCE_RE.search(header):
+                desc_col = col
+            headers_detected = True
+        # Collect qty candidates; bind by rank after the header scan.
+        if qty_header_rank(header) is not None:
+            qty_headers[col] = header
+            headers_detected = True
+        # Tax before amount/price so "GST Amount" / "Tax" never bind as line amount.
+        if is_tax_column_header(header):
+            tax_col = col
+            headers_detected = True
+            continue
+        if is_unit_price_column_header(header):
+            unit_price_col = col
+            headers_detected = True
+        elif is_amount_column_header(header):
+            # Prefer dedicated amount headers over bare "total" when both exist.
+            if amount_col < 0 or prefers_amount_header(header):
+                amount_col = col
+            headers_detected = True
+        elif _META_HEADER_RE.search(header):
+            meta_cols[col] = header
+            headers_detected = True
+    if qty_headers:
+        qty_col = select_best_qty_column(qty_headers)
+    if desc_col < 0:
+        desc_col = 0
     if not headers_detected:
         inferred = _detect_headerless_line_item_columns(grid, row_count, column_count)
         if inferred is None:
             return []
-        desc_col, qty_col, unit_price_col, amount_col = inferred
+        desc_col, qty_col, unit_price_col, tax_col, amount_col = inferred
         desc_cols = [desc_col] if desc_col >= 0 else []
 
     data_start_row = 1 if headers_detected else 0
@@ -398,7 +507,8 @@ def _parse_line_items_from_materialized_grid(
                 )
             continue
         if not desc or re.search(
-            r"^(?:total|subtotal|gst|tax)\b|\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet)\b",
+            r"^(?:total|sub\s*total|subtotal|gst|tax|[csi]?gst|igst)\b|"
+            r"\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet)\b",
             desc,
             re.I,
         ):
@@ -425,6 +535,7 @@ def _parse_line_items_from_materialized_grid(
         qty = None
         unit_price = None
         amount = None
+        tax_amount = None
         if qty_col >= 0:
             qty_raw = grid.get((row, qty_col), "").strip()
             if qty_raw:
@@ -434,16 +545,26 @@ def _parse_line_items_from_materialized_grid(
                     qty = None
         if unit_price_col >= 0:
             unit_price = _money_value(grid.get((row, unit_price_col), ""))
+        if tax_col >= 0:
+            tax_amount = _money_value(grid.get((row, tax_col), ""))
         if amount_col >= 0:
             amount = _money_value(grid.get((row, amount_col), ""))
+        # Serial-only descriptions (S/N bleed) → recover product name from other cells.
+        if re.fullmatch(r"\d{1,4}", desc or ""):
+            for col in range(column_count):
+                if col in {qty_col, unit_price_col, tax_col, amount_col} or col in meta_cols:
+                    continue
+                candidate = grid.get((row, col), "").strip()
+                if candidate and not re.fullmatch(r"[\d.,$€£¥-]+", candidate.replace(" ", "")):
+                    desc = candidate
+                    break
         if qty is not None and prior_qtys and qty == sum(prior_qtys) and _is_layout_totals_row(desc, row_cells):
             continue
         if qty_only_table and qty is None:
             continue
         if not qty_only_table and amount is None and unit_price is None and qty is None:
             continue
-        if amount is None and qty is not None and unit_price is not None:
-            amount = plausible_money(qty * unit_price)
+        # Grounded-only: leave amount null when the amount cell is empty.
 
         if is_noise_line_item_row(desc, qty, trace=trace, row_key=skip_key):
             continue
@@ -461,6 +582,7 @@ def _parse_line_items_from_materialized_grid(
                     qty=qty,
                     unit_price=unit_price,
                     amount=amount,
+                    tax_amount=tax_amount,
                     source="table",
                 )
             )

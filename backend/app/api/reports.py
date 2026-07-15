@@ -117,7 +117,7 @@ async def reports_ar_balances(
 
 
 @router.get("/documents-bundle/export")
-async def export_documents_bundle_csv(
+async def export_documents_bundle(
     date_from: Annotated[
         date | None, Query(description="Inclusive start of invoice date range")
     ] = None,
@@ -126,12 +126,14 @@ async def export_documents_bundle_csv(
     ] = None,
     format: Annotated[
         Literal["excel", "plain"],
-        Query(description="Cell format: excel (HYPERLINK formulas) or plain (label | url)"),
+        Query(
+            description="Link cells: excel (clickable hyperlinks) or plain (label | url text)"
+        ),
     ] = "excel",
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> Response:
-    """Download documents bundle matrix CSV for auditors."""
+    """Download documents bundle matrix as a styled Excel workbook for auditors."""
     params = DocumentsBundleExportRequest(
         date_from=date_from,
         date_to=date_to,
@@ -149,9 +151,12 @@ async def export_documents_bundle_csv(
         raise http_bad_request(exc) from exc
 
     return Response(
-        content=payload.csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{payload.filename}"'},
+        content=payload.xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{payload.filename}"',
+            "X-Data-Rows": str(payload.data_rows),
+        },
     )
 
 

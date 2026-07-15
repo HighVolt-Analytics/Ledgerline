@@ -82,10 +82,15 @@ def _artifact_from_layout(
         attach_di_metadata_to_payload(payload, invoice_data)
 
     if layout is not None:
-        table_items = extract_line_items_from_tables(layout)
+        from app.services.extraction.line_items_sanitizer import sanitize_line_items
+        from app.services.extraction.money_scalar_resolver import serialize_layout_table_grids
+
+        table_items = sanitize_line_items(
+            extract_line_items_from_tables(layout),
+            allow_qty_only=True,
+        )
         if table_items:
             payload["table_line_items"] = serialize_line_items(table_items)
-        from app.services.extraction.money_scalar_resolver import serialize_layout_table_grids
 
         grids = serialize_layout_table_grids(layout)
         if grids:

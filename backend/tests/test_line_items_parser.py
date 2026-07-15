@@ -79,10 +79,90 @@ def test_enrich_line_items_from_text_fills_missing_prices() -> None:
     assert enriched[0].amount == Decimal("11600")
 
 
-def test_enrich_parsed_line_items_derives_amount() -> None:
+def test_parse_vertical_cell_per_line_table_with_gst() -> None:
+    from app.services.extraction.line_items_parser import parse_vertical_line_items_from_text
+
+    text = """
+DESCRIPTION
+QTY
+UNIT PRICE
+GST
+AMOUNT
+R&D Tax Incentive Consulting - May 2026
+12
+450.00
+540.00
+5940.00
+Advisory Workshop - Compliance Review
+1
+2200.00
+220.00
+2420.00
+Subtotal
+7600.00
+"""
+    items = parse_vertical_line_items_from_text(text)
+    assert len(items) == 2
+    assert items[0].description.startswith("R&D")
+    assert items[0].qty == Decimal("12")
+    assert items[0].unit_price == Decimal("450.00")
+    assert items[0].tax_amount == Decimal("540.00")
+    assert items[0].amount == Decimal("5940.00")
+    assert items[1].unit_price == Decimal("2200.00")
+
+
+def test_parse_vertical_po_table_name_qty_price_amount() -> None:
+    from app.services.extraction.line_items_parser import parse_vertical_line_items_from_text
+
+    text = """
+S/N
+Name
+Type
+UNIT (PCS)
+QTY
+UNIT PRICE (USD)
+AMOUNT (USD)
+1
+Core Ultra 5 225
+Tray
+PCS
+330
+137.00
+45,210.00
+2
+Core Ultra 7 265
+Tray
+PCS
+10
+315.00
+3,150.00
+TOTAL:
+75,760.00
+"""
+    items = parse_vertical_line_items_from_text(text)
+    assert len(items) == 2
+    assert items[0].description == "Core Ultra 5 225"
+    assert items[0].qty == Decimal("330")
+    assert items[0].unit_price == Decimal("137.00")
+    assert items[0].amount == Decimal("45210.00")
+    assert items[1].unit_price == Decimal("315.00")
+
+
+def test_enrich_parsed_line_items_does_not_invent_amount() -> None:
+    """Grounded-only: missing printed amount stays null (no qty×price fill)."""
     items = enrich_parsed_line_items(
         [ParsedLineItem(description="Widget", qty=Decimal("4"), unit_price=Decimal("25"), amount=None)]
     )
+    assert items[0].amount is None
+    assert items[0].unit_price == Decimal("25")
+
+
+def test_enrich_parsed_line_items_does_not_invent_unit_price() -> None:
+    """Grounded-only: missing printed unit_price stays null (no amount÷qty fill)."""
+    items = enrich_parsed_line_items(
+        [ParsedLineItem(description="Widget", qty=Decimal("4"), unit_price=None, amount=Decimal("100"))]
+    )
+    assert items[0].unit_price is None
     assert items[0].amount == Decimal("100")
 
 

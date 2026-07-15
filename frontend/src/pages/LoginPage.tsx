@@ -274,9 +274,9 @@ export function LoginPage() {
           )}
 
           <div className="auth-footer">
-            <a href="mailto:support@ledgerline.app?subject=Forgot%20password" className="auth-link">
+            <Link to="/forgot-password" className="auth-link">
               Forgot password?
-            </a>
+            </Link>
             <p>
               Don&apos;t have an account?{" "}
               <Link to={PUBLIC_SIGNUP_PATH} className="auth-link-accent">

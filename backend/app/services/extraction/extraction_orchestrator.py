@@ -331,6 +331,26 @@ def _apply_layout_kv(
         parsed = parse_flexible_date(kv["due_date"])
         if parsed and _date_grounded_in_ocr(parsed, ocr_text):
             updates["due_date"] = parsed
+    if (
+        _field_configured("currency", configured)
+        and "currency" not in skip
+        and kv.get("currency")
+        and _scalar_empty(data.currency)
+    ):
+        from app.services.extraction.field_validators import normalize_currency
+
+        candidate = normalize_currency(kv["currency"])
+        if candidate and _value_grounded_for_field("currency", candidate, ocr_text):
+            updates["currency"] = candidate
+    if (
+        _field_configured("cost_centre", configured)
+        and "cost_centre" not in skip
+        and kv.get("cost_centre")
+        and _scalar_empty(data.cost_centre)
+    ):
+        candidate = kv["cost_centre"].strip()
+        if candidate and _value_grounded_for_field("cost_centre", candidate, ocr_text):
+            updates["cost_centre"] = candidate
     for money_key in ("subtotal", "gst", "gst_rate", "total"):
         if money_key in skip:
             continue
@@ -353,6 +373,89 @@ def _apply_layout_kv(
     updates["raw_fields"] = raw_fields
     if updates:
         return replace(data, **updates)
+    return data
+
+
+def _project_configured_scalar_labels(
+    data: InvoiceData,
+    label_fields: dict[str, str],
+    *,
+    configured: set[str],
+    ocr_text: str | None = None,
+) -> InvoiceData:
+    """Project OCR label:value hits onto InvoiceData scalars (not only extracted_fields)."""
+    if not label_fields:
+        return data
+    updates: dict[str, object] = {}
+    if (
+        _field_configured("currency", configured)
+        and _scalar_empty(data.currency)
+        and label_fields.get("currency")
+    ):
+        from app.services.extraction.field_validators import normalize_currency
+
+        candidate = normalize_currency(label_fields["currency"])
+        if candidate and _value_grounded_for_field("currency", candidate, ocr_text):
+            updates["currency"] = candidate
+    if (
+        _field_configured("cost_centre", configured)
+        and _scalar_empty(data.cost_centre)
+        and label_fields.get("cost_centre")
+    ):
+        candidate = str(label_fields["cost_centre"]).strip()
+        if candidate and _value_grounded_for_field("cost_centre", candidate, ocr_text):
+            updates["cost_centre"] = candidate
+    if (
+        _field_configured("abn", configured)
+        and _scalar_empty(data.abn)
+        and label_fields.get("abn")
+    ):
+        candidate = storage_abn(label_fields["abn"])
+        if candidate and _value_grounded_for_field("abn", candidate, ocr_text):
+            updates["abn"] = candidate
+    if (
+        _field_configured("po_reference", configured)
+        and _scalar_empty(data.po_reference)
+        and label_fields.get("po_reference")
+    ):
+        candidate = str(label_fields["po_reference"]).strip()
+        if candidate and _value_grounded_for_field("po_reference", candidate, ocr_text):
+            updates["po_reference"] = candidate
+    if (
+        _field_configured("so_reference", configured)
+        and not (data.extracted_fields or {}).get("so_reference")
+        and label_fields.get("so_reference")
+    ):
+        candidate = str(label_fields["so_reference"]).strip()
+        if candidate and _value_grounded_for_field("so_reference", candidate, ocr_text):
+            extracted = dict(extracted_fields_from_parsed(data))
+            extracted["so_reference"] = candidate
+            updates["extracted_fields"] = extracted
+    if updates:
+        return replace(data, **updates)
+    return data
+
+
+def _sync_abn_from_seller_evidence(
+    data: InvoiceData,
+    *,
+    configured: set[str],
+    ocr_text: str | None = None,
+) -> InvoiceData:
+    """If abn is configured but empty, reuse grounded seller_abn / seller_tax_id evidence."""
+    if not _field_configured("abn", configured) or not _scalar_empty(data.abn):
+        return data
+    extracted = extracted_fields_from_parsed(data)
+    for key in ("seller_abn", "seller_tax_id", "abn"):
+        raw = (extracted.get(key) or "").strip()
+        if not raw:
+            continue
+        candidate = storage_abn(raw)
+        if not candidate:
+            continue
+        if ocr_text and not _value_grounded_for_field("abn", candidate, ocr_text):
+            continue
+        return replace(data, abn=candidate)
     return data
 
 
@@ -652,7 +755,10 @@ def _authoritative_structured_line_items(
     payload_dict: dict[str, object],
 ) -> list[ParsedLineItem]:
     """Usable rows from layout/DI tables — authoritative when non-empty."""
-    from app.services.extraction.line_items_parser import resolve_line_items_for_strategy
+    from app.services.extraction.line_items_parser import (
+        parse_line_items_from_layout_grids,
+        resolve_line_items_for_strategy,
+    )
     from app.services.extraction.line_items_sanitizer import _passes_minimum_product_row
 
     layout_mode = str(payload_dict.get("layout_line_mode") or "gap_fill").strip().lower()
@@ -662,6 +768,24 @@ def _authoritative_structured_line_items(
     usable = [row for row in table_rows if _passes_minimum_product_row(row, allow_qty_only=True)]
     if usable:
         return usable
+    # ignore = DI-only when DI present; if DI empty, recover printed layout rows
+    # (qty-only packing/GRN or money PO/invoice tables) instead of OCR regex junk.
+    if layout_mode == "ignore":
+        grid_rows = [
+            row
+            for row in parse_line_items_from_layout_grids(payload_dict)
+            if _passes_minimum_product_row(row, allow_qty_only=True)
+        ]
+        if grid_rows:
+            return grid_rows
+        primary_rows = resolve_line_items_for_strategy(
+            payload_dict, layout_mode="primary", allow_qty_only=True
+        )
+        primary_usable = [
+            row for row in primary_rows if _passes_minimum_product_row(row, allow_qty_only=True)
+        ]
+        if primary_usable:
+            return primary_usable
     if di_line_items_usable(payload_dict):
         di_rows = resolve_line_items_for_strategy(payload_dict, layout_mode="ignore")
         di_usable = [row for row in di_rows if _passes_minimum_product_row(row, allow_qty_only=True)]
@@ -703,9 +827,13 @@ def _merge_line_items_from_sources(
 
         llm_qty = _qty_only_llm_rows_usable(llm_rows)
         table_qty = _qty_only_table_rows_from_payload(payload_dict)
-        text_qty = parse_qty_only_line_items_from_text(text)
-        table_row_count = max(len(table_qty), len(text_qty))
-        structured_qty = _union_line_item_sources(table_qty, text_qty)
+        # When layout/DI already produced qty rows, do not union noisy OCR regex lines.
+        if table_qty:
+            structured_qty = list(table_qty)
+        else:
+            text_qty = parse_qty_only_line_items_from_text(text)
+            structured_qty = _union_line_item_sources(table_qty, text_qty)
+        table_row_count = len(structured_qty)
         if llm_qty:
             if _llm_line_items_fully_trusted(
                 llm_qty,
@@ -731,6 +859,11 @@ def _merge_line_items_from_sources(
         llm_rows = list(merged.line_items)
         layout_mode = str(payload_dict.get("layout_line_mode") or "gap_fill").strip().lower()
         table_rows = resolve_line_items_for_strategy(payload_dict, layout_mode=layout_mode)
+        # ignore drops DI-less layout; recover printed grids for money tables too.
+        if not table_rows and layout_mode == "ignore":
+            table_rows = resolve_line_items_for_strategy(
+                payload_dict, layout_mode="primary", allow_qty_only=False
+            )
         di_usable = di_line_items_usable(payload_dict)
         # gap_fill with usable DI: never re-append unmatched OCR/text rows
         use_text_fallback = (
@@ -1123,6 +1256,13 @@ def merge_extraction_sources(
         custom = harvest_custom_fields_from_llm_raw(local.raw_fields)
         if custom:
             merged = replace(merged, extracted_fields=custom)
+    if ocr_label_fields:
+        merged = _project_configured_scalar_labels(
+            merged,
+            ocr_label_fields,
+            configured=configured_keys,
+            ocr_text=text,
+        )
 
     merged = post_process_parsed_data(merged, text, dt_definition=dt_definition)
     if di_trusted:
@@ -1140,6 +1280,11 @@ def merge_extraction_sources(
         merged,
         text,
         skip_keys=_di_grounding_skip_keys(merged, text, di_trusted),
+    )
+    merged = _sync_abn_from_seller_evidence(
+        merged,
+        configured=configured_keys,
+        ocr_text=text,
     )
     merged = _apply_absent_fields(merged, dt_definition)
 

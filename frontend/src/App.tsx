@@ -12,6 +12,8 @@ import { getRouterBasename } from "@/lib/routerBasename";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { LoginOauthCallbackPage } from "@/pages/LoginOauthCallbackPage";
+import { ForgotPasswordPage } from "@/pages/ForgotPasswordPage";
+import { ResetPasswordPage } from "@/pages/ResetPasswordPage";
 import { SignupPage } from "@/pages/SignupPage";
 import { ALL_PUBLIC_SIGNUP_PATHS } from "@/lib/publicSignupRoutes";
 import { SuperAdminEmbedPage } from "@/pages/SuperAdminEmbedPage";
@@ -131,6 +133,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/login/oauth/callback" element={<LoginOauthCallbackPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         {ALL_PUBLIC_SIGNUP_PATHS.map((path) => (
           <Route key={path} path={path} element={<SignupPage />} />
         ))}

@@ -14,6 +14,7 @@ from app.config import get_settings
 _OTP_PREFIX = "auth_otp_v2:"
 _REFRESH_PREFIX = "auth_refresh:"
 _REVOKE_PREFIX = "auth_user_revoke:"
+_PASSWORD_RESET_PREFIX = "auth_password_reset:"
 
 
 def _redis() -> aioredis.Redis:
@@ -44,6 +45,28 @@ async def clear_otp(*, auth_account_id: int, email: str) -> None:
     r = _redis()
     try:
         await r.delete(f"{_OTP_PREFIX}{auth_account_id}:{email.lower()}")
+    finally:
+        await r.aclose()
+
+
+async def store_password_reset_jti(*, jti: str, auth_account_id: int, ttl_seconds: int) -> None:
+    r = _redis()
+    try:
+        await r.setex(f"{_PASSWORD_RESET_PREFIX}{jti}", ttl_seconds, str(auth_account_id))
+    finally:
+        await r.aclose()
+
+
+async def consume_password_reset_jti(*, jti: str, auth_account_id: int) -> bool:
+    """Return True and delete the key only when it matches the account (single-use)."""
+    r = _redis()
+    key = f"{_PASSWORD_RESET_PREFIX}{jti}"
+    try:
+        stored = await r.get(key)
+        if stored is None or stored != str(auth_account_id):
+            return False
+        await r.delete(key)
+        return True
     finally:
         await r.aclose()
 

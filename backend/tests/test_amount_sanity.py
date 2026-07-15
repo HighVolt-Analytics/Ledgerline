@@ -56,7 +56,7 @@ def test_sanitize_parsed_line_item_rejects_overflowing_amounts() -> None:
     assert cleaned.amount is None
 
 
-def test_sanitize_parsed_line_item_clamps_product_overflow() -> None:
+def test_sanitize_parsed_line_item_does_not_invent_amount() -> None:
     cleaned = sanitize_parsed_line_item(
         ParsedLineItem(
             description="Widget",
@@ -66,3 +66,17 @@ def test_sanitize_parsed_line_item_clamps_product_overflow() -> None:
         )
     )
     assert cleaned.amount is None
+    assert cleaned.unit_price == Decimal("100000")
+
+
+def test_sanitize_parsed_line_item_does_not_invent_unit_price() -> None:
+    cleaned = sanitize_parsed_line_item(
+        ParsedLineItem(
+            description="Widget",
+            qty=Decimal("4"),
+            unit_price=None,
+            amount=Decimal("100"),
+        )
+    )
+    assert cleaned.unit_price is None
+    assert cleaned.amount == Decimal("100")

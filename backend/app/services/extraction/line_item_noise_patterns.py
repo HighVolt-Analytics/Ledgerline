@@ -68,6 +68,12 @@ PHONE_FRAGMENT = re.compile(
 
 BARE_CODE_TOKEN = re.compile(r"^[A-Z0-9][A-Z0-9\-/_]{1,20}$", re.I)
 
+# UOM bleed from GRN qty cells ("60 Box", "195 Pair") — not product descriptions.
+BARE_QTY_UOM = re.compile(
+    r"^\d+(?:[.,]\d+)?\s*(?:box|pair|pcs|nos?|ea|kg|tray|plt|pallet|units?|packs?)$",
+    re.I,
+)
+
 
 def is_noise_line_item_row(
     description: str | None,
@@ -108,6 +114,8 @@ def is_noise_line_item_row(
         return _drop("bare_street")
     if BARE_CODE_TOKEN.match(desc) and qty is not None and qty > Decimal("10000"):
         return _drop("bare_code_qty")
+    if BARE_QTY_UOM.match(desc):
+        return _drop("bare_qty_uom")
     words = [word for word in re.split(r"\s+", desc) if word]
     if len(words) <= 3 and qty is not None and qty > Decimal("1000"):
         if not re.search(r"\b(?:cpu|chip|part|widget|item|unit|kg|pcs)\b", desc, re.I):

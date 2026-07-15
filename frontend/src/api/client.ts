@@ -436,7 +436,7 @@ async function requestBlob(
   path: string,
   init?: RequestInit,
   fallbackFilename = "download"
-): Promise<{ blob: Blob; filename: string }> {
+): Promise<{ blob: Blob; filename: string; headers: Headers }> {
   const res = await fetch(`${BASE}${path}`, { ...init, headers: getScopedAuthHeaders(init) });
   if (!res.ok) {
     const msg = await parseErrorResponse(res);
@@ -448,6 +448,7 @@ async function requestBlob(
   return {
     blob: await res.blob(),
     filename: filenameFromDisposition(res.headers.get("Content-Disposition"), fallbackFilename),
+    headers: res.headers,
   };
 }
 
@@ -1577,7 +1578,7 @@ export const api = {
     );
     saveBlobAsFile(blob, filename);
   },
-  downloadDocumentsBundleCsv: async (
+  downloadDocumentsBundle: async (
     filter?: ReportDateFilter,
     options?: { format?: "excel" | "plain" }
   ) => {
@@ -1588,14 +1589,21 @@ export const api = {
       params.set("format", options.format);
     }
     const query = params.toString();
-    const { blob, filename } = await requestBlob(
+    const { blob, filename, headers } = await requestBlob(
       `/api/reports/documents-bundle/export${query ? `?${query}` : ""}`,
       undefined,
       defaultDocumentsBundleFilename(filter)
     );
-    const text = await blob.text();
-    const dataRows = Math.max(0, text.trim().split(/\r?\n/).length - 1);
-    saveBlobAsFile(new Blob([text], { type: blob.type || "text/csv" }), filename);
+    const parsedRows = Number(headers.get("X-Data-Rows") ?? "");
+    const dataRows = Number.isFinite(parsedRows) && parsedRows >= 0 ? parsedRows : 0;
+    saveBlobAsFile(
+      new Blob([blob], {
+        type:
+          blob.type ||
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      filename
+    );
     return { dataRows };
   },
   listPurchases: (options?: FreshRequestOptions) => {
@@ -1833,11 +1841,11 @@ function defaultAuditLogFilename(filter?: ReportDateFilter): string {
 
 function defaultDocumentsBundleFilename(filter?: ReportDateFilter): string {
   const { dateFrom, dateTo } = filter ?? {};
-  if (!dateFrom && !dateTo) return "documents_bundle.csv";
+  if (!dateFrom && !dateTo) return "documents_bundle.xlsx";
   if (dateFrom && dateTo && dateFrom === dateTo) {
-    return `documents_bundle_${dateFrom}.csv`;
+    return `documents_bundle_${dateFrom}.xlsx`;
   }
-  if (dateFrom && dateTo) return `documents_bundle_${dateFrom}_to_${dateTo}.csv`;
-  if (dateFrom) return `documents_bundle_from_${dateFrom}.csv`;
-  return `documents_bundle_to_${dateTo}.csv`;
+  if (dateFrom && dateTo) return `documents_bundle_${dateFrom}_to_${dateTo}.xlsx`;
+  if (dateFrom) return `documents_bundle_from_${dateFrom}.xlsx`;
+  return `documents_bundle_to_${dateTo}.xlsx`;
 }

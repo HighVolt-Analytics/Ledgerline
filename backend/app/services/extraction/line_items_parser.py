@@ -371,6 +371,95 @@ def parse_line_items_from_layout_grids(payload: dict[str, object]) -> list[Parse
     return enrich_parsed_line_items(merged)
 
 
+def parse_vertical_line_items_from_text(text: str) -> list[ParsedLineItem]:
+    """Parse Azure layout OCR that emits one table cell per line.
+
+    Example::
+
+        DESCRIPTION
+        QTY
+        UNIT PRICE
+        GST
+        AMOUNT
+        Widget A
+        12
+        450.00
+        540.00
+        5940.00
+    """
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines) < 6:
+        return []
+
+    from app.services.extraction.line_item_header_vocab import vertical_header_role
+
+    roles: list[str] = []
+    start = -1
+    index = 0
+    while index < len(lines):
+        matched_role = vertical_header_role(lines[index])
+        if matched_role is None:
+            if roles:
+                break
+            index += 1
+            continue
+        if not roles:
+            start = index
+        roles.append(matched_role)
+        index += 1
+        # Stop header scan once we have description + money/qty structure.
+        if "description" in roles and (
+            ("qty" in roles and "amount" in roles)
+            or ("qty" in roles and "unit_price" in roles)
+            or ("unit_price" in roles and "amount" in roles)
+        ):
+            # Keep consuming remaining header cells (tax / uom skips) in sequence.
+            while index < len(lines):
+                more = vertical_header_role(lines[index])
+                if more is None:
+                    break
+                roles.append(more)
+                index += 1
+            break
+
+    if start < 0 or "description" not in roles:
+        return []
+    if "qty" not in roles and "unit_price" not in roles and "amount" not in roles:
+        return []
+
+    col_count = len(roles)
+    data_start = start + col_count
+    items: list[ParsedLineItem] = []
+    cursor = data_start
+    while cursor + col_count <= len(lines):
+        block = lines[cursor : cursor + col_count]
+        cursor += col_count
+        joined = " ".join(block)
+        if re.search(r"^(?:subtotal|total|gst\b|tax\b|country\s+of\s+origin|terms?\b)", joined, re.I):
+            break
+        cells = {role: value for role, value in zip(roles, block) if role != "skip"}
+        desc = (cells.get("description") or "").strip()
+        if not desc or should_skip_line_row(desc) or re.fullmatch(r"\d{1,4}", desc):
+            continue
+        qty = _qty(re.sub(r"[^\d.]", "", cells.get("qty") or "")) if cells.get("qty") else None
+        unit_price = _money(cells.get("unit_price") or "") if cells.get("unit_price") else None
+        tax_amount = _money(cells.get("tax") or "") if cells.get("tax") else None
+        amount = _money(cells.get("amount") or "") if cells.get("amount") else None
+        if qty is None and unit_price is None and amount is None:
+            continue
+        items.append(
+            _make_line_item(
+                description=desc,
+                qty=qty,
+                unit_price=unit_price,
+                tax_amount=tax_amount,
+                amount=amount,
+                source="regex",
+            )
+        )
+    return enrich_parsed_line_items(items)
+
+
 def parse_line_items_from_text(
     text: str,
     payload: dict[str, object] | None = None,
@@ -379,7 +468,21 @@ def parse_line_items_from_text(
     if payload:
         grid_rows = parse_line_items_from_layout_grids(payload)
         if grid_rows:
+            # Prefer money-bearing layout grids over qty-only / serial-bleed rows.
+            if any(row.amount is not None or row.unit_price is not None for row in grid_rows):
+                return grid_rows
+            # Keep qty-only grids unless vertical OCR recovers money columns.
+            vertical = parse_vertical_line_items_from_text(text)
+            money_vertical = [
+                row for row in vertical if row.amount is not None or row.unit_price is not None
+            ]
+            if money_vertical:
+                return money_vertical
             return grid_rows
+
+    vertical = parse_vertical_line_items_from_text(text)
+    if vertical and any(row.amount is not None or row.unit_price is not None for row in vertical):
+        return vertical
 
     items: list[ParsedLineItem] = []
     for raw_line in text.splitlines():
@@ -387,7 +490,14 @@ def parse_line_items_from_text(
         if parsed is not None:
             items.append(parsed)
     if items:
+        # Prefer money-bearing horizontal rows; otherwise fall back to vertical qty rows.
+        if any(item.amount is not None or item.unit_price is not None for item in items):
+            return enrich_parsed_line_items(items)
+        if vertical:
+            return vertical
         return enrich_parsed_line_items(items)
+    if vertical:
+        return vertical
 
     for m in _GRN_LINE_ROW.finditer(text):
         desc, qty_s = m.groups()
@@ -600,21 +710,15 @@ def enrich_parsed_line_items(
         _dedupe_prefix_fragment_rows(repaired, thresholds=thresholds),
         thresholds=thresholds,
     )
+    # Grounded-only: keep printed values; do not invent amount/unit_price via arithmetic.
     enriched: list[ParsedLineItem] = []
     for item in deduped:
-        qty = item.qty
-        unit_price = item.unit_price
-        amount = item.amount
-        if amount is None and qty is not None and unit_price is not None:
-            amount = qty * unit_price
-        if unit_price is None and amount is not None and qty is not None and qty > 0:
-            unit_price = amount / qty
         enriched.append(sanitize_parsed_line_item(
             _make_line_item(
                 description=item.description,
-                qty=qty,
-                unit_price=unit_price,
-                amount=amount,
+                qty=item.qty,
+                unit_price=item.unit_price,
+                amount=item.amount,
                 tax_amount=item.tax_amount,
                 source=item.source,
                 source_confidence=item.source_confidence,
@@ -1051,21 +1155,31 @@ def _is_aggregate_qty_row(qty: Decimal | None, prior_qtys: Sequence[Decimal]) ->
 
 def _payload_has_qty_only_table_rows(payload: dict[str, object]) -> bool:
     rows = payload.get("table_line_items")
-    if not isinstance(rows, list) or not rows:
+    if isinstance(rows, list) and rows:
+        saw_qty_row = False
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            desc = str(row.get("description") or "").strip()
+            qty = row.get("qty")
+            amount = row.get("amount")
+            unit_price = row.get("unit_price")
+            if amount or unit_price:
+                return False
+            if desc and qty and not _is_qty_only_totals_line(desc):
+                saw_qty_row = True
+        if saw_qty_row:
+            return True
+    # Fresh layout grids (may exist when table_line_items cache is empty/stale).
+    grid_items = parse_line_items_from_layout_grids(payload)
+    if not grid_items:
         return False
-    saw_qty_row = False
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        desc = str(row.get("description") or "").strip()
-        qty = row.get("qty")
-        amount = row.get("amount")
-        unit_price = row.get("unit_price")
-        if amount or unit_price:
-            return False
-        if desc and qty and not _is_qty_only_totals_line(desc):
-            saw_qty_row = True
-    return saw_qty_row
+    if any(item.amount is not None or item.unit_price is not None for item in grid_items):
+        return False
+    return any(
+        item.description and item.qty is not None and not _is_qty_only_totals_line(item.description)
+        for item in grid_items
+    )
 
 
 def _find_qty_only_header_line(text: str) -> tuple[int, list[str]] | None:

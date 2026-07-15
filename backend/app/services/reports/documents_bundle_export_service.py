@@ -1,4 +1,4 @@
-"""CSV export — documents bundle matrix for auditors.
+"""Excel export — documents bundle matrix for auditors.
 
 Matrix layout (one row per transactional posting anchor invoice):
 
@@ -11,7 +11,7 @@ Dynamic DT columns (org-configured document types from rule book)
     One column per document type the organisation has defined in rule book
     (not the full shipped template catalogue), sorted alphabetically by DT code.
     Cell values:
-        - Linked upload: Excel ``=HYPERLINK(url, label)`` (default) or ``label | url`` (plain)
+        - Linked upload: native Excel hyperlink (default) or ``label | url`` (plain)
         - Mandatory slot missing: ``Missing``
         - Advisory slot missing: ``Advisory``
         - Not applicable: empty
@@ -25,13 +25,17 @@ columns, not as anchor rows.
 
 from __future__ import annotations
 
-import csv
 import io
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -86,11 +90,36 @@ _FIXED_COLUMNS = [
     "Universal match",
 ]
 
+_MATCH_COLUMNS = frozenset({"2 way match", "3 way match", "Universal match"})
+
+_TITLE_FILL = PatternFill("solid", fgColor="1F6E7A")
+_TITLE_FONT = Font(color="FFFFFF", bold=True, size=14)
+_HEADER_FILL = PatternFill("solid", fgColor="1F6E7A")
+_HEADER_FONT = Font(color="FFFFFF", bold=True, size=10)
+_ZEBRA_FILL = PatternFill("solid", fgColor="F3F7F8")
+_MISSING_FILL = PatternFill("solid", fgColor="F8D7DA")
+_ADVISORY_FILL = PatternFill("solid", fgColor="FFF3CD")
+_YES_FILL = PatternFill("solid", fgColor="D1E7DD")
+_NO_FILL = PatternFill("solid", fgColor="E9ECEF")
+_LINK_FONT = Font(color="0563C1", underline="single", size=10)
+_BODY_FONT = Font(size=10)
+_LEGEND_FONT = Font(size=9, color="334455")
+
+_SINGLE_HYPERLINK_RE = re.compile(
+    r'^=HYPERLINK\("((?:[^"]|"")*)","((?:[^"]|"")*)"\)$'
+)
+
+_TITLE_ROW = 1
+_LEGEND_ROW = 2
+_HEADER_ROW = 4
+_FIRST_DATA_ROW = 5
+
 
 @dataclass(frozen=True)
 class DocumentsBundleExportPayload:
-    csv_text: str
+    xlsx_bytes: bytes
     filename: str
+    data_rows: int
 
 
 @dataclass(frozen=True)
@@ -128,8 +157,20 @@ async def _load_bundle_export_invoices(
 
 def documents_bundle_filename(*, date_from: date | None) -> str:
     if date_from is not None:
-        return f"documents_bundle_{date_from.year:04d}-{date_from.month:02d}.csv"
-    return "documents_bundle.csv"
+        return f"documents_bundle_{date_from.year:04d}-{date_from.month:02d}.xlsx"
+    return "documents_bundle.xlsx"
+
+
+def _period_label(*, date_from: date | None, date_to: date | None) -> str:
+    if date_from is not None and date_to is not None:
+        if date_from == date_to:
+            return date_from.isoformat()
+        return f"{date_from.isoformat()} → {date_to.isoformat()}"
+    if date_from is not None:
+        return f"From {date_from.isoformat()}"
+    if date_to is not None:
+        return f"Through {date_to.isoformat()}"
+    return "All dates"
 
 
 def _is_transactional_posting(defn: DocumentTypeDefinition | None) -> bool:
@@ -356,15 +397,158 @@ def build_documents_bundle_row(
     return row
 
 
-def documents_bundle_rows_to_csv(
+def _unescape_excel_csv(value: str) -> str:
+    return value.replace('""', '"')
+
+
+def _parse_single_hyperlink_formula(value: str) -> tuple[str, str] | None:
+    match = _SINGLE_HYPERLINK_RE.match((value or "").strip())
+    if match is None:
+        return None
+    url = _unescape_excel_csv(match.group(1))
+    label = _unescape_excel_csv(match.group(2))
+    return url, label
+
+
+def _autosize_columns(ws: Worksheet, *, max_width: int = 36) -> None:
+    for col_idx in range(1, ws.max_column + 1):
+        letter = get_column_letter(col_idx)
+        max_len = 0
+        for row in ws.iter_rows(min_col=col_idx, max_col=col_idx, min_row=_HEADER_ROW):
+            for cell in row:
+                if cell.value is not None:
+                    max_len = max(max_len, min(len(str(cell.value)), 48))
+        ws.column_dimensions[letter].width = min(max(max_len + 2, 11), max_width)
+
+
+def _write_title_and_period(
+    ws: Worksheet,
+    *,
+    col_count: int,
+    date_from: date | None,
+    date_to: date | None,
+) -> None:
+    ws.merge_cells(start_row=_TITLE_ROW, start_column=1, end_row=_TITLE_ROW, end_column=max(col_count, 1))
+    title_cell = ws.cell(row=_TITLE_ROW, column=1, value="Documents Bundle")
+    title_cell.fill = _TITLE_FILL
+    title_cell.font = _TITLE_FONT
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+    for col in range(2, col_count + 1):
+        cell = ws.cell(row=_TITLE_ROW, column=col)
+        cell.fill = _TITLE_FILL
+    ws.row_dimensions[_TITLE_ROW].height = 28
+
+    period = _period_label(date_from=date_from, date_to=date_to)
+    ws.cell(row=_LEGEND_ROW, column=1, value=f"Period: {period}").font = _LEGEND_FONT
+    ws.row_dimensions[_LEGEND_ROW].height = 18
+
+    # Spacer row keeps title/period visually separate from the table header.
+    ws.row_dimensions[3].height = 8
+
+
+def _apply_data_cell_style(
+    cell,
+    *,
+    header: str,
+    raw_value: str,
+    zebra: bool,
+    link_mode: BundleCellFormat,
+) -> None:
+    cell.font = _BODY_FONT
+    cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    value = raw_value
+    if link_mode == "excel":
+        parsed = _parse_single_hyperlink_formula(raw_value)
+        if parsed is not None:
+            url, label = parsed
+            cell.value = label
+            cell.hyperlink = url
+            cell.font = _LINK_FONT
+            value = label
+        else:
+            cell.value = raw_value
+            if raw_value.startswith("=") and "HYPERLINK(" in raw_value:
+                # Multi-link formula cell — keep formula; Excel renders clickable links.
+                cell.font = _LINK_FONT
+    else:
+        cell.value = raw_value
+        if " | " in raw_value and "/vault?" in raw_value:
+            cell.font = _LINK_FONT
+
+    fill = None
+    if value == "Missing":
+        fill = _MISSING_FILL
+    elif value == "Advisory":
+        fill = _ADVISORY_FILL
+    elif header in _MATCH_COLUMNS:
+        if value == "Yes":
+            fill = _YES_FILL
+        elif value == "No":
+            fill = _NO_FILL
+    elif zebra:
+        fill = _ZEBRA_FILL
+
+    if fill is not None:
+        cell.fill = fill
+
+
+def documents_bundle_rows_to_xlsx(
     rows: list[list[str]],
     *,
     dt_column_headers: list[str],
-) -> str:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow([*_FIXED_COLUMNS, *dt_column_headers])
-    writer.writerows(rows)
+    date_from: date | None = None,
+    date_to: date | None = None,
+    cell_format: BundleCellFormat = "excel",
+) -> bytes:
+    """Build a styled workbook for the documents bundle matrix."""
+    headers = [*_FIXED_COLUMNS, *dt_column_headers]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Documents Bundle"
+
+    _write_title_and_period(
+        ws,
+        col_count=len(headers),
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=_HEADER_ROW, column=col_idx, value=header)
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[_HEADER_ROW].height = 24
+
+    for row_offset, row in enumerate(rows):
+        excel_row = _FIRST_DATA_ROW + row_offset
+        zebra = row_offset % 2 == 1
+        for col_idx, header in enumerate(headers, start=1):
+            raw = row[col_idx - 1] if col_idx - 1 < len(row) else ""
+            cell = ws.cell(row=excel_row, column=col_idx)
+            _apply_data_cell_style(
+                cell,
+                header=header,
+                raw_value=raw,
+                zebra=zebra,
+                link_mode=cell_format,
+            )
+
+    ws.freeze_panes = ws.cell(row=_FIRST_DATA_ROW, column=1)
+    if rows:
+        last_col = get_column_letter(len(headers))
+        last_row = _FIRST_DATA_ROW + len(rows) - 1
+        ws.auto_filter.ref = f"A{_HEADER_ROW}:{last_col}{last_row}"
+    else:
+        last_col = get_column_letter(max(len(headers), 1))
+        ws.auto_filter.ref = f"A{_HEADER_ROW}:{last_col}{_HEADER_ROW}"
+
+    _autosize_columns(ws)
+    ws.sheet_view.showGridLines = False
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
     return buffer.getvalue()
 
 
@@ -424,9 +608,9 @@ async def build_documents_bundle_export(
             )
         )
 
-    csv_rows: list[list[str]] = []
+    data_rows: list[list[str]] = []
     for ctx in contexts:
-        csv_rows.append(
+        data_rows.append(
             build_documents_bundle_row(
                 ctx.invoice,
                 definition=ctx.definition,
@@ -437,6 +621,16 @@ async def build_documents_bundle_export(
             )
         )
 
-    csv_text = documents_bundle_rows_to_csv(csv_rows, dt_column_headers=dt_headers)
+    xlsx_bytes = documents_bundle_rows_to_xlsx(
+        data_rows,
+        dt_column_headers=dt_headers,
+        date_from=date_from,
+        date_to=date_to,
+        cell_format=cell_format,
+    )
     filename = documents_bundle_filename(date_from=date_from)
-    return DocumentsBundleExportPayload(csv_text=csv_text, filename=filename)
+    return DocumentsBundleExportPayload(
+        xlsx_bytes=xlsx_bytes,
+        filename=filename,
+        data_rows=len(data_rows),
+    )

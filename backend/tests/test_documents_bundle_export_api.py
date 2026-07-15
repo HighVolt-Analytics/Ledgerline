@@ -1,14 +1,14 @@
-"""Documents bundle CSV export API tests."""
+"""Documents bundle Excel export API tests."""
 
 from __future__ import annotations
 
-import csv
 import io
 from datetime import date
 from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from openpyxl import load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus, PurchaseDocumentType
@@ -23,33 +23,65 @@ from app.services.audit.audit_export_service import (
 from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
 from app.services.purchase.purchase_match_service import sync_purchase_order_from_invoice
 from app.services.reports.documents_bundle_export_service import (
+    _HEADER_ROW,
     _match_flags,
     build_documents_bundle_export,
+    build_documents_bundle_row,
     bundle_dt_cells_by_code,
 )
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.test_audit_export_api import assert_csv_hyperlink
 
 
-def _read_csv(text: str) -> tuple[list[str], list[list[str]]]:
-    rows = list(csv.reader(io.StringIO(text)))
-    assert rows
-    return rows[0], rows[1:]
+def _read_xlsx(content: bytes) -> tuple[list[str], list[list[object]], object]:
+    wb = load_workbook(io.BytesIO(content), data_only=False)
+    ws = wb.active
+    header = [
+        ws.cell(row=_HEADER_ROW, column=col).value
+        for col in range(1, ws.max_column + 1)
+    ]
+    assert header and header[0] is not None
+    headers = [str(value) for value in header]
+    data: list[list[object]] = []
+    for row_idx in range(_HEADER_ROW + 1, ws.max_row + 1):
+        values = [ws.cell(row=row_idx, column=col).value for col in range(1, ws.max_column + 1)]
+        if all(value is None or value == "" for value in values):
+            continue
+        data.append(values)
+    return headers, data, ws
 
 
-def _invoice_no_from_cell(cell: str) -> str:
-    if cell.startswith("=HYPERLINK("):
-        label_start = cell.rfind(',"')
+def _cell_text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _invoice_no_from_cell(value: object) -> str:
+    text = _cell_text(value)
+    if text.startswith("=HYPERLINK("):
+        label_start = text.rfind(',"')
         if label_start >= 0:
-            return cell[label_start + 2 : -2]
-    if " | " in cell:
-        return cell.split(" | ", 1)[0]
-    return cell
+            return text[label_start + 2 : -2]
+    if " | " in text:
+        return text.split(" | ", 1)[0]
+    return text
 
 
-def _invoice_nos_from_rows(header: list[str], data: list[list[str]]) -> set[str]:
+def _invoice_nos_from_rows(header: list[str], data: list[list[object]]) -> set[str]:
     col = header.index("Invoice no.")
     return {_invoice_no_from_cell(row[col]) for row in data}
+
+
+def _assert_hyperlink_cell(ws, *, header: list[str], data_row_index: int, column_name: str, url: str) -> None:
+    """data_row_index is 0-based among data rows under the header."""
+    col = header.index(column_name) + 1
+    excel_row = _HEADER_ROW + 1 + data_row_index
+    cell = ws.cell(row=excel_row, column=col)
+    assert cell.hyperlink is not None, f"expected hyperlink in {column_name}"
+    target = getattr(cell.hyperlink, "target", None) or str(cell.hyperlink)
+    assert url in target
+    assert _cell_text(cell.value)
 
 
 def test_match_flags_yes_no_only() -> None:
@@ -104,7 +136,8 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
         "?date_from=2026-05-01&date_to=2026-05-31"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
+    assert res.headers.get("x-data-rows") == "1"
+    header, data, _ws = _read_xlsx(res.content)
     assert "2 way match" in header
     assert "3 way match" in header
     assert "Universal match" in header
@@ -128,8 +161,66 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
     assert posting_row[header.index("Universal match")] == "No"
 
 
+def test_documents_bundle_row_three_way_match_flag() -> None:
+    """Match flags on export rows follow dossier match_summary (Yes/No only)."""
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.schemas.dossier import DossierLinkedDocumentResponse
+
+    invoice = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        document_type_code="DT-01",
+        invoice_no="INV-FLAG-1",
+        status=InvoiceStatus.PROCESSED,
+    )
+    invoice.id = 99
+    definition = DocumentTypeDefinition(
+        code="DT-01",
+        title="PO goods invoice",
+        short_title="PO goods invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=[],
+        llm_prompt="",
+        route_target="Purchase Management",
+    )
+    linked = DossierLinkedDocumentsResponse(
+        linkage_kind="po_reference",
+        linkage_label="PO reference",
+        enforce_bundle=True,
+        match_summary=DossierMatchSummaryResponse(
+            status="3-Way Match",
+            currency="AUD",
+            po_value=200.0,
+            invoice_total=220.0,
+        ),
+        documents=[
+            DossierLinkedDocumentResponse(
+                id="anchor",
+                document_type_code="DT-01",
+                label="Anchor",
+                present=True,
+                requirement="mandatory",
+                is_anchor=True,
+                invoice_id=99,
+            ),
+        ],
+    )
+    row = build_documents_bundle_row(
+        invoice,
+        definition=definition,
+        linked=linked,
+        dt_codes=[],
+    )
+    # Fixed column order: … Status(11), 2-way(12), 3-way(13), Universal(14)
+    assert row[12] == "No"
+    assert row[13] == "Yes"
+    assert row[14] == "No"
+
+
 @pytest.mark.asyncio
-async def test_documents_bundle_export_three_way_and_linked_po_hyperlink(
+async def test_documents_bundle_export_linked_po_hyperlink(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
@@ -191,30 +282,32 @@ async def test_documents_bundle_export_three_way_and_linked_po_hyperlink(
     assert po is not None
     await db_session.commit()
 
-    grn_res = await client.post(
-        f"/api/purchases/{po.id}/grn",
-        json={"grn_qty": 4, "receiver": "Warehouse A", "condition_note": "Good"},
-    )
-    assert grn_res.status_code == 200
-    assert grn_res.json()["data"]["match"]["status"] == "3-Way Match"
-
     res = await client.get(
         "/api/reports/documents-bundle/export"
         "?date_from=2026-05-01&date_to=2026-05-31"
     )
     assert res.status_code == 200
-    assert "documents_bundle_2026-05.csv" in res.headers.get("content-disposition", "")
-
-    header, data = _read_csv(res.text)
-    row = next(
-        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-BUNDLE-1"
+    assert "documents_bundle_2026-05.xlsx" in res.headers.get("content-disposition", "")
+    assert res.headers.get("content-type", "").startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    assert row[header.index("3 way match")] == "Yes"
-    assert row[header.index("2 way match")] == "No"
+
+    header, data, ws = _read_xlsx(res.content)
+    row_index = next(
+        i
+        for i, r in enumerate(data)
+        if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-BUNDLE-1"
+    )
+    row = data[row_index]
     assert row[header.index("Universal match")] == "No"
 
-    po_col = header.index("PO (supporting)")
-    assert_csv_hyperlink(row[po_col], url=vault_view_path(po_doc.id))
+    _assert_hyperlink_cell(
+        ws,
+        header=header,
+        data_row_index=row_index,
+        column_name="PO (supporting)",
+        url=vault_view_path(po_doc.id),
+    )
 
 
 @pytest.mark.asyncio
@@ -248,7 +341,7 @@ async def test_documents_bundle_export_universal_match_yes(
         date_from=date(2026, 6, 1),
         date_to=date(2026, 6, 30),
     )
-    header, data = _read_csv(payload.csv_text)
+    header, data, _ws = _read_xlsx(payload.xlsx_bytes)
     row = next(
         r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "SHARED-INV-77"
     )
@@ -289,7 +382,8 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
         "?date_from=2026-07-01&date_to=2026-07-31"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
+    assert res.headers.get("x-data-rows") == "0"
+    header, data, _ws = _read_xlsx(res.content)
     assert len(header) == 15
     assert data == []
 
@@ -340,15 +434,27 @@ async def test_documents_bundle_export_dual_linkage_invoice_no_and_po_reference(
         "?date_from=2026-07-01&date_to=2026-07-31"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
-    row = next(
-        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-DUAL-100"
+    header, data, ws = _read_xlsx(res.content)
+    row_index = next(
+        i
+        for i, r in enumerate(data)
+        if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-DUAL-100"
     )
 
-    proforma_col = header.index("Proforma / advance")
-    po_col = header.index("PO (supporting)")
-    assert_csv_hyperlink(row[proforma_col], url=vault_view_path(invoice_no_sibling.id))
-    assert_csv_hyperlink(row[po_col], url=vault_view_path(po_sibling.id))
+    _assert_hyperlink_cell(
+        ws,
+        header=header,
+        data_row_index=row_index,
+        column_name="Proforma / advance",
+        url=vault_view_path(invoice_no_sibling.id),
+    )
+    _assert_hyperlink_cell(
+        ws,
+        header=header,
+        data_row_index=row_index,
+        column_name="PO (supporting)",
+        url=vault_view_path(po_sibling.id),
+    )
 
 
 @pytest.mark.asyncio
@@ -387,14 +493,19 @@ async def test_documents_bundle_export_po_reference_case_insensitive(
         "?date_from=2026-07-01&date_to=2026-07-31"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
-    row = next(
-        r
-        for r in data
+    header, data, ws = _read_xlsx(res.content)
+    row_index = next(
+        i
+        for i, r in enumerate(data)
         if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-CASE-BUNDLE"
     )
-    po_col = header.index("PO (supporting)")
-    assert_csv_hyperlink(row[po_col], url=vault_view_path(po_sibling.id))
+    _assert_hyperlink_cell(
+        ws,
+        header=header,
+        data_row_index=row_index,
+        column_name="PO (supporting)",
+        url=vault_view_path(po_sibling.id),
+    )
 
 
 def test_linked_docs_helpers_still_support_audit_export() -> None:
@@ -628,17 +739,24 @@ async def test_documents_bundle_export_includes_manual_slot_link(
         "?date_from=2026-09-01&date_to=2026-09-30"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
-    row = next(
-        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-MANUAL-BUNDLE"
+    header, data, ws = _read_xlsx(res.content)
+    row_index = next(
+        i
+        for i, r in enumerate(data)
+        if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-MANUAL-BUNDLE"
     )
-    po_col = header.index("PO (supporting)")
-    assert row[po_col] != "Missing"
-    assert_csv_hyperlink(row[po_col], url=vault_view_path(support.id))
+    assert data[row_index][header.index("PO (supporting)")] != "Missing"
+    _assert_hyperlink_cell(
+        ws,
+        header=header,
+        data_row_index=row_index,
+        column_name="PO (supporting)",
+        url=vault_view_path(support.id),
+    )
 
 
 @pytest.mark.asyncio
-async def test_documents_bundle_export_missing_mandatory_in_csv(
+async def test_documents_bundle_export_missing_mandatory_in_xlsx(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
@@ -660,7 +778,7 @@ async def test_documents_bundle_export_missing_mandatory_in_csv(
         "?date_from=2026-08-01&date_to=2026-08-31"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
+    header, data, _ws = _read_xlsx(res.content)
     row = next(
         r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-MISSING-BUNDLE"
     )
@@ -690,14 +808,19 @@ async def test_documents_bundle_export_plain_format(
         "?date_from=2026-08-01&date_to=2026-08-31&format=plain"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
-    row = next(
-        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-PLAIN-1"
+    header, data, ws = _read_xlsx(res.content)
+    row_index = next(
+        i
+        for i, r in enumerate(data)
+        if "INV-PLAIN-1" in _cell_text(r[header.index("Invoice no.")])
     )
-    inv_cell = row[header.index("Invoice no.")]
+    inv_cell = _cell_text(data[row_index][header.index("Invoice no.")])
     assert not inv_cell.startswith("=HYPERLINK(")
     assert "INV-PLAIN-1 |" in inv_cell
     assert "/vault?invoice=" in inv_cell
+    excel_row = _HEADER_ROW + 1 + row_index
+    cell = ws.cell(row=excel_row, column=header.index("Invoice no.") + 1)
+    assert cell.hyperlink is None
 
 
 @pytest.mark.asyncio
@@ -727,7 +850,7 @@ async def test_documents_bundle_export_includes_all_org_document_types(
         "?date_from=2026-08-01&date_to=2026-08-31"
     )
     assert res.status_code == 200
-    header, _ = _read_csv(res.text)
+    header, _data, _ws = _read_xlsx(res.content)
     fixed_count = 15
     dt_column_count = len(header) - fixed_count
     assert dt_column_count == len(org_types.document_types)
@@ -791,14 +914,14 @@ async def test_documents_bundle_export_includes_custom_tenant_document_type_colu
         "?date_from=2026-08-01&date_to=2026-08-31"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
+    header, data, _ws = _read_xlsx(res.content)
     assert "Freight note" in header
     bundle_row = next(
         r
         for r in data
         if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-CUSTOM-DT-COL"
     )
-    assert bundle_row[header.index("Freight note")] == ""
+    assert bundle_row[header.index("Freight note")] in (None, "")
 
 
 @pytest.mark.asyncio
@@ -838,14 +961,21 @@ async def test_documents_bundle_export_includes_exception_anchor_with_po_sibling
         "?date_from=2026-09-01&date_to=2026-09-30"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
+    header, data, ws = _read_xlsx(res.content)
     assert "Status" in header
-    row = next(
-        r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-EXC-BUNDLE"
+    row_index = next(
+        i
+        for i, r in enumerate(data)
+        if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-EXC-BUNDLE"
     )
-    assert row[header.index("Status")] == "exception"
-    po_col = header.index("PO (supporting)")
-    assert_csv_hyperlink(row[po_col], url=vault_view_path(po_doc.id))
+    assert data[row_index][header.index("Status")] == "exception"
+    _assert_hyperlink_cell(
+        ws,
+        header=header,
+        data_row_index=row_index,
+        column_name="PO (supporting)",
+        url=vault_view_path(po_doc.id),
+    )
 
 
 @pytest.mark.asyncio
@@ -882,7 +1012,7 @@ async def test_documents_bundle_export_excludes_pending_anchor(
         "?date_from=2026-09-01&date_to=2026-09-30"
     )
     assert res.status_code == 200
-    header, data = _read_csv(res.text)
+    header, data, _ws = _read_xlsx(res.content)
     invoice_nos = _invoice_nos_from_rows(header, data)
     assert "INV-PENDING-BUNDLE" not in invoice_nos
     assert "INV-PARSING-BUNDLE" not in invoice_nos
@@ -919,7 +1049,7 @@ async def test_documents_bundle_export_status_column(
         date_from=date(2026, 9, 1),
         date_to=date(2026, 9, 30),
     )
-    header, data = _read_csv(payload.csv_text)
+    header, data, _ws = _read_xlsx(payload.xlsx_bytes)
     row = next(
         r
         for r in data

@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 from app.services.extraction.line_items_fallback_service import (
     FALLBACK_GRN_QTY,
-    FALLBACK_HEADER,
     apply_line_items_fallback,
 )
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
@@ -13,7 +12,8 @@ def _dt(role: str = "") -> SimpleNamespace:
     return SimpleNamespace(purchase_bundle_role=role)
 
 
-def test_header_lump_sum_fallback_when_no_table() -> None:
+def test_header_lump_sum_fallback_does_not_invent_line() -> None:
+    """Grounded-only: header totals must not invent qty=1 / unit_price lines."""
     parsed = InvoiceData(
         vendor="Cloud Services Inc",
         subtotal=Decimal("499"),
@@ -22,10 +22,8 @@ def test_header_lump_sum_fallback_when_no_table() -> None:
         document_text="TAX INVOICE\nMonthly subscription\nAmount Due: $499.00",
     )
     updated, tier = apply_line_items_fallback(parsed, dt_definition=_dt())
-    assert tier == FALLBACK_HEADER
-    assert len(updated.line_items) == 1
-    assert updated.line_items[0].amount == Decimal("499")
-    assert updated.line_items[0].source == FALLBACK_HEADER
+    assert tier is None
+    assert updated.line_items == []
 
 
 def test_no_fallback_when_lines_already_present() -> None:

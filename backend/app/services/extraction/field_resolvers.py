@@ -541,27 +541,40 @@ def merge_via_field_contracts(
             trace=trace,
         )
 
-    if merged.line_items:
-        merged = replace(merged, line_items=_sanitize_rows(merged.line_items))
-    elif text:
-        # Contracts may omit/miss line_items; reuse shape-aware DI/layout merge
-        # instead of leaving the list empty for noisy text fallback.
+    # Always prefer shape-aware merge when OCR text exists so partial LLM rows
+    # gap-fill from printed DI/layout/table evidence (never invent numerics).
+    seed_lines = list(merged.line_items) if merged.line_items else list(parsed.line_items or [])
+    if text:
         from app.services.extraction.extraction_orchestrator import _merge_line_items_from_sources
 
-        seed = merged
-        if not seed.line_items and parsed.line_items:
-            seed = replace(merged, line_items=list(parsed.line_items))
+        seed = replace(merged, line_items=seed_lines)
         filled = _merge_line_items_from_sources(seed, text, payload)
         if filled:
             merged = replace(merged, line_items=_sanitize_rows(filled))
-        elif seed.line_items:
-            merged = replace(merged, line_items=_sanitize_rows(seed.line_items))
+        elif seed_lines:
+            merged = replace(merged, line_items=_sanitize_rows(seed_lines))
+        else:
+            merged = replace(merged, line_items=[])
+    elif merged.line_items:
+        merged = replace(merged, line_items=_sanitize_rows(merged.line_items))
 
     merged = post_process_parsed_data(merged, text, dt_definition=dt_definition)
 
     from app.services.shared.currency import apply_currency_ocr_fallback
+    from app.utils.abn_validator import storage_abn
 
     merged = apply_currency_ocr_fallback(merged, text)  # type: ignore[assignment]
+    # Sync abn from party evidence when contract merge left abn empty.
+    if _scalar_empty(merged.abn):
+        extracted = extracted_fields_from_parsed(merged)
+        for key in ("seller_abn", "seller_tax_id", "abn"):
+            raw = (extracted.get(key) or "").strip()
+            if not raw:
+                continue
+            candidate = storage_abn(raw)
+            if candidate and (not text or _value_grounded("abn", candidate, text)):
+                merged = replace(merged, abn=candidate)
+                break
 
     # Apply absent fields
     if dt_definition is not None:

@@ -298,6 +298,31 @@
       }
     },
     {
+      "key": "currency",
+      "label": "Currency",
+      "data_type": "string",
+      "category": "amount",
+      "posting_critical": false,
+      "grounding_required": true,
+      "synonyms": [
+        "Currency",
+        "CCY",
+        "Curr"
+      ],
+      "extraction_hint": "Currency, CCY, Curr (ISO code e.g. AUD, USD)",
+      "finance_role": "Document currency ISO code",
+      "do_not_confuse_with": [
+        "total",
+        "subtotal"
+      ],
+      "source_priority": [
+        "azure_di",
+        "layout_kv",
+        "regex",
+        "llm"
+      ]
+    },
+    {
       "key": "cost_centre",
       "label": "Cost centre",
       "data_type": "string",
@@ -513,9 +538,13 @@
       "posting_critical": true,
       "grounding_required": true,
       "synonyms": [
-        "Product/service table rows with description and amounts"
+        "Product/service table rows with description and amounts",
+        "Line items with description, qty, unit price, amount, tax",
+        "Qty-only table rows (Name/Description + Accepted/Recd/PO Qty)",
+        "Purchase order product Name/QTY/UNIT PRICE/AMOUNT rows",
+        "GRN accepted quantity rows without unit price"
       ],
-      "extraction_hint": "Product/service table rows with description and amounts",
+      "extraction_hint": "Extract printed product/service rows only. Money tables: description/Name, qty, unit price, amount, tax when printed. Qty-only tables (GRN/packing): description/Name plus Accepted/Received/PO Qty; leave unit_price and amount null when not printed. Never invent amounts via qty×price.",
       "finance_role": "",
       "do_not_confuse_with": [],
       "source_priority": [

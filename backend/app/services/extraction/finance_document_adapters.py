@@ -251,11 +251,26 @@ def invoice_data_from_layout_payload(
     layout_kv: dict[str, str] | None = None,
 ) -> InvoiceData:
     """Build a lightweight InvoiceData snapshot from layout OCR payload."""
-    from app.services.extraction.line_items_parser import resolve_line_items_for_strategy
+    from app.services.extraction.line_items_parser import (
+        document_has_qty_only_table,
+        resolve_line_items_for_strategy,
+    )
     from app.services.extraction.line_items_sanitizer import sanitize_line_items
 
-    layout_mode = str(ocr_payload.get("layout_line_mode") or "gap_fill")
-    items = resolve_line_items_for_strategy(ocr_payload, layout_mode=layout_mode)
+    layout_mode = str(ocr_payload.get("layout_line_mode") or "gap_fill").strip().lower()
+    allow_qty_only = layout_mode == "primary" or document_has_qty_only_table(text, ocr_payload)
+    items = resolve_line_items_for_strategy(
+        ocr_payload,
+        layout_mode=layout_mode,
+        allow_qty_only=allow_qty_only,
+    )
+    # ignore + empty DI: still surface printed layout grids (money or qty-only).
+    if not items and layout_mode == "ignore":
+        items = resolve_line_items_for_strategy(
+            ocr_payload,
+            layout_mode="primary",
+            allow_qty_only=True,
+        )
 
     kv = layout_kv or {}
     if isinstance(ocr_payload.get("layout_kv"), dict):
@@ -273,7 +288,7 @@ def invoice_data_from_layout_payload(
         extracted_fields=extracted,
         po_reference=extracted.get("po_reference"),
         so_reference=extracted.get("so_reference"),
-        allow_qty_only=layout_mode == "primary",
+        allow_qty_only=allow_qty_only or layout_mode in {"primary", "ignore"},
     )
 
     field_sources = {

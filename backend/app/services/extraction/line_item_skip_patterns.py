@@ -26,6 +26,7 @@ HEADER_DEDUP_EXTRACTED_FIELD_KEYS: tuple[str, ...] = (
 )
 
 # Optional prefix for money columns in OCR line-item rows (shared with frontend invoicePreview.ts).
+from app.services.extraction.line_item_header_vocab import TABLE_HEADER_CELL_RE as _TABLE_HEADER  # noqa: E402
 from app.services.extraction.locale_vocab import OPTIONAL_CURRENCY_MONEY_PREFIX  # noqa: E402,F401
 
 __all__ = (
@@ -42,7 +43,7 @@ _HEADER_LABEL_TOKEN = (
     r"po\s*(?:no|number|reference)?|order\s*(?:no|number)?|so\s*(?:no|number|reference)?|"
     r"bill(?:ed)?\s*to|ship\s*to|vendor|supplier|abn|gstin|bsb|account\s*(?:no|number|name)?|"
     r"payment\s*terms|due\s*date|date\s*paid|receipt\s*(?:no|number)?|"
-    r"consignment|permit|cost\s*cent(?:er|re)|"
+    r"consignment|permit|cost\s*cent(?:er|re)|currency|ccy|curr|"
     r"phone|tel(?:ephone)?(?:\s*no\.?)?|mobile|email|fax|address|attn|attention|"
     r"bank(?:\s*name)?|swift|iban|remittance|page\s*\d+(?:\s*of\s*\d+)?"
 )
@@ -69,15 +70,10 @@ _METADATA_LABEL_VALUE_SPACE = re.compile(
     r"ship\s*to|bill(?:ed)?\s*to|"
     r"due\s*date|delivery\s*date|ship(?:ped)?\s*date|"
     r"payment\s*terms|abn|gstin|bsb|"
+    r"currency|ccy|curr|"
+    r"cost\s*cent(?:er|re)|"
     r"account\s*(?:no|number|name)"
     r")\s*(?:-+|\s+)\S",
-    re.I,
-)
-
-# Bare table header cells that still look like product rows when joined.
-_TABLE_HEADER = re.compile(
-    r"^(?:description|item(?:\s*description)?|product|qty|quantity|unit\s*price|amount|rate|uom|sku|"
-    r"hs\s*code|country\s*of\s*origin|net\s*weight|gross\s*weight)\s*:?\s*$",
     re.I,
 )
 
@@ -94,7 +90,12 @@ _SUMMARY_MONEY_FOOTER = re.compile(
     r"amount\s*(?:due|payable)|"
     r"balance\s*(?:due|owing)|"
     r"net\s*(?:payable|amount|total)|"
-    r"(?:gst|tax)\s*(?:amount|total)?"
+    r"(?:gst|tax)\s*(?:amount|total)?|"
+    # Tax / adjustment footers (label ± amount) — not product rows
+    r"(?:[csi]?gst|igst|utgst|vat|cess)\s*@\s*[\d.]+%?|"
+    r"round\s*off|"
+    r"taxable\s*(?:amount|value)|"
+    r"(?:freight|discount)\s*totals?"
     r")\b"
     r"(?:\s*:?\s*\$?\s*[\d,]+\.?\d*)?\s*$",
     re.I,
@@ -117,6 +118,21 @@ def is_summary_line_description(desc: str | None) -> bool:
     if re.match(r"^(?:grand\s+)?totals?\s*:?\s*$", text, re.I):
         return True
     if re.match(r"^(?:gst|tax)\s*:?\s*$", text, re.I):
+        return True
+    # CGST/SGST/IGST/CESS rate or bare tax labels (label only or label + amount).
+    if re.match(
+        r"^(?:[csi]?gst|igst|utgst|vat|cess)(?:\s*@\s*[\d.]+%?)?"
+        r"(?:\s*:?\s*\$?\s*[\d,]+\.?\d*)?$",
+        text,
+        re.I,
+    ):
+        return True
+    if re.match(
+        r"^(?:round\s*off|taxable\s*(?:amount|value)|(?:freight|discount)\s*totals?)"
+        r"(?:\s*:?\s*\$?\s*[\d,]+\.?\d*)?$",
+        text,
+        re.I,
+    ):
         return True
     if re.search(r"\b(?:total\s+no\.?\s+of\s+pallet|no\.?\s+of\s+pallet|pallet\s*:)\b", text, re.I):
         return True
@@ -151,7 +167,7 @@ def is_metadata_line_description(desc: str | None) -> bool:
         return True
     # Multi-cell OCR header bleed: "Description Qty Unit Price Amount"
     if re.match(
-        r"^(?:description|item|product)\b.+\b(?:qty|quantity|amount|unit\s*price|rate)\b",
+        r"^(?:description|item|product|name|particulars?)\b.+\b(?:qty|quantity|amount|unit\s*price|rate|accepted)\b",
         text,
         re.I,
     ) and len(text.split()) <= 10:

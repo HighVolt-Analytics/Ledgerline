@@ -27,11 +27,28 @@ def _label_variants(key: str) -> list[str]:
     return out
 
 
+def _value_after_label_match(body: str, match: re.Match[str]) -> str:
+    """Take same-line value, or the next non-empty line when labels are newline-KV."""
+    same_line = (match.group(1) or "").strip().splitlines()[0].strip()
+    if same_line:
+        return same_line[:_MAX_VALUE_LEN]
+    tail = body[match.end() :]
+    for line in tail.splitlines():
+        token = line.strip()
+        if token:
+            return token[:_MAX_VALUE_LEN]
+    return ""
+
+
 def extract_label_value_fields_from_text(
     text: str | None,
     keys: Sequence[str],
 ) -> dict[str, str]:
-    """Best-effort label: value extraction for configured field keys."""
+    """Best-effort label: value extraction for configured field keys.
+
+    Supports ``Label: value``, ``Label - value``, and newline forms:
+    ``Label\\nvalue`` (common in Azure layout OCR).
+    """
     if not text or not str(text).strip() or not keys:
         return {}
     body = str(text)
@@ -41,11 +58,14 @@ def extract_label_value_fields_from_text(
         if not key or key in found:
             continue
         for label in _label_variants(key):
-            pattern = re.compile(rf"(?i){re.escape(label)}\s*[:\-]\s*(.+)", re.M)
+            # Optional delimiter; capture rest of line (may be empty for newline KV).
+            pattern = re.compile(
+                rf"(?im)^[ \t]*{re.escape(label)}\s*[:\-]?\s*(.*)$"
+            )
             match = pattern.search(body)
             if not match:
                 continue
-            value = match.group(1).strip().splitlines()[0].strip()[:_MAX_VALUE_LEN]
+            value = _value_after_label_match(body, match)
             if value:
                 found[key] = value
                 break

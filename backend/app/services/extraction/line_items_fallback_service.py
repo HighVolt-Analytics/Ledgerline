@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from decimal import Decimal
 
 from app.services.extraction.line_items_sanitizer import sanitize_line_items
 from app.services.invoice.invoice_data import InvoiceData, ParsedLineItem
-from app.services.shared.amount_sanity import plausible_money
 
 FALLBACK_STRUCTURED = "fallback_structured"
 FALLBACK_GRN_QTY = "fallback_grn_qty"
@@ -109,56 +107,14 @@ def _grn_qty_fallback(parsed: InvoiceData, text: str) -> list[ParsedLineItem]:
     return _usable_rows(tagged, parsed=parsed, allow_qty_only=True)
 
 
-def _header_amount(parsed: InvoiceData) -> Decimal | None:
-    subtotal = plausible_money(parsed.subtotal)
-    if subtotal is not None and subtotal > 0:
-        return subtotal
-    total = plausible_money(parsed.total)
-    gst = plausible_money(parsed.gst) or Decimal("0")
-    if total is not None and total > 0:
-        derived = total - gst
-        if derived > 0:
-            return derived
-    return None
-
-
 def _header_lump_sum_fallback(parsed: InvoiceData) -> list[ParsedLineItem]:
-    from app.services.extraction.line_items_parser import (
-        document_has_line_item_table,
-        document_has_qty_only_table,
-    )
+    """Disabled under grounded-only policy.
 
-    text = (parsed.document_text or "").strip()
-    if text and (
-        document_has_line_item_table(text, {})
-        or document_has_qty_only_table(text, {})
-    ):
-        return []
-
-    amount = _header_amount(parsed)
-    if amount is None or amount <= 0:
-        return []
-
-    description = (parsed.document_heading or "").strip()
-    if not description:
-        description = (parsed.vendor or "").strip()
-    if description:
-        description = f"{description} — goods/services"
-    else:
-        description = "Invoice line"
-
-    qty = Decimal("1")
-    unit_price = plausible_money(amount)
-    return [
-        ParsedLineItem(
-            description=description,
-            qty=qty,
-            unit_price=unit_price,
-            amount=unit_price,
-            source=FALLBACK_HEADER,
-            source_confidence=0.5,
-        )
-    ]
+    Synthesizing qty=1 and unit_price=amount from header totals invents line
+    fields that were not printed as line items. Leave line_items empty instead.
+    """
+    _ = parsed
+    return []
 
 
 def _bundle_role(dt_definition: object | None) -> str:
