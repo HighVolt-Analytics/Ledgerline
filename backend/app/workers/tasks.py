@@ -267,6 +267,7 @@ async def run_pipeline(
     ingested = 0
     message_ids: list[str] = []
     preskip: dict[str, str] = {}
+    message_mailboxes: dict[str, str] = {}
 
     if mailbox_id is not None:
         async with db_session_with_rls(tenant_id) as session:
@@ -276,12 +277,14 @@ async def run_pipeline(
             ingested = ingest_result.ingested_count
             message_ids = ingest_result.message_ids
             preskip = ingest_result.preskip_exceptions
+            message_mailboxes = ingest_result.message_mailbox_emails
     elif poll_inbox:
         async with db_session_with_rls(tenant_id) as session:
             ingest_result = await poll_all_and_ingest(session, tenant_id=tenant_id)
             ingested = ingest_result.ingested_count
             message_ids = ingest_result.message_ids
             preskip = ingest_result.preskip_exceptions
+            message_mailboxes = ingest_result.message_mailbox_emails
     else:
         ingest_result = EmailIngestResult()
 
@@ -298,6 +301,7 @@ async def run_pipeline(
                 message_ids,
                 tenant_id=tenant_id,
                 preskip_exceptions=preskip,
+                message_mailbox_emails=message_mailboxes,
             )
             logger.info("graph_messages_finalized", moved=moved, total=len(message_ids))
 

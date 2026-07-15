@@ -22,6 +22,15 @@ def _inject_correlation_id(
 
 
 def configure_logging(level: str = "INFO") -> None:
+    # Windows consoles often default to cp1252; emoji in email subjects must not
+    # crash mailbox ingest when structlog prints JSON to stdout.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
     logging.basicConfig(format="%(message)s", stream=sys.stdout)
     structlog.configure(
         processors=[

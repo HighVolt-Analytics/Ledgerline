@@ -13,8 +13,10 @@ _ALLOWED_SUFFIX = {".pdf", ".jpg", ".jpeg", ".png", ".docx"}
 
 
 def _is_invoice_attachment(att: EmailAttachment) -> bool:
-    mime = att.content_type.split(";")[0].strip().lower()
-    name = att.filename.lower()
+    mime = (att.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    name = (att.filename or "").lower()
+    if not name:
+        return False
     suffix = Path(name).suffix.lower()
 
     is_pdf = mime in _PDF_MIME or suffix == ".pdf"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from app.config import get_settings
+from app.services.ingest.gmail_oauth_service import gmail_oauth_configured
 from app.services.ingest.graph_client import is_graph_enabled
 from app.utils.logger import get_logger
 from app.workers.tasks import run_pipeline
@@ -84,15 +85,25 @@ async def _poll_loop() -> None:
             raise
 
 
+def _mailbox_polling_configured() -> bool:
+    """True when Outlook (Graph) and/or Gmail OAuth credentials are available."""
+    return is_graph_enabled() or gmail_oauth_configured()
+
+
 def start_inline_mailbox_poller() -> asyncio.Task[None] | None:
-    """Start periodic Graph inbox polling for local / sync-processing deployments."""
+    """Start periodic inbox polling for local / sync-processing deployments."""
     global _poll_task, _shutting_down
 
     settings = get_settings()
     if not settings.sync_processing:
         return None
-    if not is_graph_enabled():
-        logger.info("inline_mailbox_poller_skipped", reason="graph_not_configured")
+    if not _mailbox_polling_configured():
+        logger.info(
+            "inline_mailbox_poller_skipped",
+            reason="no_mailbox_provider_configured",
+            graph_enabled=is_graph_enabled(),
+            gmail_configured=gmail_oauth_configured(),
+        )
         return None
     if _poll_task is not None and not _poll_task.done():
         return _poll_task
@@ -102,6 +113,8 @@ def start_inline_mailbox_poller() -> asyncio.Task[None] | None:
     logger.info(
         "inline_mailbox_poller_started",
         interval_minutes=settings.graph_poll_interval_minutes,
+        graph_enabled=is_graph_enabled(),
+        gmail_configured=gmail_oauth_configured(),
     )
     return _poll_task
 

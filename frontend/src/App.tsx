@@ -9,17 +9,37 @@ import { TenantRoute } from "@/components/TenantRoute";
 import { PageLoader, type PageLoaderVariant } from "@/components/PageLoader";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { getRouterBasename } from "@/lib/routerBasename";
-import { DashboardPage } from "@/pages/DashboardPage";
-import { LoginPage } from "@/pages/LoginPage";
-import { LoginOauthCallbackPage } from "@/pages/LoginOauthCallbackPage";
-import { ForgotPasswordPage } from "@/pages/ForgotPasswordPage";
-import { ResetPasswordPage } from "@/pages/ResetPasswordPage";
-import { SignupPage } from "@/pages/SignupPage";
 import { ALL_PUBLIC_SIGNUP_PATHS } from "@/lib/publicSignupRoutes";
-import { SuperAdminEmbedPage } from "@/pages/SuperAdminEmbedPage";
-import { AcceptInvitePage } from "@/pages/AcceptInvitePage";
-import { OnboardingPage } from "@/pages/OnboardingPage";
 
+const DashboardPage = lazy(() =>
+  import("@/pages/DashboardPage").then((m) => ({ default: m.DashboardPage }))
+);
+const LoginPage = lazy(() =>
+  import("@/pages/LoginPage").then((m) => ({ default: m.LoginPage }))
+);
+const LoginOauthCallbackPage = lazy(() =>
+  import("@/pages/LoginOauthCallbackPage").then((m) => ({
+    default: m.LoginOauthCallbackPage,
+  }))
+);
+const ForgotPasswordPage = lazy(() =>
+  import("@/pages/ForgotPasswordPage").then((m) => ({ default: m.ForgotPasswordPage }))
+);
+const ResetPasswordPage = lazy(() =>
+  import("@/pages/ResetPasswordPage").then((m) => ({ default: m.ResetPasswordPage }))
+);
+const SignupPage = lazy(() =>
+  import("@/pages/SignupPage").then((m) => ({ default: m.SignupPage }))
+);
+const SuperAdminEmbedPage = lazy(() =>
+  import("@/pages/SuperAdminEmbedPage").then((m) => ({ default: m.SuperAdminEmbedPage }))
+);
+const AcceptInvitePage = lazy(() =>
+  import("@/pages/AcceptInvitePage").then((m) => ({ default: m.AcceptInvitePage }))
+);
+const OnboardingPage = lazy(() =>
+  import("@/pages/OnboardingPage").then((m) => ({ default: m.OnboardingPage }))
+);
 const ApprovalsPage = lazy(() =>
   import("@/pages/ApprovalsPage").then((m) => ({ default: m.ApprovalsPage }))
 );
@@ -131,16 +151,73 @@ export default function App() {
   return (
     <BrowserRouter basename={routerBasename}>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/login/oauth/callback" element={<LoginOauthCallbackPage />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route
+          path="/login"
+          element={
+            <LazyPage>
+              <LoginPage />
+            </LazyPage>
+          }
+        />
+        <Route
+          path="/login/oauth/callback"
+          element={
+            <LazyPage>
+              <LoginOauthCallbackPage />
+            </LazyPage>
+          }
+        />
+        <Route
+          path="/forgot-password"
+          element={
+            <LazyPage>
+              <ForgotPasswordPage />
+            </LazyPage>
+          }
+        />
+        <Route
+          path="/reset-password"
+          element={
+            <LazyPage>
+              <ResetPasswordPage />
+            </LazyPage>
+          }
+        />
         {ALL_PUBLIC_SIGNUP_PATHS.map((path) => (
-          <Route key={path} path={path} element={<SignupPage />} />
+          <Route
+            key={path}
+            path={path}
+            element={
+              <LazyPage>
+                <SignupPage />
+              </LazyPage>
+            }
+          />
         ))}
-        <Route path="/platform/embed" element={<SuperAdminEmbedPage />} />
-        <Route path="/accept-invite" element={<AcceptInvitePage />} />
-        <Route path="/setup" element={<SignupPage />} />
+        <Route
+          path="/platform/embed"
+          element={
+            <LazyPage>
+              <SuperAdminEmbedPage />
+            </LazyPage>
+          }
+        />
+        <Route
+          path="/accept-invite"
+          element={
+            <LazyPage>
+              <AcceptInvitePage />
+            </LazyPage>
+          }
+        />
+        <Route
+          path="/setup"
+          element={
+            <LazyPage>
+              <SignupPage />
+            </LazyPage>
+          }
+        />
         <Route
           path="/connect-mailbox"
           element={
@@ -153,10 +230,24 @@ export default function App() {
         {/* Tenant app — hidden from super admins */}
         <Route path="/" element={<ProtectedRoute />}>
           <Route element={<TenantRoute />}>
-            <Route path="onboarding" element={<OnboardingPage />} />
+            <Route
+              path="onboarding"
+              element={
+                <LazyPage>
+                  <OnboardingPage />
+                </LazyPage>
+              }
+            />
             <Route element={<OnboardingGate />}>
             <Route element={<Layout />}>
-            <Route index element={<DashboardPage />} />
+            <Route
+              index
+              element={
+                <LazyPage>
+                  <DashboardPage />
+                </LazyPage>
+              }
+            />
             <Route path="inbox" element={<Navigate to="/upload" replace />} />
             <Route
               path="upload"

@@ -1,15 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { Inbox, Layers, Loader2, Scale } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { PageLoader } from "@/components/PageLoader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { Card } from "@/components/ui/card";
-import { DocumentTypesTab } from "@/components/rule-book/DocumentTypesTab";
-import { AiClassificationSettingsPanel } from "@/components/rule-book/AiClassificationSettingsPanel";
-import { IngestionTab } from "@/components/rule-book/IngestionTab";
-import { DocumentSetsPanel } from "@/components/rule-book/DocumentSetsPanel";
-import { PostingDefaultsPanel } from "@/components/rule-book/PostingDefaultsPanel";
 import { useToast } from "@/context/ToastContext";
 import { useAuth } from "@/context/AuthContext";
 import { useRuleBookConfig, useDeleteRuleBookDocumentType, useSaveRuleBookConfig } from "@/hooks/useRuleBookConfig";
@@ -21,6 +16,32 @@ import {
   shouldApplyRuleBookSaveResponse,
 } from "@/lib/ruleBookSave";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
+
+const AiClassificationSettingsPanel = lazy(() =>
+  import("@/components/rule-book/AiClassificationSettingsPanel").then((m) => ({
+    default: m.AiClassificationSettingsPanel,
+  }))
+);
+const DocumentTypesTab = lazy(() =>
+  import("@/components/rule-book/DocumentTypesTab").then((m) => ({
+    default: m.DocumentTypesTab,
+  }))
+);
+const IngestionTab = lazy(() =>
+  import("@/components/rule-book/IngestionTab").then((m) => ({
+    default: m.IngestionTab,
+  }))
+);
+const DocumentSetsPanel = lazy(() =>
+  import("@/components/rule-book/DocumentSetsPanel").then((m) => ({
+    default: m.DocumentSetsPanel,
+  }))
+);
+const PostingDefaultsPanel = lazy(() =>
+  import("@/components/rule-book/PostingDefaultsPanel").then((m) => ({
+    default: m.PostingDefaultsPanel,
+  }))
+);
 
 const RULEBOOK_TABS = [
   { value: "ingestion", label: "Ingestion", testid: "tab-ingestion", icon: Inbox },
@@ -271,6 +292,7 @@ export function RulesPage() {
       />
 
       <div className={!canEdit ? "pointer-events-none opacity-90" : undefined}>
+      <Suspense fallback={<PageLoader variant="rules" />}>
       <PageTabPanel value="document-types" active={tab} className="mt-0">
         <AiClassificationSettingsPanel
           value={
@@ -327,6 +349,7 @@ export function RulesPage() {
           onChange={(documentSets) => patch({ documentSets })}
         />
       </PageTabPanel>
+      </Suspense>
       </div>
     </div>
   );

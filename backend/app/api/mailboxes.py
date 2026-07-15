@@ -219,6 +219,12 @@ async def create_mailbox_connection_invite(
         )
     if ctx.user_id is None:
         raise HTTPException(401, "Sign in to send invitations")
+    from app.services.credit_service import PlanFeatureBlockedError, assert_can_ingest_via_channel
+
+    try:
+        await assert_can_ingest_via_channel(db, ctx.tenant_id, channel="email")
+    except PlanFeatureBlockedError as exc:
+        raise HTTPException(403, str(exc)) from exc
     actor_name, actor_email = await actor_from_context(db, ctx)
     try:
         result = await create_mailbox_connection_request(

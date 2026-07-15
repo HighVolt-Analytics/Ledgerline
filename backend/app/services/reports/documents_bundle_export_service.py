@@ -3,9 +3,9 @@
 Matrix layout (one row per transactional posting anchor invoice):
 
 Fixed columns
-    Class, Posting, DT type, Invoice date, Counterparty, Total, Currency, Linkage,
-    PO reference, SO reference, Invoice no. (vault hyperlink), Status,
-    Timestamp, Uploaded by, Source, 2/3/Universal match flags.
+    Timestamp, Uploaded by, Source, DT type, Invoice date,
+    Counterparty, Total, Currency, Linkage, PO reference, SO reference,
+    Invoice no. (vault hyperlink), Universal match.
 
 Dynamic DT columns (org-configured document types from rule book)
     One column per document type the organisation has defined in rule book
@@ -73,8 +73,9 @@ _BUNDLE_EXPORT_STATUSES = frozenset({
 })
 
 _FIXED_COLUMNS = [
-    "Class",
-    "Posting",
+    "Timestamp",
+    "Uploaded by",
+    "Source",
     "DT type",
     "Invoice date",
     "Counterparty",
@@ -84,16 +85,10 @@ _FIXED_COLUMNS = [
     "PO reference",
     "SO reference",
     "Invoice no.",
-    "Status",
-    "Timestamp",
-    "Uploaded by",
-    "Source",
-    "2 way match",
-    "3 way match",
     "Universal match",
 ]
 
-_MATCH_COLUMNS = frozenset({"2 way match", "3 way match", "Universal match"})
+_MATCH_COLUMNS = frozenset({"Universal match"})
 
 _TITLE_FILL = PatternFill("solid", fgColor="1F6E7A")
 _TITLE_FONT = Font(color="FFFFFF", bold=True, size=14)
@@ -409,9 +404,7 @@ def build_documents_bundle_row(
     cell_format: BundleCellFormat = "excel",
     upload_actor: str | None = None,
 ) -> list[str]:
-    klass = (definition.klass if definition else "").strip() or ""
-    posting = (definition.posting if definition else "").strip() or ""
-    two_way, three_way, universal = _match_flags(linked)
+    _, _, universal = _match_flags(linked)
     by_dt = bundle_dt_cells_by_code(
         invoice.id,
         linked,
@@ -421,8 +414,9 @@ def build_documents_bundle_row(
     )
 
     row: list[str] = [
-        klass,
-        posting,
+        _timestamp_label(invoice),
+        _uploaded_by_label(invoice, upload_actor=upload_actor),
+        _source_label(invoice),
         _dt_type_label(definition),
         _invoice_date_label(invoice),
         (invoice.vendor or "").strip(),
@@ -432,12 +426,6 @@ def build_documents_bundle_row(
         (invoice.po_reference or "").strip(),
         (invoice.so_reference or "").strip(),
         _invoice_no_cell(invoice, cell_format=cell_format),
-        (invoice.status.value if invoice.status is not None else "").strip(),
-        _timestamp_label(invoice),
-        _uploaded_by_label(invoice, upload_actor=upload_actor),
-        _source_label(invoice),
-        two_way,
-        three_way,
         universal,
     ]
     row.extend(by_dt.get(code, "") for code in dt_codes)

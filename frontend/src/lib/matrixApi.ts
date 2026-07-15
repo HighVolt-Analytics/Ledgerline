@@ -13,23 +13,48 @@ export function sortMatrixRowsNewestFirst(rows: MatrixRow[]): MatrixRow[] {
   return [...rows].sort((a, b) => (order.get(a.invoice.id) ?? 0) - (order.get(b.invoice.id) ?? 0));
 }
 
+type MatrixFetchKey = string;
+const matrixFetchInflight = new Map<MatrixFetchKey, Promise<MatrixRow[]>>();
+
+function matrixFetchKey(fresh: boolean, params: Record<string, string>): MatrixFetchKey {
+  return `${fresh ? "fresh" : "cache"}:${JSON.stringify(params)}`;
+}
+
+/** Fetch every matrix page; remaining pages load in parallel after page 1. */
 export async function fetchAllMatrixRows(
   fresh = false,
   params: Record<string, string> = {}
 ): Promise<MatrixRow[]> {
-  const all: MatrixRow[] = [];
-  let page = 1;
-  let pages = 1;
-  do {
-    const res = await api.getMatrixWithMeta(
-      { page: String(page), page_size: DEFAULT_PAGE_SIZE, ...params },
-      { fresh: fresh && page === 1 }
+  const key = matrixFetchKey(fresh, params);
+  const existing = matrixFetchInflight.get(key);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const first = await api.getMatrixWithMeta(
+      { page: "1", page_size: DEFAULT_PAGE_SIZE, ...params },
+      { fresh }
     );
-    all.push(...res.data);
-    pages = res.meta.pages ?? 1;
-    page += 1;
-  } while (page <= pages);
-  return all;
+    const pages = first.meta.pages ?? 1;
+    if (pages <= 1) return first.data;
+
+    const rest = await Promise.all(
+      Array.from({ length: pages - 1 }, (_, i) =>
+        api.getMatrixWithMeta({
+          page: String(i + 2),
+          page_size: DEFAULT_PAGE_SIZE,
+          ...params,
+        })
+      )
+    );
+    return [...first.data, ...rest.flatMap((r) => r.data)];
+  })();
+
+  matrixFetchInflight.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    matrixFetchInflight.delete(key);
+  }
 }
 
 function actorFromDetail(detail?: string | null): string {

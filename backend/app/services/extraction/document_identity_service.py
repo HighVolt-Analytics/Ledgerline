@@ -101,7 +101,9 @@ def normalize_identity_value(key: str, value: str) -> str:
     if key in {"total", "subtotal", "gst"}:
         return _normalize_money(text)
     if key == "vendor":
-        return normalize_vendor_name(text).lower()
+        # normalize_vendor_name returns None for implausible labels (BUYER, dates, etc.)
+        vendor = normalize_vendor_name(text)
+        return vendor.lower() if vendor else ""
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 

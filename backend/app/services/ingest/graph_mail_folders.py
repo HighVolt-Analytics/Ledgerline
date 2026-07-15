@@ -159,16 +159,19 @@ async def finalize_graph_messages(
     *,
     tenant_id: str | int | None = None,
     preskip_exceptions: dict[str, str] | None = None,
+    message_mailbox_emails: dict[str, str] | None = None,
 ) -> int:
     """
     After pipeline run, move each polled message to Processed or Exceptions.
 
     preskip_exceptions: message_id → reason for emails skipped before ingest (no PDF).
+    message_mailbox_emails: message_id → mailbox used during poll (for preskips).
     """
     if not message_ids:
         return 0
 
     preskip = preskip_exceptions or {}
+    mailbox_by_message = message_mailbox_emails or {}
     moved = 0
     settings = get_settings()
     scoped_tenant_id = parse_tenant_id(tenant_id)
@@ -183,7 +186,10 @@ async def finalize_graph_messages(
             outcome: FolderOutcome = "exception"
             reason = preskip[message_id]
             invoice_ids: list[int] = []
-            mailbox_email = get_settings().graph_mailbox.strip()
+            mailbox_email = (
+                (mailbox_by_message.get(message_id) or "").strip()
+                or get_settings().graph_mailbox.strip()
+            )
         else:
             stmt = select(Invoice).where(Invoice.email_message_id == message_id)
             if scoped_tenant_id is not None:
@@ -193,7 +199,10 @@ async def finalize_graph_messages(
             statuses = [r.status for r in rows]
             outcome = classify_message_outcome(statuses)
             reason = "invoice_status" if rows else "no_invoices_ingested"
-            mailbox_email = get_settings().graph_mailbox.strip()
+            mailbox_email = (
+                (mailbox_by_message.get(message_id) or "").strip()
+                or get_settings().graph_mailbox.strip()
+            )
             if rows and rows[0].connected_mailbox_id:
                 mb = await session.get(ConnectedMailbox, rows[0].connected_mailbox_id)
                 if mb:
@@ -204,9 +213,12 @@ async def finalize_graph_messages(
             mb_row = await session.get(ConnectedMailbox, rows[0].connected_mailbox_id)
         elif mailbox_email:
             stmt = select(ConnectedMailbox).where(ConnectedMailbox.email == mailbox_email)
-            if rows:
+            # Same mailbox email can exist on multiple tenants — always scope.
+            if scoped_tenant_id is not None:
+                stmt = stmt.where(ConnectedMailbox.tenant_id == scoped_tenant_id)
+            elif rows:
                 stmt = stmt.where(ConnectedMailbox.tenant_id == rows[0].tenant_id)
-            mb_row = (await session.execute(stmt)).scalar_one_or_none()
+            mb_row = (await session.execute(stmt)).scalars().first()
         if mb_row and mb_row.is_pollable:
             try:
                 access_token = await resolve_mailbox_access_token(session, mb_row)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Ban, Check, Clock, Minus, RefreshCw } from "lucide-react";
 import type { Invoice, MatrixRow } from "@/api/types";
@@ -10,7 +10,6 @@ import { MatrixFlagBadge } from "@/components/matrix/MatrixFlagBadge";
 import { MatrixFlagDrawer } from "@/components/matrix/MatrixFlagDrawer";
 import { MatrixPaymentBadge } from "@/components/matrix/MatrixPaymentBadge";
 import { MatrixStageCell } from "@/components/matrix/MatrixStageCell";
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { Button } from "@/components/ui/button";
 import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
@@ -43,6 +42,12 @@ import {
   handleTenantScopedLoadFailure,
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
+
+const InvoiceDetailDrawer = lazy(() =>
+  import("@/components/InvoiceDetailDrawer").then((m) => ({
+    default: m.InvoiceDetailDrawer,
+  }))
+);
 
 const MATRIX_POLL_MS = 15_000;
 const MATRIX_POLL_FAST_MS = 4_000;
@@ -774,15 +779,17 @@ export function DocumentMatrixPanel({
             }}
           />
 
-          <InvoiceDetailDrawer
-            invoiceId={drawerInvoiceId}
-            open={drawerOpen}
-            onClose={() => {
-              setDrawerOpen(false);
-              setDrawerInvoiceId(null);
-            }}
-            onUpdated={() => void load({ silent: true, fresh: true })}
-          />
+          <Suspense fallback={null}>
+            <InvoiceDetailDrawer
+              invoiceId={drawerInvoiceId}
+              open={drawerOpen}
+              onClose={() => {
+                setDrawerOpen(false);
+                setDrawerInvoiceId(null);
+              }}
+              onUpdated={() => void load({ silent: true, fresh: true })}
+            />
+          </Suspense>
         </>
       ) : null}
     </div>

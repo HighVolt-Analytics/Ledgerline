@@ -79,6 +79,13 @@ def test_amount_normalized_to_two_dp() -> None:
     assert normalize_identity_value("total", "$99.00") == "99.00"
 
 
+def test_normalize_identity_vendor_skips_implausible_labels() -> None:
+    """Implausible OCR vendor labels must not crash fingerprinting with None.lower()."""
+    assert normalize_identity_value("vendor", "BUYER") == ""
+    assert normalize_identity_value("vendor", "01/07/2026") == ""
+    assert normalize_identity_value("vendor", "Acme Trading Pty Ltd") == "acme trading"
+
+
 def test_dates_within_tolerance_calendar_days() -> None:
     a = date(2026, 7, 1)
     b = date(2026, 7, 8)

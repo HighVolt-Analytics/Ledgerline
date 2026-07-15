@@ -22,11 +22,27 @@ def _gmail_get(path: str, *, access_token: str, params: dict[str, str] | None = 
     url = f"{GMAIL_API}{path}"
     with httpx.Client(timeout=30.0) as client:
         response = client.get(
-            url,
             headers={"Authorization": f"Bearer {access_token}"},
             params=params or {},
+            url=url,
         )
-        response.raise_for_status()
+        if response.is_error:
+            detail = ""
+            try:
+                payload = response.json()
+                err = payload.get("error") if isinstance(payload, dict) else None
+                if isinstance(err, dict):
+                    detail = str(err.get("message") or err.get("status") or "").strip()
+            except Exception:
+                detail = (response.text or "").strip()[:240]
+            if response.status_code in {401, 403}:
+                raise RuntimeError(
+                    "Gmail access denied (HTTP "
+                    f"{response.status_code}). Reconnect the mailbox and ensure the "
+                    "Gmail API is enabled for the Google Cloud project"
+                    + (f": {detail}" if detail else ".")
+                )
+            response.raise_for_status()
         return response.json()
 
 

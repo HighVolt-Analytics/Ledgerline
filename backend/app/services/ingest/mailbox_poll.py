@@ -103,6 +103,21 @@ async def _ingest_mailbox(
     if not org:
         return EmailIngestResult()
 
+    from app.services.credit_service import PlanFeatureBlockedError, assert_can_ingest_via_channel
+
+    try:
+        await assert_can_ingest_via_channel(session, mb.tenant_id, channel="email")
+    except PlanFeatureBlockedError as exc:
+        mb.last_error = str(exc)[:500]
+        mb.last_poll_at = datetime.now(timezone.utc)
+        logger.warning(
+            "poll_mailbox_plan_blocked",
+            mailbox=mb.email,
+            tenant_id=str(mb.tenant_id),
+            error=str(exc),
+        )
+        return EmailIngestResult()
+
     try:
         access_token = await resolve_mailbox_access_token(session, mb)
     except Exception as exc:
@@ -122,6 +137,7 @@ async def _ingest_mailbox(
             mark_processed_only_if_ingested=True,
         )
         mb.last_poll_at = datetime.now(timezone.utc)
+        mb.last_error = None
         logger.info(
             "poll_mailbox_ingest_done",
             tenant_id=str(mb.tenant_id),
@@ -134,9 +150,25 @@ async def _ingest_mailbox(
         )
         return result
     except Exception as exc:
+        error_text = str(exc)[:500]
+        lowered = error_text.lower()
+        auth_failure = (
+            "403" in lowered
+            or "401" in lowered
+            or "forbidden" in lowered
+            or "unauthorized" in lowered
+            or "access denied" in lowered
+        )
         logger.warning("poll_mailbox_ingest_failed", mailbox=mb.email, error=str(exc))
         await _recover_poll_session_if_needed(session, mb.tenant_id)
-        raise
+        refreshed = await session.get(ConnectedMailbox, mb.id)
+        if refreshed is not None:
+            refreshed.last_error = error_text
+            if auth_failure:
+                from app.models.connected_mailbox import STATUS_ERROR
+
+                refreshed.connection_status = STATUS_ERROR
+        return EmailIngestResult()
 
 
 async def poll_all_and_ingest(
@@ -191,6 +223,7 @@ async def poll_all_and_ingest(
         merged.ingested_count += result.ingested_count
         merged.message_ids.extend(result.message_ids)
         merged.preskip_exceptions.update(result.preskip_exceptions)
+        merged.message_mailbox_emails.update(result.message_mailbox_emails)
         known_ids = known_ids | mb_known_ids
 
     logger.info(

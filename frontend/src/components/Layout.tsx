@@ -31,10 +31,8 @@ import { ProfileSidebarMenu } from "@/components/ProfileSidebarMenu";
 import { SettingsSidebarMenu } from "@/components/SettingsSidebarMenu";
 import { useAuth } from "@/context/AuthContext";
 import { useNavBadges } from "@/hooks/useNavBadges";
-import { useCollections } from "@/hooks/useCollections";
 import { canAccessNavPath, usePermissions } from "@/hooks/usePermissions";
 import type { FlatNavItem } from "@/lib/appNavigation";
-import { collectionsOpenCount } from "@/lib/collectionsQueue";
 import { canAccessModulePath } from "@/lib/tenantModules";
 import { queryClient, queryKeys } from "@/lib/queryClient";
 import {
@@ -259,7 +257,6 @@ export function Layout() {
   const { pathname } = useLocation();
   const { user } = useAuth();
   const { data: badges } = useNavBadges();
-  const { data: collectionRows = [] } = useCollections();
   const { permissions } = usePermissions();
   const enabledModules = permissions?.enabled_modules;
 
@@ -274,7 +271,7 @@ export function Layout() {
     business_expenses: badges?.business_expenses_count ?? 0,
     sales: badges?.sales_count ?? 0,
     payments: badges?.payments_queue_count ?? 0,
-    collections: badges?.collections_queue_count ?? collectionsOpenCount(collectionRows),
+    collections: badges?.collections_queue_count ?? 0,
   };
   const [expandedSection, setExpandedSection] = useState<string | null>(() =>
     sectionForPath(pathname)

@@ -285,6 +285,8 @@ class EmailIngestResult:
     ingested_count: int = 0
     message_ids: list[str] = field(default_factory=list)
     preskip_exceptions: dict[str, str] = field(default_factory=dict)
+    # message_id → mailbox email (needed for Graph folder moves on preskips)
+    message_mailbox_emails: dict[str, str] = field(default_factory=dict)
 
 
 logger = get_logger(__name__)
@@ -592,6 +594,8 @@ async def ingest_email_attachments(
 
     for email in emails:
         result.message_ids.append(email.message_id)
+        if email.mailbox_email:
+            result.message_mailbox_emails[email.message_id] = email.mailbox_email
 
         if email.message_id in seen_message_ids:
             logger.info(
@@ -636,6 +640,21 @@ async def ingest_email_attachments(
                 error=str(exc),
             )
             result.preskip_exceptions[email.message_id] = "integrity_error"
+            continue
+        except Exception as exc:
+            # One bad attachment/subject must not abort the rest of the mailbox poll.
+            from app.services.credit_service import PlanFeatureBlockedError
+
+            if isinstance(exc, PlanFeatureBlockedError):
+                raise
+            logger.warning(
+                "email_ingest_message_failed",
+                message_id=email.message_id,
+                mailbox=email.mailbox_email,
+                subject=email.subject,
+                error=str(exc),
+            )
+            result.preskip_exceptions[email.message_id] = "ingest_error"
             continue
 
         seen_message_ids.add(email.message_id)

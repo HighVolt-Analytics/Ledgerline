@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CloudUpload, Mail, Plus, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
@@ -15,7 +15,6 @@ import {
 import { ListSearchInput } from "@/components/ListSearchInput";
 import { MailboxImportDialog } from "@/components/mailboxes/MailboxImportDialog";
 import { EmptyState } from "@/components/EmptyState";
-import { InvoiceDetailDrawer } from "@/components/InvoiceDetailDrawer";
 import { PageHeader } from "@/components/PageHeader";
 import { PageTabs } from "@/components/PageTabs";
 import { DocumentMatrixPanel } from "@/components/upload/DocumentMatrixPanel";
@@ -43,6 +42,12 @@ import {
   UploadViberChannelPanel,
   UploadWhatsappChannelPanel,
 } from "@/components/upload/UploadChannelPanels";
+
+const InvoiceDetailDrawer = lazy(() =>
+  import("@/components/InvoiceDetailDrawer").then((m) => ({
+    default: m.InvoiceDetailDrawer,
+  }))
+);
 import {
   UploadInvoiceMobileRow,
   UploadInvoiceTableRow,
@@ -693,14 +698,16 @@ export function UploadPage() {
             onFiles={(files) => void runUpload(files)}
             onBrowse={() => uploadInputRef.current?.click()}
           />
-          <DocumentMatrixPanel
-            embedded
-            showControls={false}
-            showTable={false}
-            showLegend={false}
-            onFlaggedCount={setMatrixFlagged}
-            refreshRef={matrixRefreshRef}
-          />
+          {viewTab !== "summary" ? (
+            <DocumentMatrixPanel
+              embedded
+              showControls={false}
+              showTable={false}
+              showLegend={false}
+              onFlaggedCount={setMatrixFlagged}
+              refreshRef={matrixRefreshRef}
+            />
+          ) : null}
           <input
             ref={uploadInputRef}
             type="file"
@@ -710,24 +717,24 @@ export function UploadPage() {
             data-testid="input-upload-doc"
             onChange={uploadDocuments}
           />
-          {fetchNotice ? (
-            <Card
-              className="p-3 mb-4 text-xs text-muted-foreground border-dashed"
-              role="status"
-              data-testid="upload-notice"
-            >
-              {fetchNotice}
-            </Card>
-          ) : null}
-          {importJob && (importJob.status === "queued" || importJob.status === "running") && (
-            <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">
-              Importing mail from {importJob.from_date} through today…{" "}
-              {importJob.messages_scanned > 0
-                ? `${importJob.messages_scanned} message(s) scanned`
-                : "scanning mailbox"}
-            </Card>
-          )}
         </>
+      ) : null}
+      {fetchNotice ? (
+        <Card
+          className="p-3 mb-4 text-xs text-muted-foreground border-dashed"
+          role="status"
+          data-testid="upload-notice"
+        >
+          {fetchNotice}
+        </Card>
+      ) : null}
+      {importJob && (importJob.status === "queued" || importJob.status === "running") ? (
+        <Card className="p-3 mb-4 text-xs text-muted-foreground border-dashed">
+          Importing mail from {importJob.from_date} through today…{" "}
+          {importJob.messages_scanned > 0
+            ? `${importJob.messages_scanned} message(s) scanned`
+            : "scanning mailbox"}
+        </Card>
       ) : null}
       {channelTab === "upload" ? (
         <PageTabs
@@ -766,7 +773,21 @@ export function UploadPage() {
             },
           ]}
         />
-      ) : null}      {content}
+      ) : null}
+      {content}
+
+      <ConnectMailboxDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onSendInvite={sendMailboxInvite}
+      />
+      <MailboxImportDialog
+        open={importMailbox != null}
+        mailboxEmail={importMailbox?.email ?? ""}
+        busy={importBusy}
+        onClose={() => setImportMailbox(null)}
+        onSubmit={(payload) => void startHistoricalImport(payload)}
+      />
     </div>
   );
 
@@ -795,7 +816,6 @@ export function UploadPage() {
       <>
         <DocumentMatrixPanel
           embedded
-          showKpis={false}
           onFlaggedCount={setMatrixFlagged}
           onGoUpload={() => setViewTab("detailed")}
           refreshRef={matrixRefreshRef}
@@ -803,38 +823,12 @@ export function UploadPage() {
       </>
     ) : channelTab !== "upload" ? null : (
       <>
-      <ConnectMailboxDialog
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onSendInvite={sendMailboxInvite}
-      />
-
-      <MailboxImportDialog
-        open={importMailbox != null}
-        mailboxEmail={importMailbox?.email ?? ""}
-        busy={importBusy}
-        onClose={() => setImportMailbox(null)}
-        onSubmit={(payload) => void startHistoricalImport(payload)}
-      />
-
       {loading && !showCapturedChrome ? (
         <InlineTableSkeleton rows={8} columns={6} />
       ) : !showCapturedChrome ? (
         <EmptyState
           title="No documents yet"
-          hint={
-            channelTab === "upload"
-              ? "Upload documents from the Upload tab, or capture documents from Email, WhatsApp, or Viber."
-              : "Capture documents from Email, WhatsApp, or Viber. To upload files, switch to the Upload tab."
-          }
-          action={
-            isAdmin ? (
-              <Button size="sm" onClick={() => setAddOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add mailbox
-              </Button>
-            ) : undefined
-          }
+          hint="Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs."
         />
       ) : (
         <Card className="overflow-hidden">
@@ -1000,15 +994,17 @@ export function UploadPage() {
         </Card>
       )}
 
-      <InvoiceDetailDrawer
-        invoiceId={drawerId}
-        open={drawerOpen}
-        onClose={() => {
-          setDrawerOpen(false);
-          setDrawerId(null);
-        }}
-        onUpdated={() => void invalidateUploadInvoiceList(queryClient)}
-      />
+      <Suspense fallback={null}>
+        <InvoiceDetailDrawer
+          invoiceId={drawerId}
+          open={drawerOpen}
+          onClose={() => {
+            setDrawerOpen(false);
+            setDrawerId(null);
+          }}
+          onUpdated={() => void invalidateUploadInvoiceList(queryClient)}
+        />
+      </Suspense>
       </>
     )
   );

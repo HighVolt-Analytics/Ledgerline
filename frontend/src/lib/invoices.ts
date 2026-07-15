@@ -23,36 +23,43 @@ export async function fetchAllInvoices(
   params: Record<string, string> = {}
 ): Promise<Invoice[]> {
   if (fresh) clearGetCache();
-  const all: Invoice[] = [];
-  let page = 1;
-  let pages = 1;
-  do {
-    const res = await api.listInvoicesWithMeta(
-      { page: String(page), page_size: DEFAULT_PAGE_SIZE, ...params },
-      { fresh }
-    );
-    all.push(...res.data);
-    pages = res.meta.pages ?? 1;
-    page += 1;
-  } while (page <= pages);
-  return all;
+  const first = await api.listInvoicesWithMeta(
+    { page: "1", page_size: DEFAULT_PAGE_SIZE, ...params },
+    { fresh }
+  );
+  const pages = first.meta.pages ?? 1;
+  if (pages <= 1) return first.data;
+
+  const rest = await Promise.all(
+    Array.from({ length: pages - 1 }, (_, i) =>
+      api.listInvoicesWithMeta({
+        page: String(i + 2),
+        page_size: DEFAULT_PAGE_SIZE,
+        ...params,
+      })
+    )
+  );
+  return [...first.data, ...rest.flatMap((r) => r.data)];
 }
 
 /** Fetch all approval-queue invoices across pages. */
 export async function fetchAllApprovals(fresh = false): Promise<Invoice[]> {
-  const all: Invoice[] = [];
-  let page = 1;
-  let pages = 1;
-  do {
-    const res = await api.listApprovalsWithMeta(
-      { page: String(page), page_size: DEFAULT_PAGE_SIZE },
-      { fresh }
-    );
-    all.push(...res.data);
-    pages = res.meta.pages ?? 1;
-    page += 1;
-  } while (page <= pages);
-  return all;
+  const first = await api.listApprovalsWithMeta(
+    { page: "1", page_size: DEFAULT_PAGE_SIZE },
+    { fresh }
+  );
+  const pages = first.meta.pages ?? 1;
+  if (pages <= 1) return first.data;
+
+  const rest = await Promise.all(
+    Array.from({ length: pages - 1 }, (_, i) =>
+      api.listApprovalsWithMeta({
+        page: String(i + 2),
+        page_size: DEFAULT_PAGE_SIZE,
+      })
+    )
+  );
+  return [...first.data, ...rest.flatMap((r) => r.data)];
 }
 
 let boardFetchInflight: Promise<Invoice[]> | null = null;

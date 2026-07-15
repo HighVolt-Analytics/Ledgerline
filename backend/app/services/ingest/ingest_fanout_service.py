@@ -457,7 +457,9 @@ async def ingest_file_with_fanout(
     settings = get_settings()
     parent_hash = compute_sha256_bytes(data)
     normalized_type = normalize_purchase_document_type(purchase_document_type)
-    lower_name = filename.lower()
+    safe_filename = (filename or "attachment.bin").strip() or "attachment.bin"
+    filename = safe_filename
+    lower_name = safe_filename.lower()
     content_fingerprint: str | None = None
     business_fingerprint: str | None = None
     identity_fields: dict[str, str] | None = None

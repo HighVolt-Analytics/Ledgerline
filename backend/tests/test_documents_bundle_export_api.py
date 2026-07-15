@@ -138,8 +138,11 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
     assert res.status_code == 200
     assert res.headers.get("x-data-rows") == "1"
     header, data, _ws = _read_xlsx(res.content)
-    assert "2 way match" in header
-    assert "3 way match" in header
+    assert "Class" not in header
+    assert "Posting" not in header
+    assert "Status" not in header
+    assert "2 way match" not in header
+    assert "3 way match" not in header
     assert "Universal match" in header
     assert "Invoice date" in header
     assert "Counterparty" in header
@@ -154,15 +157,11 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
     posting_row = next(
         row for row in data if _invoice_no_from_cell(row[header.index("Invoice no.")]) == "INV-POST-1"
     )
-    assert posting_row[header.index("Class")] == "Transactional"
-    assert posting_row[header.index("Posting")] == "Yes"
-    assert posting_row[header.index("2 way match")] == "No"
-    assert posting_row[header.index("3 way match")] == "No"
     assert posting_row[header.index("Universal match")] == "No"
 
 
-def test_documents_bundle_row_three_way_match_flag() -> None:
-    """Match flags on export rows follow dossier match_summary (Yes/No only)."""
+def test_documents_bundle_row_universal_match_flag() -> None:
+    """Universal match column is Yes/No; 2/3-way are not exported as columns."""
     from datetime import datetime, timezone
 
     from app.schemas.document_type import DocumentTypeDefinition
@@ -218,14 +217,11 @@ def test_documents_bundle_row_three_way_match_flag() -> None:
         linked=linked,
         dt_codes=[],
     )
-    # Fixed column order: … Status(11), Timestamp(12), Uploaded by(13), Source(14),
-    # 2-way(15), 3-way(16), Universal(17)
-    assert row[12] == "2026-05-12 09:30:00"
-    assert row[13] == "vendor@example.com"
-    assert row[14] == "Email"
-    assert row[15] == "No"
-    assert row[16] == "Yes"
-    assert row[17] == "No"
+    # Fixed column order: Timestamp(0), Uploaded by(1), Source(2), … Universal(12)
+    assert row[0] == "2026-05-12 09:30:00"
+    assert row[1] == "vendor@example.com"
+    assert row[2] == "Email"
+    assert row[12] == "No"
 
 
 def test_documents_bundle_row_manual_uploader_name() -> None:
@@ -270,8 +266,8 @@ def test_documents_bundle_row_manual_uploader_name() -> None:
         linked=linked,
         dt_codes=[],
     )
-    assert row[13] == "Vishnu Admin"
-    assert row[14] == "Direct upload"
+    assert row[1] == "Vishnu Admin"
+    assert row[2] == "Direct upload"
 
 
 def test_documents_bundle_row_upload_actor_and_source() -> None:
@@ -327,8 +323,8 @@ def test_documents_bundle_row_upload_actor_and_source() -> None:
         dt_codes=[],
         upload_actor="Ada Lovelace",
     )
-    assert row[13] == "Ada Lovelace"
-    assert row[14] == "Direct upload"
+    assert row[1] == "Ada Lovelace"
+    assert row[2] == "Direct upload"
 
 
 @pytest.mark.asyncio
@@ -458,8 +454,6 @@ async def test_documents_bundle_export_universal_match_yes(
         r for r in data if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "SHARED-INV-77"
     )
     assert row[header.index("Universal match")] == "Yes"
-    assert row[header.index("3 way match")] == "No"
-    assert row[header.index("2 way match")] == "No"
 
 
 @pytest.mark.asyncio
@@ -496,7 +490,7 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
     assert res.status_code == 200
     assert res.headers.get("x-data-rows") == "0"
     header, data, _ws = _read_xlsx(res.content)
-    assert len(header) == 18
+    assert len(header) == 13
     assert "Timestamp" in header
     assert "Uploaded by" in header
     assert "Source" in header
@@ -966,7 +960,7 @@ async def test_documents_bundle_export_includes_all_org_document_types(
     )
     assert res.status_code == 200
     header, _data, _ws = _read_xlsx(res.content)
-    fixed_count = 18
+    fixed_count = 13
     dt_column_count = len(header) - fixed_count
     assert header[header.index("Timestamp")] == "Timestamp"
     assert "Uploaded by" in header
@@ -1080,13 +1074,12 @@ async def test_documents_bundle_export_includes_exception_anchor_with_po_sibling
     )
     assert res.status_code == 200
     header, data, ws = _read_xlsx(res.content)
-    assert "Status" in header
+    assert "Status" not in header
     row_index = next(
         i
         for i, r in enumerate(data)
         if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "INV-EXC-BUNDLE"
     )
-    assert data[row_index][header.index("Status")] == "exception"
     _assert_hyperlink_cell(
         ws,
         header=header,
@@ -1137,9 +1130,10 @@ async def test_documents_bundle_export_excludes_pending_anchor(
 
 
 @pytest.mark.asyncio
-async def test_documents_bundle_export_status_column(
+async def test_documents_bundle_export_includes_validating_anchor(
     db_session: AsyncSession,
 ) -> None:
+    """Active-workflow anchors (e.g. validating) still export; Status is not a column."""
     anchor = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         vendor="Importer",
@@ -1168,11 +1162,10 @@ async def test_documents_bundle_export_status_column(
         date_to=date(2026, 9, 30),
     )
     header, data, _ws = _read_xlsx(payload.xlsx_bytes)
+    assert "Status" not in header
     row = next(
         r
         for r in data
         if _invoice_no_from_cell(r[header.index("Invoice no.")]) == "SHARED-VAL-88"
-        and r[header.index("Status")] == "validating"
     )
-    assert row[header.index("Status")] == "validating"
     assert row[header.index("Universal match")] == "Yes"

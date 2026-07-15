@@ -303,6 +303,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!cancelled && initialUser) {
         setAuthUser(initialUser);
         setUser(initialUser);
+        // Paint protected routes immediately from JWT/stored profile; hydrate in background.
+        setLoading(false);
       }
 
       try {
