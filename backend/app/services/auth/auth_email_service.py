@@ -285,37 +285,32 @@ async def send_tenant_invite_email(
     return smtp_result
 
 
-async def send_password_reset_email(*, to_email: str, reset_url: str) -> InviteEmailResult:
-    """Send password-reset link — Graph Mail.Send when configured, else SMTP."""
+async def send_password_reset_otp_email(*, to_email: str, otp: str) -> InviteEmailResult:
+    """Send password-reset OTP — same delivery rules as login OTP (Graph in prod)."""
     settings = get_settings()
     masked = mask_email_for_log(to_email)
 
     if not settings.is_production:
-        logger.info(
-            "dev_password_reset_email",
-            extra={"email_masked": masked, "reset_url": reset_url},
-        )
+        logger.info("dev_password_reset_otp", extra={"email_masked": masked, "otp": otp})
         return InviteEmailResult(sent=True)
 
     validate_deliverable_email_or_raise(to_email)
 
-    subject = "Reset your LedgerLink password"
+    subject = "Your LedgerLink password reset code"
     body_text = (
-        "We received a request to reset your LedgerLink password.\n\n"
-        f"Reset your password using this link:\n{reset_url}\n\n"
-        "This link expires in 30 minutes.\n\n"
+        f"Your password reset code is: {otp}\n\n"
+        f"This code expires in {settings.otp_expire_minutes} minutes.\n\n"
         "If you did not request a password reset, you can ignore this email."
     )
     body_html = (
-        "<p>We received a request to reset your LedgerLink password.</p>"
-        f'<p><a href="{reset_url}">Reset your password</a></p>'
-        "<p>This link expires in 30 minutes.</p>"
+        f"<p>Your password reset code is: <strong>{otp}</strong></p>"
+        f"<p>This code expires in {settings.otp_expire_minutes} minutes.</p>"
         "<p>If you did not request a password reset, you can ignore this email.</p>"
     )
 
     if graph_mail_send_configured():
         logger.info(
-            "password_reset_send_attempt",
+            "password_reset_otp_send_attempt",
             extra={"email_masked": masked, "channel": "graph"},
         )
         graph_result = send_graph_mail(
@@ -326,12 +321,12 @@ async def send_password_reset_email(*, to_email: str, reset_url: str) -> InviteE
         )
         if graph_result.sent:
             logger.info(
-                "password_reset_send_succeeded",
+                "password_reset_otp_send_succeeded",
                 extra={"email_masked": masked, "channel": "graph"},
             )
             return InviteEmailResult(sent=True)
         logger.warning(
-            "password_reset_graph_failed",
+            "password_reset_otp_graph_failed",
             extra={
                 "email_masked": masked,
                 "channel": "graph",
@@ -339,16 +334,17 @@ async def send_password_reset_email(*, to_email: str, reset_url: str) -> InviteE
             },
         )
         if not settings.smtp_allowed_for_outbound:
-            return InviteEmailResult(
-                sent=False,
-                error=graph_result.error or "Microsoft Graph could not send the reset email.",
-            )
+            return _otp_graph_failure_result(graph_error=graph_result.error)
         smtp_result = _send_via_smtp(
             to_email=to_email,
             subject=subject,
             body_text=body_text,
         )
         if smtp_result.sent:
+            logger.info(
+                "password_reset_otp_send_succeeded",
+                extra={"email_masked": masked, "channel": "smtp_fallback"},
+            )
             return InviteEmailResult(sent=True)
         return InviteEmailResult(
             sent=False,

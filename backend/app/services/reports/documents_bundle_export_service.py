@@ -5,7 +5,7 @@ Matrix layout (one row per transactional posting anchor invoice):
 Fixed columns
     Class, Posting, DT type, Invoice date, Counterparty, Total, Currency, Linkage,
     PO reference, SO reference, Invoice no. (vault hyperlink), Status,
-    2/3/Universal match flags.
+    Timestamp, Uploaded by, Source, 2/3/Universal match flags.
 
 Dynamic DT columns (org-configured document types from rule book)
     One column per document type the organisation has defined in rule book
@@ -29,7 +29,7 @@ import io
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timezone
 from typing import Literal
 
 from openpyxl import Workbook
@@ -85,6 +85,9 @@ _FIXED_COLUMNS = [
     "SO reference",
     "Invoice no.",
     "Status",
+    "Timestamp",
+    "Uploaded by",
+    "Source",
     "2 way match",
     "3 way match",
     "Universal match",
@@ -213,6 +216,46 @@ def _invoice_date_label(invoice: Invoice) -> str:
     if invoice.created_at is not None:
         return invoice.created_at.date().isoformat()
     return ""
+
+
+def _timestamp_label(invoice: Invoice) -> str:
+    """When the document was received / uploaded (UTC)."""
+    if invoice.created_at is None:
+        return ""
+    created = invoice.created_at
+    if created.tzinfo is not None:
+        created = created.astimezone(timezone.utc).replace(tzinfo=None)
+    return created.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _source_label(invoice: Invoice) -> str:
+    src = (invoice.capture_source or "").strip().lower()
+    if src == "email":
+        return "Email"
+    if src == "whatsapp":
+        return "WhatsApp"
+    if src == "viber":
+        return "Viber"
+    if src == "upload":
+        return "Direct upload"
+    sender = (invoice.email_sender or "").lower()
+    if "onedrive" in sender or "sharepoint" in sender:
+        return "OneDrive"
+    if invoice.connected_mailbox_id or invoice.email_sender:
+        return "Email"
+    return "Direct upload"
+
+
+def _uploaded_by_label(invoice: Invoice, *, upload_actor: str | None = None) -> str:
+    """Manual uploader for direct upload; email/messaging sender otherwise."""
+    name = (invoice.uploaded_by_name or "").strip()
+    email = (invoice.uploaded_by_email or "").strip()
+    if name or email:
+        return name or email
+    sender = (invoice.email_sender or "").strip()
+    if sender:
+        return sender
+    return (upload_actor or "").strip()
 
 
 def _total_label(invoice: Invoice) -> str:
@@ -364,6 +407,7 @@ def build_documents_bundle_row(
     dt_codes: list[str],
     invoice_dt_code_by_id: dict[int, str] | None = None,
     cell_format: BundleCellFormat = "excel",
+    upload_actor: str | None = None,
 ) -> list[str]:
     klass = (definition.klass if definition else "").strip() or ""
     posting = (definition.posting if definition else "").strip() or ""
@@ -389,12 +433,48 @@ def build_documents_bundle_row(
         (invoice.so_reference or "").strip(),
         _invoice_no_cell(invoice, cell_format=cell_format),
         (invoice.status.value if invoice.status is not None else "").strip(),
+        _timestamp_label(invoice),
+        _uploaded_by_label(invoice, upload_actor=upload_actor),
+        _source_label(invoice),
         two_way,
         three_way,
         universal,
     ]
     row.extend(by_dt.get(code, "") for code in dt_codes)
     return row
+
+
+async def _upload_actors_by_invoice_id(
+    db: AsyncSession,
+    invoice_ids: list[int],
+) -> dict[int, str]:
+    """Map invoice id → uploader from invoice_uploaded audit (name preferred, else email)."""
+    if not invoice_ids:
+        return {}
+    from app.models.audit import AuditLog
+
+    rows = (
+        await db.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.invoice_id.in_(invoice_ids),
+                AuditLog.event == "invoice_uploaded",
+            )
+            .order_by(AuditLog.created_at.asc())
+        )
+    ).scalars().all()
+
+    actors: dict[int, str] = {}
+    for log in rows:
+        if log.invoice_id is None or log.invoice_id in actors:
+            continue
+        detail = log.detail if isinstance(log.detail, dict) else {}
+        name = str(detail.get("actor_name") or "").strip()
+        email = str(detail.get("actor_email") or "").strip()
+        label = name or email
+        if label:
+            actors[log.invoice_id] = label
+    return actors
 
 
 def _unescape_excel_csv(value: str) -> str:
@@ -588,6 +668,11 @@ async def build_documents_bundle_export(
 
     linkage_cache = await build_linkage_sibling_cache(db, tenant_id=tenant_id, anchors=anchors)
 
+    need_upload_actor = [
+        inv.id for inv in anchors if not (inv.email_sender or "").strip()
+    ]
+    upload_actors = await _upload_actors_by_invoice_id(db, need_upload_actor)
+
     contexts: list[_AnchorExportContext] = []
     for invoice in anchors:
         definition = anchor_definitions[invoice.id]
@@ -618,6 +703,7 @@ async def build_documents_bundle_export(
                 dt_codes=dt_codes,
                 invoice_dt_code_by_id=ctx.invoice_dt_code_by_id,
                 cell_format=cell_format,
+                upload_actor=upload_actors.get(ctx.invoice.id),
             )
         )
 

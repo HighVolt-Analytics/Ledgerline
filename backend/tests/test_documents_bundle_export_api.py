@@ -163,6 +163,8 @@ async def test_documents_bundle_export_excludes_non_posting_documents(
 
 def test_documents_bundle_row_three_way_match_flag() -> None:
     """Match flags on export rows follow dossier match_summary (Yes/No only)."""
+    from datetime import datetime, timezone
+
     from app.schemas.document_type import DocumentTypeDefinition
     from app.schemas.dossier import DossierLinkedDocumentResponse
 
@@ -172,8 +174,11 @@ def test_documents_bundle_row_three_way_match_flag() -> None:
         document_type_code="DT-01",
         invoice_no="INV-FLAG-1",
         status=InvoiceStatus.PROCESSED,
+        email_sender="vendor@example.com",
+        capture_source="email",
     )
     invoice.id = 99
+    invoice.created_at = datetime(2026, 5, 12, 9, 30, 0, tzinfo=timezone.utc)
     definition = DocumentTypeDefinition(
         code="DT-01",
         title="PO goods invoice",
@@ -213,10 +218,117 @@ def test_documents_bundle_row_three_way_match_flag() -> None:
         linked=linked,
         dt_codes=[],
     )
-    # Fixed column order: … Status(11), 2-way(12), 3-way(13), Universal(14)
-    assert row[12] == "No"
-    assert row[13] == "Yes"
-    assert row[14] == "No"
+    # Fixed column order: … Status(11), Timestamp(12), Uploaded by(13), Source(14),
+    # 2-way(15), 3-way(16), Universal(17)
+    assert row[12] == "2026-05-12 09:30:00"
+    assert row[13] == "vendor@example.com"
+    assert row[14] == "Email"
+    assert row[15] == "No"
+    assert row[16] == "Yes"
+    assert row[17] == "No"
+
+
+def test_documents_bundle_row_manual_uploader_name() -> None:
+    """Direct uploads prefer persisted uploaded_by_* over empty email_sender."""
+    from datetime import datetime, timezone
+
+    from app.schemas.document_type import DocumentTypeDefinition
+
+    invoice = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        document_type_code="DT-01",
+        invoice_no="INV-UPLOAD-1",
+        status=InvoiceStatus.PROCESSED,
+        capture_source="upload",
+        uploaded_by_name="Vishnu Admin",
+        uploaded_by_email="vishnu@example.com",
+    )
+    invoice.id = 101
+    invoice.created_at = datetime(2026, 5, 12, 10, 0, 0, tzinfo=timezone.utc)
+    definition = DocumentTypeDefinition(
+        code="DT-01",
+        title="PO goods invoice",
+        short_title="PO goods invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=[],
+        llm_prompt="",
+        route_target="Purchase Management",
+    )
+    linked = DossierLinkedDocumentsResponse(
+        linkage_kind="po_reference",
+        linkage_label="PO reference",
+        enforce_bundle=False,
+        match_summary=None,
+        documents=[],
+    )
+    row = build_documents_bundle_row(
+        invoice,
+        definition=definition,
+        linked=linked,
+        dt_codes=[],
+    )
+    assert row[13] == "Vishnu Admin"
+    assert row[14] == "Direct upload"
+
+
+def test_documents_bundle_row_upload_actor_and_source() -> None:
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.schemas.dossier import DossierLinkedDocumentResponse
+
+    invoice = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        document_type_code="DT-01",
+        invoice_no="INV-UPLOAD-1",
+        status=InvoiceStatus.PROCESSED,
+        capture_source="upload",
+    )
+    invoice.id = 100
+    definition = DocumentTypeDefinition(
+        code="DT-01",
+        title="PO goods invoice",
+        short_title="PO goods invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=[],
+        llm_prompt="",
+        route_target="Purchase Management",
+    )
+    linked = DossierLinkedDocumentsResponse(
+        linkage_kind="po_reference",
+        linkage_label="PO reference",
+        enforce_bundle=True,
+        match_summary=DossierMatchSummaryResponse(
+            status="2-Way Match",
+            currency="AUD",
+            po_value=100.0,
+            invoice_total=100.0,
+        ),
+        documents=[
+            DossierLinkedDocumentResponse(
+                id="anchor",
+                document_type_code="DT-01",
+                label="Anchor",
+                present=True,
+                requirement="mandatory",
+                is_anchor=True,
+                invoice_id=100,
+            ),
+        ],
+    )
+    row = build_documents_bundle_row(
+        invoice,
+        definition=definition,
+        linked=linked,
+        dt_codes=[],
+        upload_actor="Ada Lovelace",
+    )
+    assert row[13] == "Ada Lovelace"
+    assert row[14] == "Direct upload"
 
 
 @pytest.mark.asyncio
@@ -384,7 +496,10 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
     assert res.status_code == 200
     assert res.headers.get("x-data-rows") == "0"
     header, data, _ws = _read_xlsx(res.content)
-    assert len(header) == 15
+    assert len(header) == 18
+    assert "Timestamp" in header
+    assert "Uploaded by" in header
+    assert "Source" in header
     assert data == []
 
 
@@ -851,8 +966,11 @@ async def test_documents_bundle_export_includes_all_org_document_types(
     )
     assert res.status_code == 200
     header, _data, _ws = _read_xlsx(res.content)
-    fixed_count = 15
+    fixed_count = 18
     dt_column_count = len(header) - fixed_count
+    assert header[header.index("Timestamp")] == "Timestamp"
+    assert "Uploaded by" in header
+    assert "Source" in header
     assert dt_column_count == len(org_types.document_types)
     shipped_only_codes = {"DT-14", "DT-15", "DT-26", "DT-27", "DT-28"}
     header_labels = set(header[fixed_count:])

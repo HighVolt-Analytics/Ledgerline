@@ -93,13 +93,13 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ForgotPasswordResponse(BaseModel):
-    message: str = (
-        "If an account exists for that email, you will receive a password reset link shortly."
-    )
+    challenge_token: str
+    message: str = "Verification code sent"
 
 
 class ResetPasswordRequest(BaseModel):
-    token: str = Field(min_length=8)
+    challenge_token: str = Field(min_length=8)
+    otp: str = Field(min_length=4, max_length=8)
     password: str = Field(min_length=8, max_length=128)
 
 

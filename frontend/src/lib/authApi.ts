@@ -58,7 +58,9 @@ export async function apiLogin(email: string, password: string): Promise<LoginCh
   return json.data as LoginChallengeResponse;
 }
 
-export async function apiForgotPassword(email: string): Promise<{ message: string }> {
+export async function apiForgotPassword(
+  email: string
+): Promise<{ challenge_token: string; message: string }> {
   const res = await fetch(`${BASE}/api/auth/forgot-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -66,17 +68,22 @@ export async function apiForgotPassword(email: string): Promise<{ message: strin
   });
   if (!res.ok) throw new Error(await parseError(res));
   const json = await res.json();
-  return json.data as { message: string };
+  return json.data as { challenge_token: string; message: string };
 }
 
-export async function apiResetPassword(
-  token: string,
-  password: string
-): Promise<{ message: string }> {
+export async function apiResetPassword(input: {
+  challengeToken: string;
+  otp: string;
+  password: string;
+}): Promise<{ message: string }> {
   const res = await fetch(`${BASE}/api/auth/reset-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, password }),
+    body: JSON.stringify({
+      challenge_token: input.challengeToken,
+      otp: input.otp,
+      password: input.password,
+    }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   const json = await res.json();

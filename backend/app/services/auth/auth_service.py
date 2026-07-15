@@ -19,8 +19,6 @@ TOKEN_TYPE_SIGNUP_EMAIL_CHALLENGE = "signup_email_challenge"
 TOKEN_TYPE_SIGNUP_SESSION = "signup_session"
 TOKEN_TYPE_PASSWORD_RESET = "password_reset"
 
-PASSWORD_RESET_TOKEN_MINUTES = 30
-
 
 def hash_password(password: str) -> str:
     return _pwd.hash(password)
@@ -86,15 +84,16 @@ def create_signup_session_token(*, session_id: str) -> str:
     )
 
 
-def create_password_reset_token(*, auth_account_id: int, email: str, jti: str) -> str:
+def create_password_reset_token(*, auth_account_id: int, email: str) -> str:
+    settings = get_settings()
     return _encode(
         {
             "sub": str(auth_account_id),
             "email": email.lower(),
             "type": TOKEN_TYPE_PASSWORD_RESET,
-            "jti": jti,
+            "scope": "password_reset",
         },
-        minutes=PASSWORD_RESET_TOKEN_MINUTES,
+        minutes=settings.otp_expire_minutes,
     )
 
 

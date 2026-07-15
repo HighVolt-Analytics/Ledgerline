@@ -37,9 +37,8 @@ from app.schemas.tenant_member import (
 )
 from app.schemas.common import ApiEnvelope
 from app.services.auth.auth_account_service import resolve_login_account
-from app.services.auth.auth_email_service import send_login_otp_email, send_password_reset_email
+from app.services.auth.auth_email_service import send_login_otp_email, send_password_reset_otp_email
 from app.services.auth.auth_service import (
-    PASSWORD_RESET_TOKEN_MINUTES,
     TOKEN_TYPE_CHALLENGE,
     TOKEN_TYPE_PASSWORD_RESET,
     TOKEN_TYPE_REFRESH,
@@ -55,7 +54,6 @@ from app.services.auth.auth_service import (
 )
 from app.services.auth.auth_session_service import (
     clear_otp,
-    consume_password_reset_jti,
     generate_otp,
     is_user_revoked,
     new_jti,
@@ -64,11 +62,9 @@ from app.services.auth.auth_session_service import (
     revoke_refresh_jti,
     grace_revoke_refresh_jti,
     store_otp,
-    store_password_reset_jti,
     validate_refresh_jti,
     verify_otp,
 )
-from app.services.shared.public_app_url import build_public_app_path
 from app.services.signup.signup_fulfillment_service import is_oauth_only_auth_account
 from app.services.auth.membership_enumeration import (
     filter_switchable_memberships,
@@ -96,9 +92,6 @@ logger = get_logger(__name__)
 
 _OTP_EMAIL_FAILURE_MESSAGE = (
     "Could not send verification email. Please try again later or contact your administrator."
-)
-_FORGOT_PASSWORD_MESSAGE = (
-    "If an account exists for that email, you will receive a password reset link shortly."
 )
 
 
@@ -232,6 +225,14 @@ async def _send_login_otp_or_raise(*, account: AuthAccount, otp: str) -> None:
     raise HTTPException(status_code=503, detail=_OTP_EMAIL_FAILURE_MESSAGE)
 
 
+async def _send_password_reset_otp_or_raise(*, account: AuthAccount, otp: str) -> None:
+    delivery = await send_password_reset_otp_email(to_email=account.email, otp=otp)
+    if delivery.sent:
+        return
+    await clear_otp(auth_account_id=account.id, email=account.email)
+    raise HTTPException(status_code=503, detail=_OTP_EMAIL_FAILURE_MESSAGE)
+
+
 @router.post("/portal-embed/login", response_model=ApiEnvelope[PortalEmbedLoginResponse])
 async def portal_embed_login(
     body: PortalEmbedLoginRequest,
@@ -279,53 +280,44 @@ async def forgot_password(
     body: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[ForgotPasswordResponse]:
-    """Always returns the same message to avoid email enumeration."""
+    """Issue a password-reset OTP challenge (same delivery path as login OTP)."""
+    from app.config import get_settings
+
+    settings = get_settings()
     email = body.email.lower().strip()
     logger.info("forgot_password_started", email=email)
 
     account = await resolve_login_account(db, body.email)
-    if (
-        account
-        and not account.is_blocked
-        and not is_oauth_only_auth_account(account.password_hash)
-    ):
-        jti = new_jti()
-        token = create_password_reset_token(
-            auth_account_id=account.id,
-            email=account.email,
-            jti=jti,
-        )
-        await store_password_reset_jti(
-            jti=jti,
-            auth_account_id=account.id,
-            ttl_seconds=PASSWORD_RESET_TOKEN_MINUTES * 60,
-        )
-        reset_url = build_public_app_path(f"/reset-password?token={token}")
-        delivery = await send_password_reset_email(
-            to_email=account.email,
-            reset_url=reset_url,
-        )
-        if not delivery.sent:
-            logger.warning(
-                "forgot_password_email_failed",
-                email=email,
-                auth_account_id=account.id,
-                error=delivery.error,
-            )
-        else:
-            logger.info(
-                "forgot_password_email_sent",
-                email=email,
-                auth_account_id=account.id,
-            )
-    else:
+    if not account or account.is_blocked or is_oauth_only_auth_account(account.password_hash):
         logger.info(
-            "forgot_password_noop",
+            "forgot_password_rejected",
             email=email,
             reason="account_unavailable_or_oauth_only",
         )
+        raise HTTPException(400, "No password reset is available for this email")
 
-    return ApiEnvelope(data=ForgotPasswordResponse(message=_FORGOT_PASSWORD_MESSAGE))
+    otp = generate_otp()
+    await store_otp(
+        auth_account_id=account.id,
+        email=account.email,
+        otp=otp,
+        ttl_seconds=settings.otp_expire_minutes * 60,
+    )
+    await _send_password_reset_otp_or_raise(account=account, otp=otp)
+
+    token = create_password_reset_token(auth_account_id=account.id, email=account.email)
+    logger.info(
+        "forgot_password_otp_issued",
+        email=email,
+        auth_account_id=account.id,
+        otp_ttl_seconds=settings.otp_expire_minutes * 60,
+    )
+    return ApiEnvelope(
+        data=ForgotPasswordResponse(
+            challenge_token=token,
+            message="Verification code sent",
+        )
+    )
 
 
 @router.post("/reset-password", response_model=ApiEnvelope[ResetPasswordResponse])
@@ -333,30 +325,30 @@ async def reset_password(
     body: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ApiEnvelope[ResetPasswordResponse]:
-    payload = decode_token(body.token)
+    payload = decode_token(body.challenge_token)
     if not payload or payload.get("type") != TOKEN_TYPE_PASSWORD_RESET:
-        raise HTTPException(400, "Invalid or expired reset link")
+        raise HTTPException(400, "Invalid or expired reset session")
 
     try:
         auth_account_id = int(payload["sub"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(400, "Invalid or expired reset link") from exc
+        raise HTTPException(400, "Invalid or expired reset session") from exc
 
-    jti = payload.get("jti")
-    if not jti or not isinstance(jti, str):
-        raise HTTPException(400, "Invalid or expired reset link")
-
-    if not await consume_password_reset_jti(jti=jti, auth_account_id=auth_account_id):
-        raise HTTPException(400, "Invalid or expired reset link")
-
+    email = str(payload.get("email") or "").lower()
     account = await db.get(AuthAccount, auth_account_id)
     if not account or account.is_blocked:
-        raise HTTPException(400, "Invalid or expired reset link")
+        raise HTTPException(400, "Invalid or expired reset session")
+    if email and email != account.email.lower():
+        raise HTTPException(400, "Invalid or expired reset session")
 
-    email_from_token = str(payload.get("email") or "").lower()
-    if email_from_token and email_from_token != account.email.lower():
-        raise HTTPException(400, "Invalid or expired reset link")
+    if not await verify_otp(
+        auth_account_id=account.id,
+        email=account.email,
+        otp=body.otp.strip(),
+    ):
+        raise HTTPException(401, "Invalid verification code")
 
+    await clear_otp(auth_account_id=account.id, email=account.email)
     account.password_hash = hash_password(body.password)
     await db.flush()
 

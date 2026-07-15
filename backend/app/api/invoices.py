@@ -601,6 +601,7 @@ async def upload_invoice(
     tenant_name = org.name if org else None
 
     try:
+        actor_name, actor_email = await actor_from_context(db, ctx)
         result = await ingest_upload_file(
             db,
             tenant_id=ctx.tenant_id,
@@ -609,6 +610,8 @@ async def upload_invoice(
             filename=Path(file.filename).name,
             data=data,
             purchase_document_type=purchase_document_type,
+            actor_name=actor_name,
+            actor_email=actor_email,
         )
     except DuplicateUploadError:
         raise HTTPException(409, "Duplicate file already uploaded") from None

@@ -261,6 +261,8 @@ async def _create_invoice_from_bytes(
     source: IngestSourceMetadata | None = None,
     log_upload_event: bool = True,
     page_count: int | None = None,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
 ) -> tuple[int | None, bool]:
     duplicate_id, duplicate_handled = await _try_resolve_duplicate(
         session,
@@ -292,6 +294,9 @@ async def _create_invoice_from_bytes(
     from app.tenant_settings import tenant_currency
 
     tenant = await session.get(Tenant, tenant_id)
+    is_manual_upload = (meta.capture_source or "").strip().lower() == "upload"
+    uploader_name = ((actor_name or "").strip() or None) if is_manual_upload else None
+    uploader_email = ((actor_email or "").strip() or None) if is_manual_upload else None
     inv = Invoice(
         tenant_id=tenant_id,
         connected_mailbox_id=meta.connected_mailbox_id,
@@ -309,6 +314,8 @@ async def _create_invoice_from_bytes(
         email_message_id=meta.email_message_id,
         email_attachment_name=attachment_name,
         capture_source=meta.capture_source,
+        uploaded_by_name=uploader_name,
+        uploaded_by_email=uploader_email,
         matched_rule_ids=meta.matched_rule_ids,
         document_ref=document_ref,
         extracted_fields=extracted_fields,
@@ -346,6 +353,8 @@ async def _create_invoice_from_bytes(
                 "content_fingerprint": content_fingerprint,
                 "business_fingerprint": business_fingerprint,
             },
+            actor_name=actor_name,
+            actor_email=actor_email,
         )
 
     settings = get_settings()
@@ -378,6 +387,8 @@ async def _single_file_ingest(
     source: IngestSourceMetadata | None,
     log_upload_event: bool,
     parent_file_hash: str,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
 ) -> IngestUploadResult:
     invoice_id, duplicate_handled = await _create_invoice_from_bytes(
         session,
@@ -393,6 +404,8 @@ async def _single_file_ingest(
         purchase_document_type=purchase_document_type,
         source=source,
         log_upload_event=log_upload_event,
+        actor_name=actor_name,
+        actor_email=actor_email,
     )
     invoice_ids = [invoice_id] if invoice_id is not None else []
     return IngestUploadResult(
@@ -415,6 +428,8 @@ async def ingest_file_with_fanout(
     source: IngestSourceMetadata | None = None,
     log_upload_event: bool = False,
     prefetched_extraction: PdfPageTextExtraction | None = None,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
 ) -> IngestUploadResult:
     """
     Create one or more pending invoices from an attachment.
@@ -493,6 +508,8 @@ async def ingest_file_with_fanout(
             source=source,
             log_upload_event=log_upload_event,
             parent_file_hash=parent_hash,
+            actor_name=actor_name,
+            actor_email=actor_email,
         )
         return result
 
@@ -527,6 +544,8 @@ async def ingest_file_with_fanout(
                 source=source,
                 log_upload_event=log_upload_event,
                 parent_file_hash=parent_hash,
+                actor_name=actor_name,
+                actor_email=actor_email,
             )
 
         content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages)
@@ -572,6 +591,8 @@ async def ingest_file_with_fanout(
                 source=source,
                 log_upload_event=log_upload_event,
                 parent_file_hash=parent_hash,
+                actor_name=actor_name,
+                actor_email=actor_email,
             )
 
         segment_result = await segment_pdf_pages_smart(
@@ -655,6 +676,8 @@ async def ingest_file_with_fanout(
                 source=source,
                 log_upload_event=log_upload_event,
                 parent_file_hash=parent_hash,
+                actor_name=actor_name,
+                actor_email=actor_email,
             )
 
         invoice_ids: list[int] = []
@@ -702,8 +725,10 @@ async def ingest_file_with_fanout(
                 bundle_source_hash=parent_hash,
                 purchase_document_type=segment_type,
                 source=source,
-                log_upload_event=False,
+                log_upload_event=log_upload_event,
                 page_count=segment_pages,
+                actor_name=actor_name,
+                actor_email=actor_email,
             )
             if segment_duplicate:
                 duplicate_handled = True
@@ -759,6 +784,8 @@ async def ingest_upload_file(
     filename: str,
     data: bytes,
     purchase_document_type: str | None,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
 ) -> IngestUploadResult:
     """Upload API entry point — logs invoice_uploaded for single-file ingest."""
     return await ingest_file_with_fanout(
@@ -771,4 +798,6 @@ async def ingest_upload_file(
         purchase_document_type=purchase_document_type,
         source=IngestSourceMetadata(capture_source="upload"),
         log_upload_event=True,
+        actor_name=actor_name,
+        actor_email=actor_email,
     )

@@ -97,6 +97,8 @@ class Invoice(Base):
     email_attachment_name: Mapped[str | None] = mapped_column(String(255))
     email_message_id: Mapped[str | None] = mapped_column(String(255), index=True)
     capture_source: Mapped[str | None] = mapped_column(String(32))
+    uploaded_by_name: Mapped[str | None] = mapped_column(String(255))
+    uploaded_by_email: Mapped[str | None] = mapped_column(String(255))
     storage_vendor_slug: Mapped[str | None] = mapped_column(String(100))
     validation_results: Mapped[str | None] = mapped_column(Text)
     account_code: Mapped[str | None] = mapped_column(String(20))
