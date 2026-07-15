@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { TableSkeleton } from "@/components/skeleton/PageSkeletons";
 import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
-import { counterpartyColumnLabel, counterpartyName } from "@/lib/invoice";
+import { counterpartyColumnLabel, counterpartyName, invoiceMatchesCaptureChannel } from "@/lib/invoice";
 import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import {
   effectiveDocumentTypeCode,
@@ -166,6 +166,7 @@ export function DocumentMatrixPanel({
   showControls = true,
   showTable = true,
   showLegend = true,
+  captureSource,
   onFlaggedCount,
   onGoUpload,
   refreshRef,
@@ -175,6 +176,8 @@ export function DocumentMatrixPanel({
   showControls?: boolean;
   showTable?: boolean;
   showLegend?: boolean;
+  /** When set, only show documents for this Upload channel tab. */
+  captureSource?: "upload" | "email" | "whatsapp" | "viber";
   onFlaggedCount?: (count: number) => void;
   onGoUpload?: () => void;
   refreshRef?: MutableRefObject<(() => void) | null>;
@@ -285,10 +288,16 @@ export function DocumentMatrixPanel({
     return () => clearTimeout(t);
   }, [toast]);
 
-  const matrixRows = useMemo<MatrixTableRow[]>(
-    () => sortMatrixRowsNewestFirst(matrixData).map(rowFromApi),
-    [matrixData]
-  );
+  const matrixRows = useMemo<MatrixTableRow[]>(() => {
+    const scoped = captureSource
+      ? matrixData.filter((row) => invoiceMatchesCaptureChannel(row.invoice, captureSource))
+      : matrixData;
+    return sortMatrixRowsNewestFirst(scoped).map(rowFromApi);
+  }, [matrixData, captureSource]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [captureSource]);
 
   const hasActiveProcessing = useMemo(
     () => matrixRows.some((row) => isInvoicePipelineActive(row.inv)),
@@ -445,14 +454,28 @@ export function DocumentMatrixPanel({
 
       {loading && matrixData.length === 0 ? (
         <TableSkeleton rows={6} columns={5} />
-      ) : matrixData.length === 0 ? (
+      ) : matrixRows.length === 0 && showTable ? (
         <EmptyState
-          title="No documents in the matrix"
-          hint="Connect a mailbox and fetch documents, or upload an invoice."
+          title={
+            captureSource === "email"
+              ? "No email documents in the matrix"
+              : captureSource === "whatsapp"
+                ? "No WhatsApp documents in the matrix"
+                : captureSource === "viber"
+                  ? "No Viber documents in the matrix"
+                  : captureSource === "upload"
+                    ? "No upload documents in the matrix"
+                    : "No documents in the matrix"
+          }
+          hint={
+            captureSource && captureSource !== "upload"
+              ? "Documents captured on this channel will appear here."
+              : "Connect a mailbox and fetch documents, or upload an invoice."
+          }
           action={
             onGoUpload ? (
               <Button onClick={onGoUpload} data-testid="button-matrix-go-upload">
-                Go to Upload
+                {captureSource && captureSource !== "upload" ? "View detailed list" : "Go to Upload"}
               </Button>
             ) : undefined
           }

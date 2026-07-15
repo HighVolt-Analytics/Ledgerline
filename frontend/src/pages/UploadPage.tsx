@@ -208,9 +208,11 @@ export function UploadPage() {
   const mailboxes = canRenderTenantOwnedUi(tenantScope) && !mailboxesBlocked ? mailboxQueryData : [];
 
   const selectedMailboxId = useMemo(() => {
-    if (source === "all") return null;
+    if (channelTab !== "email" || source === "all") return null;
     return mailboxes.find((mb) => mb.email === source)?.id ?? null;
-  }, [source, mailboxes]);
+  }, [channelTab, source, mailboxes]);
+
+  const listEnabled = canRenderTenantOwnedUi(tenantScope);
 
   const {
     data: listData,
@@ -225,10 +227,7 @@ export function UploadPage() {
     q: debouncedSearch,
     mailboxId: selectedMailboxId,
     captureSource: channelTab,
-    enabled:
-      canRenderTenantOwnedUi(tenantScope) &&
-      viewTab === "detailed" &&
-      channelTab === "upload",
+    enabled: listEnabled,
     processingIds,
   });
 
@@ -270,13 +269,19 @@ export function UploadPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [source, debouncedSearch]);
+  }, [source, debouncedSearch, channelTab]);
 
-  // Clear merged rows only on page/source changes. Search keeps previous rows via
+  useEffect(() => {
+    if (channelTab !== "email") {
+      setSource("all");
+    }
+  }, [channelTab]);
+
+  // Clear merged rows only on page/source/channel changes. Search keeps previous rows via
   // keepPreviousData so the list (and search input) do not unmount mid-keystroke.
   useEffect(() => {
     prevMergedRef.current = [];
-  }, [page, source]);
+  }, [page, source, channelTab]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -342,17 +347,6 @@ export function UploadPage() {
     setDrawerId(id);
     setDrawerOpen(true);
   };
-
-  const docsPerChannel = useMemo(() => {
-    let whatsapp = 0;
-    let viber = 0;
-    for (const inv of captured) {
-      const src = (inv.capture_source ?? "").toLowerCase();
-      if (src.includes("whatsapp")) whatsapp += 1;
-      if (src.includes("viber")) viber += 1;
-    }
-    return { whatsapp, viber };
-  }, [captured]);
 
   const setChannelTab = (tab: ChannelTab) => {
     const next = new URLSearchParams(searchParams);
@@ -599,7 +593,7 @@ export function UploadPage() {
         <Plus className="h-4 w-4 mr-1.5 shrink-0" />
         Add mailbox
       </Button>
-    ) : channelTab === "upload" && viewTab === "summary" ? (
+    ) : viewTab === "summary" ? (
       <Button
         variant="surface"
         size="sm"
@@ -682,9 +676,9 @@ export function UploadPage() {
           isPollable={isMailboxPollable}
         />
       ) : channelTab === "whatsapp" ? (
-        <UploadWhatsappChannelPanel docCount={docsPerChannel.whatsapp} />
+        <UploadWhatsappChannelPanel docCount={totalInvoices} />
       ) : channelTab === "viber" ? (
-        <UploadViberChannelPanel docCount={docsPerChannel.viber} />
+        <UploadViberChannelPanel docCount={totalInvoices} />
       ) : null}
 
       {channelTab === "upload" ? (
@@ -736,44 +730,42 @@ export function UploadPage() {
             : "scanning mailbox"}
         </Card>
       ) : null}
-      {channelTab === "upload" ? (
-        <PageTabs
-          className="mb-5"
-          value={viewTab}
-          onChange={(value) => setViewTab(value as ViewTab)}
-          data-testid="upload-view-tabs"
-          tabs={[
-            {
-              value: "summary",
-              testid: "tab-upload-summary",
-              label: (
-                <>
-                  Summary
-                  {matrixFlagged > 0 ? (
-                    <Badge variant="destructive" className="ml-1.5 tnum font-normal">
-                      {matrixFlagged}
-                    </Badge>
-                  ) : null}
-                </>
-              ),
-            },
-            {
-              value: "detailed",
-              testid: "tab-upload-detailed",
-              label: (
-                <>
-                  Detailed
-                  {inboxCount > 0 ? (
-                    <Badge variant="secondary" className="ml-1.5 tnum font-normal">
-                      {inboxCount}
-                    </Badge>
-                  ) : null}
-                </>
-              ),
-            },
-          ]}
-        />
-      ) : null}
+      <PageTabs
+        className="mb-5"
+        value={viewTab}
+        onChange={(value) => setViewTab(value as ViewTab)}
+        data-testid="upload-view-tabs"
+        tabs={[
+          {
+            value: "summary",
+            testid: "tab-upload-summary",
+            label: (
+              <>
+                Summary
+                {matrixFlagged > 0 ? (
+                  <Badge variant="destructive" className="ml-1.5 tnum font-normal">
+                    {matrixFlagged}
+                  </Badge>
+                ) : null}
+              </>
+            ),
+          },
+          {
+            value: "detailed",
+            testid: "tab-upload-detailed",
+            label: (
+              <>
+                Detailed
+                {(channelTab === "upload" ? inboxCount : totalInvoices) > 0 ? (
+                  <Badge variant="secondary" className="ml-1.5 tnum font-normal">
+                    {channelTab === "upload" ? inboxCount : totalInvoices}
+                  </Badge>
+                ) : null}
+              </>
+            ),
+          },
+        ]}
+      />
       {content}
 
       <ConnectMailboxDialog
@@ -793,7 +785,6 @@ export function UploadPage() {
 
   if (
     error &&
-    channelTab === "upload" &&
     viewTab === "detailed" &&
     captured.length === 0 &&
     !loading
@@ -811,24 +802,52 @@ export function UploadPage() {
     );
   }
 
+  const emptyHint =
+    channelTab === "upload"
+      ? "Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs."
+      : channelTab === "email"
+        ? "Connect a mailbox and fetch mail to capture documents here."
+        : channelTab === "whatsapp"
+          ? "Connect WhatsApp to capture documents here."
+          : "Connect Viber to capture documents here.";
+
+  const emptyTitle =
+    channelTab === "upload"
+      ? "No documents yet"
+      : channelTab === "email"
+        ? "No email documents yet"
+        : channelTab === "whatsapp"
+          ? "No WhatsApp documents yet"
+          : "No Viber documents yet";
+
   return workspaceShell(
-    channelTab === "upload" && viewTab === "summary" ? (
+    viewTab === "summary" ? (
       <>
         <DocumentMatrixPanel
           embedded
+          showKpis={false}
+          captureSource={channelTab}
           onFlaggedCount={setMatrixFlagged}
           onGoUpload={() => setViewTab("detailed")}
           refreshRef={matrixRefreshRef}
         />
       </>
-    ) : channelTab !== "upload" ? null : (
+    ) : (
       <>
       {loading && !showCapturedChrome ? (
         <InlineTableSkeleton rows={8} columns={6} />
       ) : !showCapturedChrome ? (
         <EmptyState
-          title="No documents yet"
-          hint="Drop files above to upload, or capture documents from the Email, WhatsApp, or Viber tabs."
+          title={emptyTitle}
+          hint={emptyHint}
+          action={
+            channelTab === "email" && isAdmin ? (
+              <Button size="sm" onClick={() => setAddOpen(true)}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add mailbox
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
         <Card className="overflow-hidden">
@@ -859,22 +878,24 @@ export function UploadPage() {
                 { value: "needs_review", label: "Needs review only" },
               ]}
             />
-            <Select
-              value={source}
-              onValueChange={(value) => {
-                setSource(value);
-                setPage(1);
-              }}
-              data-testid="select-source-filter"
-              className="w-full sm:w-[220px] h-8 text-xs"
-              options={[
-                { value: "all", label: "All sources" },
-                ...mailboxes.map((mb) => ({
-                  value: mb.email,
-                  label: mailboxNickname(mb),
-                })),
-              ]}
-            />
+            {channelTab === "email" ? (
+              <Select
+                value={source}
+                onValueChange={(value) => {
+                  setSource(value);
+                  setPage(1);
+                }}
+                data-testid="select-source-filter"
+                className="w-full sm:w-[220px] h-8 text-xs"
+                options={[
+                  { value: "all", label: "All mailboxes" },
+                  ...mailboxes.map((mb) => ({
+                    value: mb.email,
+                    label: mailboxNickname(mb),
+                  })),
+                ]}
+              />
+            ) : null}
             </div>
           </div>
 
