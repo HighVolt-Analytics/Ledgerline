@@ -101,6 +101,13 @@ import type {
   StripeGlobalPayoutsReadinessResponse,
   StripeReadinessResponse,
   StripeTransaction,
+  PaypalBalanceResponse,
+  PaypalConnectResponse,
+  PaypalDisconnectResponse,
+  PaypalPayoutAttempt,
+  PaypalPayoutRequest,
+  PaypalReadinessResponse,
+  PaypalTransactionsResponse,
   WhatsappStatus,
   ViberStatus,
 } from "./types";
@@ -1772,6 +1779,44 @@ export const api = {
     const path = `/api/payments/stripe/transactions?limit=${encodeURIComponent(String(limit))}`;
     if (options?.fresh) bustGetCache(path);
     return request<StripeTransaction[]>(path);
+  },
+  connectPaypal: () =>
+    request<PaypalConnectResponse>("/api/payments/paypal/connect", {
+      method: "POST",
+    }),
+  getPaypalReadiness: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/paypal/readiness";
+    if (options?.fresh) bustGetCache(path);
+    return request<PaypalReadinessResponse>(path);
+  },
+  disconnectPaypal: () =>
+    request<PaypalDisconnectResponse>("/api/payments/paypal/disconnect", {
+      method: "POST",
+    }),
+  getPaypalBalance: (options?: FreshRequestOptions) => {
+    const path = "/api/payments/paypal/balance";
+    if (options?.fresh) bustGetCache(path);
+    return request<PaypalBalanceResponse>(path);
+  },
+  listPaypalTransactions: (limit = 20, options?: FreshRequestOptions) => {
+    const path = `/api/payments/paypal/transactions?limit=${encodeURIComponent(String(limit))}`;
+    if (options?.fresh) bustGetCache(path);
+    return request<PaypalTransactionsResponse>(path);
+  },
+  createPaypalPayout: (body: PaypalPayoutRequest) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaypalPayoutAttempt>("/api/payments/paypal/payouts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  refreshPaypalPayout: (attemptId: number) => {
+    bustGetCacheByPrefix("/api/payments");
+    return request<PaypalPayoutAttempt>(
+      `/api/payments/paypal/payouts/${attemptId}/refresh`,
+      { method: "POST" }
+    );
   },
   validatePaymentExecutionReadiness: (paymentId: number) =>
     request<PaymentExecutionReadinessResponse>(

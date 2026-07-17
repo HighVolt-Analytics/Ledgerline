@@ -703,6 +703,57 @@ class Settings(BaseSettings):
         description="Public LedgerLink API base URL (e.g. https://ledgerlink.highvolt.tech/api)",
     )
 
+    # PayPal tenant-connected payments (NOT platform billing / credits / top-ups)
+    paypal_enabled: bool = Field(default=False, validation_alias="PAYPAL_ENABLED")
+    paypal_mode: str = Field(default="sandbox", validation_alias="PAYPAL_MODE")
+    paypal_client_id: str = Field(default="", validation_alias="PAYPAL_CLIENT_ID")
+    paypal_client_secret: str = Field(default="", validation_alias="PAYPAL_CLIENT_SECRET")
+    paypal_api_base_url: str = Field(
+        default="https://api-m.sandbox.paypal.com",
+        validation_alias="PAYPAL_API_BASE_URL",
+    )
+    paypal_webhook_id: str = Field(default="", validation_alias="PAYPAL_WEBHOOK_ID")
+    paypal_partner_merchant_id: str = Field(
+        default="",
+        validation_alias="PAYPAL_PARTNER_MERCHANT_ID",
+    )
+    paypal_partner_attribution_id: str = Field(
+        default="",
+        validation_alias="PAYPAL_PARTNER_ATTRIBUTION_ID",
+    )
+    paypal_partner_onboarding_enabled: bool = Field(
+        default=False,
+        validation_alias="PAYPAL_PARTNER_ONBOARDING_ENABLED",
+    )
+    paypal_payouts_enabled: bool = Field(
+        default=False,
+        validation_alias="PAYPAL_PAYOUTS_ENABLED",
+    )
+    paypal_transaction_search_enabled: bool = Field(
+        default=False,
+        validation_alias="PAYPAL_TRANSACTION_SEARCH_ENABLED",
+    )
+    paypal_balance_enabled: bool = Field(
+        default=False,
+        validation_alias="PAYPAL_BALANCE_ENABLED",
+    )
+    paypal_background_reconciliation_enabled: bool = Field(
+        default=False,
+        validation_alias="PAYPAL_BACKGROUND_RECONCILIATION_ENABLED",
+    )
+    paypal_return_url: str = Field(default="", validation_alias="PAYPAL_RETURN_URL")
+    paypal_cancel_url: str = Field(default="", validation_alias="PAYPAL_CANCEL_URL")
+    paypal_sandbox_merchant_id: str = Field(
+        default="",
+        validation_alias="PAYPAL_SANDBOX_MERCHANT_ID",
+        description="Optional sandbox/platform test merchant id when partner onboarding is off",
+    )
+    paypal_max_payout_amount: float = Field(
+        default=1000.0,
+        ge=0,
+        validation_alias="PAYPAL_MAX_PAYOUT_AMOUNT",
+    )
+
     # Stripe Global Payouts (configuration only — no outbound API calls until approved)
     stripe_global_payouts_enabled: bool = Field(
         default=False,
@@ -1201,6 +1252,30 @@ class Settings(BaseSettings):
             self.microsoft_oauth_client_id.strip()
             and self.microsoft_oauth_redirect_uri.strip()
         )
+
+    @property
+    def paypal_mode_normalized(self) -> str:
+        mode = self.paypal_mode.strip().lower()
+        if mode in ("live", "production"):
+            return "live"
+        return "sandbox"
+
+    @property
+    def paypal_configured(self) -> bool:
+        return bool(
+            self.paypal_enabled
+            and self.paypal_client_id.strip()
+            and self.paypal_client_secret.strip()
+        )
+
+    @property
+    def paypal_api_base_resolved(self) -> str:
+        explicit = self.paypal_api_base_url.strip().rstrip("/")
+        if explicit:
+            return explicit
+        if self.paypal_mode_normalized == "live":
+            return "https://api-m.paypal.com"
+        return "https://api-m.sandbox.paypal.com"
 
     @property
     def stripe_platform_billing_secret_key_resolved(self) -> str:

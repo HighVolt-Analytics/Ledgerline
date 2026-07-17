@@ -112,10 +112,24 @@ class PaymentAttempt(Base):
     __tablename__ = "payment_attempts"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        index=True,
+        nullable=True,
+    )
     payment_id: Mapped[int] = mapped_column(
         ForeignKey("payments.id", ondelete="CASCADE"),
         index=True,
     )
+    provider: Mapped[str | None] = mapped_column(String(32), index=True)
+    provider_batch_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    provider_item_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    provider_transaction_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    provider_request_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    provider_status: Mapped[str | None] = mapped_column(String(64))
+    recipient_type: Mapped[str | None] = mapped_column(String(32))
+    recipient_value: Mapped[str | None] = mapped_column(String(255))
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), index=True)
     stripe_transfer_id: Mapped[str | None] = mapped_column(String(255))
     stripe_payout_id: Mapped[str | None] = mapped_column(String(255))
@@ -124,6 +138,9 @@ class PaymentAttempt(Base):
     status: Mapped[str | None] = mapped_column(String(32), index=True)
     failure_code: Mapped[str | None] = mapped_column(String(64))
     failure_message: Mapped[str | None] = mapped_column(Text)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -171,6 +188,11 @@ class VendorPaymentMethod(Base):
     stripe_account_id: Mapped[str | None] = mapped_column(String(255), index=True)
     last4: Mapped[str | None] = mapped_column(String(4))
     currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    country: Mapped[str | None] = mapped_column(String(2))
+    provider: Mapped[str | None] = mapped_column(String(32), index=True)
+    recipient_type: Mapped[str | None] = mapped_column(String(32))
+    recipient_value: Mapped[str | None] = mapped_column(String(255))
+    verification_status: Mapped[str | None] = mapped_column(String(32))
     status: Mapped[str | None] = mapped_column(String(32), index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     raw_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)

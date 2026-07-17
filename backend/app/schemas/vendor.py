@@ -12,6 +12,7 @@ PayoutMethodType = Literal[
     "stripe_global_payouts",
     "stripe_treasury",
     "external_ap_provider",
+    "paypal",
 ]
 PayoutMethodStatus = Literal[
     "not_configured",
@@ -25,7 +26,9 @@ PayoutProvider = Literal[
     "stripe_global_payouts",
     "stripe_treasury",
     "external_ap_provider",
+    "paypal",
 ]
+PaypalRecipientType = Literal["EMAIL", "PHONE", "PAYPAL_ID"]
 RecipientStatus = Literal[
     "not_configured",
     "pending",
@@ -89,8 +92,13 @@ class VendorPayoutMethodCreate(BaseModel):
     stripe_account_id: str | None = Field(None, max_length=255)
     last4: str | None = Field(None, max_length=4)
     currency: str = Field(default="SGD", min_length=3, max_length=3)
+    country: str | None = Field(None, min_length=2, max_length=2)
     status: PayoutMethodStatus = "pending"
     is_default: bool = True
+    provider: str | None = Field(None, max_length=32)
+    recipient_type: PaypalRecipientType | None = None
+    recipient_value: str | None = Field(None, max_length=255)
+    verification_status: str | None = Field(None, max_length=32)
 
 
 class VendorPayoutMethodUpdate(BaseModel):
@@ -99,5 +107,10 @@ class VendorPayoutMethodUpdate(BaseModel):
     stripe_account_id: str | None = Field(None, max_length=255)
     last4: str | None = Field(None, max_length=4)
     currency: str | None = Field(None, min_length=3, max_length=3)
+    country: str | None = Field(None, min_length=2, max_length=2)
     status: PayoutMethodStatus | None = None
     is_default: bool | None = None
+    provider: str | None = Field(None, max_length=32)
+    recipient_type: PaypalRecipientType | None = None
+    recipient_value: str | None = Field(None, max_length=255)
+    verification_status: str | None = Field(None, max_length=32)

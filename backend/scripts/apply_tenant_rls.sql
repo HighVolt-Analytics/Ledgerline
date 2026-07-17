@@ -13,6 +13,7 @@ DECLARE
     'line_items', 'journal_entries', 'goods_receipts', 'meta_webhook_dedupe',
     'dossier_manual_links',
     'stripe_accounts', 'stripe_balance_snapshots', 'stripe_transactions', 'vendor_payment_methods',
+    'tenant_payment_provider_accounts', 'provider_transactions', 'payment_attempts',
     'invoice_ocr_artifacts', 'classification_learning_events',
     'accounting_integrations',
     'accounting_sync_jobs',
