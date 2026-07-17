@@ -314,7 +314,7 @@ export function PaymentRow({
       }
 
       const confirmed = window.confirm(
-        `Submit a PayPal payout for ${fmtAud(p.amount)} to ${p.vendor}?`
+        `Submit a PayPal payout for ${money(p.amount, p.currency)} to ${p.vendor}?`
       );
       if (!confirmed) return;
 
