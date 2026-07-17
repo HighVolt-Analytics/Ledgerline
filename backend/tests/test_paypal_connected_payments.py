@@ -98,14 +98,133 @@ async def test_partner_onboarding_disabled_without_sandbox_merchant(
 
 @pytest.mark.asyncio
 async def test_sandbox_connect(db_session) -> None:
+    expected_merchant = f"sandbox-test:{TESTING_TENANT_UUID}"
     result = await connect_paypal_account(
         db_session, tenant_id=TESTING_TENANT_UUID, user_id=1
     )
     assert result["mode"] == "sandbox_test"
-    assert result["merchant_id"] == "SANDBOX-MERCHANT-1"
+    assert result["connected"] is True
+    assert result["already_connected"] is False
+    assert result["merchant_id"] == expected_merchant
+    # Platform env merchant must never be stored as the tenant seller identity.
+    assert result["merchant_id"] != "SANDBOX-MERCHANT-1"
     readiness = await get_paypal_readiness(db_session, TESTING_TENANT_UUID)
     assert readiness["connected"] is True
-    assert readiness["merchant_id"] == "SANDBOX-MERCHANT-1"
+    assert readiness["merchant_id"] == expected_merchant
+
+
+@pytest.mark.asyncio
+async def test_sandbox_connect_idempotent(db_session) -> None:
+    first = await connect_paypal_account(
+        db_session, tenant_id=TESTING_TENANT_UUID, user_id=1
+    )
+    second = await connect_paypal_account(
+        db_session, tenant_id=TESTING_TENANT_UUID, user_id=1
+    )
+    assert first["connected"] is True
+    assert first["already_connected"] is False
+    assert second["connected"] is True
+    assert second["already_connected"] is True
+    assert second["merchant_id"] == first["merchant_id"]
+
+    from sqlalchemy import select
+
+    rows = (
+        await db_session.execute(
+            select(TenantPaymentProviderAccount).where(
+                TenantPaymentProviderAccount.tenant_id == TESTING_TENANT_UUID,
+                TenantPaymentProviderAccount.provider == PROVIDER_PAYPAL,
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_connect_twice_no_duplicate_row(db_session) -> None:
+    await connect_paypal_account(db_session, tenant_id=TESTING_TENANT_UUID, user_id=1)
+    await connect_paypal_account(db_session, tenant_id=TESTING_TENANT_UUID, user_id=2)
+    from sqlalchemy import func, select
+
+    count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(TenantPaymentProviderAccount)
+            .where(
+                TenantPaymentProviderAccount.tenant_id == TESTING_TENANT_UUID,
+                TenantPaymentProviderAccount.provider == PROVIDER_PAYPAL,
+            )
+        )
+    ).scalar_one()
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_reconnect_after_disconnect(db_session) -> None:
+    first = await connect_paypal_account(
+        db_session, tenant_id=TESTING_TENANT_UUID, user_id=1
+    )
+    await disconnect_paypal_account(db_session, tenant_id=TESTING_TENANT_UUID)
+    readiness = await get_paypal_readiness(db_session, TESTING_TENANT_UUID)
+    assert readiness["connected"] is False
+    assert readiness["merchant_id"] is None
+
+    second = await connect_paypal_account(
+        db_session, tenant_id=TESTING_TENANT_UUID, user_id=1
+    )
+    assert second["connected"] is True
+    assert second["already_connected"] is False
+    assert second["merchant_id"] == first["merchant_id"]
+    assert second["merchant_id"] != "SANDBOX-MERCHANT-1"
+
+    from sqlalchemy import select
+
+    rows = (
+        await db_session.execute(
+            select(TenantPaymentProviderAccount).where(
+                TenantPaymentProviderAccount.tenant_id == TESTING_TENANT_UUID,
+                TenantPaymentProviderAccount.provider == PROVIDER_PAYPAL,
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == "connected"
+    assert rows[0].provider_account_id == f"sandbox-test:{TESTING_TENANT_UUID}"
+    assert rows[0].onboarding_status == "sandbox_test"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_after_legacy_sandbox_merchant_disconnect(db_session) -> None:
+    """Staging bug: disconnected row still held PAYPAL_SANDBOX_MERCHANT_ID."""
+    from sqlalchemy import select
+
+    legacy = TenantPaymentProviderAccount(
+        tenant_id=TESTING_TENANT_UUID,
+        provider=PROVIDER_PAYPAL,
+        provider_account_id="SANDBOX-MERCHANT-1",
+        provider_merchant_id="SANDBOX-MERCHANT-1",
+        status="disconnected",
+        onboarding_status="disconnected",
+    )
+    db_session.add(legacy)
+    await db_session.flush()
+
+    result = await connect_paypal_account(
+        db_session, tenant_id=TESTING_TENANT_UUID, user_id=1
+    )
+    assert result["connected"] is True
+    assert result["merchant_id"] == f"sandbox-test:{TESTING_TENANT_UUID}"
+    assert result["merchant_id"] != "SANDBOX-MERCHANT-1"
+
+    rows = (
+        await db_session.execute(
+            select(TenantPaymentProviderAccount).where(
+                TenantPaymentProviderAccount.tenant_id == TESTING_TENANT_UUID,
+                TenantPaymentProviderAccount.provider == PROVIDER_PAYPAL,
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
 
 
 @pytest.mark.asyncio
@@ -115,6 +234,28 @@ async def test_disconnect_clears_credentials(db_session) -> None:
     assert result["connected"] is False
     readiness = await get_paypal_readiness(db_session, TESTING_TENANT_UUID)
     assert readiness["connected"] is False
+
+    from sqlalchemy import select
+
+    row = (
+        await db_session.execute(
+            select(TenantPaymentProviderAccount).where(
+                TenantPaymentProviderAccount.tenant_id == TESTING_TENANT_UUID,
+                TenantPaymentProviderAccount.provider == PROVIDER_PAYPAL,
+            )
+        )
+    ).scalar_one()
+    assert row.status == "disconnected"
+    assert row.onboarding_status is None
+    assert row.provider_merchant_id is None
+    assert row.payments_enabled is False
+    assert row.payouts_enabled is False
+    assert row.balance_visibility is False
+    assert row.transactions_visibility is False
+    assert row.provider_account_id.startswith("disconnected:")
+    assert row.last_verified_at is None
+    assert row.last_balance_sync_at is None
+    assert row.last_transaction_sync_at is None
 
 
 @pytest.mark.asyncio
