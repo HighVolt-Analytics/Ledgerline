@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { PageLoader } from "@/components/PageLoader";
 import { setAuthToken, setAuthUser } from "@/api/client";
 import { useAuth } from "@/context/AuthContext";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { hydrateUserAndMemberships } from "@/lib/authHydrate";
 import { persistAuthSuccess } from "@/lib/authSession";
 import { apiFetchTenantSelectAccounts, type TenantAccountSummary } from "@/lib/authApi";
@@ -12,6 +13,7 @@ import { completeMicrosoftOAuthInBrowser, loadMicrosoftOAuthConfig } from "@/lib
 import { withRouterBasename } from "@/lib/routerBasename";
 import { postLoginPathForRole, consumeOAuthReturnTo } from "@/lib/authReturnTo";
 import { persistSignupToken } from "@/lib/signupApi";
+import { canRenderTenantOwnedUi } from "@/lib/tenantSession";
 
 export function LoginOauthCallbackPage() {
   const navigate = useNavigate();
@@ -20,9 +22,18 @@ export function LoginOauthCallbackPage() {
   const [error, setError] = useState<string | null>(null);
   const handled = useRef(false);
 
+  // Drop transient callback errors if tenant scope moves during OAuth completion.
+  useResetOnTenantChange(() => {
+    setError(null);
+  });
+
   useEffect(() => {
     if (loading || handled.current) return;
     if (user && user.id > 0) {
+      // Wait until JWT/profile tenant scope is consistent before entering app routes.
+      if (!canRenderTenantOwnedUi(user.tenant_id)) {
+        return;
+      }
       const returnTo = consumeOAuthReturnTo();
       navigate(postLoginPathForRole(user.role, returnTo), { replace: true });
       return;
