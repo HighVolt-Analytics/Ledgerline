@@ -1,7 +1,7 @@
 """PayPal connected payments schema beside Stripe Connect.
 
-Revision ID: 067
-Revises: 066
+Revision ID: 074
+Revises: 073
 """
 
 from typing import Sequence, Union
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "067"
-down_revision: Union[str, None] = "066"
+revision: str = "074"
+down_revision: Union[str, None] = "073"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
