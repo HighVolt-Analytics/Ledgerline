@@ -83,6 +83,7 @@ async def get_paypal_account_for_tenant(
     db: AsyncSession,
     tenant_id: uuid.UUID,
 ) -> TenantPaymentProviderAccount | None:
+    """Active (non-disconnected) PayPal connection for the tenant."""
     return (
         await db.execute(
             select(TenantPaymentProviderAccount).where(
@@ -92,6 +93,46 @@ async def get_paypal_account_for_tenant(
             )
         )
     ).scalar_one_or_none()
+
+
+async def _get_any_paypal_row_for_tenant(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> TenantPaymentProviderAccount | None:
+    """Any PayPal row for the tenant, including disconnected (for idempotent upsert)."""
+    return (
+        await db.execute(
+            select(TenantPaymentProviderAccount)
+            .where(
+                TenantPaymentProviderAccount.tenant_id == tenant_id,
+                TenantPaymentProviderAccount.provider == PROVIDER_PAYPAL,
+            )
+            .order_by(TenantPaymentProviderAccount.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+def _sandbox_test_account_id(tenant_id: uuid.UUID) -> str:
+    """Tenant-scoped sandbox identity — never the shared PAYPAL_SANDBOX_MERCHANT_ID."""
+    return f"sandbox-test:{tenant_id}"
+
+
+def _already_connected_payload(
+    account: TenantPaymentProviderAccount,
+    *,
+    mode: str,
+) -> dict[str, Any]:
+    readiness = readiness_payload(account)
+    return {
+        "connected": True,
+        "already_connected": True,
+        "mode": mode,
+        "action": "already_connected",
+        "merchant_id": readiness.get("merchant_id"),
+        "redirect_url": None,
+        "readiness": readiness,
+    }
 
 
 def readiness_payload(
@@ -163,19 +204,29 @@ async def connect_paypal_account(
     tenant_id: uuid.UUID,
     user_id: int,
 ) -> dict[str, Any]:
-    """Start partner onboarding or sandbox test-mode connect."""
+    """Start partner onboarding or explicit sandbox platform-test connect."""
     settings = get_settings()
     if not settings.paypal_configured:
         raise PaypalAccountError("PayPal is not configured", code="paypal_not_configured")
 
+    existing = await get_paypal_account_for_tenant(db, tenant_id)
+    if existing is not None and existing.status == STATUS_CONNECTED:
+        mode = (
+            "sandbox_test"
+            if (existing.onboarding_status or "") == ONBOARDING_SANDBOX_TEST
+            else "partner_onboarding"
+        )
+        return _already_connected_payload(existing, mode=mode)
+
     if not settings.paypal_partner_onboarding_enabled:
-        sandbox_merchant = settings.paypal_sandbox_merchant_id.strip()
-        if settings.paypal_mode_normalized == "sandbox" and sandbox_merchant:
+        # Explicit sandbox platform testing only — requires the env gate to be set,
+        # but never stores PAYPAL_SANDBOX_MERCHANT_ID as the tenant's merchant identity.
+        sandbox_gate = settings.paypal_sandbox_merchant_id.strip()
+        if settings.paypal_mode_normalized == "sandbox" and sandbox_gate:
             return await _connect_sandbox_test_mode(
                 db,
                 tenant_id=tenant_id,
                 user_id=user_id,
-                merchant_id=sandbox_merchant,
             )
         raise PaypalAccountError(
             "PayPal partner onboarding is not enabled for this environment",
@@ -190,23 +241,35 @@ async def _connect_sandbox_test_mode(
     *,
     tenant_id: uuid.UUID,
     user_id: int,
-    merchant_id: str,
 ) -> dict[str, Any]:
-    """Platform sandbox test connection using configured merchant id (no partner referral)."""
+    """Idempotent platform sandbox test connect (not seller Partner Referral).
+
+    Uses a tenant-scoped provider_account_id so reconnect never collides on the
+    shared PAYPAL_SANDBOX_MERCHANT_ID unique key.
+    """
     now = datetime.now(timezone.utc)
+    account_id = _sandbox_test_account_id(tenant_id)
+
     account = await get_paypal_account_for_tenant(db, tenant_id)
+    if account is not None and account.status == STATUS_CONNECTED:
+        return _already_connected_payload(account, mode="sandbox_test")
+
+    # Reuse disconnected/pending row when present — never INSERT a duplicate.
+    account = await _get_any_paypal_row_for_tenant(db, tenant_id)
+    created = False
     if account is None:
         account = TenantPaymentProviderAccount(
             tenant_id=tenant_id,
             provider=PROVIDER_PAYPAL,
-            provider_account_id=merchant_id,
-            provider_merchant_id=merchant_id,
+            provider_account_id=account_id,
         )
         db.add(account)
+        created = True
 
-    account.provider_account_id = merchant_id
-    account.provider_merchant_id = merchant_id
-    account.display_name = account.display_name or "PayPal Sandbox"
+    account.provider_account_id = account_id
+    # Platform sandbox merchant is an env gate only — not the seller merchant id.
+    account.provider_merchant_id = account_id
+    account.display_name = "PayPal Sandbox (platform test)"
     account.status = STATUS_CONNECTED
     account.onboarding_status = ONBOARDING_SANDBOX_TEST
     account.payments_enabled = True
@@ -216,9 +279,14 @@ async def _connect_sandbox_test_mode(
         get_settings().paypal_transaction_search_enabled
     )
     account.last_verified_at = now
+    account.last_balance_sync_at = None
+    account.last_transaction_sync_at = None
     account.last_error_code = None
     account.last_error_message = None
     account.tracking_id = account.tracking_id or str(uuid.uuid4())
+    account.encrypted_access_token = None
+    account.encrypted_refresh_token = None
+    account.token_expires_at = None
     await db.flush()
 
     await log_event(
@@ -226,15 +294,18 @@ async def _connect_sandbox_test_mode(
         "paypal_sandbox_connected",
         tenant_id=tenant_id,
         detail={
-            "merchant_id": merchant_id,
+            "merchant_id": account_id,
             "user_id": user_id,
             "mode": "sandbox_test",
+            "created": created,
         },
     )
     return {
+        "connected": True,
+        "already_connected": False,
         "mode": "sandbox_test",
         "action": "connected",
-        "merchant_id": merchant_id,
+        "merchant_id": account_id,
         "redirect_url": None,
         "readiness": readiness_payload(account),
     }
@@ -255,27 +326,39 @@ async def _start_partner_referral(
             code="paypal_urls_required",
         )
 
+    active = await get_paypal_account_for_tenant(db, tenant_id)
+    if active is not None and active.status == STATUS_CONNECTED:
+        return _already_connected_payload(active, mode="partner_onboarding")
+
     state = create_oauth_state(tenant_id=tenant_id, user_id=user_id)
     tracking_id = str(uuid.uuid4())
 
-    # Persist pending row keyed by tracking id before redirect.
-    account = await get_paypal_account_for_tenant(db, tenant_id)
+    # Upsert pending row (reuse disconnected row) — seller merchant id comes from callback.
+    account = await _get_any_paypal_row_for_tenant(db, tenant_id)
     if account is None:
-        # Temporary account id until merchant id is known from callback.
         account = TenantPaymentProviderAccount(
             tenant_id=tenant_id,
             provider=PROVIDER_PAYPAL,
             provider_account_id=f"pending:{tracking_id}",
         )
         db.add(account)
+    else:
+        account.provider_account_id = f"pending:{tracking_id}"
+        account.provider_merchant_id = None
 
     account.tracking_id = tracking_id
     account.status = STATUS_PENDING
     account.onboarding_status = ONBOARDING_PENDING
     account.payments_enabled = False
     account.payouts_enabled = False
+    account.balance_visibility = False
+    account.transactions_visibility = False
+    account.display_name = None
     account.last_error_code = None
     account.last_error_message = None
+    account.encrypted_access_token = None
+    account.encrypted_refresh_token = None
+    account.token_expires_at = None
     await db.flush()
 
     body = {
@@ -340,6 +423,8 @@ async def _start_partner_referral(
         detail={"tracking_id": tracking_id, "user_id": user_id},
     )
     return {
+        "connected": False,
+        "already_connected": False,
         "mode": "partner_onboarding",
         "action": "redirect",
         "redirect_url": redirect_url,
@@ -475,21 +560,19 @@ async def disconnect_paypal_account(
     tenant_id: uuid.UUID,
     user_id: int | None = None,
 ) -> dict[str, Any]:
-    """Clear live credentials; keep historical payment attempts untouched."""
-    account = (
-        await db.execute(
-            select(TenantPaymentProviderAccount).where(
-                TenantPaymentProviderAccount.tenant_id == tenant_id,
-                TenantPaymentProviderAccount.provider == PROVIDER_PAYPAL,
-            )
-        )
-    ).scalar_one_or_none()
-    if account is None:
+    """Deactivate the tenant PayPal connection; keep historical payment attempts."""
+    account = await _get_any_paypal_row_for_tenant(db, tenant_id)
+    if account is None or account.status == STATUS_DISCONNECTED:
         raise PaypalAccountError("PayPal account is not connected")
 
-    merchant_id = account.provider_merchant_id or account.provider_account_id
+    prior_merchant = account.provider_merchant_id or account.provider_account_id
+    # Rotate account id so a later reconnect with the same seller id cannot collide.
+    account.provider_account_id = f"disconnected:{uuid.uuid4()}"
+    account.provider_merchant_id = None
+    account.provider_email = None
+    account.display_name = None
     account.status = STATUS_DISCONNECTED
-    account.onboarding_status = STATUS_DISCONNECTED
+    account.onboarding_status = None
     account.payments_enabled = False
     account.payouts_enabled = False
     account.balance_visibility = False
@@ -497,6 +580,10 @@ async def disconnect_paypal_account(
     account.encrypted_access_token = None
     account.encrypted_refresh_token = None
     account.token_expires_at = None
+    account.tracking_id = None
+    account.last_verified_at = None
+    account.last_balance_sync_at = None
+    account.last_transaction_sync_at = None
     account.last_error_code = None
     account.last_error_message = None
     await db.flush()
@@ -505,6 +592,7 @@ async def disconnect_paypal_account(
         db,
         "paypal_account_disconnected",
         tenant_id=tenant_id,
-        detail={"merchant_id": merchant_id, "user_id": user_id},
+        detail={"merchant_id": prior_merchant, "user_id": user_id},
     )
+    # Readiness is computed live from DB — disconnected rows are excluded.
     return readiness_payload(None, configured=get_settings().paypal_configured)
