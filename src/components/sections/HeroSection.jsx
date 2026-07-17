@@ -1,11 +1,15 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, Play } from 'lucide-react';
 import HeroFloatingVisual from './HeroFloatingVisual';
 import { externalLinks } from '../../data/navigation';
 
 const EASE = [0.16, 1, 0.3, 1];
+const SUPADEMO_ID = 'cmrm3tpec02v5qm3qxyu3iris';
 
 export default function HeroSection() {
+  const [tourOpen, setTourOpen] = useState(false);
+
   return (
     <section
       id="top"
@@ -59,10 +63,15 @@ export default function HeroSection() {
                 Start free tier today
                 <ArrowRight className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5 sm:h-4 sm:w-4" />
               </a>
-              <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card/40 px-4 py-2.5 text-[13px] text-foreground hover-elevate active-elevate-2 sm:w-auto sm:px-6 sm:py-3.5 sm:text-sm">
+              <a
+                href={externalLinks.demoVideo}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card/40 px-4 py-2.5 text-[13px] text-foreground hover-elevate active-elevate-2 sm:w-auto sm:px-6 sm:py-3.5 sm:text-sm"
+              >
                 <Play className="h-3 w-3 fill-current sm:h-3.5 sm:w-3.5" />
                 Watch 60s demo
-              </button>
+              </a>
             </motion.div>
 
             <motion.p
@@ -76,6 +85,52 @@ export default function HeroSection() {
             </motion.p>
           </div>
         </div>
+
+        {/* Exact Supademo demo size: 2880×1304 (crops their 40px embed padding) */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: EASE, delay: 0.28 }}
+          className="relative z-10 mx-auto mt-10 w-[min(100%,90vw)] max-w-[1200px] px-4 sm:mt-12 sm:px-6"
+        >
+          <div
+            className="relative w-full overflow-hidden rounded-2xl border border-border bg-black shadow-lg"
+            style={{ aspectRatio: '2880 / 1304', maxHeight: '80vh' }}
+          >
+            {tourOpen ? (
+              <iframe
+                src={`https://app.supademo.com/embed/${SUPADEMO_ID}?embed_v=2`}
+                title="Ledgerline interactive product tour"
+                allow="clipboard-write"
+                allowFullScreen
+                className="absolute left-0 w-full border-0"
+                style={{ top: '-40px', height: 'calc(100% + 80px)' }}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setTourOpen(true)}
+                className="group absolute inset-0 h-full w-full overflow-hidden text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/60"
+                aria-label="Try the interactive product tour"
+              >
+                <img
+                  src={`https://app.supademo.com/api/demo/${SUPADEMO_ID}/image`}
+                  alt="Ledgerline interactive product tour preview"
+                  className="absolute inset-0 h-full w-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                />
+                <div className="absolute inset-0 bg-black/40" aria-hidden="true" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-zinc-900 shadow-lg transition-transform duration-200 group-hover:scale-105 sm:px-6 sm:py-3 sm:text-[15px]">
+                    <Play className="h-3.5 w-3.5 fill-current text-zinc-900 sm:h-4 sm:w-4" />
+                    Try the tour
+                  </span>
+                </div>
+              </button>
+            )}
+          </div>
+        </motion.div>
 
         <HeroFloatingVisual />
       </div>

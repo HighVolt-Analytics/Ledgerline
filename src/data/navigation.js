@@ -13,4 +13,5 @@ export const footerCompanyLinks = ['Company', 'Security', 'Privacy', 'Terms', 'C
 export const externalLinks = {
   signup: 'https://staging.highvolt.tech/ledgerlink/signup',
   getStarted: 'https://staging.highvolt.tech/ledgerlink/get-started',
+  demoVideo: 'https://youtu.be/0luxUk3VtgA',
 };
