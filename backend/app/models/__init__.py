@@ -39,6 +39,13 @@ from app.models.stripe_payments import (
     StripeWebhookEvent,
     VendorPaymentMethod,
 )
+from app.models.tenant_payment_provider import (
+    PROVIDER_PAYPAL,
+    PROVIDER_STRIPE,
+    PaypalWebhookEvent,
+    ProviderTransaction,
+    TenantPaymentProviderAccount,
+)
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_line import SalesOrderLine
 from app.models.purchase_order import PurchaseOrder
@@ -93,6 +100,10 @@ __all__ = [
     "PaymentAttempt",
     "PaymentExecutionInstruction",
     "PendingVendor",
+    "PaypalWebhookEvent",
+    "PROVIDER_PAYPAL",
+    "PROVIDER_STRIPE",
+    "ProviderTransaction",
     "PurchaseOrder",
     "PurchaseOrderLine",
     "SalesOrder",
@@ -109,6 +120,7 @@ __all__ = [
     "Tenant",
     "TenantMemberInvite",
     "TenantModule",
+    "TenantPaymentProviderAccount",
     "TenantRuleBookConfig",
     "User",
     "UserTenantMapping",

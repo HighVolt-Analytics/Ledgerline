@@ -1024,12 +1024,17 @@ export interface Vendor {
 export type VendorPayoutMethodType =
   | "manual_bank"
   | "stripe_connected_account"
-  | "external_bank_phase2";
+  | "external_bank_phase2"
+  | "paypal"
+  | "stripe_global_payouts"
+  | "stripe_treasury"
+  | "external_ap_provider";
 
 export type VendorPayoutMethodStatus =
   | "not_configured"
   | "pending"
   | "verified"
+  | "failed"
   | "disabled";
 
 export interface VendorPayoutMethod {
@@ -1042,6 +1047,11 @@ export interface VendorPayoutMethod {
   currency: string;
   status: VendorPayoutMethodStatus | string;
   is_default: boolean;
+  provider?: string | null;
+  provider_recipient_id?: string | null;
+  recipient_status?: string | null;
+  recipient_country?: string | null;
+  recipient_currency?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1925,6 +1935,122 @@ export interface StripeTransaction {
   status: string | null;
   description: string | null;
   available_on: string | null;
+}
+
+export interface PaypalReadinessError {
+  code: string | null;
+  message: string | null;
+}
+
+export interface PaypalReadinessResponse {
+  configured: boolean;
+  connected: boolean;
+  merchant_id: string | null;
+  display_name: string | null;
+  onboarding_complete: boolean;
+  payments_enabled: boolean;
+  payouts_enabled: boolean;
+  balance_available: boolean;
+  transactions_available: boolean;
+  needs_reauthorization: boolean;
+  last_verified_at: string | null;
+  last_error: PaypalReadinessError | string | null;
+}
+
+export interface PaypalConnectResponse {
+  mode: string;
+  action?: string | null;
+  merchant_id?: string | null;
+  onboarding_url?: string | null;
+  redirect_url?: string | null;
+  tracking_id?: string | null;
+  state?: string | null;
+  readiness?: PaypalReadinessResponse | null;
+}
+
+export interface PaypalDisconnectResponse {
+  configured: boolean;
+  connected: boolean;
+  merchant_id: string | null;
+  display_name: string | null;
+  onboarding_complete: boolean;
+  payments_enabled: boolean;
+  payouts_enabled: boolean;
+  balance_available: boolean;
+  transactions_available: boolean;
+  needs_reauthorization: boolean;
+  last_verified_at: string | null;
+  last_error: PaypalReadinessError | string | null;
+}
+
+export interface PaypalBalanceRow {
+  currency: string | null;
+  total?: string | number | null;
+  available?: string | number | null;
+  primary?: boolean;
+}
+
+export interface PaypalBalanceResponse {
+  available: boolean;
+  reason?: string | null;
+  balances: PaypalBalanceRow[];
+  merchant_id?: string | null;
+  as_of?: string | null;
+}
+
+export interface PaypalTransaction {
+  id: number;
+  provider: string;
+  provider_account_id: string | null;
+  provider_transaction_id: string | null;
+  transaction_type: string | null;
+  status: string | null;
+  currency: string | null;
+  gross_amount: string | number | null;
+  fee_amount: string | number | null;
+  net_amount: string | number | null;
+  recipient: string | null;
+  occurred_at: string | null;
+  last_synced_at: string | null;
+}
+
+export interface PaypalTransactionsResponse {
+  available: boolean;
+  reason?: string | null;
+  transactions: PaypalTransaction[];
+  page?: number;
+  page_size?: number;
+  merchant_id?: string | null;
+}
+
+export interface PaypalPayoutRequest {
+  payable_id: number;
+  recipient_method_id: number;
+  amount?: string | null;
+  currency?: string | null;
+  note?: string | null;
+}
+
+export interface PaypalPayoutAttempt {
+  id: number;
+  payment_id: number;
+  provider: string;
+  provider_batch_id: string | null;
+  provider_item_id: string | null;
+  provider_transaction_id: string | null;
+  provider_request_id: string | null;
+  provider_status: string | null;
+  recipient_type: string | null;
+  recipient_value: string | null;
+  amount: string | null;
+  currency: string | null;
+  status: string;
+  failure_code: string | null;
+  failure_message: string | null;
+  submitted_at: string | null;
+  completed_at: string | null;
+  last_checked_at: string | null;
+  created_at: string | null;
 }
 
 export interface PlanInfo {

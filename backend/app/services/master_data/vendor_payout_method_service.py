@@ -25,6 +25,7 @@ PAYOUT_METHOD_TYPES = frozenset(
         "stripe_global_payouts",
         "stripe_treasury",
         "external_ap_provider",
+        "paypal",
     }
 )
 PAYOUT_METHOD_STATUSES = frozenset(
@@ -35,6 +36,7 @@ PAYOUT_METHOD_STATUSES = frozenset(
         "disabled",
     }
 )
+PAYPAL_RECIPIENT_TYPES = frozenset({"EMAIL", "PHONE", "PAYPAL_ID"})
 
 _LAST4_RE = re.compile(r"^\d{0,4}$")
 _STRIPE_ACCOUNT_ID_RE = re.compile(r"^acct_[A-Za-z0-9]+$")
@@ -95,10 +97,42 @@ def _validate_stripe_account_id(value: str | None) -> str | None:
     return cleaned
 
 
+def _validate_paypal_recipient(
+    *,
+    method_type: str | None,
+    provider: str | None,
+    recipient_type: str | None,
+    recipient_value: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """When provider/method is paypal, require EMAIL|PHONE|PAYPAL_ID + value."""
+    is_paypal = (method_type or "").strip().lower() == "paypal" or (
+        provider or ""
+    ).strip().lower() == "paypal"
+    if not is_paypal:
+        return (
+            (provider or "").strip().lower() or None,
+            (recipient_type or "").strip().upper() or None,
+            (recipient_value or "").strip() or None,
+        )
+
+    resolved_provider = "paypal"
+    resolved_type = (recipient_type or "").strip().upper()
+    resolved_value = (recipient_value or "").strip()
+    if resolved_type not in PAYPAL_RECIPIENT_TYPES:
+        raise VendorPayoutMethodError(
+            "recipient_type must be EMAIL, PHONE, or PAYPAL_ID when provider=paypal"
+        )
+    if not resolved_value:
+        raise VendorPayoutMethodError(
+            "recipient_value is required when provider=paypal"
+        )
+    return resolved_provider, resolved_type, resolved_value
+
+
 def _provider_metadata(row: VendorPaymentMethod) -> dict[str, str | None]:
     raw = row.raw_json if isinstance(row.raw_json, dict) else {}
     method_type = row.method_type or "manual_bank"
-    provider = str(raw.get("provider") or method_type)
+    provider = str(row.provider or raw.get("provider") or method_type)
     if method_type == "stripe_global_payouts":
         provider = "stripe_global_payouts"
     elif method_type == "stripe_treasury":
@@ -107,15 +141,24 @@ def _provider_metadata(row: VendorPaymentMethod) -> dict[str, str | None]:
         provider = "external_ap_provider"
     elif method_type == "manual_bank":
         provider = "manual_bank"
-    recipient_status = str(raw.get("recipient_status") or row.status or "pending")
+    elif method_type == "paypal":
+        provider = "paypal"
+    recipient_status = str(
+        row.verification_status
+        or raw.get("recipient_status")
+        or row.status
+        or "pending"
+    )
     if method_type == "stripe_global_payouts" and recipient_status == "verified":
         recipient_status = "pending"
     return {
         "provider": provider,
-        "provider_recipient_id": raw.get("provider_recipient_id"),
+        "provider_recipient_id": row.recipient_value or raw.get("provider_recipient_id"),
         "recipient_status": recipient_status,
-        "recipient_country": raw.get("recipient_country"),
+        "recipient_country": row.country or raw.get("recipient_country"),
         "recipient_currency": raw.get("recipient_currency") or row.currency,
+        "recipient_type": row.recipient_type,
+        "recipient_value": row.recipient_value,
     }
 
 
@@ -227,6 +270,13 @@ async def create_payout_method_for_vendor(
             "stripe_account_id is required for stripe_connected_account methods"
         )
 
+    provider, recipient_type, recipient_value = _validate_paypal_recipient(
+        method_type=body.method_type,
+        provider=body.provider,
+        recipient_type=body.recipient_type,
+        recipient_value=body.recipient_value,
+    )
+
     is_default = body.is_default
     if is_default:
         await _clear_other_defaults(db, tenant_id, vendor_id)
@@ -239,6 +289,11 @@ async def create_payout_method_for_vendor(
         stripe_account_id=stripe_account_id,
         last4=last4,
         currency=(body.currency or "SGD").upper()[:3],
+        country=(body.country or "").strip().upper()[:2] or None,
+        provider=provider,
+        recipient_type=recipient_type,
+        recipient_value=recipient_value,
+        verification_status=(body.verification_status or body.status or "pending"),
         status=body.status,
         is_default=is_default,
     )
@@ -268,10 +323,14 @@ async def update_payout_method_for_vendor(
         row.last4 = _validate_last4(body.last4)
     if body.currency is not None:
         row.currency = body.currency.upper()[:3]
+    if body.country is not None:
+        row.country = body.country.strip().upper()[:2] or None
     if body.status is not None:
         if body.status not in PAYOUT_METHOD_STATUSES:
             raise VendorPayoutMethodError(f"Unsupported status: {body.status}")
         row.status = body.status
+    if body.verification_status is not None:
+        row.verification_status = body.verification_status.strip() or None
     if body.is_default is not None:
         if body.is_default:
             await _clear_other_defaults(
@@ -284,6 +343,31 @@ async def update_payout_method_for_vendor(
         raise VendorPayoutMethodError(
             "stripe_account_id is required for stripe_connected_account methods"
         )
+
+    if (
+        body.provider is not None
+        or body.recipient_type is not None
+        or body.recipient_value is not None
+        or method_type == "paypal"
+    ):
+        provider, recipient_type, recipient_value = _validate_paypal_recipient(
+            method_type=method_type,
+            provider=body.provider if body.provider is not None else row.provider,
+            recipient_type=(
+                body.recipient_type if body.recipient_type is not None else row.recipient_type
+            ),
+            recipient_value=(
+                body.recipient_value
+                if body.recipient_value is not None
+                else row.recipient_value
+            ),
+        )
+        if provider is not None:
+            row.provider = provider
+        if recipient_type is not None:
+            row.recipient_type = recipient_type
+        if recipient_value is not None:
+            row.recipient_value = recipient_value
 
     await db.flush()
     return payout_method_to_response(row)

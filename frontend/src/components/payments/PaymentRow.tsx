@@ -9,6 +9,11 @@ import {
   Shield,
 } from "lucide-react";
 import { ApproverChip } from "@/components/ApproverChip";
+import {
+  PayProviderSelector,
+  paypalPayoutsReady,
+  type PayProvider,
+} from "@/components/payments/PayPalProviderCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -20,6 +25,11 @@ import {
   useMarkPaymentPaidManual,
   useValidatePaymentExecutionReadiness,
 } from "@/hooks/usePayments";
+import {
+  resolvePaypalRecipientMethodId,
+  useCreatePayPalPayout,
+  usePayPalReadiness,
+} from "@/hooks/usePayPal";
 import type { PaymentExecutionReadinessResponse } from "@/api/types";
 import { money } from "@/lib/format";
 import {
@@ -43,9 +53,11 @@ function formatVendorPayoutStatus(
       ? "manual bank"
       : methodType === "stripe_connected_account"
         ? "Stripe account"
-        : methodType === "external_bank_phase2"
-          ? "external bank"
-          : methodType.replaceAll("_", " ");
+        : methodType === "paypal"
+          ? "PayPal"
+          : methodType === "external_bank_phase2"
+            ? "external bank"
+            : methodType.replaceAll("_", " ");
   return `${typeLabel} (${statusLabel})`;
 }
 
@@ -189,6 +201,8 @@ export function PaymentRow({
   const validateReadiness = useValidatePaymentExecutionReadiness();
   const createInstruction = useCreatePaymentExecutionInstruction();
   const markPaidManual = useMarkPaymentPaidManual();
+  const createPaypalPayout = useCreatePayPalPayout();
+  const { data: paypalReadiness } = usePayPalReadiness();
   const { permissions } = usePermissions();
   const canExecuteManual =
     permissions == null || permissions.permissions.Approve === true;
@@ -203,17 +217,26 @@ export function PaymentRow({
   );
   const [manualNote, setManualNote] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [payProvider, setPayProvider] = useState<PayProvider>("stripe");
 
   const badge = executionReadinessBadge(p.executionReadinessStatus);
   const showValidate = p.tab !== "paid" && p.tab !== "failed";
+  const showProviderSelector = p.tab === "scheduled" || p.tab === "awaiting";
+  const paypalEnabled = paypalPayoutsReady(paypalReadiness);
   const canCreateInstruction =
     p.tab === "scheduled" &&
+    payProvider === "stripe" &&
     manualExecutionEnabled &&
     canExecuteManual &&
     !p.executionInstruction &&
     p.executionReadinessStatus === "manual_instruction_available";
   const canMarkPaidManual =
-    p.tab === "scheduled" && !!p.executionInstruction && canExecuteManual;
+    p.tab === "scheduled" &&
+    payProvider === "stripe" &&
+    !!p.executionInstruction &&
+    canExecuteManual;
+  const canPayWithPaypal =
+    p.tab === "scheduled" && payProvider === "paypal" && paypalEnabled && canExecuteManual;
 
   const handleValidate = async () => {
     setReadinessResult(null);
@@ -274,6 +297,39 @@ export function PaymentRow({
     }
   };
 
+  const handlePayWithPaypal = async () => {
+    setActionError(null);
+    try {
+      let recipientMethodId = await resolvePaypalRecipientMethodId(p.vendor);
+      if (recipientMethodId == null) {
+        const prompted = window.prompt(
+          "No PayPal payout method found for this vendor. Enter the vendor PayPal payout method id:"
+        );
+        const parsed = prompted ? Number(prompted.trim()) : NaN;
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          setActionError("A PayPal recipient method id is required");
+          return;
+        }
+        recipientMethodId = parsed;
+      }
+
+      const confirmed = window.confirm(
+        `Submit a PayPal payout for ${money(p.amount, p.currency)} to ${p.vendor}?`
+      );
+      if (!confirmed) return;
+
+      const attempt = await createPaypalPayout.mutateAsync({
+        payable_id: Number(p.id),
+        recipient_method_id: recipientMethodId,
+      });
+      if (attempt.status === "failed") {
+        setActionError(attempt.failure_message || "PayPal payout failed");
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not create PayPal payout");
+    }
+  };
+
   return (
     <Card
       className={cn(
@@ -329,6 +385,15 @@ export function PaymentRow({
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
+        {showProviderSelector ? (
+          <PayProviderSelector
+            paymentId={p.id}
+            value={payProvider}
+            onChange={setPayProvider}
+            paypalEnabled={paypalEnabled}
+          />
+        ) : null}
+
         {p.tab === "queue" && (
           <Button size="sm" className="h-7 text-xs" onClick={onSubmit} data-testid={`button-submit-${p.id}`}>
             <Send className="h-3.5 w-3.5 mr-1" />
@@ -389,13 +454,26 @@ export function PaymentRow({
           </Button>
         )}
 
+        {canPayWithPaypal ? (
+          <Button
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => void handlePayWithPaypal()}
+            disabled={createPaypalPayout.isPending}
+            data-testid={`button-pay-paypal-${p.id}`}
+          >
+            <Shield className="h-3.5 w-3.5 mr-1" />
+            {createPaypalPayout.isPending ? "Submitting…" : "Pay with PayPal"}
+          </Button>
+        ) : null}
+
         {!canExecuteManual && p.tab === "scheduled" && manualExecutionEnabled ? (
           <span className="text-xs text-muted-foreground">
             Tenant Admin or Approver role required for payment execution.
           </span>
         ) : null}
 
-        {p.tab === "scheduled" && paymentsExecutionEnabled && (
+        {p.tab === "scheduled" && paymentsExecutionEnabled && payProvider === "stripe" && (
           <Button
             size="sm"
             className="h-7 text-xs"

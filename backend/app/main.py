@@ -34,6 +34,8 @@ from app.api import (
     payments,
     pending_customers,
     pending_vendors,
+    paypal_payments,
+    paypal_webhooks,
     processing,
     purchases,
     reconciliation,
@@ -148,6 +150,8 @@ app.include_router(oauth_auth.router, prefix="/api")
 app.include_router(signup.router, prefix="/api")
 # Stripe webhooks — no JWT.
 app.include_router(stripe_webhooks.router, prefix="/api")
+# PayPal webhooks — no JWT.
+app.include_router(paypal_webhooks.router, prefix="/api")
 # Xero webhooks — no JWT.
 app.include_router(xero_webhooks.router, prefix="/api")
 app.include_router(billing.public_router, prefix="/api")
@@ -155,6 +159,8 @@ app.include_router(billing.public_router, prefix="/api")
 app.include_router(mailboxes.oauth_public_router, prefix="/api")
 # Stripe Connect OAuth callback â€” no JWT (must be before authenticated payments router).
 app.include_router(payments.oauth_public_router, prefix="/api")
+# PayPal Connect OAuth callback — no JWT.
+app.include_router(paypal_payments.oauth_public_router, prefix="/api")
 # Accounting OAuth callbacks (Xero, QuickBooks) â€” no JWT.
 app.include_router(accounting_integrations.oauth_public_router, prefix="/api")
 # Meta / WhatsApp OAuth callback and webhooks â€” no JWT.
@@ -193,6 +199,7 @@ app.include_router(purchases.router, prefix="/api", dependencies=_module_deps("p
 app.include_router(sales.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(collections.router, prefix="/api", dependencies=_module_deps("sales"))
 app.include_router(payments.router, prefix="/api", dependencies=_module_deps("payments"))
+app.include_router(paypal_payments.router, prefix="/api", dependencies=_module_deps("payments"))
 app.include_router(ledger_link.router, prefix="/api", dependencies=_module_deps("ledger_link"))
 app.include_router(billing.router, prefix="/api", dependencies=_api_deps)
 app.include_router(matrix.router, prefix="/api", dependencies=_api_deps)

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AuthCenteredCard } from "@/components/auth/AuthCenteredCard";
+import { useResetOnTenantChange } from "@/hooks/useResetOnTenantChange";
 import { apiForgotPassword, apiResetPassword } from "@/lib/authApi";
 import { Eye, EyeOff } from "lucide-react";
 
@@ -18,6 +19,19 @@ export function ForgotPasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
+  // Public auth flow: wipe OTP/password draft if tenant scope changes mid-reset.
+  useResetOnTenantChange(() => {
+    setStep("email");
+    setChallengeToken("");
+    setOtp("");
+    setPassword("");
+    setConfirm("");
+    setError(null);
+    setBusy(false);
+    setShowPassword(false);
+    setShowConfirm(false);
+  });
 
   const onRequestCode = async (e: React.FormEvent) => {
     e.preventDefault();

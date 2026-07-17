@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { PageTabPanel, PageTabs } from "@/components/PageTabs";
 import { PaymentReceiptSheet } from "@/components/payments/PaymentReceiptSheet";
 import { PaymentRow } from "@/components/payments/PaymentRow";
+import { PayPalProviderCard } from "@/components/payments/PayPalProviderCard";
 import { WalletCard } from "@/components/payments/WalletCard";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,6 +26,7 @@ import {
   useStripeTransactions,
 } from "@/hooks/useStripe";
 import { useInstitutionSettings } from "@/hooks/useInstitutionSettings";
+import { useRefreshPayPalReadiness } from "@/hooks/usePayPal";
 import { useTenantTime } from "@/hooks/useTenantTime";
 import type { StripeAccount, StripeBalanceAmount, StripeReadinessResponse } from "@/api/types";
 import { formatMoneyByCurrencyMap, money } from "@/lib/format";
@@ -160,6 +162,7 @@ function stripeReadinessBanner(
 export function PaymentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const stripeReturnHandled = useRef(false);
+  const paypalReturnHandled = useRef(false);
   const { timeZone } = useTenantTime();
   const { data: institution } = useInstitutionSettings();
   const institutionCurrency = (institution?.currency || "SGD").trim().toUpperCase() || "SGD";
@@ -185,6 +188,7 @@ export function PaymentsPage() {
   const connectStripe = useConnectStripe();
   const disconnectStripe = useDisconnectStripe();
   const refreshStripeAccount = useRefreshStripeAccount();
+  const refreshPayPalReadiness = useRefreshPayPalReadiness();
   const onboardingLink = useStripeOnboardingLink();
   const stripeOAuthUrl = useStripeOAuthUrl();
   const [tab, setTab] = useState<PaymentTab>("queue");
@@ -192,6 +196,7 @@ export function PaymentsPage() {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<PaymentRecord | null>(null);
   const [stripeActionError, setStripeActionError] = useState<string | null>(null);
+  const [paypalActionError, setPaypalActionError] = useState<string | null>(null);
 
   const payments = useMemo(() => paymentRows.map(apiPaymentToRecord), [paymentRows]);
   const kpis = paymentsKpis(payments, timeZone);
@@ -239,6 +244,32 @@ export function PaymentsPage() {
       });
     }
   }, [refreshStripeAccount, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const paypalReturn = searchParams.get("paypal");
+    if (!paypalReturn) return;
+    if (paypalReturnHandled.current) return;
+    paypalReturnHandled.current = true;
+
+    const message = searchParams.get("message");
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("paypal");
+    nextParams.delete("message");
+    setSearchParams(nextParams, { replace: true });
+
+    if (paypalReturn === "error") {
+      setPaypalActionError(message || "PayPal connection failed");
+      return;
+    }
+
+    if (paypalReturn === "connected" || paypalReturn === "pending") {
+      void refreshPayPalReadiness.mutateAsync().catch((err: unknown) => {
+        setPaypalActionError(
+          err instanceof Error ? err.message : "Unable to refresh PayPal account status"
+        );
+      });
+    }
+  }, [refreshPayPalReadiness, searchParams, setSearchParams]);
 
   const advance = async (payment: PaymentRecord, status: string) => {
     await updateStatus(Number(payment.id), { status });
@@ -376,7 +407,8 @@ export function PaymentsPage() {
         />
       </div>
 
-      <Card className="p-4 mb-5" data-testid="card-stripe-connect">
+      <div className="grid gap-5 lg:grid-cols-2 mb-5 items-start">
+        <Card className="p-4 mb-0" data-testid="card-stripe-connect">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
           <div className="flex items-start gap-2.5">
             <Link2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
@@ -604,6 +636,16 @@ export function PaymentsPage() {
           payments require Stripe Global Payouts approval.
         </p>
       </Card>
+
+      <div>
+        {paypalActionError ? (
+          <p className="text-xs text-destructive mb-2" data-testid="paypal-page-error">
+            {paypalActionError}
+          </p>
+        ) : null}
+        <PayPalProviderCard />
+      </div>
+      </div>
 
       <Card className="p-4 mb-5" data-testid="card-stripe-global-payouts">
         <div className="flex items-start gap-2.5 mb-3">
