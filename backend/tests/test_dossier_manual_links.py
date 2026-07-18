@@ -224,6 +224,9 @@ async def test_ad_hoc_manual_link_appended(db_session: AsyncSession) -> None:
     assert manual.present is True
     assert manual.requirement == "advisory"
     assert manual.invoice_id == support.id
+    assert manual.manual_link is not None
+    assert manual.manual_link.invoice_id == support.id
+    assert manual.manual_link_id is not None
 
 
 @pytest.mark.asyncio
@@ -262,6 +265,84 @@ async def test_manual_link_api_round_trip(client: AsyncClient, db_session: Async
     assert del_res.status_code == 200
     after = del_res.json()["data"]["linked_documents"]["documents"]
     assert not any(doc.get("link_kind") == "manual" for doc in after)
+
+
+@pytest.mark.asyncio
+async def test_manual_link_ignores_missing_created_by_user(
+    db_session: AsyncSession,
+) -> None:
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Anchor Co",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        document_heading="Commercial Invoice",
+        file_hash="vision-anchor-user",
+    )
+    other = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Other Co",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        document_heading="Packing List",
+        file_hash="vision-other-user",
+    )
+    db_session.add_all([anchor, other])
+    await db_session.flush()
+
+    row = await create_manual_link(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        anchor_invoice_id=anchor.id,
+        linked_invoice_id=other.id,
+        created_by_user_id=9_999_999,
+    )
+    assert row.created_by_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_vision_soft_bundle_manual_link_api(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    anchor = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vision Importer",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        document_heading="Commercial Invoice",
+        invoice_no="SI-VISION-1",
+        file_hash="vision-api-anchor",
+        extracted_fields={
+            "canonical_document_type": "Commercial Invoice",
+            "invoice_no": "SI-VISION-1",
+        },
+    )
+    other = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vision Carrier",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        document_heading="Air Waybill",
+        file_hash="vision-api-other",
+    )
+    db_session.add_all([anchor, other])
+    await db_session.flush()
+    await assign_document_ref(db_session, anchor)
+    await assign_document_ref(db_session, other)
+
+    dossier_id = anchor.document_ref
+    res = await client.post(
+        f"/api/dossiers/{dossier_id}/manual-links",
+        json={"linked_invoice_id": other.id, "slot_id": None},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()["data"]
+    assert body.get("pipeline_path") in ("understood", "unknown", "not_understood")
+    docs = body["linked_documents"]["documents"]
+    manual = next(doc for doc in docs if doc.get("link_kind") == "manual")
+    assert manual["invoice_id"] == other.id
+    assert manual.get("manual_link") is not None
+    assert manual["manual_link"]["invoice_id"] == other.id
 
 
 @pytest.mark.asyncio

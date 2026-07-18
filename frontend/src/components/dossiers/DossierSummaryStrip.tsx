@@ -50,18 +50,22 @@ export function DossierSummaryStrip({
             {dossier.classificationLabel}
           </StatusPill>
         </div>
-        <div className="dossier-conf-row">
-          <span className="dossier-conf-label">conf.</span>
-          <div className="dossier-conf-track">
-            <span
-              className={cn("dossier-conf-fill", confidenceFillClass(dossier.classificationConfidence))}
-              style={{ width: `${dossier.classificationConfidence}%` }}
-            />
+        {dossier.pipelinePath === "understood" && dossier.classificationConfidence <= 0 ? (
+          <div className="dossier-kpi-sub">Vision type · no OCR classify</div>
+        ) : (
+          <div className="dossier-conf-row">
+            <span className="dossier-conf-label">conf.</span>
+            <div className="dossier-conf-track">
+              <span
+                className={cn("dossier-conf-fill", confidenceFillClass(dossier.classificationConfidence))}
+                style={{ width: `${dossier.classificationConfidence}%` }}
+              />
+            </div>
+            <span className="tnum text-xs text-muted-foreground">
+              {dossier.classificationConfidence}%
+            </span>
           </div>
-          <span className="tnum text-xs text-muted-foreground">
-            {dossier.classificationConfidence}%
-          </span>
-        </div>
+        )}
         <div className="dossier-kpi-sub">{linkageSummary(dossier)}</div>
       </div>
 

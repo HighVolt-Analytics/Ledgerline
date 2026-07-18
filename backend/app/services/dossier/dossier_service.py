@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from typing import Literal
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,7 +46,9 @@ from app.services.dossier.dossier_approval_service import build_dossier_approval
 from app.services.dossier.dossier_linked_documents_service import build_dossier_linked_documents
 from app.services.dossier.dossier_match_service import enrich_match_pipeline_step
 from app.services.dossier.dossier_pipeline_service import (
+    _is_vision_understood_hold,
     build_dossier_pipeline,
+    build_understood_dossier_pipeline,
     classification_review_pending,
     first_pipeline_bottleneck,
     first_pipeline_failure,
@@ -53,7 +56,12 @@ from app.services.dossier.dossier_pipeline_service import (
 from app.services.shared.file_storage import has_stored_path
 from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
 from app.services.reports.matrix_service import derive_matrix_payment_status
-from app.services.invoice.pipeline_stages import _actor_name, _latest_log, _source_label
+from app.services.invoice.pipeline_stages import (
+    _actor_name,
+    _latest_log,
+    _source_label,
+    resolve_pipeline_active_path,
+)
 from app.services.integration.publish_service import is_published_from_audit_logs
 from app.tenant_settings import tenant_today
 
@@ -94,6 +102,13 @@ def _document_type_title(code: str, document_types) -> str:
     return token or "Document"
 
 
+def _vision_document_type_label(invoice: Invoice) -> str:
+    """AI / printed document name from vision header (no catalogue code required)."""
+    from app.services.dossier.vision_bundle_linkage import vision_document_type_label
+
+    return vision_document_type_label(invoice)
+
+
 def _owner_from_logs(logs: list[AuditLog]) -> str:
     for event in ("invoice_approved", "invoice_published_to_ledger", "approval_requested"):
         log = _latest_log(logs, event)
@@ -104,10 +119,30 @@ def _owner_from_logs(logs: list[AuditLog]) -> str:
     return "System"
 
 
-def _sla(invoice: Invoice, *, today: date) -> tuple[str, bool]:
+def _resolve_dossier_pipeline_path(
+    invoice: Invoice,
+    logs: list[AuditLog],
+) -> Literal["understood", "not_understood", "unknown"]:
+    """Prefer audit path; fall back to vision hold so UI can prune to 7 stages."""
+    path = resolve_pipeline_active_path(logs)
+    if path != "unknown":
+        return path
+    if _is_vision_understood_hold(invoice, logs):
+        return "understood"
+    return "unknown"
+
+
+def _sla(
+    invoice: Invoice,
+    *,
+    today: date,
+    logs: list[AuditLog] | None = None,
+) -> tuple[str, bool]:
     if invoice.status == InvoiceStatus.PROCESSED:
         return "Posted", False
     if invoice.status == InvoiceStatus.EXCEPTION:
+        if logs and _resolve_dossier_pipeline_path(invoice, logs) == "understood":
+            return "Vaulted", False
         return "Blocked", True
     if invoice.status == InvoiceStatus.DUPLICATE_SKIPPED:
         return "Blocked", False
@@ -153,6 +188,13 @@ def _derive_outcome(
         return "blocked", fail_detail or "Duplicate file skipped"
     if invoice.status == InvoiceStatus.REJECTED:
         return "blocked", "Invoice rejected"
+    # Understood path intentionally holds as EXCEPTION after bundle + vault — not a failure.
+    if (
+        invoice.status == InvoiceStatus.EXCEPTION
+        and not pipeline_fail
+        and _resolve_dossier_pipeline_path(invoice, logs) == "understood"
+    ):
+        return "vaulted", "Understood path — bundled and stored in vault"
     if pipeline_fail or invoice.status == InvoiceStatus.EXCEPTION:
         return "blocked", fail_detail or "Pipeline blocked — review required"
     if payment and payment.status == PaymentStatus.FAILED:
@@ -207,7 +249,11 @@ async def build_linkage_sibling_cache(
     tenant_id: uuid.UUID,
     anchors: list[Invoice],
 ) -> LinkageSiblingCache:
-    """Load all invoices that may link to any anchor via invoice_no or PO/SO reference."""
+    """Load invoices that may link to anchors via invoice_no or PO/SO.
+
+    One-hop harvest: after loading invoice_no matches, also pull docs that share
+    PO/SO values found on those siblings (so packing-list PO can pull a GRN).
+    """
     from sqlalchemy import func, or_
 
     from app.services.extraction.invoice_no_sanitizer import invoice_no_link_tokens
@@ -231,35 +277,61 @@ async def build_linkage_sibling_cache(
     if not invoice_nos and not po_refs and not so_refs:
         return LinkageSiblingCache()
 
-    clauses = []
-    if invoice_nos:
-        token_list = list(invoice_nos)
-        upper_invoice_nos = [t.upper() for t in token_list]
-        clauses.append(
-            or_(
-                func.upper(func.coalesce(Invoice.invoice_no, "")).in_(upper_invoice_nos),
-                Invoice.invoice_no.in_(token_list),
+    async def _load(invoice_nos_: set[str], po_refs_: set[str], so_refs_: set[str]) -> list[Invoice]:
+        clauses = []
+        if invoice_nos_:
+            token_list = list(invoice_nos_)
+            upper_invoice_nos = [t.upper() for t in token_list]
+            clauses.append(
+                or_(
+                    func.upper(func.coalesce(Invoice.invoice_no, "")).in_(upper_invoice_nos),
+                    Invoice.invoice_no.in_(token_list),
+                )
             )
-        )
-    if po_refs:
-        clauses.append(
-            func.upper(func.coalesce(Invoice.po_reference, "")).in_(list(po_refs))
-        )
-    if so_refs:
-        clauses.append(
-            func.upper(func.coalesce(Invoice.so_reference, "")).in_(list(so_refs))
+        if po_refs_:
+            clauses.append(
+                func.upper(func.coalesce(Invoice.po_reference, "")).in_(list(po_refs_))
+            )
+        if so_refs_:
+            clauses.append(
+                func.upper(func.coalesce(Invoice.so_reference, "")).in_(list(so_refs_))
+            )
+        if not clauses:
+            return []
+        return list(
+            (
+                await session.execute(
+                    select(Invoice)
+                    .where(Invoice.tenant_id == tenant_id, or_(*clauses))
+                    .order_by(Invoice.id.asc())
+                )
+            )
+            .scalars()
+            .all()
         )
 
-    rows = (
-        await session.execute(
-            select(Invoice)
-            .where(Invoice.tenant_id == tenant_id, or_(*clauses))
-            .order_by(Invoice.id.asc())
-        )
-    ).scalars().all()
+    rows = await _load(invoice_nos, po_refs, so_refs)
+    by_id = {row.id: row for row in rows}
+
+    # One-hop: harvest PO/SO from invoice_no-linked rows, then load those refs.
+    harvested_po = set(po_refs)
+    harvested_so = set(so_refs)
+    for row in rows:
+        po_ref = effective_po_reference(row.po_reference)
+        if po_ref and is_plausible_po_reference(po_ref):
+            harvested_po.add(normalize_po_link_token(po_ref))
+        so_ref = resolve_so_reference_from_invoice(row)
+        if so_ref and is_plausible_so_reference(so_ref):
+            harvested_so.add(normalize_so_link_token(so_ref))
+
+    new_po = harvested_po - po_refs
+    new_so = harvested_so - so_refs
+    if new_po or new_so:
+        for row in await _load(set(), new_po, new_so):
+            by_id[row.id] = row
 
     cache = LinkageSiblingCache()
-    for row in rows:
+    for row in by_id.values():
         for token in invoice_no_link_tokens(row):
             _index_linkage_sibling(cache.by_invoice_no, token, row)
         primary = (row.invoice_no or "").strip()
@@ -336,25 +408,13 @@ async def fetch_linked_invoices_by_po_reference(
     po_ref = effective_po_reference(anchor.po_reference)
     if not po_ref or not is_plausible_po_reference(po_ref):
         return []
-    po_token = normalize_po_link_token(po_ref)
-    if linkage_cache is not None:
-        return [
-            row
-            for row in linkage_cache.by_po_reference.get(po_token, [])
-            if row.id != anchor.id
-        ]
-    rows = (
-        await session.execute(
-            select(Invoice)
-            .where(
-                Invoice.tenant_id == anchor.tenant_id,
-                invoice_po_reference_equals(po_ref),
-                Invoice.id != anchor.id,
-            )
-            .order_by(Invoice.id.asc())
-        )
-    ).scalars().all()
-    return list(rows)
+    return await fetch_invoices_by_po_reference_token(
+        session,
+        tenant_id=anchor.tenant_id,
+        po_ref=po_ref,
+        exclude_id=anchor.id,
+        linkage_cache=linkage_cache,
+    )
 
 
 async def fetch_linked_invoices_by_so_reference(
@@ -367,20 +427,74 @@ async def fetch_linked_invoices_by_so_reference(
     so_ref = resolve_so_reference_from_invoice(anchor)
     if not so_ref or not is_plausible_so_reference(so_ref):
         return []
-    so_token = normalize_so_link_token(so_ref)
+    return await fetch_invoices_by_so_reference_token(
+        session,
+        tenant_id=anchor.tenant_id,
+        so_ref=so_ref,
+        exclude_id=anchor.id,
+        linkage_cache=linkage_cache,
+    )
+
+
+async def fetch_invoices_by_po_reference_token(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    po_ref: str,
+    exclude_id: int | None = None,
+    linkage_cache: LinkageSiblingCache | None = None,
+) -> list[Invoice]:
+    """Tenant invoices sharing an explicit PO reference token."""
+    token_src = effective_po_reference(po_ref) or (po_ref or "").strip()
+    if not token_src or not is_plausible_po_reference(token_src):
+        return []
+    po_token = normalize_po_link_token(token_src)
     if linkage_cache is not None:
         return [
             row
-            for row in linkage_cache.by_so_reference.get(so_token, [])
-            if row.id != anchor.id
+            for row in linkage_cache.by_po_reference.get(po_token, [])
+            if exclude_id is None or row.id != exclude_id
         ]
     rows = (
         await session.execute(
             select(Invoice)
             .where(
-                Invoice.tenant_id == anchor.tenant_id,
-                invoice_so_reference_equals(so_ref),
-                Invoice.id != anchor.id,
+                Invoice.tenant_id == tenant_id,
+                invoice_po_reference_equals(token_src),
+                *([Invoice.id != exclude_id] if exclude_id is not None else []),
+            )
+            .order_by(Invoice.id.asc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+async def fetch_invoices_by_so_reference_token(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    so_ref: str,
+    exclude_id: int | None = None,
+    linkage_cache: LinkageSiblingCache | None = None,
+) -> list[Invoice]:
+    """Tenant invoices sharing an explicit SO reference token."""
+    token_src = (so_ref or "").strip()
+    if not token_src or not is_plausible_so_reference(token_src):
+        return []
+    so_token = normalize_so_link_token(token_src)
+    if linkage_cache is not None:
+        return [
+            row
+            for row in linkage_cache.by_so_reference.get(so_token, [])
+            if exclude_id is None or row.id != exclude_id
+        ]
+    rows = (
+        await session.execute(
+            select(Invoice)
+            .where(
+                Invoice.tenant_id == tenant_id,
+                invoice_so_reference_equals(token_src),
+                *([Invoice.id != exclude_id] if exclude_id is not None else []),
             )
             .order_by(Invoice.id.asc())
         )
@@ -411,6 +525,7 @@ def _invoice_no_linked_document(
         label=_linked_doc_dt_label(code, document_types),
         document_ref=display_document_ref(row),
         invoice_no=(row.invoice_no or invoice_no).strip() or None,
+        counterparty=(row.vendor or "").strip() or None,
         present=True,
         requirement="advisory",
         linked_dossier_id=dossier_public_id(row),
@@ -428,6 +543,7 @@ def _reference_linked_document(
     reference_label: str,
     link_kind: str,
     document_types,
+    linkage_detail: str | None = None,
 ) -> DossierLinkedDocumentResponse:
     code = (row.document_type_code or "").strip().upper()
     return DossierLinkedDocumentResponse(
@@ -436,13 +552,14 @@ def _reference_linked_document(
         label=_linked_doc_dt_label(code, document_types),
         document_ref=display_document_ref(row),
         invoice_no=(row.invoice_no or "").strip() or None,
+        counterparty=(row.vendor or "").strip() or None,
         present=True,
         requirement="advisory",
         linked_dossier_id=dossier_public_id(row),
         invoice_id=row.id,
         is_anchor=False,
         has_file=has_stored_path(row.raw_file_path),
-        linkage_detail=f"Linked on {reference_label}",
+        linkage_detail=linkage_detail or f"Linked on {reference_label}",
         link_kind=link_kind,
     )
 
@@ -573,6 +690,112 @@ async def append_reference_linked_documents(
     )
 
 
+async def append_harvested_reference_linked_documents(
+    session: AsyncSession,
+    anchor: Invoice,
+    response: DossierLinkedDocumentsResponse,
+    *,
+    document_types=None,
+    linkage_cache: LinkageSiblingCache | None = None,
+) -> DossierLinkedDocumentsResponse:
+    """
+    One-hop invoice-hub expansion: harvest PO/SO from the hub and invoice_no
+    siblings, then append docs that share those references.
+
+    When the hub has no invoice_no, falls back to anchor-only PO/SO append.
+    Does not re-harvest from PO/SO-only docs (one hop only).
+    """
+    invoice_no = (anchor.invoice_no or "").strip()
+    if not invoice_no:
+        return await append_reference_linked_documents(
+            session,
+            anchor,
+            response,
+            document_types=document_types,
+            linkage_cache=linkage_cache,
+        )
+
+    if document_types is None:
+        document_types = (
+            await load_posting_config_for_tenant(session, anchor.tenant_id)
+        ).document_types
+
+    siblings = await fetch_linked_invoices_by_invoice_no(
+        session, anchor, linkage_cache=linkage_cache
+    )
+    sources = [anchor, *siblings]
+
+    po_by_token: dict[str, str] = {}
+    so_by_token: dict[str, str] = {}
+    for row in sources:
+        po_ref = effective_po_reference(row.po_reference)
+        if po_ref and is_plausible_po_reference(po_ref):
+            po_by_token.setdefault(normalize_po_link_token(po_ref), po_ref)
+        so_ref = resolve_so_reference_from_invoice(row)
+        if so_ref and is_plausible_so_reference(so_ref):
+            so_by_token.setdefault(normalize_so_link_token(so_ref), so_ref)
+
+    if not po_by_token and not so_by_token:
+        return response
+
+    seen = _linked_invoice_ids(response)
+    seen.add(anchor.id)
+    extra: list[DossierLinkedDocumentResponse] = []
+
+    for po_ref in po_by_token.values():
+        for row in await fetch_invoices_by_po_reference_token(
+            session,
+            tenant_id=anchor.tenant_id,
+            po_ref=po_ref,
+            exclude_id=anchor.id,
+            linkage_cache=linkage_cache,
+        ):
+            if row.id in seen:
+                continue
+            extra.append(
+                _reference_linked_document(
+                    row,
+                    reference_label=po_ref,
+                    link_kind="po_reference",
+                    document_types=document_types,
+                    linkage_detail=(
+                        f"Linked on {po_ref} (via invoice no {invoice_no})"
+                    ),
+                )
+            )
+            seen.add(row.id)
+
+    for so_ref in so_by_token.values():
+        for row in await fetch_invoices_by_so_reference_token(
+            session,
+            tenant_id=anchor.tenant_id,
+            so_ref=so_ref,
+            exclude_id=anchor.id,
+            linkage_cache=linkage_cache,
+        ):
+            if row.id in seen:
+                continue
+            extra.append(
+                _reference_linked_document(
+                    row,
+                    reference_label=so_ref,
+                    link_kind="so_reference",
+                    document_types=document_types,
+                    linkage_detail=(
+                        f"Linked on {so_ref} (via invoice no {invoice_no})"
+                    ),
+                )
+            )
+            seen.add(row.id)
+
+    if not extra:
+        return response
+
+    return response.model_copy(
+        update={"documents": list(response.documents) + extra},
+    )
+
+
 def dossier_counterparty_label(route_target: str | None) -> str:
     side = counterparty_side_for_route(route_target)
     if side == "customer":
@@ -629,6 +852,9 @@ async def build_dossier_summary(
         compact=compact,
         document_types=config.document_types,
     )
+    pipeline_path = _resolve_dossier_pipeline_path(invoice, logs)
+    if pipeline_path == "understood":
+        pipeline = build_understood_dossier_pipeline(invoice, logs)
     fail = first_pipeline_failure(pipeline)
 
     linked, approval = await asyncio.gather(
@@ -645,12 +871,13 @@ async def build_dossier_summary(
             definition=definition,
             payment=payment,
             published=published,
+            pipeline_path=pipeline_path,
         ),
     )
 
     match_log = _latest_log(logs, "three_way_match_evaluated")
     match_log_detail = match_log.detail if match_log and isinstance(match_log.detail, dict) else None
-    if not compact:
+    if not compact and pipeline_path != "understood":
         pipeline = enrich_match_pipeline_step(
             pipeline,
             match_summary=linked.match_summary,
@@ -668,6 +895,10 @@ async def build_dossier_summary(
         payment=payment,
         fail_detail=blocker_detail,
     )
+    # Understood path ends at vault — pending Archive must not surface as a blocker.
+    if outcome != "blocked" and fail is None and pipeline_path == "understood":
+        bottleneck = None
+        blocker_detail = None
     if invoice.status == InvoiceStatus.PROCESSED and published and approved_human:
         outcome = "manual_posted"
         banner = banner or "Manual post — approved before ledger posting"
@@ -676,22 +907,45 @@ async def build_dossier_summary(
     suggested = (invoice.llm_suggested_dt or "").strip().upper()
     display_code = code or suggested
     pending_classify = classification_review_pending(logs)
+    vision_label = _vision_document_type_label(invoice) if pipeline_path == "understood" else ""
     dt_title = _document_type_title(display_code, config.document_types) if display_code else ""
-    if pending_classify and not code:
+    if pipeline_path == "understood":
+        # Vision path: show AI/printed type, not catalogue "Unclassified".
+        document_type_title = dt_title or vision_label or "Vision document"
+        classification_label = vision_label or dt_title or "Vision vaulted"
+        fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+        vision_conf = fields.get("vision_header_confidence")
+        if vision_conf is None:
+            vision_conf = fields.get("confidence")
+        try:
+            vision_conf_f = float(vision_conf) if vision_conf is not None else None
+        except (TypeError, ValueError):
+            vision_conf_f = None
+        classification_confidence = _confidence_pct(
+            vision_conf_f
+            if vision_conf_f is not None and vision_conf_f > 0
+            else (invoice.document_type_confidence or invoice.llm_confidence),
+            floor=True,
+        )
+    elif pending_classify and not code:
+        document_type_title = dt_title or "Unclassified"
         classification_label = (
             f"{dt_title} (needs review)" if dt_title else "Needs classification review"
         )
-    elif dt_title:
-        classification_label = dt_title
-    elif pending_classify:
-        classification_label = "Needs classification review"
-    else:
-        classification_label = (invoice.route_target or "Unclassified").replace("_", " ").title()
-    if pending_classify and not code:
         classification_confidence = _confidence_pct(invoice.llm_confidence, floor=True)
-    else:
+    elif dt_title:
+        document_type_title = dt_title
+        classification_label = dt_title
         classification_confidence = _confidence_pct(invoice.document_type_confidence)
-    sla_label, sla_breached = _sla(invoice, today=institution_today)
+    elif pending_classify:
+        document_type_title = "Unclassified"
+        classification_label = "Needs classification review"
+        classification_confidence = _confidence_pct(invoice.document_type_confidence)
+    else:
+        document_type_title = "Unclassified"
+        classification_label = (invoice.route_target or "Unclassified").replace("_", " ").title()
+        classification_confidence = _confidence_pct(invoice.document_type_confidence)
+    sla_label, sla_breached = _sla(invoice, today=institution_today, logs=logs)
     inv_date = invoice.invoice_date.isoformat() if invoice.invoice_date else ""
     route_target = (invoice.route_target or "").strip() or None
     po_display, so_ref, linkage_ref = dossier_linkage_fields(invoice)
@@ -705,7 +959,7 @@ async def build_dossier_summary(
         id=dossier_public_id(invoice),
         invoice_id=invoice.id,
         document_type_code=display_code,
-        document_type_title=_document_type_title(display_code, config.document_types) if display_code else "Unclassified",
+        document_type_title=document_type_title,
         vendor=counterparty,
         counterparty_label=dossier_counterparty_label(route_target),
         route_target=route_target,
@@ -730,6 +984,7 @@ async def build_dossier_summary(
         blocker_stage_id=bottleneck.stage_id if bottleneck else None,
         blocker_reason=blocker_detail,
         blocker_remediation=bottleneck.remediation if bottleneck else None,
+        pipeline_path=pipeline_path,
         pipeline=pipeline,
         linked_documents=linked,
         approval_chain=approval,

@@ -126,6 +126,49 @@ async def test_skip_sibling_reprocess_when_pending_approval_and_po_trigger(
 
 
 @pytest.mark.asyncio
+async def test_skip_sibling_reprocess_for_vision_awaiting_classification(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vision hold docs must stay settled — sibling PO must not re-queue them."""
+    held = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        po_reference="PO-VISION-1",
+        invoice_no="INV-V-1",
+        route_target=ROUTE_PURCHASE,
+        purchase_document_type=PurchaseDocumentType.INVOICE.value,
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        raw_file_path="tenant/vision-held.pdf",
+    )
+    db_session.add(held)
+    await db_session.flush()
+
+    queued: list[list[int]] = []
+
+    async def fake_queue(ids, *, tenant_id):
+        queued.append(list(ids))
+
+    monkeypatch.setattr(
+        "app.workers.tasks.queue_invoices_for_processing",
+        fake_queue,
+    )
+
+    ids = await reprocess_held_commercial_invoices_on_anchor(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        route_target=ROUTE_PURCHASE,
+        anchor_ref="PO-VISION-1",
+        triggering_invoice_id=999,
+    )
+    assert ids == []
+    assert queued == []
+    assert held.status == InvoiceStatus.EXCEPTION
+    assert held.evaluation_status == "awaiting_classification"
+
+
+@pytest.mark.asyncio
 async def test_skip_sibling_reprocess_when_commercial_already_pending(
     db_session: AsyncSession,
 ) -> None:

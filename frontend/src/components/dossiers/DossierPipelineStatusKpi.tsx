@@ -14,6 +14,8 @@ import {
 
   dossierStageLabel,
 
+  firstPipelineBottleneck,
+
   pipelineActiveStage,
 
   pipelineProgressSummary,
@@ -210,7 +212,7 @@ export function DossierPipelineStatusKpi({
 
 
 
-  if (dossier.outcome === "auto_posted" || dossier.outcome === "manual_posted") {
+  if (dossier.outcome === "auto_posted" || dossier.outcome === "manual_posted" || dossier.outcome === "vaulted") {
 
     return (
 
@@ -226,7 +228,10 @@ export function DossierPipelineStatusKpi({
 
         <p className="dossier-kpi-sub dossier-kpi-sub--clamp">
 
-          {dossier.outcomeBanner ?? "All pipeline stages completed successfully."}
+          {dossier.outcomeBanner ??
+            (dossier.outcome === "vaulted"
+              ? "Understood path — bundled and stored in vault."
+              : "All pipeline stages completed successfully.")}
 
         </p>
 
@@ -246,6 +251,13 @@ export function DossierPipelineStatusKpi({
 
     : "starting";
 
+  const pathComplete =
+    !firstPipelineBottleneck(dossier.pipeline) &&
+    Boolean(active) &&
+    (active?.step.state === "pass" || active?.step.state === "waived") &&
+    (dossier.pipelinePath === "understood" ||
+      (dossier.outcomeBanner || "").toLowerCase().includes("understood path"));
+
 
 
   return (
@@ -254,7 +266,11 @@ export function DossierPipelineStatusKpi({
 
       <div className="dossier-kpi-value dossier-kpi-value--compact dossier-kpi-value--lead">
 
-        {active?.step.state === "pass" ? (
+        {pathComplete ? (
+
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+
+        ) : active?.step.state === "pass" ? (
 
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
 
@@ -264,7 +280,7 @@ export function DossierPipelineStatusKpi({
 
         )}
 
-        <span>Processing — {activeLabel}</span>
+        <span>{pathComplete ? "Vaulted" : `Processing — ${activeLabel}`}</span>
 
       </div>
 

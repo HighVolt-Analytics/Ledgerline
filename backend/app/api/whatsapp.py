@@ -249,6 +249,15 @@ async def process_whatsapp_payload(payload: dict) -> None:
                     tenant_id=connection.tenant_id,
                 ):
                     logger.info("whatsapp_dedupe_skip", message_id=msg.message_id)
+                    from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+                    await log_ingest_skip(
+                        session,
+                        reason="webhook_dedupe_skip",
+                        channel="whatsapp",
+                        tenant_id=connection.tenant_id,
+                        message_id=msg.message_id,
+                    )
                     continue
 
                 from app.services.ingest.whatsapp_connection_service import resolve_access_token
@@ -260,6 +269,16 @@ async def process_whatsapp_payload(payload: dict) -> None:
                         "whatsapp_token_missing",
                         connection_id=connection.id,
                         error=str(exc),
+                    )
+                    from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+                    await log_ingest_skip(
+                        session,
+                        reason="token_missing",
+                        channel="whatsapp",
+                        tenant_id=connection.tenant_id,
+                        message_id=msg.message_id,
+                        exc_type=type(exc).__name__,
                     )
                     continue
 

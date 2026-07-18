@@ -23,8 +23,10 @@ from app.services.rule_book.account_mapper import (
     resolve_fallback_account_mapping,
 )
 from app.services.dossier.document_duplicate_service import (
+    evaluate_file_hash_duplicate,
     find_existing_ingest_duplicate,
     find_invoice_by_file_hash,
+    log_duplicate_skipped,
     resolve_ingest_duplicate,
 )
 from app.services.dossier.document_ref_service import assign_document_ref, audit_document_detail
@@ -50,6 +52,8 @@ from app.services.invoice.invoice_evaluation_service import (
     EVAL_NEEDS_RESCAN,
     EVAL_NEEDS_REVIEW,
     EVAL_PENDING_VENDOR,
+    EVAL_VISION_HEADER_REVIEW,
+    EVAL_VISION_VAULTED,
     ROUTE_EXPENSES,
     ROUTE_PURCHASE,
     ROUTE_SALES,
@@ -82,15 +86,18 @@ from app.services.invoice.invoice_pipeline_phases import (
     reconcile_llm_dt_with_heading,
     evaluate_confidence_gate,
     evaluate_field_confidence_gate,
-    evaluate_image_quality_gate,
     field_confidence_audit_detail,
     gate_audit_detail,
-    image_quality_audit_detail,
+    phase_image_quality,
+    phase_layout_readiness,
     phase_llm_classify,
+    phase_ocr_quality_confirm,
     persist_llm_party_context,
     phase_file_validity,
     phase_ocr,
     phase_storage_verify,
+    phase_vision_header_extract,
+    phase_vision_understand,
 )
 from app.services.extraction.llm_document_service import (
     apply_document_type_to_invoice,
@@ -125,7 +132,10 @@ from app.utils.logger import get_logger
 from app.services.ingest.capture_channel import infer_capture_channel, is_staff_claim_sender
 from app.services.ingest.email_ingestion import RawEmail, mark_message_read
 from app.services.shared.file_storage import open_pdf_for_reading
-from app.services.vault.vault_blob_sync import sync_invoice_blob_path
+from app.services.vault.vault_blob_sync import (
+    sync_invoice_blob_path,
+    sync_vision_header_vault_path,
+)
 from app.services.ingest.graph_mail_folders import folder_moves_enabled
 from app.services.payments.journal_generator import (
     generate_entries,
@@ -287,6 +297,8 @@ class EmailIngestResult:
     preskip_exceptions: dict[str, str] = field(default_factory=dict)
     # message_id → mailbox email (needed for Graph folder moves on preskips)
     message_mailbox_emails: dict[str, str] = field(default_factory=dict)
+    # stable message_id → Graph REST id for move/mark API calls
+    message_graph_ids: dict[str, str] = field(default_factory=dict)
 
 
 logger = get_logger(__name__)
@@ -550,13 +562,18 @@ def _maybe_finish_email_message(
     mark_processed_only_if_ingested: bool,
     ingested_before: int,
     ingested_after: int,
+    force: bool = False,
 ) -> None:
     if not mark_processed:
         return
-    if mark_processed_only_if_ingested and ingested_after <= ingested_before:
+    if (
+        not force
+        and mark_processed_only_if_ingested
+        and ingested_after <= ingested_before
+    ):
         return
     _finish_email_message(
-        email.message_id,
+        email.api_message_id,
         email.mailbox_email,
         access_token=email.graph_access_token,
     )
@@ -596,6 +613,8 @@ async def ingest_email_attachments(
         result.message_ids.append(email.message_id)
         if email.mailbox_email:
             result.message_mailbox_emails[email.message_id] = email.mailbox_email
+        if email.graph_id:
+            result.message_graph_ids[email.message_id] = email.graph_id
 
         if email.message_id in seen_message_ids:
             logger.info(
@@ -639,6 +658,18 @@ async def ingest_email_attachments(
                 subject=email.subject,
                 error=str(exc),
             )
+            from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+            await log_ingest_skip(
+                session,
+                reason="ingest_integrity_error",
+                channel="email",
+                tenant_id=tenant_id,
+                message_id=email.message_id,
+                mailbox=email.mailbox_email,
+                exc_type=type(exc).__name__,
+                extra={"subject": email.subject},
+            )
             result.preskip_exceptions[email.message_id] = "integrity_error"
             continue
         except Exception as exc:
@@ -653,6 +684,18 @@ async def ingest_email_attachments(
                 mailbox=email.mailbox_email,
                 subject=email.subject,
                 error=str(exc),
+            )
+            from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+            await log_ingest_skip(
+                session,
+                reason="ingest_message_failed",
+                channel="email",
+                tenant_id=tenant_id,
+                message_id=email.message_id,
+                mailbox=email.mailbox_email,
+                exc_type=type(exc).__name__,
+                extra={"subject": email.subject, "error": str(exc)[:500]},
             )
             result.preskip_exceptions[email.message_id] = "ingest_error"
             continue
@@ -688,6 +731,21 @@ async def _ingest_single_email(
 ) -> None:
     _ = enabled_capture_rules
     ingested_before = result.ingested_count
+    duplicate_handled = False
+
+    from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+    for drop in list(email.attachment_drops):
+        await log_ingest_skip(
+            session,
+            reason=drop.get("reason") or "attachment_record_invalid",
+            channel="email",
+            tenant_id=tenant_id,
+            message_id=email.message_id,
+            mailbox=email.mailbox_email,
+            filename=drop.get("filename") or None,
+        )
+    email.attachment_drops.clear()
 
     if not email.attachments:
         logger.info(
@@ -799,6 +857,8 @@ async def _ingest_single_email(
             finally:
                 if tmp_path is not None:
                     tmp_path.unlink(missing_ok=True)
+
+        # Exceptions re-poll: avoid creating another shadow every cycle (adapter-only quirk).
         existing = await find_existing_ingest_duplicate(
             session,
             tenant_id=tenant_id,
@@ -807,7 +867,29 @@ async def _ingest_single_email(
             business_fingerprint=business_fingerprint,
             identity_fields=identity_fields,
         )
-        if existing is not None:
+        if existing is not None and email.poll_folder == "exceptions":
+            dup_decision = evaluate_file_hash_duplicate(existing)
+            if dup_decision.action == "shadow_duplicate":
+                existing.email_message_id = email.message_id
+                await log_duplicate_skipped(
+                    session,
+                    existing.id,
+                    detail={
+                        "filename": att.filename,
+                        "message_id": email.message_id,
+                        "mailbox": email.mailbox_email,
+                        "source": "email",
+                        "poll_folder": email.poll_folder,
+                        "note": "exceptions_repoll_skipped",
+                        "original_invoice_id": existing.id,
+                    },
+                )
+                duplicate_handled = True
+                continue
+
+        from app.services.ingest.canonical_intake_service import canonical_intake_enabled_for
+
+        if not canonical_intake_enabled_for("email") and existing is not None:
             outcome = await resolve_ingest_duplicate(
                 session,
                 tenant_id=tenant_id,
@@ -826,9 +908,11 @@ async def _ingest_single_email(
                     "message_id": email.message_id,
                     "mailbox": email.mailbox_email,
                     "source": "email",
+                    "poll_folder": email.poll_folder,
                 },
             )
             if outcome.handled:
+                duplicate_handled = True
                 if outcome.action == "reingest_rejected" and outcome.invoice_id is not None:
                     inv = await session.get(Invoice, outcome.invoice_id)
                     if inv is not None:
@@ -860,10 +944,14 @@ async def _ingest_single_email(
             ),
             prefetched_extraction=prefetched_extraction,
         )
+        if fanout.duplicate_handled:
+            duplicate_handled = True
 
         for segment_index, invoice_id in enumerate(fanout.invoice_ids):
             inv = await session.get(Invoice, invoice_id)
             assert inv is not None
+            if inv.status == InvoiceStatus.DUPLICATE_SKIPPED:
+                continue
             await apply_ingest_capture(session, inv, email, att)
             await log_event(
                 session,
@@ -878,12 +966,12 @@ async def _ingest_single_email(
                     "parent_file_hash": fanout.parent_file_hash,
                     "segment_index": segment_index,
                     "segment_count": fanout.segment_count,
+                    "action": fanout.action,
                 },
             )
+            result.ingested_count += 1
 
-        result.ingested_count += len(fanout.invoice_ids)
-
-    if capture_rule_blocked and result.ingested_count == ingested_before:
+    if capture_rule_blocked and result.ingested_count == ingested_before and not duplicate_handled:
         result.preskip_exceptions[email.message_id] = "no_capture_rule_match"
 
     _maybe_finish_email_message(
@@ -892,6 +980,7 @@ async def _ingest_single_email(
         mark_processed_only_if_ingested=mark_processed_only_if_ingested,
         ingested_before=ingested_before,
         ingested_after=result.ingested_count,
+        force=duplicate_handled and result.ingested_count == ingested_before,
     )
 
 
@@ -1484,6 +1573,19 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     ):
         return
 
+    from app.services.prompt_registry import warm_prompt_cache
+
+    try:
+        await warm_prompt_cache(session)
+    except Exception:
+        # Registry warm must never poison the invoice transaction (e.g. concurrent
+        # prompt version insert). Rollback clears PendingRollbackError; pipeline
+        # continues on code catalog defaults via resolve_system_prompt.
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+
     await assign_document_ref(session, invoice)
 
     bypass_review_gates = await human_approved_payable_bypass(session, invoice)
@@ -1578,8 +1680,154 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
     confirmed_dt = human_locked_dt or (locked_dt_code if classification_override else "")
 
     vision_page_images: list[bytes] = []
+    readiness = None
+
+    understand = await phase_vision_understand(
+        session,
+        invoice,
+        doc_provider=doc_provider,
+        document_ai_provider=provider_token,
+        vision_page_images=vision_page_images,
+    )
+
+    if understand.can_understand:
+        # Vision-native header extract; do not enter legacy OCR stack yet.
+        header = await phase_vision_header_extract(
+            session,
+            invoice,
+            org=org,
+            doc_provider=doc_provider,
+            document_ai_provider=provider_token,
+            vision_page_images=vision_page_images,
+        )
+        await session.flush()
+
+        from app.services.dossier.vision_bundle_linkage import apply_vision_bundle_on_hold
+        from app.tenant_settings import tenant_custom_bundle_field_key
+
+        async def _reprocess_po(anchor: str) -> None:
+            await _maybe_reprocess_held_commercial_siblings(
+                session,
+                invoice,
+                route_target=ROUTE_PURCHASE,
+                anchor_ref=anchor,
+            )
+
+        async def _reprocess_so(anchor: str) -> None:
+            await _maybe_reprocess_held_commercial_siblings(
+                session,
+                invoice,
+                route_target=ROUTE_SALES,
+                anchor_ref=anchor,
+            )
+
+        vision_link = await apply_vision_bundle_on_hold(
+            session,
+            invoice,
+            custom_field_key=tenant_custom_bundle_field_key(tenant_row),
+            reprocess_po_siblings=_reprocess_po,
+            reprocess_so_siblings=_reprocess_so,
+        )
+        await session.flush()
+        if vision_link.has_key:
+            await log_event(
+                session,
+                "vision_bundle_linked",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(
+                    invoice,
+                    vision_bundle_kind=vision_link.kind,
+                    vision_bundle_key=vision_link.key,
+                    custom_field_key=vision_link.custom_field_key,
+                ),
+            )
+        else:
+            await log_event(
+                session,
+                "vision_bundle_standalone",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(
+                    invoice,
+                    vision_bundle_kind="none",
+                    reason="no_linkage_key",
+                ),
+            )
+
+        # Vision-only vault layout: Unrouted/{type}/{vendor}/… (legacy sync untouched).
+        moved = await sync_vision_header_vault_path(
+            session, invoice, parsed_vendor=invoice.vendor
+        )
+        await session.flush()
+        if not moved:
+            await log_event(
+                session,
+                "vault_layout_sync_skipped",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(
+                    invoice,
+                    reason="vision_header_vault_sync_noop",
+                    path=invoice.raw_file_path,
+                    route_target=invoice.route_target,
+                    vendor=invoice.vendor,
+                    document_heading=invoice.document_heading,
+                    canonical_document_type=(invoice.extracted_fields or {}).get(
+                        "canonical_document_type"
+                    ),
+                ),
+            )
+
+        invoice.status = InvoiceStatus.EXCEPTION
+        invoice.evaluation_status = (
+            EVAL_VISION_VAULTED if header.success else EVAL_VISION_HEADER_REVIEW
+        )
+        await log_event(
+            session,
+            "vision_path_pending",
+            invoice_id=invoice.id,
+            detail=audit_document_detail(
+                invoice,
+                reason="bundled_and_vaulted",
+                path=invoice.raw_file_path,
+                document_ai_provider=provider_token,
+                can_understand=True,
+                understand_confidence=understand.confidence,
+                header_success=header.success,
+                header_confidence=header.confidence,
+                document_heading=invoice.document_heading,
+                canonical_document_type=(invoice.extracted_fields or {}).get(
+                    "canonical_document_type"
+                ),
+                invoice_no=invoice.invoice_no,
+                po_reference=invoice.po_reference,
+                so_reference=invoice.so_reference,
+                vision_bundle_kind=vision_link.kind,
+                vision_bundle_key=vision_link.key,
+                vendor=invoice.vendor,
+                invoice_date=invoice.invoice_date.isoformat()
+                if invoice.invoice_date
+                else None,
+                total=str(invoice.total) if invoice.total is not None else None,
+                currency=invoice.currency,
+                evaluation_status=invoice.evaluation_status,
+            ),
+        )
+        # Understood path: bundle + vault only — do not emit routing_review_required
+        # (that event fails dossier Validate with “confirm document type”).
+        send_notification(invoice, InvoiceStatus.EXCEPTION)
+        return
 
     try:
+        await phase_image_quality(
+            session,
+            invoice,
+            document_ai_provider=provider_token,
+            vision_page_images=vision_page_images,
+        )
+        readiness = await phase_layout_readiness(
+            session,
+            invoice,
+            document_ai_provider=provider_token,
+        )
         ocr = await phase_ocr(
             session,
             invoice,
@@ -1589,9 +1837,36 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             provider_token=provider_token,
             human_locked_dt=human_locked_dt,
             vision_page_images=vision_page_images,
+            readiness=readiness,
         )
     except OcrFailed as exc:
+        reason = str(exc) or "ocr_failed"
         invoice.status = InvoiceStatus.EXCEPTION
+        if reason == "image_quality_severe":
+            invoice.evaluation_status = EVAL_NEEDS_RESCAN
+            await log_event(
+                session,
+                "parsing_failed",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(
+                    invoice,
+                    reason=reason,
+                    document_ai_provider=provider_token,
+                ),
+            )
+            await log_event(
+                session,
+                "routing_review_required",
+                invoice_id=invoice.id,
+                detail={
+                    "gate": "image_quality",
+                    "review_reasons": [ReviewReason.IMAGE_QUALITY_LOW.value],
+                    "document_ai_provider": provider_token,
+                    "resubmit_hint": "Please resend a flat, well-lit scan or PDF.",
+                },
+            )
+            send_notification(invoice, InvoiceStatus.EXCEPTION)
+            return
         if human_locked_dt:
             invoice.evaluation_status = EVAL_NEEDS_REVIEW
         else:
@@ -1622,12 +1897,12 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         send_notification(invoice, InvoiceStatus.EXCEPTION)
         return
 
-    quality_result = evaluate_image_quality_gate(ocr, ai_cfg=ai_cfg)
-    await log_event(
+    quality_result = await phase_ocr_quality_confirm(
         session,
-        "image_quality_gate_passed" if quality_result.passed else "image_quality_gate_failed",
-        invoice_id=invoice.id,
-        detail=image_quality_audit_detail(quality_result, provider_token=provider_token),
+        invoice,
+        ocr=ocr,
+        ai_cfg=ai_cfg,
+        document_ai_provider=provider_token,
     )
     if not quality_result.passed:
         if should_skip(invoice, "image_quality"):
@@ -1640,7 +1915,7 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 "routing_review_required",
                 invoice_id=invoice.id,
                 detail={
-                    "gate": "image_quality",
+                    "gate": "ocr_quality_confirm",
                     "review_reasons": quality_result.review_reasons,
                     "text_length": quality_result.text_length,
                     "sparse": quality_result.sparse,

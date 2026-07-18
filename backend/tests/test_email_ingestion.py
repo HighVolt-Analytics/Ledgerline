@@ -43,6 +43,7 @@ def test_poll_parses_messages() -> None:
     messages = [
         {
             "id": "msg-1",
+            "internetMessageId": "<inv-march@example.com>",
             "subject": "Invoice March",
             "from": {"emailAddress": {"address": "vendor@example.com"}},
             "hasAttachments": True,
@@ -75,10 +76,45 @@ def test_poll_parses_messages() -> None:
         emails = poll_inbox("vendor@example.com")
 
     assert len(emails) == 1
-    assert emails[0].message_id == "msg-1"
+    assert emails[0].message_id == "<inv-march@example.com>"
+    assert emails[0].graph_id == "msg-1"
+    assert emails[0].api_message_id == "msg-1"
     assert emails[0].sender == "vendor@example.com"
     assert len(emails[0].attachments) == 1
     assert emails[0].attachments[0].filename == "invoice-march.pdf"
+
+
+def test_poll_skips_known_internet_message_ids() -> None:
+    messages = [
+        {
+            "id": "graph-id-changed-after-move",
+            "internetMessageId": "<stable@example.com>",
+            "subject": "Invoice March",
+            "from": {"emailAddress": {"address": "vendor@example.com"}},
+            "hasAttachments": True,
+        }
+    ]
+
+    with (
+        patch("app.services.ingest.email_ingestion.is_graph_enabled", return_value=True),
+        patch(
+            "app.services.ingest.email_ingestion._exceptions_folder_id",
+            return_value=None,
+        ),
+        patch(
+            "app.services.ingest.email_ingestion._list_unread_messages",
+            return_value=messages,
+        ),
+        patch("app.services.ingest.email_ingestion._list_attachments") as mock_attachments,
+    ):
+        mock_attachments.return_value = []
+        emails = poll_inbox(
+            "vendor@example.com",
+            known_message_ids=frozenset({"<stable@example.com>"}),
+        )
+
+    assert emails == []
+    mock_attachments.assert_not_called()
 
 
 def test_poll_skips_known_message_ids() -> None:

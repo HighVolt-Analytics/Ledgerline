@@ -265,6 +265,45 @@ async def test_approvals_board_returns_queue_pipeline_and_processed(
 
 
 @pytest.mark.asyncio
+async def test_approvals_board_understood_path_columns(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    vaulted = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vision Vault Co",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_vaulted",
+        currency="AUD",
+        file_hash="board-vision-vaulted",
+    )
+    header_review = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vision Header Co",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_header_review",
+        currency="AUD",
+        file_hash="board-vision-header",
+    )
+    ocr_hold = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="OCR Review Co",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        currency="AUD",
+        file_hash="board-ocr-hold",
+    )
+    db_session.add_all([vaulted, header_review, ocr_hold])
+    await db_session.flush()
+
+    res = await client.get("/api/approvals/board")
+    assert res.status_code == 200
+    rows = {row["id"]: row for row in res.json()["data"]}
+    assert rows[vaulted.id]["approval_board_column"] == "approved"
+    assert rows[header_review.id]["approval_board_column"] == "review"
+    assert rows[ocr_hold.id]["approval_board_column"] == "review"
+
+
+@pytest.mark.asyncio
 async def test_reject_requires_rejectable_status(
     client: AsyncClient, db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

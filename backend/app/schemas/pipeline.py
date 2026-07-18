@@ -33,3 +33,4 @@ class MatrixRowResponse(BaseModel):
 
 class PipelineStepsResponse(BaseModel):
     steps: list[dict]
+    active_path: Literal["understood", "not_understood", "unknown"] = "unknown"

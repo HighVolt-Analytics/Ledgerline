@@ -14,14 +14,23 @@ from app.utils.abn_validator import storage_abn
 def normalize_amount(value: Any) -> Decimal | None:
     if value is None or value == "":
         return None
-    if isinstance(value, Decimal):
-        return value
-    try:
+    if isinstance(value, (int, float, Decimal)):
         from app.services.shared.amount_sanity import plausible_money
 
-        return plausible_money(Decimal(str(value).replace(",", "").replace("$", "").strip()))
-    except (InvalidOperation, ValueError, TypeError):
+        try:
+            return plausible_money(value if isinstance(value, Decimal) else Decimal(str(value)))
+        except (InvalidOperation, ValueError, TypeError):
+            return None
+    if isinstance(value, dict):
+        for key in ("value", "amount", "total", "text", "content"):
+            if key in value:
+                return normalize_amount(value.get(key))
         return None
+    from app.services.shared.amount_sanity import plausible_money
+    from app.services.shared.locale_number_parser import parse_localized_decimal
+
+    parsed = parse_localized_decimal(str(value).strip())
+    return plausible_money(parsed) if parsed is not None else None
 
 
 def normalize_date(value: Any) -> date | None:
@@ -29,11 +38,21 @@ def normalize_date(value: Any) -> date | None:
         return None
     if isinstance(value, date) and not hasattr(value, "hour"):
         return value
+    if isinstance(value, dict):
+        for key in ("value", "date", "text", "content"):
+            if key in value:
+                return normalize_date(value.get(key))
+        return None
     return parse_flexible_date(str(value).strip() or None)
 
 
 def normalize_currency(value: Any) -> str | None:
     if value is None:
+        return None
+    if isinstance(value, dict):
+        for key in ("value", "code", "currency", "text", "content"):
+            if key in value:
+                return normalize_currency(value.get(key))
         return None
     raw = str(value).strip()
     if not raw:

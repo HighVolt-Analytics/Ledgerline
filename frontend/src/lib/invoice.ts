@@ -13,6 +13,28 @@ export const ROUTE_TEAM = "Team Expenses";
 export const ROUTE_VAULT = "Vault";
 export const ROUTE_UNROUTED = "Unrouted";
 
+/**
+ * Vault type-folder label for Upload Route — where the file is filed under the book.
+ * Prefer LLM canonical / printed heading over the book name (Purchase/Sales Management).
+ */
+export function invoiceVaultFolderLabel(
+  inv: Pick<Invoice, "document_heading" | "document_type_code" | "route_target" | "extracted_fields">
+): string {
+  const fields = inv.extracted_fields ?? undefined;
+  const canonical =
+    typeof fields?.canonical_document_type === "string"
+      ? fields.canonical_document_type.trim()
+      : "";
+  if (canonical) return canonical;
+  const heading =
+    (inv.document_heading ?? "").trim() ||
+    (typeof fields?.document_heading === "string" ? fields.document_heading.trim() : "");
+  if (heading) return heading;
+  const code = (inv.document_type_code ?? "").trim();
+  if (code) return code;
+  return (inv.route_target ?? "").trim();
+}
+
 export type CounterpartyKind = "vendor" | "customer" | "employee" | "party";
 
 /** Finance book role of the trading partner on a document (AP vendor vs AR customer). */
@@ -224,7 +246,21 @@ function fallbackFieldConfidence(inv: InvoiceDetails, fieldKey: string): number 
 }
 
 /** Per-field extraction confidence for invoice drawers (from API when available). */
-export function invoiceFieldConfidence(inv: InvoiceDetails, fieldKey: string): number {
+export function invoiceFieldConfidence(inv: InvoiceDetails, fieldKey: string): number | null {
+  // Vision header path: only score fields that were actually extracted; hide dots for empties.
+  if (
+    ((inv.evaluation_status ?? "").trim() === "awaiting_classification" ||
+      (inv.evaluation_status ?? "").trim() === "vision_vaulted" ||
+      (inv.evaluation_status ?? "").trim() === "vision_header_review") &&
+    !(inv.document_text ?? "").trim()
+  ) {
+    if (!extractionFieldPopulated(inv, fieldKey)) return null;
+    const fromApi = inv.extraction_field_confidence?.[fieldKey];
+    if (fromApi != null && Number.isFinite(fromApi)) {
+      return Math.round(fromApi);
+    }
+    return 90;
+  }
   const fromApi = inv.extraction_field_confidence?.[fieldKey];
   if (fromApi != null && Number.isFinite(fromApi)) {
     return Math.round(fromApi);
@@ -461,6 +497,8 @@ export function evaluationStatusLabel(
   if (status === "needs_review") return "Needs review";
   if (status === "pending_approval") return "Pending approval";
   if (status === "awaiting_classification") return "Awaiting classification";
+  if (status === "vision_vaulted") return "Vision vaulted";
+  if (status === "vision_header_review") return "Vision header review";
   if (status === "needs_rescan") return "Needs rescan";
   if (status === "pending_vendor") {
     return (routeTarget ?? "").trim() === ROUTE_SALES ? "Pending customer" : "Pending vendor";
@@ -488,6 +526,12 @@ export function evaluationStatusDescription(
   }
   if (status === "awaiting_classification") {
     return "LLM confidence was below the auto-route threshold — confirm document type on the document.";
+  }
+  if (status === "vision_vaulted") {
+    return "Vision understood this document — soft-bundled and stored in the vault (no OCR classification).";
+  }
+  if (status === "vision_header_review") {
+    return "Vision understood the file but header extraction was incomplete — review Fields, then reprocess if needed.";
   }
   if (status === "needs_rescan") {
     return "Image or OCR quality was too poor — ask the sender for a flat, well-lit scan or PDF.";
@@ -572,6 +616,14 @@ export function evaluationReviewTooltip(
     return suggested
       ? `Fields tab — confirm document type (${suggested})`
       : "Fields tab — confirm document type";
+  }
+
+  if (status === "vision_vaulted") {
+    return "Understood path complete — document is vaulted; open Fields for vision header details";
+  }
+
+  if (status === "vision_header_review") {
+    return "Fields tab — complete or correct vision header fields, then reprocess if needed";
   }
 
   if (status === "needs_review") {

@@ -100,6 +100,8 @@ export interface InstitutionSettings {
   tax_id_label: string;
   bank_routing_label: string;
   field_labels: Record<string, string>;
+  /** Last-resort vision soft-bundle extracted_fields key; empty skips that step. */
+  custom_bundle_field_key?: string;
 }
 
 export interface OrgAiBrief {
@@ -355,7 +357,11 @@ export interface Invoice {
     | "unmatched_expense_vendor"
     | "awaiting_po"
     | "awaiting_so"
+    | "vision_vaulted"
+    | "vision_header_review"
     | null;
+  /** Ingest T4: weak/unsure duplicate signals — distinct from evaluation needs_review. */
+  duplicate_review_suggested?: boolean;
   validation_results: ValidationResult[] | null;
   validation_pass_rate?: number | null;
   purchase_document_type?: string | null;
@@ -2161,12 +2167,46 @@ export interface PlatformCreditSettings {
   topup_factor_au: number;
 }
 
+export interface PlatformPromptSummary {
+  key: string;
+  label: string;
+  group: string;
+  description: string;
+  placeholders: string[];
+  default_body: string;
+  body: string;
+  version: number | null;
+  is_overridden: boolean;
+  updated_at?: string | null;
+  notes?: string | null;
+}
+
+export interface PlatformPromptVersionItem {
+  version: number;
+  body: string;
+  notes?: string | null;
+  created_at?: string | null;
+  created_by_user_id?: number | null;
+  is_active: boolean;
+}
+
+export interface PlatformPromptVersionList {
+  items: PlatformPromptVersionItem[];
+}
+
 export interface PipelineAuditStep {
   stage: string;
   at: string | null;
   when: string;
   detail: string;
   state: "done" | "pending" | "fail" | "skipped";
+}
+
+export type PipelineActivePath = "understood" | "not_understood" | "unknown";
+
+export interface InvoicePipelineResponse {
+  steps: PipelineAuditStep[];
+  active_path?: PipelineActivePath;
 }
 
 export interface InvoiceClassificationScoreBreakdown {

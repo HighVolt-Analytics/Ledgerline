@@ -28,7 +28,7 @@ export function DocumentAuditTrail({
     setError(null);
     api
       .getInvoicePipeline(invoiceId, { fresh: true })
-      .then(setSteps)
+      .then((res) => setSteps(res.steps))
       .catch(() => {
         setSteps([]);
         setError("Could not load audit trail.");

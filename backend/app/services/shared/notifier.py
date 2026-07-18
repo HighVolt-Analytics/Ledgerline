@@ -9,7 +9,17 @@ logger = get_logger(__name__)
 
 
 def send_notification(invoice: Invoice, status: InvoiceStatus) -> bool:
+    """Best-effort status email. Skips when SMTP is not a real relay (local defaults)."""
     settings = get_settings()
+    if not settings.smtp_explicitly_configured:
+        logger.debug(
+            "notify_skipped",
+            invoice_id=invoice.id,
+            reason="smtp_not_configured",
+            smtp_host=settings.smtp_host,
+        )
+        return False
+
     body = (
         f"Invoice {invoice.invoice_no or invoice.id}\n"
         f"Vendor: {invoice.vendor}\n"
@@ -22,7 +32,8 @@ def send_notification(invoice: Invoice, status: InvoiceStatus) -> bool:
     msg["To"] = settings.smtp_from
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
+        # Short timeout — never stall the pipeline / event loop for mail.
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=2) as smtp:
             smtp.send_message(msg)
         return True
     except OSError as exc:

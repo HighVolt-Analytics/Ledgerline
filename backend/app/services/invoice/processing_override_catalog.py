@@ -44,8 +44,8 @@ class ProcessingOverrideStepInfo(BaseModel):
 PROCESSING_OVERRIDE_STEPS: tuple[ProcessingOverrideStepInfo, ...] = (
     ProcessingOverrideStepInfo(
         step_id="image_quality",
-        label="Image quality gate",
-        hint="Skip low OCR text / sparse scan checks on reprocess.",
+        label="OCR quality confirm",
+        hint="Skip post-OCR sparse / short-text checks on reprocess.",
     ),
     ProcessingOverrideStepInfo(
         step_id="classification",

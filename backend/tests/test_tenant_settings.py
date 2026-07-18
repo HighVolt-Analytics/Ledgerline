@@ -11,6 +11,7 @@ from app.tenant_settings import (
     institution_settings_view,
     merge_institution_settings,
     tenant_currency,
+    tenant_custom_bundle_field_key,
     tenant_today,
     tenant_timezone,
 )
@@ -100,3 +101,17 @@ def test_institution_settings_view_includes_currency() -> None:
     tenant = Tenant(name="IN Co", slug="in-co", settings_json={"country": "IN"})
     view = institution_settings_view(tenant)
     assert view["currency"] == "INR"
+    assert view["custom_bundle_field_key"] == ""
+
+
+def test_custom_bundle_field_key_roundtrip() -> None:
+    merged = merge_institution_settings(
+        {"country": "AU"},
+        custom_bundle_field_key="other_reference",
+    )
+    assert merged["custom_bundle_field_key"] == "other_reference"
+    tenant = Tenant(name="AU Co", slug="au-co", settings_json=merged)
+    assert tenant_custom_bundle_field_key(tenant) == "other_reference"
+    cleared = merge_institution_settings(merged, custom_bundle_field_key="")
+    assert "custom_bundle_field_key" not in cleared
+    assert tenant_custom_bundle_field_key(Tenant(name="X", slug="x", settings_json=cleared)) is None

@@ -47,6 +47,11 @@ _TERMINAL_STATUSES = frozenset(
 )
 
 
+def is_inline_pipeline_active() -> bool:
+    """True while an in-process invoice pipeline batch/task is running."""
+    return _inline_active
+
+
 def get_processing_status() -> dict[str, str | int | None]:
     celery_active = 0
     try:
@@ -155,18 +160,64 @@ async def process_invoices_batch_background(
     *,
     tenant_id: uuid.UUID | None = None,
 ) -> None:
-    """Process uploaded invoices one at a time (bulk upload)."""
+    """Process uploaded invoices with a small concurrency limit.
+
+    Yields between invoices so uvicorn can keep serving HTTP while SYNC_PROCESSING
+    runs in the same process.
+    """
     global _last_run, _inline_active
 
+    settings = get_settings()
+    limit = max(1, int(settings.invoice_pipeline_concurrency))
+    sem = asyncio.Semaphore(limit)
     _inline_active = True
     try:
-        for invoice_id in invoice_ids:
-            lock = await _invoice_pipeline_lock(invoice_id)
-            async with lock:
-                await _run_invoice_pipeline(invoice_id, tenant_id=tenant_id)
+
+        async def _one(invoice_id: int) -> None:
+            async with sem:
+                lock = await _invoice_pipeline_lock(invoice_id)
+                async with lock:
+                    await _run_invoice_pipeline(invoice_id, tenant_id=tenant_id)
+                # Let pending HTTP / health requests run between heavy pipelines.
+                await asyncio.sleep(0)
+
+        await asyncio.gather(*(_one(invoice_id) for invoice_id in invoice_ids))
     finally:
         _inline_active = False
         _last_run = datetime.now(timezone.utc).isoformat()
+
+
+def _parse_tenant_id(tenant_id: uuid.UUID | str | None) -> uuid.UUID | None:
+    if tenant_id is None:
+        return None
+    if isinstance(tenant_id, uuid.UUID):
+        return tenant_id
+    return uuid.UUID(str(tenant_id))
+
+
+def _try_enqueue_celery_invoices(
+    invoice_ids: list[int],
+    *,
+    tenant_id: uuid.UUID,
+) -> bool:
+    """Enqueue Celery invoice tasks when SYNC_PROCESSING is off. Returns True on success."""
+    settings = get_settings()
+    if settings.sync_processing:
+        return False
+    try:
+        tid = str(tenant_id)
+        if len(invoice_ids) == 1:
+            process_invoice_task.delay(invoice_ids[0], tenant_id=tid)
+        else:
+            process_invoices_batch_task.delay(invoice_ids, tenant_id=tid)
+        return True
+    except Exception as exc:
+        logger.warning(
+            "celery_invoice_enqueue_failed",
+            error=str(exc),
+            invoice_count=len(invoice_ids),
+        )
+        return False
 
 
 async def queue_invoices_for_processing(
@@ -178,6 +229,8 @@ async def queue_invoices_for_processing(
     unique_ids = list(dict.fromkeys(invoice_ids))
     if not unique_ids:
         return
+    if _try_enqueue_celery_invoices(unique_ids, tenant_id=tenant_id):
+        return
     if len(unique_ids) == 1:
         asyncio.create_task(
             process_invoice_background(unique_ids[0], tenant_id=tenant_id),
@@ -188,6 +241,42 @@ async def queue_invoices_for_processing(
         process_invoices_batch_background(unique_ids, tenant_id=tenant_id),
         name=f"invoice-pipeline-batch-{unique_ids[0]}",
     )
+
+
+def enqueue_invoice_pipelines(
+    invoice_ids: list[int],
+    *,
+    tenant_id: uuid.UUID,
+    background_tasks=None,
+) -> str:
+    """Shared enqueue for upload/reprocess APIs. Returns queued|running|idle."""
+    unique_ids = list(dict.fromkeys(invoice_ids))
+    if not unique_ids:
+        return "idle"
+    if _try_enqueue_celery_invoices(unique_ids, tenant_id=tenant_id):
+        return "queued"
+    if background_tasks is not None:
+        if len(unique_ids) == 1:
+            background_tasks.add_task(
+                process_invoice_background, unique_ids[0], tenant_id=tenant_id
+            )
+        else:
+            background_tasks.add_task(
+                process_invoices_batch_background, unique_ids, tenant_id=tenant_id
+            )
+        return "running"
+    # Fire-and-forget when no FastAPI BackgroundTasks (e.g. tests / scripts).
+    if len(unique_ids) == 1:
+        asyncio.create_task(
+            process_invoice_background(unique_ids[0], tenant_id=tenant_id),
+            name=f"invoice-pipeline-{unique_ids[0]}",
+        )
+    else:
+        asyncio.create_task(
+            process_invoices_batch_background(unique_ids, tenant_id=tenant_id),
+            name=f"invoice-pipeline-batch-{unique_ids[0]}",
+        )
+    return "running"
 
 
 _invoice_locks: dict[int, asyncio.Lock] = {}
@@ -235,17 +324,96 @@ def process_invoice_by_id_sync(invoice_id: int, *, tenant_id: uuid.UUID | None =
     asyncio.run(_run())
 
 
+@celery_app.task(
+    bind=True,
+    name="app.workers.tasks.process_invoice_task",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=2,
+)
+def process_invoice_task(
+    self,
+    invoice_id: int,
+    tenant_id: uuid.UUID | str | None = None,
+) -> dict[str, object]:
+    """Celery entry for a single invoice pipeline (keeps uvicorn free)."""
+    configure_logging(get_settings().log_level)
+    tid = _parse_tenant_id(tenant_id)
+    logger.info(
+        "process_invoice_task_started",
+        task_id=self.request.id,
+        invoice_id=invoice_id,
+        tenant_id=str(tid) if tid else None,
+    )
+
+    async def run_with_cleanup() -> bool:
+        try:
+            await process_invoice_background(invoice_id, tenant_id=tid)
+            return True
+        finally:
+            await dispose_engine()
+
+    ok = asyncio.run(run_with_cleanup())
+    return {"invoice_id": invoice_id, "ok": ok}
+
+
+@celery_app.task(
+    bind=True,
+    name="app.workers.tasks.process_invoices_batch_task",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=2,
+)
+def process_invoices_batch_task(
+    self,
+    invoice_ids: list[int],
+    tenant_id: uuid.UUID | str | None = None,
+) -> dict[str, object]:
+    """Celery entry for concurrent batch invoice pipelines."""
+    configure_logging(get_settings().log_level)
+    tid = _parse_tenant_id(tenant_id)
+    unique_ids = list(dict.fromkeys(invoice_ids))
+    logger.info(
+        "process_invoices_batch_task_started",
+        task_id=self.request.id,
+        invoice_count=len(unique_ids),
+        tenant_id=str(tid) if tid else None,
+    )
+
+    async def run_with_cleanup() -> None:
+        try:
+            await process_invoices_batch_background(unique_ids, tenant_id=tid)
+        finally:
+            await dispose_engine()
+
+    asyncio.run(run_with_cleanup())
+    return {"invoice_ids": unique_ids, "ok": True}
+
+
 async def _process_pending(
     invoice_ids: list[int],
     *,
     tenant_id: uuid.UUID | None = None,
 ) -> int:
+    if not invoice_ids:
+        return 0
+    settings = get_settings()
+    limit = max(1, int(settings.invoice_pipeline_concurrency))
+    sem = asyncio.Semaphore(limit)
     processed = 0
-    for invoice_id in invoice_ids:
-        lock = await _invoice_pipeline_lock(invoice_id)
-        async with lock:
-            if await process_invoice_by_id(invoice_id, tenant_id=tenant_id):
-                processed += 1
+    lock = asyncio.Lock()
+
+    async def _one(invoice_id: int) -> None:
+        nonlocal processed
+        async with sem:
+            pipeline_lock = await _invoice_pipeline_lock(invoice_id)
+            async with pipeline_lock:
+                ok = await process_invoice_by_id(invoice_id, tenant_id=tenant_id)
+            if ok:
+                async with lock:
+                    processed += 1
+
+    await asyncio.gather(*(_one(invoice_id) for invoice_id in invoice_ids))
     return processed
 
 
@@ -268,6 +436,7 @@ async def run_pipeline(
     message_ids: list[str] = []
     preskip: dict[str, str] = {}
     message_mailboxes: dict[str, str] = {}
+    message_graph_ids: dict[str, str] = {}
 
     if mailbox_id is not None:
         async with db_session_with_rls(tenant_id) as session:
@@ -278,6 +447,7 @@ async def run_pipeline(
             message_ids = ingest_result.message_ids
             preskip = ingest_result.preskip_exceptions
             message_mailboxes = ingest_result.message_mailbox_emails
+            message_graph_ids = ingest_result.message_graph_ids
     elif poll_inbox:
         async with db_session_with_rls(tenant_id) as session:
             ingest_result = await poll_all_and_ingest(session, tenant_id=tenant_id)
@@ -285,6 +455,7 @@ async def run_pipeline(
             message_ids = ingest_result.message_ids
             preskip = ingest_result.preskip_exceptions
             message_mailboxes = ingest_result.message_mailbox_emails
+            message_graph_ids = ingest_result.message_graph_ids
     else:
         ingest_result = EmailIngestResult()
 
@@ -294,7 +465,7 @@ async def run_pipeline(
             tenant_id=tenant_id,
         )
 
-    if message_ids and folder_moves_enabled():
+    if message_ids:
         async with db_session_with_rls(tenant_id) as session:
             moved = await finalize_graph_messages(
                 session,
@@ -302,8 +473,14 @@ async def run_pipeline(
                 tenant_id=tenant_id,
                 preskip_exceptions=preskip,
                 message_mailbox_emails=message_mailboxes,
+                message_graph_ids=message_graph_ids,
             )
-            logger.info("graph_messages_finalized", moved=moved, total=len(message_ids))
+            logger.info(
+                "graph_messages_finalized",
+                moved=moved,
+                total=len(message_ids),
+                folder_moves=folder_moves_enabled(),
+            )
 
     return {"ingested": ingested, "processed": processed}
 

@@ -19,7 +19,7 @@ from app.services.approval.approval_api_service import (
     request_approval_action,
 )
 from app.services.auth.privilege_service import require_privilege
-from app.workers.tasks import process_invoice_background
+from app.workers.tasks import enqueue_invoice_pipelines
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -71,8 +71,10 @@ async def approve_invoice(
     except ValueError as exc:
         raise http_bad_request(exc) from exc
     await db.commit()
-    background_tasks.add_task(
-        process_invoice_background, invoice_id, tenant_id=ctx.tenant_id
+    enqueue_invoice_pipelines(
+        [invoice_id],
+        tenant_id=ctx.tenant_id,
+        background_tasks=background_tasks,
     )
     return ApiEnvelope(data=response)
 

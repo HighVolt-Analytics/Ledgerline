@@ -15,8 +15,12 @@ from app.services.shared.file_storage import (
 )
 from app.services.invoice.invoice_evaluation_service import load_config_for_tenant
 from app.services.tenant.tenant_storage_paths import blob_name_from_stored
-from app.services.vault.vault_invoice_paths import vault_document_type_titles_for_invoice
+from app.services.vault.vault_invoice_paths import (
+    vault_document_type_titles_for_invoice,
+    vault_type_folder_from_llm_or_heading,
+)
 from app.services.vault.vault_paths import (
+    UNCLASSIFIED_DT_FOLDER,
     build_vault_blob_name,
     filename_from_stored,
     strip_org_segment_from_blob_path,
@@ -186,6 +190,210 @@ async def sync_invoice_blob_path(
             "from_path": old_path,
             "to_path": new_path,
             "reason": "vault_layout_sync",
+        },
+    )
+    return True
+
+
+def _relocate_vision_header_pdf_or_none(
+    invoice: Invoice,
+    *,
+    tenant_slug: str,
+    filename: str,
+    tenant_name: str | None,
+    display_vendor: str | None,
+    type_book: str,
+) -> str | None:
+    """Relocate with type as top-level book (no Unrouted / purchase / sales)."""
+    from azure.core.exceptions import ResourceNotFoundError
+
+    try:
+        return relocate_invoice_pdf(
+            invoice.raw_file_path,
+            invoice.tenant_id,
+            tenant_slug,
+            invoice.storage_vendor_slug or UNKNOWN_SLUG,
+            invoice.id,
+            invoice.file_hash,
+            filename,
+            tenant_name=tenant_name,
+            vendor_name=display_vendor,
+            invoice_no=invoice.invoice_no,
+            invoice_date=invoice.invoice_date,
+            route_target=type_book,
+            po_reference=invoice.po_reference,
+            purchase_document_type=None,
+            document_type_code=None,
+            document_type_short_title=None,
+            document_type_title=None,
+            document_type_folder=None,
+        )
+    except ResourceNotFoundError:
+        return None
+
+
+def _copy_invoice_bytes_to_blob_name(invoice: Invoice, blob_name: str) -> str:
+    """Write invoice bytes to an absolute vault blob path (local or Azure)."""
+    from pathlib import Path
+
+    from app.services.shared import blob_storage
+    from app.services.shared.file_storage import open_pdf_for_reading
+
+    with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as src:
+        data = Path(src).read_bytes()
+    if blob_storage.is_blob_enabled():
+        return blob_storage.upload_bytes(blob_name, data)
+    settings = get_settings()
+    dest = Path(settings.upload_dir) / blob_name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    return str(dest)
+
+
+async def sync_vision_header_vault_path(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    parsed_vendor: str | None = None,
+) -> bool:
+    """Vision can-understand path only: ``{type}/{vendor}/…`` at book level (not under Unrouted).
+
+    Leaves legacy ``sync_invoice_blob_path`` unchanged.
+    """
+    if not invoice.raw_file_path or not invoice.file_hash:
+        return False
+
+    settings = get_settings()
+    candidate_vendor = (parsed_vendor or invoice.vendor or "").strip()
+    if settings.blob_auto_relocate_unknown and is_plausible_vendor_name(candidate_vendor):
+        new_slug = await resolve_storage_slug_for_parsed_vendor(
+            session, candidate_vendor, tenant_id=invoice.tenant_id
+        )
+        old_slug = invoice.storage_vendor_slug or UNKNOWN_SLUG
+        if new_slug != old_slug:
+            if new_slug != UNKNOWN_SLUG or not is_valid_storage_slug(old_slug):
+                invoice.storage_vendor_slug = new_slug
+
+    display_vendor = invoice.vendor or parsed_vendor
+    if not is_plausible_vendor_name(display_vendor):
+        display_vendor = invoice.vendor if is_plausible_vendor_name(invoice.vendor) else None
+
+    org = await session.get(Tenant, invoice.tenant_id)
+    tenant_slug = org.slug if org else settings.default_tenant_slug
+    tenant_name = org.name if org else None
+    filename = filename_from_stored(invoice.raw_file_path)
+
+    # Type is the top-level book (sibling of Purchase/Sales/Vault) — not nested under Unrouted.
+    type_book = vault_type_folder_from_llm_or_heading(invoice) or UNCLASSIFIED_DT_FOLDER
+    invoice.route_target = type_book
+
+    expected = build_vault_blob_name(
+        invoice.tenant_id,
+        tenant_slug,
+        tenant_name=tenant_name,
+        route_target=type_book,
+        vendor_name=display_vendor,
+        storage_vendor_slug=invoice.storage_vendor_slug,
+        invoice_id=invoice.id,
+        invoice_no=invoice.invoice_no,
+        invoice_date=invoice.invoice_date,
+        original_filename=filename,
+        po_reference=invoice.po_reference,
+        purchase_document_type=None,
+        document_type_code=None,
+        document_type_short_title=None,
+        document_type_title=None,
+        document_type_folder=None,
+    )
+
+    if blob_layout_matches_invoice(invoice.raw_file_path, expected):
+        invoice.route_target = type_book
+        await log_event(
+            session,
+            "blob_relocated",
+            invoice_id=invoice.id,
+            detail={
+                "vendor_slug": invoice.storage_vendor_slug,
+                "from_path": invoice.raw_file_path,
+                "to_path": invoice.raw_file_path,
+                "reason": "vision_header_vault_already_aligned",
+                "book": type_book,
+            },
+        )
+        return True
+
+    await repair_invoice_stored_path(session, invoice)
+    if not stored_file_available(invoice.raw_file_path, tenant_id=invoice.tenant_id):
+        await log_event(
+            session,
+            "vault_layout_sync_skipped",
+            invoice_id=invoice.id,
+            detail={
+                "reason": "vision_header_stored_file_missing",
+                "path": invoice.raw_file_path,
+                "expected": expected,
+                "book": type_book,
+            },
+        )
+        return False
+
+    new_path = _relocate_vision_header_pdf_or_none(
+        invoice,
+        tenant_slug=tenant_slug,
+        filename=filename,
+        tenant_name=tenant_name,
+        display_vendor=display_vendor,
+        type_book=type_book,
+    )
+
+    if new_path is None or (
+        new_path == invoice.raw_file_path
+        and not blob_layout_matches_invoice(new_path, expected)
+    ):
+        try:
+            new_path = _copy_invoice_bytes_to_blob_name(invoice, expected)
+        except Exception as exc:
+            await log_event(
+                session,
+                "vault_layout_sync_skipped",
+                invoice_id=invoice.id,
+                detail={
+                    "reason": "vision_header_vault_copy_failed",
+                    "error": str(exc),
+                    "path": invoice.raw_file_path,
+                    "expected": expected,
+                    "book": type_book,
+                },
+            )
+            return False
+
+    if not blob_layout_matches_invoice(new_path, expected) and new_path == invoice.raw_file_path:
+        await log_event(
+            session,
+            "vault_layout_sync_skipped",
+            invoice_id=invoice.id,
+            detail={
+                "reason": "vision_header_vault_relocate_noop",
+                "path": invoice.raw_file_path,
+                "expected": expected,
+                "book": type_book,
+            },
+        )
+        return False
+
+    old_path = invoice.raw_file_path
+    invoice.raw_file_path = new_path
+    invoice.route_target = type_book
+    await log_event(
+        session,
+        "blob_relocated",
+        invoice_id=invoice.id,
+        detail={
+            "vendor_slug": invoice.storage_vendor_slug,
+            "from_path": old_path,
+            "to_path": new_path,
+            "reason": "vision_header_vault_layout",
+            "book": type_book,
         },
     )
     return True

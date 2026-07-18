@@ -31,6 +31,9 @@ _HOLD_EVAL_STATUSES = frozenset({"awaiting_po", "awaiting_so"})
 # Commercial invoices waiting for human approval do not benefit from PO/SO re-sync.
 _SKIP_REPROCESS_EVAL_FOR_REFERENCE_TRIGGER = frozenset({EVAL_PENDING_APPROVAL})
 
+# Vision-understood hold: soft-bundled only — never re-queue into the full pipeline.
+_NEVER_SIBLING_REPROCESS_EVAL = frozenset({"awaiting_classification"})
+
 _PENDING_PIPELINE_STATUSES = frozenset(
     {
         InvoiceStatus.PENDING,
@@ -217,6 +220,9 @@ async def reprocess_held_commercial_invoices_on_anchor(
         if not inv.raw_file_path:
             continue
         if inv.status in _PENDING_PIPELINE_STATUSES:
+            continue
+        eval_status = (inv.evaluation_status or "").strip().lower()
+        if eval_status in _NEVER_SIBLING_REPROCESS_EVAL:
             continue
         if await _skip_sibling_reprocess(
             session,

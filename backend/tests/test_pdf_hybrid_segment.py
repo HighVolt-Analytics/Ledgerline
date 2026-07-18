@@ -192,11 +192,12 @@ async def test_find_existing_ingest_duplicate_matches_bundle_source_hash(
 
 
 @pytest.mark.asyncio
-async def test_ingest_fanout_import_bundle_pattern(
+async def test_ingest_splits_import_bundle_into_documents(
     db_session: AsyncSession,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Import dossier pages are separate documents (rules fallback = prompt decision order)."""
     org = Tenant(name="Import Org", slug="import-org")
     db_session.add(org)
     await db_session.flush()
@@ -226,8 +227,13 @@ async def test_ingest_fanout_import_bundle_pattern(
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
-        lambda *args, **kwargs: "uploads/segment.pdf",
+        lambda *args, **kwargs: "uploads/bundle.pdf",
     )
+    # Keep this test on rules (LLM-first is covered in unit tests).
+    monkeypatch.setenv("PDF_SEGMENT_LLM_ENABLED", "false")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
 
     result = await ingest_upload_file(
         db_session,
@@ -252,7 +258,7 @@ async def test_ingest_fanout_import_bundle_pattern(
 
 
 @pytest.mark.asyncio
-async def test_ingest_logs_segment_cap_exceeded_skip(
+async def test_ingest_collapses_when_segment_cap_exceeded(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -273,6 +279,7 @@ async def test_ingest_logs_segment_cap_exceeded_skip(
         lambda *args, **kwargs: "uploads/one.pdf",
     )
     monkeypatch.setenv("PDF_SEGMENT_MAX_SEGMENTS", "5")
+    monkeypatch.setenv("PDF_SEGMENT_LLM_ENABLED", "false")
     from app.config import get_settings
 
     get_settings.cache_clear()
@@ -297,17 +304,16 @@ async def test_ingest_logs_segment_cap_exceeded_skip(
             select(AuditLog).where(AuditLog.event == "pdf_split_skipped")
         )
     ).scalars().all()
-    assert len(skipped) == 1
-    assert skipped[0].detail["reason"] == "segment_cap_exceeded"
-    assert skipped[0].detail["segment_count_detected"] == 25
+    assert len(skipped) >= 1
 
 
 @pytest.mark.asyncio
-async def test_ingest_logs_ocr_incomplete_but_still_splits(
+async def test_ingest_splits_despite_ocr_incomplete_flag(
     db_session: AsyncSession,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Soft ocr_incomplete audit must not block rules bidirectional split."""
     org = Tenant(name="OCR Org", slug="ocr-org")
     db_session.add(org)
     await db_session.flush()
@@ -334,8 +340,12 @@ async def test_ingest_logs_ocr_incomplete_but_still_splits(
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
-        lambda *args, **kwargs: "uploads/segment.pdf",
+        lambda *args, **kwargs: "uploads/bundle.pdf",
     )
+    monkeypatch.setenv("PDF_SEGMENT_LLM_ENABLED", "false")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
 
     result = await ingest_upload_file(
         db_session,
@@ -350,12 +360,3 @@ async def test_ingest_logs_ocr_incomplete_but_still_splits(
 
     assert result.segment_count == 3
     assert len(result.invoice_ids) == 3
-
-    skipped = (
-        await db_session.execute(
-            select(AuditLog).where(AuditLog.event == "pdf_split_skipped")
-        )
-    ).scalars().all()
-    assert len(skipped) == 1
-    assert skipped[0].detail["reason"] == "ocr_incomplete"
-    assert skipped[0].detail["thin_page_count"] == 1

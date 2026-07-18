@@ -15,6 +15,8 @@ class InstitutionSettingsResponse(BaseModel):
     tax_id_label: str = "Tax ID"
     bank_routing_label: str = "Bank code"
     field_labels: dict[str, str] = Field(default_factory=dict)
+    # Last-resort vision soft-bundle key (extracted_fields name). Empty = skip.
+    custom_bundle_field_key: str = ""
 
 
 class UpdateInstitutionSettingsRequest(BaseModel):
@@ -22,3 +24,4 @@ class UpdateInstitutionSettingsRequest(BaseModel):
     country: str | None = Field(default=None, min_length=2, max_length=2)
     timezone: str | None = Field(default=None, min_length=3, max_length=64)
     locale: str | None = Field(default=None, min_length=2, max_length=16)
+    custom_bundle_field_key: str | None = Field(default=None, max_length=64)

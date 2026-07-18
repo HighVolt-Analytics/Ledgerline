@@ -1,7 +1,8 @@
-"""Named pipeline phases: Storage → OCR → LLM classify → Confidence gate."""
+"""Named pipeline phases: Storage → File validity → Vision understand → Vision header extract → Image quality → Layout readiness → OCR → OCR quality confirm → LLM classify."""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
@@ -137,8 +138,11 @@ async def phase_file_validity(
         file_validity_audit_detail,
     )
 
-    with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
-        result = evaluate_file_validity(path)
+    def _eval() -> object:
+        with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+            return evaluate_file_validity(path)
+
+    result = await asyncio.to_thread(_eval)
     await log_event(
         session,
         "file_validity_passed" if result.passed else "file_validity_failed",
@@ -152,6 +156,145 @@ async def phase_file_validity(
         raise OcrFailed(result.rejection_code or "file_invalid")
 
 
+async def phase_vision_understand(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    doc_provider: DocumentAiProvider,
+    document_ai_provider: str,
+    vision_page_images: list[bytes] | None = None,
+):
+    """Vision LLM understandability gate — never raises for cannot_understand."""
+    from app.services.invoice.vision_understand_gate import (
+        evaluate_vision_understand,
+        vision_understand_audit_detail,
+    )
+
+    with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+        result = await evaluate_vision_understand(
+            path,
+            provider=doc_provider,
+            vision_page_images=vision_page_images,
+        )
+    await log_event(
+        session,
+        "vision_understand_passed" if result.can_understand else "vision_understand_failed",
+        invoice_id=invoice.id,
+        detail={
+            **vision_understand_audit_detail(result),
+            "document_ai_provider": document_ai_provider,
+        },
+    )
+    return result
+
+
+async def phase_vision_header_extract(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    org: OrgContext,
+    doc_provider: DocumentAiProvider,
+    document_ai_provider: str,
+    vision_page_images: list[bytes] | None = None,
+):
+    """Vision header extract for can-understand path — never raises."""
+    from app.services.invoice.vision_header_extract import (
+        evaluate_vision_header_extract,
+        persist_vision_header_to_invoice,
+        vision_header_extract_audit_detail,
+    )
+
+    with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+        result = await evaluate_vision_header_extract(
+            path,
+            provider=doc_provider,
+            org=org,
+            vision_page_images=vision_page_images,
+        )
+    if result.success:
+        persist_vision_header_to_invoice(invoice, result)
+        await log_event(
+            session,
+            "vision_header_extracted",
+            invoice_id=invoice.id,
+            detail={
+                **vision_header_extract_audit_detail(result),
+                "document_ai_provider": document_ai_provider,
+            },
+        )
+    else:
+        await log_event(
+            session,
+            "vision_header_extract_failed",
+            invoice_id=invoice.id,
+            detail={
+                **vision_header_extract_audit_detail(result),
+                "document_ai_provider": document_ai_provider,
+            },
+        )
+    return result
+
+
+async def phase_image_quality(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    document_ai_provider: str,
+    vision_page_images: list[bytes] | None = None,
+) -> None:
+    """Pre-OCR visual fitness — severe rejects; warn continues with audit."""
+    from app.services.invoice.image_quality_gate import (
+        evaluate_pre_ocr_image_quality,
+        image_quality_pre_ocr_audit_detail,
+    )
+
+    def _eval() -> object:
+        with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+            return evaluate_pre_ocr_image_quality(path, vision_page_images=vision_page_images)
+
+    result = await asyncio.to_thread(_eval)
+    await log_event(
+        session,
+        "image_quality_passed" if result.passed else "image_quality_failed",
+        invoice_id=invoice.id,
+        detail={
+            **image_quality_pre_ocr_audit_detail(result),
+            "document_ai_provider": document_ai_provider,
+        },
+    )
+    if not result.passed:
+        raise OcrFailed("image_quality_severe")
+
+
+async def phase_layout_readiness(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    document_ai_provider: str,
+):
+    """Pre-OCR parser routing — never hard-rejects."""
+    from app.services.invoice.layout_readiness import (
+        evaluate_layout_readiness,
+        layout_readiness_audit_detail,
+    )
+
+    def _eval() -> object:
+        with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
+            return evaluate_layout_readiness(path)
+
+    result = await asyncio.to_thread(_eval)
+    await log_event(
+        session,
+        "layout_readiness_evaluated",
+        invoice_id=invoice.id,
+        detail={
+            **layout_readiness_audit_detail(result),
+            "document_ai_provider": document_ai_provider,
+        },
+    )
+    return result
+
+
 async def phase_ocr(
     session: AsyncSession,
     invoice: Invoice,
@@ -162,14 +305,24 @@ async def phase_ocr(
     provider_token: str,
     human_locked_dt: str | None,
     vision_page_images: list[bytes] | None = None,
+    readiness=None,
 ) -> OcrArtifact:
-    """OCR / layout read only — no field extraction."""
+    """OCR / layout read only — no field extraction. Consumes layout readiness hints."""
+    from app.services.invoice.layout_readiness import (
+        OcrMode,
+        LayoutReadinessResult,
+        native_text_looks_incomplete,
+        native_text_ocr_artifact,
+    )
     from app.services.invoice.processing_override_catalog import has_deferred_full_reset
 
     ocr: OcrArtifact | None = None
-    # Reprocess must not reuse pre-filter table_line_items / truncated text excerpts
     bypass_cache = has_deferred_full_reset(invoice)
     cache_hit = False
+    ocr_path_used = "provider_default"
+    fallback_triggered = False
+    readiness_mode = readiness.ocr_mode.value if isinstance(readiness, LayoutReadinessResult) else None
+
     if invoice.file_hash and not bypass_cache:
         ocr = await load_cached_ocr(
             session,
@@ -178,18 +331,60 @@ async def phase_ocr(
             file_hash=invoice.file_hash,
         )
         cache_hit = ocr is not None
+        if cache_hit:
+            ocr_path_used = "cache"
 
     if ocr is None:
         with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
-            if not provider_available(doc_provider) and not human_locked_dt:
-                raise OcrFailed(provider_unavailable_reason(doc_provider))
-            ocr = await read_for_classification(
-                path,
-                provider=doc_provider,
-                org=org,
-                document_types=document_types,
-                vision_page_images=vision_page_images,
-            )
+            path_obj = Path(path)
+            # Prefer native text when layout readiness says so (Azure DI provider family)
+            if (
+                isinstance(readiness, LayoutReadinessResult)
+                and readiness.ocr_mode == OcrMode.NATIVE_TEXT
+                and doc_provider == DocumentAiProvider.AZURE_DI
+                and path_obj.suffix.lower() == ".pdf"
+            ):
+                try:
+                    ocr = native_text_ocr_artifact(path_obj)
+                    ocr_path_used = "native_text"
+                    if native_text_looks_incomplete(ocr, readiness):
+                        if not provider_available(doc_provider) and not human_locked_dt:
+                            raise OcrFailed(provider_unavailable_reason(doc_provider))
+                        ocr = await read_for_classification(
+                            path,
+                            provider=doc_provider,
+                            org=org,
+                            document_types=document_types,
+                            vision_page_images=vision_page_images,
+                        )
+                        ocr_path_used = "di_fallback"
+                        fallback_triggered = True
+                except OcrFailed:
+                    raise
+                except Exception:
+                    ocr = None
+
+            if ocr is None:
+                if not provider_available(doc_provider) and not human_locked_dt:
+                    raise OcrFailed(provider_unavailable_reason(doc_provider))
+                # Ensure vision pages for vision_fallback / vision providers
+                if (
+                    isinstance(readiness, LayoutReadinessResult)
+                    and readiness.ocr_mode == OcrMode.VISION_FALLBACK
+                    and vision_page_images is not None
+                    and len(vision_page_images) == 0
+                ):
+                    from app.services.extraction.vision_pdf import resolve_pdf_page_images
+
+                    resolve_pdf_page_images(path_obj, vision_page_images)
+                ocr = await read_for_classification(
+                    path,
+                    provider=doc_provider,
+                    org=org,
+                    document_types=document_types,
+                    vision_page_images=vision_page_images,
+                )
+                ocr_path_used = doc_provider.value
         if invoice.file_hash:
             await store_ocr_artifact(
                 session,
@@ -212,17 +407,20 @@ async def phase_ocr(
             "sparse": ocr.sparse,
             "ocr_cache_hit": cache_hit,
             "ocr_cache_bypassed": bypass_cache,
+            "ocr_mode": readiness_mode,
+            "ocr_path_used": ocr_path_used,
+            "fallback_triggered": fallback_triggered,
         },
     )
     return ocr
 
 
-def evaluate_image_quality_gate(
+def evaluate_ocr_quality_confirm(
     ocr: OcrArtifact,
     *,
     ai_cfg: AiClassificationConfig,
 ) -> ImageQualityGateResult:
-    """Block classify when OCR/image quality is too poor (skewed photos, unreadable scans)."""
+    """Post-OCR quality confirm — sparse / short text / weak image_quality hints."""
     settings = get_settings()
     min_chars = ai_cfg.ocr_quality_min_text_chars
     if min_chars is None:
@@ -238,7 +436,6 @@ def evaluate_image_quality_gate(
     if quality_hint in {"low", "poor", "unreadable"}:
         reasons.append(ReviewReason.IMAGE_QUALITY_LOW.value)
 
-    # De-dupe while preserving order
     seen: set[str] = set()
     deduped = [r for r in reasons if not (r in seen or seen.add(r))]
 
@@ -251,13 +448,18 @@ def evaluate_image_quality_gate(
     )
 
 
-def image_quality_audit_detail(
+# Back-compat alias for callers/tests still using the old name
+evaluate_image_quality_gate = evaluate_ocr_quality_confirm
+
+
+def ocr_quality_confirm_audit_detail(
     result: ImageQualityGateResult,
     *,
     provider_token: str,
 ) -> dict[str, object]:
     return {
-        "gate": "image_quality",
+        "gate": "ocr_quality_confirm",
+        "phase": "post_ocr",
         "compare_passed": result.passed,
         "review_reasons": result.review_reasons,
         "text_length": result.text_length,
@@ -266,6 +468,49 @@ def image_quality_audit_detail(
         "document_ai_provider": provider_token,
         "resubmit_hint": "Please resend a flat, well-lit scan or PDF — avoid angled phone photos.",
     }
+
+
+def image_quality_audit_detail(
+    result: ImageQualityGateResult,
+    *,
+    provider_token: str,
+) -> dict[str, object]:
+    """Alias — dual-write compatible detail for legacy image_quality_gate_* events."""
+    detail = ocr_quality_confirm_audit_detail(result, provider_token=provider_token)
+    detail["gate"] = "image_quality"
+    return detail
+
+
+async def phase_ocr_quality_confirm(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    ocr: OcrArtifact,
+    ai_cfg: AiClassificationConfig,
+    document_ai_provider: str,
+) -> ImageQualityGateResult:
+    """Post-OCR sparse/text-length confirm. Caller handles skip override + exception status."""
+    result = evaluate_ocr_quality_confirm(ocr, ai_cfg=ai_cfg)
+    detail = {
+        **ocr_quality_confirm_audit_detail(result, provider_token=document_ai_provider),
+        **image_quality_audit_detail(result, provider_token=document_ai_provider),
+        "gate": "ocr_quality_confirm",
+    }
+    # Dual-write legacy + new event names for dossier/UI compatibility
+    passed = result.passed
+    await log_event(
+        session,
+        "ocr_quality_confirm_passed" if passed else "ocr_quality_confirm_failed",
+        invoice_id=invoice.id,
+        detail=detail,
+    )
+    await log_event(
+        session,
+        "image_quality_gate_passed" if passed else "image_quality_gate_failed",
+        invoice_id=invoice.id,
+        detail=image_quality_audit_detail(result, provider_token=document_ai_provider),
+    )
+    return result
 
 
 async def phase_llm_classify(

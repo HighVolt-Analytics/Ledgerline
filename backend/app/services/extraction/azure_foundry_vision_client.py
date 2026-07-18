@@ -14,40 +14,19 @@ from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
 from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
-from app.services.extraction.party_field_service import PARTY_LLM_RULES
+from app.services.extraction.party_field_service import party_llm_rules
 from app.services.extraction.extraction_field_values import non_canonical_extraction_keys
 from app.services.extraction.llm_document_service import (
     _normalize_llm_raw,
     _selected_keys_for_dt,
     build_structure_extract_prompts,
 )
+from app.services.prompt_registry import resolve_system_prompt_text
 from app.services.tenant.tenant_org_context import OrgContext
 from app.services.extraction.vision_pdf import resolve_pdf_page_images
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-_CLASSIFY_SYSTEM = """You classify finance documents for accounts payable from document images.
-Return JSON only with keys:
-suggested_dt, confidence, reasoning, perspective, seller, buyer, document_heading.
-
-Rules:
-- suggested_dt must be one of the catalogue codes provided, or empty string if unsure.
-- confidence is 0.0-1.0 for the document type choice.
-- perspective is purchase | sales | unknown.
-""" + PARTY_LLM_RULES + """
-- Do not extract invoice amounts, line items, or dates — classification only.
-- few_shot_examples are prior reviewer corrections. When document_heading or text_excerpt
-  closely matches a few-shot example, strongly prefer that example's human_confirmed_dt.
-- Examples with vendor_key match the sender/vendor — prefer those when the layout matches that supplier.
-- Each catalogue row has recognition_mode signals or prompt.
-- When recognition_mode is signals, treat recognition_rules as deterministic match hints for that code.
-- When recognition_mode is prompt, treat llm_prompt as the authoritative description for that code."""
-
-_FOUNDRY_READ_SYSTEM = """You read finance document images for accounts payable OCR.
-Return JSON only with keys: document_heading, text_excerpt.
-- document_heading is the primary visible document title or heading.
-- text_excerpt is the full visible document text including tables, amounts, and labels (max 12000 chars)."""
 
 
 def is_azure_foundry_vision_available() -> bool:
@@ -70,13 +49,16 @@ def _catalogue_rows(document_types: Sequence[DocumentTypeDefinition]) -> list[di
 
 
 def _vision_content(user_text: str, images: list[bytes]) -> list[dict[str, Any]]:
+    from app.services.extraction.vision_pdf import sniff_image_media_type
+
     parts: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
     for image in images:
         encoded = base64.b64encode(image).decode("ascii")
+        media = sniff_image_media_type(image)
         parts.append(
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                "image_url": {"url": f"data:{media};base64,{encoded}"},
             }
         )
     return parts
@@ -89,8 +71,29 @@ async def _vision_json(
     images: list[bytes],
     timeout_seconds: int,
 ) -> dict[str, Any] | None:
+    import asyncio
+
+    from app.services.extraction.azure_openai_client import (
+        _is_retryable_openai_error,
+        _retry_sleep_seconds,
+    )
+    from app.services.extraction.azure_openai_throttle import (
+        azure_openai_cooldown_remaining_seconds,
+        azure_openai_cooling_down,
+        azure_openai_slot_async,
+        note_azure_openai_rate_limited,
+        note_azure_openai_success,
+    )
+
     settings = get_settings()
     if not settings.azure_foundry_vision_configured:
+        return None
+
+    if azure_openai_cooling_down("vision"):
+        logger.info(
+            "azure_foundry_vision_skipped_circuit_open",
+            remaining_seconds=round(azure_openai_cooldown_remaining_seconds("vision"), 1),
+        )
         return None
 
     payload: dict[str, Any] = {
@@ -101,34 +104,136 @@ async def _vision_json(
         "response_format": {"type": "json_object"},
         "temperature": 0.1,
     }
-    try:
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            response = await client.post(
-                _chat_url(),
-                headers={
-                    "api-key": settings.azure_ai_foundry_api_key.strip(),
-                    "Content-Type": "application/json",
-                },
-                json=payload,
+    max_attempts = min(max(settings.runtime_llm_max_retries + 1, 2), 3)
+    last_error: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            async with azure_openai_slot_async():
+                async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                    response = await client.post(
+                        _chat_url(),
+                        headers={
+                            "api-key": settings.azure_ai_foundry_api_key.strip(),
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    body = response.json()
+        except Exception as exc:
+            last_error = exc
+            is_429 = (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code == 429
             )
-            response.raise_for_status()
-            body = response.json()
-    except Exception as exc:
-        logger.warning("azure_foundry_vision_request_failed", error=str(exc))
+            if is_429:
+                sleep_for = _retry_sleep_seconds(exc, attempt)
+                note_azure_openai_rate_limited(sleep_for, scope="vision")
+                logger.warning(
+                    "azure_foundry_vision_rate_limited_fail_fast",
+                    attempt=attempt + 1,
+                    cooldown_seconds=round(sleep_for, 1),
+                )
+                return None
+            if attempt < max_attempts - 1 and _is_retryable_openai_error(
+                exc,
+                retry_timeouts=False,
+            ):
+                sleep_for = _retry_sleep_seconds(exc, attempt)
+                logger.info(
+                    "azure_foundry_vision_retry",
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    sleep_seconds=round(sleep_for, 2),
+                    error=str(exc)[:200],
+                )
+                await asyncio.sleep(sleep_for)
+                continue
+            logger.warning("azure_foundry_vision_request_failed", error=str(exc))
+            return None
+
+        choices = body.get("choices") or []
+        if not choices:
+            return None
+        content = (choices[0].get("message") or {}).get("content") or ""
+        if not content.strip():
+            return None
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning("azure_foundry_vision_invalid_json")
+            return None
+        if isinstance(parsed, dict):
+            note_azure_openai_success(scope="vision")
+            return parsed
         return None
 
-    choices = body.get("choices") or []
-    if not choices:
+    if last_error is not None:
+        logger.warning("azure_foundry_vision_request_failed", error=str(last_error))
+    return None
+
+
+async def probe_understand_azure_foundry(images: list[bytes]) -> dict[str, Any] | None:
+    """Lightweight yes/no understandability check — not classify/extract."""
+    settings = get_settings()
+    if not images:
         return None
-    content = (choices[0].get("message") or {}).get("content") or ""
-    if not content.strip():
+    user_text = json.dumps(
+        {
+            "task": "vision_understand",
+            "instruction": (
+                "Decide whether you can clearly read and understand this "
+                "finance document well enough to extract key fields later."
+            ),
+        }
+    )
+    return await _vision_json(
+        system=resolve_system_prompt_text("vision.understand.system"),
+        user_text=user_text,
+        images=images,
+        timeout_seconds=settings.runtime_llm_timeout_seconds,
+    )
+
+
+def _org_tenant_block(org: OrgContext) -> dict[str, Any]:
+    return {
+        "legal_name": org.legal_name,
+        "abn": org.abn,
+        "aliases": list(org.aliases or []),
+        "default_perspective": org.default_perspective,
+        "intake_summary": org.intake_summary,
+    }
+
+
+def _vision_header_user_payload(org: OrgContext) -> dict[str, Any]:
+    from app.services.invoice.vision_header_schema import VISION_HEADER_JSON_KEYS
+
+    return {
+        "task": "vision_header_extract",
+        "required_keys": list(VISION_HEADER_JSON_KEYS),
+        "tenant": _org_tenant_block(org),
+    }
+
+
+async def extract_header_azure_foundry(
+    images: list[bytes],
+    *,
+    org: OrgContext,
+) -> dict[str, Any] | None:
+    """Header identity extract: printed title, counterparty, linking refs."""
+    settings = get_settings()
+    if not images:
         return None
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        logger.warning("azure_foundry_vision_invalid_json")
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    user_text = json.dumps(
+        _vision_header_user_payload(org),
+        default=str,
+    )
+    return await _vision_json(
+        system=resolve_system_prompt_text("vision.header_extract.system"),
+        user_text=user_text,
+        images=images,
+        timeout_seconds=settings.runtime_llm_timeout_seconds,
+    )
 
 
 async def read_for_classification_azure_foundry(
@@ -145,7 +250,7 @@ async def read_for_classification_azure_foundry(
     if not images:
         raise ValueError("azure_foundry_no_pages")
 
-    system = _FOUNDRY_READ_SYSTEM
+    system = resolve_system_prompt_text("vision.foundry.read.system")
 
     user_text = json.dumps(
         {
@@ -219,7 +324,10 @@ async def classify_only_azure_foundry(
     )
 
     raw = await _vision_json(
-        system=_CLASSIFY_SYSTEM,
+        system=resolve_system_prompt_text(
+            "vision.foundry.classify.system",
+            party_rules=party_llm_rules(),
+        ),
         user_text=user_text,
         images=images,
         timeout_seconds=settings.runtime_llm_timeout_seconds,

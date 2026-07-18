@@ -8,6 +8,8 @@ import type {
   CheckoutSessionResult,
   CheckoutStatusResult,
   PlatformCreditSettings,
+  PlatformPromptSummary,
+  PlatformPromptVersionList,
   AuditLogEntry,
   ActivityItem,
   ApiEnvelope,
@@ -65,7 +67,7 @@ import type {
   PlatformTenantDetail,
   PlatformTenantModule,
   MatrixRow,
-  PipelineAuditStep,
+  InvoicePipelineResponse,
   InvoiceClassificationAudit,
   ProcessingStatus,
   RuleBookConfig,
@@ -624,6 +626,7 @@ export const api = {
     country?: string;
     timezone?: string;
     locale?: string;
+    custom_bundle_field_key?: string;
   }) =>
     request<InstitutionSettings>("/api/tenants/current/institution", {
       method: "PATCH",
@@ -1053,7 +1056,10 @@ export const api = {
   getInvoicePipeline: (id: number, options?: FreshRequestOptions) => {
     const path = `/api/invoices/${id}/pipeline`;
     if (options?.fresh) bustGetCache(path);
-    return request<{ steps: PipelineAuditStep[] }>(path).then((r) => r.steps);
+    return request<InvoicePipelineResponse>(path).then((r) => ({
+      steps: r.steps ?? [],
+      active_path: r.active_path ?? "unknown",
+    }));
   },
   getInvoiceClassificationAudit: (id: number, options?: FreshRequestOptions) => {
     const path = `/api/invoices/${id}/classification-audit`;
@@ -1519,6 +1525,30 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  getPlatformPrompts: () => request<PlatformPromptSummary[]>("/api/platform/prompts"),
+  getPlatformPrompt: (key: string) =>
+    request<PlatformPromptSummary>(`/api/platform/prompts/${encodeURIComponent(key)}`),
+  getPlatformPromptVersions: (key: string) =>
+    request<PlatformPromptVersionList>(
+      `/api/platform/prompts/${encodeURIComponent(key)}/versions`
+    ),
+  createPlatformPromptVersion: (
+    key: string,
+    body: { body: string; notes?: string }
+  ) =>
+    request<PlatformPromptSummary>(
+      `/api/platform/prompts/${encodeURIComponent(key)}/versions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    ),
+  activatePlatformPromptVersion: (key: string, version: number) =>
+    request<PlatformPromptSummary>(
+      `/api/platform/prompts/${encodeURIComponent(key)}/versions/${version}/activate`,
+      { method: "POST" }
+    ),
   getPlatformTenantUsage: (tenantId: string, page = 1, pageSize = 50) =>
     request<BillingUsageHistory>(
       `/api/platform/tenants/${tenantId}/usage?page=${page}&page_size=${pageSize}`
@@ -1594,6 +1624,12 @@ export const api = {
     if (filter?.dateTo) params.set("date_to", filter.dateTo);
     if (options?.format) {
       params.set("format", options.format);
+    }
+    try {
+      const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (browserTz) params.set("tz", browserTz);
+    } catch {
+      /* keep UTC on the server when Intl is unavailable */
     }
     const query = params.toString();
     const { blob, filename, headers } = await requestBlob(

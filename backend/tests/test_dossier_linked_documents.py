@@ -97,6 +97,67 @@ async def test_invoice_no_bundle_is_advisory_and_automatic(db_session: AsyncSess
 
 
 @pytest.mark.asyncio
+async def test_invoice_hub_one_hop_harvests_po_from_sibling(
+    db_session: AsyncSession,
+) -> None:
+    """Non-vision path: hub invoice_no → PL (PO) → GRN on that PO; unrelated PO excluded."""
+    hub = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Importer",
+        status=InvoiceStatus.MAPPING,
+        document_type_code="DT-01",
+        invoice_no="INV-HARVEST-1",
+        file_hash="harvest-hub",
+        currency="AUD",
+    )
+    packing = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Carrier",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-06",
+        invoice_no="INV-HARVEST-1",
+        po_reference="PO-HARVEST-9",
+        file_hash="harvest-pl",
+        currency="AUD",
+    )
+    grn = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Warehouse",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-02",
+        po_reference="PO-HARVEST-9",
+        file_hash="harvest-grn",
+        currency="AUD",
+    )
+    unrelated = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Other",
+        status=InvoiceStatus.PROCESSED,
+        document_type_code="DT-02",
+        po_reference="PO-OTHER-77",
+        file_hash="harvest-unrelated",
+        currency="AUD",
+    )
+    db_session.add_all([hub, packing, grn, unrelated])
+    await db_session.flush()
+
+    linked = await build_dossier_linked_documents(
+        db_session,
+        hub,
+        definition=None,
+        document_types=[],
+    )
+    ids = {doc.invoice_id for doc in linked.documents}
+    assert hub.id in ids
+    assert packing.id in ids
+    assert grn.id in ids
+    assert unrelated.id not in ids
+    grn_doc = next(doc for doc in linked.documents if doc.invoice_id == grn.id)
+    assert grn_doc.link_kind == "po_reference"
+    assert "via invoice no INV-HARVEST-1" in (grn_doc.linkage_detail or "")
+
+
+@pytest.mark.asyncio
 async def test_playbook_bundle_satisfied_by_invoice_no_without_po(db_session: AsyncSession) -> None:
     from app.services.classification.document_type_playbook_service import missing_bundle_dt_codes
 

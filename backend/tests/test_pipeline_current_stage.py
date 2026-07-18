@@ -197,3 +197,29 @@ def test_list_stage_from_status_without_audit_logs() -> None:
     label, state = derive_list_stage(inv)
     assert label == "Validated"
     assert state == "fail"
+
+
+def test_list_stage_understood_path_vaulted() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vision Co",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_vaulted",
+        currency="AUD",
+        file_hash="list-stage-vaulted",
+        extracted_fields={"vision_bundle_kind": "soft"},
+    )
+    label, state = derive_list_stage(inv)
+    assert label == "Vaulted"
+    assert state == "done"
+
+    inv.evaluation_status = "vision_header_review"
+    label, state = derive_list_stage(inv)
+    assert label == "Header review"
+    assert state == "pending"
+
+    # Legacy soft-bundle still tagged awaiting_classification.
+    inv.evaluation_status = "awaiting_classification"
+    label, state = derive_list_stage(inv)
+    assert label == "Vaulted"
+    assert state == "done"

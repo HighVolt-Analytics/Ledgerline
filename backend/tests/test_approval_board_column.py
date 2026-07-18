@@ -97,3 +97,35 @@ def test_rejected_column() -> None:
     assert (
         approval_board_column(_inv(status=InvoiceStatus.DUPLICATE_SKIPPED)) == "rejected"
     )
+
+
+def test_understood_path_vaulted_goes_to_approved() -> None:
+    from app.services.approval.approval_board_service import (
+        is_understood_path_complete,
+        is_understood_path_not_approvable,
+    )
+
+    vaulted = _inv(status=InvoiceStatus.EXCEPTION, evaluation_status="vision_vaulted")
+    assert approval_board_column(vaulted) == "approved"
+    assert is_understood_path_complete(vaulted)
+    assert is_understood_path_not_approvable(vaulted)
+
+    header = _inv(status=InvoiceStatus.EXCEPTION, evaluation_status="vision_header_review")
+    assert approval_board_column(header) == "review"
+    assert is_understood_path_not_approvable(header)
+
+    # Legacy understood rows still tagged awaiting_classification but soft-bundled.
+    legacy = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        extracted_fields={"vision_bundle_kind": "soft", "vision_bundle_key": "INV-1"},
+        currency="AUD",
+    )
+    assert approval_board_column(legacy) == "approved"
+    assert is_understood_path_complete(legacy)
+
+    # OCR classification hold still belongs in To review (and remains Confirmable).
+    ocr = _inv(status=InvoiceStatus.EXCEPTION, evaluation_status="awaiting_classification")
+    assert approval_board_column(ocr) == "review"
+    assert not is_understood_path_not_approvable(ocr)

@@ -13,6 +13,7 @@ export const EXTRACTION_FIELD_OPTIONS = [
   { key: "vendor", label: "Vendor" },
   { key: "abn", label: "Tax ID / ABN" },
   { key: "invoice_no", label: "Invoice number" },
+  { key: "proforma_invoice_no", label: "Proforma invoice number" },
   { key: "invoice_date", label: "Invoice date" },
   { key: "due_date", label: "Due date" },
   { key: "po_reference", label: "PO reference" },
@@ -76,10 +77,12 @@ export const INFRASTRUCTURE_ONLY_EXTRACTION_FIELD_KEYS = new Set<ExtractionField
 
 /**
  * Dossier bundling keys — always offered under Add standard field for every route.
- * Values land in invoice columns (not extracted_fields JSON), which linking uses.
+ * Vision soft-bundle priority: invoice_no → proforma_invoice_no → po → so → custom.
+ * invoice_no / po / so live on invoice columns; proforma lives in extracted_fields.
  */
 export const LINKING_STANDARD_EXTRACTION_FIELD_KEYS = [
   "invoice_no",
+  "proforma_invoice_no",
   "po_reference",
   "so_reference",
 ] as const satisfies readonly ExtractionFieldKey[];
@@ -94,6 +97,10 @@ const LINKING_FIELD_CUSTOM_ALIASES: Record<string, (typeof LINKING_STANDARD_EXTR
     inv_number: "invoice_no",
     invoice_num: "invoice_no",
     invoice_ref: "invoice_no",
+    proforma_no: "proforma_invoice_no",
+    proforma_number: "proforma_invoice_no",
+    proforma_invoice_number: "proforma_invoice_no",
+    pro_forma_invoice_no: "proforma_invoice_no",
     po_number: "po_reference",
     po_ref: "po_reference",
     purchase_order: "po_reference",

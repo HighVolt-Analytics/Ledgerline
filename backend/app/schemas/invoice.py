@@ -36,6 +36,8 @@ class EvaluationStatus(str, Enum):
     UNMATCHED_EXPENSE_VENDOR = "unmatched_expense_vendor"
     AWAITING_PO = "awaiting_po"
     AWAITING_SO = "awaiting_so"
+    VISION_VAULTED = "vision_vaulted"
+    VISION_HEADER_REVIEW = "vision_header_review"
 
 
 def parse_evaluation_status(raw: str | None) -> EvaluationStatus | None:
@@ -88,6 +90,7 @@ class InvoiceResponse(BaseModel):
     matched_rule_ids: list[str] | None = None
     vendor_confidence: float | None = None
     evaluation_status: EvaluationStatus | None = None
+    duplicate_review_suggested: bool = False
     purchase_document_type: str | None = None
     document_type_code: str | None = None
     document_type_confidence: float | None = None

@@ -72,17 +72,20 @@ def _chat_json_once(
     timeout: float,
     payload: dict[str, Any],
 ) -> dict[str, Any] | None:
-    with httpx.Client(timeout=_httpx_timeout(timeout)) as client:
-        response = client.post(
-            _chat_url(),
-            headers={
-                "api-key": get_settings().azure_openai_key,
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        response.raise_for_status()
-        body = response.json()
+    from app.services.extraction.azure_openai_throttle import azure_openai_slot
+
+    with azure_openai_slot():
+        with httpx.Client(timeout=_httpx_timeout(timeout)) as client:
+            response = client.post(
+                _chat_url(),
+                headers={
+                    "api-key": get_settings().azure_openai_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
 
     choices = body.get("choices") or []
     if not choices:
@@ -101,13 +104,21 @@ def _chat_json_once(
 def _retry_sleep_seconds(exc: Exception, attempt: int) -> float:
     """Backoff between retryable OpenAI errors; honour Retry-After on 429."""
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
-        retry_after = exc.response.headers.get("Retry-After")
+        headers = exc.response.headers
+        retry_after = headers.get("Retry-After") or headers.get("retry-after")
         if retry_after:
             try:
-                return max(float(retry_after), 1.0)
+                return max(float(retry_after), 2.0)
             except ValueError:
                 pass
-        return min(30.0, 2.0 * (2**attempt))
+        retry_ms = headers.get("retry-after-ms") or headers.get("Retry-After-Ms")
+        if retry_ms:
+            try:
+                return max(float(retry_ms) / 1000.0, 2.0)
+            except ValueError:
+                pass
+        # Azure TPM resets are often 10–60s; keep a firm floor so retries can succeed.
+        return min(60.0, max(8.0, 4.0 * (2**attempt)))
     return 0.5 * (2**attempt)
 
 
@@ -118,12 +129,28 @@ def chat_json(
     timeout_seconds: int | None = None,
     require_runtime: bool = False,
 ) -> dict[str, Any] | None:
+    from app.services.extraction.azure_openai_throttle import (
+        azure_openai_cooldown_remaining_seconds,
+        azure_openai_cooling_down,
+        note_azure_openai_rate_limited,
+        note_azure_openai_success,
+    )
+
     settings = get_settings()
     if require_runtime:
         if not settings.runtime_llm_available:
             return None
     elif not is_azure_openai_enabled():
         return None
+
+    if azure_openai_cooling_down("chat"):
+        logger.info(
+            "azure_openai_chat_skipped_circuit_open",
+            remaining_seconds=round(azure_openai_cooldown_remaining_seconds("chat"), 1),
+            require_runtime=require_runtime,
+        )
+        return None
+
     payload: dict[str, Any] = {
         "messages": [
             {"role": "system", "content": system},
@@ -136,25 +163,52 @@ def chat_json(
         payload["temperature"] = 0.1
     if require_runtime:
         timeout = timeout_seconds or settings.runtime_llm_timeout_seconds
-        max_attempts = max(settings.runtime_llm_max_retries + 1, 3)
+        # Fail-fast on 429: at most 2 tries, then open circuit for rules/vision fallback.
+        max_attempts = min(max(settings.runtime_llm_max_retries + 1, 1), 2)
         retry_timeouts = False
     else:
         timeout = timeout_seconds or settings.sample_proposal_llm_timeout_seconds
-        max_attempts = 3
+        max_attempts = 2
         retry_timeouts = True
     last_error: Exception | None = None
     for attempt in range(max_attempts):
         try:
-            return _chat_json_once(timeout=timeout, payload=payload)
+            result = _chat_json_once(timeout=timeout, payload=payload)
+            if result is not None:
+                note_azure_openai_success(scope="chat")
+            return result
         except Exception as exc:
             last_error = exc
+            is_429 = (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code == 429
+            )
+            if is_429:
+                sleep_for = _retry_sleep_seconds(exc, attempt)
+                note_azure_openai_rate_limited(sleep_for, scope="chat")
+                # Do not burn minutes retrying a exhausted quota — fall back immediately.
+                logger.warning(
+                    "azure_openai_rate_limited_fail_fast",
+                    attempt=attempt + 1,
+                    cooldown_seconds=round(sleep_for, 1),
+                    require_runtime=require_runtime,
+                )
+                return None
             if attempt < max_attempts - 1 and _is_retryable_openai_error(
                 exc,
                 retry_timeouts=retry_timeouts,
             ):
                 import time
 
-                time.sleep(_retry_sleep_seconds(exc, attempt))
+                sleep_for = _retry_sleep_seconds(exc, attempt)
+                logger.info(
+                    "azure_openai_chat_retry",
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    sleep_seconds=round(sleep_for, 2),
+                    error=str(exc)[:200],
+                )
+                time.sleep(sleep_for)
                 continue
             break
     if last_error is not None:

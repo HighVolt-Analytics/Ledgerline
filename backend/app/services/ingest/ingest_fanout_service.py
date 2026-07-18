@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -18,9 +19,18 @@ from app.services.document_page_count import count_document_pages
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.audit.audit_service import log_event
 from app.services.dossier.document_duplicate_service import (
-    find_existing_ingest_duplicate,
+    ConfidenceTier,
+    MatchKind,
+    find_existing_ingest_duplicate_match,
     find_invoice_by_source_file_hash,
     resolve_ingest_duplicate,
+    signals_are_sparse,
+)
+from app.services.ingest.filename_normalize import normalize_attachment_filename
+from app.services.ingest.page_fingerprint_service import (
+    collect_page_fingerprints,
+    enrich_pages_for_fingerprints,
+    persist_invoice_page_fingerprints,
 )
 from app.services.dossier.document_ref_service import allocate_next_document_ref
 from app.services.shared.file_storage import store_invoice_pdf
@@ -63,6 +73,10 @@ class IngestUploadResult:
     segment_count: int
     parent_file_hash: str
     duplicate_handled: bool = False
+    action: str = "allow"
+    match_kind: MatchKind | None = None
+    confidence_tier: ConfidenceTier = "T4"
+    review_suggested: bool = False
 
 
 @dataclass
@@ -80,6 +94,36 @@ class IngestSourceMetadata:
     capture_source: str | None = None
     matched_rule_ids: str | None = None
     route_target: str | None = None
+
+
+@dataclass(frozen=True)
+class _CreateInvoiceResult:
+    invoice_id: int | None
+    duplicate_handled: bool
+    action: str = "allow"
+    match_kind: MatchKind | None = None
+    confidence_tier: ConfidenceTier = "T4"
+    review_suggested: bool = False
+
+
+def _result_from_create(
+    created: _CreateInvoiceResult,
+    *,
+    parent_file_hash: str,
+    segment_count: int = 1,
+) -> IngestUploadResult:
+    invoice_ids = [created.invoice_id] if created.invoice_id is not None else []
+    return IngestUploadResult(
+        invoice_ids=invoice_ids,
+        segment_count=segment_count if created.invoice_id is not None else 0,
+        parent_file_hash=parent_file_hash,
+        duplicate_handled=created.duplicate_handled,
+        action=created.action,
+        match_kind=created.match_kind,
+        confidence_tier=created.confidence_tier,
+        review_suggested=created.review_suggested,
+    )
+
 
 
 async def _log_pdf_split_skipped(
@@ -104,57 +148,6 @@ async def _log_pdf_split_skipped(
     if segment_count_detected is not None:
         detail["segment_count_detected"] = segment_count_detected
     await log_event(session, "pdf_split_skipped", detail=detail)
-
-
-async def _try_resolve_duplicate(
-    session: AsyncSession,
-    *,
-    tenant_id: uuid.UUID,
-    file_hash: str,
-    content_fingerprint: str | None,
-    business_fingerprint: str | None = None,
-    identity_fields: dict[str, str] | None = None,
-    bundle_source_hash: str | None = None,
-    source: IngestSourceMetadata | None,
-    filename: str,
-) -> tuple[int | None, bool]:
-    """Return (invoice_id, handled) when duplicate handling ran."""
-    meta = source or IngestSourceMetadata()
-    lookup_hash = bundle_source_hash or file_hash
-    existing = await find_existing_ingest_duplicate(
-        session,
-        tenant_id=tenant_id,
-        file_hash=lookup_hash,
-        content_fingerprint=content_fingerprint,
-        business_fingerprint=business_fingerprint,
-        identity_fields=identity_fields,
-    )
-    if existing is None:
-        return None, False
-
-    outcome = await resolve_ingest_duplicate(
-        session,
-        tenant_id=tenant_id,
-        existing=existing,
-        file_hash=file_hash,
-        content_fingerprint=content_fingerprint,
-        business_fingerprint=business_fingerprint,
-        capture_source=meta.capture_source,
-        connected_mailbox_id=meta.connected_mailbox_id,
-        whatsapp_connection_id=meta.whatsapp_connection_id,
-        viber_connection_id=meta.viber_connection_id,
-        email_sender=meta.email_sender,
-        email_subject=meta.email_subject,
-        email_attachment_name=meta.email_attachment_name or filename,
-        email_message_id=meta.email_message_id,
-        extra_detail={
-            "filename": filename,
-            "bundle_source_hash": bundle_source_hash,
-        },
-    )
-    if not outcome.handled:
-        return None, False
-    return outcome.invoice_id, True
 
 
 def _identity_fields_from_page_range(
@@ -188,6 +181,91 @@ def _business_fingerprint_from_page_range(
     return compute_business_fingerprint(fields)
 
 
+async def _try_resolve_duplicate(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    file_hash: str,
+    content_fingerprint: str | None,
+    business_fingerprint: str | None = None,
+    identity_fields: dict[str, str] | None = None,
+    bundle_source_hash: str | None = None,
+    source: IngestSourceMetadata | None,
+    filename: str,
+    pages_for_page_fp: list[PdfPageText] | None = None,
+) -> _CreateInvoiceResult | None:
+    """Return create-result when duplicate handling ran; None when allow."""
+    meta = source or IngestSourceMetadata()
+    lookup_hash = bundle_source_hash or file_hash
+    normalized_name = normalize_attachment_filename(
+        meta.email_attachment_name or filename
+    )
+
+    match = await find_existing_ingest_duplicate_match(
+        session,
+        tenant_id=tenant_id,  # type: ignore[arg-type]
+        file_hash=lookup_hash,
+        content_fingerprint=content_fingerprint,
+        business_fingerprint=business_fingerprint,
+        identity_fields=identity_fields,
+        normalized_filename=normalized_name,
+        check_page_fingerprints=False,
+    )
+
+    # T3 last resort: page fingerprints only when T1/T2 miss.
+    if match is None and pages_for_page_fp:
+        page_fps = [fp for _, fp in collect_page_fingerprints(pages_for_page_fp)]
+        if page_fps:
+            match = await find_existing_ingest_duplicate_match(
+                session,
+                tenant_id=tenant_id,  # type: ignore[arg-type]
+                file_hash=lookup_hash,
+                content_fingerprint=None,
+                business_fingerprint=None,
+                identity_fields=None,
+                page_fingerprints=page_fps,
+                check_page_fingerprints=True,
+                normalized_filename=normalized_name,
+            )
+
+    if match is None:
+        return None
+
+    outcome = await resolve_ingest_duplicate(
+        session,
+        tenant_id=tenant_id,  # type: ignore[arg-type]
+        existing=match.invoice,
+        file_hash=file_hash,
+        content_fingerprint=content_fingerprint,
+        business_fingerprint=business_fingerprint,
+        capture_source=meta.capture_source,
+        connected_mailbox_id=meta.connected_mailbox_id,
+        whatsapp_connection_id=meta.whatsapp_connection_id,
+        viber_connection_id=meta.viber_connection_id,
+        email_sender=meta.email_sender,
+        email_subject=meta.email_subject,
+        email_attachment_name=meta.email_attachment_name or filename,
+        email_message_id=meta.email_message_id,
+        match_kind=match.match_kind,
+        confidence_tier=match.confidence_tier,
+        extra_detail={
+            "filename": filename,
+            "normalized_filename": normalized_name,
+            "bundle_source_hash": bundle_source_hash,
+        },
+    )
+    if not outcome.handled:
+        return None
+    return _CreateInvoiceResult(
+        invoice_id=outcome.invoice_id,
+        duplicate_handled=True,
+        action=outcome.action or "skip_logged",
+        match_kind=outcome.match_kind or match.match_kind,
+        confidence_tier=outcome.confidence_tier or match.confidence_tier,
+        review_suggested=False,
+    )
+
+
 async def _try_resolve_bundle_duplicate(
     session: AsyncSession,
     *,
@@ -198,29 +276,54 @@ async def _try_resolve_bundle_duplicate(
     identity_fields: dict[str, str] | None,
     source: IngestSourceMetadata | None,
     filename: str,
-) -> tuple[int | None, bool]:
+    pages_for_page_fp: list[PdfPageText] | None = None,
+) -> _CreateInvoiceResult | None:
     """Block re-ingest of an entire multi-document PDF already captured."""
     existing = await find_invoice_by_source_file_hash(
         session,
         parent_hash,
-        tenant_id=tenant_id,
+        tenant_id=tenant_id,  # type: ignore[arg-type]
     )
+    match_kind: MatchKind | None = "source_file_hash" if existing is not None else None
+    confidence_tier: ConfidenceTier = "T1"
     if existing is None:
-        existing = await find_existing_ingest_duplicate(
+        from_match = await find_existing_ingest_duplicate_match(
             session,
-            tenant_id=tenant_id,
+            tenant_id=tenant_id,  # type: ignore[arg-type]
             file_hash=parent_hash,
             content_fingerprint=content_fingerprint,
             business_fingerprint=business_fingerprint,
             identity_fields=identity_fields,
+            check_page_fingerprints=False,
+            normalized_filename=normalize_attachment_filename(filename),
         )
+        if from_match is not None:
+            existing = from_match.invoice
+            match_kind = from_match.match_kind
+            confidence_tier = from_match.confidence_tier
+
+    if existing is None and pages_for_page_fp:
+        page_fps = [fp for _, fp in collect_page_fingerprints(pages_for_page_fp)]
+        if page_fps:
+            from_match = await find_existing_ingest_duplicate_match(
+                session,
+                tenant_id=tenant_id,  # type: ignore[arg-type]
+                file_hash=parent_hash,
+                page_fingerprints=page_fps,
+                check_page_fingerprints=True,
+            )
+            if from_match is not None:
+                existing = from_match.invoice
+                match_kind = from_match.match_kind
+                confidence_tier = from_match.confidence_tier
+
     if existing is None:
-        return None, False
+        return None
 
     meta = source or IngestSourceMetadata()
     outcome = await resolve_ingest_duplicate(
         session,
-        tenant_id=tenant_id,
+        tenant_id=tenant_id,  # type: ignore[arg-type]
         existing=existing,
         file_hash=parent_hash,
         content_fingerprint=content_fingerprint,
@@ -233,6 +336,8 @@ async def _try_resolve_bundle_duplicate(
         email_subject=meta.email_subject,
         email_attachment_name=meta.email_attachment_name or filename,
         email_message_id=meta.email_message_id,
+        match_kind=match_kind,
+        confidence_tier=confidence_tier,
         extra_detail={
             "filename": filename,
             "bundle_source_hash": parent_hash,
@@ -240,8 +345,14 @@ async def _try_resolve_bundle_duplicate(
         },
     )
     if not outcome.handled:
-        return None, False
-    return outcome.invoice_id, True
+        return None
+    return _CreateInvoiceResult(
+        invoice_id=outcome.invoice_id,
+        duplicate_handled=True,
+        action=outcome.action or "skip_logged",
+        match_kind=outcome.match_kind or match_kind,
+        confidence_tier=outcome.confidence_tier or confidence_tier,
+    )
 
 
 async def _create_invoice_from_bytes(
@@ -263,8 +374,10 @@ async def _create_invoice_from_bytes(
     page_count: int | None = None,
     actor_name: str | None = None,
     actor_email: str | None = None,
-) -> tuple[int | None, bool]:
-    duplicate_id, duplicate_handled = await _try_resolve_duplicate(
+    pages_for_page_fp: list[PdfPageText] | None = None,
+    charge_credits: bool = True,
+) -> _CreateInvoiceResult:
+    duplicate = await _try_resolve_duplicate(
         session,
         tenant_id=tenant_id,
         file_hash=file_hash,
@@ -274,16 +387,30 @@ async def _create_invoice_from_bytes(
         bundle_source_hash=bundle_source_hash,
         source=source,
         filename=filename,
+        pages_for_page_fp=pages_for_page_fp,
     )
-    if duplicate_handled:
-        return duplicate_id, True
+    if duplicate is not None:
+        return duplicate
 
     pages = page_count if page_count is not None else count_document_pages(data, filename)
     await assert_can_upload(session, tenant_id, pages=pages)
 
     meta = source or IngestSourceMetadata()
     attachment_name = meta.email_attachment_name or filename
+    normalized_name = normalize_attachment_filename(attachment_name)
     vendor_slug = meta.storage_vendor_slug or UNKNOWN_SLUG
+
+    page_fp_list = (
+        [fp for _, fp in collect_page_fingerprints(pages_for_page_fp)]
+        if pages_for_page_fp
+        else None
+    )
+    review_suggested = signals_are_sparse(
+        content_fingerprint=content_fingerprint,
+        business_fingerprint=business_fingerprint,
+        identity_fields=identity_fields,
+        page_fingerprints=page_fp_list,
+    )
 
     document_ref = await allocate_next_document_ref(session, tenant_id)
     extracted_fields: dict[str, str] | None = None
@@ -306,6 +433,8 @@ async def _create_invoice_from_bytes(
         file_hash=file_hash,
         content_fingerprint=content_fingerprint,
         business_fingerprint=business_fingerprint,
+        normalized_filename=normalized_name,
+        duplicate_review_suggested=review_suggested,
         currency=tenant_currency(tenant),
         storage_vendor_slug=vendor_slug,
         purchase_document_type=purchase_document_type,
@@ -341,6 +470,29 @@ async def _create_invoice_from_bytes(
 
     ensure_invoice_so_reference(inv)
 
+    if pages_for_page_fp:
+        await persist_invoice_page_fingerprints(
+            session,
+            tenant_id=tenant_id,
+            invoice_id=inv.id,
+            pages=pages_for_page_fp,
+        )
+
+    if review_suggested:
+        await log_event(
+            session,
+            "duplicate_weak_signal",
+            invoice_id=inv.id,
+            detail={
+                "filename": filename,
+                "normalized_filename": normalized_name,
+                "content_fingerprint": content_fingerprint,
+                "business_fingerprint": business_fingerprint,
+                "confidence_tier": "T4",
+                "source": meta.capture_source or "upload",
+            },
+        )
+
     if log_upload_event:
         await log_event(
             session,
@@ -352,23 +504,32 @@ async def _create_invoice_from_bytes(
                 "file_hash": file_hash,
                 "content_fingerprint": content_fingerprint,
                 "business_fingerprint": business_fingerprint,
+                "normalized_filename": normalized_name,
+                "duplicate_review_suggested": review_suggested,
             },
             actor_name=actor_name,
             actor_email=actor_email,
         )
 
     settings = get_settings()
-    await charge_upload_credits(
-        session,
-        tenant_id,
-        pages=pages,
-        idempotency_key=file_hash,
-        invoice_id=inv.id,
-        filename=filename,
-        document_ai_provider=settings.default_document_ai_provider,
-    )
+    if charge_credits:
+        await charge_upload_credits(
+            session,
+            tenant_id,
+            pages=pages,
+            idempotency_key=file_hash,
+            invoice_id=inv.id,
+            filename=filename,
+            document_ai_provider=settings.default_document_ai_provider,
+        )
     await session.flush()
-    return inv.id, False
+    return _CreateInvoiceResult(
+        invoice_id=inv.id,
+        duplicate_handled=False,
+        action="allow_weak" if review_suggested else "allow",
+        confidence_tier="T4",
+        review_suggested=review_suggested,
+    )
 
 
 async def _single_file_ingest(
@@ -389,8 +550,9 @@ async def _single_file_ingest(
     parent_file_hash: str,
     actor_name: str | None = None,
     actor_email: str | None = None,
+    pages_for_page_fp: list[PdfPageText] | None = None,
 ) -> IngestUploadResult:
-    invoice_id, duplicate_handled = await _create_invoice_from_bytes(
+    created = await _create_invoice_from_bytes(
         session,
         tenant_id=tenant_id,
         tenant_slug=tenant_slug,
@@ -406,17 +568,74 @@ async def _single_file_ingest(
         log_upload_event=log_upload_event,
         actor_name=actor_name,
         actor_email=actor_email,
+        pages_for_page_fp=pages_for_page_fp,
     )
-    invoice_ids = [invoice_id] if invoice_id is not None else []
-    return IngestUploadResult(
-        invoice_ids=invoice_ids,
-        segment_count=1 if invoice_id is not None else 0,
-        parent_file_hash=parent_file_hash,
-        duplicate_handled=duplicate_handled,
-    )
+    return _result_from_create(created, parent_file_hash=parent_file_hash)
 
 
 async def ingest_file_with_fanout(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    tenant_slug: str,
+    tenant_name: str | None,
+    filename: str,
+    data: bytes,
+    purchase_document_type: str | None = None,
+    source: IngestSourceMetadata | None = None,
+    log_upload_event: bool = False,
+    prefetched_extraction: PdfPageTextExtraction | None = None,
+    actor_name: str | None = None,
+    actor_email: str | None = None,
+) -> IngestUploadResult:
+    """
+    Create one or more pending invoices from an attachment.
+
+    When the capture channel is listed in ``CANONICAL_INTAKE_CHANNELS``, delegates to
+    ``intake_document`` (validate + central audit). Otherwise runs the legacy core path.
+    """
+    meta = source or IngestSourceMetadata()
+    from app.services.ingest.canonical_intake_service import (
+        canonical_intake_enabled_for,
+        intake_document,
+    )
+
+    if canonical_intake_enabled_for(meta.capture_source):
+        outcome = await intake_document(
+            session,
+            tenant_id=tenant_id,
+            tenant_slug=tenant_slug,
+            tenant_name=tenant_name,
+            filename=filename,
+            data=data,
+            source=meta,
+            purchase_document_type=purchase_document_type,
+            actor_name=actor_name,
+            actor_email=actor_email,
+            prefetched_extraction=prefetched_extraction,
+            log_upload_event=log_upload_event,
+            # Email/WA already filter types; upload validates in API or here.
+            skip_validation=(meta.capture_source or "").lower() not in {"upload", ""},
+        )
+        return outcome.result
+
+    return await _ingest_file_with_fanout_core(
+        session,
+        tenant_id=tenant_id,
+        tenant_slug=tenant_slug,
+        tenant_name=tenant_name,
+        filename=filename,
+        data=data,
+        purchase_document_type=purchase_document_type,
+        source=source,
+        log_upload_event=log_upload_event,
+        prefetched_extraction=prefetched_extraction,
+        actor_name=actor_name,
+        actor_email=actor_email,
+    )
+
+
+async def _ingest_file_with_fanout_core(
     session: AsyncSession,
     *,
     tenant_id: uuid.UUID,
@@ -466,6 +685,7 @@ async def ingest_file_with_fanout(
     document_types = []
     custom_field_keys: list[str] = []
     catalogue_matchers = []
+    pages_for_fp: list[PdfPageText] | None = None
 
     if lower_name.endswith(".pdf"):
         config = await load_config_for_tenant(session, tenant_id)
@@ -480,22 +700,49 @@ async def ingest_file_with_fanout(
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
                     handle.write(data)
                     tmp_fp_path = Path(handle.name)
-                extraction = extract_pdf_page_texts(tmp_fp_path)
-                pages_for_fp = extraction.pages
-                content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages_for_fp)
-                identity_fields = extract_identity_fields_from_pages(
-                    pages_for_fp,
-                    custom_field_keys=custom_field_keys,
+                extraction = prefetched_extraction
+                if extraction is None or not extraction.pages:
+                    extraction = await asyncio.to_thread(extract_pdf_page_texts, tmp_fp_path)
+                pages_for_fp = await asyncio.to_thread(
+                    enrich_pages_for_fingerprints,
+                    tmp_fp_path,
+                    extraction.pages,
                 )
-                business_fingerprint = compute_business_fingerprint_from_pages(
-                    pages_for_fp,
-                    custom_field_keys=custom_field_keys,
-                )
+                if pages_for_fp:
+                    content_fingerprint = compute_pdf_content_fingerprint_from_pages(
+                        pages_for_fp
+                    )
+                    identity_fields = extract_identity_fields_from_pages(
+                        pages_for_fp,
+                        custom_field_keys=custom_field_keys,
+                    )
+                    business_fingerprint = compute_business_fingerprint_from_pages(
+                        pages_for_fp,
+                        custom_field_keys=custom_field_keys,
+                    )
             finally:
                 if tmp_fp_path is not None:
                     tmp_fp_path.unlink(missing_ok=True)
 
-        result = await _single_file_ingest(
+            bundle_dup = await _try_resolve_bundle_duplicate(
+                session,
+                tenant_id=tenant_id,
+                parent_hash=parent_hash,
+                content_fingerprint=content_fingerprint,
+                business_fingerprint=business_fingerprint,
+                identity_fields=identity_fields,
+                source=source,
+                filename=filename,
+                pages_for_page_fp=pages_for_fp,
+            )
+            if bundle_dup is not None:
+                return _result_from_create(
+                    bundle_dup,
+                    parent_file_hash=parent_hash,
+                    segment_count=1,
+                )
+
+        return await _single_file_ingest(
             session,
             tenant_id=tenant_id,
             tenant_slug=tenant_slug,
@@ -512,8 +759,8 @@ async def ingest_file_with_fanout(
             parent_file_hash=parent_hash,
             actor_name=actor_name,
             actor_email=actor_email,
+            pages_for_page_fp=pages_for_fp,
         )
-        return result
 
     tmp_path: Path | None = None
     try:
@@ -521,8 +768,13 @@ async def ingest_file_with_fanout(
             handle.write(data)
             tmp_path = Path(handle.name)
 
-        extraction = prefetched_extraction or extract_pdf_page_texts(tmp_path)
-        pages = extraction.pages
+        extraction = prefetched_extraction or await asyncio.to_thread(
+            extract_pdf_page_texts, tmp_path
+        )
+        pages = (
+            await asyncio.to_thread(enrich_pages_for_fingerprints, tmp_path, extraction.pages)
+            or extraction.pages
+        )
         incomplete_ocr = extraction.incomplete_ocr_indices
         if not pages:
             await _log_pdf_split_skipped(
@@ -595,6 +847,7 @@ async def ingest_file_with_fanout(
                 parent_file_hash=parent_hash,
                 actor_name=actor_name,
                 actor_email=actor_email,
+                pages_for_page_fp=pages,
             )
 
         segment_result = await segment_pdf_pages_smart(
@@ -611,10 +864,14 @@ async def ingest_file_with_fanout(
             and len(pages) > 1
             and not segment_result.cap_exceeded
             and segment_result.segmentation_method == "rules"
+            and incomplete_ocr
         ):
-            fallback = extract_pdf_page_texts_via_full_di(tmp_path)
+            fallback = await asyncio.to_thread(extract_pdf_page_texts_via_full_di, tmp_path)
             if fallback is not None and fallback.pages:
-                pages = fallback.pages
+                pages = (
+                    await asyncio.to_thread(enrich_pages_for_fingerprints, tmp_path, fallback.pages)
+                    or fallback.pages
+                )
                 incomplete_ocr = fallback.incomplete_ocr_indices
                 content_fingerprint = compute_pdf_content_fingerprint_from_pages(pages)
                 identity_fields = extract_identity_fields_from_pages(
@@ -634,7 +891,7 @@ async def ingest_file_with_fanout(
                 )
                 segments = segment_result.segments
 
-        bundle_dup_id, bundle_dup_handled = await _try_resolve_bundle_duplicate(
+        bundle_dup = await _try_resolve_bundle_duplicate(
             session,
             tenant_id=tenant_id,
             parent_hash=parent_hash,
@@ -643,18 +900,19 @@ async def ingest_file_with_fanout(
             identity_fields=identity_fields,
             source=source,
             filename=filename,
+            pages_for_page_fp=pages,
         )
-        if bundle_dup_handled:
-            invoice_ids = [bundle_dup_id] if bundle_dup_id is not None else []
-            return IngestUploadResult(
-                invoice_ids=invoice_ids,
-                segment_count=len(segments),
+        if bundle_dup is not None:
+            return _result_from_create(
+                bundle_dup,
                 parent_file_hash=parent_hash,
-                duplicate_handled=True,
+                segment_count=max(1, len(segments)),
             )
 
         if len(segments) <= 1:
-            skip_reason = "segment_cap_exceeded" if segment_result.cap_exceeded else "no_headings"
+            skip_reason = (
+                "segment_cap_exceeded" if segment_result.cap_exceeded else "no_headings"
+            )
             await _log_pdf_split_skipped(
                 session,
                 reason=skip_reason,
@@ -680,11 +938,16 @@ async def ingest_file_with_fanout(
                 parent_file_hash=parent_hash,
                 actor_name=actor_name,
                 actor_email=actor_email,
+                pages_for_page_fp=pages,
             )
 
         invoice_ids: list[int] = []
         segment_count = len(segments)
         duplicate_handled = False
+        last_action = "allow"
+        last_match_kind: MatchKind | None = None
+        last_tier: ConfidenceTier = "T4"
+        last_review = False
         for index, segment in enumerate(segments):
             segment_bytes = extract_pdf_page_range_bytes(
                 tmp_path,
@@ -711,9 +974,10 @@ async def ingest_file_with_fanout(
             )
             segment_type = purchase_document_type_from_heading(segment.heading_kind)
             segment_name = segment_upload_filename(filename, index, segment_count)
+            segment_page_slice = pages[segment.start_page : segment.end_page + 1]
 
             segment_pages = segment.end_page - segment.start_page + 1
-            invoice_id, segment_duplicate = await _create_invoice_from_bytes(
+            created = await _create_invoice_from_bytes(
                 session,
                 tenant_id=tenant_id,
                 tenant_slug=tenant_slug,
@@ -731,22 +995,27 @@ async def ingest_file_with_fanout(
                 page_count=segment_pages,
                 actor_name=actor_name,
                 actor_email=actor_email,
+                pages_for_page_fp=segment_page_slice,
             )
-            if segment_duplicate:
+            if created.duplicate_handled:
                 duplicate_handled = True
-            if invoice_id is None:
+            last_action = created.action
+            last_match_kind = created.match_kind
+            last_tier = created.confidence_tier
+            last_review = created.review_suggested
+            if created.invoice_id is None:
                 continue
 
-            inv = await session.get(Invoice, invoice_id)
+            inv = await session.get(Invoice, created.invoice_id)
             if inv is not None and inv.status == InvoiceStatus.DUPLICATE_SKIPPED:
                 continue
 
-            invoice_ids.append(invoice_id)
+            invoice_ids.append(created.invoice_id)
 
             await log_event(
                 session,
                 "pdf_segmented",
-                invoice_id=invoice_id,
+                invoice_id=created.invoice_id,
                 detail={
                     "source_file_hash": parent_hash,
                     "content_fingerprint": segment_fingerprint,
@@ -771,6 +1040,10 @@ async def ingest_file_with_fanout(
             segment_count=segment_count,
             parent_file_hash=parent_hash,
             duplicate_handled=duplicate_handled,
+            action=last_action,
+            match_kind=last_match_kind,
+            confidence_tier=last_tier,
+            review_suggested=last_review,
         )
     finally:
         if tmp_path is not None:
@@ -790,6 +1063,32 @@ async def ingest_upload_file(
     actor_email: str | None = None,
 ) -> IngestUploadResult:
     """Upload API entry point — logs invoice_uploaded for single-file ingest."""
+    from app.services.ingest.canonical_intake_service import (
+        IntakeValidationError,
+        canonical_intake_enabled_for,
+        intake_document,
+    )
+
+    source = IngestSourceMetadata(capture_source="upload")
+    if canonical_intake_enabled_for("upload"):
+        try:
+            outcome = await intake_document(
+                session,
+                tenant_id=tenant_id,
+                tenant_slug=tenant_slug,
+                tenant_name=tenant_name,
+                filename=filename,
+                data=data,
+                source=source,
+                purchase_document_type=purchase_document_type,
+                actor_name=actor_name,
+                actor_email=actor_email,
+                log_upload_event=True,
+            )
+        except IntakeValidationError:
+            raise
+        return outcome.result
+
     return await ingest_file_with_fanout(
         session,
         tenant_id=tenant_id,
@@ -798,7 +1097,7 @@ async def ingest_upload_file(
         filename=filename,
         data=data,
         purchase_document_type=purchase_document_type,
-        source=IngestSourceMetadata(capture_source="upload"),
+        source=source,
         log_upload_event=True,
         actor_name=actor_name,
         actor_email=actor_email,

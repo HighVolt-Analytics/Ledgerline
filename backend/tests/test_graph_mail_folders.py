@@ -17,11 +17,17 @@ def test_classify_all_processed() -> None:
         classify_message_outcome([InvoiceStatus.PROCESSED, InvoiceStatus.PROCESSED])
         == "processed"
     )
+    assert classify_message_outcome([InvoiceStatus.DUPLICATE_SKIPPED]) == "processed"
+    assert (
+        classify_message_outcome(
+            [InvoiceStatus.PROCESSED, InvoiceStatus.DUPLICATE_SKIPPED]
+        )
+        == "processed"
+    )
 
 
-def test_classify_exception_or_duplicate() -> None:
+def test_classify_exception_or_mixed() -> None:
     assert classify_message_outcome([InvoiceStatus.EXCEPTION]) == "exception"
-    assert classify_message_outcome([InvoiceStatus.DUPLICATE_SKIPPED]) == "exception"
     assert (
         classify_message_outcome(
             [InvoiceStatus.PROCESSED, InvoiceStatus.EXCEPTION]
@@ -43,9 +49,9 @@ async def test_finalize_preskip_moves_exception(
         *,
         mailbox_email: str,
         access_token: str | None = None,
-    ) -> bool:
+    ) -> str | None:
         moves.append((message_id, outcome))
-        return True
+        return message_id
 
     monkeypatch.setattr(
         "app.services.ingest.graph_mail_folders.folder_moves_enabled",
@@ -64,6 +70,43 @@ async def test_finalize_preskip_moves_exception(
     )
     assert moved == 1
     assert moves == [("msg-skip-1", "exception")]
+
+
+@pytest.mark.asyncio
+async def test_finalize_already_imported_moves_processed(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    moves: list[tuple[str, str]] = []
+
+    def fake_move(
+        message_id: str,
+        outcome: str,
+        *,
+        mailbox_email: str,
+        access_token: str | None = None,
+    ) -> str | None:
+        moves.append((message_id, outcome))
+        return message_id
+
+    monkeypatch.setattr(
+        "app.services.ingest.graph_mail_folders.folder_moves_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.graph_mail_folders.move_message_to_folder",
+        fake_move,
+    )
+
+    moved = await finalize_graph_messages(
+        db_session,
+        ["msg-known-1"],
+        preskip_exceptions={"msg-known-1": "message_already_imported"},
+        message_mailbox_emails={"msg-known-1": "support@example.com"},
+        message_graph_ids={"msg-known-1": "graph-id-1"},
+    )
+    assert moved == 1
+    assert moves == [("graph-id-1", "processed")]
 
 
 @pytest.mark.asyncio
@@ -108,9 +151,9 @@ async def test_finalize_preskip_scopes_duplicate_mailbox_email(
         *,
         mailbox_email: str,
         access_token: str | None = None,
-    ) -> bool:
+    ) -> str | None:
         moves.append((message_id, outcome))
-        return True
+        return message_id
 
     async def fake_token(*_a, **_k):
         raise RuntimeError("skip token")
@@ -153,6 +196,6 @@ def test_move_falls_back_to_mark_read_when_disabled(monkeypatch: pytest.MonkeyPa
 
     assert move_message_to_folder(
         "msg-1", "processed", mailbox_email="user@test.com"
-    ) is True
+    ) == "msg-1"
     assert marked == ["msg-1"]
     clear_folder_cache()

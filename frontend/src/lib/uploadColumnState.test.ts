@@ -74,6 +74,35 @@ describe("columnHasDisplayValue", () => {
     );
   });
 
+  it("detects document type from printed document_heading", () => {
+    expect(
+      columnHasDisplayValue(
+        inv(1, "exception", { document_heading: "TAX INVOICE" }),
+        "documentType"
+      )
+    ).toBe(true);
+  });
+
+  it("does not treat purchase_document_type alone as document type value", () => {
+    expect(
+      columnHasDisplayValue(
+        inv(1, "pending", { purchase_document_type: "invoice" }),
+        "documentType"
+      )
+    ).toBe(false);
+  });
+
+  it("detects route from vault folder canonical_document_type", () => {
+    expect(
+      columnHasDisplayValue(
+        inv(1, "exception", {
+          extracted_fields: { canonical_document_type: "Goods Receipt Note" },
+        }),
+        "route"
+      )
+    ).toBe(true);
+  });
+
   it("detects gl account when posting not applicable", () => {
     expect(
       columnHasDisplayValue(inv(1, "mapping", { gl_posting_applicable: false }), "glAccount")

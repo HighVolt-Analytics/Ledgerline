@@ -48,3 +48,24 @@ def test_multiline_ocr_junk_not_plausible_so_reference() -> None:
     inv = Invoice(so_reference=junk)
     assert ensure_invoice_so_reference(inv) is None
     assert inv.so_reference is None
+
+
+def test_po_number_not_copied_into_so_resolution() -> None:
+    from app.services.sales.so_reference import (
+        is_plausible_so_reference,
+        sanitize_cross_book_linkage_references,
+    )
+
+    assert is_plausible_so_reference("PO-45001234") is False
+    inv = Invoice(po_reference="PO-45001234", so_reference=None)
+    assert resolve_so_reference_from_invoice(inv) is None
+
+    swapped = Invoice(po_reference="PO-45001234", so_reference="PO-45001234")
+    sanitize_cross_book_linkage_references(swapped)
+    assert swapped.po_reference == "PO-45001234"
+    assert swapped.so_reference is None
+
+
+def test_misfiled_so_in_po_column_still_resolves() -> None:
+    inv = Invoice(po_reference="SO-DEMO-100", so_reference=None)
+    assert resolve_so_reference_from_invoice(inv) == "SO-DEMO-100"

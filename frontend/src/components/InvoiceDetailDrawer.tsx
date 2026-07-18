@@ -15,6 +15,7 @@ import type {
   InvoiceClassificationAudit,
   InvoiceUpdatePayload,
   LineItem,
+  PipelineActivePath,
   PipelineAuditStep,
   PurchaseDossier,
   SalesDossierResponse,
@@ -30,7 +31,7 @@ import {
   invoiceTaxMeta,
 } from "@/components/invoice-preview/DocumentSummaryPreview";
 import { InvoiceClassificationPanel } from "@/components/invoices/InvoiceClassificationPanel";
-import { EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
+import { DuplicateReviewBadge, EvaluationStatusBadge } from "@/components/inbox/EvaluationStatusBadge";
 import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import { PipelineDebugPanel } from "@/components/invoices/PipelineDebugPanel";
 import { DossierPipelineTimeline } from "@/components/dossiers/DossierPipelineTimeline";
@@ -46,6 +47,7 @@ import {
   lineItemGridTemplateColumns,
   resolvePreviewLineItems,
   countPreviewLineItems,
+  isVisionHeaderPipelineSummary,
   type LineItemColumnVisibility,
   type PreviewLineItem,
 } from "@/lib/invoicePreview";
@@ -95,9 +97,14 @@ import {
 import {
   documentTypeLabelForCode,
   effectiveDocumentTypeCode,
+  invoiceDocumentTypeDisplayLabel,
 } from "@/lib/documentTypeResolve";
 import { requiresClassificationConfirm } from "@/lib/classificationAuditDisplay";
 import { shouldApplyDrawerInvoiceUpdate } from "@/lib/invoiceDrawerSync";
+import {
+  defaultAuditPathTab,
+  filterPipelineStepsForPath,
+} from "@/lib/pipelineAuditPaths";
 
 const TABS = ["fields", "lines", "po", "tax", "audit", "overrides", "pipeline"] as const;
 export type InvoiceDrawerTab = (typeof TABS)[number];
@@ -268,7 +275,8 @@ function updateDraftExtractionField(
   }
 }
 
-function ConfidenceDot({ value }: { value: number }) {
+function ConfidenceDot({ value }: { value: number | null }) {
+  if (value == null || !Number.isFinite(value)) return null;
   const color =
     value >= 95
       ? "bg-[hsl(var(--chart-1))]"
@@ -681,7 +689,7 @@ function FieldRow({
 }: {
   label: string;
   value: string;
-  confidence: number;
+  confidence: number | null;
   bold?: boolean;
   editable?: boolean;
   onChange?: (value: string) => void;
@@ -696,7 +704,7 @@ function FieldRow({
           className={cn("h-8 text-sm tnum", bold && "font-semibold")}
           readOnly={!editable}
         />
-        {!editable && <ConfidenceDot value={confidence} />}
+        {!editable && confidence != null && <ConfidenceDot value={confidence} />}
       </div>
     </div>
   );
@@ -791,6 +799,7 @@ export function InvoiceDetailDrawer({
   const [mounted, setMounted] = useState(false);
   const [sheetState, setSheetState] = useState<"open" | "closed">("closed");
   const [pipelineSteps, setPipelineSteps] = useState<PipelineAuditStep[]>([]);
+  const [pipelineActivePath, setPipelineActivePath] = useState<PipelineActivePath>("unknown");
   const [auditLoading, setAuditLoading] = useState(false);
   const [classificationAudit, setClassificationAudit] = useState<InvoiceClassificationAudit | null>(null);
   const [classificationLoading, setClassificationLoading] = useState(false);
@@ -1000,8 +1009,14 @@ export function InvoiceDetailDrawer({
     setAuditLoading(true);
     api
       .getInvoicePipeline(inv.id, { fresh: true })
-      .then(setPipelineSteps)
-      .catch(() => setPipelineSteps([]))
+      .then((res) => {
+        setPipelineSteps(res.steps);
+        setPipelineActivePath(res.active_path);
+      })
+      .catch(() => {
+        setPipelineSteps([]);
+        setPipelineActivePath("unknown");
+      })
       .finally(() => setAuditLoading(false));
   }, [inv, tab]);
 
@@ -1076,16 +1091,12 @@ export function InvoiceDetailDrawer({
   }, [resolvedDocumentTypeCode, ruleBook]);
 
   const documentTypeBadgeLabel = useMemo(() => {
-    if (!ruleBook) return null;
-    if (resolvedDocumentTypeCode) {
-      return documentTypeLabelForCode(ruleBook.documentTypes, resolvedDocumentTypeCode);
+    if (!inv) return null;
+    if (!ruleBook) {
+      return invoiceDocumentTypeDisplayLabel(inv, null);
     }
-    const purchase = inv?.purchase_document_type?.trim();
-    if (purchase) {
-      return purchase.toUpperCase();
-    }
-    return null;
-  }, [inv?.purchase_document_type, resolvedDocumentTypeCode, ruleBook]);
+    return invoiceDocumentTypeDisplayLabel(inv, ruleBook.documentTypes);
+  }, [inv, ruleBook]);
 
   const resolvedDocType = useMemo(() => {
     const code = resolvedDocumentTypeCode;
@@ -1146,6 +1157,11 @@ export function InvoiceDetailDrawer({
     return { previewItems: resolved.items, columns: resolved.columns };
   }, [inv, editing, draft, absentFields, extractionFieldKeys]);
 
+  const filteredAuditSteps = useMemo(
+    () => filterPipelineStepsForPath(pipelineSteps, defaultAuditPathTab(pipelineActivePath)),
+    [pipelineSteps, pipelineActivePath]
+  );
+
   if (!mounted) return null;
 
   const tax = inv ? invoiceTaxMeta(inv) : { label: "Tax", rate: null };
@@ -1162,9 +1178,10 @@ export function InvoiceDetailDrawer({
     if (!isStillViewing(id)) return;
     setInv(updated);
     if (tab === "audit") {
-      const steps = await api.getInvoicePipeline(id, { fresh: true });
+      const res = await api.getInvoicePipeline(id, { fresh: true });
       if (!isStillViewing(id)) return;
-      setPipelineSteps(steps);
+      setPipelineSteps(res.steps);
+      setPipelineActivePath(res.active_path);
     }
   }
 
@@ -1470,6 +1487,7 @@ export function InvoiceDetailDrawer({
                     <DocumentTypeChip
                       code={resolvedDocumentTypeCode}
                       label={documentTypeBadgeLabel}
+                      display={documentTypeBadgeLabel}
                       title={documentTypeBadgeLabel}
                       purchaseKind={inv?.purchase_document_type}
                       documentTypes={ruleBook?.documentTypes}
@@ -1478,6 +1496,7 @@ export function InvoiceDetailDrawer({
                   {inv.evaluation_status ? (
                     <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
                   ) : null}
+                  <DuplicateReviewBadge suggested={inv.duplicate_review_suggested} />
                 </div>
                 <p className="text-xs text-muted-foreground tnum mt-0.5">
                   {inv.invoice_no ?? "—"} · {inv.invoice_date ?? "—"} · {fmt(inv.total)}
@@ -1591,7 +1610,9 @@ export function InvoiceDetailDrawer({
                           />
                         ) : null}
                       <p className="text-sm text-muted-foreground">
-                        {classificationConfirmRequired
+                        {isVisionHeaderPipelineSummary(inv)
+                          ? "Vision header path — waiting for header fields. Reprocess after vision extract is available."
+                          : classificationConfirmRequired
                           ? "Document type needs review. Confirm or change DT above, then reprocess."
                           : !resolvedDocumentTypeCode
                             ? "No document type is applied yet."
@@ -1602,6 +1623,12 @@ export function InvoiceDetailDrawer({
                       </div>
                     ) : (
                       <>
+                        {isVisionHeaderPipelineSummary(inv) ? (
+                          <p className="text-xs text-muted-foreground">
+                            Vision path — header fields only. Empty date/total means reprocess so
+                            vision extract can fill them; full OCR fields come after DT mapping.
+                          </p>
+                        ) : null}
                         {(currencyNeedsSelection(inv) ||
                           editing ||
                           extractionFieldKeys.includes("currency")) && (
@@ -1784,9 +1811,11 @@ export function InvoiceDetailDrawer({
                   <div className="mt-4">
                     {auditLoading ? (
                       <p className="text-sm text-muted-foreground">Loading audit log…</p>
+                    ) : filteredAuditSteps.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No pipeline stages yet.</p>
                     ) : (
                       <ol className="relative border-l border-border ml-2 space-y-4">
-                        {pipelineSteps.map((step) => (
+                        {filteredAuditSteps.map((step) => (
                           <li key={step.stage} className="ml-4">
                             <span
                               className={cn(
@@ -1840,6 +1869,7 @@ export function InvoiceDetailDrawer({
                         layout="drawer"
                         pipeline={drawerDossier.pipeline}
                         routeTarget={drawerDossier.routeTarget}
+                        pipelinePath={drawerDossier.pipelinePath}
                       />
                     ) : (
                       <p className="text-sm text-muted-foreground">

@@ -23,7 +23,7 @@ from app.models.mailbox_sync_job import (
 from app.models.tenant import Tenant
 from app.services.audit.audit_service import log_event
 from app.services.ingest.email_ingestion import fetch_historical_inbox
-from app.services.ingest.graph_mail_folders import finalize_graph_messages, folder_moves_enabled
+from app.services.ingest.graph_mail_folders import finalize_graph_messages
 from app.services.ingest.mailbox_oauth_service import resolve_mailbox_access_token
 from app.services.invoice.pipeline import ingest_email_attachments
 from app.utils.logger import get_logger
@@ -150,6 +150,8 @@ async def run_mailbox_backfill_job(
 
         message_ids: list[str] = []
         preskip: dict[str, str] = {}
+        message_mailboxes: dict[str, str] = {}
+        message_graph_ids: dict[str, str] = {}
 
         try:
             access_token = await resolve_mailbox_access_token(session, mb)
@@ -177,6 +179,8 @@ async def run_mailbox_backfill_job(
                 job.attachments_ingested = ingest_result.ingested_count
                 message_ids = ingest_result.message_ids
                 preskip = ingest_result.preskip_exceptions
+                message_mailboxes = ingest_result.message_mailbox_emails
+                message_graph_ids = ingest_result.message_graph_ids
                 job.messages_skipped = sum(
                     1
                     for mid in message_ids
@@ -198,12 +202,14 @@ async def run_mailbox_backfill_job(
                 )
                 await session.commit()
 
-            if message_ids and job.mark_processed and folder_moves_enabled():
+            if message_ids and job.mark_processed:
                 moved = await finalize_graph_messages(
                     session,
                     message_ids,
                     tenant_id=job.tenant_id,
                     preskip_exceptions=preskip,
+                    message_mailbox_emails=message_mailboxes,
+                    message_graph_ids=message_graph_ids,
                 )
                 logger.info(
                     "backfill_messages_finalized",

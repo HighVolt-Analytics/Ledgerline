@@ -37,6 +37,17 @@ def test_vault_book_folder() -> None:
     assert vault_book_folder("") == ROUTE_UNROUTED
 
 
+def test_vault_book_folder_normalizes_type_case_variants() -> None:
+    from app.services.vault.vault_paths import normalize_vault_type_book_label
+
+    assert normalize_vault_type_book_label("PACKING LIST") == "Packing List"
+    assert normalize_vault_type_book_label("Packing List") == "Packing List"
+    assert normalize_vault_type_book_label("Warehouse Gate Pass") == "Warehouse Gate Pass"
+    assert vault_book_folder("PACKING LIST") == vault_book_folder("Packing List")
+    assert vault_book_folder("BILL OF LADING") == "Bill of Lading"
+    assert vault_book_folder("CERTIFICATE OF ORIGIN") == "Certificate of Origin"
+
+
 def test_vault_vendor_folder_display_name() -> None:
     assert vault_vendor_folder("Atlassian Pty Ltd") == "Atlassian Pty Ltd"
     assert vault_vendor_folder(None, "atlassian-pty-ltd") == "Atlassian Pty Ltd"

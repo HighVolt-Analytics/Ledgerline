@@ -89,7 +89,9 @@ export function approvalChainProgress(chain: DossierApprovalChain): {
 
 export function formatApprovalTimestamp(at: string | null): string | null {
   if (!at?.trim()) return null;
-  const parsed = new Date(at.replace(" ", "T"));
+  // Backend dossier/pipeline timestamps are UTC wall-clock without a zone suffix.
+  const token = at.trim().replace(" ", "T");
+  const parsed = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(token) ? token : `${token}Z`);
   if (Number.isNaN(parsed.getTime())) return at;
   return parsed.toLocaleString(undefined, {
     day: "numeric",

@@ -13,7 +13,8 @@ from app.config import get_settings
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.llm_document import LlmDocumentResult
 from app.schemas.ocr_artifact import OcrArtifact
-from app.services.extraction.party_field_service import PARTY_LLM_RULES
+from app.services.extraction.party_field_service import party_llm_rules
+from app.services.prompt_registry import resolve_system_prompt_text
 from app.services.extraction.llm_catalogue_rows import build_llm_catalogue_rows
 from app.services.extraction.extraction_field_values import non_canonical_extraction_keys
 from app.services.extraction.llm_document_service import (
@@ -28,24 +29,6 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-
-_GEMINI_CLASSIFY_SYSTEM = """You classify finance documents for accounts payable from document images.
-Return JSON only with keys:
-suggested_dt, confidence, reasoning, perspective, seller, buyer, document_heading.
-
-Rules:
-- suggested_dt must be one of the catalogue codes provided, or empty string if unsure.
-- confidence is 0.0-1.0 for the document type choice.
-- perspective is purchase | sales | unknown.
-""" + PARTY_LLM_RULES + """
-- Do not extract invoice amounts, line items, or dates — classification only.
-- few_shot_examples are prior reviewer corrections. When document_heading or text_excerpt
-  closely matches a few-shot example, strongly prefer that example's human_confirmed_dt.
-- Examples with vendor_key match the sender/vendor — prefer those when the layout matches that supplier.
-- Each catalogue row has recognition_mode signals or prompt.
-- When recognition_mode is signals, treat recognition_rules as deterministic match hints for that code.
-- When recognition_mode is prompt, treat llm_prompt as the authoritative description for that code."""
-
 
 def is_gemini_vision_available() -> bool:
     return get_settings().gemini_vision_available
@@ -103,12 +86,14 @@ async def _generate_json(
 
 
 def _image_parts(images: list[bytes]) -> list[dict[str, Any]]:
+    from app.services.extraction.vision_pdf import sniff_image_media_type
+
     parts: list[dict[str, Any]] = []
     for image in images:
         parts.append(
             {
                 "inlineData": {
-                    "mimeType": "image/png",
+                    "mimeType": sniff_image_media_type(image),
                     "data": base64.b64encode(image).decode("ascii"),
                 }
             }
@@ -116,10 +101,75 @@ def _image_parts(images: list[bytes]) -> list[dict[str, Any]]:
     return parts
 
 
-_GEMINI_READ_SYSTEM = """You read finance document images for accounts payable OCR.
-Return JSON only with keys: document_heading, text_excerpt.
-- document_heading is the primary visible document title or heading.
-- text_excerpt is the full visible document text including tables, amounts, and labels (max 12000 chars)."""
+async def probe_understand_gemini(images: list[bytes]) -> dict[str, Any] | None:
+    """Lightweight yes/no understandability check — not classify/extract."""
+    settings = get_settings()
+    if not images:
+        return None
+    parts = _image_parts(images)
+    parts.append(
+        {
+            "text": json.dumps(
+                {
+                    "task": "vision_understand",
+                    "instruction": (
+                        "Decide whether you can clearly read and understand this "
+                        "finance document well enough to extract key fields later."
+                    ),
+                }
+            )
+        }
+    )
+    return await _generate_json(
+        system=resolve_system_prompt_text("vision.understand.system"),
+        user_parts=parts,
+        timeout_seconds=settings.runtime_llm_timeout_seconds,
+    )
+
+
+def _org_tenant_block(org: OrgContext) -> dict[str, Any]:
+    return {
+        "legal_name": org.legal_name,
+        "abn": org.abn,
+        "aliases": list(org.aliases or []),
+        "default_perspective": org.default_perspective,
+        "intake_summary": org.intake_summary,
+    }
+
+
+def _vision_header_user_payload(org: OrgContext) -> dict[str, Any]:
+    from app.services.invoice.vision_header_schema import VISION_HEADER_JSON_KEYS
+
+    return {
+        "task": "vision_header_extract",
+        "required_keys": list(VISION_HEADER_JSON_KEYS),
+        "tenant": _org_tenant_block(org),
+    }
+
+
+async def extract_header_gemini(
+    images: list[bytes],
+    *,
+    org: OrgContext,
+) -> dict[str, Any] | None:
+    """Header identity extract: printed title, counterparty, linking refs."""
+    settings = get_settings()
+    if not images:
+        return None
+    parts = _image_parts(images)
+    parts.append(
+        {
+            "text": json.dumps(
+                _vision_header_user_payload(org),
+                default=str,
+            )
+        }
+    )
+    return await _generate_json(
+        system=resolve_system_prompt_text("vision.header_extract.system"),
+        user_parts=parts,
+        timeout_seconds=settings.runtime_llm_timeout_seconds,
+    )
 
 
 async def read_for_classification_gemini(
@@ -149,7 +199,7 @@ async def read_for_classification_gemini(
     parts.append({"text": user_text})
 
     raw = await _generate_json(
-        system=_GEMINI_READ_SYSTEM,
+        system=resolve_system_prompt_text("vision.gemini.read.system"),
         user_parts=parts,
         timeout_seconds=settings.runtime_llm_timeout_seconds,
     )
@@ -211,7 +261,7 @@ async def classify_only_gemini(
     parts.append({"text": user_text})
 
     raw = await _generate_json(
-        system=_GEMINI_CLASSIFY_SYSTEM,
+        system=resolve_system_prompt_text("vision.gemini.classify.system", party_rules=party_llm_rules()),
         user_parts=parts,
         timeout_seconds=settings.runtime_llm_timeout_seconds,
     )

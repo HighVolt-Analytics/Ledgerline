@@ -22,6 +22,10 @@ _APPROVAL_LABELS = {
     "variance_workflow": "Variance workflow",
 }
 
+# Vision understood path ends at vault — no DOA / Approvals / ledger / payment.
+_UNDERSTOOD_POLICY_MODE = "no_posting"
+_UNDERSTOOD_POLICY_LABEL = "Understood path — vault only"
+
 _DETAIL_HUMAN: dict[str, str] = {
     "invoice_approved": "Approved in Approvals",
     "approval_required": "Waiting for approver",
@@ -111,6 +115,53 @@ def _step(
     )
 
 
+def build_understood_dossier_approval_chain() -> DossierApprovalChainResponse:
+    """Approval rail for vision-understood docs: vault only, no post/pay gates."""
+    not_on_path = "Not on understood path — document stops at vault"
+    return DossierApprovalChainResponse(
+        policy_mode=_UNDERSTOOD_POLICY_MODE,
+        policy_label=_UNDERSTOOD_POLICY_LABEL,
+        steps=[
+            _step(
+                step_id="document_gate",
+                kind="document_gate",
+                label="Document-type approval gate",
+                role="Approver",
+                actor="—",
+                state="not_required",
+                detail=not_on_path,
+            ),
+            _step(
+                step_id="exception_queue",
+                kind="exception_queue",
+                label="Exception queue approval",
+                role="Approver",
+                actor="—",
+                state="not_required",
+                detail="Does not appear in Approvals on this path",
+            ),
+            _step(
+                step_id="publish",
+                kind="publish",
+                label="Post to ledger",
+                role="Post",
+                actor="—",
+                state="not_required",
+                detail="Vault storage only — not posted to the ledger",
+            ),
+            _step(
+                step_id="payment",
+                kind="payment",
+                label="Payment disbursement",
+                role="Approver",
+                actor="—",
+                state="not_required",
+                detail="Payment not applicable on understood path",
+            ),
+        ],
+    )
+
+
 async def build_dossier_approval_chain(
     session: AsyncSession,
     invoice: Invoice,
@@ -119,7 +170,11 @@ async def build_dossier_approval_chain(
     definition: DocumentTypeDefinition | None,
     payment: Payment | None,
     published: bool,
+    pipeline_path: str | None = None,
 ) -> DossierApprovalChainResponse:
+    if (pipeline_path or "").strip().lower() == "understood":
+        return build_understood_dossier_approval_chain()
+
     mode = effective_approval_policy(definition).mode if definition else "touchless_on_clean_match"
     policy_label = _APPROVAL_LABELS.get(mode, mode.replace("_", " ").title())
 

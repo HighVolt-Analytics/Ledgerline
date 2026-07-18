@@ -15,6 +15,42 @@ from app.services.integration.publish_service import is_published_from_audit_log
 
 MATRIX_STAGES = ("Received", "Parsed", "Validated", "Mapped", "Approved", "Posted")
 StageState = Literal["done", "pending", "fail", "skipped"]
+PipelineActivePath = Literal["understood", "not_understood", "unknown"]
+
+# Audit-tab stage membership (dual Processing sub-tabs).
+UNDERSTOOD_AUDIT_STAGES: frozenset[str] = frozenset(
+    {
+        "Received",
+        "Duplicate",
+        "Storage",
+        "File validity",
+        "Vision understand",
+        "Vision header",
+        "Bundle",
+        "Vault",
+    }
+)
+NOT_UNDERSTOOD_AUDIT_STAGES: frozenset[str] = frozenset(
+    {
+        "Received",
+        "Duplicate",
+        "Storage",
+        "File validity",
+        "Vision understand",
+        "Image quality",
+        "Layout readiness",
+        "OCR",
+        "OCR quality",
+        "Classified",
+        "Gate",
+        "Parsed",
+        "Validated",
+        "Mapped",
+        "Approved",
+        "Posted",
+    }
+)
+
 _PROCESSING_COMPLETE_EVENTS = (
     "vault_stored",
     "purchase_document_processed",
@@ -186,14 +222,56 @@ def _actor_name(detail: dict[str, Any] | None) -> str | None:
 
 
 def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineStage]:
-    """Pre-extract phases when the strict 5-step pipeline audit trail exists."""
+    """Pre-extract phases when the strict pipeline audit trail exists.
+
+    Branches on the latest vision-understand result so the Audit tab shows either the
+    can-understand (vision header) flow or the cannot-understand (legacy OCR) flow —
+    never a mix of both from prior reprocesses.
+    """
     storage_log = _latest_log(logs, "storage_verified")
     if storage_log is None:
         return []
 
+    fv_pass = _latest_log(logs, "file_validity_passed")
+    fv_fail = _latest_log(logs, "file_validity_failed")
+    fv_log = fv_pass or fv_fail
+
+    vu_pass = _latest_log(logs, "vision_understand_passed")
+    vu_fail = _latest_log(logs, "vision_understand_failed")
+    if vu_pass and vu_fail:
+        vu_log = vu_pass if _is_after(vu_pass, vu_fail) else vu_fail
+    else:
+        vu_log = vu_pass or vu_fail
+    vision_can = bool(vu_log and vu_log.event == "vision_understand_passed")
+    vision_cannot = bool(vu_log and vu_log.event == "vision_understand_failed")
+
+    def _on_current_branch(entry: AuditLog | None) -> bool:
+        """Keep events from the active understand decision onward."""
+        if entry is None:
+            return False
+        if vu_log is None:
+            return True
+        return _is_after(entry, vu_log)
+
+    vh_pass = _latest_log(logs, "vision_header_extracted")
+    vh_fail = _latest_log(logs, "vision_header_extract_failed")
+    if vh_pass and vh_fail:
+        vh_log = vh_pass if _is_after(vh_pass, vh_fail) else vh_fail
+    else:
+        vh_log = vh_pass or vh_fail
+    vision_pending = _latest_log(logs, "vision_path_pending")
+
+    iq_pass = _latest_log(logs, "image_quality_passed")
+    iq_fail = _latest_log(logs, "image_quality_failed")
+    iq_log = iq_pass or iq_fail
+    layout_log = _latest_log(logs, "layout_readiness_evaluated")
     ocr_log = _latest_log(logs, "ocr_completed")
-    quality_pass = _latest_log(logs, "image_quality_gate_passed")
-    quality_fail = _latest_log(logs, "image_quality_gate_failed")
+    quality_pass = _latest_log(logs, "ocr_quality_confirm_passed") or _latest_log(
+        logs, "image_quality_gate_passed"
+    )
+    quality_fail = _latest_log(logs, "ocr_quality_confirm_failed") or _latest_log(
+        logs, "image_quality_gate_failed"
+    )
     quality_log = quality_pass or quality_fail
     classify_log = _latest_log(logs, "llm_classified")
     gate_pass = _latest_log(logs, "classification_gate_passed")
@@ -220,78 +298,268 @@ def _early_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineS
         ),
     ]
 
-    if ocr_log:
-        conf = (ocr_log.detail or {}).get("confidence", "high")
+    if fv_log:
+        passed = fv_log.event == "file_validity_passed"
+        code = (fv_log.detail or {}).get("rejection_code")
         stages.append(
             PipelineStage(
-                stage="OCR",
-                at=ocr_log.created_at,
-                detail=f"Layout read · {conf} confidence",
-                state="done",
-            )
-        )
-
-    if quality_log:
-        passed = quality_log.event == "image_quality_gate_passed"
-        detail = quality_log.detail or {}
-        text_len = detail.get("text_length")
-        stages.append(
-            PipelineStage(
-                stage="Image quality",
-                at=quality_log.created_at,
+                stage="File validity",
+                at=fv_log.created_at,
                 detail=(
-                    f"OCR readable · {text_len} chars"
+                    "Type/size/corruption checks passed"
                     if passed
-                    else "Rescan required — poor image or sparse OCR"
+                    else f"Rejected · {code or 'file_invalid'}"
                 ),
                 state="done" if passed else "fail",
             )
         )
 
-    if classify_log:
-        detail = classify_log.detail or {}
-        dt = detail.get("llm_suggested_dt") or "—"
-        conf = detail.get("llm_confidence")
+    if vu_log:
+        passed = vu_log.event == "vision_understand_passed"
+        conf = (vu_log.detail or {}).get("confidence")
         conf_text = f"{int(float(conf) * 100)}%" if conf is not None else "—"
         stages.append(
             PipelineStage(
-                stage="Classified",
-                at=classify_log.created_at,
-                detail=f"LLM · {dt} · {conf_text}",
+                stage="Vision understand",
+                at=vu_log.created_at,
+                detail=(
+                    f"Can understand · {conf_text}"
+                    if passed
+                    else f"Cannot understand · legacy OCR · {conf_text}"
+                ),
                 state="done",
             )
         )
 
-    if resolved and (gate_fail is None or _is_after(resolved, gate_fail)):
-        resolved_detail = resolved.detail if isinstance(resolved.detail, dict) else {}
-        dt = str(resolved_detail.get("confirmed_dt") or "—")
-        stages.append(
-            PipelineStage(
-                stage="Gate",
-                at=resolved.created_at,
-                detail=f"Human confirmed · {dt}",
-                state="done",
+    # --- Understood branch: header → bundle → vault (no legacy IQ/OCR/classify) ---
+    if vision_can:
+        if vh_log and _on_current_branch(vh_log):
+            passed = vh_log.event == "vision_header_extracted"
+            heading = (vh_log.detail or {}).get("document_heading") or "—"
+            stages.append(
+                PipelineStage(
+                    stage="Vision header",
+                    at=vh_log.created_at,
+                    detail=(
+                        f"{heading} · extracted"
+                        if passed
+                        else f"Header extract failed · {(vh_log.detail or {}).get('fail_reason') or 'error'}"
+                    ),
+                    state="done" if passed else "fail",
+                )
             )
-        )
-    elif gate_log:
-        passed = gate_log.event == "classification_gate_passed"
-        detail = gate_log.detail or {}
-        conf = detail.get("llm_confidence") or detail.get("confirmed_confidence")
-        conf_text = f"{int(float(conf) * 100)}%" if conf is not None else "—"
-        stages.append(
-            PipelineStage(
-                stage="Gate",
-                at=gate_log.created_at,
-                detail=(
-                    f"Auto-route · {conf_text}"
-                    if passed
-                    else "Awaiting human classification"
-                ),
-                state="done" if passed else "fail",
+        elif vision_pending and _on_current_branch(vision_pending):
+            stages.append(
+                PipelineStage(
+                    stage="Vision header",
+                    at=vision_pending.created_at,
+                    detail="Header extract pending",
+                    state="pending",
+                )
             )
-        )
+
+        bundle_linked = _latest_log(logs, "vision_bundle_linked")
+        bundle_standalone = _latest_log(logs, "vision_bundle_standalone")
+        if bundle_linked and bundle_standalone:
+            bundle_log = (
+                bundle_linked
+                if _is_after(bundle_linked, bundle_standalone)
+                else bundle_standalone
+            )
+        else:
+            bundle_log = bundle_linked or bundle_standalone
+        if bundle_log and _on_current_branch(bundle_log):
+            detail = bundle_log.detail if isinstance(bundle_log.detail, dict) else {}
+            if bundle_log.event == "vision_bundle_linked":
+                kind = detail.get("vision_bundle_kind") or "key"
+                key = detail.get("vision_bundle_key") or "—"
+                bundle_detail = f"Bundled · {kind} · {key}"
+            else:
+                bundle_detail = "Standalone · no linkage key"
+            stages.append(
+                PipelineStage(
+                    stage="Bundle",
+                    at=bundle_log.created_at,
+                    detail=bundle_detail,
+                    state="done",
+                )
+            )
+
+        vault_ok = _latest_log(logs, "blob_relocated")
+        vault_skip = _latest_log(logs, "vault_layout_sync_skipped")
+        if vault_ok and vault_skip:
+            vault_log = vault_ok if _is_after(vault_ok, vault_skip) else vault_skip
+        else:
+            vault_log = vault_ok or vault_skip
+        if vault_log and _on_current_branch(vault_log):
+            detail = vault_log.detail if isinstance(vault_log.detail, dict) else {}
+            book = detail.get("book") or detail.get("route_target") or "Vault"
+            if vault_log.event == "blob_relocated":
+                vault_detail = f"Stored · {book}"
+                vault_state: StageState = "done"
+            else:
+                vault_detail = f"Vault sync skipped · {detail.get('reason') or 'noop'}"
+                vault_state = "pending"
+            stages.append(
+                PipelineStage(
+                    stage="Vault",
+                    at=vault_log.created_at,
+                    detail=vault_detail,
+                    state=vault_state,
+                )
+            )
+        elif vision_pending and _on_current_branch(vision_pending):
+            path = ""
+            if isinstance(vision_pending.detail, dict):
+                path = str(vision_pending.detail.get("path") or "")
+            stages.append(
+                PipelineStage(
+                    stage="Vault",
+                    at=vision_pending.created_at,
+                    detail="Stored in vault" if path else "Vault path pending",
+                    state="done" if path else "pending",
+                )
+            )
+        return stages
+
+    # --- Not-understood (or pre-understand) branch: legacy OCR stack ---
+    if vision_cannot or vu_log is None:
+        if iq_log and _on_current_branch(iq_log):
+            passed = iq_log.event == "image_quality_passed"
+            sev = (iq_log.detail or {}).get("severity") or ("pass" if passed else "severe")
+            stages.append(
+                PipelineStage(
+                    stage="Image quality",
+                    at=iq_log.created_at,
+                    detail=f"Visual fitness · {sev}",
+                    state="done" if passed else "fail",
+                )
+            )
+
+        if layout_log and _on_current_branch(layout_log):
+            mode = (layout_log.detail or {}).get("ocr_mode") or "standard_di"
+            stages.append(
+                PipelineStage(
+                    stage="Layout readiness",
+                    at=layout_log.created_at,
+                    detail=f"OCR route · {mode}",
+                    state="done",
+                )
+            )
+
+        if ocr_log and _on_current_branch(ocr_log):
+            conf = (ocr_log.detail or {}).get("confidence", "high")
+            stages.append(
+                PipelineStage(
+                    stage="OCR",
+                    at=ocr_log.created_at,
+                    detail=f"Layout read · {conf} confidence",
+                    state="done",
+                )
+            )
+
+        if quality_log and _on_current_branch(quality_log):
+            passed = quality_log.event in {
+                "ocr_quality_confirm_passed",
+                "image_quality_gate_passed",
+            }
+            detail = quality_log.detail or {}
+            text_len = detail.get("text_length")
+            stages.append(
+                PipelineStage(
+                    stage="OCR quality",
+                    at=quality_log.created_at,
+                    detail=(
+                        f"OCR readable · {text_len} chars"
+                        if passed
+                        else "Rescan required — poor image or sparse OCR"
+                    ),
+                    state="done" if passed else "fail",
+                )
+            )
+
+        if classify_log and _on_current_branch(classify_log):
+            detail = classify_log.detail or {}
+            dt = detail.get("llm_suggested_dt") or "—"
+            conf = detail.get("llm_confidence")
+            conf_text = f"{int(float(conf) * 100)}%" if conf is not None else "—"
+            stages.append(
+                PipelineStage(
+                    stage="Classified",
+                    at=classify_log.created_at,
+                    detail=f"LLM · {dt} · {conf_text}",
+                    state="done",
+                )
+            )
+
+        if resolved and _on_current_branch(resolved) and (
+            gate_fail is None or _is_after(resolved, gate_fail)
+        ):
+            resolved_detail = resolved.detail if isinstance(resolved.detail, dict) else {}
+            dt = str(resolved_detail.get("confirmed_dt") or "—")
+            stages.append(
+                PipelineStage(
+                    stage="Gate",
+                    at=resolved.created_at,
+                    detail=f"Human confirmed · {dt}",
+                    state="done",
+                )
+            )
+        elif gate_log and _on_current_branch(gate_log):
+            passed = gate_log.event == "classification_gate_passed"
+            detail = gate_log.detail or {}
+            conf = detail.get("llm_confidence") or detail.get("confirmed_confidence")
+            conf_text = f"{int(float(conf) * 100)}%" if conf is not None else "—"
+            stages.append(
+                PipelineStage(
+                    stage="Gate",
+                    at=gate_log.created_at,
+                    detail=(
+                        f"Auto-route · {conf_text}"
+                        if passed
+                        else "Awaiting human classification"
+                    ),
+                    state="done" if passed else "fail",
+                )
+            )
 
     return stages
+
+
+def _vision_path_active(logs: list[AuditLog]) -> bool:
+    """True when the latest understand result is can-understand (vision-native hold path)."""
+    vu_pass = _latest_log(logs, "vision_understand_passed")
+    vu_fail = _latest_log(logs, "vision_understand_failed")
+    if vu_pass and vu_fail:
+        return _is_after(vu_pass, vu_fail)
+    return vu_pass is not None
+
+
+def resolve_pipeline_active_path(logs: list[AuditLog]) -> PipelineActivePath:
+    """Which Processing sub-tab should be selected by default."""
+    vu_pass = _latest_log(logs, "vision_understand_passed")
+    vu_fail = _latest_log(logs, "vision_understand_failed")
+    if vu_pass and vu_fail:
+        return "understood" if _is_after(vu_pass, vu_fail) else "not_understood"
+    if vu_pass is not None:
+        return "understood"
+    if vu_fail is not None:
+        return "not_understood"
+    return "unknown"
+
+
+def filter_pipeline_stages_for_path(
+    steps: list[PipelineStage],
+    path: PipelineActivePath | Literal["understood", "not_understood"],
+) -> list[PipelineStage]:
+    """Keep only stages that belong to the Understood or Not understood audit tab."""
+    if path == "understood":
+        allowed = UNDERSTOOD_AUDIT_STAGES
+    elif path == "not_understood":
+        allowed = NOT_UNDERSTOOD_AUDIT_STAGES
+    else:
+        return list(steps)
+    return [step for step in steps if step.stage in allowed]
 
 
 def _gl_posting_applicable(inv: Invoice) -> bool:
@@ -331,11 +599,27 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         and parsed_log.event != "parsing_failed"
     )
 
+    vision_hold = False
+    if _vision_path_active(logs):
+        vision_pending_log = _latest_log(logs, "vision_path_pending")
+        vu_pass = _latest_log(logs, "vision_understand_passed")
+        if (
+            vision_pending_log
+            and vu_pass
+            and _is_after(vision_pending_log, vu_pass)
+            and (inv.evaluation_status or "").strip().lower()
+            in {"awaiting_classification", "vision_vaulted", "vision_header_review"}
+        ):
+            vision_hold = True
+
     validation_text, validation_state = _validation_detail(inv, logs)
     if awaiting_reparse:
         validation_text, validation_state = "Pending", "pending"
+    if vision_hold:
+        # Understood path stops at bundle + vault — no tax/totals validation.
+        validation_text, validation_state = "Not run · understood path", "skipped"
     validated_at = validated_log.created_at if validated_log else None
-    if validated_at is None and _stage_index(inv.status) >= 2 and not awaiting_reparse:
+    if validated_at is None and _stage_index(inv.status) >= 2 and not awaiting_reparse and not vision_hold:
         validated_at = parsed_at or inv.created_at
     if processing_finished:
         if terminal_log and terminal_log.event == "vault_stored":
@@ -352,17 +636,20 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         validated_at = validated_at or (terminal_log.created_at if terminal_log else inv.created_at)
 
     gl_applicable = _gl_posting_applicable(inv)
-    if not gl_applicable:
+    if vision_hold:
+        account = "Not run · understood path"
+    elif not gl_applicable:
         account = "Not posted — reference document"
     else:
         account = inv.account_name or ("Pending" if awaiting_reparse else "Suspense Account")
     mapped_at = mapped_log.created_at if mapped_log else None
-    if mapped_at is None and gl_applicable and (
+    if mapped_at is None and gl_applicable and not vision_hold and (
         _stage_index(inv.status) >= 3 and not awaiting_reparse or processing_finished
     ):
         mapped_at = validated_at or inv.created_at
     mapped_suspense = (
         gl_applicable
+        and not vision_hold
         and not awaiting_reparse
         and inv.account_name
         and "suspense" in inv.account_name.lower()
@@ -371,7 +658,10 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     approved_at: datetime | None = None
     approved_detail = "Pending policy"
     approved_state: StageState = "pending"
-    if approved_log:
+    if vision_hold:
+        approved_detail = "Not run · understood path"
+        approved_state = "skipped"
+    elif approved_log:
         approved_at = approved_log.created_at
         actor = _actor_name(approved_log.detail)
         if inv.status == InvoiceStatus.PROCESSED:
@@ -410,7 +700,10 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     published_detail = "Pending"
     published_state: StageState = "pending"
     doc_ref = display_document_ref(inv)
-    if is_published_from_audit_logs(logs):
+    if vision_hold:
+        published_detail = "Not run · understood path (vault only)"
+        published_state = "skipped"
+    elif is_published_from_audit_logs(logs):
         published_log = _latest_log(logs, "invoice_published_to_ledger")
         published_at = published_log.created_at if published_log else None
         actor = _actor_name(published_log.detail if published_log else None)
@@ -485,9 +778,11 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
         "fail"
         if parsed_log and parsed_log.event == "parsing_failed"
         else "done"
-        if processing_finished
+        if vision_hold
         else "pending"
         if awaiting_reparse
+        else "done"
+        if processing_finished
         else "done"
         if _stage_index(inv.status) >= 1
         else "pending"
@@ -495,6 +790,8 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
     parsed_detail = (
         "Could not read document"
         if parsed_log and parsed_log.event == "parsing_failed"
+        else "Vision path · bundled and vaulted"
+        if vision_hold
         else "Queued for re-parse"
         if awaiting_reparse
         else f"OCR complete · {parse_conf}% confidence"
@@ -506,6 +803,8 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
 
     mapped_state: StageState = (
         "skipped"
+        if vision_hold
+        else "skipped"
         if not gl_applicable and processing_finished
         else "fail"
         if mapped_suspense and inv.status == InvoiceStatus.EXCEPTION and not processing_finished
@@ -521,38 +820,68 @@ def build_pipeline_stages(inv: Invoice, logs: list[AuditLog]) -> list[PipelineSt
             detail=f"{source} · {received_via}",
             state="done",
         ),
-        *_early_pipeline_stages(inv, logs),
-        PipelineStage(
-            stage="Parsed",
-            at=parsed_at,
-            detail=parsed_detail,
-            state=parsed_state,
-        ),
-        PipelineStage(
-            stage="Validated",
-            at=validated_at,
-            detail=f"Tax & totals checked · {validation_text}",
-            state=validation_state,
-        ),
-        PipelineStage(
-            stage="Mapped",
-            at=mapped_at,
-            detail=f"Rule book applied · {account}",
-            state=mapped_state,
-        ),
-        PipelineStage(
-            stage="Approved",
-            at=approved_at,
-            detail=approved_detail,
-            state=approved_state,
-        ),
-        PipelineStage(
-            stage="Posted",
-            at=published_at,
-            detail=f"Ledger · {published_detail}",
-            state=published_state,
-        ),
     ]
+    # Duplicate check sits between receive and storage on both paths.
+    if inv.status != InvoiceStatus.DUPLICATE_SKIPPED and (
+        _latest_log(logs, "storage_verified") is not None
+        or bool((inv.file_hash or "").strip())
+        or _latest_log(logs, "vision_understand_passed", "vision_understand_failed") is not None
+    ):
+        stages.append(
+            PipelineStage(
+                stage="Duplicate",
+                at=received_at,
+                detail="File hash unique",
+                state="done",
+            )
+        )
+    stages.extend(
+        [
+            *_early_pipeline_stages(inv, logs),
+            PipelineStage(
+                stage="Parsed",
+                at=parsed_at,
+                detail=parsed_detail,
+                state=parsed_state,
+            ),
+            PipelineStage(
+                stage="Validated",
+                at=validated_at,
+                detail=(
+                    validation_text
+                    if vision_hold
+                    else f"Tax & totals checked · {validation_text}"
+                ),
+                state=validation_state,
+            ),
+            PipelineStage(
+                stage="Mapped",
+                at=mapped_at,
+                detail=(
+                    account
+                    if vision_hold
+                    else f"Rule book applied · {account}"
+                ),
+                state=mapped_state,
+            ),
+            PipelineStage(
+                stage="Approved",
+                at=approved_at,
+                detail=approved_detail,
+                state=approved_state,
+            ),
+            PipelineStage(
+                stage="Posted",
+                at=published_at,
+                detail=(
+                    published_detail
+                    if vision_hold
+                    else f"Ledger · {published_detail}"
+                ),
+                state=published_state,
+            ),
+        ]
+    )
 
     dup_log = _latest_log(logs, "duplicate_in_progress", "duplicate_skipped")
     if dup_log is not None:
@@ -601,7 +930,19 @@ def derive_list_stage(inv: Invoice) -> tuple[str, StageState]:
         return "Mapped", "pending"
     if status == InvoiceStatus.EXCEPTION:
         eval_status = (inv.evaluation_status or "").strip().lower()
+        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        has_vision_bundle = bool(
+            fields.get("vision_bundle_kind") or fields.get("vision_bundle_key")
+        )
+        if eval_status == "vision_vaulted" or (
+            eval_status == "awaiting_classification" and has_vision_bundle
+        ):
+            # Understood path finished at vault (incl. legacy soft-bundle rows).
+            return "Vaulted", "done"
+        if eval_status == "vision_header_review":
+            return "Header review", "pending"
         if eval_status == "awaiting_classification":
+            # OCR path — classification gate, not vault.
             return "Parsed", "pending"
         return "Validated", "fail"
     if status == InvoiceStatus.PROCESSED:

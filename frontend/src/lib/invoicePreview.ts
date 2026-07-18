@@ -49,6 +49,14 @@ export type DocumentContentProfile = {
   textExcerpt: string | null;
   footer: string;
   emailSender: string | null;
+  /** ISO currency for totals display (vision + OCR). */
+  currency: string | null;
+  /**
+   * Summary empty/status copy:
+   * - vision_header: can-understand path (no OCR body yet)
+   * - ocr: legacy extract path
+   */
+  pipelineKind: "vision_header" | "ocr";
 };
 
 /** Keep in sync with backend HEADER_DEDUP_EXTRACTED_FIELD_KEYS. */
@@ -106,8 +114,38 @@ const INTERNAL_EXTRACTED_KEYS = new Set([
   "perspective",
   "llm_perspective",
   "customer",
+  "canonical_document_type",
+  "currency",
+  "invoice_date",
+  "total",
+  "document_heading",
+  "vision_bundle_kind",
+  "vision_bundle_key",
+  "vision_bundle_custom_field",
+  // Shown explicitly via pushReference above the generic extracted loop.
+  "proforma_invoice_no",
+  "other_reference",
 ]);
 
+/**
+ * Vision can-understand hold: awaiting classification without OCR body.
+ * Summary / Fields should show header fields only — not OCR empty-state copy.
+ * Field keys for Fields tab come from API `document_type_extraction_fields`
+ * (backend vision header contract) — do not hardcode a parallel list here.
+ */
+export function isVisionHeaderPipelineSummary(
+  inv: Pick<Invoice, "evaluation_status" | "document_text">
+): boolean {
+  const status = (inv.evaluation_status ?? "").trim();
+  if (
+    status !== "awaiting_classification" &&
+    status !== "vision_vaulted" &&
+    status !== "vision_header_review"
+  ) {
+    return false;
+  }
+  return !(inv.document_text ?? "").trim();
+}
 /** Party keys rendered via buildPartyBlocks — skip generic extracted_fields loop. */
 const PARTY_REFERENCE_KEYS = new Set([
   "seller_name",
@@ -999,7 +1037,21 @@ export function buildDocumentContentProfile(
     ? scalarIfPresent(inv, "document_heading", absentFields, extractionFieldKeys, summaryMode)
     : scalarIfPresent(inv, "document_heading", absentFields, extractionFieldKeys, summaryMode) ??
       headingFromDocumentText(inv.document_text);
-  const heading = headingRaw || options.documentTypeLabel?.trim() || null;
+  const canonicalType =
+    typeof (inv.extracted_fields ?? {}).canonical_document_type === "string"
+      ? String(inv.extracted_fields?.canonical_document_type).trim()
+      : "";
+  const heading =
+    headingRaw ||
+    canonicalType ||
+    options.documentTypeLabel?.trim() ||
+    null;
+
+  const visionHeaderPath = isVisionHeaderPipelineSummary(inv);
+  const pipelineKind: DocumentContentProfile["pipelineKind"] = visionHeaderPath
+    ? "vision_header"
+    : "ocr";
+  const currencyCode = (inv.currency ?? "").trim().toUpperCase() || null;
 
   const dates: DocumentContentProfile["dates"] = {};
   const issued = scalarIfPresent(inv, "invoice_date", absentFields, extractionFieldKeys, summaryMode);
@@ -1026,6 +1078,34 @@ export function buildDocumentContentProfile(
     extractionFieldKeys,
     summaryMode
   );
+  const proformaNo =
+    typeof (inv.extracted_fields ?? {}).proforma_invoice_no === "string"
+      ? String(inv.extracted_fields?.proforma_invoice_no).trim()
+      : "";
+  if (proformaNo) {
+    pushReference(
+      referenceDetails,
+      "proforma_invoice_no",
+      proformaNo,
+      absentFields,
+      extractionFieldKeys,
+      summaryMode
+    );
+  }
+  const otherRef =
+    typeof (inv.extracted_fields ?? {}).other_reference === "string"
+      ? String(inv.extracted_fields?.other_reference).trim()
+      : "";
+  if (otherRef) {
+    pushReference(
+      referenceDetails,
+      "other_reference",
+      otherRef,
+      absentFields,
+      extractionFieldKeys,
+      summaryMode
+    );
+  }
   pushReference(
     referenceDetails,
     "cost_centre",
@@ -1176,11 +1256,21 @@ export function buildDocumentContentProfile(
     totals,
     bankDetails,
     textExcerpt: null,
-    footer: buildPreviewFooter(inv, options.sourceKind),
+    footer: visionHeaderPath
+      ? `${buildPreviewFooter(inv, options.sourceKind)} · vision header · ${
+          (inv.evaluation_status ?? "").trim() === "vision_header_review"
+            ? "header review"
+            : "vaulted"
+        }`
+      : buildPreviewFooter(inv, options.sourceKind),
     emailSender: inv.email_sender?.trim() || null,
+    currency: currencyCode,
+    pipelineKind,
   };
 
-  const mayShowTextExcerpt = shouldShowDocumentTextExcerpt(
+  const mayShowTextExcerpt =
+    !visionHeaderPath &&
+    shouldShowDocumentTextExcerpt(
     extractionFieldKeys,
     absentFields,
     contentHasFinancialBody(profileSoFar),

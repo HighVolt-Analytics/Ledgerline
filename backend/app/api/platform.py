@@ -25,6 +25,19 @@ from app.schemas.platform import (
     PlatformTenantSummary,
     UpdatePlatformTenantRequest,
 )
+from app.schemas.platform_prompts import (
+    PlatformPromptSummary,
+    PlatformPromptVersionCreate,
+    PlatformPromptVersionItem,
+    PlatformPromptVersionListResponse,
+)
+from app.services.prompt_registry import (
+    activate_version,
+    create_version,
+    get_prompt_detail,
+    list_prompt_summaries,
+    list_versions,
+)
 from app.services.credit_service import (
     get_platform_credit_settings,
     list_credit_ledger,
@@ -347,3 +360,93 @@ async def patch_tenant_billing(
     if not detail:
         raise HTTPException(404, "Tenant not found")
     return ApiEnvelope(data=detail)
+
+
+@router.get("/prompts", response_model=ApiEnvelope[list[PlatformPromptSummary]])
+async def get_platform_prompts(
+    db: AsyncSession = Depends(get_db),
+    _ctx: AuthContext = Depends(require_super_admin),
+) -> ApiEnvelope[list[PlatformPromptSummary]]:
+    items = await list_prompt_summaries(db)
+    return ApiEnvelope(data=[PlatformPromptSummary.model_validate(item) for item in items])
+
+
+@router.get("/prompts/{key}", response_model=ApiEnvelope[PlatformPromptSummary])
+async def get_platform_prompt(
+    key: str,
+    db: AsyncSession = Depends(get_db),
+    _ctx: AuthContext = Depends(require_super_admin),
+) -> ApiEnvelope[PlatformPromptSummary]:
+    detail = await get_prompt_detail(db, key)
+    if detail is None:
+        raise HTTPException(404, "Prompt key not found")
+    return ApiEnvelope(data=PlatformPromptSummary.model_validate(detail))
+
+
+@router.get(
+    "/prompts/{key}/versions",
+    response_model=ApiEnvelope[PlatformPromptVersionListResponse],
+)
+async def get_platform_prompt_versions(
+    key: str,
+    db: AsyncSession = Depends(get_db),
+    _ctx: AuthContext = Depends(require_super_admin),
+) -> ApiEnvelope[PlatformPromptVersionListResponse]:
+    rows = await list_versions(db, key)
+    if rows is None:
+        raise HTTPException(404, "Prompt key not found")
+    return ApiEnvelope(
+        data=PlatformPromptVersionListResponse(
+            items=[PlatformPromptVersionItem.model_validate(row) for row in rows]
+        )
+    )
+
+
+@router.post(
+    "/prompts/{key}/versions",
+    response_model=ApiEnvelope[PlatformPromptSummary],
+)
+async def post_platform_prompt_version(
+    key: str,
+    body: PlatformPromptVersionCreate,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_super_admin),
+) -> ApiEnvelope[PlatformPromptSummary]:
+    try:
+        await create_version(
+            db,
+            key,
+            body=body.body,
+            notes=body.notes,
+            user_id=ctx.user_id,
+        )
+    except KeyError:
+        raise HTTPException(404, "Prompt key not found") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await db.commit()
+    detail = await get_prompt_detail(db, key)
+    assert detail is not None
+    return ApiEnvelope(data=PlatformPromptSummary.model_validate(detail))
+
+
+@router.post(
+    "/prompts/{key}/versions/{version}/activate",
+    response_model=ApiEnvelope[PlatformPromptSummary],
+)
+async def post_activate_platform_prompt_version(
+    key: str,
+    version: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_super_admin),
+) -> ApiEnvelope[PlatformPromptSummary]:
+    try:
+        await activate_version(db, key, version, user_id=ctx.user_id)
+    except KeyError:
+        raise HTTPException(404, "Prompt key not found") from None
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    await db.commit()
+    detail = await get_prompt_detail(db, key)
+    assert detail is not None
+    return ApiEnvelope(data=PlatformPromptSummary.model_validate(detail))

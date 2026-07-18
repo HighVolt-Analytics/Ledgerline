@@ -67,6 +67,7 @@ from app.services.invoice.pipeline_stages import (
     build_pipeline_stages,
     derive_current_stage,
     pipeline_steps_for_api,
+    resolve_pipeline_active_path,
 )
 from app.services.invoice.remap_service import remap_invoices_for_tenant
 from app.services.master_data.vendor_resolver import UNKNOWN_SLUG
@@ -77,11 +78,12 @@ from app.services.classification.document_type_playbook_service import (
 )
 from app.services.extraction.field_extraction_confidence import compute_extraction_field_confidence
 from app.services.ingest.ingest_fanout_service import DuplicateUploadError, ingest_upload_file
+from app.services.ingest.canonical_intake_service import IntakeValidationError
 from app.services.credit_service import InsufficientCreditsError, PlanFeatureBlockedError
 from app.services.purchase.purchase_dossier_service import build_purchase_dossier
 from app.tenant_child_tables import journal_entries_for_invoice, line_items_for_invoice
 from app.tenant_scoped import get_for_tenant
-from app.workers.tasks import process_invoice_background, process_invoices_batch_background
+from app.workers.tasks import enqueue_invoice_pipelines
 from app.services.invoice.invoice_access_service import (
     MAX_UPLOAD_BYTES as _MAX_UPLOAD_BYTES,
     get_invoice_for_tenant,
@@ -542,8 +544,10 @@ async def process_invoices_batch(
         if invoice_id in found and found[invoice_id] in _PROCESS_BATCH_STATUSES
     ]
     if ordered:
-        background_tasks.add_task(
-            process_invoices_batch_background, ordered, tenant_id=ctx.tenant_id
+        enqueue_invoice_pipelines(
+            ordered,
+            tenant_id=ctx.tenant_id,
+            background_tasks=background_tasks,
         )
     return ApiEnvelope(
         data={
@@ -563,13 +567,10 @@ async def _queue_upload_processing(
 ) -> None:
     if defer_processing or not invoice_ids:
         return
-    if len(invoice_ids) == 1:
-        background_tasks.add_task(
-            process_invoice_background, invoice_ids[0], tenant_id=tenant_id
-        )
-        return
-    background_tasks.add_task(
-        process_invoices_batch_background, invoice_ids, tenant_id=tenant_id
+    enqueue_invoice_pipelines(
+        invoice_ids,
+        tenant_id=tenant_id,
+        background_tasks=background_tasks,
     )
 
 
@@ -613,6 +614,8 @@ async def upload_invoice(
             actor_name=actor_name,
             actor_email=actor_email,
         )
+    except IntakeValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except DuplicateUploadError:
         raise HTTPException(409, "Duplicate file already uploaded") from None
     except InsufficientCreditsError as exc:
@@ -800,7 +803,11 @@ async def reprocess_invoice(
     )
     # Commit before background task so process_invoice sees pending (not processed/rejected).
     await db.commit()
-    background_tasks.add_task(process_invoice_background, inv.id, tenant_id=ctx.tenant_id)
+    enqueue_invoice_pipelines(
+        [inv.id],
+        tenant_id=ctx.tenant_id,
+        background_tasks=background_tasks,
+    )
     return ApiEnvelope(
         data=await _response_for_invoice(
             db, inv, tenant_id=ctx.tenant_id, verify_stored_file=True
@@ -814,7 +821,7 @@ async def invoice_pipeline(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[PipelineStepsResponse]:
-    """Six-step pipeline audit trail for one invoice."""
+    """Pipeline audit trail for one invoice (Understood / Not understood paths)."""
     inv = await _get_invoice_for_tenant(db, invoice_id, ctx.tenant_id)
     logs = (
         await db.execute(
@@ -826,9 +833,14 @@ async def invoice_pipeline(
             .order_by(AuditLog.created_at.desc())
         )
     ).scalars().all()
-    steps = build_pipeline_stages(inv, list(logs))
-    return ApiEnvelope(data=PipelineStepsResponse(steps=pipeline_steps_for_api(steps)))
-
+    log_list = list(logs)
+    steps = build_pipeline_stages(inv, log_list)
+    return ApiEnvelope(
+        data=PipelineStepsResponse(
+            steps=pipeline_steps_for_api(steps),
+            active_path=resolve_pipeline_active_path(log_list),
+        )
+    )
 
 @router.post("/{invoice_id:int}/classification/resolve", response_model=ApiEnvelope[InvoiceResponse])
 async def resolve_classification(
@@ -908,10 +920,10 @@ async def resolve_classification(
             clear_overrides=False,
         )
         await db.commit()
-        background_tasks.add_task(
-            process_invoice_background,
-            invoice_id,
+        enqueue_invoice_pipelines(
+            [invoice_id],
             tenant_id=ctx.tenant_id,
+            background_tasks=background_tasks,
         )
     else:
         await db.commit()

@@ -112,12 +112,26 @@ def tenant_today(tenant: Tenant | None) -> date:
     return datetime.now(ZoneInfo(tenant_timezone(tenant))).date()
 
 
+def tenant_custom_bundle_field_key(tenant: Tenant | None) -> str | None:
+    """Optional extracted_fields key used as last-resort vision bundle linkage.
+
+    Empty / unset → step skipped. Typical value: ``other_reference``.
+    """
+    settings = _settings(tenant)
+    raw = settings.get("custom_bundle_field_key")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
 def institution_settings_view(tenant: Tenant | None) -> dict[str, str]:
+    custom = tenant_custom_bundle_field_key(tenant)
     return {
         "country": tenant_country(tenant),
         "timezone": tenant_timezone(tenant),
         "locale": tenant_locale(tenant),
         "currency": tenant_currency(tenant),
+        "custom_bundle_field_key": custom or "",
     }
 
 
@@ -167,6 +181,7 @@ def merge_institution_settings(
     country: str | None = None,
     timezone: str | None = None,
     locale: str | None = None,
+    custom_bundle_field_key: str | None = None,
 ) -> dict[str, Any]:
     """Apply institution profile updates to settings_json."""
     out: dict[str, Any] = dict(current or {})
@@ -186,6 +201,12 @@ def merge_institution_settings(
         out["timezone"] = _validate_timezone(timezone.strip())
     if locale is not None:
         out["locale"] = locale.strip()
+    if custom_bundle_field_key is not None:
+        token = custom_bundle_field_key.strip()
+        if token:
+            out["custom_bundle_field_key"] = token
+        else:
+            out.pop("custom_bundle_field_key", None)
 
     return out
 

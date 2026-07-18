@@ -254,6 +254,169 @@ async def test_pipeline_classify_passes_after_human_resolve() -> None:
     assert doc_type.state == "pass"
 
 
+def test_pipeline_understood_hold_skips_validate_not_routing_fail() -> None:
+    """Vision hold must not surface Failed at stage Validate / ROUTING_REVIEW."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        currency="AUD",
+        extracted_fields={
+            "vision_bundle_kind": "invoice_no",
+            "vision_bundle_key": "INV-1",
+        },
+    )
+    logs = [
+        _log_at("invoice_uploaded", 1, 0),
+        _log_at("storage_verified", 1, 1),
+        _log_at("file_validity_passed", 1, 2),
+        _log_at("vision_understand_passed", 1, 3, confidence=0.9),
+        _log_at("vision_header_extracted", 1, 4, document_heading="TAX INVOICE"),
+        _log_at(
+            "vision_bundle_linked",
+            1,
+            5,
+            vision_bundle_kind="invoice_no",
+            vision_bundle_key="INV-1",
+        ),
+        _log_at("vision_path_pending", 1, 6, reason="bundled_and_vaulted"),
+        # Stale event from earlier builds — must not fail Validate.
+        _log_at(
+            "routing_review_required",
+            1,
+            7,
+            gate="vision_header_extract",
+            review_reasons=["vision_path_pending"],
+        ),
+    ]
+    pipeline = build_dossier_pipeline(inv, logs)
+    validate = next(s for s in pipeline if s.stage_id == "validate")
+    assert validate.state == "skipped"
+    assert "understood path" in (validate.detail or "").lower()
+    assert validate.exception_code is None
+    fail = first_pipeline_failure(pipeline)
+    assert fail is None or fail.stage_id != "validate"
+
+
+def test_understood_path_skips_llm_classify_not_blocked() -> None:
+    """Understood hold must not surface Failed at LLM classify."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        currency="AUD",
+        document_heading="AIR WAYBILL",
+        extracted_fields={
+            "canonical_document_type": "Air Waybill",
+            "vision_bundle_kind": "none",
+        },
+        raw_file_path="/tmp/awb.pdf",
+    )
+    logs = [
+        _log_at("invoice_uploaded", 1, 0),
+        _log_at("storage_verified", 1, 1),
+        _log_at("file_validity_passed", 1, 2),
+        _log_at("vision_understand_passed", 1, 3, confidence=0.9),
+        _log_at("vision_header_extracted", 1, 4, document_heading="AIR WAYBILL"),
+        _log_at("vision_bundle_standalone", 1, 5, reason="no_linkage_key"),
+        _log_at("blob_relocated", 1, 6, book="Air Waybill"),
+        _log_at("vision_path_pending", 1, 7, reason="bundled_and_vaulted"),
+    ]
+    from app.services.dossier.dossier_pipeline_service import (
+        PIPELINE_AUDIT_EVENTS,
+        build_understood_dossier_pipeline,
+    )
+
+    for event in (
+        "vision_understand_passed",
+        "vision_header_extracted",
+        "vision_bundle_standalone",
+        "blob_relocated",
+        "vision_path_pending",
+    ):
+        assert event in PIPELINE_AUDIT_EVENTS
+
+    pipeline = build_understood_dossier_pipeline(inv, logs)
+    assert [s.stage_id for s in pipeline] == [
+        "ingest",
+        "duplicate",
+        "storage",
+        "file_validity",
+        "vision_understand",
+        "extract",
+        "bundle",
+        "archive",
+    ]
+    assert all(s.state == "pass" for s in pipeline)
+    assert first_pipeline_failure(pipeline) is None
+    assert first_pipeline_bottleneck(pipeline) is None
+
+    legacy = build_dossier_pipeline(inv, logs)
+    llm = next(s for s in legacy if s.stage_id == "llm_classify")
+    assert llm.state == "skipped"
+    validate = next(s for s in legacy if s.stage_id == "validate")
+    assert validate.state == "skipped"
+
+
+def test_understood_pipeline_passes_from_invoice_snapshot_without_vision_logs() -> None:
+    """If vision audit rows were filtered out, invoice snapshot still marks path complete."""
+    from app.services.dossier.dossier_pipeline_service import build_understood_dossier_pipeline
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        currency="AUD",
+        document_heading="HOUSE AIR WAYBILL",
+        raw_file_path="/tmp/awb.pdf",
+        extracted_fields={
+            "canonical_document_type": "Air Waybill",
+            "vision_bundle_kind": "none",
+        },
+    )
+    logs = [
+        _log_at("invoice_uploaded", 1, 0),
+        _log_at("storage_verified", 1, 1),
+        _log_at("file_validity_passed", 1, 2),
+    ]
+    pipeline = build_understood_dossier_pipeline(inv, logs)
+    by_id = {s.stage_id: s for s in pipeline}
+    assert by_id["vision_understand"].state == "pass"
+    assert by_id["extract"].state == "pass"
+    assert by_id["bundle"].state == "pass"
+    assert by_id["archive"].state == "pass"
+
+def test_understood_path_outcome_not_blocked() -> None:
+    from app.services.dossier.dossier_service import _derive_outcome
+
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="awaiting_classification",
+        currency="AUD",
+        raw_file_path="/tmp/awb.pdf",
+        extracted_fields={"vision_bundle_kind": "none", "canonical_document_type": "Air Waybill"},
+    )
+    logs = [
+        _log_at("vision_understand_passed", 1, 1, confidence=0.9),
+        _log_at("vision_path_pending", 1, 2, reason="bundled_and_vaulted"),
+    ]
+    outcome, banner = _derive_outcome(
+        inv,
+        logs,
+        pipeline_fail=False,
+        published=False,
+        payment=None,
+        fail_detail=None,
+    )
+    assert outcome == "vaulted"
+    assert "Understood path" in banner
+
+
 @pytest.mark.asyncio
 async def test_pipeline_gate_passes_when_resolve_supersedes_stale_gate_fail() -> None:
     inv = Invoice(

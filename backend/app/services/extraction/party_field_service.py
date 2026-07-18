@@ -8,6 +8,7 @@ from typing import Any
 
 from app.jurisdiction.packs import JurisdictionPack, jurisdiction_pack_for_country
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
+from app.services.prompt_registry import resolve_system_prompt_text
 from app.services.tenant.tenant_org_context import OrgContext, infer_perspective
 from app.tenant_settings import DEFAULT_COUNTRY
 from app.utils.tax_id_validator import is_acceptable_tax_id
@@ -23,17 +24,10 @@ _ADDRESS_BLEED_MARKERS = re.compile(
 def party_llm_rules(pack: JurisdictionPack | None = None) -> str:
     """Jurisdiction-aware party prompt fragment."""
     p = pack or jurisdiction_pack_for_country(DEFAULT_COUNTRY)
-    return (
-        "- seller and buyer are objects with name, tax_id, and address "
-        "(multi-line address as one string).\n"
-        "- Copy tax_id and address verbatim from OCR; leave empty if absent.\n"
-        f"- Never invent tax IDs or {p.llm_tax_id_examples}.\n"
-        f"- tax_id is jurisdiction-aware for this tenant ({p.tax_id_label}); also accept "
-        "ABN, GSTIN, VAT, BIN, TIN, EIN, Company Reg, etc. when printed on the document.\n"
-        "- On commercial/export invoices: seller = issuer/exporter in header; "
-        "buyer = consignee/applicant/bill-to.\n"
-        "- Put buyer bill-to address in buyer.address; do not include HS codes, LC refs, "
-        "or customs metadata in addresses."
+    return resolve_system_prompt_text(
+        "llm.party_rules",
+        tax_id_label=p.tax_id_label,
+        llm_tax_id_examples=p.llm_tax_id_examples,
     )
 
 

@@ -3,10 +3,59 @@ import { isTransPosting } from "@/lib/documentTypeKlass";
 
 type PurchaseKind = "po" | "grn" | "invoice";
 
+type InvoiceTypeFields = {
+  document_type_code?: string | null;
+  purchase_document_type?: string | null;
+  document_heading?: string | null;
+  extracted_fields?: Record<string, unknown> | null;
+  evaluation_status?: string | null;
+  invoice_no?: string | null;
+  po_reference?: string | null;
+  total?: string | number | null;
+  subtotal?: string | number | null;
+};
+
 function normalizePurchaseKind(value: string | null | undefined): PurchaseKind | null {
   const key = (value ?? "").trim().toLowerCase();
   if (key === "po" || key === "grn" || key === "invoice") return key;
   return null;
+}
+
+/** Vision understood path hold — DT not catalogue-mapped; show AI / printed name. */
+export function isVisionUnderstoodHold(
+  inv: Pick<InvoiceTypeFields, "evaluation_status"> | null | undefined
+): boolean {
+  const status = (inv?.evaluation_status ?? "").trim();
+  return (
+    status === "vision_vaulted" ||
+    status === "vision_header_review" ||
+    status === "awaiting_classification"
+  );
+}
+
+/** @deprecated Prefer isVisionUnderstoodHold — kept for existing call sites. */
+export function isVisionAwaitingClassification(
+  inv: Pick<InvoiceTypeFields, "evaluation_status"> | null | undefined
+): boolean {
+  return isVisionUnderstoodHold(inv);
+}
+
+/** AI / printed document name from vision (or later extract). */
+export function visionDocumentTypeLabel(inv: InvoiceTypeFields): string {
+  const canonical = inv.extracted_fields?.canonical_document_type;
+  if (typeof canonical === "string" && canonical.trim()) return canonical.trim();
+  const fromFields = inv.extracted_fields?.document_heading;
+  const heading =
+    (inv.document_heading ?? "").trim() ||
+    (typeof fromFields === "string" ? fromFields.trim() : "");
+  return heading;
+}
+
+/** Stored catalogue code only — never invent from purchase_document_type. */
+export function storedDocumentTypeCode(
+  inv: Pick<InvoiceTypeFields, "document_type_code"> | null | undefined
+): string {
+  return (inv?.document_type_code ?? "").trim().toUpperCase();
 }
 
 export function resolveDocumentTypeForPurchaseKind(
@@ -38,15 +87,35 @@ export function resolveDocumentTypeForPurchaseKind(
   return null;
 }
 
+/**
+ * Catalogue DT code for an invoice.
+ *
+ * - Vision hold (`awaiting_classification`): never invent — empty until user/confirm maps DT.
+ * - Prefer stored `document_type_code` when present.
+ * - Purchase-kind invent is only for legacy rows that already have an evaluation outcome
+ *   (not early Received / mid-pipeline), so Upload chips do not show "Non-PO vendor invoice"
+ *   before classification.
+ */
 export function effectiveDocumentTypeCode(
-  inv: {
-    document_type_code?: string | null;
-    purchase_document_type?: string | null;
-  },
+  inv: Pick<
+    InvoiceTypeFields,
+    "document_type_code" | "purchase_document_type" | "evaluation_status"
+  >,
   documentTypes: DocumentTypeDefinition[]
 ): string {
-  const stored = (inv.document_type_code ?? "").trim().toUpperCase();
+  const stored = storedDocumentTypeCode(inv);
   if (stored) return stored;
+
+  if (isVisionAwaitingClassification(inv)) {
+    return "";
+  }
+
+  // Early pipeline: purchase_document_type may be set at ingest, but no DT yet.
+  const evalStatus = (inv.evaluation_status ?? "").trim();
+  if (!evalStatus) {
+    return "";
+  }
+
   const kind = normalizePurchaseKind(inv.purchase_document_type);
   if (!kind) return "";
   return resolveDocumentTypeForPurchaseKind(kind, documentTypes)?.code.toUpperCase() ?? "";
@@ -95,25 +164,33 @@ export function documentTypeChipDisplayLabel(input: {
   return "Unclassified";
 }
 
-/** List/table label — prefers classified DT document name (title), same as the detail drawer. */
+/**
+ * List/table document-type label — pipeline-aware:
+ * - Vision hold / vision header present: AI canonical or printed heading (matches vault)
+ * - Classified: catalogue title from stored document_type_code only
+ * - Never invent Rule Book titles from purchase_document_type alone
+ */
 export function invoiceDocumentTypeDisplayLabel(
-  inv: {
-    document_type_code?: string | null;
-    purchase_document_type?: string | null;
-    invoice_no?: string | null;
-    po_reference?: string | null;
-    total?: string | number | null;
-    subtotal?: string | number | null;
-  },
+  inv: InvoiceTypeFields,
   documentTypes?: DocumentTypeDefinition[] | null
 ): string {
-  if (documentTypes?.length) {
-    const code = effectiveDocumentTypeCode(inv, documentTypes);
-    const label = code ? documentTypeLabelForCode(documentTypes, code) : null;
+  const vision = visionDocumentTypeLabel(inv);
+
+  // Vision path hold: always prefer AI / printed name over catalogue invent.
+  if (isVisionAwaitingClassification(inv)) {
+    if (vision) return vision;
+  }
+
+  const stored = storedDocumentTypeCode(inv);
+  if (stored && documentTypes?.length) {
+    const label = documentTypeLabelForCode(documentTypes, stored);
     if (label) return label;
   }
-  const stored = (inv.document_type_code ?? "").trim();
   if (stored) return stored;
+
+  // Header extract done but DT not confirmed yet (or eval not set): show vision name.
+  if (vision) return vision;
+
   const purchaseType = inv.purchase_document_type?.toLowerCase();
   if (purchaseType === "po") return "Purchase Order";
   if (purchaseType === "grn") return "GRN";
@@ -131,5 +208,6 @@ export function invoiceDocumentTypeDisplayLabel(
     const n = parseFloat(String(amount));
     if (!Number.isNaN(n) && n < 0) return "Credit Note";
   }
-  return "Invoice";
+  if (purchaseType === "invoice") return "Invoice";
+  return "Unclassified";
 }

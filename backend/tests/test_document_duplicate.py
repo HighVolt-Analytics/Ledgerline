@@ -47,7 +47,12 @@ def _clear_config_cache() -> None:
     clear_classification_config_cache()
 
 
-def _matching_capture_email(data: bytes, *, message_id: str = "msg-dup") -> RawEmail:
+def _matching_capture_email(
+    data: bytes,
+    *,
+    message_id: str = "msg-dup",
+    poll_folder: str = "inbox",
+) -> RawEmail:
     """Matches ec-1 in tests/fixtures/rule_book_demo.json."""
 
     return RawEmail(
@@ -62,6 +67,7 @@ def _matching_capture_email(data: bytes, *, message_id: str = "msg-dup") -> RawE
                 data=data,
             )
         ],
+        poll_folder=poll_folder,
     )
 
 
@@ -151,6 +157,56 @@ async def test_email_duplicate_preserves_processed_invoice(
     shadow = next(r for r in rows if r.id != processed.id)
     assert shadow.status == InvoiceStatus.DUPLICATE_SKIPPED
     assert shadow.file_hash is None
+
+
+@pytest.mark.asyncio
+async def test_email_exceptions_repoll_does_not_create_shadow(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_org_rule_book,
+) -> None:
+    """Exceptions-folder re-poll of a processed file must not add DUPLICATE_SKIPPED rows."""
+    from app.utils.hashing import compute_sha256_bytes
+
+    pdf_bytes = b"%PDF-1.4 exceptions-repoll"
+    file_hash = compute_sha256_bytes(pdf_bytes)
+
+    processed = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Vendor Co",
+        invoice_no="INV-101",
+        status=InvoiceStatus.PROCESSED,
+        file_hash=file_hash,
+        currency="AUD",
+        total=Decimal("100.00"),
+        email_message_id="<stable@example.com>",
+    )
+    db_session.add(processed)
+    await db_session.flush()
+
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline._finish_email_message",
+        lambda *args, **kwargs: None,
+    )
+
+    result = await ingest_email_attachments(
+        db_session,
+        [
+            _matching_capture_email(
+                pdf_bytes,
+                message_id="<stable@example.com>",
+                poll_folder="exceptions",
+            )
+        ],
+        tenant_id=TESTING_TENANT_UUID,
+        tenant_slug="hv-org",
+    )
+    assert result.ingested_count == 0
+
+    rows = (await db_session.execute(select(Invoice))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].id == processed.id
+    assert rows[0].status == InvoiceStatus.PROCESSED
 
 
 @pytest.mark.asyncio

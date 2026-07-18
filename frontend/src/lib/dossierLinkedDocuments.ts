@@ -7,9 +7,12 @@ export type DossierLinkageKind =
   | "po_reference"
   | "so_reference"
   | "invoice_no"
+  | "proforma_invoice_no"
+  | "custom"
   | "shipment_ref"
   | "contract_ref"
-  | "standalone";
+  | "standalone"
+  | "none";
 
 export type DossierDocumentSource = "erp_register" | "upload" | "email_capture" | "edi" | "manual";
 
@@ -35,6 +38,7 @@ export type DossierLinkedDocument = {
   label: string;
   documentRef: string | null;
   invoiceNo?: string | null;
+  counterparty?: string | null;
   present: boolean;
   requirement: DossierBundleRequirement;
   purchaseBundleRole?: DossierPurchaseBundleRole;
@@ -47,7 +51,7 @@ export type DossierLinkedDocument = {
   isAnchor?: boolean;
   hasFile?: boolean;
   linkageDetail?: string;
-  linkKind?: "system" | "manual" | "invoice_no";
+  linkKind?: "system" | "manual" | "invoice_no" | "proforma_invoice_no";
   manualLinkId?: number | null;
   manualLink?: DossierManualLinkInfo | null;
 };
@@ -119,10 +123,13 @@ export function isSalesLinkedDocuments(linked: DossierLinkedDocuments): boolean 
 
 export function linkageKindLabel(kind: DossierLinkageKind, salesBook = false): string {
   if (kind === "invoice_no") return "Invoice no";
+  if (kind === "proforma_invoice_no") return "Proforma invoice no";
+  if (kind === "custom") return "Custom reference";
   if (kind === "so_reference") return "SO reference";
   if (kind === "po_reference") return salesBook ? "SO reference" : "PO reference";
   if (kind === "shipment_ref") return "Shipment reference";
   if (kind === "contract_ref") return "Contract reference";
+  if (kind === "none") return "No linkage key";
   return "Standalone document";
 }
 

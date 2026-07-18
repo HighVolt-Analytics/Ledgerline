@@ -52,6 +52,20 @@ export function canShowApproveOnBoard(inv: Invoice, column: ApprovalBoardColumnK
   return APPROVABLE_STATUSES.has(inv.status);
 }
 
+/** Reject from Approved: ledger-posted rows, or vision-understood vaulted rows. */
+export function canShowRejectOnApprovedBoard(inv: Invoice): boolean {
+  if (inv.status === "processed") return true;
+  if (inv.status !== "exception") return false;
+  const evalStatus = inv.evaluation_status ?? "";
+  if (evalStatus === "vision_vaulted") return true;
+  const fields = inv.extracted_fields;
+  const hasVisionBundle =
+    fields != null &&
+    typeof fields === "object" &&
+    ("vision_bundle_kind" in fields || "vision_bundle_key" in fields);
+  return evalStatus === "awaiting_classification" && hasVisionBundle;
+}
+
 /** Full pipeline re-run — rejected rows with a stored file only (not duplicate shadows). */
 export function canShowReprocessOnBoard(inv: Invoice, column: ApprovalBoardColumnKey): boolean {
   return (
@@ -110,6 +124,17 @@ function localApprovalBoardColumn(inv: Invoice): ApprovalBoardColumnApi {
   if (inv.status === "processed") return "approved";
 
   const evalStatus = inv.evaluation_status ?? "";
+  // Vision understood path: finished at vault → Approved; header gaps → To review.
+  if (evalStatus === "vision_vaulted") return "approved";
+  if (evalStatus === "vision_header_review") return "review";
+  // Legacy tag before vision_* evals: soft-bundled docs are vaulted.
+  const fields = inv.extracted_fields;
+  const hasVisionBundle =
+    fields != null &&
+    typeof fields === "object" &&
+    ("vision_bundle_kind" in fields || "vision_bundle_key" in fields);
+  if (evalStatus === "awaiting_classification" && hasVisionBundle) return "approved";
+
   if (PRE_CLASSIFICATION_EVAL.has(evalStatus)) return "review";
 
   if (inv.status === "exception" && !isClassificationConfirmed(inv)) return "review";

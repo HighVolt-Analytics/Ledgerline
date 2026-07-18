@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Invoice } from "@/api/types";
 import {
   canShowApproveOnBoard,
+  canShowRejectOnApprovedBoard,
   canShowReprocessOnBoard,
   columnForInvoice,
   isPreClassificationReview,
@@ -102,6 +103,23 @@ describe("columnForInvoice", () => {
       )
     ).toBe("awaiting");
   });
+
+  it("puts vision_vaulted in Approved and vision_header_review in To review", () => {
+    expect(
+      columnForInvoice(inv(1, "exception", { evaluation_status: "vision_vaulted" }))
+    ).toBe("approved");
+    expect(
+      columnForInvoice(inv(2, "exception", { evaluation_status: "vision_header_review" }))
+    ).toBe("pending");
+    expect(
+      columnForInvoice(
+        inv(3, "exception", {
+          evaluation_status: "awaiting_classification",
+          extracted_fields: { vision_bundle_kind: "soft", vision_bundle_key: "INV-1" },
+        })
+      )
+    ).toBe("approved");
+  });
 });
 
 describe("isPreClassificationReview and approve visibility", () => {
@@ -148,6 +166,20 @@ describe("isPreClassificationReview and approve visibility", () => {
     expect(canShowReprocessOnBoard(duplicateInv, "rejected")).toBe(false);
     expect(canShowReprocessOnBoard(processedInv, "approved")).toBe(false);
     expect(canShowReprocessOnBoard(rejectedInv, "awaiting")).toBe(false);
+  });
+
+  it("shows Reject on Approved for processed and vision-vaulted exception docs", () => {
+    expect(canShowRejectOnApprovedBoard(inv(1, "processed"))).toBe(true);
+    expect(
+      canShowRejectOnApprovedBoard(
+        inv(2, "exception", { evaluation_status: "vision_vaulted" })
+      )
+    ).toBe(true);
+    expect(
+      canShowRejectOnApprovedBoard(
+        inv(3, "exception", { evaluation_status: "needs_review", document_type_code: "DT-01" })
+      )
+    ).toBe(false);
   });
 });
 

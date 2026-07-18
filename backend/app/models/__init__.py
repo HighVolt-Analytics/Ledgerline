@@ -17,14 +17,17 @@ from app.models.dossier_manual_link import DossierManualLink
 from app.models.goods_receipt import GoodsReceipt
 from app.models.goods_receipt_line import GoodsReceiptLine
 from app.models.invoice import Invoice
+from app.models.invoice_page_fingerprint import InvoicePageFingerprint
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.mailbox_connection_request import MailboxConnectionRequest
+from app.models.mailbox_message import MailboxMessage
 from app.models.mailbox_sync_job import MailboxSyncJob
 from app.models.credit_ledger import CreditLedgerEntry
 from app.models.pending_signup_billing import PendingSignupBillingSession
 from app.models.platform_billing_webhook import PlatformBillingWebhookEvent
 from app.models.platform_credit_settings import PlatformCreditSettings
+from app.models.platform_prompt import PlatformPromptActive, PlatformPromptVersion
 from app.models.tenant_billing import TenantBilling
 from app.models.tenant import Tenant
 from app.models.tenant_module import TenantModule
@@ -95,6 +98,7 @@ __all__ = [
     "JournalEntry",
     "LineItem",
     "MailboxConnectionRequest",
+    "MailboxMessage",
     "MailboxSyncJob",
     "Payment",
     "PaymentAttempt",
@@ -116,6 +120,8 @@ __all__ = [
     "PendingSignupBillingSession",
     "PlatformBillingWebhookEvent",
     "PlatformCreditSettings",
+    "PlatformPromptActive",
+    "PlatformPromptVersion",
     "TenantBilling",
     "Tenant",
     "TenantMemberInvite",

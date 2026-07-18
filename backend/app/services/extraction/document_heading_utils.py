@@ -42,36 +42,76 @@ _CONTINUATION_PAGE = re.compile(
     r"\b(?:continuation\s+page|\(continuation\s+page\)|\(cont(?:\.|inued)?\))\b",
     re.I,
 )
+# Seagate / SAP style: "Page : 2 of 3", "Page 2/3", "Page 2 of 3"
+_PAGE_OF_MARKER = re.compile(
+    r"\bpage\s*:?\s*(\d+)\s*(?:of|/)\s*(\d+)\b",
+    re.I,
+)
 
 # Keyword fallback when title is embedded in OCR layout (import / logistics dossiers).
+# Prefer commercial titles over logistics *field labels* (e.g. "Bill of Lading No" on an invoice).
 _PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
+    (re.compile(r"\bTAX\s+INVOICE\b", re.I), "tax_invoice"),
     (re.compile(r"\bCOMMERCIAL\s+INVOICE\b", re.I), "commercial_invoice"),
+    (re.compile(r"\bPRO[\s-]?FORMA(?:\s+INVOICE)?\b", re.I), "proforma"),
+    (re.compile(r"\bINVOICE\b", re.I), "invoice"),
     (re.compile(r"\bCARGO\s+CLEARANCE\s+PERMIT\b", re.I), "customs_permit"),
     (re.compile(r"\bCUSTOMS?\s+(?:ENTRY|DECLARATION)\b", re.I), "customs_permit"),
     (re.compile(r"\bPACKING\s+LIST\b", re.I), "packing_list"),
     (re.compile(r"\bCERTIFICATE\s+OF\s+ORIGIN\b", re.I), "certificate_of_origin"),
+    (re.compile(r"\bBENEFICIARY\s+SHIPMENT\s+ADVICE\b", re.I), "statement"),
+    (re.compile(r"\bSHIPMENT\s+ADVICE\b", re.I), "statement"),
     (re.compile(r"\b(?:HAWB|MAWB|AWB)\b", re.I), "transport_doc"),
     (re.compile(r"\b(?:HOUSE|AIR)\s+WAYBILL\b", re.I), "transport_doc"),
+    (re.compile(r"\bAIR\s+FREIGHT\s+SERVICES\b", re.I), "transport_doc"),
     (re.compile(r"\bShipper'?s?\s+Name\s+and\s+Address\b", re.I), "transport_doc"),
     (re.compile(r"\bConsignee'?s?\s+Name\s+and\s+Address\b", re.I), "transport_doc"),
     (re.compile(r"\bBILL\s+OF\s+LADING\b", re.I), "transport_doc"),
     (re.compile(r"\b(?:B/L|BL)\s*NO\b", re.I), "transport_doc"),
     (re.compile(r"\bGOODS\s+RECEIPT\b", re.I), "grn"),
     (re.compile(r"\bG\.?\s*R\.?\s*N\.?\b", re.I), "grn"),
+    (re.compile(r"\bPROOF\s+OF\s+DELIVERY\b", re.I), "grn"),
+    (re.compile(r"\bPOD\b", re.I), "grn"),
+    (re.compile(r"\bDELIVERY\s+(?:NOTE|RECEIPT|DOCKET)\b", re.I), "grn"),
     (re.compile(r"\bDEBIT\s+NOTE\b", re.I), "credit_note"),
 ]
+
+# Title/body kinds that beat logistics field labels when both appear on one page.
+_STRONG_PAGE_KINDS: frozenset[HeadingKind] = frozenset(
+    {
+        "tax_invoice",
+        "commercial_invoice",
+        "invoice",
+        "proforma",
+        "packing_list",
+        "purchase_order",
+        "sales_order",
+        "grn",
+        "credit_note",
+        "customs_permit",
+        "certificate_of_origin",
+        "statement",
+        "remittance",
+        "quote",
+        "contract",
+        "timesheet",
+    }
+)
 
 # Standalone title line (full line is essentially the document type label).
 _STANDALONE_TITLE = re.compile(
     r"^(?:"
     r"tax\s+invoice|"
     r"commercial\s+invoice|"
-    r"invoice|"
+    # "INVOICE 9300667281" / "INVOICE COMPUTER GENERATED DOCUMENT" — not "Invoice No:"
+    r"invoice(?!\s*no\b)(?:\s+\S+)*|"
     r"purchase\s+order|"
     r"sales\s+order|"
     r"goods\s+receipt(?:\s+note)?|"
     r"g\.?\s*r\.?\s*n\.?|"
-    r"delivery\s+(?:note|docket)|"
+    r"delivery\s+(?:note|receipt|docket)|"
+    r"proof\s+of\s+delivery|"
+    r"pod|"
     r"credit\s+note|"
     r"debit\s+note|"
     r"quotation|quote|"
@@ -80,11 +120,16 @@ _STANDALONE_TITLE = re.compile(
     r"timesheet|time\s+sheet|"
     r"statement\s+of\s+account|"
     r"vendor\s+statement|"
+    r"beneficiary\s+shipment\s+advice|"
+    r"shipment\s+advice|"
     r"contract|"
     r"agreement|"
     r"packing\s+list(?:\s*/\s*weight\s+list)?|"
     r"certificate\s+of\s+origin|"
-    r"cargo\s+clearance\s+permit"
+    r"cargo\s+clearance\s+permit|"
+    r"air\s+freight\s+services|"
+    r"(?:house|air)\s+waybill|"
+    r"bill\s+of\s+lading"
     r")\s*\.?$",
     re.I,
 )
@@ -106,23 +151,30 @@ _TRAILING_TITLE = re.compile(
 _KIND_FROM_LABEL: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"^tax\s+invoice$", re.I), "tax_invoice"),
     (re.compile(r"^commercial\s+invoice$", re.I), "commercial_invoice"),
-    (re.compile(r"^invoice$", re.I), "invoice"),
+    (re.compile(r"^invoice(?!\s*no\b)", re.I), "invoice"),
     (re.compile(r"^purchase\s+order$", re.I), "purchase_order"),
     (re.compile(r"^sales\s+order$", re.I), "sales_order"),
     (re.compile(r"^goods\s+receipt", re.I), "grn"),
     (re.compile(r"^g\.?\s*r\.?\s*n\.?$", re.I), "grn"),
-    (re.compile(r"^delivery\s+(?:note|docket)", re.I), "grn"),
+    (re.compile(r"^delivery\s+(?:note|receipt|docket)", re.I), "grn"),
+    (re.compile(r"^proof\s+of\s+delivery$", re.I), "grn"),
+    (re.compile(r"^pod$", re.I), "grn"),
     (re.compile(r"^credit\s+note$", re.I), "credit_note"),
     (re.compile(r"^debit\s+note$", re.I), "credit_note"),
     (re.compile(r"^(?:quotation|quote)$", re.I), "quote"),
     (re.compile(r"^remittance", re.I), "remittance"),
     (re.compile(r"^pro[\s-]?forma", re.I), "proforma"),
     (re.compile(r"^time\s*sheet|^timesheet", re.I), "timesheet"),
+    (re.compile(r"^beneficiary\s+shipment\s+advice", re.I), "statement"),
+    (re.compile(r"^shipment\s+advice", re.I), "statement"),
     (re.compile(r"^statement", re.I), "statement"),
     (re.compile(r"^contract|^agreement", re.I), "contract"),
     (re.compile(r"^packing\s+list", re.I), "packing_list"),
     (re.compile(r"^certificate\s+of\s+origin", re.I), "certificate_of_origin"),
     (re.compile(r"^cargo\s+clearance\s+permit", re.I), "customs_permit"),
+    (re.compile(r"^air\s+freight\s+services", re.I), "transport_doc"),
+    (re.compile(r"^(?:house|air)\s+waybill", re.I), "transport_doc"),
+    (re.compile(r"^bill\s+of\s+lading", re.I), "transport_doc"),
 ]
 
 
@@ -186,6 +238,50 @@ def _kind_for_label(label: str) -> HeadingKind | None:
     return None
 
 
+def heading_kind_for_label(label: str) -> HeadingKind | None:
+    """Map a vault / heading display label to a coarse document kind."""
+    return _kind_for_label(label)
+
+
+_INVOICE_FAMILY_KINDS: frozenset[HeadingKind] = frozenset(
+    {
+        "tax_invoice",
+        "commercial_invoice",
+        "invoice",
+        "credit_note",
+    }
+)
+
+# Customer / sales / vendor invoices that do not start with "Invoice".
+_INVOICE_FAMILY_LABEL_RE = re.compile(
+    r"(?:"
+    r"\b(?:customer|sales|vendor|tax|commercial)\s+invoice\b"
+    r"|\binvoice\b(?!\s*no\b)"
+    r"|\b(?:credit|debit)\s+note\b"
+    r")",
+    re.I,
+)
+
+_PROFORMA_LABEL_RE = re.compile(r"\bpro[\s-]?forma\b", re.I)
+
+
+def is_invoice_family_vault_label(label: str | None) -> bool:
+    """True when a vault type folder / vision label is an invoice-family anchor.
+
+    Includes tax / commercial / customer / sales invoices and credit/debit notes.
+    Excludes packing lists, transport docs, PO/SO/GRN, remittance, proforma, etc.
+    """
+    raw = (label or "").strip()
+    if not raw:
+        return False
+    if _PROFORMA_LABEL_RE.search(raw):
+        return False
+    kind = _kind_for_label(raw)
+    if kind is not None:
+        return kind in _INVOICE_FAMILY_KINDS
+    return bool(_INVOICE_FAMILY_LABEL_RE.search(raw))
+
+
 def _label_from_line(line: str) -> str | None:
     cleaned = line.strip()
     if not cleaned:
@@ -233,14 +329,10 @@ def _heading_signals_from_lines(
             kinds.append(kind)
 
     if include_body_fallback and not kinds:
-        blob = "\n".join(text.splitlines()[:50])
-        for pattern, kind in _PAGE_KIND_KEYWORDS:
-            if kind in seen_kinds:
-                continue
-            if pattern.search(blob):
-                seen_kinds.add(kind)
-                kinds.append(kind)
-                labels.append(kind.replace("_", " "))
+        preferred = _pick_preferred_body_kind(_body_keyword_kinds(text))
+        if preferred is not None:
+            kinds.append(preferred)
+            labels.append(preferred.replace("_", " "))
 
     primary_label = labels[0] if labels else None
     primary_kind = kinds[0] if kinds else None
@@ -251,9 +343,52 @@ def _heading_signals_from_lines(
     )
 
 
+def parse_page_of_marker(text: str) -> tuple[int, int] | None:
+    """Return (current, total) for 'Page X of Y' markers, else None."""
+    match = _PAGE_OF_MARKER.search(text or "")
+    if not match:
+        return None
+    current = int(match.group(1))
+    total = int(match.group(2))
+    if current < 1 or total < 1 or current > total:
+        return None
+    return current, total
+
+
 def is_continuation_page(text: str) -> bool:
-    """True when OCR indicates this page continues the previous document."""
-    return bool(_CONTINUATION_PAGE.search(text or ""))
+    """True when OCR indicates this page continues the previous document.
+
+    Includes explicit continuation labels and mid-run 'Page X of Y' (X > 1)
+    for every document type (invoice, packing list, AWB, GRN/PoD, etc.).
+    """
+    raw = text or ""
+    if _CONTINUATION_PAGE.search(raw):
+        return True
+    page_of = parse_page_of_marker(raw)
+    return bool(page_of and page_of[0] > 1)
+
+
+def _body_keyword_kinds(text: str) -> list[HeadingKind]:
+    blob = "\n".join((text or "").splitlines()[:50])
+    found: list[HeadingKind] = []
+    seen: set[HeadingKind] = set()
+    for pattern, kind in _PAGE_KIND_KEYWORDS:
+        if kind in seen:
+            continue
+        if pattern.search(blob):
+            found.append(kind)
+            seen.add(kind)
+    return found
+
+
+def _pick_preferred_body_kind(kinds: list[HeadingKind]) -> HeadingKind | None:
+    if not kinds:
+        return None
+    strong = [kind for kind in kinds if kind in _STRONG_PAGE_KINDS]
+    if strong:
+        # Keep keyword-list order among strong kinds (invoice before packing, etc.).
+        return strong[0]
+    return kinds[0]
 
 
 def infer_page_document_kind_with_source(text: str) -> InferredPageHeading | None:
@@ -267,10 +402,9 @@ def infer_page_document_kind_with_source(text: str) -> InferredPageHeading | Non
     if title_signals.primary_kind is not None:
         return InferredPageHeading(kind=title_signals.primary_kind, source="title_line")
 
-    blob = "\n".join(text.splitlines()[:50])
-    for pattern, kind in _PAGE_KIND_KEYWORDS:
-        if pattern.search(blob):
-            return InferredPageHeading(kind=kind, source="body_keyword")
+    body_kind = _pick_preferred_body_kind(_body_keyword_kinds(text))
+    if body_kind is not None:
+        return InferredPageHeading(kind=body_kind, source="body_keyword")
     return None
 
 

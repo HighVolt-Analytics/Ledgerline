@@ -32,5 +32,19 @@ def _is_invoice_attachment(att: EmailAttachment) -> bool:
 
 
 def filter_invoice_attachments(email: RawEmail) -> list[EmailAttachment]:
-    """PDF, JPG/PNG, and DOCX attachments per assessment brief §2."""
-    return [att for att in email.attachments if _is_invoice_attachment(att)]
+    """PDF, JPG/PNG, and DOCX attachments per assessment brief §2.
+
+    Filtered-out attachments are recorded on ``email.attachment_drops`` for durable audit.
+    """
+    kept: list[EmailAttachment] = []
+    for att in email.attachments:
+        if _is_invoice_attachment(att):
+            kept.append(att)
+        else:
+            email.attachment_drops.append(
+                {
+                    "reason": "attachment_type_filtered",
+                    "filename": att.filename or "",
+                }
+            )
+    return kept

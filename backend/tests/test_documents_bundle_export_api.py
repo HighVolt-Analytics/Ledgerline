@@ -217,11 +217,56 @@ def test_documents_bundle_row_universal_match_flag() -> None:
         linked=linked,
         dt_codes=[],
     )
-    # Fixed column order: Timestamp(0), Uploaded by(1), Source(2), … Universal(12)
+    # Fixed column order: Timestamp(0), Uploaded by(1), Source(2), … Universal(13)
     assert row[0] == "2026-05-12 09:30:00"
     assert row[1] == "vendor@example.com"
     assert row[2] == "Email"
-    assert row[12] == "No"
+    assert row[13] == "No"
+
+
+def test_documents_bundle_timestamp_uses_browser_timezone() -> None:
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from app.schemas.document_type import DocumentTypeDefinition
+    from app.services.reports.documents_bundle_export_service import resolve_display_timezone
+
+    invoice = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        document_type_code="DT-01",
+        invoice_no="INV-TZ-1",
+        status=InvoiceStatus.PROCESSED,
+    )
+    invoice.id = 77
+    invoice.created_at = datetime(2026, 5, 12, 9, 30, 0, tzinfo=timezone.utc)
+    definition = DocumentTypeDefinition(
+        code="DT-01",
+        title="PO goods invoice",
+        short_title="PO goods invoice",
+        klass="Transactional",
+        posting="Yes",
+        recognition_mode="signals",
+        recognition_signals=[],
+        llm_prompt="",
+        route_target="Purchase Management",
+    )
+    linked = DossierLinkedDocumentsResponse(
+        linkage_kind="none",
+        linkage_label="",
+        enforce_bundle=False,
+        match_summary=None,
+        documents=[],
+    )
+    row = build_documents_bundle_row(
+        invoice,
+        definition=definition,
+        linked=linked,
+        dt_codes=[],
+        display_tz=ZoneInfo("Asia/Kolkata"),
+    )
+    assert row[0] == "2026-05-12 15:00:00"
+    assert resolve_display_timezone("Not/AZone") is timezone.utc
 
 
 def test_documents_bundle_row_manual_uploader_name() -> None:
@@ -490,10 +535,11 @@ async def test_documents_bundle_export_with_empty_tenant_document_types(
     assert res.status_code == 200
     assert res.headers.get("x-data-rows") == "0"
     header, data, _ws = _read_xlsx(res.content)
-    assert len(header) == 13
+    assert len(header) == 14
     assert "Timestamp" in header
     assert "Uploaded by" in header
     assert "Source" in header
+    assert "Proforma invoice no." in header
     assert data == []
 
 
@@ -960,11 +1006,12 @@ async def test_documents_bundle_export_includes_all_org_document_types(
     )
     assert res.status_code == 200
     header, _data, _ws = _read_xlsx(res.content)
-    fixed_count = 13
+    fixed_count = 14
     dt_column_count = len(header) - fixed_count
     assert header[header.index("Timestamp")] == "Timestamp"
     assert "Uploaded by" in header
     assert "Source" in header
+    assert "Proforma invoice no." in header
     assert dt_column_count == len(org_types.document_types)
     shipped_only_codes = {"DT-14", "DT-15", "DT-26", "DT-27", "DT-28"}
     header_labels = set(header[fixed_count:])

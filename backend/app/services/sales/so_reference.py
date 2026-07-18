@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 _SO_PREFIX = re.compile(r"^SO[-\s#]?", re.IGNORECASE)
+_PO_PREFIX = re.compile(r"^PO[-\s#]?", re.IGNORECASE)
 
 _SO_TEXT_PATTERNS = (
     re.compile(
@@ -49,6 +50,9 @@ def is_plausible_so_reference(so: str | None) -> bool:
     if len(text) > 64:
         return False
     if len(text) < 4:
+        return False
+    # Purchase-order keys must not satisfy SO plausibility (common LLM conflation).
+    if _PO_PREFIX.match(text):
         return False
     if _SO_PREFIX.match(text):
         return True
@@ -142,9 +146,11 @@ def resolve_so_reference_from_invoice(invoice) -> str | None:
     if is_plausible_so_reference(invoice_no) and _SO_PREFIX.match(invoice_no):
         return invoice_no
 
-    from_po = getattr(invoice, "po_reference", None)
-    if is_plausible_so_reference(from_po):
-        return (from_po or "").strip()
+    # Only borrow from po_reference when that column clearly holds an SO key
+    # (misfiled AR upload) — never treat a normal PO number as an SO.
+    from_po = str(getattr(invoice, "po_reference", None) or "").strip()
+    if from_po and _SO_PREFIX.match(from_po) and is_plausible_so_reference(from_po):
+        return from_po
 
     return None
 
@@ -168,16 +174,30 @@ def ensure_invoice_so_reference(invoice) -> str | None:
 
 
 def sanitize_cross_book_linkage_references(invoice) -> None:
-    """Clear PO column when it holds a sales-order key (common on AR uploads)."""
-    po = str(getattr(invoice, "po_reference", None) or "").strip()
-    if not po:
-        return
+    """Clear cross-contaminated PO/SO columns (common LLM / OCR conflation)."""
     from app.services.purchase.po_reference import is_plausible_po_reference
 
-    if is_plausible_so_reference(po) and not is_plausible_po_reference(po):
-        invoice.po_reference = None
-        return
+    po = str(getattr(invoice, "po_reference", None) or "").strip()
     so = str(getattr(invoice, "so_reference", None) or "").strip()
-    route = str(getattr(invoice, "route_target", None) or "").strip()
-    if route == "Sales Management" and so and po.upper() == so.upper():
+
+    # PO column holding an SO key → move/clear.
+    if po and is_plausible_so_reference(po) and not is_plausible_po_reference(po):
+        if not so:
+            invoice.so_reference = po
         invoice.po_reference = None
+        po = ""
+        so = str(getattr(invoice, "so_reference", None) or "").strip()
+
+    # SO column holding a PO key → clear SO (keep PO).
+    if so and _PO_PREFIX.match(so) and not is_plausible_so_reference(so):
+        invoice.so_reference = None
+        so = ""
+
+    # Identical tokens: keep the book that matches the prefix / route.
+    if po and so and po.upper() == so.upper():
+        route = str(getattr(invoice, "route_target", None) or "").strip()
+        if _SO_PREFIX.match(po) or route == "Sales Management":
+            invoice.po_reference = None
+        else:
+            # Default: duplicated PO value incorrectly copied into SO.
+            invoice.so_reference = None

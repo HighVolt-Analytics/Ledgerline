@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -56,6 +58,7 @@ class DossierLinkedDocumentResponse(BaseModel):
     label: str
     document_ref: str | None = None
     invoice_no: str | None = None
+    counterparty: str | None = None
     present: bool
     requirement: str
     purchase_bundle_role: str | None = None
@@ -156,6 +159,7 @@ class DossierSummaryResponse(BaseModel):
     blocker_stage_id: str | None = None
     blocker_reason: str | None = None
     blocker_remediation: str | None = None
+    pipeline_path: Literal["understood", "not_understood", "unknown"] = "unknown"
     pipeline: list[DossierPipelineStepResponse] = Field(default_factory=list)
     linked_documents: DossierLinkedDocumentsResponse
     approval_chain: DossierApprovalChainResponse

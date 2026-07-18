@@ -84,7 +84,7 @@ export function DossierStatusHero({ dossier, onOpenInvoice, onJumpToFailure }: P
     );
   }
 
-  if (dossier.outcome === "auto_posted" || dossier.outcome === "manual_posted") {
+  if (dossier.outcome === "auto_posted" || dossier.outcome === "manual_posted" || dossier.outcome === "vaulted") {
     return (
       <div className="dossier-status-hero dossier-status-hero--success" data-testid="dossier-status-hero">
         <div className="dossier-status-hero__icon">
@@ -95,7 +95,11 @@ export function DossierStatusHero({ dossier, onOpenInvoice, onJumpToFailure }: P
           {dossier.outcomeBanner ? (
             <p className="dossier-status-hero__message">{dossier.outcomeBanner}</p>
           ) : (
-            <p className="dossier-status-hero__message">All pipeline stages completed successfully.</p>
+            <p className="dossier-status-hero__message">
+              {dossier.outcome === "vaulted"
+                ? "Understood path — bundled and stored in vault."
+                : "All pipeline stages completed successfully."}
+            </p>
           )}
           <p className="dossier-status-hero__progress">{progress}</p>
         </div>

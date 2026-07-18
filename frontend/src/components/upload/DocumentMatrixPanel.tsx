@@ -16,10 +16,7 @@ import { Card } from "@/components/ui/card";
 import { documentDisplayRef, money } from "@/lib/format";
 import { counterpartyColumnLabel, counterpartyName, invoiceMatchesCaptureChannel } from "@/lib/invoice";
 import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
-import {
-  effectiveDocumentTypeCode,
-  invoiceDocumentTypeDisplayLabel,
-} from "@/lib/documentTypeResolve";
+import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
 import { CounterpartyColumnHeaderLink } from "@/components/upload/CounterpartyCreationsLink";
 import { MATRIX_STAGES, matrixStageSettled, type MatrixCellState, type MatrixStage } from "@/lib/matrix";
 import { fetchAllMatrixRows, sortMatrixRowsNewestFirst, stagesToCells } from "@/lib/matrixApi";
@@ -145,14 +142,13 @@ function matrixDocumentTypeChip(
   inv: Invoice,
   documentTypes?: DocumentTypeDefinition[] | null
 ) {
-  const code = documentTypes?.length
-    ? effectiveDocumentTypeCode(inv, documentTypes)
-    : (inv.document_type_code ?? "").trim();
+  const code = (inv.document_type_code ?? "").trim();
   const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
   return (
     <DocumentTypeChip
       code={code}
       label={typeLabel}
+      display={typeLabel}
       title={typeLabel}
       purchaseKind={inv.purchase_document_type}
       documentTypes={documentTypes}

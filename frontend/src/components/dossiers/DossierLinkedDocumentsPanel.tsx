@@ -135,12 +135,24 @@ function manualLinkIdForDoc(doc: DossierLinkedDocument): number | null {
 
 
 
-function documentTypeCodeLabel(code: string): string {
+function documentTypeChipLabel(doc: DossierLinkedDocument): string {
+  const code = (doc.documentTypeCode ?? "").trim();
+  if (code) return code;
+  const label = (doc.label ?? "").trim();
+  if (label && label.toLowerCase() !== "unclassified") return label;
+  return "Unclassified";
+}
 
-  const token = (code ?? "").trim();
-
-  return token || "Unclassified";
-
+/** Bold line under the type chip — prefer counterparty; never repeat the type. */
+function linkedDocTitle(doc: DossierLinkedDocument): string | null {
+  const party = (doc.counterparty ?? "").trim();
+  if (party) return party;
+  const invNo = (doc.invoiceNo ?? "").trim();
+  if (invNo) return invNo;
+  const typeChip = documentTypeChipLabel(doc);
+  const label = (doc.label ?? "").trim();
+  if (label && label.toLowerCase() !== typeChip.toLowerCase()) return label;
+  return null;
 }
 
 
@@ -153,7 +165,7 @@ function statusPill(doc: DossierLinkedDocument) {
 
   }
 
-  if (doc.linkKind === "invoice_no") {
+  if (doc.linkKind === "invoice_no" || doc.linkKind === "proforma_invoice_no") {
 
     return { tone: pillTones.ok, label: "linked" };
 
@@ -252,6 +264,8 @@ function LinkedDocumentCard({
 
   const pill = statusPill(doc);
 
+  const title = linkedDocTitle(doc);
+
   const showLinkSlot =
 
     !doc.isAnchor &&
@@ -312,7 +326,7 @@ function LinkedDocumentCard({
 
           >
 
-            {documentTypeCodeLabel(doc.documentTypeCode)}
+            {documentTypeChipLabel(doc)}
 
           </span>
 
@@ -322,7 +336,9 @@ function LinkedDocumentCard({
 
 
 
-        <div className="dossier-linked-doc__label">{doc.label}</div>
+        {title ? (
+          <div className="dossier-linked-doc__label">{title}</div>
+        ) : null}
 
 
 

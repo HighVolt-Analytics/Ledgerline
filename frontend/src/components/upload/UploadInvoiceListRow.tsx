@@ -2,6 +2,7 @@ import type { Invoice } from "@/api/types";
 import { InboxConfidenceBadge } from "@/components/inbox/InboxConfidenceBadge";
 import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
 import {
+  DuplicateReviewBadge,
   EvaluationStatusBadge,
   RouteTargetBadge,
 } from "@/components/inbox/EvaluationStatusBadge";
@@ -9,12 +10,13 @@ import { InboxGlAccountBadge } from "@/components/inbox/InboxGlAccountBadge";
 import { invoiceStageBadgeProps, StageBadge } from "@/components/StageBadge";
 import { UploadColumnCell } from "@/components/upload/UploadColumnCell";
 import { documentDisplayRef, money } from "@/lib/format";
-import { effectiveDocumentTypeCode, invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
+import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
 import {
   counterpartyMatchLabel,
   counterpartyName,
   invoiceCounterpartyConfidence,
   invoiceValidationConfidence,
+  invoiceVaultFolderLabel,
   vendorMatchApplicable,
 } from "@/lib/invoice";
 import type { DocumentTypeDefinition } from "@/lib/v5DocumentTypes";
@@ -75,9 +77,8 @@ function DocumentTypeLine({
   documentTypes?: DocumentTypeDefinition[] | null;
   mode: ColumnDisplayMode;
 }) {
-  const code = documentTypes?.length
-    ? effectiveDocumentTypeCode(inv, documentTypes)
-    : (inv.document_type_code ?? "").trim();
+  // Chip code = stored DT only. Invented purchase-kind codes make early rows look classified.
+  const code = (inv.document_type_code ?? "").trim();
   const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
 
   return (
@@ -85,6 +86,7 @@ function DocumentTypeLine({
       <DocumentTypeChip
         code={code}
         label={typeLabel}
+        display={typeLabel}
         title={typeLabel}
         purchaseKind={inv.purchase_document_type}
         documentTypes={documentTypes}
@@ -138,7 +140,7 @@ export function UploadInvoiceMobileRow({
       </div>
       <div className="flex flex-wrap items-center gap-1.5 mt-2">
         <UploadColumnCell mode={modes.route}>
-          <RouteTargetBadge route={inv.route_target} />
+          <RouteTargetBadge route={invoiceVaultFolderLabel(inv) || null} />
         </UploadColumnCell>
         <UploadColumnCell mode={modes.glAccount}>
           <InboxGlAccountBadge
@@ -148,7 +150,10 @@ export function UploadInvoiceMobileRow({
         </UploadColumnCell>
         <StageBadge {...stageProps} processing={stageProcessing} />
         <UploadColumnCell mode={modes.evaluation}>
-          <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
+          <div className="flex flex-col items-start gap-1">
+            <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
+            <DuplicateReviewBadge suggested={inv.duplicate_review_suggested} />
+          </div>
         </UploadColumnCell>
       </div>
       <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[11px] text-muted-foreground">
@@ -185,6 +190,7 @@ export function UploadInvoiceTableRow({
   const modes = rowColumnModes(inv, documentTypes, processingIds);
   const stageProps = invoiceStageBadgeProps(inv);
   const stageProcessing = isStageColumnProcessing(inv, processingIds);
+  const vaultFolder = invoiceVaultFolderLabel(inv);
 
   return (
     <tr
@@ -204,7 +210,7 @@ export function UploadInvoiceTableRow({
       </td>
       <td className="px-3 py-2.5">
         <UploadColumnCell mode={modes.route}>
-          <RouteTargetBadge route={inv.route_target} />
+          <RouteTargetBadge route={vaultFolder || null} />
         </UploadColumnCell>
       </td>
       <td className="px-3 py-2.5">
@@ -220,7 +226,10 @@ export function UploadInvoiceTableRow({
       </td>
       <td className="px-3 py-2.5">
         <UploadColumnCell mode={modes.evaluation}>
-          <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
+          <div className="flex flex-col items-start gap-1">
+            <EvaluationStatusBadge status={inv.evaluation_status} invoice={inv} />
+            <DuplicateReviewBadge suggested={inv.duplicate_review_suggested} />
+          </div>
         </UploadColumnCell>
       </td>
       <td className="px-3 py-2.5 text-right">

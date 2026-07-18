@@ -63,6 +63,31 @@ STAGE_IDS: tuple[str, ...] = (
     "archive",
 )
 
+# Stages that run on the vision can-understand path (matches Audit tab path points).
+UNDERSTOOD_DOSSIER_STAGE_IDS: frozenset[str] = frozenset(
+    {
+        "ingest",
+        "duplicate",
+        "storage",
+        "file_validity",
+        "vision_understand",
+        "extract",
+        "bundle",
+        "archive",
+    }
+)
+
+UNDERSTOOD_DOSSIER_STAGE_ORDER: tuple[str, ...] = (
+    "ingest",
+    "duplicate",
+    "storage",
+    "file_validity",
+    "vision_understand",
+    "extract",
+    "bundle",
+    "archive",
+)
+
 _STAGE_LABELS = {
     "ingest": "Ingest",
     "duplicate": "Duplicate file check",
@@ -87,6 +112,8 @@ _STAGE_LABELS = {
 }
 
 # Audit events → furthest stage index reached (sync with frontend DOSSIER_PIPELINE_BACKEND_MAP).
+# Indices match STAGE_IDS (not-understood catalogue). Vision-only events are allowlisted here
+# for audit fetch; the understood path uses build_understood_dossier_pipeline separately.
 _EVENT_STAGE: dict[str, int] = {}
 _EVENT_STAGE.update(
     {
@@ -97,8 +124,17 @@ _EVENT_STAGE.update(
         "duplicate_in_progress": 1,
         "duplicate_reingest_rejected": 1,
         "storage_verified": 2,
+        "file_validity_passed": 2,
+        "file_validity_failed": 2,
         "ocr_completed": 3,
         "parsing_failed": 3,
+        "vision_understand_passed": 3,
+        "vision_understand_failed": 3,
+        "image_quality_passed": 4,
+        "image_quality_failed": 4,
+        "layout_readiness_evaluated": 4,
+        "ocr_quality_confirm_passed": 4,
+        "ocr_quality_confirm_failed": 4,
         "image_quality_gate_passed": 4,
         "image_quality_gate_failed": 4,
         "llm_classified": 5,
@@ -107,9 +143,12 @@ _EVENT_STAGE.update(
         "field_confidence_evaluated": 7,
         "parse_completed": 7,
         "invoice_parsed": 7,
+        "vision_header_extracted": 7,
         "document_classified": 8,
         "classification_resolved": 8,
         "playbook_evaluated": 9,
+        "vision_bundle_linked": 9,
+        "vision_bundle_standalone": 9,
         "vendor_registration_hold": 10,
         "vendor_registration_cleared": 10,
         "vendor_registration_waived": 10,
@@ -139,6 +178,9 @@ _EVENT_STAGE.update(
         "invoice_processed": 17,
         "invoice_published_to_ledger": 17,
         "purchase_document_processed": 17,
+        "blob_relocated": 19,
+        "vault_layout_sync_skipped": 19,
+        "vision_path_pending": 19,
         "vault_stored": 19,
     }
 )
@@ -265,6 +307,8 @@ def _routing_review_fail_for_stage(
     routing = _latest_log(logs, "routing_review_required")
     if routing is None or _routing_review_gate(routing) != gate:
         return None
+    if _is_vision_understood_hold_routing(routing):
+        return None
     resolved = _latest_log(logs, "classification_resolved")
     if resolved and _is_after(resolved, routing):
         return None
@@ -274,8 +318,13 @@ def _routing_review_fail_for_stage(
     gate_pass = _latest_log(logs, "classification_gate_passed")
     if gate == "classification" and gate_pass and _is_after(gate_pass, routing):
         return None
-    quality_pass = _latest_log(logs, "image_quality_gate_passed")
-    if gate == "image_quality" and quality_pass and _is_after(quality_pass, routing):
+    quality_pass = _latest_log(logs, "ocr_quality_confirm_passed") or _latest_log(
+        logs, "image_quality_gate_passed"
+    )
+    if gate in ("image_quality", "ocr_quality_confirm") and quality_pass and _is_after(quality_pass, routing):
+        return None
+    pre_iq_pass = _latest_log(logs, "image_quality_passed")
+    if gate == "image_quality" and pre_iq_pass and _is_after(pre_iq_pass, routing):
         return None
     reason = _detail_from_log(routing, fallback="routing_review_required")
     detail_dict = _routing_review_detail(routing)
@@ -435,6 +484,45 @@ def _routing_review_gate(log: AuditLog | None) -> str:
     return str(_routing_review_detail(log).get("gate") or "").strip().lower()
 
 
+def _is_vision_understood_hold_routing(log: AuditLog | None) -> bool:
+    """routing_review_required from understood hold — not a Validate failure."""
+    if log is None:
+        return False
+    gate = _routing_review_gate(log)
+    if gate in {"vision_header_extract", "vision_path_pending"}:
+        return True
+    detail = _routing_review_detail(log)
+    reasons = detail.get("review_reasons")
+    if isinstance(reasons, list) and any(
+        str(r).strip().lower() == "vision_path_pending" for r in reasons
+    ):
+        return True
+    return False
+
+
+def _is_vision_understood_hold(inv: Invoice, logs: list[AuditLog]) -> bool:
+    """True when the active path is vision can-understand hold (bundle + vault only)."""
+    from app.services.invoice.invoice_evaluation_service import VISION_UNDERSTOOD_EVAL_STATUSES
+
+    eval_status = (inv.evaluation_status or "").strip().lower()
+    if eval_status not in VISION_UNDERSTOOD_EVAL_STATUSES:
+        return False
+    vu_pass = _latest_log(logs, "vision_understand_passed")
+    vu_fail = _latest_log(logs, "vision_understand_failed")
+    if vu_pass is None and _latest_log(logs, "vision_path_pending") is None:
+        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        if not (fields.get("vision_bundle_kind") or fields.get("vision_bundle_key")):
+            # New vision_* tags imply understood path even without snapshot fields yet.
+            if eval_status in {"vision_vaulted", "vision_header_review"}:
+                return True
+            return False
+    if vu_pass and vu_fail:
+        return _is_after(vu_pass, vu_fail)
+    if vu_fail and vu_pass is None:
+        return False
+    return True
+
+
 _REVIEW_REASON_LABELS: dict[str, str] = {
     "LLM_LOW_CONF": "LLM confidence below auto-route threshold",
     "CLASSIFIER_RULE_MISMATCH": "Custom classifier rules do not match document text",
@@ -477,7 +565,7 @@ def _latest_classification_gate_log(logs: list[AuditLog]) -> AuditLog | None:
 
 def _looks_like_non_classification_routing(detail: dict[str, object]) -> bool:
     gate = str(detail.get("gate") or "").strip().lower()
-    if gate in ("image_quality", "field_confidence", "vendor_classification_drift", "playbook"):
+    if gate in ("image_quality", "ocr_quality_confirm", "field_confidence", "vendor_classification_drift", "playbook"):
         return True
     if gate:
         return False
@@ -776,12 +864,41 @@ def _resolve_quality(inv: Invoice, logs: list[AuditLog], wm: int) -> DossierPipe
     )
     if routing_fail is not None:
         return routing_fail
+    routing_fail = _routing_review_fail_for_stage(
+        logs,
+        inv,
+        gate="ocr_quality_confirm",
+        stage_id="quality",
+        exception_code="IMAGE_QUALITY",
+        remediation=_REMEDIATION["IMAGE_QUALITY"],
+    )
+    if routing_fail is not None:
+        return routing_fail
 
-    quality_pass = _latest_log(logs, "image_quality_gate_passed")
-    quality_fail = _latest_log(logs, "image_quality_gate_failed")
+    pre_fail = _latest_log(logs, "image_quality_failed")
+    if pre_fail:
+        return _step(
+            "quality",
+            state="fail",
+            detail=_detail_from_log(pre_fail, fallback="Poor visual fitness"),
+            at=pre_fail.created_at,
+            exception_code="IMAGE_QUALITY",
+            failure_reason=_detail_from_log(pre_fail, fallback="Poor visual fitness"),
+            remediation=_REMEDIATION["IMAGE_QUALITY"],
+        )
+
+    quality_pass = _latest_log(logs, "ocr_quality_confirm_passed") or _latest_log(
+        logs, "image_quality_gate_passed"
+    )
+    quality_fail = _latest_log(logs, "ocr_quality_confirm_failed") or _latest_log(
+        logs, "image_quality_gate_failed"
+    )
     quality_log = quality_pass or quality_fail
     if quality_log:
-        passed = quality_log.event == "image_quality_gate_passed"
+        passed = quality_log.event in {
+            "ocr_quality_confirm_passed",
+            "image_quality_gate_passed",
+        }
         detail_dict = quality_log.detail if isinstance(quality_log.detail, dict) else {}
         text_len = detail_dict.get("text_length")
         detail = _detail_from_log(
@@ -1115,6 +1232,8 @@ def _routing_review_superseded_for_validate(
     routing: AuditLog,
 ) -> bool:
     """True when a later successful gate/validation makes routing_review stale for validate."""
+    if _is_vision_understood_hold_routing(routing):
+        return True
     gate = _routing_review_gate(routing)
     if gate == "classification":
         gate_pass = _latest_log(logs, "classification_gate_passed")
@@ -1135,10 +1254,21 @@ def _resolve_validate(
     wm: int,
     document_types: list | None = None,
 ) -> DossierPipelineStepResponse:
+    if _is_vision_understood_hold(inv, logs):
+        pending = _latest_log(logs, "vision_path_pending")
+        return _step(
+            "validate",
+            state="skipped",
+            detail="Not run · understood path (bundle + vault only)",
+            at=pending.created_at if pending else None,
+        )
+
     checks = _validation_checks(inv, document_types)
     validate_pass = _latest_log(logs, "validation_passed")
     validate_fail = _latest_log(logs, "validation_failed")
     routing_review = _latest_log(logs, "routing_review_required")
+    if _is_vision_understood_hold_routing(routing_review):
+        routing_review = None
     failed_checks = [c for c in checks if c.state == "fail"]
 
     validation_passed_latest = validate_pass is not None and (
@@ -1157,6 +1287,8 @@ def _resolve_validate(
             "image_quality",
             "field_confidence",
             "vendor_classification_drift",
+            "vision_header_extract",
+            "vision_path_pending",
         }
         and (
             validate_pass is None
@@ -1768,6 +1900,8 @@ def _apply_blocked_downstream(steps: list[DossierPipelineStepResponse]) -> list[
     bottleneck_idx: int | None = None
     if fail_idx is None:
         for i, step in enumerate(steps):
+            if step.state == "skipped":
+                continue
             if step.state != "pending" or not step.detail or step.detail == "—":
                 continue
             if any(steps[j].state == "pass" for j in range(i + 1, len(steps))):
@@ -1785,7 +1919,7 @@ def _apply_blocked_downstream(steps: list[DossierPipelineStepResponse]) -> list[
         if i <= block_idx:
             out.append(step)
             continue
-        if step.state in ("fail", "waived"):
+        if step.state in ("fail", "waived", "skipped"):
             out.append(step)
             continue
         if fail_idx is None and step.state in ("pass", "waived"):
@@ -1812,6 +1946,245 @@ def _apply_blocked_downstream(steps: list[DossierPipelineStepResponse]) -> list[
     return out
 
 
+def build_understood_dossier_pipeline(
+    inv: Invoice,
+    logs: list[AuditLog],
+) -> list[DossierPipelineStepResponse]:
+    """Eight Audit-aligned stages for the vision understood path (incl. duplicate check)."""
+    cycle_logs = _cycle_logs(logs)
+    received = _latest_log(cycle_logs, "email_ingested", "invoice_uploaded", "invoice_file_attached")
+    storage = _latest_log(cycle_logs, "storage_verified")
+    fv_pass = _latest_log(cycle_logs, "file_validity_passed")
+    fv_fail = _latest_log(cycle_logs, "file_validity_failed")
+    fv = fv_pass or fv_fail
+    vu_pass = _latest_log(cycle_logs, "vision_understand_passed")
+    vu_fail = _latest_log(cycle_logs, "vision_understand_failed")
+    if vu_pass and vu_fail:
+        vu = vu_pass if _is_after(vu_pass, vu_fail) else vu_fail
+    else:
+        vu = vu_pass or vu_fail
+    vh = _latest_log(cycle_logs, "vision_header_extracted")
+    bundle_log = _latest_log(cycle_logs, "vision_bundle_linked", "vision_bundle_standalone")
+    vault_log = (
+        _latest_log(cycle_logs, "blob_relocated")
+        or _latest_log(cycle_logs, "vault_layout_sync_skipped")
+        or _latest_log(cycle_logs, "vision_path_pending")
+        or _latest_log(cycle_logs, "vault_stored")
+    )
+    fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+    heading = (inv.document_heading or "").strip() or str(fields.get("document_heading") or "").strip()
+    canonical = str(fields.get("canonical_document_type") or "").strip()
+    has_file = bool((inv.raw_file_path or "").strip())
+    has_bundle_snapshot = fields.get("vision_bundle_kind") is not None or bool(
+        fields.get("vision_bundle_key")
+    )
+
+    steps: list[DossierPipelineStepResponse] = []
+
+    if received:
+        steps.append(
+            _step(
+                "ingest",
+                state="pass",
+                detail=_detail_from_log(received, fallback="Document received"),
+                at=received.created_at,
+            )
+        )
+    else:
+        steps.append(
+            _step(
+                "ingest",
+                state="pass" if inv.created_at else "pending",
+                detail="Document received",
+                at=inv.created_at,
+            )
+        )
+
+    # Duplicate check runs immediately after receive (same as full pipeline).
+    steps.append(_resolve_duplicate(inv, cycle_logs, wm=2 if storage or has_file else 0))
+
+    if storage:
+        steps.append(
+            _step(
+                "storage",
+                state="pass",
+                detail=_detail_from_log(storage, fallback="Stored"),
+                at=storage.created_at,
+            )
+        )
+    else:
+        steps.append(
+            _step(
+                "storage",
+                state="pass" if has_file else "pending",
+                detail="Stored" if has_file else "—",
+            )
+        )
+
+    if fv is not None:
+        steps.append(
+            _step(
+                "file_validity",
+                state="pass" if fv.event == "file_validity_passed" else "fail",
+                detail=_detail_from_log(fv, fallback=fv.event),
+                at=fv.created_at,
+                exception_code="FILE_VALIDITY" if fv.event == "file_validity_failed" else None,
+                failure_reason=_detail_from_log(fv) if fv.event == "file_validity_failed" else None,
+            )
+        )
+    elif vu is not None or has_bundle_snapshot or heading:
+        steps.append(_step("file_validity", state="pass", detail="File accepted for vision path"))
+    else:
+        steps.append(_step("file_validity", state="pending", detail="—"))
+
+    if vu is not None:
+        steps.append(
+            _step(
+                "vision_understand",
+                state="pass" if vu.event == "vision_understand_passed" else "fail",
+                detail=_detail_from_log(vu, fallback=vu.event),
+                at=vu.created_at,
+            )
+        )
+    elif heading or canonical or has_bundle_snapshot:
+        steps.append(
+            _step("vision_understand", state="pass", detail="Document understood (vision path)")
+        )
+    else:
+        steps.append(_step("vision_understand", state="pending", detail="—"))
+
+    if vh is not None:
+        steps.append(
+            _step(
+                "extract",
+                state="pass",
+                detail=_detail_from_log(vh, fallback=heading or "Vision header extracted"),
+                at=vh.created_at,
+            )
+        )
+    elif heading or canonical:
+        steps.append(
+            _step("extract", state="pass", detail=heading or canonical or "Vision header extracted")
+        )
+    else:
+        steps.append(_step("extract", state="pending", detail="—"))
+
+    if bundle_log is not None:
+        steps.append(
+            _step(
+                "bundle",
+                state="pass",
+                detail=_detail_from_log(bundle_log, fallback="Vision soft bundle"),
+                at=bundle_log.created_at,
+            )
+        )
+    elif has_bundle_snapshot:
+        kind = str(fields.get("vision_bundle_kind") or "none")
+        key = str(fields.get("vision_bundle_key") or "").strip()
+        detail = f"Soft bundle · {kind}" + (f" · {key}" if key else "")
+        steps.append(_step("bundle", state="pass", detail=detail))
+    else:
+        steps.append(_step("bundle", state="pending", detail="—"))
+
+    if vault_log is not None or has_file:
+        steps.append(
+            _step(
+                "archive",
+                state="pass",
+                detail=_detail_from_log(vault_log, fallback="Stored in vault"),
+                at=vault_log.created_at if vault_log else None,
+            )
+        )
+    else:
+        steps.append(_step("archive", state="pending", detail="—"))
+
+    return steps
+
+
+def _apply_understood_path_overlay(
+    inv: Invoice,
+    logs: list[AuditLog],
+    steps: list[DossierPipelineStepResponse],
+) -> list[DossierPipelineStepResponse]:
+    """Vision understood path: only ingest→extract→bundle→vault; skip OCR/classify/posting."""
+    from app.services.invoice.pipeline_stages import resolve_pipeline_active_path
+
+    if resolve_pipeline_active_path(logs) != "understood" and not _is_vision_understood_hold(
+        inv, logs
+    ):
+        return steps
+
+    vh = _latest_log(logs, "vision_header_extracted")
+    bundle_log = _latest_log(logs, "vision_bundle_linked", "vision_bundle_standalone")
+    vault_log = (
+        _latest_log(logs, "blob_relocated")
+        or _latest_log(logs, "vault_layout_sync_skipped")
+        or _latest_log(logs, "vision_path_pending")
+    )
+    fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+    canonical = str(fields.get("canonical_document_type") or "").strip()
+    heading = (inv.document_heading or "").strip() or str(fields.get("document_heading") or "").strip()
+    has_file = bool((inv.raw_file_path or "").strip())
+
+    out: list[DossierPipelineStepResponse] = []
+    for step in steps:
+        sid = step.stage_id
+        if sid not in UNDERSTOOD_DOSSIER_STAGE_IDS:
+            out.append(
+                _step(
+                    sid,
+                    state="skipped",
+                    detail="Not run · understood path",
+                    at=None,
+                )
+            )
+            continue
+        if sid == "extract" and vh is not None:
+            out.append(
+                _step(
+                    "extract",
+                    state="pass",
+                    detail=_detail_from_log(vh, fallback=heading or "Vision header extracted"),
+                    at=vh.created_at,
+                )
+            )
+            continue
+        if sid == "document_type":
+            label = canonical or heading or (inv.document_type_code or "").strip()
+            if label:
+                out.append(
+                    _step(
+                        "document_type",
+                        state="pass",
+                        detail=f"Vision · {label}",
+                        at=vh.created_at if vh else None,
+                    )
+                )
+                continue
+        if sid == "bundle" and bundle_log is not None:
+            out.append(
+                _step(
+                    "bundle",
+                    state="pass",
+                    detail=_detail_from_log(bundle_log, fallback="Vision soft bundle"),
+                    at=bundle_log.created_at,
+                )
+            )
+            continue
+        if sid == "archive" and (vault_log is not None or has_file):
+            out.append(
+                _step(
+                    "archive",
+                    state="pass",
+                    detail=_detail_from_log(vault_log, fallback="Stored in vault"),
+                    at=vault_log.created_at if vault_log else None,
+                )
+            )
+            continue
+        out.append(step)
+    return out
+
+
 def build_dossier_pipeline(
     inv: Invoice,
     logs: list[AuditLog],
@@ -1825,6 +2198,7 @@ def build_dossier_pipeline(
     steps = _build_raw_steps(inv, cycle_logs, document_types=document_types)
     steps = _apply_pipeline_error(steps, inv, cycle_logs)
     _apply_pay_stage(steps, payment_status=payment_status, payment_detail=payment_detail)
+    steps = _apply_understood_path_overlay(inv, cycle_logs, steps)
     steps = _apply_blocked_downstream(steps)
     _apply_durations(steps)
 
@@ -1854,7 +2228,8 @@ def build_dossier_pipeline(
 
 
 def first_pipeline_failure(steps: list[DossierPipelineStepResponse]) -> DossierPipelineStepResponse | None:
-    for stage_id in STAGE_IDS:
+    order = _stage_order_for_steps(steps)
+    for stage_id in order:
         step = next((row for row in steps if row.stage_id == stage_id), None)
         if step is not None and step.state == "fail":
             return step
@@ -1869,12 +2244,21 @@ def first_pipeline_bottleneck(
     if fail is not None:
         return fail
     by_stage = {step.stage_id: step for step in steps}
-    for stage_id in STAGE_IDS:
+    for stage_id in _stage_order_for_steps(steps):
         step = by_stage.get(stage_id)
         if step is None:
-            break
+            continue
+        if step.state == "skipped":
+            continue
         if step.state == "pending" and step.detail and step.detail != "—":
             return step
         if step.state == "pending":
             return step
     return None
+
+
+def _stage_order_for_steps(steps: list[DossierPipelineStepResponse]) -> tuple[str, ...]:
+    ids = {step.stage_id for step in steps}
+    if ids and ids <= UNDERSTOOD_DOSSIER_STAGE_IDS:
+        return UNDERSTOOD_DOSSIER_STAGE_ORDER
+    return STAGE_IDS

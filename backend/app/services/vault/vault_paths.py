@@ -32,6 +32,47 @@ _KNOWN_BOOKS = frozenset(
     }
 )
 
+_TITLE_CASE_SMALL = frozenset({"of", "and", "or", "the", "a", "an", "to", "for", "in", "on"})
+
+
+def _title_case_vault_label(label: str) -> str:
+    """Mechanical Title Case only — no document-type allowlist."""
+    parts = re.split(r"(\s+|/)", re.sub(r"\s+", " ", label.strip()))
+    out: list[str] = []
+    word_index = 0
+    for part in parts:
+        if not part or part.isspace() or part == "/":
+            out.append(part)
+            continue
+        low = part.lower()
+        if word_index > 0 and low in _TITLE_CASE_SMALL:
+            out.append(low)
+        else:
+            out.append(low[:1].upper() + low[1:] if low else part)
+        word_index += 1
+    return "".join(out)
+
+
+def normalize_vault_type_book_label(label: str | None) -> str:
+    """Sanitize + Title Case an AI/OCR type name for use as a vault folder.
+
+    No fixed document-type catalogue: any new AI name becomes a new folder.
+    Case folding only (PACKING LIST → Packing List) so casing variants collapse.
+    """
+    raw = (label or "").strip()
+    if not raw:
+        return ""
+    if raw in _KNOWN_BOOKS:
+        return raw
+    cleaned = re.sub(r'[/\\:*?"<>|]+', "", raw).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    if not cleaned:
+        return ""
+    if cleaned in _KNOWN_BOOKS:
+        return cleaned
+    return _title_case_vault_label(cleaned)
+
+
 MONTH_NAMES = (
     "January",
     "February",
@@ -130,8 +171,16 @@ def vault_book_folder(route_target: str | None) -> str:
     if key:
         cleaned = re.sub(r'[/\\:*?"<>|]+', "", key).strip()
         if cleaned:
-            return cleaned
+            if cleaned in _KNOWN_BOOKS:
+                return cleaned
+            # Type-as-book (vision): normalize casing/synonyms so PACKING LIST == Packing List.
+            return normalize_vault_type_book_label(cleaned) or ROUTE_UNROUTED
     return ROUTE_UNROUTED
+
+
+def is_standard_vault_book(route_target: str | None) -> bool:
+    """True for Purchase/Sales/Vault/Unrouted/etc. — False when type is used as the book."""
+    return vault_book_folder(route_target) in _KNOWN_BOOKS
 
 
 def vault_document_type_folder(
@@ -143,6 +192,8 @@ def vault_document_type_folder(
     """Display folder for vault-routed documents: ``DT-13 · Vendor statement``."""
     code = (document_type_code or "").strip().upper()
     label = (short_title or title or "").strip()
+    if label and not code:
+        label = normalize_vault_type_book_label(label) or label
     if code and label:
         folder = f"{code} · {label}"
     elif code:

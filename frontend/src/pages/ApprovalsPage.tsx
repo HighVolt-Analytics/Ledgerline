@@ -25,15 +25,13 @@ import { useRuleBookConfig } from "@/hooks/useRuleBookConfig";
 import { invoiceCanPublishToLedger } from "@/lib/invoice";
 import { invoiceMatchesListSearch } from "@/lib/listSearch";
 import { DocumentTypeChip } from "@/components/inbox/DocumentTypeChip";
-import {
-  effectiveDocumentTypeCode,
-  invoiceDocumentTypeDisplayLabel,
-} from "@/lib/documentTypeResolve";
+import { invoiceDocumentTypeDisplayLabel } from "@/lib/documentTypeResolve";
 import { ruleBookConfigFromApi } from "@/lib/ruleBookConfigApi";
 import {
   APPROVABLE_STATUSES,
   APPROVAL_QUEUE_STATUSES,
   type ApprovalBoardColumnKey,
+  canShowRejectOnApprovedBoard,
   canShowReprocessOnBoard,
   columnForInvoice,
   mergeBoardRowWithLocal,
@@ -581,7 +579,7 @@ export function ApprovalsPage() {
               <div className="approvals-kanban-column__cards">
                 {cards.map((inv) => {
                   const typeLabel = invoiceDocumentTypeDisplayLabel(inv, documentTypes);
-                  const typeCode = effectiveDocumentTypeCode(inv, documentTypes);
+                  const typeCode = (inv.document_type_code ?? "").trim();
                   return (
                   <article
                     key={inv.id}
@@ -604,12 +602,21 @@ export function ApprovalsPage() {
                         <DocumentTypeChip
                           code={typeCode}
                           label={typeLabel}
+                          display={typeLabel}
                           title={typeLabel}
                           purchaseKind={inv.purchase_document_type}
                           documentTypes={documentTypes}
                           className="approvals-kanban-card__type-chip"
                         />
                       </div>
+                      {inv.duplicate_review_suggested ? (
+                        <p
+                          className="text-[10px] text-amber-800 dark:text-amber-200 leading-tight mt-1"
+                          data-testid={`card-duplicate-review-${inv.id}`}
+                        >
+                          Possible duplicate — review suggested
+                        </p>
+                      ) : null}
                       <div className="approvals-kanban-card__subline-row">
                         <span className="approvals-kanban-card__meta tnum">
                           {documentDisplayRef(inv)}
@@ -662,7 +669,7 @@ export function ApprovalsPage() {
                           testId={`reject-${inv.id}`}
                         />
                       )}
-                      {col.key === "approved" && inv.status === "processed" && (
+                      {col.key === "approved" && canShowRejectOnApprovedBoard(inv) && (
                         <ActionChip
                           tone="reject"
                           icon={X}

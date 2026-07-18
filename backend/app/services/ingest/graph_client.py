@@ -13,6 +13,9 @@ logger = get_logger(__name__)
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 SCOPE = ["https://graph.microsoft.com/.default"]
+# Keep message IDs stable across folder moves — without this, Graph issues a new
+# id on move and Exceptions-folder re-poll re-ingests the same attachment.
+GRAPH_IMMUTABLE_ID_PREFER = 'IdType="ImmutableId"'
 
 _app_token_cache: dict[str, Any] = {"expires_at": 0.0, "token": ""}
 
@@ -66,7 +69,10 @@ def graph_request(
     """Call Graph REST API and return JSON body."""
     token = access_token or get_application_access_token()
     url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Prefer": GRAPH_IMMUTABLE_ID_PREFER,
+    }
 
     with httpx.Client(timeout=30.0) as client:
         response = client.request(method, url, headers=headers, params=params, json=json_body)

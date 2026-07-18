@@ -26,6 +26,7 @@ from app.services.extraction.llm_document_service import (
     llm_result_to_invoice_data,
 )
 from app.services.invoice.invoice_data import InvoiceData
+from app.services.prompt_registry import resolve_system_prompt_text
 from app.services.tenant.tenant_org_context import OrgContext
 from app.utils.logger import get_logger
 
@@ -37,20 +38,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_GAP_FILL_SYSTEM_HEADER = """You fill ONLY the missing_fields listed in the user payload from OCR text.
-Return JSON only with the keys listed in the response schema.
-
-Rules:
-1. Copy values verbatim from ocr.text_excerpt or field_snippets — nothing else.
-2. If a field is not explicitly present in OCR, return empty ("" or omit). Do NOT guess.
-3. Never infer, calculate, or assume (no currency default, no date math, no vendor from email domain).
-4. Never swap semantically similar fields (invoice_no ≠ po_reference, vendor ≠ buyer).
-5. field_confidence must be a JSON object mapping field names to 0.0-1.0 scores — never a bare number.
-6. field_confidence: 0.0 when empty; 0.95+ only for verbatim OCR copies.
-7. Put custom (non-canonical) string values in extracted_fields.{key}.
-8. invoice_date and due_date must be ISO YYYY-MM-DD when present in OCR.
-"""
-
 
 def build_gap_fill_system_prompt(
     *,
@@ -59,7 +46,7 @@ def build_gap_fill_system_prompt(
 ) -> str:
     json_keys = build_llm_extract_json_keys(missing_keys)
     parts = [
-        _GAP_FILL_SYSTEM_HEADER.strip(),
+        resolve_system_prompt_text("llm.gap_fill.system").strip(),
         f"\nReturn JSON only with keys:\n{json_keys}.",
     ]
     normalized_missing = {str(k).strip().lower() for k in missing_keys if str(k or "").strip()}

@@ -67,6 +67,108 @@ def _anchor_document_type(
     return code, _dt_label(code, document_types)
 
 
+def _counterparty_name(invoice: Invoice) -> str | None:
+    token = (invoice.vendor or "").strip()
+    return token or None
+
+
+def _vision_linked_doc_label(
+    invoice: Invoice,
+    document_types: list[DocumentTypeDefinition],
+) -> tuple[str, str]:
+    """Code + display label for vision soft-bundle cards (prefer heading over Unclassified)."""
+    from app.services.dossier.vision_bundle_linkage import vision_document_type_label
+
+    code, fallback = _anchor_document_type(invoice, document_types)
+    vision = vision_document_type_label(invoice)
+    if vision:
+        return code, vision
+    return code, fallback
+
+
+async def _build_vision_soft_bundle_documents(
+    session: AsyncSession,
+    invoice: Invoice,
+    *,
+    document_types: list[DocumentTypeDefinition],
+    custom_field_key: str | None,
+) -> DossierLinkedDocumentsResponse | None:
+    """Advisory sibling list using vision invoice-first priority (no VR-PB02 enforce)."""
+    from app.services.dossier.vision_bundle_linkage import (
+        fetch_siblings_for_vision_bundle,
+        read_vision_bundle_snapshot,
+        resolve_vision_bundle_key,
+        should_use_vision_bundle_linkage,
+    )
+
+    if not should_use_vision_bundle_linkage(invoice):
+        return None
+
+    link = read_vision_bundle_snapshot(invoice) or resolve_vision_bundle_key(
+        invoice, custom_field_key=custom_field_key
+    )
+    if not link.has_key or not link.key:
+        code, label = _vision_linked_doc_label(invoice, document_types)
+        return DossierLinkedDocumentsResponse(
+            linkage_kind="standalone",
+            linkage_key=None,
+            linkage_label="No external linkage key",
+            enforce_bundle=False,
+            documents=[
+                DossierLinkedDocumentResponse(
+                    id="anchor",
+                    document_type_code=code,
+                    label=label,
+                    document_ref=display_document_ref(invoice),
+                    counterparty=_counterparty_name(invoice),
+                    present=True,
+                    requirement="advisory",
+                    linked_dossier_id=_dossier_id_for_invoice(invoice),
+                    invoice_id=invoice.id,
+                    is_anchor=True,
+                    has_file=bool(invoice.raw_file_path),
+                    linkage_detail="Vision path — awaiting classification",
+                    link_kind="system",
+                )
+            ],
+        )
+
+    siblings = await fetch_siblings_for_vision_bundle(session, invoice, link)
+    anchor_id = _dossier_id_for_invoice(invoice)
+    documents: list[DossierLinkedDocumentResponse] = []
+
+    def _row_doc(row: Invoice, *, is_anchor: bool) -> DossierLinkedDocumentResponse:
+        code, label = _vision_linked_doc_label(row, document_types)
+        return DossierLinkedDocumentResponse(
+            id=f"vision-bundle-{row.id}",
+            document_type_code=code,
+            label=label,
+            document_ref=display_document_ref(row),
+            invoice_no=(row.invoice_no or None),
+            counterparty=_counterparty_name(row),
+            present=True,
+            requirement="advisory",
+            linked_dossier_id=anchor_id if is_anchor else dossier_public_id(row),
+            invoice_id=row.id,
+            is_anchor=is_anchor,
+            has_file=bool(row.raw_file_path),
+            linkage_detail=link.linkage_label,
+            link_kind="system" if is_anchor else link.kind,
+        )
+
+    documents.append(_row_doc(invoice, is_anchor=True))
+    for row in siblings:
+        documents.append(_row_doc(row, is_anchor=False))
+
+    return DossierLinkedDocumentsResponse(
+        linkage_kind=link.kind,
+        linkage_key=link.key,
+        linkage_label=link.linkage_label,
+        enforce_bundle=False,
+        documents=documents,
+    )
+
+
 def _is_sales_dossier_invoice(
     invoice: Invoice,
     definition: DocumentTypeDefinition | None,
@@ -115,8 +217,8 @@ async def _finalize_linked_documents(
     linkage_cache=None,
 ) -> DossierLinkedDocumentsResponse:
     from app.services.dossier.dossier_service import (
+        append_harvested_reference_linked_documents,
         append_invoice_no_linked_documents,
-        append_reference_linked_documents,
     )
 
     enriched = await append_invoice_no_linked_documents(
@@ -126,7 +228,7 @@ async def _finalize_linked_documents(
         document_types=document_types,
         linkage_cache=linkage_cache,
     )
-    enriched = await append_reference_linked_documents(
+    enriched = await append_harvested_reference_linked_documents(
         session,
         invoice,
         enriched,
@@ -169,6 +271,7 @@ async def _build_invoice_no_linked_documents(
             label=label,
             document_ref=display_document_ref(row),
             invoice_no=invoice_no,
+            counterparty=_counterparty_name(row),
             present=True,
             requirement="advisory",
             linked_dossier_id=anchor_id if is_anchor else dossier_public_id(row),
@@ -204,6 +307,46 @@ async def build_dossier_linked_documents(
         from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
 
         document_types = (await load_posting_config_for_tenant(session, invoice.tenant_id)).document_types
+
+    from app.models.tenant import Tenant
+    from app.tenant_settings import tenant_custom_bundle_field_key
+
+    tenant_row = await session.get(Tenant, invoice.tenant_id)
+    custom_field_key = tenant_custom_bundle_field_key(tenant_row)
+
+    vision_bundle = await _build_vision_soft_bundle_documents(
+        session,
+        invoice,
+        document_types=document_types,
+        custom_field_key=custom_field_key,
+    )
+    if vision_bundle is not None:
+        from app.services.dossier.dossier_service import (
+            append_harvested_reference_linked_documents,
+            append_invoice_no_linked_documents,
+        )
+
+        enriched = await append_invoice_no_linked_documents(
+            session,
+            invoice,
+            vision_bundle,
+            document_types=document_types,
+            linkage_cache=linkage_cache,
+        )
+        enriched = await append_harvested_reference_linked_documents(
+            session,
+            invoice,
+            enriched,
+            document_types=document_types,
+            linkage_cache=linkage_cache,
+        )
+        return await apply_manual_links(
+            session,
+            tenant_id=invoice.tenant_id,
+            anchor_invoice_id=invoice.id,
+            response=enriched,
+            document_types=document_types,
+        )
 
     anchor_id = _dossier_id_for_invoice(invoice)
     po_ref = (invoice.po_reference or "").strip() or None
@@ -421,6 +564,7 @@ async def build_dossier_linked_documents(
                     label=label,
                     document_ref=display_document_ref(invoice),
                     invoice_no=(invoice.invoice_no or "").strip() or None,
+                    counterparty=_counterparty_name(invoice),
                     present=True,
                     requirement="mandatory",
                     linked_dossier_id=anchor_id,

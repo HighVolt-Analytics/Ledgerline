@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Building2, ChevronDown, Moon, Pin, PinOff, Settings2, Sun } from "lucide-react";
+import { Building2, ChevronDown, Code2, Moon, Pin, PinOff, Settings2, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Logo, LogoBlock } from "@/components/Logo";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
@@ -100,6 +100,16 @@ export function SuperAdminLayout() {
             >
               <Settings2 className="h-4 w-4 shrink-0" />
               <span className="secondary-nav-item__label">Credit settings</span>
+            </NavLink>
+            <NavLink
+              to="/platform/developer-port"
+              className={({ isActive }) =>
+                cn("secondary-nav-item", isActive && "secondary-nav-item--active")
+              }
+              data-testid="nav-developer-port"
+            >
+              <Code2 className="h-4 w-4 shrink-0" />
+              <span className="secondary-nav-item__label">Developer Port</span>
             </NavLink>
           </div>
         </nav>

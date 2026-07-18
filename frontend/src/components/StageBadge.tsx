@@ -14,6 +14,8 @@ const stageToneByName: Record<string, KpiModuleColor> = {
   Approved: "sage",
   Processed: "green",
   Posted: "blue",
+  Vaulted: "sage",
+  "Header review": "rust",
   Rejected: "rose",
   Duplicate: "rust",
 };
@@ -75,7 +77,7 @@ export function StageBadge({
 /** Status-only fallback when pipeline fields are unavailable (legacy lists). */
 export function invoiceStage(
   status: string,
-  inv?: Pick<Invoice, "published_to_ledger">
+  inv?: Pick<Invoice, "published_to_ledger" | "evaluation_status">
 ): string {
   const s = status.toLowerCase();
   if (s === "processed") return inv?.published_to_ledger ? "Posted" : "Processed";
@@ -83,13 +85,26 @@ export function invoiceStage(
   if (s === "rejected") return "Rejected";
   if (["parsing", "validating"].includes(s)) return "Parsed";
   if (["mapping", "journaling", "reconciling"].includes(s)) return "Mapped";
-  if (s === "exception") return "Validated";
+  if (s === "exception") {
+    const evalStatus = (inv?.evaluation_status ?? "").trim();
+    if (evalStatus === "vision_vaulted") return "Vaulted";
+    if (evalStatus === "vision_header_review") return "Header review";
+    if (evalStatus === "awaiting_classification") return "Parsed";
+    return "Validated";
+  }
   if (s === "pending") return "Received";
   return "Received";
 }
 
 export function invoiceStageBadgeProps(
-  inv: Pick<Invoice, "status" | "current_stage" | "current_stage_state" | "published_to_ledger">
+  inv: Pick<
+    Invoice,
+    | "status"
+    | "current_stage"
+    | "current_stage_state"
+    | "published_to_ledger"
+    | "evaluation_status"
+  >
 ): { stage: string; state?: PipelineStageState } {
   if (inv.current_stage) {
     return {

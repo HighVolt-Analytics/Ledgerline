@@ -11,6 +11,7 @@ from app.services.dossier.dossier_approval_service import (
     _human_detail,
     _human_policy_ref,
     build_dossier_approval_chain,
+    build_understood_dossier_approval_chain,
 )
 from tests.conftest import TESTING_TENANT_UUID
 
@@ -26,6 +27,47 @@ def test_human_policy_ref_hides_internal_slugs() -> None:
     assert _human_policy_ref("touchless_on_clean_match") is None
     assert _human_policy_ref("invoice_approved") is None
     assert _human_policy_ref("Post") is None
+
+
+def test_understood_approval_chain_is_vault_only() -> None:
+    chain = build_understood_dossier_approval_chain()
+    assert chain.policy_mode == "no_posting"
+    assert "understood" in chain.policy_label.lower()
+    assert {step.state for step in chain.steps} == {"not_required"}
+    assert {step.id for step in chain.steps} == {
+        "document_gate",
+        "exception_queue",
+        "publish",
+        "payment",
+    }
+
+
+@pytest.mark.asyncio
+async def test_approval_chain_understood_path_skips_posting(db_session: AsyncSession) -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Acme",
+        status=InvoiceStatus.EXCEPTION,
+        evaluation_status="vision_vaulted",
+        file_hash="approval-chain-understood",
+    )
+    db_session.add(inv)
+    await db_session.flush()
+
+    chain = await build_dossier_approval_chain(
+        db_session,
+        inv,
+        [],
+        definition=None,
+        payment=None,
+        published=False,
+        pipeline_path="understood",
+    )
+
+    assert chain.policy_mode == "no_posting"
+    publish = next(step for step in chain.steps if step.id == "publish")
+    assert publish.state == "not_required"
+    assert "Waiting to post" not in (publish.detail or "")
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ import {
   invoiceTaxMeta,
   isCompactReceiptStyle,
   isSummaryLineDescription,
+  isVisionHeaderPipelineSummary,
   lineItemColumnsForPreview,
   parseDocumentTaxRatePercent,
   previewFilename,
@@ -274,6 +275,66 @@ describe("buildDocumentContentProfile", () => {
       documentTypeLabel: "Credit note",
     });
     expect(withLabel.heading).toBe("Credit note");
+  });
+
+  it("summary for vision header path shows header fields without OCR copy", () => {
+    const inv = {
+      ...baseInvoice,
+      status: "exception",
+      evaluation_status: "awaiting_classification",
+      document_heading: "PACKING LIST",
+      vendor: "Acme Supplies",
+      invoice_no: "PL-9",
+      invoice_date: "2026-03-15",
+      total: "2500.00",
+      currency: "AUD",
+      document_text: null,
+      extracted_fields: {
+        canonical_document_type: "Packing List",
+        other_reference: "REF-22",
+      },
+    } as InvoiceDetails;
+
+    const profile = buildDocumentContentProfile(inv, {
+      sourceKind: "upload",
+      summaryMode: true,
+    });
+    expect(profile.pipelineKind).toBe("vision_header");
+    expect(profile.heading).toBe("PACKING LIST");
+    expect(profile.counterparty).toBe("Acme Supplies");
+    expect(profile.invoiceNo).toBe("PL-9");
+    expect(profile.dates.issued).toBeTruthy();
+    expect(profile.totals.total).toBe("2500.00");
+    expect(profile.currency).toBe("AUD");
+    expect(profile.textExcerpt).toBeNull();
+    expect(profile.footer).toContain("vision header");
+    expect(profile.referenceDetails.some((r) => r.key === "other_reference")).toBe(true);
+  });
+
+  it("detects vision header pipeline summary hold", () => {
+    expect(
+      isVisionHeaderPipelineSummary({
+        evaluation_status: "awaiting_classification",
+        document_text: null,
+      } as InvoiceDetails)
+    ).toBe(true);
+    expect(
+      isVisionHeaderPipelineSummary({
+        evaluation_status: "awaiting_classification",
+        document_text: "ocr body",
+      } as InvoiceDetails)
+    ).toBe(false);
+  });
+
+  it("keeps OCR pipeline kind when document text exists", () => {
+    const inv = {
+      ...baseInvoice,
+      evaluation_status: "awaiting_classification",
+      document_text: "TAX INVOICE\nVendor Acme",
+      document_heading: "TAX INVOICE",
+    } as InvoiceDetails;
+    const profile = buildDocumentContentProfile(inv, { sourceKind: "upload", summaryMode: true });
+    expect(profile.pipelineKind).toBe("ocr");
   });
 
   it("collects PO reference and custom extracted fields", () => {

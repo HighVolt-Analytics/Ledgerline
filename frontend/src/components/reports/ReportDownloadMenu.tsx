@@ -111,7 +111,7 @@ export function ReportDownloadMenu({
         case "documents-bundle": {
           const { dataRows } = await api.downloadDocumentsBundle(filter);
           if (dataRows === 0) {
-            onToast("No transactional posting documents in this period to export.");
+            onToast("No documents in this period to export.");
             return;
           }
           onToast("Documents bundle downloaded.");

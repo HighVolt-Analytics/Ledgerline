@@ -234,6 +234,9 @@ async def test_pipeline_blocks_unresolved_control_accounts(
     def _valid_file(*_args, **_kwargs):
         return FileValidityResult(passed=True, rejection_code=None, detail="ok")
 
+    from tests.pipeline_test_helpers import patch_pre_ocr_gates_pass
+
+    patch_pre_ocr_gates_pass(monkeypatch)
     monkeypatch.setattr("app.services.invoice.file_validity_gate.evaluate_file_validity", _valid_file)
     monkeypatch.setattr("app.services.invoice.pipeline.open_pdf_for_reading", _fake_open)
     monkeypatch.setattr("app.services.pipeline.open_pdf_for_reading", _fake_open)

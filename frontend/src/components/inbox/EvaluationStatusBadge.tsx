@@ -11,7 +11,11 @@ function evaluationChipClass(status: NonNullable<Invoice["evaluation_status"]>):
   switch (status) {
     case "auto_coded":
       return kpiStatusChipClass("green");
+    case "vision_vaulted":
+      return kpiStatusChipClass("green");
     case "needs_review":
+      return needsReviewStatusChipClass();
+    case "vision_header_review":
       return needsReviewStatusChipClass();
     case "pending_approval":
       return kpiStatusChipClass("rust");
@@ -83,5 +87,25 @@ export function RouteTargetBadge({ route }: { route: string | null | undefined }
     <Badge variant="secondary" className="text-xs font-normal">
       {route}
     </Badge>
+  );
+}
+
+/** Distinct from evaluation needs_review — ingest T4 weak/unsure duplicate match. */
+export function DuplicateReviewBadge({
+  suggested,
+  className,
+}: {
+  suggested?: boolean | null;
+  className?: string;
+}) {
+  if (!suggested) return null;
+  return (
+    <span
+      className={cn(needsReviewStatusChipClass(), className)}
+      title="Ingest could not strongly confirm uniqueness; a reviewer should check for duplicates."
+      data-testid="badge-duplicate-review"
+    >
+      Possible duplicate — review suggested
+    </span>
   );
 }

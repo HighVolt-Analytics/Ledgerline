@@ -12,6 +12,7 @@ from app.models.delivery_note_line import DeliveryNoteLine
 from app.models.goods_receipt import GoodsReceipt
 from app.models.goods_receipt_line import GoodsReceiptLine
 from app.models.invoice import Invoice
+from app.models.invoice_page_fingerprint import InvoicePageFingerprint
 from app.models.journal import JournalEntry
 from app.models.line_item import LineItem
 from app.models.purchase_order import PurchaseOrder
@@ -92,6 +93,19 @@ def _sync_journal_entry_tenant(_mapper, connection: Connection, target: JournalE
         tenant_id=target.tenant_id,
         invoice_id=target.invoice_id,
         label="journal entry",
+    )
+
+
+@event.listens_for(InvoicePageFingerprint, "before_insert")
+@event.listens_for(InvoicePageFingerprint, "before_update")
+def _sync_page_fingerprint_tenant(
+    _mapper, connection: Connection, target: InvoicePageFingerprint
+) -> None:
+    target.tenant_id = _resolve_invoice_child_tenant(
+        connection,
+        tenant_id=target.tenant_id,
+        invoice_id=target.invoice_id,
+        label="invoice page fingerprint",
     )
 
 

@@ -515,6 +515,132 @@ async def identity_duplicate_exists(
     return None
 
 
+MatchKind = Literal[
+    "file_hash",
+    "source_file_hash",
+    "business_fingerprint",
+    "content_fingerprint",
+    "identity_overlap",
+    "page_fingerprint",
+    "filename_combo",
+]
+
+ConfidenceTier = Literal["T1", "T2", "T3", "T4"]
+
+
+@dataclass(frozen=True)
+class IngestDuplicateMatch:
+    """A found duplicate with confidence tier metadata for canonical intake."""
+
+    invoice: Invoice
+    match_kind: MatchKind
+    confidence_tier: ConfidenceTier
+
+
+def classify_match_tier(match_kind: MatchKind) -> ConfidenceTier:
+    if match_kind in {"file_hash", "source_file_hash"}:
+        return "T1"
+    if match_kind in {"business_fingerprint", "content_fingerprint", "identity_overlap", "filename_combo"}:
+        return "T2"
+    if match_kind == "page_fingerprint":
+        return "T3"
+    return "T4"
+
+
+def signals_are_sparse(
+    *,
+    content_fingerprint: str | None,
+    business_fingerprint: str | None,
+    identity_fields: dict[str, str] | None,
+    page_fingerprints: list[str] | None,
+) -> bool:
+    """True when ≥3 of 4 signal families are unavailable (T4 allow-weak path)."""
+    families_present = 0
+    # file_hash is always present at ingest; count the other three + identity as fourth family
+    if content_fingerprint:
+        families_present += 1
+    if business_fingerprint:
+        families_present += 1
+    if identity_fields and any((v or "").strip() for v in identity_fields.values()):
+        families_present += 1
+    if page_fingerprints:
+        families_present += 1
+    # 4 families beyond raw bytes: content, business, identity, page — sparse if ≤1 present
+    return families_present <= 1
+
+
+async def find_existing_ingest_duplicate_match(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    file_hash: str,
+    content_fingerprint: str | None = None,
+    business_fingerprint: str | None = None,
+    identity_fields: dict[str, str] | None = None,
+    page_fingerprints: list[str] | None = None,
+    check_page_fingerprints: bool = False,
+    normalized_filename: str | None = None,
+) -> IngestDuplicateMatch | None:
+    """
+    Tiered ingest duplicate lookup.
+
+    T1: file / source hash.
+    T2: business FP, content FP, identity overlap (filename alone never matches).
+    T3: page fingerprints — only when ``check_page_fingerprints`` is True (last resort).
+    """
+    existing = await find_invoice_by_file_hash(session, file_hash, tenant_id=tenant_id)
+    if existing is not None:
+        return IngestDuplicateMatch(existing, "file_hash", "T1")
+
+    existing = await find_invoice_by_source_file_hash(session, file_hash, tenant_id=tenant_id)
+    if existing is not None:
+        return IngestDuplicateMatch(existing, "source_file_hash", "T1")
+
+    if business_fingerprint:
+        existing = await find_invoice_by_business_fingerprint_for_ingest(
+            session,
+            business_fingerprint,
+            tenant_id=tenant_id,
+        )
+        if existing is not None:
+            return IngestDuplicateMatch(existing, "business_fingerprint", "T2")
+
+    if content_fingerprint:
+        existing = await find_invoice_by_content_fingerprint_for_ingest(
+            session,
+            content_fingerprint,
+            tenant_id=tenant_id,
+        )
+        if existing is not None:
+            return IngestDuplicateMatch(existing, "content_fingerprint", "T2")
+
+    if identity_fields:
+        existing = await identity_overlap_duplicate_exists(
+            session,
+            identity_fields,
+            tenant_id=tenant_id,
+        )
+        if existing is not None:
+            kind: MatchKind = "identity_overlap"
+            # Filename may boost audit detail but does not change the hard match kind.
+            if normalized_filename and (existing.normalized_filename or "") == normalized_filename:
+                kind = "filename_combo"
+            return IngestDuplicateMatch(existing, kind, "T2")
+
+    if check_page_fingerprints and page_fingerprints:
+        from app.services.ingest.page_fingerprint_service import find_invoice_by_page_fingerprints
+
+        existing = await find_invoice_by_page_fingerprints(
+            session,
+            tenant_id=tenant_id,  # type: ignore[arg-type]
+            page_fingerprints=page_fingerprints,
+        )
+        if existing is not None:
+            return IngestDuplicateMatch(existing, "page_fingerprint", "T3")
+
+    return None
+
+
 async def find_existing_ingest_duplicate(
     session: AsyncSession,
     *,
@@ -523,37 +649,23 @@ async def find_existing_ingest_duplicate(
     content_fingerprint: str | None = None,
     business_fingerprint: str | None = None,
     identity_fields: dict[str, str] | None = None,
+    page_fingerprints: list[str] | None = None,
+    check_page_fingerprints: bool = False,
+    normalized_filename: str | None = None,
 ) -> Invoice | None:
-    """Match by file hash, bundle source hash, business fingerprint, content fingerprint, or identity overlap."""
-    existing = await find_invoice_by_file_hash(session, file_hash, tenant_id=tenant_id)
-    if existing is not None:
-        return existing
-    existing = await find_invoice_by_source_file_hash(session, file_hash, tenant_id=tenant_id)
-    if existing is not None:
-        return existing
-    if business_fingerprint:
-        existing = await find_invoice_by_business_fingerprint_for_ingest(
-            session,
-            business_fingerprint,
-            tenant_id=tenant_id,
-        )
-        if existing is not None:
-            return existing
-    if content_fingerprint:
-        existing = await find_invoice_by_content_fingerprint_for_ingest(
-            session,
-            content_fingerprint,
-            tenant_id=tenant_id,
-        )
-        if existing is not None:
-            return existing
-    if identity_fields:
-        return await identity_overlap_duplicate_exists(
-            session,
-            identity_fields,
-            tenant_id=tenant_id,
-        )
-    return None
+    """Match by file hash, bundle source hash, business/content fingerprint, identity, or page FP."""
+    match = await find_existing_ingest_duplicate_match(
+        session,
+        tenant_id=tenant_id,
+        file_hash=file_hash,
+        content_fingerprint=content_fingerprint,
+        business_fingerprint=business_fingerprint,
+        identity_fields=identity_fields,
+        page_fingerprints=page_fingerprints,
+        check_page_fingerprints=check_page_fingerprints,
+        normalized_filename=normalized_filename,
+    )
+    return match.invoice if match else None
 
 
 def _invoice_status(invoice: Invoice) -> InvoiceStatus:
@@ -678,6 +790,8 @@ class IngestDuplicateOutcome:
     invoice_id: int | None = None
     existing: Invoice | None = None
     action: DuplicateAction | None = None
+    match_kind: MatchKind | None = None
+    confidence_tier: ConfidenceTier | None = None
 
 
 async def resolve_ingest_duplicate(
@@ -697,9 +811,12 @@ async def resolve_ingest_duplicate(
     email_attachment_name: str | None = None,
     email_message_id: str | None = None,
     extra_detail: dict[str, Any] | None = None,
+    match_kind: MatchKind | None = None,
+    confidence_tier: ConfidenceTier | None = None,
 ) -> IngestDuplicateOutcome:
     """Apply the standard duplicate decision matrix for an ingest channel."""
     decision = evaluate_file_hash_duplicate(existing)
+    tier = confidence_tier or (classify_match_tier(match_kind) if match_kind else None)
     detail: dict[str, Any] = {
         "filename": email_attachment_name,
         "source": capture_source or "upload",
@@ -709,9 +826,30 @@ async def resolve_ingest_duplicate(
         detail["content_fingerprint"] = content_fingerprint
     if business_fingerprint:
         detail["business_fingerprint"] = business_fingerprint
+    if match_kind:
+        detail["match_kind"] = match_kind
+    if tier:
+        detail["confidence_tier"] = tier
 
     if decision.action == "allow":
-        return IngestDuplicateOutcome(handled=False, existing=existing, action="allow")
+        return IngestDuplicateOutcome(
+            handled=False,
+            existing=existing,
+            action="allow",
+            match_kind=match_kind,
+            confidence_tier=tier,
+        )
+
+    await log_event(
+        session,
+        "duplicate_detected",
+        invoice_id=existing.id,
+        detail={
+            **detail,
+            "action": decision.action,
+            "original_invoice_id": existing.id,
+        },
+    )
 
     if decision.action == "skip_in_progress":
         if email_message_id:
@@ -721,6 +859,8 @@ async def resolve_ingest_duplicate(
             handled=True,
             existing=existing,
             action=decision.action,
+            match_kind=match_kind,
+            confidence_tier=tier,
         )
 
     if decision.action == "skip_logged":
@@ -740,6 +880,8 @@ async def resolve_ingest_duplicate(
             handled=True,
             existing=existing,
             action=decision.action,
+            match_kind=match_kind,
+            confidence_tier=tier,
         )
 
     if decision.action == "shadow_duplicate":
@@ -763,6 +905,8 @@ async def resolve_ingest_duplicate(
             invoice_id=shadow.id,
             existing=existing,
             action=decision.action,
+            match_kind=match_kind,
+            confidence_tier=tier,
         )
 
     if decision.action == "reingest_rejected":
@@ -790,12 +934,16 @@ async def resolve_ingest_duplicate(
             invoice_id=existing.id,
             existing=existing,
             action=decision.action,
+            match_kind=match_kind,
+            confidence_tier=tier,
         )
 
     return IngestDuplicateOutcome(
         handled=True,
         existing=existing,
         action=decision.action,
+        match_kind=match_kind,
+        confidence_tier=tier,
     )
 
 

@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { DossierPipelineStep, DossierPipelinePhaseId } from "@/lib/dossiers";
 import { dossierPipelinePhases, dossierStageStateLabel } from "@/lib/dossiers";
 import type { DossierPhaseDocumentBinding } from "@/lib/dossierPhaseDocuments";
@@ -35,7 +36,10 @@ export function DossierPipelinePhaseStrip({
 
   if (variant === "connected") {
     return (
-      <div className={cn("dossier-card-pipeline", className)}>
+      <div
+        className={cn("dossier-card-pipeline", className)}
+        style={{ "--phase-count": phases.length } as CSSProperties}
+      >
         <div
           className="dossier-card-pipeline__track"
           role={interactive ? "tablist" : "img"}
@@ -85,16 +89,12 @@ export function DossierPipelinePhaseStrip({
                     )}
                   />
                 </SegmentTag>
+                <span className="dossier-card-pipeline__label" aria-hidden>
+                  {phase.label}
+                </span>
               </div>
             );
           })}
-        </div>
-        <div className="dossier-card-pipeline__labels" aria-hidden>
-          {phases.map((phase) => (
-            <span key={phase.phaseId} className="dossier-card-pipeline__label">
-              {phase.label}
-            </span>
-          ))}
         </div>
       </div>
     );

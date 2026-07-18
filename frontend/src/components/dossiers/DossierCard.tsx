@@ -4,7 +4,6 @@ import { DossierOutcomeBadge, DossierTypeBadge } from "@/components/dossiers/Dos
 import { DossierPipelinePhaseStrip } from "@/components/dossiers/DossierPipelinePhaseStrip";
 import type { DossierSummary } from "@/lib/dossiers";
 import {
-  DOSSIER_PIPELINE_STAGES,
   dossierBlockerFromSummary,
   dossierOutcomeLabel,
   dossierStageLabel,
@@ -22,12 +21,17 @@ export function DossierCard({ dossier }: { dossier: DossierSummary }) {
   const blocker = dossierBlockerFromSummary(dossier);
   const bundle = linkedDocumentCounts(dossier.linkedDocuments);
   const stagesComplete = dossier.pipeline.filter(
-    (step) => step.state === "pass" || step.state === "waived"
+    (step) => step.state === "pass" || step.state === "waived" || step.state === "skipped"
   ).length;
-  const totalStages = DOSSIER_PIPELINE_STAGES.length;
+  const totalStages = Math.max(dossier.pipeline.length, 1);
   const progressPct = Math.round((stagesComplete / totalStages) * 100);
   const supportingLabel = supportingDocLabel(bundle.present, bundle.required);
   const showBlockedStatus = dossier.outcome === "blocked";
+  const typeTitle =
+    (dossier.documentTypeTitle || "").trim() ||
+    (dossier.classificationLabel || "").trim() ||
+    "Unclassified";
+  const typeCode = (dossier.documentTypeCode || "").trim();
 
   return (
     <Link
@@ -38,7 +42,7 @@ export function DossierCard({ dossier }: { dossier: DossierSummary }) {
       <div className="dossier-card__upper">
         <div className="dossier-card__head">
           <div className="dossier-card__vendor">{dossier.vendor}</div>
-          <DossierTypeBadge code={dossier.documentTypeCode} title={dossier.documentTypeTitle} />
+          <DossierTypeBadge code={typeCode} title={typeTitle} />
         </div>
 
         <div className="dossier-card__meta tnum">
@@ -79,6 +83,7 @@ export function DossierCard({ dossier }: { dossier: DossierSummary }) {
           </div>
           <p className="dossier-card__progress-label tnum">
             {stagesComplete} / {totalStages} stages completed
+            {dossier.pipelinePath === "understood" ? " · understood path" : ""}
           </p>
         </div>
 

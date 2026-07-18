@@ -65,10 +65,17 @@ def derive_matrix_flag(inv: Invoice) -> tuple[str, str | None]:
         if eval_status in {"awaiting_po", "awaiting_so"}:
             label = "Awaiting PO linkage" if eval_status == "awaiting_po" else "Awaiting SO linkage"
             return "Awaiting linkage", label
+        if eval_status == "vision_vaulted":
+            return "Clean", "Understood path — bundled and stored in vault"
+        if eval_status == "vision_header_review":
+            return "Anomaly Detected", "Vision understood the file but header fields need review"
         return "Anomaly Detected", _first_validation_failure(inv) or "Routed to exception review"
     if inv.evaluation_status == "needs_rescan":
         return "Anomaly Detected", "Poor image quality — rescan required"
     if inv.evaluation_status == "awaiting_classification":
+        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        if fields.get("vision_bundle_kind") is not None or fields.get("vision_bundle_key"):
+            return "Clean", "Understood path — bundled and stored in vault"
         return "Anomaly Detected", "Document type not classified — review required"
     if inv.evaluation_status == "pending_vendor":
         return "Anomaly Detected", "Vendor could not be matched confidently"
@@ -123,6 +130,7 @@ def derive_matrix_payment_status(inv: Invoice, payment: Payment | None) -> str:
         "pending_vendor",
         "unmatched_expense_vendor",
         "awaiting_classification",
+        "vision_header_review",
         "needs_rescan",
     ):
         if inv.status != InvoiceStatus.PROCESSED:

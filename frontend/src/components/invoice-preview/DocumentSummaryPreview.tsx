@@ -377,6 +377,8 @@ function PreviewTotalsBlock({
 
   if (!subtotal && !taxAmount && !total) return null;
 
+  const totalLabel = profile.currency ? `Total (${profile.currency})` : "Total";
+
 
 
   if (compact && total && !subtotal && !taxAmount) {
@@ -387,7 +389,7 @@ function PreviewTotalsBlock({
 
         <PreviewKeyValueRow
 
-          label="Total"
+          label={totalLabel}
 
           value={fmt(total)}
 
@@ -429,7 +431,7 @@ function PreviewTotalsBlock({
 
         <PreviewKeyValueRow
 
-          label="Total"
+          label={totalLabel}
 
           value={fmt(total)}
 
@@ -655,13 +657,27 @@ export function DocumentSummaryPreview({
 
 
 
+      {profile.pipelineKind === "vision_header" && (
+
+        <p className="text-[11px] text-muted-foreground px-1 pt-1">
+
+          Vision path — header fields only; catalogue document type not mapped yet.
+
+        </p>
+
+      )}
+
+
+
       {!hasBody && (
 
         <p className="invoice-preview-empty">
 
-          No structured fields extracted yet — open Original to view the uploaded file, or check
+          {profile.pipelineKind === "vision_header"
 
-          Document text above if OCR is available.
+            ? "No header fields extracted yet — open Original to view the file, or reprocess after vision is configured."
+
+            : "No structured fields extracted yet — open Original to view the uploaded file, or check Document text above if OCR is available."}
 
         </p>
 

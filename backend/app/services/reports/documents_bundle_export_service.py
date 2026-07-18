@@ -1,26 +1,17 @@
 """Excel export — documents bundle matrix for auditors.
 
-Matrix layout (one row per transactional posting anchor invoice):
+Single sheet — Documents Bundle
+    Rows: transactional posting anchors (Rule Book DT matrix) plus
+    vision soft-bundle invoice-family anchors (vault type-folder matrix).
 
 Fixed columns
     Timestamp, Uploaded by, Source, DT type, Invoice date,
-    Counterparty, Total, Currency, Linkage, PO reference, SO reference,
-    Invoice no. (vault hyperlink), Universal match.
+    Counterparty, Total, Currency, Linkage, Invoice no. (vault hyperlink),
+    Proforma invoice no., PO reference, SO reference, Universal match.
 
-Dynamic DT columns (org-configured document types from rule book)
-    One column per document type the organisation has defined in rule book
-    (not the full shipped template catalogue), sorted alphabetically by DT code.
-    Cell values:
-        - Linked upload: native Excel hyperlink (default) or ``label | url`` (plain)
-        - Mandatory slot missing: ``Missing``
-        - Advisory slot missing: ``Advisory``
-        - Not applicable: empty
-
-Row filter: active-workflow invoices (``PROCESSED``, ``EXCEPTION``, ``VALIDATING``,
-``MAPPING``, ``JOURNALING``, ``RECONCILING``) where document type is Transactional with
-posting Yes. Linked supporting docs match on PO/SO reference or invoice no as soon as
-uploaded — no need to wait for anchor posting. Supporting-only documents appear in DT
-columns, not as anchor rows.
+Dynamic columns
+    Org Rule Book document types (DT codes), then vault type-folder names
+    for soft-bundle siblings (Air Waybill, Packing List, …).
 """
 
 from __future__ import annotations
@@ -29,8 +20,9 @@ import io
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date, timezone
+from datetime import date, timezone, tzinfo
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -43,7 +35,9 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.dossier import DossierLinkedDocumentResponse, DossierLinkedDocumentsResponse
 from app.services.audit.audit_export_service import (
+    collect_linked_doc_entries,
     excel_hyperlink,
+    format_vault_links,
     linked_docs_by_dt_code,
     vault_view_path,
 )
@@ -59,7 +53,11 @@ from app.services.classification.document_type_playbook_service import (
 )
 from app.services.dossier.dossier_linked_documents_service import build_dossier_linked_documents
 from app.services.dossier.dossier_service import build_linkage_sibling_cache
+from app.services.dossier.vision_bundle_linkage import should_use_vision_bundle_linkage
+from app.services.extraction.document_heading_utils import is_invoice_family_vault_label
 from app.services.invoice.invoice_evaluation_service import load_posting_config_for_tenant
+from app.services.vault.vault_invoice_paths import vault_type_folder_from_llm_or_heading
+from app.services.vault.vault_paths import is_standard_vault_book, normalize_vault_type_book_label
 
 BundleCellFormat = Literal["excel", "plain"]
 
@@ -82,9 +80,10 @@ _FIXED_COLUMNS = [
     "Total",
     "Currency",
     "Linkage",
+    "Invoice no.",
+    "Proforma invoice no.",
     "PO reference",
     "SO reference",
-    "Invoice no.",
     "Universal match",
 ]
 
@@ -112,6 +111,8 @@ _LEGEND_ROW = 2
 _HEADER_ROW = 4
 _FIRST_DATA_ROW = 5
 
+_SHEET_POSTING = "Documents Bundle"
+
 
 @dataclass(frozen=True)
 class DocumentsBundleExportPayload:
@@ -126,6 +127,13 @@ class _AnchorExportContext:
     definition: DocumentTypeDefinition
     linked: DossierLinkedDocumentsResponse
     invoice_dt_code_by_id: dict[int, str]
+
+
+@dataclass(frozen=True)
+class _UnderstoodExportContext:
+    invoice: Invoice
+    linked: DossierLinkedDocumentsResponse
+    vault_folder_by_invoice_id: dict[int, str]
 
 
 def _effective_invoice_date():
@@ -187,6 +195,24 @@ def _dt_type_label(defn: DocumentTypeDefinition | None) -> str:
     return (defn.title or defn.code or "Unclassified").strip() or "Unclassified"
 
 
+def vault_folder_label_for_export(invoice: Invoice) -> str:
+    """Vault type-folder label for understood-path matrix columns / DT type."""
+    folder = vault_type_folder_from_llm_or_heading(invoice)
+    if folder:
+        return folder
+    route = (invoice.route_target or "").strip()
+    if route and not is_standard_vault_book(route):
+        return normalize_vault_type_book_label(route) or route
+    return ""
+
+
+def is_understood_invoice_family_anchor(invoice: Invoice) -> bool:
+    """True when this document is a vision soft-bundle invoice-family row anchor."""
+    if not should_use_vision_bundle_linkage(invoice):
+        return False
+    return is_invoice_family_vault_label(vault_folder_label_for_export(invoice))
+
+
 def _yes_no(value: bool) -> str:
     return "Yes" if value else "No"
 
@@ -213,14 +239,32 @@ def _invoice_date_label(invoice: Invoice) -> str:
     return ""
 
 
-def _timestamp_label(invoice: Invoice) -> str:
-    """When the document was received / uploaded (UTC)."""
+def resolve_display_timezone(tz_name: str | None) -> tzinfo:
+    """IANA zone from the browser; invalid/missing → UTC (DB stays UTC)."""
+    token = (tz_name or "").strip()
+    if not token:
+        return timezone.utc
+    try:
+        return ZoneInfo(token)
+    except (ZoneInfoNotFoundError, ValueError, TypeError, KeyError):
+        return timezone.utc
+
+
+def _timestamp_label(
+    invoice: Invoice,
+    *,
+    display_tz: tzinfo | None = None,
+) -> str:
+    """When the document was received / uploaded, shown in browser/local TZ."""
     if invoice.created_at is None:
         return ""
     created = invoice.created_at
-    if created.tzinfo is not None:
-        created = created.astimezone(timezone.utc).replace(tzinfo=None)
-    return created.strftime("%Y-%m-%d %H:%M:%S")
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    else:
+        created = created.astimezone(timezone.utc)
+    local = created.astimezone(display_tz or timezone.utc)
+    return local.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _source_label(invoice: Invoice) -> str:
@@ -269,6 +313,16 @@ def _invoice_no_cell(invoice: Invoice, *, cell_format: BundleCellFormat) -> str:
     if cell_format == "plain":
         return f"{label} | {url}" if url else label
     return excel_hyperlink(url, label)
+
+
+def _proforma_invoice_no_label(invoice: Invoice) -> str:
+    fields = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    raw = fields.get("proforma_invoice_no")
+    if isinstance(raw, str):
+        return raw.strip()
+    if raw is None:
+        return ""
+    return str(raw).strip()
 
 
 def _bundle_slots_by_dt_code(
@@ -341,6 +395,48 @@ def bundle_dt_cells_by_code(
     return out
 
 
+def _export_link_label(*, document_ref: str | None, invoice_no: str | None, invoice_id: int) -> str:
+    ref = (document_ref or "").strip()
+    if ref:
+        return ref
+    inv_no = (invoice_no or "").strip()
+    if inv_no:
+        return inv_no
+    return f"DOC-{invoice_id}"
+
+
+def bundle_vault_folder_cells(
+    anchor_invoice_id: int,
+    linked: DossierLinkedDocumentsResponse,
+    vault_folders: list[str],
+    *,
+    vault_folder_by_invoice_id: dict[int, str],
+    cell_format: BundleCellFormat = "excel",
+) -> dict[str, str]:
+    """Vault-folder column cells for understood soft-bundle siblings (no Missing/Advisory)."""
+    by_folder: dict[str, list[tuple[str, str]]] = {}
+    for entry in collect_linked_doc_entries(anchor_invoice_id, linked):
+        folder = (vault_folder_by_invoice_id.get(entry.invoice_id) or "").strip()
+        if not folder:
+            continue
+        url = vault_view_path(entry.invoice_id)
+        label = _export_link_label(
+            document_ref=entry.document_ref,
+            invoice_no=entry.invoice_no,
+            invoice_id=entry.invoice_id,
+        )
+        by_folder.setdefault(folder, []).append((url, label))
+
+    return {
+        folder: (
+            format_vault_links(by_folder.get(folder, []), cell_format=cell_format)
+            if by_folder.get(folder)
+            else ""
+        )
+        for folder in vault_folders
+    }
+
+
 async def _invoice_dt_code_by_id(
     db: AsyncSession,
     linked: DossierLinkedDocumentsResponse,
@@ -367,6 +463,18 @@ async def _invoice_dt_code_by_id(
         for row in rows
         if (row.document_type_code or "").strip()
     }
+
+
+async def _invoices_by_id(
+    db: AsyncSession,
+    invoice_ids: set[int],
+) -> dict[int, Invoice]:
+    if not invoice_ids:
+        return {}
+    rows = (
+        await db.execute(select(Invoice).where(Invoice.id.in_(invoice_ids)))
+    ).scalars().all()
+    return {row.id: row for row in rows}
 
 
 def _sorted_tenant_document_types(
@@ -403,6 +511,7 @@ def build_documents_bundle_row(
     invoice_dt_code_by_id: dict[int, str] | None = None,
     cell_format: BundleCellFormat = "excel",
     upload_actor: str | None = None,
+    display_tz: tzinfo | None = None,
 ) -> list[str]:
     _, _, universal = _match_flags(linked)
     by_dt = bundle_dt_cells_by_code(
@@ -414,7 +523,7 @@ def build_documents_bundle_row(
     )
 
     row: list[str] = [
-        _timestamp_label(invoice),
+        _timestamp_label(invoice, display_tz=display_tz),
         _uploaded_by_label(invoice, upload_actor=upload_actor),
         _source_label(invoice),
         _dt_type_label(definition),
@@ -423,12 +532,53 @@ def build_documents_bundle_row(
         _total_label(invoice),
         (invoice.currency or "").strip(),
         (linked.linkage_kind or "").strip(),
+        _invoice_no_cell(invoice, cell_format=cell_format),
+        _proforma_invoice_no_label(invoice),
         (invoice.po_reference or "").strip(),
         (invoice.so_reference or "").strip(),
-        _invoice_no_cell(invoice, cell_format=cell_format),
         universal,
     ]
     row.extend(by_dt.get(code, "") for code in dt_codes)
+    return row
+
+
+def build_understood_bundle_row(
+    invoice: Invoice,
+    *,
+    linked: DossierLinkedDocumentsResponse,
+    vault_folders: list[str],
+    vault_folder_by_invoice_id: dict[int, str],
+    cell_format: BundleCellFormat = "excel",
+    upload_actor: str | None = None,
+    display_tz: tzinfo | None = None,
+) -> list[str]:
+    _, _, universal = _match_flags(linked)
+    by_folder = bundle_vault_folder_cells(
+        invoice.id,
+        linked,
+        vault_folders,
+        vault_folder_by_invoice_id=vault_folder_by_invoice_id,
+        cell_format=cell_format,
+    )
+    type_label = vault_folder_label_for_export(invoice) or "Unclassified"
+
+    row: list[str] = [
+        _timestamp_label(invoice, display_tz=display_tz),
+        _uploaded_by_label(invoice, upload_actor=upload_actor),
+        _source_label(invoice),
+        type_label,
+        _invoice_date_label(invoice),
+        (invoice.vendor or "").strip(),
+        _total_label(invoice),
+        (invoice.currency or "").strip(),
+        (linked.linkage_kind or "").strip(),
+        _invoice_no_cell(invoice, cell_format=cell_format),
+        _proforma_invoice_no_label(invoice),
+        (invoice.po_reference or "").strip(),
+        (invoice.so_reference or "").strip(),
+        universal,
+    ]
+    row.extend(by_folder.get(folder, "") for folder in vault_folders)
     return row
 
 
@@ -492,12 +642,13 @@ def _autosize_columns(ws: Worksheet, *, max_width: int = 36) -> None:
 def _write_title_and_period(
     ws: Worksheet,
     *,
+    title: str,
     col_count: int,
     date_from: date | None,
     date_to: date | None,
 ) -> None:
     ws.merge_cells(start_row=_TITLE_ROW, start_column=1, end_row=_TITLE_ROW, end_column=max(col_count, 1))
-    title_cell = ws.cell(row=_TITLE_ROW, column=1, value="Documents Bundle")
+    title_cell = ws.cell(row=_TITLE_ROW, column=1, value=title)
     title_cell.fill = _TITLE_FILL
     title_cell.font = _TITLE_FONT
     title_cell.alignment = Alignment(horizontal="left", vertical="center")
@@ -561,22 +712,20 @@ def _apply_data_cell_style(
         cell.fill = fill
 
 
-def documents_bundle_rows_to_xlsx(
-    rows: list[list[str]],
+def _write_bundle_sheet(
+    ws: Worksheet,
     *,
-    dt_column_headers: list[str],
-    date_from: date | None = None,
-    date_to: date | None = None,
-    cell_format: BundleCellFormat = "excel",
-) -> bytes:
-    """Build a styled workbook for the documents bundle matrix."""
-    headers = [*_FIXED_COLUMNS, *dt_column_headers]
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Documents Bundle"
-
+    title: str,
+    rows: list[list[str]],
+    dynamic_headers: list[str],
+    date_from: date | None,
+    date_to: date | None,
+    cell_format: BundleCellFormat,
+) -> None:
+    headers = [*_FIXED_COLUMNS, *dynamic_headers]
     _write_title_and_period(
         ws,
+        title=title,
         col_count=len(headers),
         date_from=date_from,
         date_to=date_to,
@@ -615,6 +764,54 @@ def documents_bundle_rows_to_xlsx(
     _autosize_columns(ws)
     ws.sheet_view.showGridLines = False
 
+
+def documents_bundle_rows_to_xlsx(
+    rows: list[list[str]],
+    *,
+    dt_column_headers: list[str],
+    date_from: date | None = None,
+    date_to: date | None = None,
+    cell_format: BundleCellFormat = "excel",
+    understood_rows: list[list[str]] | None = None,
+    vault_folder_headers: list[str] | None = None,
+) -> bytes:
+    """Build a single-sheet workbook: posting + understood rows together."""
+    vault_headers = list(vault_folder_headers or [])
+    understood = list(understood_rows or [])
+    n_dt = len(dt_column_headers)
+    n_vault = len(vault_headers)
+    combined_headers = [*dt_column_headers, *vault_headers]
+
+    combined_rows: list[list[str]] = []
+    fixed_n = len(_FIXED_COLUMNS)
+    for row in rows:
+        # posting row = fixed + DT cells → pad vault columns
+        body = list(row)
+        if len(body) < fixed_n + n_dt:
+            body.extend([""] * (fixed_n + n_dt - len(body)))
+        combined_rows.append([*body[: fixed_n + n_dt], *[""] * n_vault])
+    for row in understood:
+        # understood row = fixed + vault cells → pad DT columns in the middle
+        body = list(row)
+        fixed = body[:fixed_n]
+        vault_part = body[fixed_n:]
+        if len(vault_part) < n_vault:
+            vault_part = [*vault_part, *[""] * (n_vault - len(vault_part))]
+        combined_rows.append([*fixed, *[""] * n_dt, *vault_part[:n_vault]])
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _SHEET_POSTING
+    _write_bundle_sheet(
+        ws,
+        title=_SHEET_POSTING,
+        rows=combined_rows,
+        dynamic_headers=combined_headers,
+        date_from=date_from,
+        date_to=date_to,
+        cell_format=cell_format,
+    )
+
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
@@ -627,9 +824,12 @@ async def build_documents_bundle_export(
     date_from: date | None = None,
     date_to: date | None = None,
     cell_format: BundleCellFormat = "excel",
+    display_timezone: str | None = None,
 ) -> DocumentsBundleExportPayload:
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError("date_from must be on or before date_to")
+
+    display_tz = resolve_display_timezone(display_timezone)
 
     config = await load_posting_config_for_tenant(db, tenant_id)
     invoices = await _load_bundle_export_invoices(
@@ -692,6 +892,67 @@ async def build_documents_bundle_export(
                 invoice_dt_code_by_id=ctx.invoice_dt_code_by_id,
                 cell_format=cell_format,
                 upload_actor=upload_actors.get(ctx.invoice.id),
+                display_tz=display_tz,
+            )
+        )
+
+    # --- Understood soft-bundle rows (same sheet) ---
+    understood_anchors = [
+        inv for inv in invoices if is_understood_invoice_family_anchor(inv)
+    ]
+    understood_linkage_cache = await build_linkage_sibling_cache(
+        db, tenant_id=tenant_id, anchors=understood_anchors
+    )
+    understood_upload_actors = await _upload_actors_by_invoice_id(
+        db,
+        [inv.id for inv in understood_anchors if not (inv.email_sender or "").strip()],
+    )
+
+    understood_contexts: list[_UnderstoodExportContext] = []
+    vault_folders_seen: set[str] = set()
+    for invoice in understood_anchors:
+        linked = await build_dossier_linked_documents(
+            db,
+            invoice,
+            definition=None,
+            document_types=catalogue,
+            linkage_cache=understood_linkage_cache,
+        )
+        sibling_ids: set[int] = set()
+        for doc in linked.documents:
+            if doc.is_anchor:
+                continue
+            if doc.invoice_id is not None:
+                sibling_ids.add(doc.invoice_id)
+            if doc.manual_link is not None:
+                sibling_ids.add(doc.manual_link.invoice_id)
+        siblings = await _invoices_by_id(db, sibling_ids)
+        vault_folder_by_id: dict[int, str] = {}
+        for sib_id, sib in siblings.items():
+            label = vault_folder_label_for_export(sib)
+            if label:
+                vault_folder_by_id[sib_id] = label
+                vault_folders_seen.add(label)
+        understood_contexts.append(
+            _UnderstoodExportContext(
+                invoice=invoice,
+                linked=linked,
+                vault_folder_by_invoice_id=vault_folder_by_id,
+            )
+        )
+
+    vault_folder_headers = sorted(vault_folders_seen, key=lambda s: s.casefold())
+    understood_rows: list[list[str]] = []
+    for ctx in understood_contexts:
+        understood_rows.append(
+            build_understood_bundle_row(
+                ctx.invoice,
+                linked=ctx.linked,
+                vault_folders=vault_folder_headers,
+                vault_folder_by_invoice_id=ctx.vault_folder_by_invoice_id,
+                cell_format=cell_format,
+                upload_actor=understood_upload_actors.get(ctx.invoice.id),
+                display_tz=display_tz,
             )
         )
 
@@ -701,10 +962,12 @@ async def build_documents_bundle_export(
         date_from=date_from,
         date_to=date_to,
         cell_format=cell_format,
+        understood_rows=understood_rows,
+        vault_folder_headers=vault_folder_headers,
     )
     filename = documents_bundle_filename(date_from=date_from)
     return DocumentsBundleExportPayload(
         xlsx_bytes=xlsx_bytes,
         filename=filename,
-        data_rows=len(data_rows),
+        data_rows=len(data_rows) + len(understood_rows),
     )

@@ -242,6 +242,7 @@ async def update_institution_settings(
         and body.country is None
         and body.timezone is None
         and body.locale is None
+        and body.custom_bundle_field_key is None
     ):
         raise HTTPException(400, "No settings to update")
 
@@ -261,6 +262,7 @@ async def update_institution_settings(
         country=body.country,
         timezone=body.timezone,
         locale=body.locale,
+        custom_bundle_field_key=body.custom_bundle_field_key,
     )
     await db.commit()
     await db.refresh(tenant)

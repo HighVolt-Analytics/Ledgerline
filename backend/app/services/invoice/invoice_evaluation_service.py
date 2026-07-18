@@ -63,6 +63,19 @@ EVAL_PENDING_APPROVAL = "pending_approval"
 EVAL_AWAITING_CLASSIFICATION = "awaiting_classification"
 EVAL_NEEDS_RESCAN = "needs_rescan"
 EVAL_PENDING_VENDOR = "pending_vendor"
+# Vision understood path (bundle + vault) — distinct from OCR classification hold.
+EVAL_VISION_VAULTED = "vision_vaulted"
+EVAL_VISION_HEADER_REVIEW = "vision_header_review"
+
+# Evaluation statuses that mean the invoice stopped on the understood path.
+VISION_UNDERSTOOD_EVAL_STATUSES: frozenset[str] = frozenset(
+    {
+        EVAL_VISION_VAULTED,
+        EVAL_VISION_HEADER_REVIEW,
+        # Legacy rows written before vision_* tags existed.
+        EVAL_AWAITING_CLASSIFICATION,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -323,6 +336,17 @@ async def apply_invoice_evaluation(
     enqueue_pending: bool = True,
 ) -> InvoiceEvaluationResult:
     """Evaluate and persist routing fields; optionally enqueue unknown vendors."""
+    eval_status = (invoice.evaluation_status or "").strip()
+    if eval_status in {EVAL_VISION_VAULTED, EVAL_VISION_HEADER_REVIEW}:
+        # Understood path already finished at vault — do not re-open OCR classification.
+        return InvoiceEvaluationResult(
+            evaluation_status=eval_status,
+            route_target=invoice.route_target,
+            matched_rule_ids=parse_matched_rule_ids(invoice.matched_rule_ids),
+            vendor_confidence=float(invoice.vendor_confidence)
+            if invoice.vendor_confidence is not None
+            else None,
+        )
     if invoice.evaluation_status == EVAL_AWAITING_CLASSIFICATION:
         code = (invoice.document_type_code or "").strip().upper()
         if code:

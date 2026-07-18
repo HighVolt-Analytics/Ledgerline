@@ -93,13 +93,21 @@ def _ad_hoc_manual_document(
     linked: Invoice,
     document_types: list[DocumentTypeDefinition],
 ) -> DossierLinkedDocumentResponse:
+    from app.services.dossier.vision_bundle_linkage import vision_document_type_label
+
     code = (linked.document_type_code or "").strip().upper()
     label = _dt_label(code, document_types)
+    vision = vision_document_type_label(linked)
+    if vision:
+        label = vision
+    elif not code:
+        label = "Document"
     return DossierLinkedDocumentResponse(
         id=f"manual-{link.id}",
         document_type_code=code,
         label=label,
         document_ref=display_document_ref(linked),
+        counterparty=(linked.vendor or "").strip() or None,
         present=True,
         requirement="advisory",
         source="manual",
@@ -110,6 +118,7 @@ def _ad_hoc_manual_document(
         linkage_detail="Manually linked — not used for validation",
         link_kind="manual",
         manual_link_id=link.id,
+        manual_link=_manual_link_info(link, linked, document_types),
     )
 
 
@@ -292,6 +301,10 @@ async def create_manual_link(
     slot_id: str | None = None,
     created_by_user_id: int | None = None,
 ) -> DossierManualLink:
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.user import User
+
     if linked_invoice_id == anchor_invoice_id:
         raise HTTPException(400, "Cannot link a dossier to itself")
 
@@ -360,15 +373,24 @@ async def create_manual_link(
         if slot_taken is not None:
             raise HTTPException(409, "This bundle slot already has a manual link")
 
+    # Avoid FK 500s when JWT user_id is stale / missing from users.
+    actor_id = created_by_user_id
+    if actor_id is not None and await session.get(User, actor_id) is None:
+        actor_id = None
+
     row = DossierManualLink(
         tenant_id=tenant_id,
         anchor_invoice_id=anchor_invoice_id,
         linked_invoice_id=linked_invoice_id,
         slot_id=(resolved_slot_id or "").strip() or None,
-        created_by_user_id=created_by_user_id,
+        created_by_user_id=actor_id,
     )
     session.add(row)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        # Race on unique (anchor, linked) or other constraint — surface as conflict.
+        raise HTTPException(409, "Document is already manually linked") from exc
     return row
 
 

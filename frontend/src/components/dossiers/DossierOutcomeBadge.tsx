@@ -10,6 +10,7 @@ const POSTING_TONE: Record<DossierOutcome, string> = {
     "border-primary/20 bg-primary/10 text-primary",
   blocked: pillTones.bad,
   parked: pillTones.amber,
+  vaulted: pillTones.ok,
   in_progress: pillTones.muted,
 };
 
@@ -36,7 +37,14 @@ export function DossierTypeBadge({
   title?: string;
   className?: string;
 }) {
+  const label = (title || "").trim() || undefined;
   return (
-    <DocumentTypeChip code={code} label={title} title={title} className={className} />
+    <DocumentTypeChip
+      code={code}
+      label={label}
+      display={label}
+      title={label}
+      className={className}
+    />
   );
 }

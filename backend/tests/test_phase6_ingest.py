@@ -303,7 +303,7 @@ def _enable_pdf_split(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ingest_email_attachments_splits_mixed_bundle(
+async def test_ingest_email_attachments_keeps_mixed_bundle_as_one(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     clean_org_rule_book,
@@ -322,12 +322,8 @@ async def test_ingest_email_attachments_splits_mixed_bundle(
         lambda _path: PdfPageTextExtraction(pages=pages),
     )
     monkeypatch.setattr(
-        "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",
-        lambda _path, start, end: f"%PDF-part-{start}-{end}".encode(),
-    )
-    monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
-        lambda *args, **kwargs: "uploads/segment.pdf",
+        lambda *args, **kwargs: "uploads/bundle.pdf",
     )
     monkeypatch.setattr(
         "app.services.invoice.pipeline._finish_email_message",
@@ -348,12 +344,11 @@ async def test_ingest_email_attachments_splits_mixed_bundle(
     )
     await db_session.flush()
 
-    assert result.ingested_count == 3
+    assert result.ingested_count == 1
     rows = (
         await db_session.execute(select(Invoice).where(Invoice.tenant_id == TESTING_TENANT_UUID))
     ).scalars().all()
-    assert len(rows) == 3
-    assert {row.purchase_document_type for row in rows} == {"po", "grn", "invoice"}
+    assert len(rows) == 1
     assert all(row.email_message_id == email.message_id for row in rows)
 
     audit = (
@@ -361,4 +356,4 @@ async def test_ingest_email_attachments_splits_mixed_bundle(
             select(AuditLog).where(AuditLog.event == "pdf_segmented")
         )
     ).scalars().all()
-    assert len(audit) == 3
+    assert len(audit) == 0

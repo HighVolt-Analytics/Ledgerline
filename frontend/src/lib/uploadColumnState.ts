@@ -3,6 +3,7 @@ import {
   counterpartyName,
   invoiceCounterpartyConfidence,
   invoiceValidationConfidence,
+  invoiceVaultFolderLabel,
   validationPassApplicable,
   vendorMatchApplicable,
   type ValidationPassDocumentType,
@@ -62,16 +63,22 @@ export function columnHasDisplayValue(
     case "documentMeta":
       return Boolean(inv.invoice_no?.trim());
     case "documentType":
+      // Do not treat purchase_document_type alone as a label — that invents
+      // catalogue chips (e.g. "Non-PO vendor invoice") while still Received.
       return Boolean(
         inv.document_type_code?.trim() ||
-          inv.purchase_document_type?.trim()
+          inv.document_heading?.trim() ||
+          (typeof inv.extracted_fields?.document_heading === "string" &&
+            inv.extracted_fields.document_heading.trim()) ||
+          (typeof inv.extracted_fields?.canonical_document_type === "string" &&
+            inv.extracted_fields.canonical_document_type.trim())
       );
     case "counterparty": {
       const name = counterpartyName(inv);
       return name !== "—" && name.trim().length > 0;
     }
     case "route":
-      return Boolean(inv.route_target?.trim());
+      return Boolean(invoiceVaultFolderLabel(inv));
     case "glAccount":
       if (inv.gl_posting_applicable === false) return true;
       return Boolean(inv.account_name?.trim());

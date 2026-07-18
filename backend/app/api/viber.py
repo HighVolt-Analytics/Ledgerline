@@ -181,17 +181,38 @@ async def process_viber_payload(raw_body: bytes, signature: str | None) -> None:
                 message_token,
                 tenant_id=connection.tenant_id,
             ):
+                from app.services.ingest.ingest_skip_service import log_ingest_skip
+
                 logger.info("viber_dedupe_skip", message_token=message_token)
+                await log_ingest_skip(
+                    session,
+                    reason="webhook_dedupe_skip",
+                    channel="viber",
+                    tenant_id=connection.tenant_id,
+                    message_id=message_token,
+                )
+                await session.commit()
                 return
 
             try:
                 token = resolve_auth_token(connection)
             except Exception as exc:
+                from app.services.ingest.ingest_skip_service import log_ingest_skip
+
                 logger.error(
                     "viber_token_missing",
                     connection_id=connection.id,
                     error=str(exc),
                 )
+                await log_ingest_skip(
+                    session,
+                    reason="mailbox_token_failed",
+                    channel="viber",
+                    tenant_id=connection.tenant_id,
+                    message_id=message_token,
+                    exc_type=type(exc).__name__,
+                )
+                await session.commit()
                 return
 
             result = await ingest_viber_message(

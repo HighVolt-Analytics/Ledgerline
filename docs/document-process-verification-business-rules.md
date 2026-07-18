@@ -72,7 +72,7 @@ Source: `backend/app/schemas/invoice.py`, `invoice_evaluation_service.py`
 
 Matrix narrative: **Received → Parsed → Validated → Mapped → Approved → Posted**
 
-Early audit stages (when present): **Storage → OCR → Image quality → Classified → Gate**
+Early audit stages (when present): **Storage → File validity → Vision understand → Vision header → Image quality → Layout readiness → OCR → OCR quality → Classified → Gate**
 
 Source: `backend/app/services/invoice/pipeline_stages.py`
 
@@ -100,22 +100,26 @@ Early phases: `backend/app/services/invoice/invoice_pipeline_phases.py`
 |---|-------|---------------|--------------|--------------------|
 | 1 | Storage verify | File readable at stored path | OCR fail / `stored_file_missing` | No |
 | 2 | File validity | Type, size, encryption, corruption | `exception` + rejection code | No |
-| 3 | OCR | Layout/read succeeds | OCR failure | No |
-| 4 | Image quality | Not sparse / enough chars / quality OK | `exception` + `needs_rescan` | `image_quality` |
-| 5 | LLM classify | Suggested DT + confidence | Continues to gate | — |
-| 6 | Heading reconcile | Heading may override / clear LLM DT | May clear suggested DT | — |
-| 7 | Policy backfill | Classifier winner ≥ route min | — | — |
-| 8 | Classification gate | Confidence + recognition mode | `exception` + `awaiting_classification` | `classification` |
-| 9 | Field extract | DI + LLM + layout merge | — | — |
-| 10 | Field confidence | Playbook required fields ≥ floor | `needs_review` / hold path | `field_confidence` |
-| 11 | Vendor drift (if applicable) | Within drift tolerance | Review signal | `vendor_drift` |
-| 12 | Playbook gates | Bundle / linkage / required fields | Hold / VR-PB02 | `playbook` |
-| 13 | Validation | `all_passed` | `exception` | `validation` |
-| 14 | Vendor registration | Known or policy allows | `pending_vendor` / unmatched expense | `vendor_registration` |
-| 15 | Approval gate | Mode + match cleanliness | `pending_approval` | — |
-| 16 | Match variance | Variance approved or none | `exception` (variance unapproved) | — |
-| 17 | Mapping → journal → reconcile | Control accounts balanced | `exception` | `mapping_review`, `line_gl_mapping` |
-| 18 | Processed | Clean completion | `status=processed` | — |
+| 3 | Vision understand | Vision LLM can read the document (`can_understand` + confidence floor) | **Branch:** cannot → continue present IQ/OCR path; can → vision header extract | No |
+| 3a | Vision header extract (can-understand only) | Printed `document_heading`, LLM `canonical_document_type`, org-aware counterparty → `vendor`, refs, `invoice_date`, `total`, `currency` persisted; vault relocate via `sync_vision_header_vault_path` (type-as-book → vendor) | On success or fail: `exception` + `awaiting_classification` + `vision_path_pending` (`header_extracted_awaiting_dt`); no legacy OCR | No |
+| 4 | Image quality (pre-OCR) | Visual fitness; severe only rejects | `exception` + `needs_rescan` | No (warn continues) |
+| 5 | Layout readiness | Route OCR mode / DI fallback hints | Never rejects (route only) | No |
+| 6 | OCR | Layout/read succeeds (honors readiness) | OCR failure | No |
+| 7 | OCR quality confirm | Not sparse / enough chars / quality OK | `exception` + `needs_rescan` | `image_quality` |
+| 8 | LLM classify | Suggested DT + confidence | Continues to gate | — |
+| 9 | Heading reconcile | Heading may override / clear LLM DT | May clear suggested DT | — |
+| 10 | Policy backfill | Classifier winner ≥ route min | — | — |
+| 11 | Classification gate | Confidence + recognition mode | `exception` + `awaiting_classification` | `classification` |
+| 12 | Field extract | DI + LLM + layout merge | — | — |
+| 13 | Field confidence | Playbook required fields ≥ floor | `needs_review` / hold path | `field_confidence` |
+| 14 | Vendor drift (if applicable) | Within drift tolerance | Review signal | `vendor_drift` |
+| 15 | Playbook gates | Bundle / linkage / required fields | Hold / VR-PB02 | `playbook` |
+| 16 | Validation | `all_passed` | `exception` | `validation` |
+| 17 | Vendor registration | Known or policy allows | `pending_vendor` / unmatched expense | `vendor_registration` |
+| 18 | Approval gate | Mode + match cleanliness | `pending_approval` | — |
+| 19 | Match variance | Variance approved or none | `exception` (variance unapproved) | — |
+| 20 | Mapping → journal → reconcile | Control accounts balanced | `exception` | `mapping_review`, `line_gl_mapping` |
+| 21 | Processed | Clean completion | `status=processed` | — |
 
 **Skippable override keys** (`processing_overrides.skip_steps`):  
 `image_quality`, `classification`, `field_confidence`, `vendor_drift`, `playbook`, `validation`, `mapping_review`, `vendor_registration`, `line_gl_mapping`
@@ -149,7 +153,47 @@ Source: `backend/app/services/invoice/file_validity_gate.py`, `backend/app/confi
 
 ---
 
-## 4. BR-IQ — Image quality / OCR gate
+## 4. BR-IQ — Pre-OCR image quality (visual fitness)
+
+Runs **before** OCR. Cheap raster heuristics on the first N pages (`IMAGE_QUALITY_MAX_PAGES_CHECK`, default **3**).
+
+| Rule | Default behavior | Outcome |
+|------|------------------|---------|
+| BR-IQ-01 Raster open | Must open as image/PDF page | `severe` → reject |
+| BR-IQ-02 Blank page | Near-zero luminance variance | `severe` → reject |
+| BR-IQ-03 Tiny dimensions | min edge &lt; `IMAGE_QUALITY_MIN_DIMENSION_PX` (**200**) | `severe` → reject |
+| BR-IQ-04 Low approx DPI | Below `IMAGE_QUALITY_MIN_APPROX_DPI` (**72**) | warn or severe (extreme) |
+| BR-IQ-05 Crop / content fill | Fill &lt; `IMAGE_QUALITY_CONTENT_FILL_MIN` | warn or severe (extreme) |
+| BR-IQ-06 Mild low contrast | Below warn std, above severe std | **warn only** |
+| BR-IQ-07 Skew / orientation | Mild skew / orientation_suspect | **warn only** (severe only past extreme bars) |
+
+| Outcome | Values |
+|---------|--------|
+| Severe | Status `exception`, eval `needs_rescan`, gate `image_quality` |
+| Warn | Continue; audit every signal with metric + threshold (calibration window) |
+
+Source: `backend/app/services/invoice/image_quality_gate.py`, `backend/app/config.py`
+
+---
+
+## 4b. BR-LR — Layout readiness (pre-OCR routing)
+
+Route-only — **never hard-rejects**.
+
+| Signal | Route |
+|--------|-------|
+| Native PDF text layer (enough chars) | `ocr_mode=native_text` (prefer text-friendly path) |
+| Mixed PDF (text + large embedded images) | `allow_di_fallback=true` — DI if native text incomplete/suspicious |
+| Image / scan-like | `enhanced_scan` or `standard_di` |
+| Photo-collage heuristic | `vision_fallback` |
+
+Source: `backend/app/services/invoice/layout_readiness.py`
+
+---
+
+## 4c. BR-OQC — Post-OCR quality confirm
+
+Runs **after** OCR. Former “image quality gate” OCR-derived checks.
 
 Fails when **any** of:
 
@@ -162,17 +206,19 @@ Fails when **any** of:
 | Status | `exception` |
 | Eval | `needs_rescan` |
 | Review reasons | `OCR_SPARSE`, `IMAGE_QUALITY_LOW` |
+| Skip override | `processing_overrides.skip_steps: ["image_quality"]` |
 
-Source: `evaluate_image_quality_gate` in `invoice_pipeline_phases.py`
+Source: `evaluate_ocr_quality_confirm` in `invoice_pipeline_phases.py`
 
 ### Suggested test cases
 
 | ID | Condition | Expected |
 |----|-----------|----------|
 | TC-IQ-01 | Clear multi-page invoice, text ≫ 80 | Gate pass |
-| TC-IQ-02 | Blurry phone photo, sparse OCR | `needs_rescan` |
-| TC-IQ-03 | Nearly blank scan, text_length &lt; 80 | `needs_rescan` |
-| TC-IQ-04 | Reprocess with `skip_steps: [image_quality]` | Gate skipped |
+| TC-IQ-02 | Blank / tiny raster | Pre-OCR reject `needs_rescan` |
+| TC-IQ-03 | Blurry phone photo, sparse OCR | Post-OCR confirm `needs_rescan` |
+| TC-IQ-04 | Mild skew / orientation | Warn + continue |
+| TC-IQ-05 | Reprocess with `skip_steps: [image_quality]` | Post-OCR confirm skipped |
 
 ---
 
@@ -665,6 +711,9 @@ Use these first in smoke / release testing:
 | Main pipeline | `services/invoice/pipeline.py` |
 | Early gates | `services/invoice/invoice_pipeline_phases.py` |
 | File validity | `services/invoice/file_validity_gate.py` |
+| Pre-OCR image quality | `services/invoice/image_quality_gate.py` |
+| Layout readiness | `services/invoice/layout_readiness.py` |
+| Post-OCR quality confirm | `evaluate_ocr_quality_confirm` in `invoice_pipeline_phases.py` |
 | Classification compare | `services/classification/classification_compare_service.py` |
 | Playbook / bundle | `services/classification/document_type_playbook_service.py` |
 | Profile presets | `services/classification/playbook_profile_catalog.py` |

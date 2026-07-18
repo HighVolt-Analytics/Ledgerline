@@ -178,7 +178,7 @@ export function UploadPage() {
     refetch: refetchMailboxes,
   } = useMailboxes(Boolean(user));
   const [source, setSource] = useState("all");
-  const [evalFilter, setEvalFilter] = useState<"all" | "needs_review">("all");
+  const [evalFilter, setEvalFilter] = useState<"all" | "needs_review" | "possible_duplicate">("all");
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get("q") ?? "");
   const debouncedSearch = useDebouncedValue(searchQuery.trim());
 
@@ -304,6 +304,9 @@ export function UploadPage() {
   const filtered = useMemo(() => {
     if (evalFilter === "needs_review") {
       return captured.filter((inv) => isNeedsReviewEvaluation(inv.evaluation_status));
+    }
+    if (evalFilter === "possible_duplicate") {
+      return captured.filter((inv) => inv.duplicate_review_suggested === true);
     }
     return captured;
   }, [captured, evalFilter]);
@@ -570,6 +573,10 @@ export function UploadPage() {
         window.setTimeout(() => {
           void refetchInvoiceList();
         }, 3000);
+      } else if (uploadedIds.length > 0) {
+        window.setTimeout(() => {
+          void refetchInvoiceList();
+        }, 1000);
       }
     } catch (err) {
       setFetchNotice(err instanceof Error ? err.message : "Upload failed");
@@ -868,14 +875,19 @@ export function UploadPage() {
             <Select
               value={evalFilter}
               onValueChange={(value) => {
-                setEvalFilter(value === "needs_review" ? "needs_review" : "all");
+                if (value === "needs_review" || value === "possible_duplicate") {
+                  setEvalFilter(value);
+                } else {
+                  setEvalFilter("all");
+                }
                 setPage(1);
               }}
               data-testid="select-eval-filter"
-              className="w-full sm:w-[200px] h-8 text-xs"
+              className="w-full sm:w-[220px] h-8 text-xs"
               options={[
                 { value: "all", label: "All evaluations" },
                 { value: "needs_review", label: "Needs review only" },
+                { value: "possible_duplicate", label: "Possible duplicates" },
               ]}
             />
             {channelTab === "email" ? (

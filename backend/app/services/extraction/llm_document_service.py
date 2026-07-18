@@ -53,10 +53,10 @@ from app.services.extraction.extraction_field_values import (
 )
 from app.jurisdiction.packs import jurisdiction_pack_for_country
 from app.services.extraction.party_field_service import (
-    PARTY_LLM_RULES,
     apply_party_normalization_to_llm,
     party_llm_rules,
 )
+from app.services.prompt_registry import resolve_system_prompt_text
 from app.services.shared.flexible_date import parse_flexible_date
 from app.utils.logger import get_logger
 
@@ -236,195 +236,28 @@ def build_llm_extract_rule_lines(
     return "\n".join(lines)
 
 
-def _build_llm_extract_system_text(json_keys: str, rule_lines: str, *, country: str | None = None) -> str:
+def _build_llm_extract_system_text(json_keys: str, rule_lines: str, *, country: str | None = None, party_rules: str = '') -> str:
     pack = jurisdiction_pack_for_country(country)
-    return f"""You structure accounts-payable/receivable fields from the provided OCR payload into JSON.
-Return JSON only with keys:
-{json_keys}.
-
-═══════════════════════════════════════════════
-CORE RULES (non-negotiable)
-═══════════════════════════════════════════════
-1. Extract ONLY fields listed in extraction_fields / finance_field_manifest in the user payload.
-   Do not add keys. Do not omit requested keys — use null if genuinely absent.
-2. When ocr.scalar_fields_source is azure_di, canonical scalar values (totals, dates, tax)
-   come ONLY from ocr.azure_di_scalar_fields. Never override a DI scalar with your own
-   read of ocr.text_excerpt unless the DI field is explicitly null or flagged low-confidence.
-3. Structure all other values strictly from ocr.text_excerpt and ocr.layout_kv.
-   Never use tenant.legal_name, catalogue rows, or few_shot_examples as field VALUES —
-   those are context for disambiguation only, never a source of truth for THIS document.
-4. Copy values verbatim from the OCR payload. Do NOT round, calculate, infer, reformat,
-   or normalize amounts, dates, or identifiers unless a specific rule below says otherwise.
-5. If a field cannot be found with reasonable confidence in the OCR payload, return null.
-   Never guess. Never fabricate a plausible-looking value to avoid returning null.
-
-═══════════════════════════════════════════════
-EDGE CASE RULES
-═══════════════════════════════════════════════
-
-## A. Identifier fields (invoice_no, po_no, grn_no, dn_no, so_no)
-- Extract ONLY the identifier token itself. STOP at the first delimiter that is not
-  part of the identifier: comma, "DATED", "OF", "/", newline, or a date pattern
-  (DD.MM.YYYY, DD/MM/YYYY, YYYY-MM-DD).
-  Example: "RC-SIPL-AUG-INL-20250826-001, DATED: 26.08.2025 OF THE BENEFICIARY"
-           → invoice_no = "RC-SIPL-AUG-INL-20250826-001"  (NOT the trailing text)
-- If multiple candidate numbers exist (e.g. "Invoice No" AND "Our Ref No" AND
-  "Order No"), pick the one whose label matches the target field name most closely.
-  Do not default to the first number seen top-to-bottom.
-- When multiple labels could map to the same field, deprioritize any label containing
-  qualifier words: PROFORMA, DRAFT, QUOTATION, ESTIMATE, PRO-FORMA (same rule for
-  po_reference vs PROFORMA PO NO, etc.). Prefer the unqualified canonical label.
-- If both "INVOICE NO" and "PROFORMA INVOICE NO" exist, use INVOICE NO for invoice_no.
-- Do not include prefixes/suffixes like "No:", "#", "Ref:" in the value.
-
-## B. Vendor / buyer / party names
-- The party name must appear verbatim in ocr.text_excerpt or ocr.layout_kv.
-  If a name only appears in tenant.legal_name, catalogue, or few_shot_examples and
-  NOT in this document's OCR text, treat it as absent — return null, do not borrow it.
-- For vendor/counterparty: follow document_type.counterparty_source in the user payload
-  (letterhead | consignee | applicant | bill_to) — do not always default to letterhead.
-- Distinguish seller vs buyer using layout position, letterhead, "Bill To" / "Ship To" /
-  "From" / "Remit To" labels, and the perspective hint in the payload — not assumption.
-- If the document has multiple entities with similar names (e.g. "ABC Pvt Ltd" vs
-  "ABC Global Pvt Ltd" vs "ABC Distributors"), copy the FULL name exactly as printed
-  next to the relevant role label. Do not truncate or merge similar-looking names.
-- If a registered/legal name differs from a trading/brand name shown elsewhere in the
-  document, prefer the name adjacent to the GSTIN/ABN/tax-ID block if present.
-{{party_rules}}
-
-## C. Amounts (total, subtotal, tax, freight, discount, line amounts)
-- If a document has a lump-sum total with NO line-item table, set total from the
-  clearly labeled total field and leave line_items as an empty array — do not
-  fabricate line items to "fill" the schema.
-- If freight, insurance, or other charges are listed SEPARATELY from the main total
-  (e.g. "FREIGHT: USD 400.00" as a standalone line, not inside a table), still
-  capture the grand total by reading the field explicitly labeled Total/Grand Total/
-  Amount Due — do NOT self-sum unless no total field is present anywhere in the
-  document, in which case sum only the explicitly labeled component amounts and note
-  in the internal field_citations that it was derived, not read directly.
-- If multiple totals appear (subtotal, tax, grand total, amount in words), map each
-  to its correct field — never confuse subtotal with grand total, or paid-to-date
-  with amount-due.
-- Preserve the sign: credit notes / debit notes / refunds may show negative amounts
-  or a "(-)" / parentheses convention — preserve that polarity in the value; do not
-  silently make everything positive.
-- Never convert currency. If the document states amounts in a foreign currency,
-  extract the currency code/symbol as printed alongside the amount fields, and do
-  not perform conversion math.
-- Numeric formatting: strip thousands separators (commas/periods per locale) only
-  when converting to a numeric type; preserve the original numeral characters
-  otherwise. If unsure whether "1.234,56" is European (1234.56) or a typo, prefer
-  the jurisdiction pack's decimal/thousands convention for {pack.country}.
-
-## D. Dates
-- Do not assume a date format. Check for explicit format hints in the document
-  (e.g. "DD/MM/YYYY" printed near the field, or a month name spelling out the month
-  unambiguously). If the format is genuinely ambiguous (e.g. "03/04/2025" with no
-  other clues) and the jurisdiction pack specifies a default convention for
-  {pack.country}, apply that convention; otherwise return the date exactly as
-  printed in a date-like string rather than guessing day/month order.
-- When the date format is unambiguous (month name, explicit DD/MM/YYYY hint, or
-  jurisdiction-default convention for {pack.country}), output ISO YYYY-MM-DD.
-- When genuinely ambiguous (e.g. "03/04/2025" with no label), return the date as
-  printed — do not guess day/month order.
-- Distinguish invoice_date, due_date, delivery_date, and PO date — these are often
-  printed close together. Match by the adjacent label, not proximity alone.
-- If a date appears embedded inside another field's text (as in the invoice_no
-  example above), do not let it bleed into that field, and separately check whether
-  it should populate a date field instead.
-
-## E. Tax / registration identifiers (GSTIN, ABN, VAT number, TIN)
-- Extract exactly as printed, including any embedded hyphens/spaces the document
-  uses, unless the finance_field_manifest specifies a canonical format to normalize to.
-- Do not confuse a tax ID with a bank account number, IBAN, SWIFT/BIC code, or an
-  internal reference number — verify against the expected format/length for
-  {pack.country} where the field manifest provides one.
-- If both seller and buyer tax IDs are present, attribute each to the correct party
-  using adjacent labels, not order of appearance.
-
-## F. Line items
-- Only extract rows that are genuinely part of the itemized table — skip subtotal
-  rows, tax summary rows, "continued on next page" rows, and blank/decorative rows
-  that DI or layout parsing may have picked up as table rows.
-- If a table spans multiple pages, treat it as one continuous list; do not duplicate
-  a repeated header row as a line item.
-- If quantity, unit price, and line total are present but one is missing or
-  illegible, leave that specific sub-field null rather than dropping the whole row
-  or inventing the missing number from the other two (no back-calculation unless a
-  rule elsewhere explicitly permits derived values).
-- Merged/spanning cells: attribute merged description cells to each row they visually
-  cover, not just the first row.
-
-## G. Untrustworthy or conflicting signals
-- If ocr.azure_di_scalar_fields and your own reading of ocr.text_excerpt disagree,
-  DI scalars win per rule 2 above — but if a DI value looks structurally implausible
-  for its field (e.g. a vendor name field containing only digits, a date field
-  containing an amount), treat it as a DI extraction error, return null for that
-  field, and do not attempt to silently correct it yourself.
-- If a value appears ONLY in a few_shot_example or catalogue entry and nowhere in
-  this document's OCR, it is contamination — never copy it into your output. Few-shot
-  examples show correction PATTERNS, not values to reuse.
-- If the OCR is sparse, garbled, or the document appears to be a low-quality scan,
-  extract what is legible and confidently return null for the rest — do not pad
-  in plausible-sounding values to make the JSON look complete.
-
-## H. Document-type mismatches
-- If confirmed_dt in the payload does not match what the document content actually
-  looks like (e.g. confirmed_dt is INVOICE but the document is clearly a delivery
-  note), still extract using the field manifest for confirmed_dt as instructed, but
-  return null for any field that has no genuine counterpart in this document rather
-  than force-mapping unrelated content into the wrong field.
-
-## I. Duplicates / multi-document artifacts
-- If the OCR text appears to contain more than one distinct document concatenated
-  (e.g. a PO followed by an invoice in the same payload), extract fields belonging
-  ONLY to the document type indicated by confirmed_dt, and ignore fields that belong
-  to the other embedded document.
-
-═══════════════════════════════════════════════
-JURISDICTION-SPECIFIC RULES
-═══════════════════════════════════════════════
-{rule_lines}
-
-═══════════════════════════════════════════════
-OUTPUT DISCIPLINE
-═══════════════════════════════════════════════
-- Return a single JSON object. No markdown, no commentary, no trailing text.
-- Every requested key must be present. Use null for genuinely unavailable values —
-  never an empty string as a substitute for null, and never a placeholder like
-  "N/A" or "Unknown".
-- Do not wrap the JSON in a code fence.
-- Metadata keys:
-  - suggested_dt must match confirmed_dt from the user payload.
-  - confidence is 0.0-1.0 for the document type choice.
-  - perspective is purchase | sales | unknown.
-  - field_confidence maps every manifest key to 0.0-1.0 (0.0 when absent).
-"""
+    return resolve_system_prompt_text(
+        'llm.extract.system',
+        json_keys=json_keys,
+        rule_lines=rule_lines,
+        country=pack.country,
+        party_rules=party_rules,
+    )
 
 
-def _build_llm_combined_system_text(json_keys: str, rule_lines: str) -> str:
-    return f"""You classify finance documents for accounts payable.
-Return JSON only with keys:
-{json_keys}.
+def _build_llm_combined_system_text(json_keys: str, rule_lines: str, *, party_rules: str = '') -> str:
+    return resolve_system_prompt_text(
+        'llm.combined.system',
+        json_keys=json_keys,
+        rule_lines=rule_lines,
+        party_rules=party_rules,
+    )
 
-Rules:
-- suggested_dt is REQUIRED: pick exactly one DT-xx code from the catalogue codes provided.
-- Use empty string only when the document is clearly not in the catalogue.
-- confidence is 0.0-1.0 for the document type choice.
-- Use document_heading and the first title lines of OCR as the primary classification signal.
-- Certificate of Origin, Cargo Clearance Permit, Packing List, and Bill of Lading / AWB are supporting import documents — never classify them as DT-01 or DT-02.
-- When the heading is unambiguous, suggested_dt must match the catalogue row whose short title best fits that heading.
-- perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
-{{party_rules}}
-{rule_lines}
-- Use OCR text faithfully; do not invent amounts or parties.
-- few_shot_examples are prior reviewer corrections for this tenant. When document_heading or text_excerpt
-  closely matches a few-shot example, strongly prefer that example's human_confirmed_dt over catalogue defaults.
-- When llm_suggested_dt was wrong but human_confirmed_dt was chosen, learn from the note and excerpt."""
 
-_SPARSE_IMAGE_EXTRACT_HINT = """
-Sparse OCR: document images may be attached. Prefer ocr.text_excerpt and layout_kv.
-Use images only to fill fields still missing from OCR — do not override OCR with invented values."""
+def _sparse_image_extract_hint() -> str:
+    return resolve_system_prompt_text('llm.extract.sparse_hint')
 
 
 def _org_role_lines(org: OrgContext) -> list[str]:
@@ -445,31 +278,9 @@ def _org_role_lines(org: OrgContext) -> list[str]:
     ]
 
 
-_LLM_CLASSIFY_SYSTEM_TEMPLATE = """You classify finance documents for accounts payable.
-Return JSON only with keys:
-suggested_dt, confidence, reasoning, perspective, seller, buyer, document_heading.
-
-Rules:
-- suggested_dt is REQUIRED: pick exactly one DT-xx code from the catalogue codes provided.
-- Use empty string only when the document is clearly not in the catalogue.
-- confidence is 0.0-1.0 for the document type choice.
-- Use document_heading and the first title lines of OCR as the primary classification signal.
-- Certificate of Origin, Cargo Clearance Permit, Packing List, and Bill of Lading / AWB are supporting import documents — never classify them as DT-01 or DT-02.
-- When the heading is unambiguous, suggested_dt must match the catalogue row whose short title best fits that heading.
-- perspective is purchase | sales | unknown (tenant perspective is buyer/AP unless they are the seller).
-{party_rules}
-- Do not extract invoice amounts, line items, or dates — classification only.
-- few_shot_examples are prior reviewer corrections for this tenant. When document_heading or text_excerpt
-  closely matches a few-shot example, strongly prefer that example's human_confirmed_dt over catalogue defaults.
-- Examples with vendor_key match the sender/vendor — prefer those when the layout matches that supplier.
-- Each catalogue row has recognition_mode signals or prompt.
-- When recognition_mode is signals, treat recognition_rules as deterministic match hints for that code.
-- When recognition_mode is prompt, treat llm_prompt as the authoritative description for that code."""
-
-
 def build_classify_system_prompt(org: OrgContext) -> str:
     rules = party_llm_rules(jurisdiction_pack_for_country(org.country))
-    classify = _LLM_CLASSIFY_SYSTEM_TEMPLATE.format(party_rules=rules)
+    classify = resolve_system_prompt_text("llm.classify.system", party_rules=rules)
     parts = [classify.strip(), "", "Tenant context:"]
     parts.extend(f"- {line}" for line in _org_role_lines(org))
     if org.intake_summary.strip():
@@ -533,8 +344,8 @@ def build_extract_system_prompt(
     )
     party_rules = party_llm_rules(jurisdiction_pack_for_country(org.country))
     base = _build_llm_extract_system_text(
-        json_keys, rule_lines, country=org.country
-    ).format(party_rules=party_rules)
+        json_keys, rule_lines, country=org.country, party_rules=party_rules
+    )
     parts = [base, "", "Tenant context:"]
     parts.extend(f"- {line}" for line in _org_role_lines(org))
     finance_manifest = build_finance_field_manifest(keys)
@@ -599,7 +410,7 @@ def build_combined_system_prompt(
     json_keys = build_llm_extract_json_keys(keys)
     rule_lines = build_llm_extract_rule_lines(keys, country=org.country)
     party_rules = party_llm_rules(jurisdiction_pack_for_country(org.country))
-    base = _build_llm_combined_system_text(json_keys, rule_lines).format(party_rules=party_rules)
+    base = _build_llm_combined_system_text(json_keys, rule_lines, party_rules=party_rules)
     parts = [base, "", "Tenant context:"]
     parts.extend(f"- {line}" for line in _org_role_lines(org))
     if org.intake_summary.strip():
@@ -815,7 +626,7 @@ def build_structure_extract_prompts(
         ocr=ocr,
     )
     if sparse:
-        system = f"{system}{_SPARSE_IMAGE_EXTRACT_HINT}"
+        system = f"{system}{_sparse_image_extract_hint()}"
     user = build_llm_user_payload(
         ocr=ocr,
         org=org,

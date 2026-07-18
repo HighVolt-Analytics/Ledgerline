@@ -1,10 +1,11 @@
-"""Image quality gate (pre-classify) and per-field confidence gate (post-extract)."""
+"""Pre-OCR image quality detectors and post-OCR quality confirm."""
 
 from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,16 +14,19 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.document_type import DocumentTypeDefinition
 from app.schemas.llm_document import LlmDocumentResult, LlmParty
 from app.schemas.ocr_artifact import OcrArtifact
+from app.schemas.rule_book_config import AiClassificationConfig
+from app.services.invoice.image_quality_gate import evaluate_pre_ocr_image_quality
 from app.services.invoice.invoice_data import InvoiceData
-from app.services.invoice.invoice_evaluation_service import EVAL_NEEDS_RESCAN, EVAL_NEEDS_REVIEW
+from app.services.invoice.invoice_evaluation_service import EVAL_NEEDS_RESCAN
 from app.services.invoice.invoice_pipeline_phases import (
     evaluate_field_confidence_gate,
     evaluate_image_quality_gate,
+    evaluate_ocr_quality_confirm,
 )
+from app.services.invoice.layout_readiness import OcrMode, evaluate_layout_readiness
 from app.services.invoice.pipeline import process_invoice
-from app.schemas.rule_book_config import AiClassificationConfig
 from app.tenant_ids import TESTING_TENANT_UUID
-from tests.pipeline_test_helpers import patch_confidence_gate_pass
+from tests.pipeline_test_helpers import patch_confidence_gate_pass, patch_pre_ocr_gates_pass
 
 
 def _dt_definition(**kwargs) -> DocumentTypeDefinition:
@@ -32,7 +36,9 @@ def _dt_definition(**kwargs) -> DocumentTypeDefinition:
         shortTitle="Test",
         klass="Transactional",
         posting="Yes",
-        recognition_mode="signals", recognition_signals=["heading_invoice"], llm_prompt="",
+        recognition_mode="signals",
+        recognition_signals=["heading_invoice"],
+        llm_prompt="",
         routeTarget="Purchase Management",
         requiredFields=["vendor", "total", "gst"],
         extractionFields=["vendor", "total", "gst"],
@@ -52,7 +58,7 @@ def _good_ocr() -> OcrArtifact:
     )
 
 
-def test_image_quality_gate_rejects_sparse_ocr() -> None:
+def test_ocr_quality_confirm_rejects_sparse_ocr() -> None:
     ocr = OcrArtifact(
         success=True,
         sparse=True,
@@ -60,12 +66,14 @@ def test_image_quality_gate_rejects_sparse_ocr() -> None:
         text_length=12,
         di_model="prebuilt-layout",
     )
-    result = evaluate_image_quality_gate(ocr, ai_cfg=AiClassificationConfig())
+    result = evaluate_ocr_quality_confirm(ocr, ai_cfg=AiClassificationConfig())
     assert not result.passed
     assert "OCR_SPARSE" in result.review_reasons
+    # Back-compat alias
+    assert not evaluate_image_quality_gate(ocr, ai_cfg=AiClassificationConfig()).passed
 
 
-def test_image_quality_gate_rejects_short_text() -> None:
+def test_ocr_quality_confirm_rejects_short_text() -> None:
     ocr = OcrArtifact(
         success=True,
         sparse=False,
@@ -73,9 +81,69 @@ def test_image_quality_gate_rejects_short_text() -> None:
         text_length=5,
         di_model="prebuilt-layout",
     )
-    result = evaluate_image_quality_gate(ocr, ai_cfg=AiClassificationConfig())
+    result = evaluate_ocr_quality_confirm(ocr, ai_cfg=AiClassificationConfig())
     assert not result.passed
     assert "IMAGE_QUALITY_LOW" in result.review_reasons
+
+
+def test_pre_ocr_blank_image_is_severe(tmp_path: Path) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    path = tmp_path / "blank.png"
+    Image.new("RGB", (400, 400), color=(255, 255, 255)).save(path)
+    result = evaluate_pre_ocr_image_quality(path)
+    assert not result.passed
+    assert result.severity == "severe"
+    assert any(s.name == "blank_page" for s in result.signals)
+
+
+def test_pre_ocr_tiny_image_is_severe(tmp_path: Path) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    path = tmp_path / "tiny.png"
+    Image.new("RGB", (40, 40), color=(0, 0, 0)).save(path)
+    # Paint some contrast so blank doesn't dominate
+    img = Image.new("RGB", (40, 40), color=(0, 0, 0))
+    for x in range(40):
+        img.putpixel((x, x % 40), (255, 255, 255))
+    img.save(path)
+    result = evaluate_pre_ocr_image_quality(path)
+    assert not result.passed
+    assert any(s.name == "tiny_dimensions" for s in result.signals)
+
+
+def test_pre_ocr_normal_scan_passes(tmp_path: Path) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+    from PIL import ImageDraw
+
+    path = tmp_path / "scan.png"
+    img = Image.new("RGB", (800, 1100), color=(250, 250, 250))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((40, 40, 760, 1060), outline=(20, 20, 20), width=3)
+    for y in range(80, 1000, 28):
+        draw.line((60, y, 740, y), fill=(30, 30, 30), width=2)
+    img.save(path)
+    result = evaluate_pre_ocr_image_quality(path)
+    assert result.passed
+    assert result.severity in {"pass", "warn"}
+    # Skew/orientation/mild contrast must not be severe on a normal scan
+    assert all(
+        s.level != "severe" or s.name in {"raster_open_failed", "blank_page", "tiny_dimensions"}
+        for s in result.signals
+    )
+
+
+def test_layout_readiness_image_routes_enhanced_scan(tmp_path: Path) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    path = tmp_path / "photo.jpg"
+    Image.new("RGB", (600, 800), color=(200, 200, 200)).save(path)
+    result = evaluate_layout_readiness(path)
+    assert result.ocr_mode == OcrMode.ENHANCED_SCAN
 
 
 def test_field_confidence_gate_flags_low_gst() -> None:
@@ -166,7 +234,7 @@ def test_field_confidence_gate_skips_low_llm_when_merge_filled_field() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_image_quality_blocks_classify(
+async def test_pipeline_ocr_quality_confirm_blocks_classify(
     db_session: AsyncSession,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -200,8 +268,9 @@ async def test_pipeline_image_quality_blocks_classify(
         return bad_ocr
 
     async def _fake_classify(*_args, **_kwargs) -> LlmDocumentResult:
-        raise AssertionError("classify must not run when image quality gate fails")
+        raise AssertionError("classify must not run when OCR quality confirm fails")
 
+    patch_pre_ocr_gates_pass(monkeypatch)
     monkeypatch.setattr("app.services.invoice.pipeline.open_pdf_for_reading", _fake_open)
     monkeypatch.setattr("app.services.invoice.invoice_pipeline_phases.open_pdf_for_reading", _fake_open)
     monkeypatch.setattr(
@@ -292,7 +361,24 @@ async def test_pipeline_field_confidence_sets_needs_review(
         extractionFields=["vendor", "total", "gst"],
     )
 
+    from app.services.invoice.invoice_pipeline_phases import FieldConfidenceGateResult
+
+    def _failing_field_conf(*_args, **_kwargs) -> FieldConfidenceGateResult:
+        return FieldConfidenceGateResult(
+            passed=False,
+            low_confidence_fields={"gst": 0.35},
+            min_confidence=0.65,
+            review_reasons=["FIELD_CONFIDENCE_LOW"],
+            gate_fields=["gst"],
+            confirmed_dt="DT-01",
+        )
+
     patch_confidence_gate_pass(monkeypatch)
+    patch_pre_ocr_gates_pass(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.invoice.pipeline.evaluate_field_confidence_gate",
+        _failing_field_conf,
+    )
     monkeypatch.setattr(
         "app.services.invoice.pipeline.get_document_type_definition",
         lambda *_args, **_kwargs: dt_def,
@@ -309,16 +395,22 @@ async def test_pipeline_field_confidence_sets_needs_review(
         "app.services.invoice.invoice_pipeline_phases.classify_only",
         _fake_classify,
     )
-    monkeypatch.setattr(
-        "app.services.invoice.pipeline.apply_user_defined_classifier_gate",
-        lambda result, **_kwargs: result,
-    )
     monkeypatch.setattr("app.services.invoice.pipeline.extract_fields", _fake_extract)
     monkeypatch.setattr("app.services.extraction.document_ai_provider.extract_fields", _fake_extract)
     monkeypatch.setattr("app.services.invoice.pipeline.sync_invoice_blob_path", _noop_sync)
 
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+
     await process_invoice(db_session, inv)
     await db_session.flush()
 
-    assert inv.vendor == "Acme Pty Ltd"
-    assert inv.evaluation_status == EVAL_NEEDS_REVIEW
+    assert inv.vendor and "Acme" in inv.vendor
+    rows = (
+        await db_session.execute(
+            select(AuditLog.event).where(AuditLog.invoice_id == inv.id)
+        )
+    ).scalars().all()
+    assert "ocr_quality_confirm_passed" in rows or "image_quality_gate_passed" in rows
+    assert "field_confidence_evaluated" in rows

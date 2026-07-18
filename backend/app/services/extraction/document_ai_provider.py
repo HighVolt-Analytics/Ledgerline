@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from app.config import get_settings
 from app.schemas.document_type import DocumentTypeDefinition
@@ -15,7 +15,9 @@ from app.schemas.ocr_artifact import OcrArtifact
 from app.services.extraction.azure_foundry_vision_client import (
     classify_only_azure_foundry,
     extract_fields_azure_foundry,
+    extract_header_azure_foundry,
     is_azure_foundry_vision_available,
+    probe_understand_azure_foundry,
     read_for_classification_azure_foundry,
 )
 from app.services.extraction.di_extract_service import (
@@ -26,7 +28,9 @@ from app.services.extraction.document_intelligence import is_di_enabled
 from app.services.extraction.gemini_vision_client import (
     classify_only_gemini,
     extract_fields_gemini,
+    extract_header_gemini,
     is_gemini_vision_available,
+    probe_understand_gemini,
     read_for_classification_gemini,
 )
 from app.services.extraction.llm_document_service import classify_document_only, extract_document_fields
@@ -77,6 +81,33 @@ def provider_unavailable_reason(provider: DocumentAiProvider) -> str:
     if not get_settings().runtime_llm_available:
         return "Azure OpenAI runtime LLM not configured"
     return "Azure DI provider unavailable"
+
+
+async def probe_vision_understand(
+    *,
+    provider: DocumentAiProvider,
+    images: list[bytes],
+) -> dict[str, Any] | None:
+    """Lightweight vision understandability probe (yes/no JSON)."""
+    if provider == DocumentAiProvider.GEMINI_VISION:
+        return await probe_understand_gemini(images)
+    if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
+        return await probe_understand_azure_foundry(images)
+    return None
+
+
+async def extract_vision_header(
+    *,
+    provider: DocumentAiProvider,
+    images: list[bytes],
+    org: OrgContext,
+) -> dict[str, Any] | None:
+    """Vision header extract (printed title, counterparty, linking refs)."""
+    if provider == DocumentAiProvider.GEMINI_VISION:
+        return await extract_header_gemini(images, org=org)
+    if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
+        return await extract_header_azure_foundry(images, org=org)
+    return None
 
 
 async def read_for_classification(

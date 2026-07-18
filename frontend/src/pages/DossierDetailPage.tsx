@@ -155,19 +155,12 @@ export function DossierDetailPage() {
 
 
   const handleAddManualLink = async (body: {
-
     linkedInvoiceId: number;
-
     slotId?: string | null;
-
   }) => {
-
     if (!dossierId) return;
-
     const row = await addDossierManualLink(dossierId, body);
-
     setDossier(row);
-
   };
 
 
@@ -397,11 +390,12 @@ export function DossierDetailPage() {
             <DossierOutcomeBadge outcome={dossier.outcome} />
 
             <DossierTypeBadge
-
               code={dossier.documentTypeCode ?? ""}
-
-              title={dossier.documentTypeTitle}
-
+              title={
+                (dossier.documentTypeTitle || "").trim() ||
+                (dossier.classificationLabel || "").trim() ||
+                undefined
+              }
             />
 
           </>
@@ -432,7 +426,11 @@ export function DossierDetailPage() {
 
       <div className="dossier-detail-grid">
 
-        <DossierPipelinePanel pipeline={dossier.pipeline} routeTarget={dossier.routeTarget} />
+        <DossierPipelinePanel
+          pipeline={dossier.pipeline}
+          routeTarget={dossier.routeTarget}
+          pipelinePath={dossier.pipelinePath}
+        />
 
         <div className="dossier-detail-rail-col">
 
@@ -454,7 +452,10 @@ export function DossierDetailPage() {
 
             />
 
-            <DossierApprovalPanel chain={dossier.approvalChain} />
+            <DossierApprovalPanel
+              chain={dossier.approvalChain}
+              pipelinePath={dossier.pipelinePath}
+            />
 
           </div>
 

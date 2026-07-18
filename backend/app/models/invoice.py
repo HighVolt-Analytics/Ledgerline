@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint, func, Uuid
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint, func, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -91,6 +91,13 @@ class Invoice(Base):
     file_hash: Mapped[str | None] = mapped_column(String(64))
     content_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     business_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
+    normalized_filename: Mapped[str | None] = mapped_column(String(255), index=True)
+    duplicate_review_suggested: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
+        nullable=False,
+    )
     raw_file_path: Mapped[str | None] = mapped_column(Text)
     email_sender: Mapped[str | None] = mapped_column(String(255))
     email_subject: Mapped[str | None] = mapped_column(String(500))

@@ -80,6 +80,16 @@ def classification_review_confidence(
 async def document_type_extraction_fields(
     db: AsyncSession, tenant_id: uuid.UUID, inv: Invoice
 ) -> list[str]:
+    # Vision header hold: Fields tab uses the vision header contract (no DT mapped yet).
+    from app.services.invoice.invoice_evaluation_service import VISION_UNDERSTOOD_EVAL_STATUSES
+
+    if (inv.evaluation_status or "").strip() in VISION_UNDERSTOOD_EVAL_STATUSES and not (
+        inv.document_text or ""
+    ).strip():
+        from app.services.invoice.vision_header_schema import VISION_HEADER_PERSISTED_FIELD_KEYS
+
+        return list(VISION_HEADER_PERSISTED_FIELD_KEYS)
+
     config = await load_config_for_tenant(db, tenant_id)
     code = effective_document_type_code(inv, list(config.document_types))
     if not code:
@@ -125,6 +135,13 @@ def _inbox_display_fields(
         and evaluation_status == EvaluationStatus.NEEDS_REVIEW
     ):
         evaluation_status = EvaluationStatus.AUTO_CODED
+    # Legacy understood-path rows still stored as awaiting_classification.
+    if evaluation_status == EvaluationStatus.AWAITING_CLASSIFICATION:
+        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+        if fields.get("vision_bundle_kind") is not None or fields.get("vision_bundle_key"):
+            evaluation_status = EvaluationStatus.VISION_VAULTED
+        elif (inv.document_heading or "").strip() and not (inv.document_text or "").strip():
+            evaluation_status = EvaluationStatus.VISION_VAULTED
     return vendor_confidence, validation_pass_rate, evaluation_status
 
 
@@ -199,6 +216,7 @@ def invoice_to_response(
         matched_rule_ids=parse_matched_rule_ids(inv.matched_rule_ids) or None,
         vendor_confidence=vendor_confidence,
         evaluation_status=evaluation_status,
+        duplicate_review_suggested=bool(getattr(inv, "duplicate_review_suggested", False)),
         purchase_document_type=inv.purchase_document_type,
         document_type_code=inv.document_type_code,
         document_type_confidence=inv.document_type_confidence,
@@ -210,7 +228,7 @@ def invoice_to_response(
         billing_address=inv.billing_address,
         email_subject=inv.email_subject if not for_list else None,
         document_text=inv.document_text if not for_list else None,
-        document_heading=getattr(inv, "document_heading", None) if not for_list else None,
+        document_heading=getattr(inv, "document_heading", None),
         extracted_fields=getattr(inv, "extracted_fields", None) or None,
         validation_results=validation_items,
         validation_pass_rate=validation_pass_rate,

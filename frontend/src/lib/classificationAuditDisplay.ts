@@ -91,7 +91,13 @@ export function requiresClassificationConfirm(
     | undefined
 ): boolean {
   if (!inv) return false;
-  if (inv.evaluation_status === "awaiting_classification") return true;
+  if (
+    inv.evaluation_status === "awaiting_classification" ||
+    inv.evaluation_status === "vision_header_review"
+  ) {
+    return true;
+  }
+  if (inv.evaluation_status === "vision_vaulted") return false;
   if (inv.evaluation_status === "needs_rescan") return false;
 
   const storedDt = (inv.document_type_code ?? "").trim();

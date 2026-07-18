@@ -79,17 +79,32 @@ export function DossierManualLinkDialog({
   if (!open) return null;
 
   async function pick(row: DossierSummaryWithInvoiceId) {
-    if (row.invoiceId === anchorInvoiceId) return;
-    setSubmittingId(row.invoiceId);
+    const linkedInvoiceId = Number(row.invoiceId);
+    if (!Number.isFinite(linkedInvoiceId) || linkedInvoiceId <= 0) {
+      setError("This search result has no invoice id — try another document.");
+      return;
+    }
+    if (linkedInvoiceId === anchorInvoiceId) return;
+    setSubmittingId(linkedInvoiceId);
     setError(null);
     try {
-      await onSelect(row.invoiceId);
+      await onSelect(linkedInvoiceId);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create link");
     } finally {
       setSubmittingId(null);
     }
+  }
+
+  function resultTypeLabel(row: DossierSummaryWithInvoiceId): string {
+    const title = (row.documentTypeTitle || "").trim();
+    if (title && title.toLowerCase() !== "unclassified") return title;
+    const code = (row.documentTypeCode || "").trim();
+    if (code) return code;
+    const classification = (row.classificationLabel || "").trim();
+    if (classification && classification.toLowerCase() !== "unclassified") return classification;
+    return "Document";
   }
 
   return (
@@ -152,14 +167,20 @@ export function DossierManualLinkDialog({
                 key={row.id}
                 type="button"
                 className="dossier-manual-link-dialog__result"
-                disabled={row.invoiceId === anchorInvoiceId || submittingId != null}
-                onClick={() => pick(row)}
+                disabled={
+                  !row.invoiceId ||
+                  row.invoiceId === anchorInvoiceId ||
+                  submittingId != null
+                }
+                onClick={() => void pick(row)}
               >
                   <span className="dossier-manual-link-dialog__result-ref tnum">{row.id}</span>
                   <span className="dossier-manual-link-dialog__result-main">
-                    <span className="dossier-manual-link-dialog__result-vendor">{row.vendor}</span>
+                    <span className="dossier-manual-link-dialog__result-vendor">
+                      {(row.vendor || "").trim() || "—"}
+                    </span>
                     <span className="dossier-manual-link-dialog__result-meta">
-                      {row.documentTypeCode} · {row.invoiceRef}
+                      {[resultTypeLabel(row), row.invoiceRef].filter(Boolean).join(" · ")}
                     </span>
                   </span>
                 </button>

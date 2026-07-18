@@ -46,7 +46,39 @@ export const DOSSIER_PIPELINE_STAGES = [
   { id: "archive", order: 20, label: "Archive", phase: "finish" as const },
 ] as const;
 
-export type DossierPipelineStageId = (typeof DOSSIER_PIPELINE_STAGES)[number]["id"];
+/** Vision understood path — same points as the Audit Processing tab. */
+export const UNDERSTOOD_PIPELINE_STAGES = [
+  { id: "ingest", order: 1, label: "Received", phase: "capture" as const },
+  { id: "duplicate", order: 2, label: "Duplicate check", phase: "capture" as const },
+  { id: "storage", order: 3, label: "Storage", phase: "capture" as const },
+  { id: "file_validity", order: 4, label: "File validity", phase: "capture" as const },
+  { id: "vision_understand", order: 5, label: "Vision understand", phase: "capture" as const },
+  { id: "extract", order: 6, label: "Vision header", phase: "capture" as const },
+  { id: "bundle", order: 7, label: "Bundle", phase: "process" as const },
+  { id: "archive", order: 8, label: "Vault", phase: "finish" as const },
+] as const;
+
+export type DossierPipelineStageId =
+  | (typeof DOSSIER_PIPELINE_STAGES)[number]["id"]
+  | (typeof UNDERSTOOD_PIPELINE_STAGES)[number]["id"];
+
+/** Vision understood path — capture header, soft-bundle, vault only. */
+export const UNDERSTOOD_DOSSIER_STAGE_IDS: ReadonlySet<string> = new Set(
+  UNDERSTOOD_PIPELINE_STAGES.map((stage) => stage.id)
+);
+
+export type DossierPipelinePath = "understood" | "not_understood" | "unknown";
+
+export function pipelineStageCatalog(
+  path: DossierPipelinePath | null | undefined
+): readonly {
+  id: DossierPipelineStageId;
+  order: number;
+  label: string;
+  phase: DossierPipelinePhaseId;
+}[] {
+  return path === "understood" ? UNDERSTOOD_PIPELINE_STAGES : DOSSIER_PIPELINE_STAGES;
+}
 
 /** Wire-up reference: audit events and InvoiceStatus per stage. */
 export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
@@ -65,6 +97,12 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
   },
   storage: {
     auditEvents: ["storage_verified"],
+  },
+  file_validity: {
+    auditEvents: ["file_validity_passed", "file_validity_failed"],
+  },
+  vision_understand: {
+    auditEvents: ["vision_understand_passed", "vision_understand_failed"],
   },
   ocr: {
     auditEvents: ["ocr_completed", "parsing_failed"],
@@ -88,13 +126,25 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
     ],
   },
   extract: {
-    auditEvents: ["parse_completed", "invoice_parsed", "field_confidence_evaluated"],
+    auditEvents: [
+      "vision_header_extracted",
+      "parse_completed",
+      "invoice_parsed",
+      "field_confidence_evaluated",
+    ],
     invoiceStatus: "parsing",
   },
   document_type: {
     auditEvents: ["document_classified", "classification_resolved"],
   },
-  bundle: { auditEvents: ["playbook_evaluated", "routing_review_required"] },
+  bundle: {
+    auditEvents: [
+      "vision_bundle_linked",
+      "vision_bundle_standalone",
+      "playbook_evaluated",
+      "routing_review_required",
+    ],
+  },
   vendor_hold: {
     auditEvents: [
       "vendor_registration_hold",
@@ -139,16 +189,24 @@ export const DOSSIER_PIPELINE_BACKEND_MAP: Record<
     invoiceStatus: "processed",
   },
   pay: { auditEvents: [] },
-  archive: { auditEvents: ["vault_stored"] },
+  archive: {
+    auditEvents: [
+      "vault_stored",
+      "blob_relocated",
+      "vault_layout_sync_skipped",
+      "vision_path_pending",
+    ],
+  },
 };
 
-export type DossierStageState = "pass" | "fail" | "waived" | "pending";
+export type DossierStageState = "pass" | "fail" | "waived" | "skipped" | "pending";
 
 export type DossierOutcome =
   | "auto_posted"
   | "manual_posted"
   | "blocked"
   | "parked"
+  | "vaulted"
   | "in_progress";
 
 export type DossierPipelineCheckState = "pass" | "fail" | "waived" | "skipped" | "pending";
@@ -185,6 +243,37 @@ export type DossierPipelineStep = {
   evidence?: DossierPipelineEvidence[];
 };
 
+/** Show only stages for the path this document actually ran. */
+export function filterDossierPipelineForPath(
+  pipeline: DossierPipelineStep[],
+  path: DossierPipelinePath | null | undefined
+): DossierPipelineStep[] {
+  const resolved = resolveDossierPipelinePath(pipeline, path);
+  if (resolved !== "understood") return pipeline;
+  return pipeline.filter((step) => UNDERSTOOD_DOSSIER_STAGE_IDS.has(step.stageId));
+}
+
+/** Prefer API path; infer understood when stages were marked skipped for that path. */
+export function resolveDossierPipelinePath(
+  pipeline: DossierPipelineStep[],
+  path: DossierPipelinePath | null | undefined
+): DossierPipelinePath {
+  if (path === "understood" || path === "not_understood") return path;
+  const understoodSkip = pipeline.some(
+    (step) =>
+      (step.state === "skipped" || step.state === "waived") &&
+      (step.detail || "").toLowerCase().includes("understood path")
+  );
+  if (understoodSkip) return "understood";
+  const onlyUnderstoodStages =
+    pipeline.length > 0 &&
+    pipeline.every((step) => UNDERSTOOD_DOSSIER_STAGE_IDS.has(step.stageId));
+  if (onlyUnderstoodStages && pipeline.length <= UNDERSTOOD_DOSSIER_STAGE_IDS.size) {
+    return "understood";
+  }
+  return path ?? "unknown";
+}
+
 export type DossierSummary = {
   id: string;
   invoiceId?: number;
@@ -214,6 +303,7 @@ export type DossierSummary = {
   blockerStageId?: DossierPipelineStageId | null;
   blockerReason?: string | null;
   blockerRemediation?: string | null;
+  pipelinePath?: DossierPipelinePath;
   pipeline: DossierPipelineStep[];
   linkedDocuments: DossierLinkedDocuments;
   approvalChain: DossierApprovalChain;
@@ -227,7 +317,7 @@ export function isLegacyMockDossierId(id: string): boolean {
 export function dossierStageStateLabel(state: DossierStageState): string {
   if (state === "pass") return "Complete";
   if (state === "fail") return "Failed";
-  if (state === "waived") return "Skipped";
+  if (state === "waived" || state === "skipped") return "Skipped";
   return "Waiting";
 }
 
@@ -235,7 +325,7 @@ export function firstPipelineFailure(
   pipeline: DossierPipelineStep[]
 ): DossierPipelineStep | undefined {
   const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
-  for (const stage of DOSSIER_PIPELINE_STAGES) {
+  for (const stage of stagesForPipeline(pipeline)) {
     const step = byStage.get(stage.id);
     if (step?.state === "fail") return step;
   }
@@ -250,9 +340,10 @@ export function firstPipelineBottleneck(
   if (fail) return { stageId: fail.stageId, step: fail };
 
   const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
-  for (const stage of DOSSIER_PIPELINE_STAGES) {
+  for (const stage of stagesForPipeline(pipeline)) {
     const step = byStage.get(stage.id);
-    if (!step) break;
+    if (!step) continue;
+    if (step.state === "skipped" || step.state === "waived") continue;
     if (step.state === "pending" && step.detail && step.detail !== "—") {
       return { stageId: stage.id, step };
     }
@@ -263,6 +354,15 @@ export function firstPipelineBottleneck(
   return undefined;
 }
 
+function stagesForPipeline(pipeline: DossierPipelineStep[]) {
+  const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  const understoodOnly =
+    pipeline.length > 0 &&
+    pipeline.every((step) => UNDERSTOOD_DOSSIER_STAGE_IDS.has(step.stageId));
+  const catalog = understoodOnly ? UNDERSTOOD_PIPELINE_STAGES : DOSSIER_PIPELINE_STAGES;
+  return catalog.filter((stage) => byStage.has(stage.id));
+}
+
 export function pipelineActiveStage(
   pipeline: DossierPipelineStep[]
 ): { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined {
@@ -270,10 +370,11 @@ export function pipelineActiveStage(
   if (bottleneck) return bottleneck;
 
   const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  const ordered = DOSSIER_PIPELINE_STAGES.filter((stage) => byStage.has(stage.id));
   let last: { stageId: DossierPipelineStageId; step: DossierPipelineStep } | undefined;
-  for (const stage of DOSSIER_PIPELINE_STAGES) {
+  for (const stage of ordered) {
     const step = byStage.get(stage.id);
-    if (!step) break;
+    if (!step) continue;
     if (step.state === "pass" || step.state === "waived") {
       last = { stageId: stage.id, step };
     }
@@ -286,9 +387,9 @@ export function pipelineProgressSummary(
   routeTarget?: string | null
 ): string {
   const complete = pipeline.filter(
-    (step) => step.state === "pass" || step.state === "waived"
+    (step) => step.state === "pass" || step.state === "waived" || step.state === "skipped"
   ).length;
-  const total = DOSSIER_PIPELINE_STAGES.length;
+  const total = pipeline.length || DOSSIER_PIPELINE_STAGES.length;
   const fail = firstPipelineFailure(pipeline);
   if (fail) {
     return `${complete} of ${total} complete · failed at ${dossierStageLabel(fail.stageId, routeTarget)}`;
@@ -362,7 +463,11 @@ export function stageIdsForPhase(phaseId: DossierPipelinePhaseId): DossierPipeli
 }
 
 export function phaseIdForStage(stageId: DossierPipelineStageId): DossierPipelinePhaseId {
-  return DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.phase ?? "capture";
+  return (
+    UNDERSTOOD_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.phase ??
+    DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.phase ??
+    "capture"
+  );
 }
 
 export function defaultActivePipelinePhase(pipeline: DossierPipelineStep[]): DossierPipelinePhaseId {
@@ -386,15 +491,19 @@ export function phaseStageSummary(
   phaseId: DossierPipelinePhaseId,
   routeTarget?: string | null
 ): string {
-  const ids = stageIdsForPhase(phaseId);
   const byStage = new Map(pipeline.map((step) => [step.stageId, step]));
+  const ids = stagesForPipeline(pipeline)
+    .filter((stage) => stage.phase === phaseId && byStage.has(stage.id))
+    .map((stage) => stage.id);
   const steps = ids.map((id) => byStage.get(id)).filter(Boolean) as DossierPipelineStep[];
-  const complete = steps.filter((step) => step.state === "pass" || step.state === "waived").length;
+  const complete = steps.filter(
+    (step) => step.state === "pass" || step.state === "waived" || step.state === "skipped"
+  ).length;
   const failed = steps.find((step) => step.state === "fail");
   if (failed) {
     return `Failed at ${dossierStageLabel(failed.stageId, routeTarget)}`;
   }
-  return `${complete}/${ids.length} complete`;
+  return `${complete}/${ids.length || steps.length} complete`;
 }
 
 export function pipelineStageSummary(pipeline: DossierPipelineStep[]): string {
@@ -413,6 +522,7 @@ export function dossierOutcomeLabel(outcome: DossierOutcome): string {
   if (outcome === "manual_posted") return "Manual post";
   if (outcome === "blocked") return "Blocked";
   if (outcome === "parked") return "Parked";
+  if (outcome === "vaulted") return "Vaulted";
   return "In progress";
 }
 
@@ -431,8 +541,11 @@ export function dossierPipelineCounts(pipeline: DossierPipelineStep[]): {
 
 function rollupPhaseState(states: DossierStageState[]): DossierStageState {
   if (states.some((s) => s === "fail")) return "fail";
-  if (states.every((s) => s === "pass" || s === "waived")) {
-    return states.some((s) => s === "waived") ? "waived" : "pass";
+  if (states.every((s) => s === "pass")) return "pass";
+  if (states.every((s) => s === "pass" || s === "waived" || s === "skipped")) {
+    // Prefer Complete when any stage passed; Skipped only if nothing ran.
+    if (states.some((s) => s === "pass")) return "pass";
+    return "waived";
   }
   if (states.every((s) => s === "pending")) return "pending";
   return "pending";
@@ -447,10 +560,22 @@ export type DossierPipelinePhaseSummary = {
 /** Roll capture/process stages into 5 phase dots for list cards. */
 export function dossierPipelinePhases(pipeline: DossierPipelineStep[]): DossierPipelinePhaseSummary[] {
   const byStage = new Map(pipeline.map((step) => [step.stageId, step.state]));
+  const presentIds = new Set(pipeline.map((step) => step.stageId));
+  const catalog = stagesForPipeline(pipeline);
   return DOSSIER_PIPELINE_PHASES.map((phase) => {
-    const stageIds = DOSSIER_PIPELINE_STAGES.filter((s) => s.phase === phase.id).map((s) => s.id);
+    const stageIds = catalog
+      .filter((s) => s.phase === phase.id && presentIds.has(s.id))
+      .map((s) => s.id);
+    if (stageIds.length === 0) {
+      return { phaseId: phase.id, label: phase.label, state: "waived" as const };
+    }
     const states = stageIds.map((id) => byStage.get(id) ?? "pending");
     return { phaseId: phase.id, label: phase.label, state: rollupPhaseState(states) };
+  }).filter((phase) => {
+    const stageIds = catalog.filter(
+      (s) => s.phase === phase.phaseId && presentIds.has(s.id)
+    );
+    return stageIds.length > 0;
   });
 }
 
@@ -479,7 +604,11 @@ export function dossierStageLabel(
   if (stageId === "vendor_hold" && routeTarget === ROUTE_SALES) {
     return "Customer hold";
   }
-  return DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.label ?? stageId;
+  return (
+    UNDERSTOOD_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.label ??
+    DOSSIER_PIPELINE_STAGES.find((stage) => stage.id === stageId)?.label ??
+    stageId
+  );
 }
 
 export function pipelineBlockedFromStageId(
@@ -514,14 +643,16 @@ export function dossierStageDescription(stageId: DossierPipelineStageId): string
   const descriptions: Record<DossierPipelineStageId, string> = {
     ingest: "Document received and stored.",
     duplicate: "Checked for duplicate uploads.",
-    storage: "Stored file verified before OCR.",
+    storage: "Stored file verified before processing.",
+    file_validity: "File type and readability checked.",
+    vision_understand: "Vision model decided the document can be understood.",
     ocr: "Layout and text read from the document.",
     quality: "Image quality and OCR readability gate.",
     llm_classify: "LLM suggests document type from OCR.",
     confidence_gate: "Auto-route confidence and catalogue gate.",
-    extract: "Invoice fields extracted from the document.",
+    extract: "Header fields captured from vision understanding.",
     document_type: "Confirmed document type applied to the invoice.",
-    bundle: "Required supporting documents checked.",
+    bundle: "Soft-bundled with linked supporting documents.",
     vendor_hold: "Vendor registration status verified.",
     validate: "Business rules and validation checks run.",
     match: "PO, GRN, and invoice amounts compared.",
@@ -531,7 +662,7 @@ export function dossierStageDescription(stageId: DossierPipelineStageId): string
     reconcile: "Sub-ledger reconciliation run.",
     post: "Posted to the ledger.",
     pay: "Payment queue prepared.",
-    archive: "Archived for retention.",
+    archive: "Stored in the document vault.",
   };
   return descriptions[stageId];
 }

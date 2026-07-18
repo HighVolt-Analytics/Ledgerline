@@ -25,6 +25,12 @@ async def _poll_once() -> None:
         logger.info("inline_mailbox_poll_skipped", reason="already_running")
         return
 
+    from app.workers.tasks import is_inline_pipeline_active
+
+    if is_inline_pipeline_active():
+        logger.info("inline_mailbox_poll_skipped", reason="invoice_pipeline_active")
+        return
+
     async with _poll_lock:
         if _shutting_down:
             return

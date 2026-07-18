@@ -182,6 +182,18 @@ class Settings(BaseSettings):
     pdf_multi_document_split: bool = Field(
         default=True,
         validation_alias="PDF_MULTI_DOCUMENT_SPLIT",
+        description=(
+            "When true, multi-document PDFs may be split at ingest into separate "
+            "invoice rows (one per detected document segment)."
+        ),
+    )
+    canonical_intake_channels: str = Field(
+        default="upload,email,whatsapp,viber",
+        validation_alias="CANONICAL_INTAKE_CHANNELS",
+        description=(
+            "Comma-separated capture channels that use canonical intake "
+            "(upload,email,whatsapp,viber). Empty disables the facade."
+        ),
     )
     pdf_segment_max_pages: int = Field(
         default=200,
@@ -190,7 +202,7 @@ class Settings(BaseSettings):
         validation_alias="PDF_SEGMENT_MAX_PAGES",
     )
     pdf_segment_max_segments: int = Field(
-        default=20,
+        default=30,
         ge=2,
         le=50,
         validation_alias="PDF_SEGMENT_MAX_SEGMENTS",
@@ -200,13 +212,13 @@ class Settings(BaseSettings):
         validation_alias="PDF_SEGMENT_LLM_ENABLED",
     )
     pdf_segment_llm_timeout_seconds: int = Field(
-        default=30,
+        default=60,
         ge=5,
-        le=120,
+        le=180,
         validation_alias="PDF_SEGMENT_LLM_TIMEOUT_SECONDS",
     )
     pdf_segment_llm_prompt_version: str = Field(
-        default="v1",
+        default="v10",
         validation_alias="PDF_SEGMENT_LLM_PROMPT_VERSION",
     )
     max_upload_file_bytes: int = Field(
@@ -336,6 +348,27 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="RUNTIME_LLM_ENABLED",
     )
+    azure_openai_max_concurrent: int = Field(
+        default=1,
+        ge=1,
+        le=8,
+        validation_alias="AZURE_OPENAI_MAX_CONCURRENT",
+        description="Max in-flight Azure OpenAI/Foundry chat calls process-wide (avoid 429).",
+    )
+    azure_openai_min_interval_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+        le=10.0,
+        validation_alias="AZURE_OPENAI_MIN_INTERVAL_SECONDS",
+        description="Minimum seconds between Azure chat calls (smoothing bursts).",
+    )
+    azure_openai_cooldown_seconds: float = Field(
+        default=45.0,
+        ge=15.0,
+        le=300.0,
+        validation_alias="AZURE_OPENAI_COOLDOWN_SECONDS",
+        description="After a 429, skip same-scope Azure chat for this many seconds.",
+    )
     runtime_llm_timeout_seconds: int = Field(
         default=45,
         ge=5,
@@ -343,11 +376,11 @@ class Settings(BaseSettings):
         validation_alias="RUNTIME_LLM_TIMEOUT_SECONDS",
     )
     runtime_llm_max_retries: int = Field(
-        default=2,
+        default=1,
         ge=0,
-        le=3,
+        le=8,
         validation_alias="RUNTIME_LLM_MAX_RETRIES",
-        description="Extra attempts after the first runtime LLM call (2 = up to 3 tries; min 3 for rate limits).",
+        description="Extra attempts after the first runtime LLM call (1 = up to 2 tries; keep low to avoid 429 storms).",
     )
     extraction_gap_fill_enabled: bool = Field(
         default=True,
@@ -405,6 +438,73 @@ class Settings(BaseSettings):
         default=80,
         ge=0,
         validation_alias="OCR_MIN_TEXT_CHARS",
+    )
+    # Pre-OCR visual fitness (conservative defaults — calibrate warn rates before tightening)
+    image_quality_max_pages_check: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        validation_alias="IMAGE_QUALITY_MAX_PAGES_CHECK",
+    )
+    image_quality_min_dimension_px: int = Field(
+        default=200,
+        ge=32,
+        validation_alias="IMAGE_QUALITY_MIN_DIMENSION_PX",
+    )
+    image_quality_min_approx_dpi: float = Field(
+        default=72.0,
+        ge=36.0,
+        validation_alias="IMAGE_QUALITY_MIN_APPROX_DPI",
+    )
+    image_quality_min_contrast_std: float = Field(
+        default=12.0,
+        ge=0.0,
+        validation_alias="IMAGE_QUALITY_MIN_CONTRAST_STD",
+    )
+    image_quality_contrast_severe_std: float = Field(
+        default=3.0,
+        ge=0.0,
+        validation_alias="IMAGE_QUALITY_CONTRAST_SEVERE_STD",
+        description="Extremely low contrast → severe; mild low contrast stays warn",
+    )
+    image_quality_blank_variance_max: float = Field(
+        default=8.0,
+        ge=0.0,
+        validation_alias="IMAGE_QUALITY_BLANK_VARIANCE_MAX",
+    )
+    image_quality_content_fill_min: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=1.0,
+        validation_alias="IMAGE_QUALITY_CONTENT_FILL_MIN",
+    )
+    image_quality_skew_warn_degrees: float = Field(
+        default=8.0,
+        ge=0.0,
+        validation_alias="IMAGE_QUALITY_SKEW_WARN_DEGREES",
+    )
+    image_quality_skew_severe_degrees: float = Field(
+        default=35.0,
+        ge=0.0,
+        validation_alias="IMAGE_QUALITY_SKEW_SEVERE_DEGREES",
+        description="Near-unusable skew only; mild skew stays warn",
+    )
+    layout_native_text_min_chars: int = Field(
+        default=80,
+        ge=0,
+        validation_alias="LAYOUT_NATIVE_TEXT_MIN_CHARS",
+    )
+    layout_native_text_chars_per_page_min: int = Field(
+        default=40,
+        ge=0,
+        validation_alias="LAYOUT_NATIVE_TEXT_CHARS_PER_PAGE_MIN",
+    )
+    layout_mixed_pdf_image_area_ratio: float = Field(
+        default=0.35,
+        ge=0.0,
+        le=1.0,
+        validation_alias="LAYOUT_MIXED_PDF_IMAGE_AREA_RATIO",
+        description="Large embedded images vs page area → allow DI fallback",
     )
     llm_classification_prompt_version: str = Field(
         default="v1",
@@ -470,6 +570,13 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="SYNC_PROCESSING",
         description="Run invoice pipeline in-process (no Celery worker required)",
+    )
+    invoice_pipeline_concurrency: int = Field(
+        default=1,
+        ge=1,
+        le=16,
+        validation_alias="INVOICE_PIPELINE_CONCURRENCY",
+        description="Max concurrent invoice pipelines when processing a batch inline",
     )
     jwt_secret: str = "change-me-in-production"
     jwt_expire_minutes: int = 60 * 24 * 7

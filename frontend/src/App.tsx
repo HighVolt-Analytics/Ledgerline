@@ -129,6 +129,11 @@ const CreditSettingsPage = lazy(() =>
     default: m.CreditSettingsPage,
   }))
 );
+const DeveloperPortPage = lazy(() =>
+  import("@/pages/platform/DeveloperPortPage").then((m) => ({
+    default: m.DeveloperPortPage,
+  }))
+);
 const TenantSettingsPage = lazy(() =>
   import("@/pages/platform/TenantSettingsPage").then((m) => ({
     default: m.TenantSettingsPage,
@@ -498,6 +503,14 @@ export default function App() {
                 element={
                   <LazyPage>
                     <CreditSettingsPage />
+                  </LazyPage>
+                }
+              />
+              <Route
+                path="developer-port"
+                element={
+                  <LazyPage>
+                    <DeveloperPortPage />
                   </LazyPage>
                 }
               />

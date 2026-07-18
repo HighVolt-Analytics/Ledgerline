@@ -8,6 +8,7 @@ import {
   approvalStepStateLabel,
   formatApprovalTimestamp,
 } from "@/lib/dossierApproval";
+import type { DossierPipelinePath } from "@/lib/dossiers";
 import { cn } from "@/lib/cn";
 
 function stepIcon(state: DossierApprovalStepState) {
@@ -35,13 +36,24 @@ function actorLabel(actor: string): string | null {
   return token;
 }
 
-export function DossierApprovalPanel({ chain }: { chain: DossierApprovalChain }) {
+export function DossierApprovalPanel({
+  chain,
+  pipelinePath,
+}: {
+  chain: DossierApprovalChain;
+  pipelinePath?: DossierPipelinePath | null;
+}) {
+  const understood = pipelinePath === "understood";
   const { complete, total } = approvalChainProgress(chain);
 
   return (
     <SectionBlock
       label="Approval chain"
-      description="Policy checks, manual approvals, ledger posting, and payment."
+      description={
+        understood
+          ? "Understood path ends at vault — no Approvals queue, ledger post, or payment."
+          : "Policy checks, manual approvals, ledger posting, and payment."
+      }
     >
       <div className="dossier-panel">
         <div className="dossier-approval-policy">

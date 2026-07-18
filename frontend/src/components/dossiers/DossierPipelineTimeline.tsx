@@ -8,13 +8,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DossierPipelinePhaseStrip } from "@/components/dossiers/DossierPipelinePhaseStrip";
 import { approvalStatusChipClass, warningStatusChipClass } from "@/lib/kpiModuleColors";
-import type {
-  DossierPipelineCheck,
-  DossierPipelinePhaseId,
-  DossierPipelineStep,
-  DossierPipelineStageId,
-  DossierStageState,
-} from "@/lib/dossiers";
+import { formatApprovalTimestamp } from "@/lib/dossierApproval";
 import {
   DOSSIER_PIPELINE_PHASES,
   DOSSIER_PIPELINE_STAGES,
@@ -28,7 +22,16 @@ import {
   phaseIdForStage,
   phaseStageSummary,
   pipelineBlockedFromStageId,
+  pipelineStageCatalog,
   stageIdsForPhase,
+} from "@/lib/dossiers";
+import type {
+  DossierPipelineCheck,
+  DossierPipelinePath,
+  DossierPipelinePhaseId,
+  DossierPipelineStep,
+  DossierPipelineStageId,
+  DossierStageState,
 } from "@/lib/dossiers";
 import { cn } from "@/lib/cn";
 
@@ -264,7 +267,7 @@ function PipelineStageCard({
               {step?.at ? (
                 <span className="dossier-pipeline-stage__meta-item tnum">
                   <Clock className="h-3.5 w-3.5" />
-                  {step.at}
+                  {formatApprovalTimestamp(step.at) ?? step.at}
                 </span>
               ) : null}
               {formatDuration(step?.durationMs) ? (
@@ -356,14 +359,14 @@ function CompletedStagesGroup({
 }
 
 function splitPhaseStages(
-  phaseStages: (typeof DOSSIER_PIPELINE_STAGES)[number][],
+  phaseStages: { id: DossierPipelineStageId; order: number }[],
   byStage: Map<DossierPipelineStageId, DossierPipelineStep>
 ) {
   const failedStage = phaseStages.find((stage) => byStage.get(stage.id)?.state === "fail");
   const failOrder = failedStage?.order ?? null;
-  const completedBeforeFail: (typeof DOSSIER_PIPELINE_STAGES)[number][] = [];
-  const failed: (typeof DOSSIER_PIPELINE_STAGES)[number][] = [];
-  const rest: (typeof DOSSIER_PIPELINE_STAGES)[number][] = [];
+  const completedBeforeFail: { id: DossierPipelineStageId; order: number }[] = [];
+  const failed: { id: DossierPipelineStageId; order: number }[] = [];
+  const rest: { id: DossierPipelineStageId; order: number }[] = [];
 
   for (const stage of phaseStages) {
     const state = byStage.get(stage.id)?.state ?? "pending";
@@ -535,21 +538,41 @@ export const DOSSIER_PIPELINE_FOCUS_PHASE_EVENT = "dossier-pipeline-focus-phase"
 export function DossierPipelineTimeline({
   pipeline,
   routeTarget,
+  pipelinePath,
   layout = "page",
 }: {
   pipeline: DossierPipelineStep[];
   routeTarget?: string | null;
+  pipelinePath?: DossierPipelinePath | null;
   layout?: "page" | "drawer";
 }) {
+  const catalog = useMemo(
+    () => pipelineStageCatalog(pipelinePath),
+    [pipelinePath]
+  );
   const byStage = useMemo(
     () => new Map(pipeline.map((step) => [step.stageId, step])),
     [pipeline]
   );
+  const stageDisplayOrder = useMemo(() => {
+    const ordered = catalog.filter((stage) => byStage.has(stage.id));
+    return new Map(ordered.map((stage, index) => [stage.id, index + 1]));
+  }, [byStage, catalog]);
 
-  const [openPhases, setOpenPhases] = useState(() => defaultOpenPhases(byStage));
-  const [openStages, setOpenStages] = useState(() => defaultOpenStages(byStage));
+  const [openPhases, setOpenPhases] = useState(() => {
+    if (pipelinePath === "understood" || pipeline.length <= 8) {
+      return new Set(DOSSIER_PIPELINE_PHASES.map((phase) => phase.id));
+    }
+    return defaultOpenPhases(byStage);
+  });
+  const [openStages, setOpenStages] = useState(() => {
+    if (pipelinePath === "understood" || pipeline.length <= 8) {
+      return new Set(pipeline.map((step) => step.stageId));
+    }
+    return defaultOpenStages(byStage);
+  });
   const [openCompletedGroups, setOpenCompletedGroups] = useState<Set<DossierPipelinePhaseId>>(
-    () => new Set()
+    () => new Set(pipelinePath === "understood" ? DOSSIER_PIPELINE_PHASES.map((p) => p.id) : [])
   );
   const stageRefs = useRef<Partial<Record<DossierPipelineStageId, HTMLElement | null>>>({});
 
@@ -557,10 +580,16 @@ export function DossierPipelineTimeline({
 
   useEffect(() => {
     const map = new Map(pipeline.map((step) => [step.stageId, step]));
+    if (pipelinePath === "understood" || pipeline.length <= 8) {
+      setOpenPhases(new Set(DOSSIER_PIPELINE_PHASES.map((phase) => phase.id)));
+      setOpenStages(new Set(pipeline.map((step) => step.stageId)));
+      setOpenCompletedGroups(new Set(DOSSIER_PIPELINE_PHASES.map((p) => p.id)));
+      return;
+    }
     setOpenPhases(defaultOpenPhases(map));
     setOpenStages(defaultOpenStages(map));
     setOpenCompletedGroups(new Set());
-  }, [pipeline]);
+  }, [pipeline, pipelinePath]);
 
   const focusPhase = useCallback((phaseId: DossierPipelinePhaseId, openPanel = true) => {
     if (openPanel) {
@@ -663,28 +692,41 @@ export function DossierPipelineTimeline({
         />
       ) : null}
       <div className="dossier-pipeline-stepper" data-testid="pipeline-phase-stepper">
-        {DOSSIER_PIPELINE_PHASES.map((phase, index) => {
+        {(() => {
+          const visiblePhases = DOSSIER_PIPELINE_PHASES.filter((phase) =>
+            catalog.some((stage) => stage.phase === phase.id && byStage.has(stage.id))
+          );
+          return visiblePhases.map((phase, index) => {
           const phaseMeta = phases.find((row) => row.phaseId === phase.id);
           const state = phaseMeta?.state ?? "pending";
-          const phaseStages = DOSSIER_PIPELINE_STAGES.filter((stage) => stage.phase === phase.id);
+          const phaseStages = catalog.filter(
+            (stage) => stage.phase === phase.id && byStage.has(stage.id)
+          );
           const open = openPhases.has(phase.id);
-          const { completedBeforeFail, failed, rest } = splitPhaseStages(phaseStages, byStage);
+          // Understood path: show every stage card — do not collapse into "N completed".
+          const { completedBeforeFail, failed, rest } =
+            pipelinePath === "understood"
+              ? { completedBeforeFail: [], failed: [], rest: phaseStages }
+              : splitPhaseStages(phaseStages, byStage);
 
-          const renderStageCard = (stage: (typeof DOSSIER_PIPELINE_STAGES)[number], compact = false) => {
+          const renderStageCard = (
+            stage: { id: DossierPipelineStageId; order: number },
+            compact = false
+          ) => {
             const step = byStage.get(stage.id);
             const blocked =
               pipelineBlockedFromStageId(pipeline, stage.id) && isStageBlocked(step);
             return (
               <PipelineStageCard
                 key={stage.id}
-                order={stage.order}
+                order={stageDisplayOrder.get(stage.id) ?? stage.order}
                 stageId={stage.id}
                 step={step}
                 blocked={blocked}
                 open={openStages.has(stage.id)}
                 onToggle={() => toggleStage(stage.id)}
                 routeTarget={routeTarget}
-                compact={compact}
+                compact={compact && pipelinePath !== "understood"}
                 cardRef={(el) => {
                   stageRefs.current[stage.id] = el;
                 }}
@@ -702,7 +744,7 @@ export function DossierPipelineTimeline({
               summary={phaseStageSummary(pipeline, phase.id, routeTarget)}
               open={open}
               onToggle={() => togglePhase(phase.id)}
-              isLast={index === DOSSIER_PIPELINE_PHASES.length - 1}
+              isLast={index === visiblePhases.length - 1}
             >
               <div className="dossier-pipeline-step__stages">
                 {completedBeforeFail.length > 0 ? (
@@ -726,7 +768,8 @@ export function DossierPipelineTimeline({
               </div>
             </PipelinePhaseStep>
           );
-        })}
+          });
+        })()}
       </div>
     </div>
   );

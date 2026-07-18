@@ -324,6 +324,7 @@ function claimValidationReason(inv: Invoice): string {
   if (inv.status === "processed") return "Posted to ledger";
   if (inv.status === "rejected") return "Claim rejected";
   if (inv.evaluation_status === "needs_review") return "Needs manual review";
+  if (inv.duplicate_review_suggested) return "Possible duplicate — review suggested";
   if (inv.status === "exception") return "Validation exception";
   return "Pending validation";
 }

@@ -130,6 +130,12 @@ async def export_documents_bundle(
             description="Link cells: excel (clickable hyperlinks) or plain (label | url text)"
         ),
     ] = "excel",
+    tz: Annotated[
+        str | None,
+        Query(
+            description="IANA timezone for Timestamp column (browser local); DB stays UTC"
+        ),
+    ] = None,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> Response:
@@ -146,6 +152,7 @@ async def export_documents_bundle(
             date_from=params.date_from,
             date_to=params.date_to,
             cell_format=params.format,
+            display_timezone=tz,
         )
     except ValueError as exc:
         raise http_bad_request(exc) from exc

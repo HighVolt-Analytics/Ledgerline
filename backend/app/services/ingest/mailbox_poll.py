@@ -29,7 +29,11 @@ async def known_message_ids(
     *,
     tenant_id: uuid.UUID,
 ) -> frozenset[str]:
-    rows = (
+    from app.services.ingest.mailbox_message_service import (
+        known_terminal_mailbox_message_ids,
+    )
+
+    invoice_ids = (
         await session.execute(
             select(Invoice.email_message_id).where(
                 Invoice.tenant_id == tenant_id,
@@ -37,7 +41,10 @@ async def known_message_ids(
             )
         )
     ).scalars().all()
-    return frozenset(str(row) for row in rows if row)
+    mailbox_ids = await known_terminal_mailbox_message_ids(
+        session, tenant_id=tenant_id
+    )
+    return frozenset(str(row) for row in invoice_ids if row) | mailbox_ids
 
 
 def _poll_since_timestamp(last_poll_at: datetime | None) -> datetime:
@@ -101,6 +108,15 @@ async def _ingest_mailbox(
 ) -> EmailIngestResult:
     org = await session.get(Tenant, mb.tenant_id)
     if not org:
+        from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+        await log_ingest_skip(
+            session,
+            reason="mailbox_org_missing",
+            channel="email",
+            tenant_id=mb.tenant_id,
+            mailbox=mb.email,
+        )
         return EmailIngestResult()
 
     from app.services.credit_service import PlanFeatureBlockedError, assert_can_ingest_via_channel
@@ -116,17 +132,69 @@ async def _ingest_mailbox(
             tenant_id=str(mb.tenant_id),
             error=str(exc),
         )
+        from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+        await log_ingest_skip(
+            session,
+            reason="plan_channel_blocked",
+            channel="email",
+            tenant_id=mb.tenant_id,
+            mailbox=mb.email,
+            extra={"error": str(exc)[:500]},
+        )
         return EmailIngestResult()
 
     try:
         access_token = await resolve_mailbox_access_token(session, mb)
     except Exception as exc:
         logger.warning("poll_mailbox_token_failed", mailbox=mb.email, error=str(exc))
+        from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+        await log_ingest_skip(
+            session,
+            reason="mailbox_token_failed",
+            channel="email",
+            tenant_id=mb.tenant_id,
+            mailbox=mb.email,
+            exc_type=type(exc).__name__,
+            extra={"error": str(exc)[:500]},
+        )
         await _recover_poll_session_if_needed(session, mb.tenant_id)
+        return EmailIngestResult()
+
+    from app.models.connected_mailbox import MAIL_PROVIDER_GOOGLE
+    from app.services.ingest.gmail_oauth_service import gmail_oauth_configured
+    from app.services.ingest.graph_client import is_graph_enabled
+    from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+    if mb.mail_provider == MAIL_PROVIDER_GOOGLE:
+        if not gmail_oauth_configured():
+            await log_ingest_skip(
+                session,
+                reason="gmail_not_configured",
+                channel="email",
+                tenant_id=mb.tenant_id,
+                mailbox=mb.email,
+            )
+            return EmailIngestResult()
+    elif not is_graph_enabled():
+        await log_ingest_skip(
+            session,
+            reason="graph_not_configured",
+            channel="email",
+            tenant_id=mb.tenant_id,
+            mailbox=mb.email,
+        )
         return EmailIngestResult()
 
     try:
         emails = await _poll_mailbox_emails(mb, access_token=access_token, known_ids=known_ids)
+        from app.services.ingest.mailbox_message_service import (
+            apply_preskip_mailbox_outcomes,
+            ensure_pending_for_emails,
+        )
+
+        await ensure_pending_for_emails(session, mailbox=mb, emails=emails)
         result = await ingest_email_attachments(
             session,
             emails,
@@ -136,6 +204,15 @@ async def _ingest_mailbox(
             known_message_ids=known_ids,
             mark_processed_only_if_ingested=True,
         )
+        if result.preskip_exceptions:
+            await apply_preskip_mailbox_outcomes(
+                session,
+                connected_mailbox_id=mb.id,
+                tenant_id=mb.tenant_id,
+                provider=mb.mail_provider,
+                preskip_exceptions=result.preskip_exceptions,
+                message_graph_ids=result.message_graph_ids,
+            )
         mb.last_poll_at = datetime.now(timezone.utc)
         mb.last_error = None
         logger.info(
@@ -160,6 +237,17 @@ async def _ingest_mailbox(
             or "access denied" in lowered
         )
         logger.warning("poll_mailbox_ingest_failed", mailbox=mb.email, error=str(exc))
+        from app.services.ingest.ingest_skip_service import log_ingest_skip
+
+        await log_ingest_skip(
+            session,
+            reason="mailbox_poll_failed",
+            channel="email",
+            tenant_id=mb.tenant_id,
+            mailbox=mb.email,
+            exc_type=type(exc).__name__,
+            extra={"error": error_text},
+        )
         await _recover_poll_session_if_needed(session, mb.tenant_id)
         refreshed = await session.get(ConnectedMailbox, mb.id)
         if refreshed is not None:
@@ -206,11 +294,24 @@ async def poll_all_and_ingest(
 
     for mb in mailboxes:
         if not mb.is_pollable:
+            from app.services.ingest.ingest_skip_service import log_ingest_skip
+
             logger.info(
                 "poll_mailbox_skipped",
                 mailbox=mb.email,
                 auth_type=mb.auth_type,
                 connection_status=mb.connection_status,
+            )
+            await log_ingest_skip(
+                session,
+                reason="mailbox_not_pollable",
+                channel="email",
+                tenant_id=mb.tenant_id,
+                mailbox=mb.email,
+                extra={
+                    "auth_type": mb.auth_type,
+                    "connection_status": mb.connection_status,
+                },
             )
             continue
 
@@ -224,6 +325,7 @@ async def poll_all_and_ingest(
         merged.message_ids.extend(result.message_ids)
         merged.preskip_exceptions.update(result.preskip_exceptions)
         merged.message_mailbox_emails.update(result.message_mailbox_emails)
+        merged.message_graph_ids.update(result.message_graph_ids)
         known_ids = known_ids | mb_known_ids
 
     logger.info(

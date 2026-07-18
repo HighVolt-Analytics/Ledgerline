@@ -34,6 +34,14 @@ class RawEmail:
     graph_access_token: str | None = None
     poll_folder: str = "inbox"
     received_at: datetime | None = None
+    # Graph REST id for move/mark; may differ from message_id when RFC Message-ID is used.
+    graph_id: str | None = None
+    # Decode/filter drops collected before a DB session exists; flushed as ingest_skipped.
+    attachment_drops: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def api_message_id(self) -> str:
+        return self.graph_id or self.message_id
 
 
 def mailbox_api_path(mailbox_email: str, segment: str) -> str:
@@ -80,7 +88,7 @@ def _list_message_pages(
     path = mailbox_api_path(mailbox, messages_path)
     params: dict[str, str] | None = {
         "$filter": odata_filter,
-        "$select": "id,subject,from,hasAttachments,receivedDateTime",
+        "$select": "id,internetMessageId,subject,from,hasAttachments,receivedDateTime",
         "$top": str(page_size),
     }
     next_url: str | None = None
@@ -182,8 +190,18 @@ def _messages_to_emails(
     known = known_message_ids or frozenset()
     emails: list[RawEmail] = []
     for msg in messages:
-        message_id = str(msg.get("id") or "")
-        if not message_id or message_id in known:
+        graph_id = str(msg.get("id") or "")
+        internet_message_id = str(msg.get("internetMessageId") or "").strip()
+        # Prefer RFC Message-ID for dedup — Graph id changes on folder move unless
+        # ImmutableId is honored.
+        stable_id = internet_message_id or graph_id
+        if not stable_id:
+            continue
+        if (
+            stable_id in known
+            or graph_id in known
+            or (internet_message_id and internet_message_id in known)
+        ):
             continue
         raw = _raw_email_from_message(
             mailbox_email,
@@ -343,24 +361,25 @@ def _list_attachments(
     return data.get("value", [])  # type: ignore[return-value]
 
 
-def _decode_attachment(record: dict[str, object]) -> EmailAttachment | None:
+def _decode_attachment(record: dict[str, object]) -> tuple[EmailAttachment | None, str | None]:
+    """Return (attachment, drop_reason). drop_reason set when attachment is skipped."""
     odata_type = record.get("@odata.type", "")
     if odata_type != "#microsoft.graph.fileAttachment":
-        return None
+        return None, "attachment_not_file"
 
     name = str(record.get("name") or "attachment.bin")
     content_type = str(record.get("contentType") or "application/octet-stream")
     raw = record.get("contentBytes")
     if not raw:
-        return None
+        return None, "attachment_bytes_missing"
 
     try:
         data = base64.b64decode(str(raw))
     except (ValueError, TypeError):
         logger.warning("attachment_decode_failed", filename=name)
-        return None
+        return None, "attachment_decode_failed"
 
-    return EmailAttachment(filename=name, content_type=content_type, data=data)
+    return EmailAttachment(filename=name, content_type=content_type, data=data), None
 
 
 def _sender_from_message(msg: dict[str, object]) -> str:
@@ -389,20 +408,36 @@ def _raw_email_from_message(
     access_token: str | None = None,
     poll_folder: str = "inbox",
 ) -> RawEmail | None:
-    message_id = str(msg.get("id", ""))
-    if not message_id:
+    graph_id = str(msg.get("id") or "")
+    if not graph_id:
         return None
+    internet_message_id = str(msg.get("internetMessageId") or "").strip()
+    stable_id = internet_message_id or graph_id
 
     attachments: list[EmailAttachment] = []
-    for record in _list_attachments(mailbox_email, message_id, access_token=access_token):
+    attachment_drops: list[dict[str, str]] = []
+    for record in _list_attachments(mailbox_email, graph_id, access_token=access_token):
         if not isinstance(record, dict):
+            attachment_drops.append(
+                {
+                    "reason": "attachment_record_invalid",
+                    "filename": "",
+                }
+            )
             continue
-        att = _decode_attachment(record)
+        att, drop_reason = _decode_attachment(record)
         if att:
             attachments.append(att)
+        elif drop_reason:
+            attachment_drops.append(
+                {
+                    "reason": drop_reason,
+                    "filename": str(record.get("name") or "attachment.bin"),
+                }
+            )
 
     return RawEmail(
-        message_id=message_id,
+        message_id=stable_id,
         subject=str(msg.get("subject") or ""),
         sender=_sender_from_message(msg),
         mailbox_email=mailbox_email.strip().lower(),
@@ -410,6 +445,8 @@ def _raw_email_from_message(
         graph_access_token=access_token,
         poll_folder=poll_folder,
         received_at=_received_at_from_message(msg),
+        graph_id=graph_id,
+        attachment_drops=attachment_drops,
     )
 
 

@@ -72,7 +72,8 @@ async def add_dossier_manual_link(
         slot_id=body.slot_id,
         created_by_user_id=ctx.user_id,
     )
-    await db.commit()
+    # Do not commit mid-request: set_config(..., is_local=true) RLS would reset,
+    # and invoices use FORCE ROW LEVEL SECURITY. get_db commits after the response.
 
     return ApiEnvelope(
         data=await build_dossier_detail_summary(
@@ -100,7 +101,6 @@ async def remove_dossier_manual_link(
     )
     if not removed:
         raise HTTPException(404, "Manual link not found")
-    await db.commit()
 
     return ApiEnvelope(
         data=await build_dossier_detail_summary(

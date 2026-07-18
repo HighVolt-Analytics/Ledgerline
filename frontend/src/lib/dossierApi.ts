@@ -4,11 +4,12 @@ import type {
   DossierLinkedDocument,
   DossierLinkedDocuments,
   DossierOutcome,
+  DossierPipelinePath,
   DossierPipelineStageId,
   DossierPipelineStep,
   DossierSummary,
 } from "@/lib/dossiers";
-import { DOSSIER_PIPELINE_STAGES } from "@/lib/dossiers";
+import { DOSSIER_PIPELINE_STAGES, filterDossierPipelineForPath, resolveDossierPipelinePath } from "@/lib/dossiers";
 import type { ApprovalMode } from "@/lib/documentPlaybookConfig";
 import { api, ApiError } from "@/api/client";
 
@@ -53,6 +54,7 @@ export type DossierLinkedDocumentApi = {
   label: string;
   document_ref?: string | null;
   invoice_no?: string | null;
+  counterparty?: string | null;
   present: boolean;
   requirement: string;
   purchase_bundle_role?: string | null;
@@ -151,6 +153,7 @@ export type DossierSummaryApi = {
   blocker_stage_id?: string | null;
   blocker_reason?: string | null;
   blocker_remediation?: string | null;
+  pipeline_path?: "understood" | "not_understood" | "unknown";
   pipeline: DossierPipelineStepApi[];
   linked_documents: DossierLinkedDocumentsApi;
   approval_chain: DossierApprovalChainApi;
@@ -214,6 +217,7 @@ function mapLinkedDocument(doc: DossierLinkedDocumentApi): DossierLinkedDocument
     label: doc.label,
     documentRef: doc.document_ref ?? null,
     invoiceNo: doc.invoice_no ?? null,
+    counterparty: doc.counterparty ?? null,
     present: doc.present,
     requirement: doc.requirement as DossierLinkedDocument["requirement"],
     purchaseBundleRole: (doc.purchase_bundle_role ?? undefined) as DossierLinkedDocument["purchaseBundleRole"],
@@ -228,7 +232,9 @@ function mapLinkedDocument(doc: DossierLinkedDocumentApi): DossierLinkedDocument
       ? "manual"
       : doc.link_kind === "invoice_no"
         ? "invoice_no"
-        : "system") as DossierLinkedDocument["linkKind"],
+        : doc.link_kind === "proforma_invoice_no"
+          ? "proforma_invoice_no"
+          : "system") as DossierLinkedDocument["linkKind"],
     manualLinkId: doc.manual_link_id ?? null,
     manualLink: doc.manual_link ? mapManualLinkInfo(doc.manual_link) : null,
   };
@@ -299,6 +305,13 @@ function mapApprovalChain(chain: DossierApprovalChainApi): DossierApprovalChain 
 
 export function mapDossierFromApi(row: DossierSummaryApi): DossierSummary {
   const routeTarget = row.route_target?.trim() || null;
+  const mappedSteps = row.pipeline.map(mapPipelineStep);
+  const apiPath = (row.pipeline_path as DossierPipelinePath | undefined) ?? "unknown";
+  const pipelinePath = resolveDossierPipelinePath(mappedSteps, apiPath);
+  const pipeline =
+    pipelinePath === "understood"
+      ? filterDossierPipelineForPath(mappedSteps, pipelinePath)
+      : normalizePipeline(mappedSteps);
   return {
     id: row.id,
     invoiceId: row.invoice_id,
@@ -328,7 +341,8 @@ export function mapDossierFromApi(row: DossierSummaryApi): DossierSummary {
     blockerStageId: (row.blocker_stage_id as DossierPipelineStageId | undefined) ?? null,
     blockerReason: row.blocker_reason ?? null,
     blockerRemediation: row.blocker_remediation ?? null,
-    pipeline: normalizePipeline(row.pipeline.map(mapPipelineStep)),
+    pipelinePath,
+    pipeline,
     linkedDocuments: mapLinkedDocuments(row.linked_documents),
     approvalChain: mapApprovalChain(row.approval_chain),
   };

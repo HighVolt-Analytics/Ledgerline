@@ -13,7 +13,10 @@ from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.approvals import ApprovalListRequest
 from app.schemas.common import ResponseMeta
 from app.schemas.invoice import InvoiceResponse
-from app.services.approval.approval_board_service import approval_board_column
+from app.services.approval.approval_board_service import (
+    approval_board_column,
+    is_understood_path_not_approvable,
+)
 from app.services.approval.approval_service import (
     APPROVABLE_STATUSES,
     approve_invoice_for_reprocess,
@@ -138,6 +141,11 @@ async def load_approvable_invoice(
     invoice_id: int,
 ) -> Invoice:
     inv = await get_invoice_for_tenant(db, invoice_id, tenant_id)
+    if is_understood_path_not_approvable(inv):
+        raise ValueError(
+            "This document is on the understood path (vault only) and cannot be "
+            "confirmed into the posting pipeline from Approvals."
+        )
     if inv.status == InvoiceStatus.PROCESSED:
         raise ValueError(
             "This invoice is already processed. Reject it first if you need "

@@ -293,6 +293,15 @@ describe("evaluationStatusLabel", () => {
     expect(evaluationStatusLabel("pending_vendor", ROUTE_SALES)).toBe("Pending customer");
     expect(evaluationStatusLabel("pending_vendor", ROUTE_PURCHASE)).toBe("Pending vendor");
   });
+
+  it("keeps awaiting classification as status label", () => {
+    expect(evaluationStatusLabel("awaiting_classification")).toBe("Awaiting classification");
+  });
+
+  it("shows dedicated understood-path evaluation tags", () => {
+    expect(evaluationStatusLabel("vision_vaulted")).toBe("Vision vaulted");
+    expect(evaluationStatusLabel("vision_header_review")).toBe("Vision header review");
+  });
 });
 
 describe("evaluationStatusDescription", () => {

@@ -146,45 +146,35 @@ async def test_bundle_reupload_detected_via_source_file_hash(
 
 
 @pytest.mark.asyncio
-async def test_bundle_segment_matches_prior_standalone_fingerprint(
+async def test_bundle_reupload_matches_prior_source_file_hash(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    invoice_text = _invoice_page_text()
-    fingerprint = compute_pdf_content_fingerprint(
-        [PdfPageText(0, invoice_text)],
-        0,
-        0,
-    )
-    assert fingerprint is not None
-
+    """Whole-file re-upload finds a prior segment via source_file_hash."""
     existing = Invoice(
         tenant_id=TESTING_TENANT_UUID,
         status=InvoiceStatus.PROCESSED,
         currency="AUD",
         file_hash="standalone-hash",
-        content_fingerprint=fingerprint,
+        content_fingerprint="fp-standalone",
         invoice_no="INV-CONTENT-1",
         vendor="Acme",
+        extracted_fields={"source_file_hash": "bundle-parent-hash"},
     )
     db_session.add(existing)
     await db_session.flush()
 
     pages = [
         PdfPageText(0, "PURCHASE ORDER\nPO Number: PO-500\n"),
-        PdfPageText(1, invoice_text),
+        PdfPageText(1, _invoice_page_text()),
     ]
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.extract_pdf_page_texts",
         lambda _path: PdfPageTextExtraction(pages=pages),
     )
     monkeypatch.setattr(
-        "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",
-        lambda _path, start, end: f"%PDF-part-{start}-{end}".encode(),
-    )
-    monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
-        lambda *args, **kwargs: "uploads/segment.pdf",
+        lambda *args, **kwargs: "uploads/bundle.pdf",
     )
 
     async def _fake_config(_session, _tenant_id):
@@ -196,7 +186,7 @@ async def test_bundle_segment_matches_prior_standalone_fingerprint(
     )
     monkeypatch.setattr(
         "app.services.ingest.ingest_fanout_service.compute_sha256_bytes",
-        lambda data: "bundle-parent-hash" if data == b"%PDF bundle" else "segment-hash",
+        lambda data: "bundle-parent-hash",
     )
 
     result = await ingest_upload_file(
@@ -214,6 +204,8 @@ async def test_bundle_segment_matches_prior_standalone_fingerprint(
     assert result.duplicate_handled is True
 
     rows = (await db_session.execute(select(Invoice))).scalars().all()
-    assert len(rows) == 2
-    assert any(r.status == InvoiceStatus.DUPLICATE_SKIPPED for r in rows)
     assert any(r.status == InvoiceStatus.PROCESSED for r in rows)
+    assert any(
+        (r.extracted_fields or {}).get("source_file_hash") == "bundle-parent-hash"
+        for r in rows
+    )

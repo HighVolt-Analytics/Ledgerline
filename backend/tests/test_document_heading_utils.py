@@ -102,6 +102,56 @@ def test_infer_import_logistics_page_kinds() -> None:
     assert infer_page_document_kind("(CONTINUATION PAGE)\nMore lines") is None
 
 
+def test_invoice_with_bill_of_lading_field_is_not_transport() -> None:
+    """Seagate-style invoices list BOL as a field — must stay invoice, not AWB."""
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = (
+        "INVOICE COMPUTER GENERATED DOCUMENT\n"
+        "Invoice No: 9300667417\n"
+        "Page : 1 of 2\n"
+        "Bill of Lading No: 9064997073\n"
+        "Freight Order: 6101733776\n"
+        "Unit Price Total Price\n"
+    )
+    assert infer_page_document_kind(text) == "invoice"
+
+
+def test_packing_list_with_bill_of_lading_field_is_not_transport() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = (
+        "PACKING LIST\n"
+        "COMPUTER GENERATED DOCUMENT\n"
+        "Bill of Lading No: 1Z8967RX6744276618\n"
+        "Freight Order: 6101747516\n"
+        "Number of Cartons : 5\n"
+    )
+    assert infer_page_document_kind(text) == "packing_list"
+
+
+def test_invoice_numbered_title_line() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    assert (
+        infer_page_document_kind("INVOICE 9300667281 COMPUTER GENERATED DOCUMENT\nPage : 2 of 3")
+        is None
+    )  # page 2 of 3 is continuation
+    assert (
+        infer_page_document_kind("INVOICE 9300667281 COMPUTER GENERATED DOCUMENT\nPage : 1 of 3")
+        == "invoice"
+    )
+
+
+def test_beneficiary_shipment_advice_kind() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    assert (
+        infer_page_document_kind("BENEFICIARY SHIPMENT ADVICE\nMAWB NO: 176 DXB")
+        == "statement"
+    )
+
+
 def test_extract_abbreviated_grn_heading() -> None:
     from app.services.extraction.document_heading_utils import infer_page_document_kind
 

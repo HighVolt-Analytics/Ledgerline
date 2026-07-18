@@ -98,7 +98,14 @@ describe("standardExtractionFieldsForRoute", () => {
       "Vault",
     ] as const) {
       const keys = standardExtractionFieldsForRoute(route);
-      expect(keys).toEqual(expect.arrayContaining(["invoice_no", "po_reference", "so_reference"]));
+      expect(keys).toEqual(
+        expect.arrayContaining([
+          "invoice_no",
+          "proforma_invoice_no",
+          "po_reference",
+          "so_reference",
+        ])
+      );
     }
   });
 
@@ -110,6 +117,7 @@ describe("standardExtractionFieldsForRoute", () => {
       "vendor",
       "invoice_no",
       "invoice_date",
+      "proforma_invoice_no",
       "po_reference",
       "so_reference",
     ]);
@@ -127,6 +135,7 @@ describe("customFieldLinkingConflictError", () => {
   it("redirects invoice/po/so aliases to standard linking fields", () => {
     expect(customFieldLinkingConflictError("invoice_number")).toMatch(/invoice number/i);
     expect(linkingStandardFieldForCustomAlias("invoice_number")).toBe("invoice_no");
+    expect(linkingStandardFieldForCustomAlias("proforma_no")).toBe("proforma_invoice_no");
     expect(linkingStandardFieldForCustomAlias("po_number")).toBe("po_reference");
     expect(linkingStandardFieldForCustomAlias("so_number")).toBe("so_reference");
   });

@@ -281,6 +281,9 @@ def _patch_pipeline_to_mapping(
     async def _load_config(_session, _tenant_id):
         return config
 
+    from tests.pipeline_test_helpers import patch_pre_ocr_gates_pass
+
+    patch_pre_ocr_gates_pass(monkeypatch)
     monkeypatch.setattr("app.services.invoice.file_validity_gate.evaluate_file_validity", lambda *_a, **_k: FileValidityResult(passed=True, rejection_code=None, detail="ok"))
     monkeypatch.setattr("app.services.invoice.pipeline.open_pdf_for_reading", _fake_open)
     monkeypatch.setattr("app.services.pipeline.open_pdf_for_reading", _fake_open)
