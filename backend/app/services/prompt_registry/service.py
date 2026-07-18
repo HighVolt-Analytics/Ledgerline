@@ -119,6 +119,13 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
 
     return {
         "vision.header_extract.system": VISION_HEADER_PROMPT_MARKERS,
+        "llm.currency.system": (
+            "You are a Currency Detection Agent",
+            "ZERO tolerance for error",
+            "HR1. NEVER assign a currency ISO code from a bare",
+            "PHASE 1 — SIGNAL HARVEST",
+            "Prefer \"UNCERTAIN\" over a wrong answer",
+        ),
         # Distinctive markers from the hardened segment prompt (stale seeds lack these).
         "pdf.segment.system": (
             "ROLE — Document Splitting Agent (page-range mode)",

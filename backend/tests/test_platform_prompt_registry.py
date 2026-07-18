@@ -225,7 +225,7 @@ async def test_platform_prompts_api_super_admin(client, db_session: AsyncSession
     listed = await client.get("/api/platform/prompts", headers=headers)
     assert listed.status_code == 200, listed.text
     items = listed.json()["data"]
-    assert len(items) >= 11
+    assert len(items) >= 12
     key = "llm.classify.system"
     detail = await client.get(f"/api/platform/prompts/{key}", headers=headers)
     assert detail.status_code == 200

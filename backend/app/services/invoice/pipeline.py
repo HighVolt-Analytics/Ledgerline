@@ -2326,6 +2326,23 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
             detail=gap_fill_detail,
         )
 
+    from app.services.extraction.currency_detection_service import apply_currency_detection
+
+    parsed, currency_detect_detail = await apply_currency_detection(
+        parsed,
+        ocr=ocr,
+        org=org,
+        selected_keys=selected_keys,
+        dt_definition=dt_definition,
+    )
+    if currency_detect_detail.get("currency_detect_attempted"):
+        await log_event(
+            session,
+            "currency_detection",
+            invoice_id=invoice.id,
+            detail=currency_detect_detail,
+        )
+
     from app.services.extraction.line_items_fallback_service import apply_line_items_fallback
 
     parsed, fallback_tier = apply_line_items_fallback(

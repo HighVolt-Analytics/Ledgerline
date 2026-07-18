@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.services.prompt_registry.currency_detect_default import CURRENCY_DETECT_SYSTEM_DEFAULT
+
 
 @dataclass(frozen=True)
 class PromptDefinition:
@@ -125,6 +127,9 @@ EDGE CASE RULES
 - Never convert currency. If the document states amounts in a foreign currency,
   extract the currency code/symbol as printed alongside the amount fields, and do
   not perform conversion math.
+- currency: ISO 4217 only when corroborated (explicit code, prefixed symbol like
+  A$/US$, amount-in-words, tax/bank/jurisdiction signal). Bare "$", "Rs", "kr",
+  "Fr", or "R" alone → leave currency empty (do not guess USD/AUD/etc.).
 - Numeric formatting: strip thousands separators (commas/periods per locale) only
   when converting to a numeric type; preserve the original numeral characters
   otherwise. If unsure whether "1.234,56" is European (1234.56) or a typo, prefer
@@ -618,8 +623,9 @@ DATE, TOTAL, CURRENCY
   when you can normalize confidently; otherwise empty string — never invent a date.
 - total: grand total / amount due / total payable as a plain number string (e.g. "1234.56").
   Do not include currency symbols or codes in total. Empty string if unclear.
-- currency: ISO 4217 code when clear (AUD, USD, EUR, …). If only a symbol is shown and the
-  code is ambiguous (e.g. "$"), leave currency empty rather than guessing. Never convert amounts.
+- currency: ISO 4217 only when clear and corroborated (explicit code, A$/US$/HK$,
+  amount-in-words, or tax/bank/jurisdiction signal). Bare "$" / "Rs" / "kr" alone →
+  empty string — never guess. Never convert amounts.
 - Do not extract line items, subtotal, or tax breakdowns in this step.
 - confidence is 0.0-1.0 for the overall header extraction.
 - reason is one short sentence.
@@ -667,6 +673,16 @@ PROMPT_CATALOG: tuple[PromptDefinition, ...] = (
         group="Extract",
         description="Header for second-pass gap-fill extraction (dynamic keys appended in code).",
         default_body=_GAP_FILL_HEADER_DEFAULT,
+    ),
+    PromptDefinition(
+        key="llm.currency.system",
+        label="Currency Detection Agent",
+        group="Extract",
+        description=(
+            "Dedicated currency detection: ISO code from corroborating evidence only; "
+            "prefer UNCERTAIN over guessing ambiguous symbols."
+        ),
+        default_body=CURRENCY_DETECT_SYSTEM_DEFAULT,
     ),
     PromptDefinition(
         key="pdf.segment.system",

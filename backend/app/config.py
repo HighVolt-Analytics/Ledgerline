@@ -386,6 +386,14 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="EXTRACTION_GAP_FILL_ENABLED",
     )
+    extraction_currency_detect_enabled: bool = Field(
+        default=True,
+        validation_alias="EXTRACTION_CURRENCY_DETECT_ENABLED",
+        description=(
+            "Run dedicated Currency Detection Agent (llm.currency.system) when "
+            "currency is empty or only an ambiguous symbol was found."
+        ),
+    )
     runtime_llm_min_confidence: float = Field(
         default=0.85,
         ge=0.0,

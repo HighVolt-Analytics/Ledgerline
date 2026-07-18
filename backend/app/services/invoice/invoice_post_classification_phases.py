@@ -399,6 +399,15 @@ async def reextract_fields_for_corrected_dt(
         dt_definition=dt_definition,
         invoice=loaded,
     )
+    from app.services.extraction.currency_detection_service import apply_currency_detection
+
+    parsed, _currency_detail = await apply_currency_detection(
+        parsed,
+        ocr=ocr_out,
+        org=org,
+        selected_keys=selected_keys,
+        dt_definition=dt_definition,
+    )
     parsed, _tier = apply_line_items_fallback(
         parsed,
         ocr_text=ocr_out.text,

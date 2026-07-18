@@ -197,8 +197,9 @@ def build_llm_extract_rule_lines(
             lines.append("- cost_centre: department or cost centre code when explicitly labeled.")
         if "currency" in selected or {"subtotal", "gst", "total"} & selected:
             lines.append(
-                f"- currency: ISO 4217 code from the document (e.g. {pack.currency}, USD, EUR). "
-                "Leave empty when no currency is shown."
+                "- currency: ISO 4217 only when corroborated (explicit code, prefixed "
+                f"symbol like A$/US$, amount-in-words, tax/bank signal). Examples: "
+                f"{pack.currency}, USD, EUR. Bare $, Rs, kr alone → leave empty; never guess."
             )
     if "bank_details" in selected or any(key in selected for key in _bank_details_llm_keys()):
         lines.append(
