@@ -89,12 +89,18 @@ async def _vision_json(
     if not settings.azure_foundry_vision_configured:
         return None
 
+    # Batch uploads share one Foundry deployment across pods. Waiting out a
+    # short circuit beat fail-closed understand → OCR → azure_foundry_read_failed.
     if azure_openai_cooling_down("vision"):
-        logger.info(
-            "azure_foundry_vision_skipped_circuit_open",
-            remaining_seconds=round(azure_openai_cooldown_remaining_seconds("vision"), 1),
-        )
-        return None
+        remaining = azure_openai_cooldown_remaining_seconds("vision")
+        wait_for = min(remaining, max(settings.azure_openai_cooldown_seconds, 15.0))
+        if wait_for > 0:
+            logger.info(
+                "azure_foundry_vision_wait_circuit",
+                remaining_seconds=round(remaining, 1),
+                wait_seconds=round(wait_for, 1),
+            )
+            await asyncio.sleep(wait_for)
 
     payload: dict[str, Any] = {
         "messages": [
@@ -104,9 +110,20 @@ async def _vision_json(
         "response_format": {"type": "json_object"},
         "temperature": 0.1,
     }
-    max_attempts = min(max(settings.runtime_llm_max_retries + 1, 2), 3)
+    # Vision OCR/understand is latency-sensitive but must survive 429 bursts.
+    max_attempts = min(max(settings.runtime_llm_max_retries + 1, 3), 4)
     last_error: Exception | None = None
     for attempt in range(max_attempts):
+        if attempt > 0 and azure_openai_cooling_down("vision"):
+            remaining = azure_openai_cooldown_remaining_seconds("vision")
+            wait_for = min(remaining, max(settings.azure_openai_cooldown_seconds, 15.0))
+            if wait_for > 0:
+                logger.info(
+                    "azure_foundry_vision_wait_circuit_retry",
+                    attempt=attempt + 1,
+                    wait_seconds=round(wait_for, 1),
+                )
+                await asyncio.sleep(wait_for)
         try:
             async with azure_openai_slot_async():
                 async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -129,8 +146,17 @@ async def _vision_json(
             if is_429:
                 sleep_for = _retry_sleep_seconds(exc, attempt)
                 note_azure_openai_rate_limited(sleep_for, scope="vision")
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        "azure_foundry_vision_rate_limited_retry",
+                        attempt=attempt + 1,
+                        max_attempts=max_attempts,
+                        cooldown_seconds=round(sleep_for, 1),
+                    )
+                    await asyncio.sleep(sleep_for)
+                    continue
                 logger.warning(
-                    "azure_foundry_vision_rate_limited_fail_fast",
+                    "azure_foundry_vision_rate_limited_exhausted",
                     attempt=attempt + 1,
                     cooldown_seconds=round(sleep_for, 1),
                 )

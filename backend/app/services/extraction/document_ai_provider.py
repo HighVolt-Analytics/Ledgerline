@@ -35,6 +35,9 @@ from app.services.extraction.gemini_vision_client import (
 )
 from app.services.extraction.llm_document_service import classify_document_only, extract_document_fields
 from app.services.tenant.tenant_org_context import OrgContext
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -127,12 +130,20 @@ async def read_for_classification(
             vision_page_images=vision_page_images,
         )
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
-        return await read_for_classification_azure_foundry(
-            path,
-            org=org,
-            document_types=document_types,
-            vision_page_images=vision_page_images,
-        )
+        try:
+            return await read_for_classification_azure_foundry(
+                path,
+                org=org,
+                document_types=document_types,
+                vision_page_images=vision_page_images,
+            )
+        except ValueError as exc:
+            # After Foundry 429/empty, fall back to Azure DI so batch uploads
+            # don't hard-stop on azure_foundry_read_failed.
+            if "azure_foundry_read_failed" not in str(exc) or not is_di_enabled():
+                raise
+            logger.warning("azure_foundry_read_fallback_to_di", error=str(exc))
+            return await asyncio.to_thread(read_layout_for_classification, path)
     return await asyncio.to_thread(read_layout_for_classification, path)
 
 

@@ -223,3 +223,113 @@ async def test_extract_fields_enriches_ocr_for_foundry_when_di_enabled(tmp_path,
     assert mock_extract.await_args.args[0] is enriched
     assert result.ocr is enriched
     assert result.di_enrich_detail == {"route": "invoice"}
+
+
+@pytest.mark.asyncio
+async def test_vision_json_waits_open_circuit_then_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.extraction import azure_foundry_vision_client as client
+
+    sleeps: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"choices": [{"message": {"content": '{"ok": true}'}}]}
+
+    class _Http:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return _Resp()
+
+    class _Slot:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+    monkeypatch.setattr(client, "get_settings", lambda: type(
+        "S",
+        (),
+        {
+            "azure_foundry_vision_configured": True,
+            "azure_ai_foundry_endpoint": "https://example.openai.azure.com/",
+            "azure_ai_foundry_deployment": "gpt-4o",
+            "azure_ai_foundry_api_version": "2024-08-01-preview",
+            "azure_ai_foundry_api_key": "test-key",
+            "azure_openai_cooldown_seconds": 45.0,
+            "runtime_llm_max_retries": 1,
+        },
+    )())
+    with (
+        patch(
+            "app.services.extraction.azure_openai_throttle.azure_openai_cooling_down",
+            side_effect=[True, False],
+        ),
+        patch(
+            "app.services.extraction.azure_openai_throttle.azure_openai_cooldown_remaining_seconds",
+            return_value=2.5,
+        ),
+        patch(
+            "app.services.extraction.azure_openai_throttle.azure_openai_slot_async",
+            return_value=_Slot(),
+        ),
+        patch("httpx.AsyncClient", return_value=_Http()),
+        patch("asyncio.sleep", new=_fake_sleep),
+        patch(
+            "app.services.extraction.azure_openai_throttle.note_azure_openai_success",
+        ),
+    ):
+        result = await client._vision_json(
+            system="sys",
+            user_text="{}",
+            images=[b"img"],
+            timeout_seconds=10,
+        )
+
+    assert result == {"ok": True}
+    assert sleeps and sleeps[0] == 2.5
+
+
+@pytest.mark.asyncio
+async def test_foundry_read_falls_back_to_di_on_empty(tmp_path) -> None:
+    from app.services.extraction.document_ai_provider import read_for_classification
+
+    pdf_path = tmp_path / "doc.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    di_ocr = OcrArtifact(success=True, text="from di", text_length=7)
+
+    with (
+        patch(
+            "app.services.extraction.document_ai_provider.read_for_classification_azure_foundry",
+            new=AsyncMock(side_effect=ValueError("azure_foundry_read_failed")),
+        ),
+        patch(
+            "app.services.extraction.document_ai_provider.is_di_enabled",
+            return_value=True,
+        ),
+        patch(
+            "app.services.extraction.document_ai_provider.read_layout_for_classification",
+            return_value=di_ocr,
+        ) as mock_di,
+    ):
+        result = await read_for_classification(
+            pdf_path,
+            provider=DocumentAiProvider.AZURE_FOUNDRY_VISION,
+            org=OrgContext(),
+            document_types=[],
+        )
+
+    mock_di.assert_called_once()
+    assert result is di_ocr
+    assert result.text == "from di"
