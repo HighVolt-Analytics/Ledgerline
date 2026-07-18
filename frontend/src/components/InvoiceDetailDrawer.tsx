@@ -95,7 +95,6 @@ import {
 } from "@/lib/processingOverrides";
 
 import {
-  documentTypeLabelForCode,
   effectiveDocumentTypeCode,
   invoiceDocumentTypeDisplayLabel,
 } from "@/lib/documentTypeResolve";
