@@ -239,6 +239,32 @@ def test_drop_blank_pages_omits_instead_of_merging() -> None:
     assert "skipblank" in cleaned.segmentation_method
 
 
+def test_refine_splits_completed_page_of_one_then_new_title() -> None:
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(0, "TAX INVOICE\nInvoice No: 6000000299\nPage 1 of 1"),
+        _page(1, "PACKING LIST\nInvoice No: 6000000299\nPage 1 of 1"),
+        _page(2, "Delivery Note\nDO.No : RPPL/DO/102\nPO#: 260643048"),
+        _page(3, ""),
+    ]
+    # LLM wrongly glued invoice + packing list (shared invoice number).
+    raw = PdfSegmentResult(
+        segments=[
+            PdfDocumentSegment(0, 1, "invoice", 0.9),
+            PdfDocumentSegment(2, 2, "grn", 0.9),
+        ],
+        detected_boundary_count=2,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    assert [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments] == [
+        (0, 0, "tax_invoice"),
+        (1, 1, "packing_list"),
+        (2, 2, "grn"),
+    ]
+
+
 def test_refine_merges_page_of_n_oversplit_and_splits_type_glue() -> None:
     from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
 

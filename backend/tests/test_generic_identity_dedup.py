@@ -357,6 +357,147 @@ async def test_find_existing_ingest_duplicate_checks_business_fingerprint(
     assert found.id == existing.id
 
 
+@pytest.mark.asyncio
+async def test_content_fingerprint_match_ignores_document_role(
+    db_session: AsyncSession,
+) -> None:
+    """Same page text is always a duplicate — role must not bypass content FP (DB unique)."""
+    from app.services.dossier.document_duplicate_service import (
+        find_existing_ingest_duplicate_match,
+    )
+
+    content_fp = "a" * 64
+    existing = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        file_hash="content-fp-role-hash",
+        content_fingerprint=content_fp,
+        vendor="Matrix Freight",
+        purchase_document_type="invoice",
+        document_heading="INVOICE",
+    )
+    db_session.add(existing)
+    await db_session.flush()
+
+    match = await find_existing_ingest_duplicate_match(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        file_hash="new-seg-hash",
+        content_fingerprint=content_fp,
+        document_role="grn",
+        identity_fields={"document_role": "grn"},
+    )
+    assert match is not None
+    assert match.match_kind == "content_fingerprint"
+    assert match.invoice.id == existing.id
+
+
+@pytest.mark.asyncio
+async def test_business_fingerprint_does_not_collapse_packing_list_onto_invoice(
+    db_session: AsyncSession,
+) -> None:
+    """Shipment companions share invoice_no — must stay distinct instruments."""
+    from app.services.dossier.document_duplicate_service import (
+        find_existing_ingest_duplicate_match,
+    )
+
+    business_fp = compute_business_fingerprint(
+        {
+            "vendor": "Rashi Peripherals",
+            "invoice_no": "6000000299",
+        }
+    )
+    assert business_fp is not None
+
+    invoice = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PENDING,
+        currency="SGD",
+        file_hash="inv-seg-hash",
+        business_fingerprint=business_fp,
+        vendor="Rashi Peripherals",
+        invoice_no="6000000299",
+        purchase_document_type="invoice",
+        document_heading="TAX INVOICE",
+    )
+    db_session.add(invoice)
+    await db_session.flush()
+
+    # Same business FP as the tax invoice, but packing-list role → allow create.
+    packing_match = await find_existing_ingest_duplicate_match(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        file_hash="packing-seg-hash",
+        business_fingerprint=business_fp,
+        identity_fields={
+            "vendor": "Rashi Peripherals",
+            "invoice_no": "6000000299",
+            "document_role": "packing_list",
+        },
+        document_role="packing_list",
+    )
+    assert packing_match is None
+
+    # Same role re-upload still matches.
+    invoice_match = await find_existing_ingest_duplicate_match(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        file_hash="inv-seg-hash-2",
+        business_fingerprint=business_fp,
+        identity_fields={
+            "vendor": "Rashi Peripherals",
+            "invoice_no": "6000000299",
+            "document_role": "invoice",
+        },
+        document_role="invoice",
+    )
+    assert invoice_match is not None
+    assert invoice_match.invoice.id == invoice.id
+    assert invoice_match.match_kind == "business_fingerprint"
+
+
+@pytest.mark.asyncio
+async def test_identity_overlap_respects_document_role(
+    db_session: AsyncSession,
+) -> None:
+    existing = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PROCESSED,
+        currency="SGD",
+        file_hash="dn-role-hash",
+        vendor="Rashi Peripherals",
+        invoice_no="6000000299",
+        purchase_document_type="invoice",
+        document_heading="TAX INVOICE",
+    )
+    db_session.add(existing)
+    await db_session.flush()
+
+    overlap = await identity_overlap_duplicate_exists(
+        db_session,
+        {
+            "vendor": "Rashi Peripherals",
+            "invoice_no": "6000000299",
+            "document_role": "packing_list",
+        },
+        tenant_id=TESTING_TENANT_UUID,
+    )
+    assert overlap is None
+
+
+def test_business_fingerprint_includes_document_role() -> None:
+    """Invoice vs packing list sharing invoice_no must not share a fingerprint."""
+    base = {"vendor": "Rashi Peripherals", "invoice_no": "6000000299"}
+    inv_fp = compute_business_fingerprint({**base, "document_role": "invoice"})
+    pack_fp = compute_business_fingerprint({**base, "document_role": "packing_list"})
+    bare_fp = compute_business_fingerprint(base)
+    assert inv_fp is not None and pack_fp is not None and bare_fp is not None
+    assert inv_fp != pack_fp
+    assert inv_fp != bare_fp
+    assert pack_fp != bare_fp
+
+
 def test_business_fingerprint_not_built_from_vendor_and_so_reference_only() -> None:
     fp = compute_business_fingerprint(
         {

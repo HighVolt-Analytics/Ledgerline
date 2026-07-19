@@ -99,3 +99,6 @@ def test_header_extract_prompt_includes_canonical_and_edge_cases() -> None:
     assert "invoice_date" in body
     assert "total" in body
     assert "currency" in body
+    assert "GENERAL EXTRACTION PRINCIPLE" in body
+    assert "TOTAL DISAMBIGUATION" in body
+    assert "SELF-CHECK BEFORE RETURNING OUTPUT" in body

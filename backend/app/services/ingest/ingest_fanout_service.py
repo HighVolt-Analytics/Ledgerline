@@ -38,6 +38,7 @@ from app.services.extraction.pdf_content_fingerprint import (
     compute_pdf_content_fingerprint,
     compute_pdf_content_fingerprint_from_pages,
 )
+from app.services.extraction.document_heading_utils import document_role_from_heading
 from app.services.extraction.document_identity_service import (
     compute_business_fingerprint,
     compute_business_fingerprint_from_pages,
@@ -171,6 +172,7 @@ def _business_fingerprint_from_page_range(
     end_page: int,
     *,
     custom_field_keys: list[str] | None,
+    document_role: str | None = None,
 ) -> str | None:
     fields = _identity_fields_from_page_range(
         pages,
@@ -178,6 +180,11 @@ def _business_fingerprint_from_page_range(
         end_page,
         custom_field_keys=custom_field_keys,
     )
+    role = (document_role or "").strip().lower()
+    if role:
+        # Role is part of the fingerprint so invoice + packing list + DN that share
+        # invoice/PO numbers do not violate uq_invoice_tenant_business_fingerprint.
+        fields = {**fields, "document_role": role}
     return compute_business_fingerprint(fields)
 
 
@@ -960,11 +967,14 @@ async def _ingest_file_with_fanout_core(
                 segment.start_page,
                 segment.end_page,
             )
+            segment_type = purchase_document_type_from_heading(segment.heading_kind)
+            segment_role = document_role_from_heading(segment.heading_kind)
             segment_business_fp = _business_fingerprint_from_page_range(
                 pages,
                 segment.start_page,
                 segment.end_page,
                 custom_field_keys=custom_field_keys,
+                document_role=segment_role,
             )
             segment_identity = _identity_fields_from_page_range(
                 pages,
@@ -972,7 +982,8 @@ async def _ingest_file_with_fanout_core(
                 segment.end_page,
                 custom_field_keys=custom_field_keys,
             )
-            segment_type = purchase_document_type_from_heading(segment.heading_kind)
+            if segment_role:
+                segment_identity = {**segment_identity, "document_role": segment_role}
             segment_name = segment_upload_filename(filename, index, segment_count)
             segment_page_slice = pages[segment.start_page : segment.end_page + 1]
 
@@ -1009,6 +1020,13 @@ async def _ingest_file_with_fanout_core(
             inv = await session.get(Invoice, created.invoice_id)
             if inv is not None and inv.status == InvoiceStatus.DUPLICATE_SKIPPED:
                 continue
+
+            if inv is not None and segment_role:
+                # Persist role so later same-type re-uploads still match supporting docs
+                # that have no purchase_document_type (e.g. packing_list).
+                extracted = dict(inv.extracted_fields or {})
+                extracted["document_role"] = segment_role
+                inv.extracted_fields = extracted
 
             invoice_ids.append(created.invoice_id)
 

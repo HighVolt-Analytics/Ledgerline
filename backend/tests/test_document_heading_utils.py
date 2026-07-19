@@ -117,6 +117,26 @@ def test_invoice_with_bill_of_lading_field_is_not_transport() -> None:
     assert infer_page_document_kind(text) == "invoice"
 
 
+def test_invoice_with_packing_list_no_field_is_not_packing_list() -> None:
+    from app.services.extraction.document_heading_utils import (
+        document_role_from_heading,
+        extract_document_heading_signals,
+        infer_page_document_kind,
+    )
+
+    text = (
+        "TAX INVOICE\n"
+        "Invoice No: 6000000299\n"
+        "Packing List No: 8003622454\n"
+        "Page 1 of 1\n"
+    )
+    assert infer_page_document_kind(text) == "tax_invoice"
+    signals = extract_document_heading_signals(text)
+    assert "packing_list" not in signals.kinds
+    assert document_role_from_heading("packing_list") == "packing_list"
+    assert document_role_from_heading("tax_invoice") == "invoice"
+
+
 def test_packing_list_with_bill_of_lading_field_is_not_transport() -> None:
     from app.services.extraction.document_heading_utils import infer_page_document_kind
 

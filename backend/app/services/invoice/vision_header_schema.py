@@ -37,13 +37,18 @@ VISION_HEADER_PERSISTED_FIELD_KEYS: tuple[str, ...] = (
     "other_reference",
 )
 
-# Stale DB seed detection — active body must include these field names.
+# Stale DB seed detection — active body must include these (hardened prompt markers).
 VISION_HEADER_PROMPT_MARKERS: tuple[str, ...] = (
     "invoice_date",
     "total",
     "currency",
     "proforma_invoice_no",
     "Never copy a purchase-order number into so_reference",
+    "GENERAL EXTRACTION PRINCIPLE",
+    "MULTI-PARTY DISAMBIGUATION",
+    "TOTAL DISAMBIGUATION",
+    "SELF-CHECK BEFORE RETURNING OUTPUT",
+    "An empty string is always a safer output",
 )
 
 # Common LLM aliases → canonical JSON key (first match wins).

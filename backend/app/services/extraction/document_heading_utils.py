@@ -57,7 +57,8 @@ _PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"\bINVOICE\b", re.I), "invoice"),
     (re.compile(r"\bCARGO\s+CLEARANCE\s+PERMIT\b", re.I), "customs_permit"),
     (re.compile(r"\bCUSTOMS?\s+(?:ENTRY|DECLARATION)\b", re.I), "customs_permit"),
-    (re.compile(r"\bPACKING\s+LIST\b", re.I), "packing_list"),
+    # Avoid field labels like "Packing List No:" on invoices (same idea as Invoice No).
+    (re.compile(r"\bPACKING\s+LIST\b(?!\s*no\b)", re.I), "packing_list"),
     (re.compile(r"\bCERTIFICATE\s+OF\s+ORIGIN\b", re.I), "certificate_of_origin"),
     (re.compile(r"\bBENEFICIARY\s+SHIPMENT\s+ADVICE\b", re.I), "statement"),
     (re.compile(r"\bSHIPMENT\s+ADVICE\b", re.I), "statement"),
@@ -412,6 +413,36 @@ def infer_page_document_kind(text: str) -> HeadingKind | None:
     """Detect document kind from a single page (headings + import/logistics keywords)."""
     inferred = infer_page_document_kind_with_source(text)
     return inferred.kind if inferred else None
+
+
+def document_role_from_heading(kind: HeadingKind | str | None) -> str | None:
+    """Stable dedup role for a heading kind (invoice family collapses; supports stay distinct).
+
+    Shipment packs often share invoice/PO numbers across Tax Invoice, Packing List,
+    Delivery Note, AWB, etc. Dedup must not collapse those into one instrument.
+    """
+    token = (kind or "").strip().lower()
+    if not token:
+        return None
+    if token in {"invoice", "tax_invoice", "commercial_invoice", "proforma", "credit_note"}:
+        return "invoice"
+    if token == "purchase_order":
+        return "purchase_order"
+    if token == "sales_order":
+        return "sales_order"
+    if token == "grn":
+        return "grn"
+    if token == "packing_list":
+        return "packing_list"
+    if token == "transport_doc":
+        return "transport_doc"
+    if token == "customs_permit":
+        return "customs_permit"
+    if token == "certificate_of_origin":
+        return "certificate_of_origin"
+    if token in {"quote", "remittance", "statement", "contract", "timesheet"}:
+        return token
+    return token
 
 
 def _expected_heading_kinds(

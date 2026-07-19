@@ -309,6 +309,13 @@ def _should_merge_continuation(
     next_kind = _effective_page_kind(next_page.text or "") or nxt.heading_kind
     prev_kind = prev.heading_kind or _effective_page_kind(prev_page.text or "")
 
+    # Completed Page N of N (including 1 of 1) closes the prior run — never glue the next doc.
+    if po_prev and po_prev[0] == po_prev[1]:
+        if next_kind and prev_kind and not _kinds_same_family(prev_kind, next_kind):
+            return False
+        if po_next and po_next[0] == 1:
+            return False
+
     if po_next and po_next[0] > 1:
         if po_prev and po_prev[1] == po_next[1] and po_next[0] >= po_prev[0] + 1:
             return True
@@ -348,27 +355,37 @@ def _split_segments_on_type_changes(
             page = pages[index]
             if page_is_blank_for_segment(page):
                 continue
-            if is_continuation_page(page.text or ""):
+            prev_page = pages[index - 1]
+            po_prev = parse_page_of_marker(prev_page.text or "")
+            prior_completed = bool(po_prev and po_prev[0] == po_prev[1])
+            if is_continuation_page(page.text or "") and not prior_completed:
                 # Strengthen open kind from continuation page title when useful.
                 cont_kind = _effective_page_kind(page.text or "")
                 if cont_kind and not open_kind:
                     open_kind = cont_kind
                 continue
-            if not _page_starts_new_document(page, matchers=None):
-                continue
             page_kind = _effective_page_kind(page.text or "")
-            if page_kind and open_kind and not _kinds_same_family(open_kind, page_kind):
-                changed = True
-                out.append(
-                    _clone_segment(
-                        segment,
-                        start_page=run_start,
-                        end_page=index - 1,
-                        heading_kind=open_kind,
-                    )
+            starts_new = _page_starts_new_document(page, matchers=None)
+            type_change = bool(
+                page_kind and open_kind and not _kinds_same_family(open_kind, page_kind)
+            )
+            # Hard close after completed Page N of N when a new title/type appears.
+            completed_then_new = bool(
+                prior_completed and page_kind and (type_change or starts_new)
+            )
+            if not type_change and not completed_then_new:
+                continue
+            changed = True
+            out.append(
+                _clone_segment(
+                    segment,
+                    start_page=run_start,
+                    end_page=index - 1,
+                    heading_kind=open_kind,
                 )
-                run_start = index
-                open_kind = page_kind
+            )
+            run_start = index
+            open_kind = page_kind or open_kind
         out.append(
             _clone_segment(
                 segment,

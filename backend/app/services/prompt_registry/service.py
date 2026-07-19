@@ -126,9 +126,11 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
             "PHASE 1 — SIGNAL HARVEST",
             "Prefer \"UNCERTAIN\" over a wrong answer",
         ),
-        # Distinctive markers from the hardened segment prompt (stale seeds lack these).
+        # Distinctive markers from the v2 hardened segment prompt (stale seeds lack these).
         "pdf.segment.system": (
-            "ROLE — Document Splitting Agent (page-range mode)",
+            "ROLE — Document Splitting Agent (page-range mode) — v2 (hardened)",
+            "KNOWN HARD LIMITATION",
+            "SEPARATOR / NON-DOCUMENT PAGES (MUST SKIP AS DOCUMENTS)",
             'WHAT "ONE DOCUMENT" MEANS',
             "CORE METHOD — WINDOW … i-1 | i | i+1 | i+2 …",
             "DECISION ORDER (mandatory for every page i)",
@@ -146,6 +148,10 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
             "OMIT blank pages from every segment",
             "PAGE-OF-N (all document types)",
             "Repeating the same header on every page",
+            "R11. Every page must be accounted for",
+            "Run the R11 coverage self-check before returning output",
+            "E23. Reissue/duplicate/replacement document",
+            "E22. Same template/layout, different issuing company",
         ),
     }
 

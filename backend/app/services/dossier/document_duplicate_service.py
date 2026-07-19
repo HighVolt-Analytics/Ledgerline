@@ -334,9 +334,36 @@ async def find_invoice_by_business_fingerprint_for_ingest(
     return (await session.execute(stmt)).scalars().first()
 
 
+async def find_invoices_by_business_fingerprint_for_ingest(
+    session: AsyncSession,
+    business_fingerprint: str,
+    *,
+    tenant_id: int,
+    limit: int = 20,
+) -> list[Invoice]:
+    """Newest-first candidates sharing a business fingerprint (cross-type filter applied by caller)."""
+    stmt = (
+        select(Invoice)
+        .where(
+            Invoice.business_fingerprint == business_fingerprint,
+            Invoice.tenant_id == tenant_id,
+            Invoice.status.notin_(_INGEST_FINGERPRINT_LOOKUP_IGNORE_STATUSES),
+        )
+        .order_by(Invoice.created_at.desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 _LINKING_REFERENCE_KEYS = frozenset({"po_reference", "so_reference"})
-_REGISTER_TYPE_KEYS = frozenset({"sales_document_type", "purchase_document_type"})
+_REGISTER_TYPE_KEYS = frozenset({"sales_document_type", "purchase_document_type", "document_role"})
 _MONEY_KEYS = frozenset({"total", "subtotal"})
+
+_PURCHASE_TYPE_TO_ROLE = {
+    "invoice": "invoice",
+    "po": "purchase_order",
+    "grn": "grn",
+}
 
 
 def _is_reference_key(key: str) -> bool:
@@ -351,6 +378,34 @@ def _is_document_number_key(key: str) -> bool:
     if key in _LINKING_REFERENCE_KEYS:
         return False
     return key.endswith("_no")
+
+
+def document_role_from_invoice(invoice: Invoice) -> str | None:
+    """Best-effort document role for cross-type dedup (invoice vs packing list vs DN)."""
+    from app.services.extraction.document_heading_utils import (
+        document_role_from_heading,
+        infer_page_document_kind,
+    )
+
+    purchase = (invoice.purchase_document_type or "").strip().lower()
+    mapped = _PURCHASE_TYPE_TO_ROLE.get(purchase)
+    if mapped:
+        return mapped
+    heading = (invoice.document_heading or "").strip()
+    if heading:
+        return document_role_from_heading(infer_page_document_kind(heading))
+    extracted = invoice.extracted_fields if isinstance(invoice.extracted_fields, dict) else {}
+    role = str(extracted.get("document_role") or "").strip().lower()
+    return role or None
+
+
+def document_roles_conflict(left: str | None, right: str | None) -> bool:
+    """True when both roles are known and different — never treat as the same instrument."""
+    left_role = (left or "").strip().lower()
+    right_role = (right or "").strip().lower()
+    if not left_role or not right_role:
+        return False
+    return left_role != right_role
 
 
 def _register_types_differ(left: dict[str, str], right: dict[str, str]) -> bool:
@@ -378,7 +433,13 @@ def _invoice_identity_snapshot(invoice: Invoice) -> dict[str, str]:
     purchase_type = (invoice.purchase_document_type or "").strip().lower()
     if purchase_type:
         fields["purchase_document_type"] = purchase_type
+    role = document_role_from_invoice(invoice)
+    if role:
+        fields["document_role"] = role
     fields.update(extracted_fields_from_invoice(invoice))
+    # Prefer derived role over a stale extracted_fields copy.
+    if role:
+        fields["document_role"] = role
     return fields
 
 
@@ -580,6 +641,7 @@ async def find_existing_ingest_duplicate_match(
     page_fingerprints: list[str] | None = None,
     check_page_fingerprints: bool = False,
     normalized_filename: str | None = None,
+    document_role: str | None = None,
 ) -> IngestDuplicateMatch | None:
     """
     Tiered ingest duplicate lookup.
@@ -587,7 +649,14 @@ async def find_existing_ingest_duplicate_match(
     T1: file / source hash.
     T2: business FP, content FP, identity overlap (filename alone never matches).
     T3: page fingerprints — only when ``check_page_fingerprints`` is True (last resort).
+
+    ``document_role`` (or identity_fields['document_role']) prevents shipment companions
+    that share invoice/PO numbers (invoice + packing list + DN) from collapsing.
     """
+    incoming_role = (document_role or "").strip().lower() or None
+    if not incoming_role and identity_fields:
+        incoming_role = (identity_fields.get("document_role") or "").strip().lower() or None
+
     existing = await find_invoice_by_file_hash(session, file_hash, tenant_id=tenant_id)
     if existing is not None:
         return IngestDuplicateMatch(existing, "file_hash", "T1")
@@ -597,15 +666,18 @@ async def find_existing_ingest_duplicate_match(
         return IngestDuplicateMatch(existing, "source_file_hash", "T1")
 
     if business_fingerprint:
-        existing = await find_invoice_by_business_fingerprint_for_ingest(
+        for candidate in await find_invoices_by_business_fingerprint_for_ingest(
             session,
             business_fingerprint,
             tenant_id=tenant_id,
-        )
-        if existing is not None:
-            return IngestDuplicateMatch(existing, "business_fingerprint", "T2")
+        ):
+            if document_roles_conflict(incoming_role, document_role_from_invoice(candidate)):
+                continue
+            return IngestDuplicateMatch(candidate, "business_fingerprint", "T2")
 
     if content_fingerprint:
+        # Content FP is page-text identity — always match. Role must NOT bypass this:
+        # uq_invoice_tenant_content_fingerprint is absolute; skipping here causes 500s.
         existing = await find_invoice_by_content_fingerprint_for_ingest(
             session,
             content_fingerprint,
@@ -636,6 +708,7 @@ async def find_existing_ingest_duplicate_match(
             page_fingerprints=page_fingerprints,
         )
         if existing is not None:
+            # Page FP is physical-page identity — same as content FP, never role-bypass.
             return IngestDuplicateMatch(existing, "page_fingerprint", "T3")
 
     return None
