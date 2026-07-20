@@ -154,6 +154,119 @@ def test_microsoft_azure_invoice_test6_capture_rule() -> None:
     assert hit.action.route_to == "Expenses Management"
 
 
+def test_subject_contains_mid_string_case_insensitive() -> None:
+    """Regression: subject contains 'highvolt' must match 'vishnu works in highvolt'."""
+    from app.schemas.rule_book_config import (
+        EmailCaptureAction,
+        EmailCaptureRule,
+        RuleCondition,
+        RuleConditionGroup,
+        RuleBookConfigPayload,
+    )
+    from app.services.ingest.email_ingestion import EmailAttachment, RawEmail
+    from app.services.ingest.ingest_capture_service import evaluate_ingest_capture
+    from app.services.rule_book.rule_engine import match_email_capture_rule
+
+    rule = EmailCaptureRule(
+        id="ec-hv",
+        name="Highvolt subject",
+        enabled=True,
+        priority=1,
+        mailbox="*",
+        root=RuleConditionGroup(
+            operator="AND",
+            children=[
+                RuleCondition(field="subject", operator="contains", value="highvolt"),
+            ],
+        ),
+        action=EmailCaptureAction(
+            save_attachment=True,
+            route_to="Purchase Management",
+            tags=[],
+        ),
+    )
+    email = SampleEmail(
+        id="msg-hv",
+        from_addr="sender@example.com",
+        to="vishnu@highvolt.tech",
+        subject="vishnu works in highvolt",
+        body="",
+        attachment_name="invoice.pdf",
+        attachment_mime="application/pdf",
+    )
+    assert match_email_capture_rule(email, [rule], mailbox="vishnu@highvolt.tech") is not None
+
+    # Trailing spaces in the rule value must not break contains.
+    padded = rule.model_copy(
+        update={
+            "root": RuleConditionGroup(
+                operator="AND",
+                children=[
+                    RuleCondition(field="subject", operator="contains", value="  highvolt  "),
+                ],
+            )
+        }
+    )
+    assert match_email_capture_rule(email, [padded], mailbox="vishnu@highvolt.tech") is not None
+
+    config = RuleBookConfigPayload(schema_version=1, email_capture_rules=[rule])
+    raw = RawEmail(
+        message_id="msg-hv",
+        subject="vishnu works in highvolt",
+        sender="sender@example.com",
+        mailbox_email="vishnu@highvolt.tech",
+        attachments=[
+            EmailAttachment(
+                filename="invoice.pdf",
+                content_type="application/pdf",
+                data=b"%PDF",
+            )
+        ],
+    )
+    assert evaluate_ingest_capture(raw, raw.attachments[0], config) is not None
+
+
+def test_empty_nested_group_does_not_block_and_match() -> None:
+    """UI can leave an empty nested group; backend must ignore it like the frontend."""
+    from app.schemas.rule_book_config import (
+        EmailCaptureAction,
+        EmailCaptureRule,
+        RuleCondition,
+        RuleConditionGroup,
+    )
+    from app.services.rule_book.rule_engine import match_email_capture_rule
+
+    rule = EmailCaptureRule(
+        id="ec-empty-group",
+        name="Subject with empty AND branch",
+        enabled=True,
+        priority=1,
+        mailbox="*",
+        root=RuleConditionGroup(
+            operator="AND",
+            children=[
+                RuleCondition(field="subject", operator="contains", value="highvolt"),
+                RuleConditionGroup(operator="AND", children=[]),
+            ],
+        ),
+        action=EmailCaptureAction(
+            save_attachment=True,
+            route_to="Purchase Management",
+            tags=[],
+        ),
+    )
+    email = SampleEmail(
+        id="msg-1",
+        from_addr="sender@example.com",
+        to="vishnu@highvolt.tech",
+        subject="vishnu works in highvolt",
+        body="",
+        attachment_name="invoice.pdf",
+        attachment_mime="application/pdf",
+    )
+    assert match_email_capture_rule(email, [rule], mailbox="vishnu@highvolt.tech") is not None
+
+
 def test_starts_with_pdf_never_matches_real_filenames() -> None:
     from app.schemas.rule_book_config import (
         EmailCaptureAction,

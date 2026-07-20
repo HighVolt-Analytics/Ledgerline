@@ -94,6 +94,9 @@ def _match_value(
     *,
     case_sensitive: bool | None = None,
 ) -> bool:
+    # Trim so UI trailing spaces ("highvolt ") do not break contains/equals.
+    haystack = (haystack or "").strip()
+    needle = (needle or "").strip()
     if case_sensitive:
         a, b = haystack, needle
     else:
@@ -174,12 +177,21 @@ def eval_condition_group_generic(
     *,
     field_resolver: Any,
 ) -> bool:
+    """Evaluate a condition group.
+
+    Empty nested groups are ignored (same as the Rules UI) so an accidental
+    blank AND/OR branch cannot force a false no-match at ingest time.
+    """
     children = group.get("children") or []
     if not children:
         return False
     results: list[bool] = []
     for child in children:
         if child.get("type") == "group":
+            nested_children = child.get("children") or []
+            if not nested_children:
+                # Mirror frontend: empty groups contribute nothing.
+                continue
             results.append(
                 eval_condition_group_generic(child, field_resolver=field_resolver)
             )
@@ -245,7 +257,8 @@ def diagnose_email_capture_match(
 
     for rule in _iter_email_capture_rules(rules, enabled_only=True):
         mailbox_ok = _mailbox_matches(rule.mailbox, actual_mailbox)
-        conditions_ok = mailbox_ok and eval_condition_group(email, rule.root.model_dump())
+        root = rule.root.model_dump()
+        conditions_ok = mailbox_ok and eval_condition_group(email, root)
         checks.append(
             {
                 "rule_id": rule.id,
@@ -254,6 +267,9 @@ def diagnose_email_capture_match(
                 "rule_mailbox": rule.mailbox,
                 "mailbox_ok": mailbox_ok,
                 "conditions_ok": conditions_ok,
+                "condition_details": _diagnose_condition_group(email, root)
+                if mailbox_ok
+                else [],
             }
         )
         if conditions_ok and matched_rule is None:
@@ -269,6 +285,37 @@ def diagnose_email_capture_match(
         "matched_rule_name": matched_rule.name if matched_rule else None,
         "rule_checks": checks,
     }
+
+
+def _diagnose_condition_group(email: SampleEmail, group: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten condition outcomes for ingest decision logs."""
+    details: list[dict[str, Any]] = []
+    for child in group.get("children") or []:
+        if child.get("type") == "group":
+            nested = child.get("children") or []
+            if not nested:
+                continue
+            details.extend(_diagnose_condition_group(email, child))
+            continue
+        field = str(child.get("field", ""))
+        operator = str(child.get("operator", ""))
+        needle = str(child.get("value", ""))
+        haystack = _email_field(email, field)
+        details.append(
+            {
+                "field": field,
+                "operator": operator,
+                "value": needle,
+                "actual": haystack,
+                "matched": _match_value(
+                    haystack,
+                    operator,
+                    needle,
+                    case_sensitive=child.get("case_sensitive"),
+                ),
+            }
+        )
+    return details
 
 
 def match_disabled_email_capture_rule(

@@ -22,7 +22,17 @@ FolderOutcome = Literal["processed", "exception"]
 # Folder routing treats duplicate shadows as done — otherwise Exceptions re-poll
 # keeps re-fetching the same message and creating more duplicate rows.
 _SUCCESS_STATUSES = frozenset({InvoiceStatus.PROCESSED, InvoiceStatus.DUPLICATE_SKIPPED})
-_PRESKIP_PROCESSED_REASONS = frozenset({"message_already_imported"})
+# Folder routing: intentional ingest skips → Processed; hard failures → Exceptions.
+# Keep in sync with mailbox_message_service._SKIPPED_PRESKIP_REASONS.
+_PRESKIP_PROCESSED_REASONS = frozenset(
+    {
+        "message_already_imported",
+        "no_attachments",
+        "no_invoice_attachments",
+        "attachment_type_filtered",
+        "no_capture_rule_match",
+    }
+)
 
 
 def folder_moves_enabled() -> bool:

@@ -75,9 +75,11 @@ def _aws_billing_email() -> RawEmail:
 
 def test_raw_email_to_sample_email_maps_fields() -> None:
     email = _aws_billing_email()
+    email.body = "Please find your invoice attached."
     sample = raw_email_to_sample_email(email, email.attachments[0])
     assert sample.from_addr == "billing@amazon.com"
     assert sample.subject == email.subject
+    assert sample.body == "Please find your invoice attached."
     assert sample.attachment_name == "AWS-Invoice-May.pdf"
 
 

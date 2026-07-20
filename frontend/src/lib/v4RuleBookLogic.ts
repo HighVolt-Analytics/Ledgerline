@@ -17,8 +17,11 @@ function matchValue(
   needle: string,
   caseSensitive?: boolean
 ): boolean {
-  const a = caseSensitive ? haystack : haystack.toLowerCase();
-  const b = caseSensitive ? needle : needle.toLowerCase();
+  // Trim so accidental UI trailing spaces don't break contains/equals (matches backend).
+  const trimmedHaystack = (haystack ?? "").trim();
+  const trimmedNeedle = (needle ?? "").trim();
+  const a = caseSensitive ? trimmedHaystack : trimmedHaystack.toLowerCase();
+  const b = caseSensitive ? trimmedNeedle : trimmedNeedle.toLowerCase();
   switch (operator) {
     case "equals":
       return a === b;

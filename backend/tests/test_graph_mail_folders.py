@@ -37,7 +37,7 @@ def test_classify_exception_or_mixed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finalize_preskip_moves_exception(
+async def test_finalize_preskip_moves_processed_for_intentional_skip(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -69,7 +69,43 @@ async def test_finalize_preskip_moves_exception(
         message_mailbox_emails={"msg-skip-1": "support@example.com"},
     )
     assert moved == 1
-    assert moves == [("msg-skip-1", "exception")]
+    assert moves == [("msg-skip-1", "processed")]
+
+
+@pytest.mark.asyncio
+async def test_finalize_no_capture_rule_match_moves_processed(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    moves: list[tuple[str, str]] = []
+
+    def fake_move(
+        message_id: str,
+        outcome: str,
+        *,
+        mailbox_email: str,
+        access_token: str | None = None,
+    ) -> str | None:
+        moves.append((message_id, outcome))
+        return message_id
+
+    monkeypatch.setattr(
+        "app.services.ingest.graph_mail_folders.folder_moves_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.graph_mail_folders.move_message_to_folder",
+        fake_move,
+    )
+
+    moved = await finalize_graph_messages(
+        db_session,
+        ["msg-skip-2"],
+        preskip_exceptions={"msg-skip-2": "no_capture_rule_match"},
+        message_mailbox_emails={"msg-skip-2": "support@example.com"},
+    )
+    assert moved == 1
+    assert moves == [("msg-skip-2", "processed")]
 
 
 @pytest.mark.asyncio
@@ -179,7 +215,7 @@ async def test_finalize_preskip_scopes_duplicate_mailbox_email(
         message_mailbox_emails={"msg-dup-1": "shared@example.com"},
     )
     assert moved == 1
-    assert moves == [("msg-dup-1", "exception")]
+    assert moves == [("msg-dup-1", "processed")]
 
 
 def test_move_falls_back_to_mark_read_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

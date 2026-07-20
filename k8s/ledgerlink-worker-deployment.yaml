@@ -29,6 +29,9 @@ spec:
             - app.workers.celery_app
             - worker
             - --loglevel=info
+            # Prefork default = CPU count (2 on B2s) doubles RSS and OOM-kills the pod.
+            - --concurrency=1
+            - --prefetch-multiplier=1
           env:
             - name: CELERY_WORKER
               value: "1"
@@ -64,7 +67,7 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               cpu: "1"
-              memory: 1Gi
+              memory: 1536Mi

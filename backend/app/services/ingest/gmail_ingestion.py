@@ -121,6 +121,7 @@ def _raw_email_from_message(
         mailbox_email=mailbox_email.strip().lower(),
         attachments=attachments,
         graph_access_token=access_token,
+        body=str(msg.get("snippet") or ""),
     )
 
 

@@ -38,6 +38,8 @@ class RawEmail:
     graph_id: str | None = None
     # Decode/filter drops collected before a DB session exists; flushed as ingest_skipped.
     attachment_drops: list[dict[str, str]] = field(default_factory=list)
+    # Plain-text preview for ingestion rule "body" conditions (Graph bodyPreview / Gmail snippet).
+    body: str = ""
 
     @property
     def api_message_id(self) -> str:
@@ -88,7 +90,7 @@ def _list_message_pages(
     path = mailbox_api_path(mailbox, messages_path)
     params: dict[str, str] | None = {
         "$filter": odata_filter,
-        "$select": "id,internetMessageId,subject,from,hasAttachments,receivedDateTime",
+        "$select": "id,internetMessageId,subject,from,hasAttachments,receivedDateTime,bodyPreview",
         "$top": str(page_size),
     }
     next_url: str | None = None
@@ -447,6 +449,7 @@ def _raw_email_from_message(
         received_at=_received_at_from_message(msg),
         graph_id=graph_id,
         attachment_drops=attachment_drops,
+        body=str(msg.get("bodyPreview") or ""),
     )
 
 

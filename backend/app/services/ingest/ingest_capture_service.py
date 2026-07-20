@@ -37,7 +37,7 @@ def raw_email_to_sample_email(email: RawEmail, attachment: EmailAttachment) -> S
         from_addr=email.sender or "",
         to=email.mailbox_email,
         subject=email.subject or "",
-        body="",
+        body=email.body or "",
         attachment_name=attachment.filename,
         attachment_mime=attachment.content_type,
     )
