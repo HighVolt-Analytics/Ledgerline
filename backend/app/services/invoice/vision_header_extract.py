@@ -201,8 +201,9 @@ def persist_vision_header_to_invoice(
     money = plausible_money(result.total)
     if money is not None:
         invoice.total = money
-    if result.currency:
-        invoice.currency = result.currency
+    # Always write currency from vision — empty clears any ingest/tenant seed so
+    # undetected currency shows blank (UI asks user) instead of inventing AUD.
+    invoice.currency = (result.currency or "").strip().upper()[:3]
 
     parsed = InvoiceData(
         vendor=result.counterparty_name or invoice.vendor,
@@ -211,7 +212,7 @@ def persist_vision_header_to_invoice(
         document_heading=result.document_heading or None,
         invoice_date=result.invoice_date or invoice.invoice_date,
         total=money if money is not None else invoice.total,
-        currency=result.currency or invoice.currency or "",
+        currency=invoice.currency or "",
     )
     apply_parsed_extraction_fields(invoice, parsed)
 
@@ -240,8 +241,8 @@ def persist_vision_header_to_invoice(
         patch["invoice_date"] = result.invoice_date.isoformat()
     if money is not None:
         patch["total"] = format(money, "f")
-    if result.currency:
-        patch["currency"] = result.currency
+    if invoice.currency:
+        patch["currency"] = invoice.currency
     if result.counterparty_name:
         if result.perspective == "sales":
             patch["buyer_name"] = result.counterparty_name
@@ -252,6 +253,11 @@ def persist_vision_header_to_invoice(
         patch["vision_header_confidence"] = f"{result.confidence:.4f}"
 
     merge_invoice_extracted_fields(invoice, patch)
+    # Drop stale currency key when vision left currency empty.
+    if not invoice.currency:
+        fields = dict(invoice.extracted_fields or {})
+        if fields.pop("currency", None) is not None:
+            invoice.extracted_fields = fields
     if secondary:
         invoice.extracted_fields = apply_invoice_no_secondary(
             dict(invoice.extracted_fields or {}),

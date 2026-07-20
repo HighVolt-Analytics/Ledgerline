@@ -47,6 +47,8 @@ VISION_HEADER_PROMPT_MARKERS: tuple[str, ...] = (
     "GENERAL EXTRACTION PRINCIPLE",
     "MULTI-PARTY DISAMBIGUATION",
     "TOTAL DISAMBIGUATION",
+    "Never invent AUD/USD when ₹ is printed",
+    "you MUST return the after-tax Total",
     "SELF-CHECK BEFORE RETURNING OUTPUT",
     "An empty string is always a safer output",
 )

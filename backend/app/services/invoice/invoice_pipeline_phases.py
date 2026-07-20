@@ -203,6 +203,9 @@ async def phase_vision_header_extract(
         persist_vision_header_to_invoice,
         vision_header_extract_audit_detail,
     )
+    from app.services.invoice.vision_header_reconcile import (
+        apply_vision_header_text_reconcile,
+    )
 
     with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
         result = await evaluate_vision_header_extract(
@@ -211,8 +214,20 @@ async def phase_vision_header_extract(
             org=org,
             vision_page_images=vision_page_images,
         )
+        reconcile_detail: dict[str, object] = {}
+        if result.success:
+            persist_vision_header_to_invoice(invoice, result)
+            # Lightweight local text — fix ₹→INR, clear bare-$, upgrade subtotal→total.
+            try:
+                from app.services.extraction.pdf_page_text_service import (
+                    extract_local_pdf_plain_text,
+                )
+
+                text = await asyncio.to_thread(extract_local_pdf_plain_text, path)
+                reconcile_detail = apply_vision_header_text_reconcile(invoice, text)
+            except Exception as exc:
+                reconcile_detail = {"currency_reason": "text_reconcile_failed", "error": str(exc)}
     if result.success:
-        persist_vision_header_to_invoice(invoice, result)
         await log_event(
             session,
             "vision_header_extracted",
@@ -220,6 +235,7 @@ async def phase_vision_header_extract(
             detail={
                 **vision_header_extract_audit_detail(result),
                 "document_ai_provider": document_ai_provider,
+                "text_reconcile": reconcile_detail,
             },
         )
     else:

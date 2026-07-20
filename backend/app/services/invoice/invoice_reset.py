@@ -35,6 +35,8 @@ async def reset_invoice_for_reprocess(
     inv.gst = None
     inv.gst_rate = None
     inv.total = None
+    # Clear so reprocess can re-detect; do not keep a stale wrong ISO.
+    inv.currency = ""
     inv.billing_address = None
     inv.bank_bsb = None
     inv.bank_account = None

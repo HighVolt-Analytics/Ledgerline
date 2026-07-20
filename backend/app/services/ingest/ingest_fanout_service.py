@@ -424,10 +424,6 @@ async def _create_invoice_from_bytes(
     if bundle_source_hash:
         extracted_fields = {"source_file_hash": bundle_source_hash}
 
-    from app.models.tenant import Tenant
-    from app.tenant_settings import tenant_currency
-
-    tenant = await session.get(Tenant, tenant_id)
     is_manual_upload = (meta.capture_source or "").strip().lower() == "upload"
     uploader_name = ((actor_name or "").strip() or None) if is_manual_upload else None
     uploader_email = ((actor_email or "").strip() or None) if is_manual_upload else None
@@ -442,7 +438,9 @@ async def _create_invoice_from_bytes(
         business_fingerprint=business_fingerprint,
         normalized_filename=normalized_name,
         duplicate_review_suggested=review_suggested,
-        currency=tenant_currency(tenant),
+        # Empty until extraction corroborates an ISO code — never seed tenant
+        # reporting currency (that caused AUD to stick on bare-$ / ₹ invoices).
+        currency="",
         storage_vendor_slug=vendor_slug,
         purchase_document_type=purchase_document_type,
         email_sender=meta.email_sender,

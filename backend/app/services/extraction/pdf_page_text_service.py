@@ -138,6 +138,17 @@ def _merge_thin_pages_with_di(
     return merged, tuple(still_thin)
 
 
+def extract_local_pdf_plain_text(path: Path, *, max_pages: int | None = None) -> str:
+    """Concatenate local pdfplumber/PyMuPDF page text — no Azure DI.
+
+    Used for cheap post-vision reconcile (currency glyph / labeled totals).
+    """
+    pages = _extract_local_page_texts(path)
+    if max_pages is not None:
+        pages = pages[: max(0, max_pages)]
+    return "\n".join(page.text or "" for page in pages)
+
+
 def extract_pdf_page_texts_via_full_di(path: Path) -> PdfPageTextExtraction | None:
     """OCR every page via Azure DI — fallback when hybrid split preparation fails."""
     ocr_pages = read_pdf_page_texts_via_di(path)

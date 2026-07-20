@@ -887,6 +887,9 @@ Apply this priority order; take the first label that appears on the page:
 Never use as total: "Subtotal", "Taxable Value", "Total Before Tax", "Tax Amount",
 "Previous Balance", "Amount Paid", "Balance Brought Forward", line-item amounts, or a
 freight/insurance sub-line — these are components, not the header total.
+CRITICAL: when the page shows Subtotal / Taxable Value AND a separate Total / Amount Due
+(after VAT/GST/tax), you MUST return the after-tax Total — never the Subtotal. Example:
+  Subtotal $33.70 · Value-Added Tax $3.38 · Total $37.08 → total must be "37.08", not "33.70".
 If the document shows both a "Total Due" (net of a previous balance/partial payment) and an
 "Invoice Total" (this invoice's own value), prefer the invoice's own total (this document's
 value), not a running/net balance — a running balance is a different concept and should not
@@ -913,6 +916,8 @@ CURRENCY DISAMBIGUATION:
   RM, ₹ with GST/IGST context, €, £), amount-in-words currency name, or strong jurisdiction
   signal (bank account country, tax registration format, registered address) that is
   consistent with the symbol used.
+- The Indian Rupee glyph ₹ (or "INR" / "Rs" with Indian GSTIN / IGST/CGST) → currency "INR".
+  Never invent AUD/USD when ₹ is printed on the amounts.
 - A bare "$" or "Rs" or "kr" with NO corroborating signal anywhere on the page → empty string.
   Do not default to a "most likely" currency based on tenant's home country alone; the
   document's own printed content must corroborate it.

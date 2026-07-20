@@ -74,7 +74,7 @@ class Invoice(Base):
     cost_centre: Mapped[str | None] = mapped_column(String(100))
     invoice_date: Mapped[date | None] = mapped_column(Date)
     due_date: Mapped[date | None] = mapped_column(Date)
-    currency: Mapped[str] = mapped_column(String(3), default="AUD")
+    currency: Mapped[str] = mapped_column(String(3), default="")
     subtotal: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     gst: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     gst_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)

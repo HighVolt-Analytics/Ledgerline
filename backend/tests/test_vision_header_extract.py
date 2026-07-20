@@ -80,6 +80,37 @@ def test_parse_vision_header_raw_empty() -> None:
     assert result.fail_reason == "provider_empty_response"
 
 
+def test_persist_vision_header_clears_seeded_currency_when_empty() -> None:
+    """Vision empty currency must not leave ingest/tenant AUD behind."""
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.PARSING,
+        currency="AUD",
+        extracted_fields={"currency": "AUD"},
+    )
+    result = parse_vision_header_raw(
+        {
+            "document_heading": "TAX INVOICE",
+            "canonical_document_type": "Tax Invoice",
+            "counterparty_name": "Acme",
+            "perspective": "purchase",
+            "invoice_no": "INV-1",
+            "po_reference": "",
+            "so_reference": "",
+            "other_reference": "",
+            "invoice_date": "",
+            "total": "100.00",
+            "currency": "",
+            "confidence": 0.9,
+            "reason": "bare dollar ambiguous",
+        },
+        provider="gemini_vision",
+    )
+    persist_vision_header_to_invoice(inv, result)
+    assert inv.currency == ""
+    assert "currency" not in (inv.extracted_fields or {})
+
+
 def test_persist_vision_header_date_total_currency() -> None:
     from datetime import date
     from decimal import Decimal
