@@ -21,13 +21,21 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Preskip reasons that mean intentional skip (Processed folder), not Exceptions.
+# Preskip reasons that mean intentional skip (DB outcome=skipped).
 _SKIPPED_PRESKIP_REASONS = frozenset(
     {
         "message_already_imported",
         "no_attachments",
         "no_invoice_attachments",
         "attachment_type_filtered",
+        "no_capture_rule_match",
+    }
+)
+
+# Skips that must be re-polled within the 48h lookback (e.g. after fixing capture rules).
+# These stay out of known_message_ids so Inbox/Exceptions retries can re-evaluate.
+_RETRYABLE_SKIP_REASONS = frozenset(
+    {
         "no_capture_rule_match",
     }
 )
@@ -56,7 +64,11 @@ async def upsert_pending_mailbox_message(
     if row is not None:
         if provider_message_id and row.provider_message_id != provider_message_id:
             row.provider_message_id = provider_message_id
-        if row.outcome not in TERMINAL_OUTCOMES:
+        retryable_skip = (
+            row.outcome == OUTCOME_SKIPPED
+            and (row.skip_reason or "") in _RETRYABLE_SKIP_REASONS
+        )
+        if row.outcome not in TERMINAL_OUTCOMES or retryable_skip:
             row.outcome = OUTCOME_PENDING
             row.skip_reason = None
         return row
@@ -105,11 +117,24 @@ async def known_terminal_mailbox_message_ids(
     *,
     tenant_id: uuid.UUID,
 ) -> frozenset[str]:
+    """Message IDs that must not be fetched again.
+
+    Retryable capture-rule misses are excluded so the 48h lookback can re-ingest
+    after the tenant updates ingestion rules.
+    """
+    from sqlalchemy import and_, not_
+
     rows = (
         await session.execute(
             select(MailboxMessage.stable_message_id).where(
                 MailboxMessage.tenant_id == tenant_id,
                 MailboxMessage.outcome.in_(tuple(TERMINAL_OUTCOMES)),
+                not_(
+                    and_(
+                        MailboxMessage.outcome == OUTCOME_SKIPPED,
+                        MailboxMessage.skip_reason.in_(tuple(_RETRYABLE_SKIP_REASONS)),
+                    )
+                ),
             )
         )
     ).scalars().all()

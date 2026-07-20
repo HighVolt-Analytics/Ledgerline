@@ -37,7 +37,7 @@ def test_classify_exception_or_mixed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finalize_preskip_moves_processed_for_intentional_skip(
+async def test_finalize_preskip_moves_exception(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -69,11 +69,11 @@ async def test_finalize_preskip_moves_processed_for_intentional_skip(
         message_mailbox_emails={"msg-skip-1": "support@example.com"},
     )
     assert moved == 1
-    assert moves == [("msg-skip-1", "processed")]
+    assert moves == [("msg-skip-1", "exception")]
 
 
 @pytest.mark.asyncio
-async def test_finalize_no_capture_rule_match_moves_processed(
+async def test_finalize_no_capture_rule_match_stays_exception_for_retry(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -105,7 +105,7 @@ async def test_finalize_no_capture_rule_match_moves_processed(
         message_mailbox_emails={"msg-skip-2": "support@example.com"},
     )
     assert moved == 1
-    assert moves == [("msg-skip-2", "processed")]
+    assert moves == [("msg-skip-2", "exception")]
 
 
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ async def test_finalize_preskip_scopes_duplicate_mailbox_email(
         message_mailbox_emails={"msg-dup-1": "shared@example.com"},
     )
     assert moved == 1
-    assert moves == [("msg-dup-1", "processed")]
+    assert moves == [("msg-dup-1", "exception")]
 
 
 def test_move_falls_back_to_mark_read_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

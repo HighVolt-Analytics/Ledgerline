@@ -154,3 +154,80 @@ async def test_gmail_finalize_sets_db_outcome_without_folder_move(
     assert row.outcome == OUTCOME_SKIPPED
     assert row.skip_reason == "no_attachments"
     assert row.folder_synced_at is not None
+
+
+@pytest.mark.asyncio
+async def test_capture_rule_miss_is_retryable_not_known(
+    db_session: AsyncSession,
+) -> None:
+    """After no_capture_rule_match, the message must be re-fetched so rule fixes work."""
+    from app.services.ingest.mailbox_message_service import (
+        known_terminal_mailbox_message_ids,
+        set_mailbox_message_outcome,
+    )
+
+    mb = await _mailbox(db_session)
+    await upsert_pending_mailbox_message(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        connected_mailbox_id=mb.id,
+        provider=MAIL_PROVIDER_MICROSOFT,
+        stable_message_id="<hv-subject@example.com>",
+        provider_message_id="graph-hv-1",
+    )
+    await set_mailbox_message_outcome(
+        db_session,
+        connected_mailbox_id=mb.id,
+        stable_message_id="<hv-subject@example.com>",
+        outcome=OUTCOME_SKIPPED,
+        skip_reason="no_capture_rule_match",
+    )
+    await db_session.flush()
+
+    known = await known_terminal_mailbox_message_ids(
+        db_session, tenant_id=TESTING_TENANT_UUID
+    )
+    assert "<hv-subject@example.com>" not in known
+
+    reopened = await upsert_pending_mailbox_message(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        connected_mailbox_id=mb.id,
+        provider=MAIL_PROVIDER_MICROSOFT,
+        stable_message_id="<hv-subject@example.com>",
+        provider_message_id="graph-hv-1",
+    )
+    assert reopened.outcome == OUTCOME_PENDING
+    assert reopened.skip_reason is None
+
+
+@pytest.mark.asyncio
+async def test_no_attachments_skip_stays_known(
+    db_session: AsyncSession,
+) -> None:
+    from app.services.ingest.mailbox_message_service import (
+        known_terminal_mailbox_message_ids,
+        set_mailbox_message_outcome,
+    )
+
+    mb = await _mailbox(db_session, email="ap2@example.com")
+    await upsert_pending_mailbox_message(
+        db_session,
+        tenant_id=TESTING_TENANT_UUID,
+        connected_mailbox_id=mb.id,
+        provider=MAIL_PROVIDER_MICROSOFT,
+        stable_message_id="<no-att@example.com>",
+    )
+    await set_mailbox_message_outcome(
+        db_session,
+        connected_mailbox_id=mb.id,
+        stable_message_id="<no-att@example.com>",
+        outcome=OUTCOME_SKIPPED,
+        skip_reason="no_attachments",
+    )
+    await db_session.flush()
+
+    known = await known_terminal_mailbox_message_ids(
+        db_session, tenant_id=TESTING_TENANT_UUID
+    )
+    assert "<no-att@example.com>" in known
