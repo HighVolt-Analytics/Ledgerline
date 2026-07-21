@@ -9,8 +9,9 @@ ImageFormat = Literal["png", "jpeg"]
 
 DEFAULT_VISION_MAX_PAGES = 4
 DEFAULT_VISION_DPI = 150
-# Header identity usually lives on the first page(s); keep API payload small.
-HEADER_VISION_MAX_PAGES = 2
+# Header extract must see the whole upload (refs/totals often past page 1).
+# Cap protects provider payload size; raise if tenants routinely exceed this.
+HEADER_VISION_MAX_PAGES = 20
 
 
 def sniff_image_media_type(image: bytes) -> str:
@@ -133,4 +134,32 @@ def limit_vision_images(images: list[bytes], *, max_pages: int) -> list[bytes]:
     if max_pages <= 0 or len(images) <= max_pages:
         return images
     return images[:max_pages]
+
+
+def resolve_header_vision_images(
+    path: Path,
+    cache: list[bytes] | None = None,
+    *,
+    max_pages: int = HEADER_VISION_MAX_PAGES,
+    dpi: int = DEFAULT_VISION_DPI,
+) -> list[bytes]:
+    """Rasterize up to *max_pages* for header extract.
+
+    Understand-gate may have cached only the first few pages; when the cache is
+    shorter than the PDF (or shorter than *max_pages*), re-rasterize so header
+    fields on later pages are visible to the model.
+    """
+    budget = max(1, int(max_pages))
+    page_count = pdf_page_count(path)
+    needed = budget if page_count is None else min(budget, max(1, page_count))
+
+    if cache is not None and len(cache) >= needed:
+        return limit_vision_images(cache, max_pages=needed)
+
+    images = pdf_page_images(path, max_pages=needed, dpi=dpi)
+    if cache is not None:
+        cache.clear()
+        cache.extend(images)
+        return cache
+    return images
 

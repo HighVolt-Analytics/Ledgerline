@@ -72,12 +72,20 @@ def test_detect_currency_symbol_launchdarkly_style() -> None:
     assert symbol == "$"
 
 
-def test_detect_currency_iso_in_text() -> None:
-    text = "Invoice total USD 99.00\nAmount due: USD 99.00"
-    assert detect_currency_code_in_text(text) == "USD"
+def test_detect_currency_ignores_for_all_items_false_positive() -> None:
+    text = (
+        "TOTAL AMOUNT PAYABLE : S$ 0.00\n"
+        "FOR ALL ITEMS.\n"
+        "PERMIT IS NOT REQUIRED.\n"
+    )
+    assert detect_currency_code_in_text(text) == "SGD"
     iso, symbol = resolve_currency_from_ocr(text)
-    assert iso == "USD"
+    assert iso == "SGD"
     assert symbol is None
+
+
+def test_detect_currency_sg_dollar_prefix() -> None:
+    assert detect_currency_code_in_text("Total S$ 1,234.56") == "SGD"
 
 
 def test_detect_unlisted_iso_near_money() -> None:

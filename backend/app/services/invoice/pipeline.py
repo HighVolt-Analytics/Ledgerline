@@ -1778,7 +1778,9 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
 
         invoice.status = InvoiceStatus.EXCEPTION
         invoice.evaluation_status = (
-            EVAL_VISION_VAULTED if header.success else EVAL_VISION_HEADER_REVIEW
+            EVAL_VISION_HEADER_REVIEW
+            if (not header.success or getattr(header, "needs_review", False))
+            else EVAL_VISION_VAULTED
         )
         await log_event(
             session,
@@ -1793,6 +1795,8 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
                 understand_confidence=understand.confidence,
                 header_success=header.success,
                 header_confidence=header.confidence,
+                header_needs_review=bool(getattr(header, "needs_review", False)),
+                header_page_count=getattr(header, "page_count", None),
                 document_heading=invoice.document_heading,
                 canonical_document_type=(invoice.extracted_fields or {}).get(
                     "canonical_document_type"

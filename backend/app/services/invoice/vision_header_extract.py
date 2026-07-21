@@ -11,8 +11,7 @@ from app.models.invoice import Invoice
 from app.services.extraction.document_ai_provider import DocumentAiProvider
 from app.services.extraction.vision_pdf import (
     HEADER_VISION_MAX_PAGES,
-    limit_vision_images,
-    resolve_pdf_page_images,
+    resolve_header_vision_images,
 )
 from app.services.invoice.invoice_data import InvoiceData
 from app.services.tenant.tenant_org_context import OrgContext
@@ -21,6 +20,10 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 CANONICAL_DOCUMENT_TYPE_KEY = "canonical_document_type"
+
+
+# Below this confidence (or after heavy grounding clears), hold for header review.
+VISION_HEADER_REVIEW_CONFIDENCE = 0.55
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,40 @@ class VisionHeaderExtractResult:
     provider: str = ""
     page_count: int = 0
     fail_reason: str | None = None
+    needs_review: bool = False
+
+
+def vision_header_has_commercial_identity(result: VisionHeaderExtractResult) -> bool:
+    """True when at least one linking / identity field survived extraction."""
+    return bool(
+        (result.document_heading or "").strip()
+        or (result.canonical_document_type or "").strip()
+        or (result.counterparty_name or "").strip()
+        or (result.invoice_no or "").strip()
+        or (result.proforma_invoice_no or "").strip()
+        or (result.po_reference or "").strip()
+        or (result.so_reference or "").strip()
+        or (result.other_reference or "").strip()
+        or result.invoice_date is not None
+        or result.total is not None
+    )
+
+
+def vision_header_should_review(
+    result: VisionHeaderExtractResult,
+    *,
+    grounding_cleared: list[str] | None = None,
+) -> bool:
+    """Hold in vision_header_review when extract is weak or heavily ungrounded."""
+    if not result.success:
+        return True
+    if result.needs_review:
+        return True
+    if result.confidence < VISION_HEADER_REVIEW_CONFIDENCE:
+        return True
+    if grounding_cleared and len(grounding_cleared) >= 2:
+        return True
+    return not vision_header_has_commercial_identity(result)
 
 
 def vision_header_extract_audit_detail(result: VisionHeaderExtractResult) -> dict:
@@ -65,6 +102,7 @@ def vision_header_extract_audit_detail(result: VisionHeaderExtractResult) -> dic
         "provider": result.provider,
         "page_count": result.page_count,
         "fail_reason": result.fail_reason,
+        "needs_review": result.needs_review,
     }
 
 
@@ -298,9 +336,11 @@ async def evaluate_vision_header_extract(
 
     path = Path(file_path)
     try:
-        # Reuse understand-gate rasters; only send first page(s) for header fields.
-        images = limit_vision_images(
-            resolve_pdf_page_images(path, vision_page_images),
+        # Whole upload (up to HEADER_VISION_MAX_PAGES). Extends understand-gate
+        # cache when it only held the first few pages.
+        images = resolve_header_vision_images(
+            path,
+            vision_page_images,
             max_pages=HEADER_VISION_MAX_PAGES,
         )
     except Exception as exc:

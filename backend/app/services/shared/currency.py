@@ -39,6 +39,61 @@ UNAMBIGUOUS_SYMBOL_TO_ISO = {
     "₹": "INR",
 }
 
+# Prefixed symbols that unambiguously imply an ISO (checked before bare ISO tokens).
+_PREFIXED_SYMBOL_TO_ISO: tuple[tuple[str, str], ...] = (
+    ("A$", "AUD"),
+    ("AU$", "AUD"),
+    ("AUD$", "AUD"),
+    ("US$", "USD"),
+    ("USD$", "USD"),
+    ("NZ$", "NZD"),
+    ("NZD$", "NZD"),
+    ("C$", "CAD"),
+    ("CA$", "CAD"),
+    ("CAD$", "CAD"),
+    ("S$", "SGD"),
+    ("SG$", "SGD"),
+    ("HK$", "HKD"),
+    ("NT$", "TWD"),
+    ("R$", "BRL"),
+    ("RM", "MYR"),
+)
+
+# ISO 4217 codes that are also common English words — never take from prose alone.
+_ENGLISH_FALSE_POSITIVE_ISO = frozenset(
+    {
+        "ALL",  # "FOR ALL ITEMS"
+        "AND",
+        "ARE",
+        "CAN",
+        "GET",
+        "HAS",
+        "HIS",
+        "ITS",
+        "LOW",
+        "MAD",
+        "MAY",
+        "NEW",
+        "NOR",
+        "NOW",
+        "OLD",
+        "ONE",
+        "OUR",
+        "OUT",
+        "OWN",
+        "PAN",
+        "PER",
+        "SET",
+        "SHE",
+        "SOS",
+        "TOP",
+        "TRY",
+        "USE",
+        "WAS",
+        "YOU",
+    }
+)
+
 # Common currency glyphs near amounts.
 _CURRENCY_GLYPHS = r"[$€£¥₹₩₪₫₱₽₴₺₦₡₵₲]"
 
@@ -75,23 +130,32 @@ def _amount_looks_like_money(amount: str | None) -> bool:
     return len(digits) >= 3
 
 
+def detect_prefixed_currency_in_text(text: str | None) -> str | None:
+    """Return ISO from unambiguous prefixed symbols (S$, US$, A$, …)."""
+    if not text:
+        return None
+    upper = text.upper()
+    # Longer prefixes first (USD$ before US$, AUD$ before A$).
+    for prefix, iso in sorted(_PREFIXED_SYMBOL_TO_ISO, key=lambda row: -len(row[0])):
+        if prefix.upper() in upper or prefix in text:
+            return iso
+    return None
+
+
 def detect_currency_code_in_text(text: str | None) -> str | None:
     """Return the strongest ISO 4217 currency code in OCR text, if any.
 
     Preference:
-    1. Uppercase ISO tokens validated via pycountry
-    2. Case-insensitive codes next to money amounts, also pycountry-validated
+    1. Prefixed symbols (S$ → SGD, US$ → USD)
+    2. ISO codes next to money amounts (pycountry-validated)
+    3. Uppercase ISO tokens that are not common English false positives
     """
     if not text:
         return None
 
-    uppercase_hits = Counter(
-        match.group(1)
-        for match in _UPPER_ISO_TOKEN.finditer(text)
-        if is_iso4217_currency(match.group(1))
-    )
-    if uppercase_hits:
-        return uppercase_hits.most_common(1)[0][0]
+    prefixed = detect_prefixed_currency_in_text(text)
+    if prefixed:
+        return prefixed
 
     near_money: Counter[str] = Counter()
     for match in _ISO_NEAR_MONEY.finditer(text):
@@ -99,11 +163,23 @@ def detect_currency_code_in_text(text: str | None) -> str | None:
         amount = match.group("amt_before") or match.group("amt_after")
         if not is_iso4217_currency(code):
             continue
+        if code in _ENGLISH_FALSE_POSITIVE_ISO:
+            continue
         if not _amount_looks_like_money(amount):
             continue
         near_money[code] += 1
     if near_money:
         return near_money.most_common(1)[0][0]
+
+    uppercase_hits = Counter(
+        match.group(1)
+        for match in _UPPER_ISO_TOKEN.finditer(text)
+        if is_iso4217_currency(match.group(1))
+        and match.group(1) not in _ENGLISH_FALSE_POSITIVE_ISO
+    )
+    if uppercase_hits:
+        return uppercase_hits.most_common(1)[0][0]
+
     return None
 
 

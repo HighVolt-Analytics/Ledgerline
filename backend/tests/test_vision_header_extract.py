@@ -276,7 +276,7 @@ async def test_evaluate_vision_header_provider_error(
     pdf.write_bytes(b"%PDF-1.4")
 
     monkeypatch.setattr(
-        "app.services.invoice.vision_header_extract.resolve_pdf_page_images",
+        "app.services.invoice.vision_header_extract.resolve_header_vision_images",
         lambda *_a, **_k: [b"png"],
     )
     monkeypatch.setattr(

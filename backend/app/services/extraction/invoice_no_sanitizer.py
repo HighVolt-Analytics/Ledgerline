@@ -26,7 +26,17 @@ _LEADING_LABEL = re.compile(
 )
 _INVOICE_NO_TIGHT = re.compile(
     r"(?:(?<!Proforma\s)(?<!PROFORMA\s)Invoice\s*(?:No\.?|Number|#)|"
+    r"Inv\.?\s*(?:No\.?|Number|#)|"
     r"Inv\.?\s*#|Invoice\s*ID)\s*[:\s#]*"
+    r"([A-Z0-9][A-Z0-9\-/_]{2,})",
+    re.I,
+)
+_PERMIT_OR_DOC_NO = re.compile(
+    r"(?:Permit\s*(?:No\.?|Number|#)|"
+    r"Clearance\s*(?:No\.?|Number|#)|"
+    r"Declaration\s*(?:No\.?|Number|#)|"
+    r"Document\s*(?:No\.?|Number|#)|"
+    r"Doc\.?\s*(?:No\.?|#))\s*[:\s#]*"
     r"([A-Z0-9][A-Z0-9\-/_]{2,})",
     re.I,
 )
@@ -148,16 +158,25 @@ def sanitize_invoice_no(value: str | None) -> str | None:
 
 
 def extract_invoice_no_from_text(text: str) -> str | None:
-    """Tight regex extraction for invoice / proforma numbers."""
+    """Tight regex extraction for invoice / proforma / primary doc numbers.
+
+    Prefer commercial invoice labels (Invoice No / INV NO) over permit/document
+    IDs so packing lists and clearance permits that reference an invoice keep
+    that invoice number in ``invoice_no``.
+    """
     if not text or not text.strip():
         return None
-    # Prefer commercial invoice labels over proforma when both exist.
     for pattern in (_INVOICE_NO_TIGHT, _PROFORMA_REF):
         match = pattern.search(text)
         if match:
             candidate = sanitize_invoice_no(match.group(1))
             if candidate:
                 return candidate
+    match = _PERMIT_OR_DOC_NO.search(text)
+    if match:
+        candidate = sanitize_invoice_no(match.group(1))
+        if candidate:
+            return candidate
     return None
 
 

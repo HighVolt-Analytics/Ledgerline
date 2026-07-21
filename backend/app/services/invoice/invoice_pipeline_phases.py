@@ -202,9 +202,12 @@ async def phase_vision_header_extract(
         evaluate_vision_header_extract,
         persist_vision_header_to_invoice,
         vision_header_extract_audit_detail,
+        vision_header_should_review,
     )
     from app.services.invoice.vision_header_reconcile import (
         apply_vision_header_text_reconcile,
+        enrich_vision_header_refs_from_text,
+        ground_vision_header_result,
     )
 
     with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
@@ -215,18 +218,49 @@ async def phase_vision_header_extract(
             vision_page_images=vision_page_images,
         )
         reconcile_detail: dict[str, object] = {}
+        grounding_detail: dict[str, object] = {}
+        enrich_detail: dict[str, object] = {}
         if result.success:
-            persist_vision_header_to_invoice(invoice, result)
-            # Lightweight local text — fix ₹→INR, clear bare-$, upgrade subtotal→total.
             try:
                 from app.services.extraction.pdf_page_text_service import (
                     extract_local_pdf_plain_text,
                 )
 
                 text = await asyncio.to_thread(extract_local_pdf_plain_text, path)
+                result, grounding_detail = ground_vision_header_result(result, text)
+                result, enrich_detail = enrich_vision_header_refs_from_text(result, text)
+                persist_vision_header_to_invoice(invoice, result)
+                # Lightweight local text — fix ₹→INR / S$→SGD, clear bare-$, upgrade totals.
                 reconcile_detail = apply_vision_header_text_reconcile(invoice, text)
+                # Safety net: if persist still left invoice_no empty, fill from text.
+                if not (invoice.invoice_no or "").strip():
+                    from app.services.extraction.invoice_no_sanitizer import (
+                        extract_invoice_no_from_text,
+                        sanitize_invoice_no_parts,
+                    )
+
+                    recovered = extract_invoice_no_from_text(text or "")
+                    primary, _sec = sanitize_invoice_no_parts(recovered)
+                    if primary:
+                        invoice.invoice_no = primary
+                        enrich_detail = dict(enrich_detail or {})
+                        enrich_detail["filled"] = list(enrich_detail.get("filled") or []) + [
+                            "invoice_no_post_persist"
+                        ]
             except Exception as exc:
-                reconcile_detail = {"currency_reason": "text_reconcile_failed", "error": str(exc)}
+                persist_vision_header_to_invoice(invoice, result)
+                reconcile_detail = {
+                    "currency_reason": "text_reconcile_failed",
+                    "error": str(exc),
+                }
+                grounding_detail = {"skipped": True, "reason": "text_extract_failed"}
+            from dataclasses import replace
+
+            if vision_header_should_review(
+                result,
+                grounding_cleared=list(grounding_detail.get("cleared") or []),
+            ):
+                result = replace(result, needs_review=True)
     if result.success:
         await log_event(
             session,
@@ -236,6 +270,10 @@ async def phase_vision_header_extract(
                 **vision_header_extract_audit_detail(result),
                 "document_ai_provider": document_ai_provider,
                 "text_reconcile": reconcile_detail,
+                "text_grounding": grounding_detail,
+                "text_enrich": enrich_detail,
+                "persisted_invoice_no": invoice.invoice_no,
+                "persisted_currency": invoice.currency,
             },
         )
     else:

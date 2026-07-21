@@ -14,8 +14,18 @@ from app.services.extraction.invoice_no_sanitizer import (
 from app.services.invoice.invoice_data import InvoiceData
 
 
-def test_sanitize_strips_leading_label() -> None:
-    assert sanitize_invoice_no("Invoice No. INV-2026-0589") == "INV-2026-0589"
+def test_extract_inv_no_label_from_clearance_permit_style() -> None:
+    text = (
+        "PERMIT NO : OD5I458006S\n"
+        "UNITS (INV NO: 250970286) 5622.17\n"
+        "UNIQUE REF : 197700341D 20250905 5701\n"
+    )
+    assert extract_invoice_no_from_text(text) == "250970286"
+
+
+def test_extract_permit_no_when_no_invoice_label() -> None:
+    text = "CARGO CLEARANCE PERMIT\nPERMIT NO : OD5I458006S\n"
+    assert extract_invoice_no_from_text(text) == "OD5I458006S"
 
 
 def test_sanitize_strips_date_bleed_label() -> None:

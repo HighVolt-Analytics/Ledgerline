@@ -77,15 +77,63 @@ def classification_review_confidence(
         return None
 
 
+def _document_text_if_loaded(inv: Invoice) -> str | None:
+    """Return document_text when already on the instance; None if deferred/expired.
+
+    List invoices defer ``document_text``. Touching an unloaded deferred column
+    under async SQLAlchemy raises MissingGreenlet — never trigger that load.
+    """
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        state = sa_inspect(inv)
+        # Only use the value if it is already present in the instance dict.
+        if "document_text" not in state.dict:
+            return None
+    except Exception:
+        pass
+    return (getattr(inv, "document_text", None) or "") or ""
+
+
+def _legacy_awaiting_maps_to_vision_vaulted(inv: Invoice) -> bool:
+    """True when awaiting_classification is a vision-understood hold (not OCR classify).
+
+    Prefer explicit vision markers. Only use empty OCR body when ``document_text``
+    is already loaded — never lazy-load it.
+    """
+    fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
+    if fields.get("vision_bundle_kind") is not None or fields.get("vision_bundle_key"):
+        return True
+    if fields.get("vision_header_confidence") or fields.get("canonical_document_type"):
+        return True
+    heading = (inv.document_heading or "").strip()
+    if not heading:
+        return False
+    body = _document_text_if_loaded(inv)
+    if body is None:
+        # Deferred on list: heading + no DT is the historical understood-path shape.
+        return not (inv.document_type_code or "").strip()
+    return not body.strip()
+
+
+def _is_vision_header_fields_contract(inv: Invoice) -> bool:
+    """Vision understood path: use header field keys (no OCR body / no DT yet)."""
+    from app.services.invoice.invoice_evaluation_service import VISION_UNDERSTOOD_EVAL_STATUSES
+
+    if (inv.evaluation_status or "").strip() not in VISION_UNDERSTOOD_EVAL_STATUSES:
+        return False
+    body = _document_text_if_loaded(inv)
+    if body is None:
+        # Deferred text — still the header contract when no catalogue DT is mapped.
+        return not (inv.document_type_code or "").strip()
+    return not body.strip()
+
+
 async def document_type_extraction_fields(
     db: AsyncSession, tenant_id: uuid.UUID, inv: Invoice
 ) -> list[str]:
     # Vision header hold: Fields tab uses the vision header contract (no DT mapped yet).
-    from app.services.invoice.invoice_evaluation_service import VISION_UNDERSTOOD_EVAL_STATUSES
-
-    if (inv.evaluation_status or "").strip() in VISION_UNDERSTOOD_EVAL_STATUSES and not (
-        inv.document_text or ""
-    ).strip():
+    if _is_vision_header_fields_contract(inv):
         from app.services.invoice.vision_header_schema import VISION_HEADER_PERSISTED_FIELD_KEYS
 
         return list(VISION_HEADER_PERSISTED_FIELD_KEYS)
@@ -137,10 +185,7 @@ def _inbox_display_fields(
         evaluation_status = EvaluationStatus.AUTO_CODED
     # Legacy understood-path rows still stored as awaiting_classification.
     if evaluation_status == EvaluationStatus.AWAITING_CLASSIFICATION:
-        fields = inv.extracted_fields if isinstance(inv.extracted_fields, dict) else {}
-        if fields.get("vision_bundle_kind") is not None or fields.get("vision_bundle_key"):
-            evaluation_status = EvaluationStatus.VISION_VAULTED
-        elif (inv.document_heading or "").strip() and not (inv.document_text or "").strip():
+        if _legacy_awaiting_maps_to_vision_vaulted(inv):
             evaluation_status = EvaluationStatus.VISION_VAULTED
     return vendor_confidence, validation_pass_rate, evaluation_status
 

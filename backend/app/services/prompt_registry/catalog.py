@@ -797,14 +797,37 @@ Synonym consistency (same kind → same folder name):
 ═══════════════════════════════════════════════
 PARTIES AND REFERENCES
 ═══════════════════════════════════════════════
+These rules apply to EVERY finance document kind (tax invoice, commercial invoice,
+cargo clearance permit, packing list, GRN, AWB/BOL, PO, credit note, etc.). Do NOT
+skip invoice_no / date / total / references just because the title is not "Tax Invoice".
+If a labeled value is printed and legible, extract it into the matching key below.
+If it is absent or unclear, leave empty — never invent.
+
 - Use the tenant block in the user payload (legal_name, abn, aliases, default_perspective,
   intake_summary) to decide which party is the organisation vs the counterparty.
 - counterparty_name is the OTHER party (not the tenant). Leave empty if unclear. Never set
   the tenant as counterparty.
 - perspective is purchase | sales | unknown from the tenant's viewpoint (buyer AP vs seller AR).
-- invoice_no is the commercial / tax invoice number when clearly labeled as such.
+
+- invoice_no — the primary commercial / document identity number when clearly labeled.
+  Extract on ANY document kind when a label matches (examples, not a closed list):
+  Invoice No / Inv No / Tax Invoice No / Commercial Invoice No / Invoice Number,
+  Document No / Doc No (when it is THIS document's own ID in the header),
+  Permit No / Clearance No / Declaration No / Entry No (when that is THIS document's
+  own primary ID and no separate Invoice No is printed),
+  AWB / HAWB / BL / Bill of Lading No (when that is THIS document's own primary ID).
+  Priority when several IDs appear:
+  1) Explicit "Invoice No" / "Tax Invoice No" / "Commercial Invoice No" → invoice_no
+     (even on a packing list, permit, or transport doc that references an invoice).
+  2) Else THIS document's own primary ID label (Permit No / Declaration No / AWB No /
+     GRN No / Document No in the title/header block) → invoice_no.
+  3) Never leave invoice_no empty when a clearly labeled candidate from (1) or (2) is
+     legible on any provided page.
   If both "INVOICE NO" and "PROFORMA INVOICE NO" exist, put the commercial number in
   invoice_no and the proforma number in proforma_invoice_no — never merge them.
+  Copy the printed token as-is (leading zeros, hyphens, slashes). Empty only when no
+  labeled candidate exists or the token is unreadable.
+
 - proforma_invoice_no is only when labeled as proforma / pro-forma invoice number;
   empty string if absent. Do not copy commercial invoice_no into this field.
 - po_reference and so_reference are identifier tokens only when clearly labeled;
@@ -812,8 +835,12 @@ PARTIES AND REFERENCES
   Never copy a purchase-order number into so_reference, or a sales-order number
   into po_reference. If only a PO is labeled, leave so_reference empty (and vice versa).
   Identical values in both fields are wrong unless both labels truly appear on the page.
-- other_reference is any other business reference (GRN no, DN no, LC, packing list ref, etc.)
-  that is not invoice_no / proforma_invoice_no / po_reference / so_reference; empty string if none.
+- other_reference is any other business reference that is NOT already placed in
+  invoice_no / proforma_invoice_no / po_reference / so_reference
+  (e.g. secondary GRN/DN/LC/packing-list/job/ref when invoice_no already holds the
+  primary Invoice No or document ID). Empty string if none. Do not dump the same
+  token into both invoice_no and other_reference.
+
 
 ═══════════════════════════════════════════════
 MULTI-PARTY DISAMBIGUATION (which name is "counterparty_name")
@@ -849,10 +876,16 @@ counterparty_name empty and note the conflict.
 ═══════════════════════════════════════════════
 DATE, TOTAL, CURRENCY
 ═══════════════════════════════════════════════
-- invoice_date: document date (Invoice Date / Date / Tax Invoice Date). Prefer ISO YYYY-MM-DD
-  when you can normalize confidently; otherwise empty string — never invent a date.
-- total: grand total / amount due / total payable as a plain number string (e.g. "1234.56").
-  Do not include currency symbols or codes in total. Empty string if unclear.
+Apply on EVERY document kind — do not skip these because the title is not "Invoice".
+- invoice_date: THIS document's issuance / document date when clearly labeled
+  (Invoice Date / Tax Invoice Date / Date / Document Date / Permit Date /
+  Declaration Date / GRN Date / PO Date / Order Date / AWB Date — matching the
+  document's own kind). Prefer ISO YYYY-MM-DD when you can normalize confidently;
+  otherwise empty string — never invent a date.
+- total: grand total / amount due / total payable / total value / CIF/FOB total when
+  clearly labeled as the document's overall amount, as a plain number string
+  (e.g. "1234.56"). Do not include currency symbols or codes in total. Empty if unclear
+  or if the page has no overall amount (e.g. pure packing list with no value).
 - currency: ISO 4217 only when clear and corroborated (explicit code, A$/US$/HK$,
   amount-in-words, or tax/bank/jurisdiction signal). Bare "$" / "Rs" / "kr" alone →
   empty string — never guess. Never convert amounts.
@@ -863,10 +896,11 @@ DATE, TOTAL, CURRENCY
 
 DATE DISAMBIGUATION (which date is "invoice_date"):
 - Multiple dates are common: Invoice Date, Due Date, Delivery Date, PO Date, Order Date,
-  Value Date, Ship Date. Only the label matching the document's own issuance
+  Value Date, Ship Date, Permit Date. Only the label matching THIS document's own issuance
   (Invoice Date / Tax Invoice Date / "Date" directly beside the document number, or the
-  equivalent issuance-date label for the document's own type — PO Date for a PO, Order Date
-  for a sales order, GRN Date for a GRN) qualifies for invoice_date.
+  equivalent issuance-date label for the document's own type — Permit Date for a permit,
+  PO Date for a PO, Order Date for a sales order, GRN Date for a GRN, AWB Date for an AWB)
+  qualifies for invoice_date.
 - Never use Due Date, Delivery Date, Payment Date, or Expected Ship Date as invoice_date.
 - If two dates are both plausibly the issuance date and neither is clearly labeled, leave
   invoice_date empty rather than guessing which.
@@ -944,19 +978,25 @@ NUMBER & FORMAT NORMALIZATION
   character's position in reason (do not silently pick one reading).
 
 ═══════════════════════════════════════════════
-MULTI-PAGE / CONTINUATION PAGE HANDLING
+MULTI-PAGE / WHOLE-PDF HANDLING
 ═══════════════════════════════════════════════
-- Each page is scored independently on the fields actually visible on THAT page image. Do
-  not assume values from a document's typical page-1 header if this page is a continuation
-  page (e.g. "Page 2 of 3") that does not repeat the header block.
-- If a continuation page repeats the full header (common on SAP-style forms), extract
-  normally from what's repeated on this page.
-- If a continuation page shows NO header fields at all (pure line-item table, or terms/
-  bank-details-only page), leave all identity fields empty EXCEPT canonical_document_type/
-  document_heading if a repeated running header/footer title is visible; set confidence low
-  and reason "continuation page, no independent header fields visible."
-- Do not fabricate invoice_no/total/date on a continuation page by assuming they must match
-  page 1 — only report what is actually printed on the page you are looking at.
+- You receive page images for the FULL uploaded PDF (or as many pages as provided).
+  Merge evidence across ALL pages into ONE header JSON — do not answer as if only
+  page 1 exists.
+- Prefer the primary commercial document's header (first clear invoice / PO / GRN /
+  packing-list / transport title). If later pages are continuation ("Page 2 of N")
+  that only add line items, keep identity fields from the page(s) that printed them;
+  do not blank fields just because a continuation page omits the header block.
+- If later pages introduce a DIFFERENT document kind (e.g. packing list after an
+  invoice in the same file), still extract identity for the PRIMARY commercial
+  document only; put secondary doc numbers in other_reference when clearly labeled,
+  never overwrite invoice_no / total / invoice_date with values from a different doc.
+- Continuation pages that repeat the full header (SAP-style): use the repeated values
+  as corroboration; they must agree with page-1 values when both are present.
+- Do not fabricate invoice_no / total / date from "what an invoice usually has" when
+  those tokens never appear on any provided page.
+- If the only pages with a title are letterhead/cover sheets and the real header is
+  on a later page, use the later page — that is why all pages are provided.
 
 ═══════════════════════════════════════════════
 EDGE CASES
@@ -973,10 +1013,12 @@ E3. Document is in a non-English language with no English anywhere → document_
     confidently inferable from structure (see canonical rules); fields (dates, totals,
     references) still extracted using the same disambiguation rules, translating only labels
     you're confident about (e.g. "Rechnungsnummer" = invoice number label), never the values.
-E4. Two invoice numbers appear — one clearly labeled "Invoice No" and one unlabeled
-    alphanumeric code elsewhere (e.g. an internal batch/barcode ID) → use only the labeled
-    one for invoice_no; the unlabeled code goes in other_reference only if it's clearly a
-    business reference (not a barcode/routing artifact); otherwise omit it entirely.
+E4. Two numbers appear — one clearly labeled "Invoice No" (or Permit No / Document No as
+    THIS document's primary ID) and one unlabeled alphanumeric code elsewhere (e.g. an
+    internal batch/barcode ID) → use only the labeled one for invoice_no; the unlabeled
+    code goes in other_reference only if it's clearly a business reference (not a
+    barcode/routing artifact); otherwise omit it entirely. Never skip a labeled Invoice No
+    just because the document title is a permit, packing list, or transport form.
 E5. Perspective cannot be determined because the tenant does not appear as either buyer or
     seller on the page (e.g. a customs authority certificate, or a third-party carrier
     document where the tenant is neither party) → perspective "unknown"; counterparty_name
@@ -1028,6 +1070,9 @@ SELF-CHECK BEFORE RETURNING OUTPUT
 Before emitting JSON, verify:
 - Every key from the required list is present, with empty string (not null, not omitted) for
   anything absent or unresolved.
+- You did not skip invoice_no / invoice_date / total / currency / po_reference / so_reference
+  merely because the document is not titled "Tax Invoice" — if a labeled value is on the
+  page, it must be in the matching key.
 - total contains no currency symbol/code and no thousands separators.
 - invoice_no and proforma_invoice_no are not identical unless both were independently labeled.
 - po_reference and so_reference are not identical unless both were independently labeled.

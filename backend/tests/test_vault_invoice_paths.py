@@ -101,4 +101,8 @@ def test_header_extract_prompt_includes_canonical_and_edge_cases() -> None:
     assert "currency" in body
     assert "GENERAL EXTRACTION PRINCIPLE" in body
     assert "TOTAL DISAMBIGUATION" in body
+    assert "MULTI-PAGE / WHOLE-PDF HANDLING" in body
+    assert "Merge evidence across ALL pages" in body
+    assert "EVERY finance document kind" in body
+    assert "Never leave invoice_no empty when a clearly labeled candidate" in body
     assert "SELF-CHECK BEFORE RETURNING OUTPUT" in body

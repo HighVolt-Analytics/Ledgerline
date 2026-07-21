@@ -1,12 +1,18 @@
-"""Tests for post-vision currency/total reconcile from local PDF text."""
+"""Tests for post-vision currency/total reconcile + header field grounding."""
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from app.models.invoice import Invoice, InvoiceStatus
+from app.services.invoice.vision_header_extract import (
+    VisionHeaderExtractResult,
+    vision_header_should_review,
+)
 from app.services.invoice.vision_header_reconcile import (
     apply_vision_header_text_reconcile,
+    ground_vision_header_result,
     prefer_grand_total_over_subtotal,
     reconcile_currency_from_text,
 )
@@ -85,3 +91,156 @@ def test_apply_reconcile_updates_invoice() -> None:
     assert (inv.extracted_fields or {}).get("currency") == "INR"
     assert detail["currency_after"] == "INR"
     assert "upgraded" in str(detail["total_reason"])
+
+
+def test_ground_recovers_inv_no_from_text_when_vision_ungrounded() -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
+    text = (
+        "PERMIT NO : OD5I458006S\n"
+        "CARGO CLEARANCE PERMIT\n"
+        "SKYLIFT CONSOLIDATOR (PTE) LTD\n"
+        "UNITS (INV NO: 250970286) 5622.17\n"
+        "UNIQUE REF : 197700341D 20250905 5701\n"
+        "VALIDITY PERIOD : 05/09/2025\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="CARGO CLEARANCE PERMIT",
+        counterparty_name="SKYLIFT CONSOLIDATOR (PTE) LTD",
+        invoice_no="WRONG-FAKE-999",
+        other_reference="197700341D 20250905 5701",
+        invoice_date=date(2025, 9, 5),
+        total=Decimal("0.00"),
+        confidence=0.9,
+        reason="x",
+        provider="test",
+    )
+    grounded, detail = ground_vision_header_result(result, text)
+    assert grounded.invoice_no == "250970286"
+    assert "invoice_no" in detail["recovered"]
+    assert detail.get("invoice_no_vision_cleared") == "WRONG-FAKE-999"
+
+
+def test_ground_clears_invented_invoice_no_and_vendor() -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="TAX INVOICE",
+        canonical_document_type="Tax Invoice",
+        counterparty_name="Hallucinated Vendor Pty",
+        perspective="purchase",
+        invoice_no="INV-FAKE-999",
+        po_reference="PO-REAL-100",
+        invoice_date=date(2026, 3, 15),
+        total=Decimal("100.00"),
+        currency="AUD",
+        confidence=0.92,
+        reason="clear",
+        provider="gemini_vision",
+        page_count=2,
+    )
+    # No Invoice No / INV NO label — only PO — so fake invoice_no cannot be recovered.
+    text = (
+        "TAX INVOICE\n"
+        "Acme Pty Ltd\n"
+        "PO Number: PO-REAL-100\n"
+        "Date: 15/03/2026\n"
+        "Total AUD 100.00\n"
+        "Extra padding so grounding text length clears the minimum threshold chars."
+    )
+    grounded, detail = ground_vision_header_result(result, text)
+    assert "invoice_no" in detail["cleared"]
+    assert "counterparty_name" in detail["cleared"]
+    assert grounded.invoice_no == ""
+    assert grounded.counterparty_name == ""
+    assert grounded.po_reference == "PO-REAL-100"
+    assert grounded.document_heading == "TAX INVOICE"
+    assert grounded.total == Decimal("100.00")
+    assert grounded.needs_review is True
+
+
+def test_enrich_sets_invoice_no_and_permit_other_ref() -> None:
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import enrich_vision_header_refs_from_text
+
+    text = (
+        "PERMIT NO : OD5I458006S\n"
+        "CARGO CLEARANCE PERMIT\n"
+        "UNITS (INV NO: 250970286) 5622.17\n"
+        "UNIQUE REF : 197700341D 20250905 5701\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="CARGO CLEARANCE PERMIT",
+        invoice_no="",
+        other_reference="197700341D 20250905 5701",
+        confidence=0.8,
+        provider="test",
+    )
+    enriched, detail = enrich_vision_header_refs_from_text(result, text)
+    assert enriched.invoice_no == "250970286"
+    assert enriched.other_reference == "OD5I458006S"
+    assert "invoice_no" in detail["filled"]
+    assert "other_reference" in detail["filled"]
+
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="TAX INVOICE",
+        counterparty_name="Only On Image Vendor",
+        invoice_no="INV-SCAN-1",
+        confidence=0.9,
+        reason="scan",
+        provider="gemini_vision",
+    )
+    grounded, detail = ground_vision_header_result(result, "short")
+    assert detail["skipped"] is True
+    assert grounded.counterparty_name == "Only On Image Vendor"
+    assert grounded.invoice_no == "INV-SCAN-1"
+
+
+def test_vision_header_should_review_low_confidence() -> None:
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="TAX INVOICE",
+        confidence=0.4,
+        provider="gemini_vision",
+    )
+    assert vision_header_should_review(result) is True
+
+
+def test_apply_reconcile_clears_ungrounded_total() -> None:
+    inv = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        status=InvoiceStatus.EXCEPTION,
+        currency="USD",
+        total=Decimal("99999.00"),
+        extracted_fields={"currency": "USD", "total": "99999.00"},
+    )
+    text = (
+        "MongoDB Limited\n"
+        "Subtotal US$33.70\n"
+        "Value-Added Tax US$3.38\n"
+        "Total US$37.08\n"
+        "Enough body text here so grounding length threshold is satisfied fully."
+    )
+    detail = apply_vision_header_text_reconcile(inv, text)
+    # 99999 not in text and not upgraded from a matching subtotal → cleared
+    assert inv.total is None or inv.total == Decimal("37.08")
+    assert detail["total_reason"] in {
+        "cleared_ungrounded_total",
+        "upgraded_labeled_grand_total",
+        "upgraded_subtotal_plus_tax",
+        "unchanged",
+    }
