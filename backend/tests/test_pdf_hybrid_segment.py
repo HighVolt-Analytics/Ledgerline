@@ -258,7 +258,7 @@ async def test_ingest_splits_import_bundle_into_documents(
 
 
 @pytest.mark.asyncio
-async def test_ingest_collapses_when_segment_cap_exceeded(
+async def test_ingest_fans_out_with_folded_remainder_when_segment_cap_exceeded(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -278,6 +278,23 @@ async def test_ingest_collapses_when_segment_cap_exceeded(
         "app.services.ingest.ingest_fanout_service.store_invoice_pdf",
         lambda *args, **kwargs: "uploads/one.pdf",
     )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.extract_pdf_page_range_bytes",
+        lambda data, start, end, **_kwargs: (
+            b"%PDF-1.4 segment\n" + f"{start}-{end}".encode("utf-8")
+        ),
+    )
+    async def _allow_upload(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.assert_can_upload",
+        _allow_upload,
+    )
+    monkeypatch.setattr(
+        "app.services.ingest.ingest_fanout_service.charge_upload_credits",
+        _allow_upload,
+    )
     monkeypatch.setenv("PDF_SEGMENT_MAX_SEGMENTS", "5")
     monkeypatch.setenv("PDF_SEGMENT_LLM_ENABLED", "false")
     from app.config import get_settings
@@ -290,21 +307,29 @@ async def test_ingest_collapses_when_segment_cap_exceeded(
         tenant_slug=org.slug,
         tenant_name=org.name,
         filename="many_invoices.pdf",
-        data=b"%PDF cap test",
+        data=b"%PDF-1.4 cap test",
         purchase_document_type=None,
     )
     await db_session.flush()
 
     get_settings.cache_clear()
-    assert result.segment_count == 1
-    assert len(result.invoice_ids) == 1
+    assert result.segment_count == 5
+    assert len(result.invoice_ids) == 5
 
-    skipped = (
+    # Cap no longer collapses the pack to a single row — first docs fan out,
+    # remainder is folded into the last segment.
+    segmented = (
         await db_session.execute(
-            select(AuditLog).where(AuditLog.event == "pdf_split_skipped")
+            select(AuditLog).where(AuditLog.event == "pdf_segmented")
         )
     ).scalars().all()
-    assert len(skipped) >= 1
+    assert len(segmented) == 5
+    capped = [
+        row
+        for row in segmented
+        if isinstance(row.detail, dict) and row.detail.get("segment_count") == 5
+    ]
+    assert capped
 
 
 @pytest.mark.asyncio

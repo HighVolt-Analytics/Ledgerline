@@ -163,23 +163,22 @@ def sanitize_invoice_no(value: str | None) -> str | None:
 
 
 def extract_invoice_no_from_text(text: str) -> str | None:
-    """Tight regex extraction for invoice / proforma / primary doc numbers.
+    """Extract invoice_no only from Invoice / INV / proforma labels.
 
-    Prefer commercial invoice labels (Invoice No / INV NO) over permit/document
-    IDs so packing lists and clearance permits that reference an invoice keep
-    that invoice number in ``invoice_no``.
+    Never falls back to Permit No / Document No / Clearance No — those are not
+    invoice numbers and belong in other_reference when needed.
     """
+    return extract_commercial_invoice_no_from_text(text)
+
+
+def extract_permit_or_doc_no_from_text(text: str) -> str | None:
+    """Permit / Clearance / Declaration / Document No — not for invoice_no."""
     if not text or not text.strip():
         return None
-    commercial = extract_commercial_invoice_no_from_text(text)
-    if commercial:
-        return commercial
     match = _PERMIT_OR_DOC_NO.search(text)
-    if match:
-        candidate = sanitize_invoice_no(match.group(1))
-        if candidate:
-            return candidate
-    return None
+    if not match:
+        return None
+    return sanitize_invoice_no(match.group(1))
 
 
 def extract_commercial_invoice_no_from_text(text: str) -> str | None:

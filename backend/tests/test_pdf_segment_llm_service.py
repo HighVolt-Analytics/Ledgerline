@@ -419,3 +419,95 @@ def test_parse_llm_segments_allows_omitted_blanks() -> None:
     assert len(result.segments) == 2
     assert result.segments[0].end_page == 0
     assert result.segments[1].start_page == 2
+
+
+def test_internal_blank_does_not_split_multipage_invoice() -> None:
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(0, "INVOICE\nInvoice No: 9300667281\nPage : 1 of 3"),
+        _page(1, ""),  # internal blank mid-run
+        _page(2, "INVOICE 9300667281\nPage : 3 of 3\nTotals"),
+        _page(3, "PACKING LIST\nPage : 1 of 1\nBill of Lading No: 9064907291"),
+    ]
+    raw = PdfSegmentResult(
+        segments=[PdfDocumentSegment(0, 3, "invoice", 0.9)],
+        detected_boundary_count=1,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    kinds = [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments]
+    assert kinds == [
+        (0, 2, "invoice"),  # blank kept inside range; not split into two invoices
+        (3, 3, "packing_list"),
+    ]
+
+
+def test_thin_page_of_two_after_awb_does_not_glue() -> None:
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(0, "Air Freight Services\nHAWB NO: 9064907291\nShipper details"),
+        _page(1, "Page : 2 of 2\n"),  # thin OCR, no kind
+    ]
+    raw = PdfSegmentResult(
+        segments=[
+            PdfDocumentSegment(0, 0, "transport_doc", 0.9),
+            PdfDocumentSegment(1, 1, None, 0.5),
+        ],
+        detected_boundary_count=2,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    # Untyped Page 2 of 2 must not glue onto an AWB that had no page-of marker.
+    assert len(refined.segments) == 2
+    assert refined.segments[0].heading_kind == "transport_doc"
+    assert refined.segments[0].end_page == 0
+
+
+def test_orphan_page_two_of_n_with_invoice_title_starts_new_segment() -> None:
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(0, "Air Freight Services\nHAWB NO: AAA111\nShipper details"),
+        _page(1, "Page : 2 of 2\nINVOICE 9300667417\nCOMPUTER GENERATED DOCUMENT\nTotals"),
+    ]
+    raw = PdfSegmentResult(
+        segments=[PdfDocumentSegment(0, 1, "transport_doc", 0.9)],
+        detected_boundary_count=1,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    assert [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments] == [
+        (0, 0, "transport_doc"),
+        (1, 1, "invoice"),
+    ]
+
+
+def test_same_kind_identity_split_consecutive_invoices() -> None:
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(0, "INVOICE\nInvoice No: 9300667281\nPage : 1 of 1\nUnit Price\nTotal Price"),
+        _page(1, "INVOICE\nInvoice No: 9300667417\nPage : 1 of 1\nUnit Price\nTotal Price"),
+    ]
+    raw = PdfSegmentResult(
+        segments=[PdfDocumentSegment(0, 1, "invoice", 0.9)],
+        detected_boundary_count=1,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    assert [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments] == [
+        (0, 0, "invoice"),
+        (1, 1, "invoice"),
+    ]
+
+
+def test_body_invoice_no_field_does_not_make_packing_list_an_invoice() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = (
+        "Top Level Handling Unit\nNumber of Cartons : 5\n"
+        "Invoice No: 9300667281\nBill of Lading No: 9064907291\n"
+    )
+    assert infer_page_document_kind(text) == "packing_list"

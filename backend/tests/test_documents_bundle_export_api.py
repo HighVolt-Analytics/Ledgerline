@@ -16,6 +16,8 @@ from app.models.line_item import LineItem
 from app.schemas.dossier import DossierLinkedDocumentsResponse, DossierMatchSummaryResponse
 from app.services.audit.audit_export_service import (
     collect_linked_doc_entries,
+    excel_hyperlink,
+    excel_hyperlinks_joined,
     format_linked_docs_export,
     linked_docs_by_dt_code,
     vault_view_path,
@@ -23,11 +25,13 @@ from app.services.audit.audit_export_service import (
 from app.services.invoice.invoice_evaluation_service import ROUTE_PURCHASE
 from app.services.purchase.purchase_match_service import sync_purchase_order_from_invoice
 from app.services.reports.documents_bundle_export_service import (
+    _FIXED_COLUMNS,
     _HEADER_ROW,
     _match_flags,
     build_documents_bundle_export,
     build_documents_bundle_row,
     bundle_dt_cells_by_code,
+    documents_bundle_rows_to_xlsx,
 )
 from app.tenant_ids import TESTING_TENANT_UUID
 from tests.test_audit_export_api import assert_csv_hyperlink
@@ -82,6 +86,41 @@ def _assert_hyperlink_cell(ws, *, header: list[str], data_row_index: int, column
     target = getattr(cell.hyperlink, "target", None) or str(cell.hyperlink)
     assert url in target
     assert _cell_text(cell.value)
+
+
+def test_documents_bundle_xlsx_keeps_multi_links_on_same_row() -> None:
+    """Multiple docs in one DT column become adjacent one-click cells (same row)."""
+    fixed = [""] * len(_FIXED_COLUMNS)
+    fixed[_FIXED_COLUMNS.index("Invoice no.")] = "INV-MULTI"
+    single = excel_hyperlink(vault_view_path(4), "DOC-4")
+    multi = excel_hyperlinks_joined(
+        [
+            (vault_view_path(5), "DOC-5"),
+            (vault_view_path(14), "DOC-14"),
+        ]
+    )
+    xlsx = documents_bundle_rows_to_xlsx(
+        [[*fixed, single, multi]],
+        dt_column_headers=["Type A", "Type B"],
+        cell_format="excel",
+    )
+    header, data, ws = _read_xlsx(xlsx)
+    assert len(data) == 1
+    assert "Type A" in header
+    assert "Type B" in header
+    assert "Type B (2)" in header
+    assert data[0][header.index("Type A")] == "DOC-4"
+    assert data[0][header.index("Type B")] == "DOC-5"
+    assert data[0][header.index("Type B (2)")] == "DOC-14"
+    _assert_hyperlink_cell(
+        ws, header=header, data_row_index=0, column_name="Type A", url=vault_view_path(4)
+    )
+    _assert_hyperlink_cell(
+        ws, header=header, data_row_index=0, column_name="Type B", url=vault_view_path(5)
+    )
+    _assert_hyperlink_cell(
+        ws, header=header, data_row_index=0, column_name="Type B (2)", url=vault_view_path(14)
+    )
 
 
 def test_match_flags_yes_no_only() -> None:

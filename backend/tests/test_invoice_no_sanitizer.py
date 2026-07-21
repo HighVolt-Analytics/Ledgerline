@@ -23,9 +23,14 @@ def test_extract_inv_no_label_from_clearance_permit_style() -> None:
     assert extract_invoice_no_from_text(text) == "250970286"
 
 
-def test_extract_permit_no_when_no_invoice_label() -> None:
+def test_extract_leaves_invoice_no_empty_when_only_permit() -> None:
     text = "CARGO CLEARANCE PERMIT\nPERMIT NO : OD5I458006S\n"
-    assert extract_invoice_no_from_text(text) == "OD5I458006S"
+    assert extract_invoice_no_from_text(text) is None
+    from app.services.extraction.invoice_no_sanitizer import (
+        extract_permit_or_doc_no_from_text,
+    )
+
+    assert extract_permit_or_doc_no_from_text(text) == "OD5I458006S"
 
 
 def test_sanitize_strips_date_bleed_label() -> None:

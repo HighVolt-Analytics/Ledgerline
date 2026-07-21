@@ -373,15 +373,30 @@ def _segments_from_starts(
 
     if len(starts) > max_segments:
         logger.warning("pdf_segment_cap_exceeded", detected=len(starts), cap=max_segments)
-        return (
-            [_single_segment(
-                pages,
-                matchers=matchers,
-                custom_field_keys=custom_field_keys,
-                document_types=document_types,
-            )],
-            True,
+        # Keep first (cap-1) documents intact; fold the remainder into the last segment
+        # instead of collapsing the whole pack to a single unsplit PDF.
+        capped_starts = list(starts[: max_segments - 1])
+        capped_starts.append(starts[max_segments - 1])
+        segments, _ = _segments_from_starts(
+            pages,
+            capped_starts,
+            matchers=matchers,
+            custom_field_keys=custom_field_keys,
+            document_types=document_types,
+            max_segments=max_segments,
         )
+        # Force last segment to cover through end of PDF (remainder of starts).
+        if segments:
+            last = segments[-1]
+            segments[-1] = PdfDocumentSegment(
+                start_page=last.start_page,
+                end_page=len(pages) - 1,
+                heading_kind=last.heading_kind,
+                boundary_confidence=last.boundary_confidence,
+                page_kind_token=last.page_kind_token,
+                identity_signature=last.identity_signature,
+            )
+        return segments, True
 
     segments: list[PdfDocumentSegment] = []
     for idx, (start, confidence) in enumerate(starts):

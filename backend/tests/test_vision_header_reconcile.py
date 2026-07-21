@@ -210,6 +210,53 @@ def test_enrich_sets_invoice_no_and_permit_other_ref() -> None:
     assert "invoice_no" in detail["filled"]
     assert "other_reference" in detail["filled"]
 
+
+def test_enrich_permit_only_leaves_invoice_no_empty() -> None:
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import (
+        enrich_vision_header_refs_from_text,
+        ground_vision_header_result,
+    )
+
+    text = (
+        "PERMIT NO : OD5I458006S\n"
+        "CARGO CLEARANCE PERMIT\n"
+        "UNIQUE REF : 197700341D 20250905 5701\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="CARGO CLEARANCE PERMIT",
+        invoice_no="",
+        other_reference="",
+        confidence=0.8,
+        provider="test",
+    )
+    enriched, detail = enrich_vision_header_refs_from_text(result, text)
+    assert enriched.invoice_no == ""
+    assert enriched.other_reference == "OD5I458006S"
+    assert "invoice_no" not in detail["filled"]
+    assert "other_reference" in detail["filled"]
+
+    # Vision wrongly put Permit No into invoice_no — grounding must clear it.
+    result2 = VisionHeaderExtractResult(
+        success=True,
+        document_heading="CARGO CLEARANCE PERMIT",
+        invoice_no="OD5I458006S",
+        other_reference="",
+        confidence=0.9,
+        provider="test",
+    )
+    grounded, gdetail = ground_vision_header_result(result2, text)
+    assert grounded.invoice_no == ""
+    assert "invoice_no" in gdetail["cleared"]
+    assert gdetail.get("invoice_no_cleared_reason") == "non_invoice_labeled_id"
+
+
+def test_ground_skips_thin_text() -> None:
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
     result = VisionHeaderExtractResult(
         success=True,
         document_heading="TAX INVOICE",

@@ -105,6 +105,9 @@ _LEGEND_FONT = Font(size=9, color="334455")
 _SINGLE_HYPERLINK_RE = re.compile(
     r'^=HYPERLINK\("((?:[^"]|"")*)","((?:[^"]|"")*)"\)$'
 )
+_HYPERLINK_PART_RE = re.compile(
+    r'HYPERLINK\("((?:[^"]|"")*)","((?:[^"]|"")*)"\)'
+)
 
 _TITLE_ROW = 1
 _LEGEND_ROW = 2
@@ -628,6 +631,53 @@ def _parse_single_hyperlink_formula(value: str) -> tuple[str, str] | None:
     return url, label
 
 
+def _parse_hyperlink_entries(value: str) -> list[tuple[str, str]]:
+    """Parse one or more HYPERLINK(...) parts from an Excel formula cell."""
+    raw = (value or "").strip()
+    if not raw.startswith("=") or "HYPERLINK(" not in raw:
+        return []
+    return [
+        (_unescape_excel_csv(url), _unescape_excel_csv(label))
+        for url, label in _HYPERLINK_PART_RE.findall(raw)
+    ]
+
+
+def _expand_cell_slots(raw_value: str, link_mode: BundleCellFormat) -> list[str]:
+    """Split multi-doc link cells into one single-link value per slot (same row)."""
+    raw = raw_value or ""
+    if link_mode == "excel":
+        entries = _parse_hyperlink_entries(raw)
+        if len(entries) >= 2:
+            return [excel_hyperlink(url, label) for url, label in entries]
+        return [raw]
+    lines = [line.strip() for line in raw.split("\n") if line.strip()]
+    if len(lines) >= 2 and all(" | " in line for line in lines):
+        return lines
+    return [raw]
+
+
+def _logical_column_widths(
+    rows: list[list[str]],
+    *,
+    headers: list[str],
+    link_mode: BundleCellFormat,
+) -> list[int]:
+    widths = [1] * len(headers)
+    for row in rows:
+        for idx in range(len(headers)):
+            raw = row[idx] if idx < len(row) else ""
+            widths[idx] = max(widths[idx], len(_expand_cell_slots(raw, link_mode)))
+    return widths
+
+
+def _physical_header_labels(headers: list[str], widths: list[int]) -> list[str]:
+    labels: list[str] = []
+    for header, width in zip(headers, widths):
+        for slot in range(width):
+            labels.append(header if slot == 0 else f"{header} ({slot + 1})")
+    return labels
+
+
 def _autosize_columns(ws: Worksheet, *, max_width: int = 36) -> None:
     for col_idx in range(1, ws.max_column + 1):
         letter = get_column_letter(col_idx)
@@ -687,9 +737,6 @@ def _apply_data_cell_style(
             value = label
         else:
             cell.value = raw_value
-            if raw_value.startswith("=") and "HYPERLINK(" in raw_value:
-                # Multi-link formula cell — keep formula; Excel renders clickable links.
-                cell.font = _LINK_FONT
     else:
         cell.value = raw_value
         if " | " in raw_value and "/vault?" in raw_value:
@@ -723,15 +770,19 @@ def _write_bundle_sheet(
     cell_format: BundleCellFormat,
 ) -> None:
     headers = [*_FIXED_COLUMNS, *dynamic_headers]
+    widths = _logical_column_widths(rows, headers=headers, link_mode=cell_format)
+    physical_headers = _physical_header_labels(headers, widths)
+    col_count = len(physical_headers)
+
     _write_title_and_period(
         ws,
         title=title,
-        col_count=len(headers),
+        col_count=col_count,
         date_from=date_from,
         date_to=date_to,
     )
 
-    for col_idx, header in enumerate(headers, start=1):
+    for col_idx, header in enumerate(physical_headers, start=1):
         cell = ws.cell(row=_HEADER_ROW, column=col_idx, value=header)
         cell.fill = _HEADER_FILL
         cell.font = _HEADER_FONT
@@ -741,24 +792,31 @@ def _write_bundle_sheet(
     for row_offset, row in enumerate(rows):
         excel_row = _FIRST_DATA_ROW + row_offset
         zebra = row_offset % 2 == 1
-        for col_idx, header in enumerate(headers, start=1):
-            raw = row[col_idx - 1] if col_idx - 1 < len(row) else ""
-            cell = ws.cell(row=excel_row, column=col_idx)
-            _apply_data_cell_style(
-                cell,
-                header=header,
-                raw_value=raw,
-                zebra=zebra,
-                link_mode=cell_format,
-            )
+        physical_col = 1
+        for logical_idx, header in enumerate(headers):
+            raw = row[logical_idx] if logical_idx < len(row) else ""
+            slots = _expand_cell_slots(raw, cell_format)
+            width = widths[logical_idx]
+            if len(slots) < width:
+                slots = [*slots, *[""] * (width - len(slots))]
+            for slot_value in slots[:width]:
+                cell = ws.cell(row=excel_row, column=physical_col)
+                _apply_data_cell_style(
+                    cell,
+                    header=header,
+                    raw_value=slot_value,
+                    zebra=zebra,
+                    link_mode=cell_format,
+                )
+                physical_col += 1
 
     ws.freeze_panes = ws.cell(row=_FIRST_DATA_ROW, column=1)
     if rows:
-        last_col = get_column_letter(len(headers))
+        last_col = get_column_letter(col_count)
         last_row = _FIRST_DATA_ROW + len(rows) - 1
         ws.auto_filter.ref = f"A{_HEADER_ROW}:{last_col}{last_row}"
     else:
-        last_col = get_column_letter(max(len(headers), 1))
+        last_col = get_column_letter(max(col_count, 1))
         ws.auto_filter.ref = f"A{_HEADER_ROW}:{last_col}{_HEADER_ROW}"
 
     _autosize_columns(ws)

@@ -819,24 +819,18 @@ If it is absent or unclear, leave empty — never invent.
   the tenant as counterparty.
 - perspective is purchase | sales | unknown from the tenant's viewpoint (buyer AP vs seller AR).
 
-- invoice_no — the primary commercial / document identity number when clearly labeled.
-  Extract on ANY document kind when a label matches (examples, not a closed list):
-  Invoice No / Inv No / Tax Invoice No / Commercial Invoice No / Invoice Number,
-  Document No / Doc No (when it is THIS document's own ID in the header),
-  Permit No / Clearance No / Declaration No / Entry No (when that is THIS document's
-  own primary ID and no separate Invoice No is printed),
-  AWB / HAWB / BL / Bill of Lading No (when that is THIS document's own primary ID).
-  Priority when several IDs appear:
-  1) Explicit "Invoice No" / "Tax Invoice No" / "Commercial Invoice No" → invoice_no
-     (even on a packing list, permit, or transport doc that references an invoice).
-  2) Else THIS document's own primary ID label (Permit No / Declaration No / AWB No /
-     GRN No / Document No in the title/header block) → invoice_no.
-  3) Never leave invoice_no empty when a clearly labeled candidate from (1) or (2) is
-     legible on any provided page.
+- invoice_no — ONLY when clearly labeled as an invoice number. Accepted labels
+  (examples, not a closed list): Invoice No / Inv No / INV NO / Tax Invoice No /
+  Commercial Invoice No / Invoice Number. Extract on ANY document kind when such a
+  label appears (even on a packing list, permit, or transport doc that references
+  an invoice). NEVER put Permit No / Clearance No / Declaration No / Document No /
+  Doc No / Entry No / AWB / HAWB / BL / Bill of Lading / Unique Ref / GRN / DN into
+  invoice_no — leave invoice_no empty when no Invoice/INV label exists.
   If both "INVOICE NO" and "PROFORMA INVOICE NO" exist, put the commercial number in
   invoice_no and the proforma number in proforma_invoice_no — never merge them.
-  Copy the printed token as-is (leading zeros, hyphens, slashes). Empty only when no
-  labeled candidate exists or the token is unreadable.
+  Copy the printed token as-is (leading zeros, hyphens, slashes). Empty string when
+  no Invoice/INV-labeled candidate exists or the token is unreadable — do not invent
+  or substitute another document ID.
 
 - proforma_invoice_no is only when labeled as proforma / pro-forma invoice number;
   empty string if absent. Do not copy commercial invoice_no into this field.
@@ -847,9 +841,10 @@ If it is absent or unclear, leave empty — never invent.
   Identical values in both fields are wrong unless both labels truly appear on the page.
 - other_reference is any other business reference that is NOT already placed in
   invoice_no / proforma_invoice_no / po_reference / so_reference
-  (e.g. secondary GRN/DN/LC/packing-list/job/ref when invoice_no already holds the
-  primary Invoice No or document ID). Empty string if none. Do not dump the same
-  token into both invoice_no and other_reference.
+  (e.g. Permit No / Document No / AWB / BL / Unique Ref / GRN / DN / LC / job/ref
+  when no Invoice/INV label exists, or when invoice_no already holds a commercial
+  Invoice No). Empty string if none. Do not dump the same token into both
+  invoice_no and other_reference.
 
 
 ═══════════════════════════════════════════════
@@ -1023,12 +1018,12 @@ E3. Document is in a non-English language with no English anywhere → document_
     confidently inferable from structure (see canonical rules); fields (dates, totals,
     references) still extracted using the same disambiguation rules, translating only labels
     you're confident about (e.g. "Rechnungsnummer" = invoice number label), never the values.
-E4. Two numbers appear — one clearly labeled "Invoice No" (or Permit No / Document No as
-    THIS document's primary ID) and one unlabeled alphanumeric code elsewhere (e.g. an
-    internal batch/barcode ID) → use only the labeled one for invoice_no; the unlabeled
-    code goes in other_reference only if it's clearly a business reference (not a
-    barcode/routing artifact); otherwise omit it entirely. Never skip a labeled Invoice No
-    just because the document title is a permit, packing list, or transport form.
+E4. Two numbers appear — one clearly labeled "Invoice No" / "INV NO" and one labeled
+    Permit/Document/AWB/Unique Ref (or an unlabeled alphanumeric code) → invoice_no gets
+    only the Invoice/INV token; put Permit/Document/AWB/Unique Ref in other_reference.
+    Never skip a labeled Invoice No just because the document title is a permit, packing
+    list, or transport form. If there is no Invoice/INV label at all, leave invoice_no
+    empty — do not fill it with Permit/Document/AWB/Unique Ref.
 E5. Perspective cannot be determined because the tenant does not appear as either buyer or
     seller on the page (e.g. a customs authority certificate, or a third-party carrier
     document where the tenant is neither party) → perspective "unknown"; counterparty_name
@@ -1081,8 +1076,9 @@ Before emitting JSON, verify:
 - Every key from the required list is present, with empty string (not null, not omitted) for
   anything absent or unresolved.
 - You did not skip invoice_no / invoice_date / total / currency / po_reference / so_reference
-  merely because the document is not titled "Tax Invoice" — if a labeled value is on the
-  page, it must be in the matching key.
+  merely because the document is not titled "Tax Invoice" — if a labeled Invoice/INV value
+  is on the page, it must be in invoice_no; if only Permit/Doc/AWB/Unique Ref exists, leave
+  invoice_no empty and put that ID in other_reference.
 - total contains no currency symbol/code and no thousands separators.
 - invoice_no and proforma_invoice_no are not identical unless both were independently labeled.
 - po_reference and so_reference are not identical unless both were independently labeled.

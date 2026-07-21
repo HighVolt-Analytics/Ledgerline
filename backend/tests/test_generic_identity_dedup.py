@@ -490,12 +490,19 @@ def test_business_fingerprint_includes_document_role() -> None:
     """Invoice vs packing list sharing invoice_no must not share a fingerprint."""
     base = {"vendor": "Rashi Peripherals", "invoice_no": "6000000299"}
     inv_fp = compute_business_fingerprint({**base, "document_role": "invoice"})
-    pack_fp = compute_business_fingerprint({**base, "document_role": "packing_list"})
+    # Logistics roles need an instrument id (BOL) — shared invoice_no alone is dropped.
+    pack_fp = compute_business_fingerprint(
+        {**base, "document_role": "packing_list", "bol_no": "BOL-6000000299"}
+    )
     bare_fp = compute_business_fingerprint(base)
     assert inv_fp is not None and pack_fp is not None and bare_fp is not None
     assert inv_fp != pack_fp
     assert inv_fp != bare_fp
     assert pack_fp != bare_fp
+    # Packing list with only shared invoice_no must not build a colliding FP.
+    assert (
+        compute_business_fingerprint({**base, "document_role": "packing_list"}) is None
+    )
 
 
 def test_business_fingerprint_not_built_from_vendor_and_so_reference_only() -> None:

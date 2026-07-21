@@ -108,6 +108,8 @@ async def test_document_matrix(client: AsyncClient, db_session: AsyncSession) ->
     assert stages[0]["state"] in ("done", "pending", "fail", "skipped")
     assert rows[0]["flag"] == "Clean"
     assert rows[0]["payment_status"] in ("—", "Awaiting Payment", "On Hold", "Paid")
+    # List/matrix must not ship OCR bodies (memory / 504 under load).
+    assert rows[0]["invoice"].get("document_text") in (None, "")
 
 
 @pytest.mark.asyncio

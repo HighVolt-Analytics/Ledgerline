@@ -56,9 +56,9 @@ spec:
             failureThreshold: 3
           resources:
             requests:
-              cpu: 100m
-              memory: 512Mi
+              cpu: 250m
+              memory: 768Mi
             limits:
               cpu: "1"
-              # PDF/vision work (or Celery inline fallback) exceeds 1Gi and OOMKills → ingress 502.
-              memory: 1536Mi
+              # Matrix/list + occasional inline PDF/vision still spikes RSS; 1.5Gi OOMKilled → ingress 504.
+              memory: 2Gi

@@ -237,14 +237,14 @@ async def phase_vision_header_extract(
                     **reconcile_detail,
                     "text_source": text_source_detail,
                 }
-                # Safety net: if persist still left invoice_no empty, fill from text.
+                # Safety net: only fill from Invoice/INV labels — never Permit/Doc No.
                 if not (invoice.invoice_no or "").strip():
                     from app.services.extraction.invoice_no_sanitizer import (
-                        extract_invoice_no_from_text,
+                        extract_commercial_invoice_no_from_text,
                         sanitize_invoice_no_parts,
                     )
 
-                    recovered = extract_invoice_no_from_text(text or "")
+                    recovered = extract_commercial_invoice_no_from_text(text or "")
                     primary, _sec = sanitize_invoice_no_parts(recovered)
                     if primary:
                         invoice.invoice_no = primary

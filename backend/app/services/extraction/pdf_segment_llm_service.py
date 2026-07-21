@@ -232,34 +232,34 @@ def drop_blank_pages_from_segments(
     result: PdfSegmentResult,
     pages: list[PdfPageText],
 ) -> PdfSegmentResult:
-    """Omit blank pages from segment ranges; drop blank-only segments entirely."""
+    """Omit leading/trailing blanks; keep internal blanks inside a multi-page run.
+
+    Internal blanks must NOT split one instrument (Page 1–N with a blank mid-run)
+    into two segments — that causes over-split and same-role false duplicates.
+    Blank-only segments are dropped entirely.
+    """
     if not result.segments:
         return result
 
     cleaned: list[PdfDocumentSegment] = []
     changed = False
     for segment in sorted(result.segments, key=lambda s: s.start_page):
-        # Split on internal blanks into contiguous non-blank runs.
-        run_start: int | None = None
+        first_nonblank: int | None = None
+        last_nonblank: int | None = None
         for index in range(segment.start_page, segment.end_page + 1):
-            blank = page_is_blank_for_segment(pages[index])
-            if blank:
-                changed = True
-                if run_start is not None:
-                    cleaned.append(
-                        _clone_segment(segment, start_page=run_start, end_page=index - 1)
-                    )
-                    run_start = None
+            if page_is_blank_for_segment(pages[index]):
                 continue
-            if run_start is None:
-                run_start = index
-        if run_start is not None:
-            end = segment.end_page
-            if run_start != segment.start_page or end != segment.end_page:
-                changed = True
-            cleaned.append(_clone_segment(segment, start_page=run_start, end_page=end))
-        else:
-            changed = True  # entire segment was blank — dropped
+            if first_nonblank is None:
+                first_nonblank = index
+            last_nonblank = index
+        if first_nonblank is None or last_nonblank is None:
+            changed = True
+            continue
+        if first_nonblank != segment.start_page or last_nonblank != segment.end_page:
+            changed = True
+        cleaned.append(
+            _clone_segment(segment, start_page=first_nonblank, end_page=last_nonblank)
+        )
 
     if not changed:
         return result
@@ -296,8 +296,13 @@ def _should_merge_continuation(
     pages: list[PdfPageText],
 ) -> bool:
     """True when nxt continues prev (Page X of Y / continuation), any doc type."""
-    if nxt.start_page != prev.end_page + 1:
+    if nxt.start_page <= prev.end_page:
         return False
+    # Allow a blank-only gap between segments (common after blank omission).
+    if nxt.start_page != prev.end_page + 1:
+        gap = range(prev.end_page + 1, nxt.start_page)
+        if not gap or not all(page_is_blank_for_segment(pages[i]) for i in gap):
+            return False
 
     next_page = pages[nxt.start_page]
     if page_is_blank_for_segment(next_page):
@@ -309,33 +314,42 @@ def _should_merge_continuation(
     next_kind = _effective_page_kind(next_page.text or "") or nxt.heading_kind
     prev_kind = prev.heading_kind or _effective_page_kind(prev_page.text or "")
 
-    # Completed Page N of N (including 1 of 1) closes the prior run — never glue the next doc.
+    # Completed Page N of N closes the prior run — never glue the next instrument,
+    # even when the next visible page is a mid-run "Page 2 of N" of the same family
+    # (orphan page-1 / OCR drop of the real page 1).
     if po_prev and po_prev[0] == po_prev[1]:
-        if next_kind and prev_kind and not _kinds_same_family(prev_kind, next_kind):
-            return False
-        if po_next and po_next[0] == 1:
-            return False
+        return False
 
     if po_next and po_next[0] > 1:
-        # Never glue across document families even when Page X of Y looks sequential
-        # (e.g. AWB then invoice "Page : 2 of 2" after a mislabeled page 1).
+        # Never glue across document families.
         if next_kind and prev_kind and not _kinds_same_family(prev_kind, next_kind):
             return False
+        # Sequential Page X of Y within the same total → clear continuation.
         if po_prev and po_prev[1] == po_next[1] and po_next[0] >= po_prev[0] + 1:
             return True
-        if not next_kind or _kinds_same_family(prev_kind, next_kind):
-            return True
-        if po_prev and po_prev[1] == po_next[1]:
-            return True
+        # Untyped / thin OCR continuation: only merge when page-of totals match
+        # (or prev has no marker) AND kinds are compatible when both known.
+        if next_kind and prev_kind and not _kinds_same_family(prev_kind, next_kind):
+            return False
+        if po_prev is None:
+            # Previous page had no Page X of Y — do not assume a mid-page continues it
+            # unless kinds clearly match the same family.
+            return bool(next_kind and prev_kind and _kinds_same_family(prev_kind, next_kind))
+        if po_prev[1] == po_next[1]:
+            return not next_kind or not prev_kind or _kinds_same_family(prev_kind, next_kind)
+        return False
 
     if is_continuation_page(next_page.text or ""):
         if (
             next_kind
             and prev_kind
             and not _kinds_same_family(prev_kind, next_kind)
-            and (po_next is None or po_next[0] == 1)
         ):
             return False
+        # Explicit "(CONTINUATION PAGE)" without page-of — require compatible kinds
+        # when both sides are labeled.
+        if next_kind and prev_kind:
+            return _kinds_same_family(prev_kind, next_kind)
         return True
 
     return False
@@ -363,8 +377,26 @@ def _split_segments_on_type_changes(
             po_prev = parse_page_of_marker(prev_page.text or "")
             prior_completed = bool(po_prev and po_prev[0] == po_prev[1])
             if is_continuation_page(page.text or "") and not prior_completed:
-                # Strengthen open kind from continuation page title when useful.
                 cont_kind = _effective_page_kind(page.text or "")
+                # Orphan mid-pack page (Page 2 of N) with a strong title that conflicts
+                # with the open run must start a new segment — do not glue forever.
+                if (
+                    cont_kind
+                    and open_kind
+                    and not _kinds_same_family(open_kind, cont_kind)
+                ):
+                    changed = True
+                    out.append(
+                        _clone_segment(
+                            segment,
+                            start_page=run_start,
+                            end_page=index - 1,
+                            heading_kind=open_kind,
+                        )
+                    )
+                    run_start = index
+                    open_kind = cont_kind
+                    continue
                 if cont_kind and not open_kind:
                     open_kind = cont_kind
                 continue
@@ -453,15 +485,120 @@ def _merge_continuation_segments(
     )
 
 
+def _primary_identity_key(text: str, *, kind: str | None) -> str | None:
+    """Compact primary ref for same-kind identity splits (invoice_no / bol / tracking)."""
+    fields = page_identity_signature(
+        text,
+        page_kind_token=f"kind:{kind}" if kind else None,
+    )
+    if not fields:
+        return None
+    # Prefer document-number style keys over kind-only signatures.
+    for prefix in ("invoice_no=", "bol_no=", "freight_order_no=", "tracking_no="):
+        for part in fields.split("|"):
+            if part.startswith(prefix) and len(part) > len(prefix):
+                return part
+    return None
+
+
+def _split_same_kind_on_identity_change(
+    result: PdfSegmentResult,
+    pages: list[PdfPageText],
+) -> PdfSegmentResult:
+    """Split multi-page same-type runs when the primary instrument id changes.
+
+    Covers consecutive Seagate invoices glued because type detection found no
+    change, but invoice_no / BOL clearly differs on a non-continuation page.
+    Skipped when the pack was already segment-capped (remainder is intentionally
+    folded into the last segment).
+    """
+    if result.cap_exceeded:
+        return result
+    out: list[PdfDocumentSegment] = []
+    changed = False
+    for segment in sorted(result.segments, key=lambda s: s.start_page):
+        if segment.end_page <= segment.start_page:
+            out.append(segment)
+            continue
+        open_kind = segment.heading_kind or _effective_page_kind(
+            pages[segment.start_page].text or ""
+        )
+        open_key = _primary_identity_key(pages[segment.start_page].text or "", kind=open_kind)
+        run_start = segment.start_page
+        for index in range(segment.start_page + 1, segment.end_page + 1):
+            page = pages[index]
+            if page_is_blank_for_segment(page):
+                continue
+            po = parse_page_of_marker(page.text or "")
+            if po and po[0] > 1:
+                # Mid Page-of-N — strengthen open key from this page when useful.
+                page_key = _primary_identity_key(page.text or "", kind=open_kind)
+                if page_key and not open_key:
+                    open_key = page_key
+                continue
+            if is_continuation_page(page.text or ""):
+                continue
+            page_kind = _effective_page_kind(page.text or "") or open_kind
+            if page_kind and open_kind and not _kinds_same_family(open_kind, page_kind):
+                continue  # type splitter owns this
+            page_key = _primary_identity_key(page.text or "", kind=page_kind or open_kind)
+            if open_key and page_key and page_key != open_key:
+                changed = True
+                out.append(
+                    _clone_segment(
+                        segment,
+                        start_page=run_start,
+                        end_page=index - 1,
+                        heading_kind=open_kind,
+                    )
+                )
+                run_start = index
+                open_kind = page_kind or open_kind
+                open_key = page_key
+                continue
+            if page_key and not open_key:
+                open_key = page_key
+            if page_kind:
+                open_kind = page_kind
+        out.append(
+            _clone_segment(
+                segment,
+                start_page=run_start,
+                end_page=segment.end_page,
+                heading_kind=open_kind or segment.heading_kind,
+            )
+        )
+
+    if not changed:
+        return result
+    logger.info(
+        "pdf_segment_identity_split",
+        before=len(result.segments),
+        after=len(out),
+    )
+    method = result.segmentation_method
+    if "ident" not in method:
+        method = f"{method}+ident" if method else "ident"
+    return PdfSegmentResult(
+        segments=out,
+        detected_boundary_count=len(out),
+        segmentation_method=method,
+        llm_reasoning=result.llm_reasoning,
+        cap_exceeded=result.cap_exceeded,
+    )
+
+
 def refine_segment_boundaries(
     result: PdfSegmentResult,
     pages: list[PdfPageText],
 ) -> PdfSegmentResult:
-    """Fix oversplits/mis-glues, relabel kinds from page text, omit blank pages."""
+    """Fix oversplits/mis-glues, omit blanks, re-merge Page-of-N, relabel kinds."""
     refined = _split_segments_on_type_changes(result, pages)
+    # Drop blanks before continuation merge so blank-only gaps can be bridged.
+    refined = drop_blank_pages_from_segments(refined, pages)
     refined = _merge_continuation_segments(refined, pages)
-    refined = _relabel_segments_from_page_text(refined, pages)
-    return drop_blank_pages_from_segments(refined, pages)
+    refined = _split_same_kind_on_identity_change(refined, pages)
+    return _relabel_segments_from_page_text(refined, pages)
 
 
 # Prefer the public name; keep old alias for callers/tests.

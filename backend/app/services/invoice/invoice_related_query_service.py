@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
@@ -16,19 +16,52 @@ async def audit_logs_for_invoice_ids(
     invoice_ids: list[int],
     *,
     tenant_id: uuid.UUID,
+    per_invoice_limit: int | None = None,
 ) -> dict[int, list[AuditLog]]:
+    """Load audit logs for many invoices.
+
+    When ``per_invoice_limit`` is set, only the newest N rows per invoice are
+    returned (windowed). Matrix list uses this so page_size=100 does not pull
+    unbounded audit history into API memory.
+    """
     if not invoice_ids:
         return {}
-    rows = (
-        await db.execute(
-            select(AuditLog)
+    if per_invoice_limit is None or per_invoice_limit <= 0:
+        rows = (
+            await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.invoice_id.in_(invoice_ids),
+                    AuditLog.tenant_id == tenant_id,
+                )
+                .order_by(AuditLog.created_at.desc())
+            )
+        ).scalars().all()
+    else:
+        ranked = (
+            select(
+                AuditLog.id.label("audit_id"),
+                func.row_number()
+                .over(
+                    partition_by=AuditLog.invoice_id,
+                    order_by=AuditLog.created_at.desc(),
+                )
+                .label("rn"),
+            )
             .where(
                 AuditLog.invoice_id.in_(invoice_ids),
                 AuditLog.tenant_id == tenant_id,
             )
-            .order_by(AuditLog.created_at.desc())
+            .subquery()
         )
-    ).scalars().all()
+        rows = (
+            await db.execute(
+                select(AuditLog)
+                .join(ranked, AuditLog.id == ranked.c.audit_id)
+                .where(ranked.c.rn <= per_invoice_limit)
+                .order_by(AuditLog.created_at.desc())
+            )
+        ).scalars().all()
     grouped: dict[int, list[AuditLog]] = {i: [] for i in invoice_ids}
     for row in rows:
         if row.invoice_id is not None:

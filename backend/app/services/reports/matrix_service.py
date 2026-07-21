@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentStatus
@@ -21,6 +22,9 @@ from app.services.invoice.invoice_related_query_service import (
 from app.services.invoice.invoice_response_service import invoice_to_response
 from app.services.invoice.pipeline_stages import build_matrix_cells
 from app.services.integration.publish_service import published_invoice_ids
+
+# Cap audit rows per invoice for matrix stages (latest-first). Full OCR text is never needed.
+_MATRIX_AUDIT_PER_INVOICE = 60
 
 
 def _parse_validation_results(raw: str | list | None) -> list[dict[str, Any]]:
@@ -251,6 +255,9 @@ async def fetch_document_matrix(
 ) -> MatrixListResult:
     stmt = (
         select(Invoice)
+        # List/matrix never need OCR body — loading it for page_size=100 OOMs the API
+        # pod (504 from ingress while the container is restarting).
+        .options(defer(Invoice.document_text))
         .where(Invoice.tenant_id == tenant_id)
         .order_by(Invoice.created_at.desc(), Invoice.id.desc())
     )
@@ -280,7 +287,10 @@ async def fetch_document_matrix(
 
     invoice_ids = [inv.id for inv in invoices]
     audit_by_id = await audit_logs_for_invoice_ids(
-        db, invoice_ids, tenant_id=tenant_id
+        db,
+        invoice_ids,
+        tenant_id=tenant_id,
+        per_invoice_limit=_MATRIX_AUDIT_PER_INVOICE,
     )
     payments_by_id = await payments_for_invoice_ids(db, tenant_id, invoice_ids)
     published_ids = await published_invoice_ids(db, invoice_ids, tenant_id=tenant_id)
@@ -302,6 +312,7 @@ async def fetch_document_matrix(
                     inv,
                     published_to_ledger=inv.id in published_ids,
                     audit_logs=audit_by_id.get(inv.id, []),
+                    for_list=True,
                 ),
                 stages=build_matrix_cells(inv, audit_by_id.get(inv.id, [])),
                 flag=flag,

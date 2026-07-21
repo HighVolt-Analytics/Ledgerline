@@ -170,7 +170,7 @@ def test_import_dossier_page_kinds_segment() -> None:
     assert segments[4].end_page == 5
 
 
-def test_segment_cap_exceeded_collapses_to_single_segment() -> None:
+def test_segment_cap_exceeded_keeps_prefix_and_folds_remainder() -> None:
     pages = [
         _page(i, f"TAX INVOICE\nInvoice No: INV-{i}\nTotal $10")
         for i in range(25)
@@ -178,4 +178,11 @@ def test_segment_cap_exceeded_collapses_to_single_segment() -> None:
     result = segment_pdf_pages(pages, max_segments=5)
     assert result.cap_exceeded is True
     assert result.detected_boundary_count == 25
-    assert len(result.segments) == 1
+    assert len(result.segments) == 5
+    assert result.segments[0].start_page == 0
+    assert result.segments[0].end_page == 0
+    assert result.segments[3].start_page == 3
+    assert result.segments[3].end_page == 3
+    # Remainder of the pack is folded into the last segment (not collapsed to one doc).
+    assert result.segments[4].start_page == 4
+    assert result.segments[4].end_page == 24

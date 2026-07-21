@@ -244,11 +244,34 @@ def _has_strong_identity(normalized: dict[str, str]) -> bool:
 
 def compute_business_fingerprint(fields: dict[str, str]) -> str | None:
     """Stable SHA256 over normalized identity fields."""
-    normalized = normalize_identity_fields(fields)
+    prepared = _fields_for_business_fingerprint(fields)
+    normalized = normalize_identity_fields(prepared)
     if not normalized or not _has_strong_identity(normalized):
         return None
     payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
     return compute_sha256_bytes(payload.encode("utf-8"))
+
+
+_LOGISTICS_ROLES = frozenset(
+    {"packing_list", "transport_doc", "grn", "certificate_of_origin"}
+)
+_LOGISTICS_PRIMARY_KEYS = frozenset({"bol_no", "freight_order_no", "tracking_no", "hawb_no"})
+
+
+def _fields_for_business_fingerprint(fields: dict[str, str]) -> dict[str, str]:
+    """Role-aware identity for FP — avoid same-upload packing-list collisions on shared invoice_no."""
+    out = dict(fields)
+    role = (out.get("document_role") or "").strip().lower()
+    if role not in _LOGISTICS_ROLES:
+        return out
+    has_logistics = any(k in out and (out.get(k) or "").strip() for k in _LOGISTICS_PRIMARY_KEYS)
+    if has_logistics:
+        # Cross-ref invoice numbers must not dominate when a BOL/tracking id exists.
+        out.pop("invoice_no", None)
+    else:
+        # Shared shipment invoice_no alone collapses distinct packing lists / PODs.
+        out.pop("invoice_no", None)
+    return out
 
 
 def extract_identity_fields_from_pages(

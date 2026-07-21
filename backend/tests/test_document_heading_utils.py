@@ -119,6 +119,17 @@ def test_invoice_page1_without_title_word_uses_layout_not_bol_field() -> None:
     assert infer_page_document_kind(text) == "invoice"
 
 
+def test_thin_seagate_page1_shipping_selling_org_is_invoice() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = (
+        "SHIPPING ORGANIZATION\nSeagate Technology\n"
+        "SELLING ORGANIZATION\nSeagate Singapore\n"
+        "Page : 1 of 2\nBILL OF LADING NO\n9064997073\n"
+    )
+    assert infer_page_document_kind(text) == "invoice"
+
+
 def test_packing_list_page1_without_title_uses_handling_unit_layout() -> None:
     from app.services.extraction.document_heading_utils import infer_page_document_kind
 

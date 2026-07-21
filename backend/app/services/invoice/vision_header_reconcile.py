@@ -259,9 +259,12 @@ def _invoice_no_soft_grounded(value: str, text: str) -> bool:
 
 
 def _recover_invoice_no_from_text(text: str | None) -> str:
-    from app.services.extraction.invoice_no_sanitizer import extract_invoice_no_from_text
+    """Commercial Invoice/INV labels only — never Permit/Doc/AWB."""
+    from app.services.extraction.invoice_no_sanitizer import (
+        extract_commercial_invoice_no_from_text,
+    )
 
-    return (extract_invoice_no_from_text(text or "") or "").strip()
+    return (extract_commercial_invoice_no_from_text(text or "") or "").strip()
 
 
 _PERMIT_NO_LINE = re.compile(
@@ -269,6 +272,19 @@ _PERMIT_NO_LINE = re.compile(
 )
 _UNIQUE_REF_LINE = re.compile(
     r"(?im)(?:Unique\s*Ref(?:erence)?)\s*[:\s#]*([A-Z0-9][A-Z0-9\-/\s]{4,80})"
+)
+_NON_INVOICE_ID_LINE = re.compile(
+    r"(?im)(?:"
+    r"Permit\s*(?:No\.?|Number|#)|"
+    r"Clearance\s*(?:No\.?|Number|#)|"
+    r"Declaration\s*(?:No\.?|Number|#)|"
+    r"Document\s*(?:No\.?|Number|#)|"
+    r"Doc\.?\s*(?:No\.?|#)|"
+    r"Unique\s*Ref(?:erence)?|"
+    r"(?:Master\s+)?AWB\s*(?:No\.?|Number|#)?|"
+    r"HAWB\s*(?:No\.?|Number|#)?|"
+    r"(?:Bill\s+of\s+Lading|B/?L|BOL)\s*(?:No\.?|Number|#)?"
+    r")\s*[:\s#]*([A-Z0-9][A-Z0-9\-/\s]{2,80})"
 )
 
 
@@ -292,14 +308,32 @@ def _looks_like_unique_ref_blob(value: str | None) -> bool:
     return bool(re.match(r"^[A-Z0-9]{6,}\s+\d{8}\s+\d{2,}$", token, re.I))
 
 
+def _norm_id_token(value: str | None) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def _is_non_invoice_labeled_id(value: str | None, text: str | None) -> bool:
+    """True when value matches a Permit/Doc/Unique Ref/AWB/BL labeled token."""
+    needle = _norm_id_token(value)
+    if len(needle) < 4:
+        return False
+    for match in _NON_INVOICE_ID_LINE.finditer(text or ""):
+        candidate = _norm_id_token(match.group(1))
+        if not candidate:
+            continue
+        if needle == candidate or needle in candidate or candidate in needle:
+            return True
+    return False
+
+
 def enrich_vision_header_refs_from_text(
     result: Any,
     text: str | None,
 ) -> tuple[Any, dict[str, Any]]:
     """Fill invoice_no / other_reference from labeled PDF text when missing.
 
-    Prefer commercial INV NO for invoice_no; keep Permit No in other_reference when
-    invoice_no already holds a different commercial number.
+    ``invoice_no`` only from Invoice/INV labels. Permit No goes to other_reference
+    (including when no commercial invoice number exists).
     """
     from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
 
@@ -314,6 +348,12 @@ def enrich_vision_header_refs_from_text(
     recovered_inv = _recover_invoice_no_from_text(text)
     permit = _recover_permit_no_from_text(text)
 
+    # Drop permit/doc/AWB etc. that vision incorrectly put in invoice_no.
+    if inv and not recovered_inv and _is_non_invoice_labeled_id(inv, text):
+        updates["invoice_no"] = ""
+        inv = ""
+        detail["filled"].append("invoice_no_cleared_non_invoice_id")
+
     if not inv and recovered_inv:
         updates["invoice_no"] = recovered_inv
         inv = recovered_inv
@@ -325,13 +365,13 @@ def enrich_vision_header_refs_from_text(
 
     prefer_permit_as_other = bool(
         permit
-        and inv
-        and permit.upper() != inv.upper()
         and (
             not other
             or _looks_like_unique_ref_blob(other)
             or (unique_ref and other.upper() == unique_ref.upper())
+            or (inv and other.upper() == inv.upper())
         )
+        and (not inv or permit.upper() != inv.upper())
     )
     if prefer_permit_as_other:
         updates["other_reference"] = permit
@@ -358,9 +398,9 @@ def ground_vision_header_result(
     truth. ``canonical_document_type`` and ``perspective`` are not grounded —
     they are normalized / inferred labels, not literal page tokens.
 
-    ``invoice_no`` is recovered from labeled PDF text (INV NO / Permit No) when
-    vision left it empty or grounding would clear a value that OCR text supports
-    under a softer match.
+    ``invoice_no`` is recovered only from labeled Invoice/INV text when vision
+    left it empty or grounding would clear a value that OCR text supports under
+    a softer match. Permit/Doc/AWB numbers are never recovered into invoice_no.
     """
     from app.services.extraction.field_grounding_service import (
         _date_grounded_in_ocr,
@@ -429,10 +469,16 @@ def ground_vision_header_result(
             recovered.append("invoice_no")
             detail["invoice_no_vision_cleared"] = vision_inv
             detail["invoice_no_prefer_commercial"] = commercial_inv
+        elif not commercial_inv and _is_non_invoice_labeled_id(vision_inv, raw):
+            # Soft-grounded but it's a Permit/Doc/AWB/Unique Ref — not invoice_no.
+            updates["invoice_no"] = ""
+            cleared.append("invoice_no")
+            detail["invoice_no_vision_cleared"] = vision_inv
+            detail["invoice_no_cleared_reason"] = "non_invoice_labeled_id"
         else:
             kept.append("invoice_no")
     elif vision_inv:
-        # Vision value not corroborated — try labeled text recovery before clearing.
+        # Vision value not corroborated — try labeled Invoice/INV recovery before clearing.
         recovered_inv = _recover_invoice_no_from_text(raw)
         if recovered_inv:
             updates["invoice_no"] = recovered_inv

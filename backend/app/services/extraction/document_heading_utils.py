@@ -54,7 +54,8 @@ _PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"\bTAX\s+INVOICE\b", re.I), "tax_invoice"),
     (re.compile(r"\bCOMMERCIAL\s+INVOICE\b", re.I), "commercial_invoice"),
     (re.compile(r"\bPRO[\s-]?FORMA(?:\s+INVOICE)?\b", re.I), "proforma"),
-    (re.compile(r"\bINVOICE\b", re.I), "invoice"),
+    # Avoid field labels like "Invoice No:" on packing lists / AWBs.
+    (re.compile(r"\bINVOICE\b(?!\s*no\b)", re.I), "invoice"),
     (re.compile(r"\bCARGO\s+CLEARANCE\s+PERMIT\b", re.I), "customs_permit"),
     (re.compile(r"\bCUSTOMS?\s+(?:ENTRY|DECLARATION)\b", re.I), "customs_permit"),
     # Avoid field labels like "Packing List No:" on invoices (same idea as Invoice No).
@@ -421,6 +422,17 @@ def _layout_kind_from_cues(text: str) -> HeadingKind | None:
         return "packing_list"
     invoice_hits = sum(1 for p in _INVOICE_LAYOUT_CUES if p.search(blob))
     if invoice_hits >= 2:
+        return "invoice"
+    # Thin Seagate page-1: Shipping+Selling org, or Selling+Freight Order, is enough.
+    has_shipping = bool(re.search(r"\bSHIPPING\s+ORGANIZATION\b", blob, re.I))
+    has_selling = bool(re.search(r"\bSELLING\s+ORGANIZATION\b", blob, re.I))
+    has_freight = bool(re.search(r"\bFREIGHT\s+ORDER\b", blob, re.I))
+    has_seagate_inv = bool(re.search(r"(?m)^\s*9300\d{6}\s*$", blob)) or bool(
+        re.search(r"\bINVOICE\s+9300\d{6}\b", blob, re.I)
+    )
+    if (has_shipping and has_selling) or (has_selling and has_freight) or (
+        invoice_hits >= 1 and has_seagate_inv
+    ):
         return "invoice"
     return None
 
