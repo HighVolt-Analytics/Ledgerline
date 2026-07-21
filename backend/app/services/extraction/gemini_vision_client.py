@@ -113,8 +113,11 @@ async def probe_understand_gemini(images: list[bytes]) -> dict[str, Any] | None:
                 {
                     "task": "vision_understand",
                     "instruction": (
-                        "Decide whether you can clearly read and understand this "
-                        "finance document well enough to extract key fields later."
+                        "Decide whether you can clearly read this AP/trade document "
+                        "(invoice, packing list, GRN, Proof of Delivery, AWB/BOL, permit, "
+                        "or similar) well enough for later header extract. "
+                        "Do not require invoice amounts or line items. "
+                        "Say no only for blank, extreme blur, or non-document junk."
                     ),
                 }
             )

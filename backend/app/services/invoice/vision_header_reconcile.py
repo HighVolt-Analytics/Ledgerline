@@ -115,11 +115,15 @@ def reconcile_currency_from_text(
     """Return (iso_or_empty, currency_symbol_or_none, reason).
 
     Unambiguous OCR evidence wins over a wrong vision ISO. Ungrounded ISO
-    codes (e.g. invented AUD on bare ``$``) are cleared so the UI asks the user.
+    codes (e.g. invented AUD on bare ``$``) are cleared so the UI asks the user
+    — but only when text is rich enough to judge. Thin/junk text must not wipe a
+    vision ISO that the page images actually supported.
     """
     current = (current_currency or "").strip().upper()
     if current and not is_iso4217_currency(current):
         current = ""
+
+    text_usable = text_usable_for_header_grounding(text)
 
     iso, symbol = resolve_currency_from_ocr(text, existing_currency=None)
     if iso:
@@ -132,17 +136,28 @@ def reconcile_currency_from_text(
     if symbol and symbol in AMBIGUOUS_CURRENCY_SYMBOLS:
         if current and _iso_corroborated_in_text(current, text):
             return current, None, "keep_corroborated_vision_iso"
-        # Bare $ / ¥ with no ISO corroboration — never keep a guessed code.
-        return "", symbol, "cleared_uncorroborated_iso" if current else f"ambiguous_symbol_{symbol}"
+        # Bare $ / ¥ with no ISO corroboration — never keep a guessed code when
+        # text is rich enough to have shown a code if one existed.
+        if text_usable:
+            return (
+                "",
+                symbol,
+                "cleared_uncorroborated_iso" if current else f"ambiguous_symbol_{symbol}",
+            )
+        if current:
+            return current, None, "keep_vision_iso_thin_text"
+        return "", symbol, f"ambiguous_symbol_{symbol}"
 
     if symbol:
         return current, symbol, "symbol_only"
 
     if current and _iso_corroborated_in_text(current, text):
         return current, None, "keep_corroborated_vision_iso"
-    if current:
+    if current and text_usable:
         # Vision invented an ISO with no text support — leave empty for human pick.
         return "", None, "cleared_ungrounded_iso"
+    if current:
+        return current, None, "keep_vision_iso_thin_text"
     return "", None, "empty"
 
 
@@ -184,6 +199,55 @@ def prefer_grand_total_over_subtotal(
 
 def text_usable_for_header_grounding(text: str | None) -> bool:
     return len((text or "").strip()) >= _MIN_TEXT_CHARS_FOR_GROUNDING
+
+
+def resolve_header_grounding_text(path: Any) -> tuple[str, dict[str, Any]]:
+    """Local PDF text, then hybrid Azure DI when scans/images yield empty/thin text.
+
+    Understood-path vision skips full OCR, but header grounding still needs glyphs
+    and labeled INV NO / Permit No tokens — especially for JPG uploads and
+    image-only PDFs where pdfplumber returns nothing.
+    """
+    from pathlib import Path
+
+    from app.services.extraction.pdf_page_text_service import (
+        extract_local_pdf_plain_text,
+        extract_pdf_page_texts,
+    )
+
+    detail: dict[str, Any] = {"source": "local", "local_chars": 0, "final_chars": 0}
+    file_path = Path(path)
+    local = extract_local_pdf_plain_text(file_path) or ""
+    detail["local_chars"] = len(local.strip())
+    if text_usable_for_header_grounding(local):
+        detail["final_chars"] = detail["local_chars"]
+        return local, detail
+
+    try:
+        extraction = extract_pdf_page_texts(file_path)
+        hybrid = "\n".join(page.text or "" for page in extraction.pages)
+    except Exception as exc:
+        detail["source"] = "local_thin"
+        detail["hybrid_error"] = str(exc)[:200]
+        detail["final_chars"] = detail["local_chars"]
+        return local, detail
+
+    hybrid_chars = len((hybrid or "").strip())
+    detail["hybrid_chars"] = hybrid_chars
+    detail["incomplete_ocr_indices"] = list(extraction.incomplete_ocr_indices or ())
+    if text_usable_for_header_grounding(hybrid):
+        detail["source"] = "hybrid_di"
+        detail["final_chars"] = hybrid_chars
+        return hybrid, detail
+
+    # Prefer whichever is longer when both are thin.
+    if hybrid_chars > detail["local_chars"]:
+        detail["source"] = "hybrid_di_thin"
+        detail["final_chars"] = hybrid_chars
+        return hybrid or "", detail
+    detail["source"] = "local_thin"
+    detail["final_chars"] = detail["local_chars"]
+    return local, detail
 
 
 def _invoice_no_soft_grounded(value: str, text: str) -> bool:
@@ -363,8 +427,26 @@ def ground_vision_header_result(
     )
 
     vision_inv = (result.invoice_no or "").strip()
+    commercial_inv = ""
+    try:
+        from app.services.extraction.invoice_no_sanitizer import (
+            extract_commercial_invoice_no_from_text,
+        )
+
+        commercial_inv = (extract_commercial_invoice_no_from_text(raw) or "").strip()
+    except Exception:
+        commercial_inv = ""
+
     if vision_inv and _invoice_no_soft_grounded(vision_inv, raw):
-        kept.append("invoice_no")
+        # Prefer labeled commercial INV NO over a soft-grounded permit/booking/doc id
+        # (or OCR near-miss of the same invoice token).
+        if commercial_inv and commercial_inv.upper() != vision_inv.upper():
+            updates["invoice_no"] = commercial_inv
+            recovered.append("invoice_no")
+            detail["invoice_no_vision_cleared"] = vision_inv
+            detail["invoice_no_prefer_commercial"] = commercial_inv
+        else:
+            kept.append("invoice_no")
     elif vision_inv:
         # Vision value not corroborated — try labeled text recovery before clearing.
         recovered_inv = _recover_invoice_no_from_text(raw)

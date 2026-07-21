@@ -157,3 +157,15 @@ async def test_vision_understand_azure_di_fail_closed(tmp_path) -> None:
     assert result.can_understand is False
     assert result.fail_closed is True
     assert result.reason == "vision_provider_not_configured"
+
+
+def test_vision_understand_catalog_has_foundry_style_markers() -> None:
+    from app.services.prompt_registry.catalog import catalog_default_body
+    from app.services.prompt_registry.service import _catalog_upgrade_markers
+
+    body = catalog_default_body("vision.understand.system") or ""
+    assert "Proof of Delivery" in body
+    assert "Do not require invoice amounts or line items" in body
+    assert "Foundry-style readability gate" in body
+    markers = _catalog_upgrade_markers()["vision.understand.system"]
+    assert all(marker in body for marker in markers)

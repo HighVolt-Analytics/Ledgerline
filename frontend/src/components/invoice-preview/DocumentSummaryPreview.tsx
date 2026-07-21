@@ -675,7 +675,15 @@ export function DocumentSummaryPreview({
 
           {profile.pipelineKind === "vision_header"
 
-            ? "No header fields extracted yet — open Original to view the file, or reprocess after vision is configured."
+            ? (inv.evaluation_status ?? "").trim() === "vision_header_review"
+
+              ? "Header extract incomplete — open Original, fix Fields, then reprocess."
+
+              : (inv.evaluation_status ?? "").trim() === "vision_vaulted"
+
+                ? "Understood path vaulted — header fields should appear above; reprocess if Summary is empty."
+
+                : "No header fields extracted yet — open Original to view the file, or reprocess after vision is configured."
 
             : "No structured fields extracted yet — open Original to view the uploaded file, or check Document text above if OCR is available."}
 

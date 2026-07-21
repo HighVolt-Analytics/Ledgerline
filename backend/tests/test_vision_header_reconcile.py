@@ -32,11 +32,26 @@ def test_rupee_overrides_wrong_aud() -> None:
 def test_bare_dollar_clears_uncorroborated_aud() -> None:
     iso, symbol, reason = reconcile_currency_from_text(
         current_currency="AUD",
-        text="Rosty.ai x LML Content Invoice\nTotal $1,399.00\n50% Advance $699.50",
+        text=(
+            "Rosty.ai x LML Content Invoice\n"
+            "Total $1,399.00\n"
+            "50% Advance $699.50\n"
+            "Enough body text so grounding length threshold is satisfied for currency checks."
+        ),
     )
     assert iso == ""
     assert symbol == "$"
     assert "cleared" in reason
+
+
+def test_thin_text_keeps_vision_iso() -> None:
+    iso, symbol, reason = reconcile_currency_from_text(
+        current_currency="USD",
+        text="25-Jul-2025 17:36 IST",
+    )
+    assert iso == "USD"
+    assert symbol is None
+    assert "thin_text" in reason
 
 
 def test_bare_dollar_empty_stays_empty_with_symbol() -> None:
@@ -208,6 +223,61 @@ def test_enrich_sets_invoice_no_and_permit_other_ref() -> None:
     assert detail["skipped"] is True
     assert grounded.counterparty_name == "Only On Image Vendor"
     assert grounded.invoice_no == "INV-SCAN-1"
+
+
+def test_ground_prefers_commercial_inv_over_soft_grounded_permit() -> None:
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
+    text = (
+        "PERMIT NO : OD5I458006S\n"
+        "CARGO CLEARANCE PERMIT\n"
+        "SKYLIFT CONSOLIDATOR (PTE) LTD\n"
+        "UNITS (INV NO: 250970286) 5622.17\n"
+        "UNIQUE REF : 197700341D 20250905 5701\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="CARGO CLEARANCE PERMIT",
+        counterparty_name="SKYLIFT CONSOLIDATOR (PTE) LTD",
+        invoice_no="OD5I458006S",
+        other_reference="197700341D 20250905 5701",
+        confidence=0.9,
+        reason="x",
+        provider="test",
+    )
+    grounded, detail = ground_vision_header_result(result, text)
+    assert grounded.invoice_no == "250970286"
+    assert detail.get("invoice_no_prefer_commercial") == "250970286"
+    assert detail.get("invoice_no_vision_cleared") == "OD5I458006S"
+
+
+def test_ground_fixes_near_miss_invoice_no() -> None:
+    from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
+    from app.services.invoice.vision_header_reconcile import ground_vision_header_result
+
+    text = (
+        "MongoDB Limited\n"
+        "Invoice Number: 686b6174909b5272abdce254\n"
+        "Total US$37.08\n"
+        + ("padding " * 20)
+    )
+    result = VisionHeaderExtractResult(
+        success=True,
+        document_heading="Invoice",
+        counterparty_name="MongoDB Limited",
+        # Vision dropped a digit vs the labeled token.
+        invoice_no="686b617490b5272abdce254",
+        total=None,
+        currency="USD",
+        confidence=0.9,
+        reason="x",
+        provider="test",
+    )
+    grounded, detail = ground_vision_header_result(result, text)
+    assert grounded.invoice_no == "686b6174909b5272abdce254"
+    assert "invoice_no" in detail["recovered"]
 
 
 def test_vision_header_should_review_low_confidence() -> None:

@@ -208,6 +208,7 @@ async def phase_vision_header_extract(
         apply_vision_header_text_reconcile,
         enrich_vision_header_refs_from_text,
         ground_vision_header_result,
+        resolve_header_grounding_text,
     )
 
     with open_pdf_for_reading(invoice.raw_file_path, tenant_id=invoice.tenant_id) as path:
@@ -222,16 +223,20 @@ async def phase_vision_header_extract(
         enrich_detail: dict[str, object] = {}
         if result.success:
             try:
-                from app.services.extraction.pdf_page_text_service import (
-                    extract_local_pdf_plain_text,
+                text, text_source_detail = await asyncio.to_thread(
+                    resolve_header_grounding_text,
+                    path,
                 )
-
-                text = await asyncio.to_thread(extract_local_pdf_plain_text, path)
                 result, grounding_detail = ground_vision_header_result(result, text)
+                grounding_detail = {**grounding_detail, "text_source": text_source_detail}
                 result, enrich_detail = enrich_vision_header_refs_from_text(result, text)
                 persist_vision_header_to_invoice(invoice, result)
-                # Lightweight local text — fix ₹→INR / S$→SGD, clear bare-$, upgrade totals.
+                # Text grounding — fix ₹→INR / S$→SGD, clear bare-$, upgrade totals.
                 reconcile_detail = apply_vision_header_text_reconcile(invoice, text)
+                reconcile_detail = {
+                    **reconcile_detail,
+                    "text_source": text_source_detail,
+                }
                 # Safety net: if persist still left invoice_no empty, fill from text.
                 if not (invoice.invoice_no or "").strip():
                     from app.services.extraction.invoice_no_sanitizer import (

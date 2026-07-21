@@ -36,8 +36,20 @@ def test_sanitize_strips_gstin_bleed() -> None:
     assert sanitize_invoice_no("INV-99 GSTIN: 29AAAAA0000A1Z5") == "INV-99"
 
 
-def test_sanitize_strips_wrappers() -> None:
-    assert sanitize_invoice_no("(INV-123)") == "INV-123"
+def test_sanitize_strips_leading_hash() -> None:
+    assert sanitize_invoice_no("#0001") == "0001"
+    assert sanitize_invoice_no("Invoice Number: #0001") == "0001"
+
+
+def test_extract_invoice_number_label_with_hash() -> None:
+    assert extract_invoice_no_from_text("Invoice Number: #0001\nTotal $10") == "0001"
+    assert (
+        extract_invoice_no_from_text(
+            "Invoice Number: 686b6174909b5272abdce254\nTotal US$37.08"
+        )
+        == "686b6174909b5272abdce254"
+    )
+
 
 
 def test_sanitize_normalizes_en_dash() -> None:

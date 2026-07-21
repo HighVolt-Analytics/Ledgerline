@@ -119,6 +119,13 @@ def _catalog_upgrade_markers() -> dict[str, tuple[str, ...]]:
 
     return {
         "vision.header_extract.system": VISION_HEADER_PROMPT_MARKERS,
+        "vision.understand.system": (
+            "Foundry-style readability gate",
+            "Proof of Delivery",
+            "Do not require invoice amounts or line items",
+            "Do not reject a readable shipping, delivery, packing, or receipt document",
+            "Do not use a catalogue",
+        ),
         "llm.currency.system": (
             "You are a Currency Detection Agent",
             "ZERO tolerance for error",

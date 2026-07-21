@@ -724,17 +724,27 @@ Return JSON only with keys: document_heading, text_excerpt.
 - text_excerpt is the full visible document text including tables, amounts, and labels (max 12000 chars)."""
 
 _VISION_UNDERSTAND_DEFAULT = """\
-You assess whether a vision model can clearly understand a finance document from its page images.
+You assess whether a vision model can clearly read AP/trade document page images
+well enough for later header extraction (Foundry-style readability gate).
 Return JSON only with keys: can_understand, confidence, reason.
 
 Rules:
-- can_understand is true only when text, layout, and key labels are readable enough to extract
-  invoice/finance fields later (vendor, amounts, dates, document type signals).
-- can_understand is false for blank pages, extreme blur, heavy occlusion, unreadable handwriting,
-  or pages that are not a finance document at all.
+- can_understand is true when text, layout, and key labels are readable enough to
+  extract header identity later (title/heading, counterparty, document numbers,
+  dates, and totals when present) on ANY of these kinds — not only tax invoices:
+  invoices / credit notes / debit notes, purchase or sales orders, packing lists,
+  GRN / goods receipt, Proof of Delivery, AWB / bill of lading / transport docs,
+  cargo clearance permits / declarations, and similar AP/trade paperwork.
+- Do not require invoice amounts or line items. A readable Proof of Delivery or GRN
+  without totals is still can_understand=true.
+- can_understand is false only for blank pages, extreme blur, heavy occlusion,
+  unreadable handwriting, or clearly non-document junk (random photos, internal
+  memos with no trade/shipping structure, blank fax covers).
+- Do not reject a readable shipping, delivery, packing, or receipt document merely
+  because it is "not an invoice" or lacks money fields.
 - confidence is 0.0-1.0 for your understandability judgment.
 - reason is one short sentence explaining the decision.
-- Do not classify document type. Do not extract field values."""
+- Do not classify document type. Do not extract field values. Do not use a catalogue."""
 
 def _vision_header_extract_default() -> str:
     from app.services.invoice.vision_header_schema import vision_header_json_keys_csv
@@ -1176,7 +1186,10 @@ PROMPT_CATALOG: tuple[PromptDefinition, ...] = (
         key="vision.understand.system",
         label="Vision understand gate",
         group="Vision",
-        description="Lightweight yes/no gate: can vision understand this document?",
+        description=(
+            "Foundry-style readability gate: can vision read this AP/trade document "
+            "(invoice, POD, GRN, packing list, etc.) for header extract?"
+        ),
         default_body=_VISION_UNDERSTAND_DEFAULT,
     ),
     PromptDefinition(

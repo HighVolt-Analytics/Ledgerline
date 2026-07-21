@@ -1610,7 +1610,11 @@ export function InvoiceDetailDrawer({
                         ) : null}
                       <p className="text-sm text-muted-foreground">
                         {isVisionHeaderPipelineSummary(inv)
-                          ? "Vision header path — waiting for header fields. Reprocess after vision extract is available."
+                          ? (inv.evaluation_status ?? "").trim() === "vision_header_review"
+                            ? "Vision header needs review — complete Fields, then reprocess if needed."
+                            : (inv.evaluation_status ?? "").trim() === "vision_vaulted"
+                              ? "Understood path complete — vaulted with header fields only (no OCR / DT extract)."
+                              : "Vision header path — open Summary for extracted header fields, or reprocess if they are empty."
                           : classificationConfirmRequired
                           ? "Document type needs review. Confirm or change DT above, then reprocess."
                           : !resolvedDocumentTypeCode

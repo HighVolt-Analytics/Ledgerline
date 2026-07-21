@@ -27,7 +27,9 @@ _LEADING_LABEL = re.compile(
 _INVOICE_NO_TIGHT = re.compile(
     r"(?:(?<!Proforma\s)(?<!PROFORMA\s)Invoice\s*(?:No\.?|Number|#)|"
     r"Inv\.?\s*(?:No\.?|Number|#)|"
-    r"Inv\.?\s*#|Invoice\s*ID)\s*[:\s#]*"
+    r"Inv\.?\s*#|Invoice\s*ID|"
+    r"INV\s*NO)\s*[:\s#]*"
+    r"#?"
     r"([A-Z0-9][A-Z0-9\-/_]{2,})",
     re.I,
 )
@@ -97,11 +99,14 @@ def _cleanup_token(value: str) -> str:
     token = _LEADING_LABEL.sub("", token).strip()
     token = _INVOICE_NO_BLEED.sub("", token).strip()
     token = _strip_wrappers(token)
-    token = token.strip(" .,;:/")
+    # Strip decorative # / punctuation wrappers (printed "Invoice Number: #0001").
+    token = token.strip(" .,;:/#")
+    if token.startswith("#"):
+        token = token.lstrip("#").strip()
     if len(token) > _MAX_TOKEN_LEN and re.search(r"[\s,;]", token):
         parts = re.split(r"[\s,;]+", token)
         token = parts[0] if parts else token[:_MAX_TOKEN_LEN]
-    return token.strip()
+    return token.strip(" .,;:/#")
 
 
 def is_plausible_invoice_no(value: str | None) -> bool:
@@ -166,17 +171,27 @@ def extract_invoice_no_from_text(text: str) -> str | None:
     """
     if not text or not text.strip():
         return None
+    commercial = extract_commercial_invoice_no_from_text(text)
+    if commercial:
+        return commercial
+    match = _PERMIT_OR_DOC_NO.search(text)
+    if match:
+        candidate = sanitize_invoice_no(match.group(1))
+        if candidate:
+            return candidate
+    return None
+
+
+def extract_commercial_invoice_no_from_text(text: str) -> str | None:
+    """Only Invoice No / INV NO / proforma-labeled tokens — never Permit/Doc No."""
+    if not text or not text.strip():
+        return None
     for pattern in (_INVOICE_NO_TIGHT, _PROFORMA_REF):
         match = pattern.search(text)
         if match:
             candidate = sanitize_invoice_no(match.group(1))
             if candidate:
                 return candidate
-    match = _PERMIT_OR_DOC_NO.search(text)
-    if match:
-        candidate = sanitize_invoice_no(match.group(1))
-        if candidate:
-            return candidate
     return None
 
 
