@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
@@ -29,10 +30,10 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_JSON_FENCE_RE = re.compile(
-    r"```(?:json)?\s*(\{.*?\})\s*```",
-    re.DOTALL | re.IGNORECASE,
-)
+# Azure Claude Sonnet (Foundry Messages API) rejects assistant prefill with 400:
+# "This model does not support assistant message prefill."
+_FENCE_OPEN_RE = re.compile(r"^```(?:json)?\s*", re.IGNORECASE)
+_FENCE_CLOSE_RE = re.compile(r"\s*```\s*$")
 
 
 def is_claude_vision_available() -> bool:
@@ -55,30 +56,26 @@ def _messages_url() -> str:
 
 
 def _parse_json_text(text: str) -> dict[str, Any] | None:
+    """Parse a JSON object from model text (fences, prefill, trailing prose)."""
     raw = (text or "").strip()
     if not raw:
         return None
+    if raw.startswith("```"):
+        raw = _FENCE_OPEN_RE.sub("", raw)
+        raw = _FENCE_CLOSE_RE.sub("", raw).strip()
     try:
         parsed = json.loads(raw)
         return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         pass
-    match = _JSON_FENCE_RE.search(raw)
-    if match:
-        try:
-            parsed = json.loads(match.group(1))
-            return parsed if isinstance(parsed, dict) else None
-        except json.JSONDecodeError:
-            pass
     start = raw.find("{")
-    end = raw.rfind("}")
-    if start >= 0 and end > start:
-        try:
-            parsed = json.loads(raw[start : end + 1])
-            return parsed if isinstance(parsed, dict) else None
-        except json.JSONDecodeError:
-            return None
-    return None
+    if start < 0:
+        return None
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(raw[start:])
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
 
 
 def _image_content_blocks(images: list[bytes]) -> list[dict[str, Any]]:
@@ -100,6 +97,17 @@ def _image_content_blocks(images: list[bytes]) -> list[dict[str, Any]]:
     return blocks
 
 
+def _response_text(body: dict[str, Any]) -> str:
+    parts = body.get("content") or []
+    text_chunks: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "text" and part.get("text"):
+            text_chunks.append(str(part["text"]))
+    return "\n".join(text_chunks).strip()
+
+
 async def _vision_json(
     *,
     system: str,
@@ -107,6 +115,19 @@ async def _vision_json(
     images: list[bytes],
     timeout_seconds: int,
 ) -> dict[str, Any] | None:
+    """Call Claude Messages API with Foundry-style 429 retry + JSON hardening."""
+    from app.services.extraction.azure_openai_client import (
+        _is_retryable_openai_error,
+        _retry_sleep_seconds,
+    )
+    from app.services.extraction.azure_openai_throttle import (
+        azure_openai_cooldown_remaining_seconds,
+        azure_openai_cooling_down,
+        azure_openai_slot_async,
+        note_azure_openai_rate_limited,
+        note_azure_openai_success,
+    )
+
     settings = get_settings()
     if not settings.azure_claude_vision_configured:
         return None
@@ -115,6 +136,18 @@ async def _vision_json(
     if not url:
         return None
 
+    # Share the vision circuit with Foundry so batch reprocess backs off together.
+    if azure_openai_cooling_down("vision"):
+        remaining = azure_openai_cooldown_remaining_seconds("vision")
+        wait_for = min(remaining, max(settings.azure_openai_cooldown_seconds, 15.0))
+        if wait_for > 0:
+            logger.info(
+                "claude_vision_wait_circuit",
+                remaining_seconds=round(remaining, 1),
+                wait_seconds=round(wait_for, 1),
+            )
+            await asyncio.sleep(wait_for)
+
     deployment = settings.azure_ai_visualization_deployment.strip() or "claude-sonnet-4-6"
     anthropic_version = (
         settings.azure_ai_visualization_anthropic_version.strip() or "2023-06-01"
@@ -122,17 +155,20 @@ async def _vision_json(
     content: list[dict[str, Any]] = _image_content_blocks(images)
     content.append({"type": "text", "text": user_text})
 
-    # Claude does not use OpenAI response_format; require JSON in the system prompt.
+    # No OpenAI response_format / no assistant prefill (Azure Claude rejects prefill).
     system_with_json = (
         f"{system.rstrip()}\n\n"
-        "Return ONLY a valid JSON object. No markdown fences, no commentary."
+        "Return ONLY a single valid JSON object. "
+        "No markdown fences, no commentary, no trailing text."
     )
     payload: dict[str, Any] = {
         "model": deployment,
         "max_tokens": 4096,
-        "temperature": 0.1,
+        "temperature": 0.0,
         "system": system_with_json,
-        "messages": [{"role": "user", "content": content}],
+        "messages": [
+            {"role": "user", "content": content},
+        ],
     }
     headers = {
         "content-type": "application/json",
@@ -142,27 +178,112 @@ async def _vision_json(
         "x-api-key": settings.azure_ai_visualization_api_key.strip(),
         "anthropic-version": anthropic_version,
     }
-    try:
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            body = response.json()
-    except Exception as exc:
-        logger.warning("claude_vision_request_failed", error=str(exc), url=url)
+
+    # Survive 429 bursts the same way Foundry vision does.
+    max_attempts = min(max(settings.runtime_llm_max_retries + 1, 3), 4)
+    invalid_json_retries = 1
+
+    for attempt in range(max_attempts):
+        if attempt > 0 and azure_openai_cooling_down("vision"):
+            remaining = azure_openai_cooldown_remaining_seconds("vision")
+            wait_for = min(remaining, max(settings.azure_openai_cooldown_seconds, 15.0))
+            if wait_for > 0:
+                logger.info(
+                    "claude_vision_wait_circuit_retry",
+                    attempt=attempt + 1,
+                    wait_seconds=round(wait_for, 1),
+                )
+                await asyncio.sleep(wait_for)
+        try:
+            async with azure_openai_slot_async():
+                async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    body = response.json()
+        except Exception as exc:
+            is_429 = (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code == 429
+            )
+            if is_429:
+                sleep_for = _retry_sleep_seconds(exc, attempt)
+                note_azure_openai_rate_limited(sleep_for, scope="vision")
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        "claude_vision_rate_limited_retry",
+                        attempt=attempt + 1,
+                        max_attempts=max_attempts,
+                        cooldown_seconds=round(sleep_for, 1),
+                    )
+                    await asyncio.sleep(sleep_for)
+                    continue
+                logger.warning(
+                    "claude_vision_rate_limited_exhausted",
+                    attempt=attempt + 1,
+                    cooldown_seconds=round(sleep_for, 1),
+                )
+                return None
+            if attempt < max_attempts - 1 and _is_retryable_openai_error(
+                exc,
+                retry_timeouts=False,
+            ):
+                sleep_for = _retry_sleep_seconds(exc, attempt)
+                logger.info(
+                    "claude_vision_retry",
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    sleep_seconds=round(sleep_for, 2),
+                    error=str(exc)[:200],
+                )
+                await asyncio.sleep(sleep_for)
+                continue
+            detail = ""
+            if isinstance(exc, httpx.HTTPStatusError):
+                try:
+                    detail = (exc.response.text or "")[:400]
+                except Exception:
+                    detail = ""
+            logger.warning(
+                "claude_vision_request_failed",
+                error=str(exc),
+                url=url,
+                response_body=detail or None,
+            )
+            return None
+
+        text = _response_text(body if isinstance(body, dict) else {})
+        parsed = _parse_json_text(text)
+        if parsed is not None:
+            note_azure_openai_success(scope="vision")
+            return parsed
+
+        logger.warning(
+            "claude_vision_invalid_json",
+            attempt=attempt + 1,
+            text_prefix=(text or "")[:240],
+        )
+        if invalid_json_retries > 0 and attempt < max_attempts - 1:
+            invalid_json_retries -= 1
+            # One repair retry: ask explicitly for JSON-only (still ends on user turn).
+            payload = {
+                **payload,
+                "temperature": 0.0,
+                "messages": [
+                    {"role": "user", "content": content},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous reply was not valid JSON. "
+                            "Reply again with ONLY a JSON object, nothing else."
+                        ),
+                    },
+                ],
+            }
+            await asyncio.sleep(0.5)
+            continue
         return None
 
-    parts = body.get("content") or []
-    text_chunks: list[str] = []
-    for part in parts:
-        if not isinstance(part, dict):
-            continue
-        if part.get("type") == "text" and part.get("text"):
-            text_chunks.append(str(part["text"]))
-    text = "\n".join(text_chunks).strip()
-    parsed = _parse_json_text(text)
-    if parsed is None:
-        logger.warning("claude_vision_invalid_json")
-    return parsed
+    return None
 
 
 async def probe_understand_claude(images: list[bytes]) -> dict[str, Any] | None:

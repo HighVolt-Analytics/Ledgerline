@@ -1702,6 +1702,30 @@ async def process_invoice(session: AsyncSession, invoice: Invoice) -> None:
         )
         await session.flush()
 
+        # Understood path skips OCR → deferred full reset never runs. Drop stale
+        # not-understood line items / DT / full-extract fields so header-only
+        # vault state is path-consistent after reprocess.
+        from app.services.invoice.invoice_reset import (
+            clear_stale_not_understood_for_understood_path,
+        )
+
+        stale_clear = await clear_stale_not_understood_for_understood_path(
+            session,
+            invoice,
+            preserve_document_type=bool(human_locked_dt),
+        )
+        if (
+            stale_clear.get("cleared_line_item_count")
+            or stale_clear.get("cleared_document_type")
+            or stale_clear.get("stripped_extracted_field_keys")
+        ):
+            await log_event(
+                session,
+                "vision_path_stale_extract_cleared",
+                invoice_id=invoice.id,
+                detail=audit_document_detail(invoice, **stale_clear),
+            )
+
         from app.services.dossier.vision_bundle_linkage import apply_vision_bundle_on_hold
         from app.tenant_settings import tenant_custom_bundle_field_key
 

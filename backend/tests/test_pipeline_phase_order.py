@@ -219,6 +219,9 @@ async def test_pipeline_holds_when_vision_can_understand(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from decimal import Decimal
+
+    from app.models.line_item import LineItem
     from app.services.invoice.vision_header_extract import VisionHeaderExtractResult
     from app.services.invoice.vision_understand_gate import VisionUnderstandResult
 
@@ -231,8 +234,29 @@ async def test_pipeline_holds_when_vision_can_understand(
         raw_file_path=str(pdf_path),
         file_hash="phase-order-vision-hold",
         currency="AUD",
+        # Stale not-understood leftovers (as after a failed-then-retry reprocess).
+        document_type_code="DT-04",
+        document_type_confidence=0.95,
+        llm_suggested_dt="DT-04",
+        llm_confidence=0.95,
+        subtotal=Decimal("100.00"),
+        gst=Decimal("10.00"),
+        extracted_fields={
+            "field_confidence": {"total": 0.9, "line_items": 0.94},
+            "subtotal": "100.00",
+            "canonical_document_type": "Tax Invoice",
+        },
     )
     db_session.add(inv)
+    await db_session.flush()
+    db_session.add(
+        LineItem(
+            tenant_id=TESTING_TENANT_UUID,
+            invoice_id=inv.id,
+            description="Stale fare line",
+            amount=Decimal("79434.00"),
+        )
+    )
     await db_session.flush()
 
     @contextmanager
@@ -304,6 +328,7 @@ async def test_pipeline_holds_when_vision_can_understand(
 
     await process_invoice(db_session, inv)
     await db_session.flush()
+    await db_session.refresh(inv)
 
     rows = (
         await db_session.execute(
@@ -322,9 +347,22 @@ async def test_pipeline_holds_when_vision_can_understand(
     assert inv.vendor == "Acme Pty Ltd"
     assert (inv.extracted_fields or {}).get("vision_bundle_kind") == "invoice_no"
     assert (inv.extracted_fields or {}).get("vision_bundle_key") == "INV-100"
+    # Path-consistent: no not-understood leftovers mixed with vision header.
+    assert inv.document_type_code is None
+    assert inv.subtotal is None
+    assert inv.gst is None
+    assert "field_confidence" not in (inv.extracted_fields or {})
+    assert "subtotal" not in (inv.extracted_fields or {})
+    line_count = (
+        await db_session.execute(
+            select(LineItem).where(LineItem.invoice_id == inv.id)
+        )
+    ).scalars().all()
+    assert line_count == []
     assert sync_calls == [inv.id]
     assert "vision_understand_passed" in events
     assert "vision_header_extracted" in events
+    assert "vision_path_stale_extract_cleared" in events
     assert "vision_bundle_linked" in events
     assert "vision_path_pending" in events
     assert "image_quality_passed" not in events
@@ -335,6 +373,7 @@ async def test_pipeline_holds_when_vision_can_understand(
         "file_validity_passed",
         "vision_understand_passed",
         "vision_header_extracted",
+        "vision_path_stale_extract_cleared",
         "vision_bundle_linked",
         "vision_path_pending",
     )
