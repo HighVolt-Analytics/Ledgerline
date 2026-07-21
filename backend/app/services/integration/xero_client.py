@@ -204,3 +204,79 @@ class XeroClient:
         if not response.content:
             return {}
         return response.json()
+
+    async def put_bytes(
+        self,
+        path: str,
+        *,
+        content: bytes,
+        content_type: str,
+        params: dict[str, Any] | None = None,
+        refreshed: bool = False,
+    ) -> httpx.Response:
+        """Binary PUT (e.g. invoice PDF attachments). Never logs content."""
+        access_token = await get_valid_access_token(self._db, self._tenant_id)
+        url = _resolve_url(path)
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "xero-tenant-id": self._xero_tenant_id,
+            "Accept": "application/json",
+            "Content-Type": content_type,
+        }
+        cid = _correlation_id()
+        if cid:
+            headers["X-Correlation-Id"] = cid
+
+        attempt = 0
+        rate_limit_attempt = 0
+        while True:
+            attempt += 1
+            try:
+                async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+                    response = await client.request(
+                        "PUT",
+                        url,
+                        headers=headers,
+                        params=params,
+                        content=content,
+                    )
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                if attempt >= MAX_NETWORK_RETRIES:
+                    raise XeroApiError(
+                        status_code=0,
+                        error_code="xero_network_error",
+                        message="Xero API network error",
+                    ) from exc
+                await asyncio.sleep(min(2 ** (attempt - 1), 4))
+                continue
+
+            if response.status_code == 401 and not refreshed:
+                await get_valid_access_token(self._db, self._tenant_id, force_refresh=True)
+                return await self.put_bytes(
+                    path,
+                    content=content,
+                    content_type=content_type,
+                    params=params,
+                    refreshed=True,
+                )
+
+            if response.status_code == 429:
+                rate_limit_attempt += 1
+                if rate_limit_attempt > MAX_429_RETRIES:
+                    raise _parse_error_response(response.status_code, response.text)
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    wait_seconds = float(retry_after) if retry_after else 2.0
+                except ValueError:
+                    wait_seconds = 2.0
+                wait_seconds = min(max(wait_seconds, 1.0), MAX_429_WAIT_SECONDS)
+                await asyncio.sleep(wait_seconds)
+                continue
+
+            if response.status_code in RETRYABLE_STATUS and attempt < MAX_NETWORK_RETRIES:
+                await asyncio.sleep(min(2 ** (attempt - 1), 4))
+                continue
+
+            if response.status_code >= 400:
+                raise _parse_error_response(response.status_code, response.text)
+            return response

@@ -1,5 +1,7 @@
 ﻿from app.models.accounting_sync_job import AccountingSyncJob
 from app.models.accounting_integration import AccountingIntegration
+from app.models.accounting_entity_mapping import AccountingEntityMapping
+from app.models.accounting_export_ledger import AccountingExportLedger
 from app.models.external_accounting_ref import ExternalAccountingRef
 from app.models.audit import AuditLog
 from app.models.auth_account import AuthAccount
@@ -67,13 +69,17 @@ from app.models.xero_connection import XeroConnection
 from app.models.xero_account import XeroAccount
 from app.models.xero_contact import XeroContact
 from app.models.xero_currency import XeroCurrency
+from app.models.xero_organisation_profile import XeroOrganisationProfile
 from app.models.xero_tax_rate import XeroTaxRate
+from app.models.xero_tracking_category import XeroTrackingCategory
 from app.models.xero_webhook_event import XeroWebhookEvent
 
 import app.tenant_child_tables  # noqa: F401 â€” register child-table tenant listeners
 
 __all__ = [
     "AccountingIntegration",
+    "AccountingEntityMapping",
+    "AccountingExportLedger",
     "AccountingSyncJob",
     "ExternalAccountingRef",
     "AuditLog",
@@ -138,7 +144,9 @@ __all__ = [
     "XeroAccount",
     "XeroContact",
     "XeroCurrency",
+    "XeroOrganisationProfile",
     "XeroTaxRate",
+    "XeroTrackingCategory",
     "XeroWebhookEvent",
 ]
 

@@ -1,5 +1,5 @@
 /**
- * User-visible proof of Xero inbound/outbound sync: stored master data + history.
+ * Xero integration evidence: reference data, mappings, export queue, ledger.
  */
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/api/client";
@@ -7,6 +7,9 @@ import type {
   XeroAccountRow,
   XeroContactRow,
   XeroExportHistoryRow,
+  XeroExportLedgerRow,
+  XeroExportQueueItem,
+  XeroMappingRow,
   XeroMasterTotals,
   XeroSyncHistoryRow,
   XeroTaxRateRow,
@@ -19,15 +22,27 @@ import {
   isTenantFetchScopeCurrent,
 } from "@/lib/tenantSession";
 
-type TabId = "overview" | "accounts" | "tax_rates" | "contacts" | "sync_history" | "export_history";
+type TabId =
+  | "overview"
+  | "accounts"
+  | "tax_rates"
+  | "contacts"
+  | "mappings"
+  | "export_queue"
+  | "export_ledger"
+  | "sync_history"
+  | "export_history";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "accounts", label: "Accounts" },
   { id: "tax_rates", label: "Tax rates" },
   { id: "contacts", label: "Contacts" },
+  { id: "mappings", label: "Mappings" },
+  { id: "export_queue", label: "Export queue" },
+  { id: "export_ledger", label: "Export evidence" },
   { id: "sync_history", label: "Sync history" },
-  { id: "export_history", label: "Export history" },
+  { id: "export_history", label: "Legacy history" },
 ];
 
 function ProvenanceBadge() {
@@ -44,17 +59,25 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
   const [accounts, setAccounts] = useState<XeroAccountRow[]>([]);
   const [taxRates, setTaxRates] = useState<XeroTaxRateRow[]>([]);
   const [contacts, setContacts] = useState<XeroContactRow[]>([]);
+  const [mappings, setMappings] = useState<XeroMappingRow[]>([]);
+  const [queue, setQueue] = useState<XeroExportQueueItem[]>([]);
+  const [ledger, setLedger] = useState<XeroExportLedgerRow[]>([]);
   const [syncHistory, setSyncHistory] = useState<XeroSyncHistoryRow[]>([]);
   const [exportHistory, setExportHistory] = useState<XeroExportHistoryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [glDraft, setGlDraft] = useState({ source_key: "", external_code: "" });
+  const [taxDraft, setTaxDraft] = useState({ source_key: "", external_code: "" });
 
   useResetOnTenantChange(() => {
     setTotals(null);
     setAccounts([]);
     setTaxRates([]);
     setContacts([]);
+    setMappings([]);
+    setQueue([]);
+    setLedger([]);
     setSyncHistory([]);
     setExportHistory([]);
     setError(null);
@@ -65,11 +88,14 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
     const scope = captureTenantFetchScope();
     setLoading(true);
     try {
-      const [t, a, tr, c, sh, eh] = await Promise.all([
+      const [t, a, tr, c, m, q, led, sh, eh] = await Promise.all([
         api.getXeroMasterTotals(),
         api.getXeroAccounts({ limit: 50 }),
         api.getXeroTaxRates({ limit: 50 }),
         api.getXeroContactsList({ limit: 50 }),
+        api.getXeroMappings(),
+        api.getXeroExportQueue({ limit: 25 }),
+        api.getXeroExportLedger({ limit: 25 }),
         api.getXeroSyncHistory({ limit: 25 }),
         api.getXeroExportHistory({ limit: 25 }),
       ]);
@@ -78,6 +104,9 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
       setAccounts(a.items);
       setTaxRates(tr.items);
       setContacts(c.items);
+      setMappings(m.items);
+      setQueue(q.items);
+      setLedger(led.items);
       setSyncHistory(sh.items);
       setExportHistory(eh.items);
       setError(null);
@@ -93,15 +122,67 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
     void reload();
   }, [reload]);
 
-  async function runReconcile() {
-    setReconcileBusy(true);
+  async function saveMapping(draft: {
+    mapping_type: string;
+    source_key: string;
+    external_code?: string;
+    external_id?: string;
+  }) {
+    setError(null);
     try {
-      await api.reconcileXero();
+      await api.putXeroMappings([draft]);
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Reconcile failed");
+      setError(err instanceof Error ? err.message : "Failed to save mapping");
+    }
+  }
+
+  async function exportInvoice(invoiceId: number) {
+    setBusyId(invoiceId);
+    setError(null);
+    try {
+      await api.exportXeroInvoice(invoiceId);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
     } finally {
-      setReconcileBusy(false);
+      setBusyId(null);
+    }
+  }
+
+  async function refreshExport(syncId: number) {
+    setBusyId(syncId);
+    try {
+      await api.refreshXeroExport(syncId);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refresh failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function retryAttachment(syncId: number) {
+    setBusyId(syncId);
+    try {
+      await api.retryXeroAttachment(syncId);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Attachment retry failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function runReconcile() {
+    setBusyId(-1);
+    try {
+      await api.runXeroReconciliation();
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reconciliation failed");
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -132,7 +213,11 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
         </Button>
       </div>
 
-      {error && <p className="text-xs text-destructive mb-2">{error}</p>}
+      {error && (
+        <p className="text-xs text-destructive mb-2" data-testid="xero-structured-error">
+          {error}
+        </p>
+      )}
 
       {tab === "overview" && (
         <div className="space-y-3 text-xs">
@@ -151,18 +236,18 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" disabled={reconcileBusy} onClick={() => void runReconcile()}>
-              {reconcileBusy ? "Reconciling…" : "Reconcile exported invoices"}
+            <Button size="sm" variant="outline" disabled={busyId === -1} onClick={() => void runReconcile()}>
+              {busyId === -1 ? "Reconciling…" : "Run reconciliation"}
             </Button>
           </div>
           <p className="text-muted-foreground">
-            Stored totals are committed database rows, not remote fetch counts alone.
+            Counts are committed database rows. Export evidence requires ACCPAY Draft + PDF attachment.
           </p>
         </div>
       )}
 
       {tab === "accounts" && (
-        <ul className="space-y-2 max-h-72 overflow-auto text-xs">
+        <ul className="space-y-2 max-h-72 overflow-auto text-xs" data-testid="xero-accounts-list">
           {accounts.length === 0 && <li className="text-muted-foreground">No accounts stored yet.</li>}
           {accounts.map((row) => (
             <li key={row.id} className="rounded-md border border-border px-3 py-2">
@@ -173,7 +258,7 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
                 <Badge variant="secondary">{row.sync_status}</Badge>
               </div>
               <p className="text-muted-foreground mt-1">
-                Xero ID {row.xero_account_id}
+                External ID {row.xero_account_id}
                 {row.last_synced_at ? ` · synced ${new Date(row.last_synced_at).toLocaleString()}` : ""}
               </p>
             </li>
@@ -192,10 +277,6 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
                 <ProvenanceBadge />
                 <Badge variant="secondary">{row.sync_status}</Badge>
               </div>
-              <p className="text-muted-foreground mt-1">
-                Rate {row.effective_rate ?? "—"}
-                {row.last_synced_at ? ` · synced ${new Date(row.last_synced_at).toLocaleString()}` : ""}
-              </p>
             </li>
           ))}
         </ul>
@@ -210,13 +291,164 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
                 <span className="font-medium">{row.name || row.xero_contact_id}</span>
                 <ProvenanceBadge />
                 <Badge variant="secondary">{row.mapping_status}</Badge>
-                <Badge variant="outline">{row.sync_status}</Badge>
               </div>
-              <p className="text-muted-foreground mt-1">
-                Xero ID {row.xero_contact_id}
-                {row.is_supplier ? " · supplier" : ""}
-                {row.is_customer ? " · customer" : ""}
+              <p className="text-muted-foreground mt-1">External ID {row.xero_contact_id}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {tab === "mappings" && (
+        <div className="space-y-4 text-xs" data-testid="xero-mappings-panel">
+          <div className="rounded-md border border-border p-3 space-y-2">
+            <p className="font-medium">LedgerLink GL → Xero AccountCode</p>
+            <div className="flex flex-wrap gap-2">
+              <input
+                className="border border-border rounded px-2 py-1 bg-background"
+                placeholder="QLL GL code"
+                value={glDraft.source_key}
+                onChange={(e) => setGlDraft((d) => ({ ...d, source_key: e.target.value }))}
+                data-testid="mapping-gl-source"
+              />
+              <input
+                className="border border-border rounded px-2 py-1 bg-background"
+                placeholder="Xero AccountCode"
+                value={glDraft.external_code}
+                onChange={(e) => setGlDraft((d) => ({ ...d, external_code: e.target.value }))}
+                data-testid="mapping-gl-external"
+              />
+              <Button
+                size="sm"
+                onClick={() =>
+                  void saveMapping({
+                    mapping_type: "gl_account",
+                    source_key: glDraft.source_key,
+                    external_code: glDraft.external_code,
+                  })
+                }
+              >
+                Save GL mapping
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-md border border-border p-3 space-y-2">
+            <p className="font-medium">LedgerLink tax → Xero TaxType</p>
+            <div className="flex flex-wrap gap-2">
+              <input
+                className="border border-border rounded px-2 py-1 bg-background"
+                placeholder="e.g. GST:10"
+                value={taxDraft.source_key}
+                onChange={(e) => setTaxDraft((d) => ({ ...d, source_key: e.target.value }))}
+              />
+              <input
+                className="border border-border rounded px-2 py-1 bg-background"
+                placeholder="Xero TaxType"
+                value={taxDraft.external_code}
+                onChange={(e) => setTaxDraft((d) => ({ ...d, external_code: e.target.value }))}
+              />
+              <Button
+                size="sm"
+                onClick={() =>
+                  void saveMapping({
+                    mapping_type: "tax_code",
+                    source_key: taxDraft.source_key,
+                    external_code: taxDraft.external_code,
+                  })
+                }
+              >
+                Save tax mapping
+              </Button>
+            </div>
+          </div>
+          <ul className="space-y-2 max-h-56 overflow-auto">
+            {mappings.length === 0 && (
+              <li className="text-muted-foreground">No mappings saved. Export stays blocked until required mappings exist.</li>
+            )}
+            {mappings.map((row) => (
+              <li key={`${row.mapping_type}:${row.source_key}`} className="border border-border rounded px-3 py-2">
+                <span className="font-medium">{row.mapping_type}</span> · {row.source_key} →{" "}
+                {row.external_code || row.external_id || "—"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {tab === "export_queue" && (
+        <ul className="space-y-2 max-h-80 overflow-auto text-xs" data-testid="xero-export-queue">
+          {queue.length === 0 && <li className="text-muted-foreground">No eligible supplier invoices.</li>}
+          {queue.map((item) => (
+            <li key={item.invoice_id} className="rounded-md border border-border px-3 py-2 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">#{item.invoice_id}</span>
+                <span>{item.invoice_no || "—"}</span>
+                <span>{item.vendor}</span>
+                <Badge variant={item.valid ? "secondary" : "destructive"}>
+                  {item.valid ? "Ready" : "Blocked"}
+                </Badge>
+              </div>
+              {!item.valid && (
+                <ul className="text-destructive space-y-1" data-testid="xero-blocking-errors">
+                  {item.blocking_errors.map((err) => (
+                    <li key={`${err.code}:${err.message}`}>{err.message}</li>
+                  ))}
+                </ul>
+              )}
+              <Button
+                size="sm"
+                disabled={!item.valid || busyId === item.invoice_id}
+                onClick={() => void exportInvoice(item.invoice_id)}
+                data-testid="xero-export-action"
+              >
+                {busyId === item.invoice_id ? "Exporting…" : "Export to Xero"}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {tab === "export_ledger" && (
+        <ul className="space-y-2 max-h-80 overflow-auto text-xs" data-testid="xero-export-ledger">
+          {ledger.length === 0 && <li className="text-muted-foreground">No export evidence yet.</li>}
+          {ledger.map((row) => (
+            <li key={row.sync_id} className="rounded-md border border-border px-3 py-2 space-y-1">
+              <div className="flex flex-wrap gap-2 items-center">
+                <span className="font-medium">Invoice #{row.source_invoice_id}</span>
+                <Badge variant="outline">{row.status}</Badge>
+                <span data-testid="xero-attachment-status">
+                  <Badge variant="secondary">PDF: {row.attachment_status || "—"}</Badge>
+                </span>
+              </div>
+              <p className="text-muted-foreground">
+                Xero {row.external_number || "—"} · ID {row.external_id || "—"} · status{" "}
+                {row.external_status || "—"} · amount {row.external_total ?? "—"} · attempts{" "}
+                {row.attempt_count}
               </p>
+              {row.error_message && (
+                <p className="text-destructive">
+                  [{row.error_bucket}/{row.error_code}] {row.error_message}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyId === row.sync_id}
+                  onClick={() => void refreshExport(row.sync_id)}
+                >
+                  Refresh status
+                </Button>
+                {row.attachment_status !== "success" && row.external_id && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busyId === row.sync_id}
+                    onClick={() => void retryAttachment(row.sync_id)}
+                  >
+                    Retry attachment
+                  </Button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
@@ -227,16 +459,9 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
           {syncHistory.length === 0 && <li className="text-muted-foreground">No sync jobs yet.</li>}
           {syncHistory.map((row) => (
             <li key={row.id} className="rounded-md border border-border px-3 py-2">
-              <div className="flex flex-wrap gap-2 items-center">
-                <span className="font-medium">#{row.id} {row.job_type}</span>
-                <Badge variant="secondary">{row.status}</Badge>
-                <span className="text-muted-foreground">{row.trigger_type || "manual"}</span>
-              </div>
-              <p className="text-muted-foreground mt-1">
-                fetched {row.records_fetched} · created {row.records_created} · updated {row.records_updated} ·
-                unchanged {row.records_unchanged} · failed {row.records_failed} · persisted {row.records_persisted}
-              </p>
-              {row.error_message && <p className="text-destructive mt-1">{row.error_message}</p>}
+              <span className="font-medium">{row.job_type}</span> · {row.status} · fetched{" "}
+              {row.records_fetched} / created {row.records_created} / updated {row.records_updated} /
+              unchanged {row.records_unchanged} / failed {row.records_failed}
             </li>
           ))}
         </ul>
@@ -244,22 +469,11 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
 
       {tab === "export_history" && (
         <ul className="space-y-2 max-h-72 overflow-auto text-xs">
-          {exportHistory.length === 0 && <li className="text-muted-foreground">No exports yet.</li>}
+          {exportHistory.length === 0 && <li className="text-muted-foreground">No legacy export refs.</li>}
           {exportHistory.map((row) => (
             <li key={row.id} className="rounded-md border border-border px-3 py-2">
-              <div className="flex flex-wrap gap-2 items-center">
-                <span className="font-medium">Invoice {row.invoice_id ?? "—"}</span>
-                <Badge variant="outline">Exported to Xero</Badge>
-                <Badge variant="secondary">{row.external_status || row.sync_status || "—"}</Badge>
-              </div>
-              <p className="text-muted-foreground mt-1">
-                Xero {row.external_number || row.external_entity_id || "—"}
-                {row.last_pushed_at ? ` · exported ${new Date(row.last_pushed_at).toLocaleString()}` : ""}
-                {row.last_reconciled_at
-                  ? ` · reconciled ${new Date(row.last_reconciled_at).toLocaleString()}`
-                  : ""}
-              </p>
-              {row.sync_error_message && <p className="text-destructive mt-1">{row.sync_error_message}</p>}
+              Invoice {row.invoice_id} · {row.external_number} · {row.external_status} ·{" "}
+              {row.sync_status}
             </li>
           ))}
         </ul>
@@ -269,9 +483,11 @@ export function XeroEvidencePanel({ enabled }: { enabled: boolean }) {
 }
 
 export async function reloadXeroEvidenceCaches(): Promise<void> {
-  // Lightweight helper for parent toast handlers to bust list caches via a fresh fetch.
   await Promise.all([
     api.getXeroMasterTotals(),
-    api.getXeroAccounts({ limit: 1 }),
+    api.getXeroAccounts({ limit: 50 }),
+    api.getXeroTaxRates({ limit: 50 }),
+    api.getXeroContactsList({ limit: 50 }),
+    api.getXeroExportLedger({ limit: 25 }),
   ]);
 }

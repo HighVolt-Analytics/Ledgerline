@@ -1373,6 +1373,47 @@ export interface XeroMasterTotals {
   currencies: number;
 }
 
+export interface XeroMappingRow {
+  id?: number;
+  mapping_type: string;
+  source_key: string;
+  source_label?: string | null;
+  external_id?: string | null;
+  external_code?: string | null;
+  external_name?: string | null;
+  external_option_id?: string | null;
+  is_active?: boolean;
+}
+
+export interface XeroExportLedgerRow {
+  sync_id: number;
+  source_invoice_id: number;
+  qll_transaction_id: string;
+  status: string;
+  external_id: string | null;
+  external_number: string | null;
+  external_status: string | null;
+  external_total: number | null;
+  attachment_status: string | null;
+  attempt_count: number;
+  error_bucket: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  export_complete?: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface XeroExportQueueItem {
+  invoice_id: number;
+  invoice_no: string | null;
+  vendor: string | null;
+  total: number | null;
+  currency: string | null;
+  valid: boolean;
+  blocking_errors: Array<{ field: string; code: string; message: string }>;
+}
+
 export interface XeroPushResult {
   invoice_id: number;
   skipped: boolean;
