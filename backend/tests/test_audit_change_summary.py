@@ -96,13 +96,29 @@ def test_duplicate_skipped_summary() -> None:
         "duplicate_skipped",
         {
             "original_invoice_id": 42,
+            "original_document_ref": "DOC-12",
             "filename": "invoice.pdf",
             "source": "email",
         },
     )
     assert "Duplicate file skipped" in summary
-    assert "42" in summary
+    assert "matches DOC-12" in summary
+    assert "42" not in summary
     assert "invoice.pdf" in summary
+
+
+def test_duplicate_skipped_summary_prefers_invoice_no_over_db_id() -> None:
+    summary = summarize_audit_change(
+        "duplicate_skipped",
+        {
+            "original_invoice_id": 400,
+            "invoice_no": "250970286",
+            "filename": "skylift.pdf",
+        },
+    )
+    assert "matches 250970286" in summary
+    assert "matches invoice 400" not in summary
+    assert "400" not in summary
 
 
 def test_duplicate_in_progress_summary() -> None:

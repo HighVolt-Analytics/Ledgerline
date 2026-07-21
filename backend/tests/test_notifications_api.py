@@ -213,6 +213,57 @@ async def test_notifications_low_credits(
 
 
 @pytest.mark.asyncio
+async def test_notifications_duplicate_skipped_uses_document_ref(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    original = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Skylift",
+        invoice_no="250970286",
+        document_ref="DOC-40",
+        status=InvoiceStatus.PROCESSED,
+        currency="AUD",
+        file_hash="notif-dup-orig",
+    )
+    shadow = Invoice(
+        tenant_id=TESTING_TENANT_UUID,
+        vendor="Skylift",
+        invoice_no="250970286",
+        document_ref="DOC-86",
+        status=InvoiceStatus.DUPLICATE_SKIPPED,
+        currency="AUD",
+        file_hash=None,
+    )
+    db_session.add_all([original, shadow])
+    await db_session.flush()
+    db_session.add(
+        AuditLog(
+            tenant_id=TESTING_TENANT_UUID,
+            event="duplicate_skipped",
+            invoice_id=shadow.id,
+            detail={
+                "original_invoice_id": original.id,
+                "filename": "skylift.pdf",
+                "source": "upload",
+                "invoice_no": "250970286",
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    await db_session.flush()
+
+    res = await client.get("/api/notifications")
+    assert res.status_code == 200
+    row = next(
+        item for item in res.json()["data"]["items"] if item["event"] == "duplicate_skipped"
+    )
+    assert "DOC-86" in row["title"]
+    assert "matches DOC-40" in row["summary"]
+    assert f"matches invoice {original.id}" not in row["summary"]
+    assert str(original.id) not in row["summary"]
+
+
+@pytest.mark.asyncio
 async def test_notifications_invoice_processed_info(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

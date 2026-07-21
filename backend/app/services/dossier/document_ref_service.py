@@ -77,6 +77,18 @@ def audit_document_detail(invoice: Invoice | None, **extra: object) -> dict[str,
     return detail
 
 
+def original_document_audit_fields(invoice: Invoice) -> dict[str, object]:
+    """Duplicate-match pointers: keep DB id for joins, expose DOC-ref for display."""
+    fields: dict[str, object] = {"original_invoice_id": invoice.id}
+    ref = (invoice.document_ref or "").strip()
+    if ref:
+        fields["original_document_ref"] = ref
+    invoice_no = (invoice.invoice_no or "").strip()
+    if invoice_no:
+        fields["original_invoice_no"] = invoice_no
+    return fields
+
+
 def _session_supports_advisory_lock(session: AsyncSession) -> bool:
     try:
         bind = session.get_bind()

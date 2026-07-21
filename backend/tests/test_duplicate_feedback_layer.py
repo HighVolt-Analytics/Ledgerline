@@ -87,6 +87,7 @@ async def test_skip_logged_includes_original_invoice_id(
         currency="AUD",
         file_hash=None,
         vendor="Acme",
+        document_ref="DOC-9",
     )
     db_session.add(existing)
     await db_session.flush()
@@ -111,3 +112,4 @@ async def test_skip_logged_includes_original_invoice_id(
     ).scalars().all()
     assert row
     assert row[-1].detail.get("original_invoice_id") == existing.id
+    assert row[-1].detail.get("original_document_ref") == existing.document_ref

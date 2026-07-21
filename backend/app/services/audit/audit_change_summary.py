@@ -205,13 +205,29 @@ def _summarize_parse_completed(detail: dict[str, Any]) -> str:
     return ", ".join(parts) if parts else "Parse completed"
 
 
+def _duplicate_match_label(detail: dict[str, Any]) -> str | None:
+    """Prefer stable DOC-ref / invoice number over internal DB id."""
+    original_ref = str(detail.get("original_document_ref") or "").strip()
+    if original_ref:
+        return f"matches {original_ref}"
+    original_no = str(
+        detail.get("original_invoice_no") or detail.get("invoice_no") or ""
+    ).strip()
+    if original_no:
+        return f"matches {original_no}"
+    # Legacy audits only stored the DB id — avoid surfacing raw ids in the UI.
+    if isinstance(detail.get("original_invoice_id"), int):
+        return "matches original document"
+    return None
+
+
 def _summarize_duplicate_skipped(detail: dict[str, Any]) -> str:
     filename = str(detail.get("filename") or detail.get("attachment") or "").strip()
     source = str(detail.get("source") or "").strip()
-    original_id = detail.get("original_invoice_id")
     parts = ["Duplicate file skipped"]
-    if isinstance(original_id, int):
-        parts.append(f"matches invoice {original_id}")
+    match_label = _duplicate_match_label(detail)
+    if match_label:
+        parts.append(match_label)
     if filename:
         parts.append(f"file: {filename}")
     if source:

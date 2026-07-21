@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus
 from app.services.audit.audit_service import log_event
-from app.services.dossier.document_ref_service import assign_document_ref
+from app.services.dossier.document_ref_service import (
+    assign_document_ref,
+    original_document_audit_fields,
+)
 from app.services.invoice.invoice_data import InvoiceData
 
 DuplicateAction = Literal[
@@ -844,12 +847,14 @@ async def create_duplicate_shadow_invoice(
     await assign_document_ref(session, shadow)
 
     detail: dict[str, Any] = {
-        "original_invoice_id": original.id,
+        **original_document_audit_fields(original),
         "file_hash": file_hash,
         "preserved_original_status": original.status.value,
     }
     if extra_detail:
         detail.update(extra_detail)
+        # Keep original_* pointers authoritative even if callers pass a partial copy.
+        detail.update(original_document_audit_fields(original))
 
     await log_duplicate_skipped(session, shadow.id, detail=detail)
     return shadow
@@ -920,7 +925,7 @@ async def resolve_ingest_duplicate(
         detail={
             **detail,
             "action": decision.action,
-            "original_invoice_id": existing.id,
+            **original_document_audit_fields(existing),
         },
     )
 
@@ -946,7 +951,7 @@ async def resolve_ingest_duplicate(
             detail={
                 **detail,
                 "note": "repeat submission ignored",
-                "original_invoice_id": existing.id,
+                **original_document_audit_fields(existing),
             },
         )
         return IngestDuplicateOutcome(

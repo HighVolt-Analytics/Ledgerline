@@ -163,14 +163,51 @@ async def _audit_notification_items(
         )
     ).all()
 
+    original_ids: set[int] = set()
+    for log, _vendor, _document_ref in rows:
+        detail = log.detail if isinstance(log.detail, dict) else {}
+        if str(detail.get("original_document_ref") or "").strip():
+            continue
+        raw_id = detail.get("original_invoice_id")
+        if isinstance(raw_id, int):
+            original_ids.add(raw_id)
+
+    original_refs: dict[int, tuple[str | None, str | None]] = {}
+    if original_ids:
+        originals = (
+            await db.execute(
+                select(Invoice.id, Invoice.document_ref, Invoice.invoice_no).where(
+                    Invoice.tenant_id == tenant_id,
+                    Invoice.id.in_(original_ids),
+                )
+            )
+        ).all()
+        for inv_id, doc_ref, invoice_no in originals:
+            original_refs[inv_id] = (
+                (doc_ref or "").strip() or None,
+                (invoice_no or "").strip() or None,
+            )
+
     items: list[NotificationItem] = []
     for log, vendor, document_ref in rows:
-        detail = log.detail if isinstance(log.detail, dict) else {}
+        detail = dict(log.detail) if isinstance(log.detail, dict) else {}
+        raw_id = detail.get("original_invoice_id")
+        if (
+            isinstance(raw_id, int)
+            and raw_id in original_refs
+            and not str(detail.get("original_document_ref") or "").strip()
+        ):
+            ref, invoice_no = original_refs[raw_id]
+            if ref:
+                detail["original_document_ref"] = ref
+            if invoice_no and not str(detail.get("original_invoice_no") or "").strip():
+                detail["original_invoice_no"] = invoice_no
         ref = (document_ref or "").strip() or None
-        if not ref and log.invoice_id is not None:
-            ref = f"DOC-{log.invoice_id}"
         if not ref:
             ref = str(detail.get("document_ref") or "").strip() or None
+        if not ref:
+            # Prefer business invoice number over inventing DOC-{db_id}.
+            ref = str(detail.get("invoice_no") or "").strip() or None
         summary = summarize_audit_change(log.event, detail)
         created_at = _as_utc(log.created_at)
         items.append(

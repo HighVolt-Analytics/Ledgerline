@@ -29,7 +29,11 @@ from app.services.dossier.document_duplicate_service import (
     log_duplicate_skipped,
     resolve_ingest_duplicate,
 )
-from app.services.dossier.document_ref_service import assign_document_ref, audit_document_detail
+from app.services.dossier.document_ref_service import (
+    assign_document_ref,
+    audit_document_detail,
+    original_document_audit_fields,
+)
 from app.services.ingest.ingest_capture_service import (
     apply_ingest_capture,
     evaluate_ingest_capture,
@@ -881,7 +885,7 @@ async def _ingest_single_email(
                         "source": "email",
                         "poll_folder": email.poll_folder,
                         "note": "exceptions_repoll_skipped",
-                        "original_invoice_id": existing.id,
+                        **original_document_audit_fields(existing),
                     },
                 )
                 duplicate_handled = True
