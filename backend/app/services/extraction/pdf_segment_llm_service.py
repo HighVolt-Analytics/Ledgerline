@@ -317,6 +317,10 @@ def _should_merge_continuation(
             return False
 
     if po_next and po_next[0] > 1:
+        # Never glue across document families even when Page X of Y looks sequential
+        # (e.g. AWB then invoice "Page : 2 of 2" after a mislabeled page 1).
+        if next_kind and prev_kind and not _kinds_same_family(prev_kind, next_kind):
+            return False
         if po_prev and po_prev[1] == po_next[1] and po_next[0] >= po_prev[0] + 1:
             return True
         if not next_kind or _kinds_same_family(prev_kind, next_kind):

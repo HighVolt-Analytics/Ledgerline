@@ -62,13 +62,14 @@ _PAGE_KIND_KEYWORDS: list[tuple[re.Pattern[str], HeadingKind]] = [
     (re.compile(r"\bCERTIFICATE\s+OF\s+ORIGIN\b", re.I), "certificate_of_origin"),
     (re.compile(r"\bBENEFICIARY\s+SHIPMENT\s+ADVICE\b", re.I), "statement"),
     (re.compile(r"\bSHIPMENT\s+ADVICE\b", re.I), "statement"),
-    (re.compile(r"\b(?:HAWB|MAWB|AWB)\b", re.I), "transport_doc"),
+    (re.compile(r"\b(?:HAWB|MAWB|AWB)\s*NO\.?\b", re.I), "transport_doc"),
     (re.compile(r"\b(?:HOUSE|AIR)\s+WAYBILL\b", re.I), "transport_doc"),
     (re.compile(r"\bAIR\s+FREIGHT\s+SERVICES\b", re.I), "transport_doc"),
+    (re.compile(r"\bNot\s+Negotiable\s+Air\s+Waybill\b", re.I), "transport_doc"),
     (re.compile(r"\bShipper'?s?\s+Name\s+and\s+Address\b", re.I), "transport_doc"),
     (re.compile(r"\bConsignee'?s?\s+Name\s+and\s+Address\b", re.I), "transport_doc"),
-    (re.compile(r"\bBILL\s+OF\s+LADING\b", re.I), "transport_doc"),
-    (re.compile(r"\b(?:B/L|BL)\s*NO\b", re.I), "transport_doc"),
+    # Title "BILL OF LADING" only — not the common invoice/packing field "Bill of Lading No".
+    (re.compile(r"\bBILL\s+OF\s+LADING\b(?!\s*NO\b)", re.I), "transport_doc"),
     (re.compile(r"\bGOODS\s+RECEIPT\b", re.I), "grn"),
     (re.compile(r"\bG\.?\s*R\.?\s*N\.?\b", re.I), "grn"),
     (re.compile(r"\bPROOF\s+OF\s+DELIVERY\b", re.I), "grn"),
@@ -330,10 +331,15 @@ def _heading_signals_from_lines(
             kinds.append(kind)
 
     if include_body_fallback and not kinds:
-        preferred = _pick_preferred_body_kind(_body_keyword_kinds(text))
-        if preferred is not None:
-            kinds.append(preferred)
-            labels.append(preferred.replace("_", " "))
+        layout_kind = _layout_kind_from_cues(text)
+        if layout_kind is not None:
+            kinds.append(layout_kind)
+            labels.append(layout_kind.replace("_", " "))
+        else:
+            preferred = _pick_preferred_body_kind(_body_keyword_kinds(text))
+            if preferred is not None:
+                kinds.append(preferred)
+                labels.append(preferred.replace("_", " "))
 
     primary_label = labels[0] if labels else None
     primary_kind = kinds[0] if kinds else None
@@ -382,6 +388,43 @@ def _body_keyword_kinds(text: str) -> list[HeadingKind]:
     return found
 
 
+# Seagate/SAP page-1 often omits the word INVOICE / PACKING LIST (title only on page 2).
+_INVOICE_LAYOUT_CUES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bUNIT\s+PRICE\b", re.I),
+    re.compile(r"\bTOTAL\s+PRICE\b", re.I),
+    re.compile(r"\bMATERIAL\s+NUMBER\b", re.I),
+    re.compile(r"\bSHIPPING\s+ORGANIZATION\b", re.I),
+    re.compile(r"\bSELLING\s+ORGANIZATION\b", re.I),
+    re.compile(r"\bCOO\s*/\s*QTY\b", re.I),
+)
+_PACKING_LAYOUT_CUES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bTOP\s+LEVEL\s+HANDLING\s+UNIT\b", re.I),
+    re.compile(r"\bNUMBER\s+OF\s+CARTONS\b", re.I),
+    re.compile(r"\bPACKAGE\s+TYPE\b", re.I),
+)
+_TRANSPORT_LAYOUT_CUES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:HAWB|MAWB|AWB)\s*NO\.?\b", re.I),
+    re.compile(r"\b(?:HOUSE|AIR)\s+WAYBILL\b", re.I),
+    re.compile(r"\bAIR\s+FREIGHT\s+SERVICES\b", re.I),
+    re.compile(r"\bNot\s+Negotiable\s+Air\s+Waybill\b", re.I),
+    re.compile(r"\bShipper'?s?\s+Name\s+and\s+Address\b", re.I),
+)
+
+
+def _layout_kind_from_cues(text: str) -> HeadingKind | None:
+    """Infer kind from commercial layout when the title word is missing on page 1."""
+    blob = text or ""
+    if any(p.search(blob) for p in _TRANSPORT_LAYOUT_CUES):
+        return None
+    packing_hits = sum(1 for p in _PACKING_LAYOUT_CUES if p.search(blob))
+    if packing_hits >= 1:
+        return "packing_list"
+    invoice_hits = sum(1 for p in _INVOICE_LAYOUT_CUES if p.search(blob))
+    if invoice_hits >= 2:
+        return "invoice"
+    return None
+
+
 def _pick_preferred_body_kind(kinds: list[HeadingKind]) -> HeadingKind | None:
     if not kinds:
         return None
@@ -402,6 +445,11 @@ def infer_page_document_kind_with_source(text: str) -> InferredPageHeading | Non
     title_signals = _heading_signals_from_lines(text, include_body_fallback=False)
     if title_signals.primary_kind is not None:
         return InferredPageHeading(kind=title_signals.primary_kind, source="title_line")
+
+    # Prefer commercial layout over logistics *field labels* (BOL No on an invoice page).
+    layout_kind = _layout_kind_from_cues(text)
+    if layout_kind is not None:
+        return InferredPageHeading(kind=layout_kind, source="body_keyword")
 
     body_kind = _pick_preferred_body_kind(_body_keyword_kinds(text))
     if body_kind is not None:

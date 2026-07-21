@@ -102,6 +102,38 @@ def test_infer_import_logistics_page_kinds() -> None:
     assert infer_page_document_kind("(CONTINUATION PAGE)\nMore lines") is None
 
 
+def test_invoice_page1_without_title_word_uses_layout_not_bol_field() -> None:
+    """Seagate page-1 often omits 'INVOICE'; BOL field must not win as transport."""
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = (
+        "SEAGATE\n"
+        "SHIPPING ORGANIZATION\nSeagate Technology (Thailand) Ltd.\n"
+        "SELLING ORGANIZATION\nSeagate Singapore International\n"
+        "Date : 11-JUN-2026\n"
+        "Page : 1 of 2\n"
+        "BILL OF LADING NO\n9064997073\n"
+        "FREIGHT ORDER\n6101733776\n"
+        "Item\nMaterial Number\nDescription\nUnit Price\nTotal Price\n"
+    )
+    assert infer_page_document_kind(text) == "invoice"
+
+
+def test_packing_list_page1_without_title_uses_handling_unit_layout() -> None:
+    from app.services.extraction.document_heading_utils import infer_page_document_kind
+
+    text = (
+        "SEAGATE\n"
+        "SHIPPING ORGANIZATION\nCAL-COMP ELECTRONICS\n"
+        "Date : June 11, 2026\n"
+        "Page : 1 of 2\n"
+        "BILL OF LADING NO\n1Z8967RX6744276618\n"
+        "Top Level Handling Unit\nGross Weight\nDimensions\nPackage Type\n"
+        "Number of Cartons : 5\n"
+    )
+    assert infer_page_document_kind(text) == "packing_list"
+
+
 def test_invoice_with_bill_of_lading_field_is_not_transport() -> None:
     """Seagate-style invoices list BOL as a field — must stay invoice, not AWB."""
     from app.services.extraction.document_heading_utils import infer_page_document_kind

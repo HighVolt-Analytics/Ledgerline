@@ -508,6 +508,36 @@ def test_business_fingerprint_not_built_from_vendor_and_so_reference_only() -> N
     assert fp is None
 
 
+def test_business_fingerprint_not_built_from_vendor_and_document_role_only() -> None:
+    """Packing lists that share a weak vendor must not collide on role alone."""
+    fp = compute_business_fingerprint(
+        {
+            "vendor": "SPECTRA INNOVATIONS PTE",
+            "document_role": "packing_list",
+        }
+    )
+    assert fp is None
+    fp_role_only = compute_business_fingerprint({"document_role": "packing_list"})
+    assert fp_role_only is None
+
+
+def test_business_fingerprint_uses_bol_no_for_packing_companions() -> None:
+    left = compute_business_fingerprint(
+        {
+            "document_role": "packing_list",
+            "bol_no": "9064997073",
+        }
+    )
+    right = compute_business_fingerprint(
+        {
+            "document_role": "packing_list",
+            "bol_no": "9064997469",
+        }
+    )
+    assert left is not None and right is not None
+    assert left != right
+
+
 @pytest.mark.asyncio
 async def test_identity_overlap_allows_so_sibling_documents(
     db_session: AsyncSession,

@@ -151,17 +151,53 @@ def _harvest_fallback_reference_fields(
     """Looser reference extraction for split boundaries when strict parsers skip short refs."""
     patterns: tuple[tuple[str, str], ...] = (
         (r"Invoice\s*(?:No\.?|Number|#)\s*[:\s#]*([A-Z0-9][A-Z0-9\-/_]{1,})", "invoice_no"),
+        # Seagate/SAP title form: "INVOICE 9300667417" (no "No:" label).
+        (r"\bINVOICE\s+([0-9]{7,})\b", "invoice_no"),
         (r"PO\s*(?:Number|No\.?|#|Reference)\s*[:\s#]*([A-Z0-9][A-Z0-9\-/_]{1,})", "po_reference"),
         (r"SO\s*(?:Number|No\.?|#|Reference)\s*[:\s#]*([A-Z0-9][A-Z0-9\-/_]{1,})", "so_reference"),
+        # Word-bounded BOL/HAWB — avoid matching inside place names like "Tambol".
+        (
+            r"(?:Bill\s+of\s+Lading|\bB/?L\b|\bBOL\b|\bHAWB\b|\bMAWB\b|\bAWB\b)\s*"
+            r"(?:No\.?|Number|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9\-]{5,})",
+            "bol_no",
+        ),
+        (r"Freight\s+Order\s*[:.]?\s*([0-9]{6,})", "freight_order_no"),
+        (r"Tracking\s*(?:Number|No\.?|#)?\s*[:.]?\s*([A-Z0-9]{10,})", "tracking_no"),
     )
     for pattern, key in patterns:
-        if key not in allowed or key in fields:
+        if key in fields:
+            continue
+        # Always allow canonical refs + suffix identity keys (bol_no, freight_order_no, …).
+        if key not in allowed and not is_identity_field_key(key):
             continue
         match = re.search(pattern, text or "", re.I)
         if match:
             value = match.group(1).strip()
+            if key == "bol_no" and not _looks_like_logistics_ref(value):
+                continue
             if value:
                 fields[key] = value
+
+    # Bare Seagate-style invoice number on page-1 (OCR often drops the "Invoice No" label).
+    if "invoice_no" not in fields and ("invoice_no" in allowed or is_identity_field_key("invoice_no")):
+        bare = re.search(
+            r"(?im)^(?:invoice\s*)?(9300\d{6})\s*$",
+            text or "",
+        )
+        if bare:
+            fields["invoice_no"] = bare.group(1).strip()
+
+
+def _looks_like_logistics_ref(value: str) -> bool:
+    """Reject OCR leftovers mistaken for BOL/HAWB (place names, field labels)."""
+    token = (value or "").strip()
+    if len(token) < 6:
+        return False
+    upper = token.upper()
+    if upper in {"INCOTERMS", "SUNGNOEN", "SINGAPORE", "FREIGHT", "FORWARDER"}:
+        return False
+    # Real BOL/HAWB/tracking tokens almost always include a digit.
+    return any(ch.isdigit() for ch in token)
 
 
 def normalize_identity_fields(fields: dict[str, str]) -> dict[str, str]:
@@ -174,6 +210,9 @@ def normalize_identity_fields(fields: dict[str, str]) -> dict[str, str]:
 
 
 _LINKING_REFERENCE_KEYS = frozenset({"po_reference", "so_reference"})
+# Meta keys may be mixed into fingerprint payloads (e.g. document_role) but must not
+# alone make a "strong" identity — otherwise all packing lists with no refs collide.
+_META_IDENTITY_KEYS = frozenset({"document_role"})
 
 
 def _has_strong_identity(normalized: dict[str, str]) -> bool:
@@ -184,8 +223,19 @@ def _has_strong_identity(normalized: dict[str, str]) -> bool:
         return True
     if "total" in normalized or "subtotal" in normalized:
         return True
+    # BOL / HAWB / freight order are strong instrument ids for logistics companions.
+    if any(
+        key.endswith("_no") or key.endswith("_ref") or key.endswith("_reference")
+        for key in normalized
+        if key not in _LINKING_REFERENCE_KEYS and key not in _META_IDENTITY_KEYS
+    ):
+        return True
     non_linking = {
-        k for k in normalized if k not in _LINKING_REFERENCE_KEYS and k != "vendor"
+        k
+        for k in normalized
+        if k not in _LINKING_REFERENCE_KEYS
+        and k != "vendor"
+        and k not in _META_IDENTITY_KEYS
     }
     if not non_linking:
         return False

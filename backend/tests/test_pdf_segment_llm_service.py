@@ -333,6 +333,72 @@ async def test_rules_path_uses_refine_and_keeps_invoice_despite_bol_field(
     assert result.segments[2].heading_kind == "transport_doc"
 
 
+@pytest.mark.asyncio
+async def test_rules_path_splits_awb_from_seagate_invoice_without_title_word(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AWB must not glue to the next Seagate invoice whose page-1 omits 'INVOICE'."""
+    pages = [
+        _page(
+            0,
+            "Not Negotiable Air Waybill\nAir Freight Services\n"
+            "HAWB NO. 9064907291\nShipper's Name and Address\nSEAGATE",
+        ),
+        _page(
+            1,
+            "SEAGATE\nSHIPPING ORGANIZATION\nSeagate Technology (Thailand) Ltd.\n"
+            "SELLING ORGANIZATION\nSeagate Singapore\n"
+            "Page : 1 of 2\nBILL OF LADING NO\n9064997073\n"
+            "Item\nMaterial Number\nUnit Price\nTotal Price\n",
+        ),
+        _page(
+            2,
+            "Page : 2 of 2\nINVOICE 9300667417\nCOMPUTER GENERATED DOCUMENT\n"
+            "Total Value(in USD) : 48400\n",
+        ),
+        _page(
+            3,
+            "PACKING LIST\nPage : 1 of 2\nBILL OF LADING NO\n9064997073\n"
+            "Top Level Handling Unit\nNumber of Cartons : 16\n",
+        ),
+        _page(4, "PACKING LIST\nPage : 2 of 2\nForwarder Instructions"),
+    ]
+    monkeypatch.setenv("PDF_SEGMENT_LLM_ENABLED", "false")
+    result = await segment_pdf_pages_smart(pages)
+    assert result.segmentation_method.startswith("rules")
+    kinds = [(s.start_page, s.end_page, s.heading_kind) for s in result.segments]
+    assert kinds == [
+        (0, 0, "transport_doc"),
+        (1, 2, "invoice"),
+        (3, 4, "packing_list"),
+    ]
+
+
+def test_refine_does_not_merge_awb_with_invoice_page_of_n() -> None:
+    from app.services.extraction.pdf_segment_llm_service import refine_llm_segments
+
+    pages = [
+        _page(0, "Air Freight Services\nHAWB NO: 9064907291\nShipper details"),
+        _page(
+            1,
+            "SEAGATE\nSHIPPING ORGANIZATION\nPage : 1 of 2\n"
+            "BILL OF LADING NO 9064997073\nMaterial Number\nUnit Price\nTotal Price",
+        ),
+        _page(2, "Page : 2 of 2\nINVOICE 9300667417\nTotals"),
+    ]
+    # Bad LLM: one transport run covering AWB + both invoice pages.
+    raw = PdfSegmentResult(
+        segments=[PdfDocumentSegment(0, 2, "transport_doc", 0.9)],
+        detected_boundary_count=1,
+        segmentation_method="llm",
+    )
+    refined = refine_llm_segments(raw, pages)
+    assert [(s.start_page, s.end_page, s.heading_kind) for s in refined.segments] == [
+        (0, 0, "transport_doc"),
+        (1, 2, "invoice"),
+    ]
+
+
 def test_parse_llm_segments_allows_omitted_blanks() -> None:
     pages = [
         _page(0, "TAX INVOICE\nINV-1"),
