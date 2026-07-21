@@ -380,7 +380,7 @@ class AiClassificationConfig(BaseModel):
     document_ai_provider: str = Field(
         default_factory=_default_document_ai_provider,
         alias="documentAiProvider",
-        description="azure_di | azure_foundry_vision | gemini_vision",
+        description="azure_di | azure_foundry_vision | gemini_vision | claude_vision",
     )
     auto_route_min_confidence: float = Field(
         default=0.85, ge=0.0, le=1.0, alias="autoRouteMinConfidence"
@@ -1180,6 +1180,7 @@ def _normalize_ai_classification_provider(data: dict[str, Any]) -> dict[str, Any
     if not provider_available(provider):
         for candidate in (
             DocumentAiProvider.from_config(_default_document_ai_provider()),
+            DocumentAiProvider.CLAUDE_VISION,
             DocumentAiProvider.AZURE_FOUNDRY_VISION,
             DocumentAiProvider.AZURE_DI,
             DocumentAiProvider.GEMINI_VISION,

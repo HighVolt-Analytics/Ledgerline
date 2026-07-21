@@ -531,6 +531,7 @@ async def list_ai_providers(
     azure_available = bool(is_di_enabled() and settings.runtime_llm_available)
     gemini_available = settings.gemini_vision_available
     foundry_available = settings.azure_foundry_vision_available
+    claude_available = settings.claude_vision_available
     return ApiEnvelope(
         data={
             "azure_di": {
@@ -548,6 +549,15 @@ async def list_ai_providers(
                 **(
                     {"reason": "AZURE_AI_FOUNDRY_* not configured"}
                     if not foundry_available
+                    else {}
+                ),
+            },
+            "claude_vision": {
+                "available": claude_available,
+                "label": "Claude Vision (Azure AI Foundry)",
+                **(
+                    {"reason": "AZURE_AI_VISUALIZATION_* not configured"}
+                    if not claude_available
                     else {}
                 ),
             },

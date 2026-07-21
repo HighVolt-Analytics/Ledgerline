@@ -88,11 +88,12 @@ def main() -> None:
         print(" | ".join(str(row.get(col, "")).ljust(widths[col]) for col in columns))
 
     foundry = sum(1 for row in rows if row["resolved_provider"] == DocumentAiProvider.AZURE_FOUNDRY_VISION.value)
+    claude = sum(1 for row in rows if row["resolved_provider"] == DocumentAiProvider.CLAUDE_VISION.value)
     gemini = sum(1 for row in rows if row["resolved_provider"] == DocumentAiProvider.GEMINI_VISION.value)
     azure_di = sum(1 for row in rows if row["resolved_provider"] == DocumentAiProvider.AZURE_DI.value)
     print(
         f"\nSummary: total={len(rows)} "
-        f"foundry={foundry} gemini={gemini} azure_di={azure_di} "
+        f"foundry={foundry} claude={claude} gemini={gemini} azure_di={azure_di} "
         f"env_default={get_settings().default_document_ai_provider}"
     )
 

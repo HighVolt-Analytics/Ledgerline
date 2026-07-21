@@ -20,6 +20,14 @@ from app.services.extraction.azure_foundry_vision_client import (
     probe_understand_azure_foundry,
     read_for_classification_azure_foundry,
 )
+from app.services.extraction.claude_vision_client import (
+    classify_only_claude,
+    extract_fields_claude,
+    extract_header_claude,
+    is_claude_vision_available,
+    probe_understand_claude,
+    read_for_classification_claude,
+)
 from app.services.extraction.di_extract_service import (
     enrich_ocr_for_route,
     read_layout_for_classification,
@@ -51,6 +59,7 @@ class DocumentAiProvider(str, Enum):
     AZURE_DI = "azure_di"
     GEMINI_VISION = "gemini_vision"
     AZURE_FOUNDRY_VISION = "azure_foundry_vision"
+    CLAUDE_VISION = "claude_vision"
 
     @classmethod
     def from_config(cls, token: str | None) -> DocumentAiProvider:
@@ -59,6 +68,13 @@ class DocumentAiProvider(str, Enum):
             return cls.GEMINI_VISION
         if normalized in {cls.AZURE_FOUNDRY_VISION.value, "azure_foundry"}:
             return cls.AZURE_FOUNDRY_VISION
+        if normalized in {
+            cls.CLAUDE_VISION.value,
+            "claude",
+            "azure_claude",
+            "azure_claude_vision",
+        }:
+            return cls.CLAUDE_VISION
         return cls.AZURE_DI
 
 
@@ -67,6 +83,8 @@ def provider_available(provider: DocumentAiProvider) -> bool:
         return is_gemini_vision_available()
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
         return is_azure_foundry_vision_available()
+    if provider == DocumentAiProvider.CLAUDE_VISION:
+        return is_claude_vision_available()
     return is_di_enabled() and get_settings().runtime_llm_available
 
 
@@ -79,6 +97,10 @@ def provider_unavailable_reason(provider: DocumentAiProvider) -> str:
         if not get_settings().azure_foundry_vision_configured:
             return "Azure AI Foundry vision not configured"
         return "Azure AI Foundry vision unavailable"
+    if provider == DocumentAiProvider.CLAUDE_VISION:
+        if not get_settings().azure_claude_vision_configured:
+            return "AZURE_AI_VISUALIZATION_* not configured"
+        return "Claude vision unavailable"
     if not is_di_enabled():
         return "Azure Document Intelligence not configured"
     if not get_settings().runtime_llm_available:
@@ -96,6 +118,8 @@ async def probe_vision_understand(
         return await probe_understand_gemini(images)
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
         return await probe_understand_azure_foundry(images)
+    if provider == DocumentAiProvider.CLAUDE_VISION:
+        return await probe_understand_claude(images)
     return None
 
 
@@ -110,6 +134,8 @@ async def extract_vision_header(
         return await extract_header_gemini(images, org=org)
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
         return await extract_header_azure_foundry(images, org=org)
+    if provider == DocumentAiProvider.CLAUDE_VISION:
+        return await extract_header_claude(images, org=org)
     return None
 
 
@@ -144,7 +170,27 @@ async def read_for_classification(
                 raise
             logger.warning("azure_foundry_read_fallback_to_di", error=str(exc))
             return await asyncio.to_thread(read_layout_for_classification, path)
+    if provider == DocumentAiProvider.CLAUDE_VISION:
+        try:
+            return await read_for_classification_claude(
+                path,
+                org=org,
+                document_types=document_types,
+                vision_page_images=vision_page_images,
+            )
+        except ValueError as exc:
+            if "claude_read_failed" not in str(exc) or not is_di_enabled():
+                raise
+            logger.warning("claude_read_fallback_to_di", error=str(exc))
+            return await asyncio.to_thread(read_layout_for_classification, path)
     return await asyncio.to_thread(read_layout_for_classification, path)
+
+
+_VISION_PROVIDERS = (
+    DocumentAiProvider.GEMINI_VISION,
+    DocumentAiProvider.AZURE_FOUNDRY_VISION,
+    DocumentAiProvider.CLAUDE_VISION,
+)
 
 
 async def classify_only(
@@ -157,11 +203,20 @@ async def classify_only(
     provider: DocumentAiProvider,
     vision_page_images: list[bytes] | None = None,
 ) -> LlmDocumentResult | None:
-    if provider in (DocumentAiProvider.GEMINI_VISION, DocumentAiProvider.AZURE_FOUNDRY_VISION):
+    if provider in _VISION_PROVIDERS:
         if not file_path:
             return None
         if provider == DocumentAiProvider.GEMINI_VISION:
             return await classify_only_gemini(
+                file_path,
+                ocr,
+                org=org,
+                document_types=document_types,
+                few_shots=few_shots,
+                vision_page_images=vision_page_images,
+            )
+        if provider == DocumentAiProvider.CLAUDE_VISION:
+            return await classify_only_claude(
                 file_path,
                 ocr,
                 org=org,
@@ -227,6 +282,17 @@ async def extract_fields(
         return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
     if provider == DocumentAiProvider.AZURE_FOUNDRY_VISION:
         llm = await extract_fields_azure_foundry(
+            enriched,
+            path,
+            org=org,
+            document_types=document_types,
+            confirmed_dt=confirmed_dt,
+            few_shots=few_shots,
+            vision_page_images=vision_page_images,
+        )
+        return ExtractFieldsResult(llm=llm, ocr=enriched, di_enrich_detail=di_detail)
+    if provider == DocumentAiProvider.CLAUDE_VISION:
+        llm = await extract_fields_claude(
             enriched,
             path,
             org=org,

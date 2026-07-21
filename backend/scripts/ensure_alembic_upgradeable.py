@@ -1,7 +1,8 @@
-"""Ensure alembic_version points at a revision that exists in this codebase.
+"""Validate alembic_version before `alembic upgrade head` in CI/deploy.
 
-Use before `alembic upgrade head` in CI/staging when a phantom revision (e.g. 060)
-was stamped manually but never merged to the repo.
+Never stamps to head — that skips migrations and causes schema drift.
+If the stored revision is unknown, fail loudly so operators run
+`scripts/repair_alembic_upgrade.py` (incremental upgrade + stamp on duplicates).
 """
 
 from __future__ import annotations
@@ -49,21 +50,17 @@ async def main() -> None:
             return
 
         if current is None:
-            await session.execute(
-                text("INSERT INTO alembic_version (version_num) VALUES (:v)"),
-                {"v": head},
+            print(
+                "ERROR: alembic_version is empty. Run `alembic upgrade head` on a fresh database "
+                "or `python scripts/repair_alembic_upgrade.py <base>` for partial schema."
             )
-            await session.commit()
-            print(f"inserted alembic_version={head}")
-            return
+            raise SystemExit(1)
 
-        print(f"repairing unknown revision {current!r} -> {head!r}")
-        await session.execute(
-            text("UPDATE alembic_version SET version_num = :v"),
-            {"v": head},
+        print(
+            f"ERROR: unknown alembic revision {current!r}. "
+            "Do not stamp to head — run `python scripts/repair_alembic_upgrade.py` instead."
         )
-        await session.commit()
-        print("alembic_version_repaired")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

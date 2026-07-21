@@ -15,6 +15,7 @@ class AppSettingsResponse(BaseModel):
     azure_di_enabled: bool
     gemini_vision_available: bool = False
     azure_foundry_vision_available: bool = False
+    claude_vision_available: bool = False
     default_document_ai_provider: str = "azure_di"
     azure_redis_enabled: bool
     appinsights_enabled: bool

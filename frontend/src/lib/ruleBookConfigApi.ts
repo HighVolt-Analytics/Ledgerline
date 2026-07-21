@@ -722,7 +722,8 @@ export function ruleBookConfigFromApi(api: RuleBookConfig): RuleBookConfigState 
         (api.ai_classification?.document_ai_provider as
           | "azure_di"
           | "azure_foundry_vision"
-          | "gemini_vision") ?? "azure_di",
+          | "gemini_vision"
+          | "claude_vision") ?? "azure_di",
       autoRouteMinConfidence: api.ai_classification?.auto_route_min_confidence ?? 0.85,
     },
     orgContext: mapOrgContextFromApi(api.org_context),

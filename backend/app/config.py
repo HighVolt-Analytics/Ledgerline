@@ -418,7 +418,10 @@ class Settings(BaseSettings):
     vision_llm_provider: str = Field(
         default="azure_di",
         validation_alias="VISION_LLM_PROVIDER",
-        description="Default vision document AI: azure_di | azure_foundry | gemini_vision",
+        description=(
+            "Default vision document AI: azure_di | azure_foundry | "
+            "gemini_vision | claude_vision"
+        ),
     )
     azure_ai_foundry_endpoint: str = Field(
         default="",
@@ -435,6 +438,36 @@ class Settings(BaseSettings):
     azure_ai_foundry_api_version: str = Field(
         default="2024-08-01-preview",
         validation_alias="AZURE_AI_FOUNDRY_API_VERSION",
+    )
+    # Claude on Azure AI Foundry (Anthropic Messages API — understood-path vision)
+    azure_ai_visualization_endpoint: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AZURE_AI_VISUALIZATION_ENDPOINT",
+            "AZURE_CLAUDE_ENDPOINT",
+        ),
+    )
+    azure_ai_visualization_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AZURE_AI_VISUALIZATION_API_KEY",
+            "AZURE_CLAUDE_API_KEY",
+        ),
+    )
+    azure_ai_visualization_deployment: str = Field(
+        default="claude-sonnet-4-6",
+        validation_alias=AliasChoices(
+            "AZURE_AI_VISUALIZATION_DEPLOYMENT_NAME",
+            "AZURE_AI_VISUALIZATION_DEPLOYMENT",
+            "AZURE_CLAUDE_DEPLOYMENT",
+        ),
+    )
+    azure_ai_visualization_anthropic_version: str = Field(
+        default="2023-06-01",
+        validation_alias=AliasChoices(
+            "AZURE_AI_VISUALIZATION_ANTHROPIC_VERSION",
+            "AZURE_CLAUDE_ANTHROPIC_VERSION",
+        ),
     )
     policy_min_confidence: float = Field(
         default=0.65,
@@ -1141,10 +1174,24 @@ class Settings(BaseSettings):
         return self.azure_foundry_vision_configured
 
     @property
+    def azure_claude_vision_configured(self) -> bool:
+        return bool(
+            self.azure_ai_visualization_endpoint.strip()
+            and self.azure_ai_visualization_api_key.strip()
+            and self.azure_ai_visualization_deployment.strip()
+        )
+
+    @property
+    def claude_vision_available(self) -> bool:
+        return self.azure_claude_vision_configured
+
+    @property
     def default_document_ai_provider(self) -> str:
         token = self.vision_llm_provider.strip().lower()
         if token in {"azure_foundry", "azure_foundry_vision"}:
             return "azure_foundry_vision"
+        if token in {"claude", "claude_vision", "azure_claude", "azure_claude_vision"}:
+            return "claude_vision"
         if token in {"gemini", "gemini_vision"}:
             return "gemini_vision"
         return "azure_di"

@@ -496,6 +496,7 @@ def _integrations_count(mailboxes_active: int) -> int:
             s.blob_enabled,
             s.azure_di_enabled,
             s.azure_foundry_vision_available,
+            s.claude_vision_available,
             s.gemini_vision_available,
         )
         if flag

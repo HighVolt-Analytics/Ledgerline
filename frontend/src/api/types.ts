@@ -490,6 +490,7 @@ export interface AiProviderStatus {
 export interface AiProvidersResponse {
   azure_di: AiProviderStatus;
   azure_foundry_vision: AiProviderStatus;
+  claude_vision: AiProviderStatus;
   gemini_vision: AiProviderStatus;
 }
 
@@ -1094,6 +1095,7 @@ export interface AppSettings {
   azure_di_enabled: boolean;
   gemini_vision_available: boolean;
   azure_foundry_vision_available: boolean;
+  claude_vision_available: boolean;
   default_document_ai_provider: string;
   azure_postgres_enabled: boolean;
   azure_redis_enabled: boolean;
@@ -1590,7 +1592,7 @@ export interface RuleBookConfig {
     classification_hints?: string;
   };
   ai_classification?: {
-    document_ai_provider?: "azure_di" | "azure_foundry_vision" | "gemini_vision";
+    document_ai_provider?: "azure_di" | "azure_foundry_vision" | "gemini_vision" | "claude_vision";
     auto_route_min_confidence?: number;
     llm_min_confidence?: number;
     policy_min_confidence?: number;

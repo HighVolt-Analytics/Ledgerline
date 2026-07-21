@@ -321,6 +321,7 @@ async def evaluate_vision_header_extract(
     if provider not in (
         DocumentAiProvider.GEMINI_VISION,
         DocumentAiProvider.AZURE_FOUNDRY_VISION,
+        DocumentAiProvider.CLAUDE_VISION,
     ):
         return VisionHeaderExtractResult(
             success=False,

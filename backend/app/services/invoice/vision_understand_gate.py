@@ -72,6 +72,7 @@ async def evaluate_vision_understand(
     if provider not in (
         DocumentAiProvider.GEMINI_VISION,
         DocumentAiProvider.AZURE_FOUNDRY_VISION,
+        DocumentAiProvider.CLAUDE_VISION,
     ):
         return _cannot(
             reason="vision_provider_not_configured",

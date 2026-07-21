@@ -259,7 +259,7 @@ export type DocumentClassificationConfig = {
 };
 
 export type AiClassificationConfig = {
-  documentAiProvider: "azure_di" | "azure_foundry_vision" | "gemini_vision";
+  documentAiProvider: "azure_di" | "azure_foundry_vision" | "gemini_vision" | "claude_vision";
   autoRouteMinConfidence: number;
 };
 

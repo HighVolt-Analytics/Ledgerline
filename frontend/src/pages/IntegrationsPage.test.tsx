@@ -118,6 +118,7 @@ vi.mock("@/api/client", () => ({
       azure_di_enabled: false,
       gemini_vision_available: false,
       azure_foundry_vision_available: false,
+      claude_vision_available: false,
       default_document_ai_provider: "azure_di",
       azure_postgres_enabled: false,
       azure_redis_enabled: false,

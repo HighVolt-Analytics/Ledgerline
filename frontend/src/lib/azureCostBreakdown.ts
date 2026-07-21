@@ -155,6 +155,7 @@ export function parseAzureCostBreakdown(
 
 export function formatProviderLabel(provider: string): string {
   if (provider === "azure_foundry_vision") return "Azure AI Foundry (vision)";
+  if (provider === "claude_vision") return "Claude Vision (Azure)";
   if (provider === "azure_di") return "Azure DI + OpenAI";
   if (provider === "gemini_vision") return "Gemini Vision";
   return provider.replace(/_/g, " ");

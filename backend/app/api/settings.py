@@ -26,6 +26,7 @@ async def get_app_settings() -> ApiEnvelope[AppSettingsResponse]:
             azure_di_enabled=s.azure_di_enabled,
             gemini_vision_available=s.gemini_vision_available,
             azure_foundry_vision_available=s.azure_foundry_vision_available,
+            claude_vision_available=s.claude_vision_available,
             default_document_ai_provider=s.default_document_ai_provider,
             azure_postgres_enabled=s.azure_postgres_enabled,
             azure_redis_enabled=s.azure_redis_enabled,

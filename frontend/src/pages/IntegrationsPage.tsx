@@ -834,6 +834,13 @@ export function IntegrationsPage() {
       icon: Sparkles,
     },
     {
+      id: "claude-vision",
+      name: "Claude Vision (Azure AI Foundry)",
+      tagline: "Understood-path vision via Claude Sonnet",
+      ok: Boolean(s.claude_vision_available),
+      icon: Sparkles,
+    },
+    {
       id: "gemini",
       name: "Gemini Vision",
       tagline: "Legacy optional document AI provider",

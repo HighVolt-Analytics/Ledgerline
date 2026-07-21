@@ -28,6 +28,12 @@ const PROVIDERS = [
     statusKey: "azure_foundry_vision" as const,
   },
   {
+    id: "claude_vision" as const,
+    title: "Claude Vision (Azure AI Foundry)",
+    description: "Claude Sonnet reads PDF pages for understand + header extract",
+    statusKey: "claude_vision" as const,
+  },
+  {
     id: "gemini_vision" as const,
     title: "Gemini Vision (legacy)",
     description: "Google Gemini reads PDF pages directly for classify and extract",
