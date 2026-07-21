@@ -1,6 +1,6 @@
 """Xero accounting export pipeline: mappings, ledger, tracking, org profile.
 
-Revision ID: 075
+Revision ID: 078
 Revises: 074
 """
 
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
-revision: str = "075"
-down_revision: Union[str, None] = "074"
+revision: str = "078"
+down_revision: Union[str, None] = "077"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
