@@ -58,6 +58,17 @@ def test_normalize_currency_rejects_ambiguous_dollar() -> None:
     assert normalize_currency("usd") == "USD"
 
 
+def test_normalize_currency_rejects_greedy_substring_false_positives() -> None:
+    """Never invent ISO from prose substrings (ARS in DOLLARS, EUR in EUROPEAN)."""
+    assert normalize_currency("EUROPEAN") is None
+    assert normalize_currency("US Dollars") is None
+    assert normalize_currency("STANDARD") is None
+    assert normalize_currency("AUD 100.00") == "AUD"
+    assert normalize_currency("USD$") == "USD"
+    assert normalize_currency("$100 AUD") == "AUD"
+    assert normalize_currency("S$ 12.00") == "SGD"
+
+
 def test_detect_currency_symbol_launchdarkly_style() -> None:
     text = (
         "Catamorphic Co DBA LaunchDarkly\n"
@@ -70,6 +81,24 @@ def test_detect_currency_symbol_launchdarkly_style() -> None:
     iso, symbol = resolve_currency_from_ocr(text)
     assert iso == ""
     assert symbol == "$"
+
+
+def test_rm_inside_terms_is_not_myr() -> None:
+    """Regression: 'RM' substring inside TERMS must not become MYR."""
+    text = "Payment STANDARD terms Total 50.00\nFOR ALL ITEMS.\n"
+    assert detect_currency_code_in_text(text) is None
+    iso, symbol = resolve_currency_from_ocr(text)
+    assert iso == ""
+    assert symbol is None
+
+
+def test_rm_near_amount_is_myr() -> None:
+    assert detect_currency_code_in_text("Total RM 250.00") == "MYR"
+
+
+def test_currency_label_resolves_iso() -> None:
+    text = "Currency: USD\nTotal: 100.00"
+    assert detect_currency_code_in_text(text) == "USD"
 
 
 def test_detect_currency_ignores_for_all_items_false_positive() -> None:
@@ -129,3 +158,13 @@ def test_apply_currency_ocr_fallback_keeps_existing_iso() -> None:
     updated = apply_currency_ocr_fallback(parsed, "Total $10.00")
     assert updated.currency == "USD"
     assert "currency_symbol" not in (updated.extracted_fields or {})
+
+
+def test_currency_evidence_accepts_prefix_and_glyph() -> None:
+    from app.services.shared.currency import currency_evidence_in_text
+
+    assert currency_evidence_in_text("SGD", "Total S$ 12.00")
+    assert currency_evidence_in_text("USD", "Total US$37.08")
+    assert currency_evidence_in_text("EUR", "Total €45.00")
+    assert not currency_evidence_in_text("AUD", "Total $100.00 ABN 51824753556")
+    assert currency_evidence_in_text("AUD", "Total AUD 100.00")

@@ -15,7 +15,8 @@ from app.services.shared.currency import UNKNOWN_CURRENCY, convert_to_base, sum_
 _ABN = "51824753556"
 
 
-def test_ground_keeps_aud_via_tax_id_when_ocr_has_only_dollar() -> None:
+def test_ground_clears_aud_when_only_bare_dollar_even_with_abn() -> None:
+    """ABN must not invent AUD — bare $ stays empty for human confirm."""
     ocr = (
         f"TAX INVOICE\nABN {_ABN}\nVendor: Acme Pty Ltd\n"
         "Subtotal: $100.00\nGST 10%: $10.00\nTotal: $110.00\n"
@@ -29,9 +30,42 @@ def test_ground_keeps_aud_via_tax_id_when_ocr_has_only_dollar() -> None:
         document_text=ocr,
     )
     grounded = ground_invoice_scalars(parsed, ocr)
+    assert (grounded.currency or "") == ""
+
+
+def test_ground_keeps_aud_when_iso_literally_on_document() -> None:
+    ocr = f"TAX INVOICE\nABN {_ABN}\nTotal: AUD 110.00\n"
+    parsed = InvoiceData(
+        abn=_ABN,
+        currency="AUD",
+        total=Decimal("110.00"),
+        document_text=ocr,
+    )
+    grounded = ground_invoice_scalars(parsed, ocr)
     assert grounded.currency == "AUD"
     debug = (grounded.raw_fields or {}).get("_grounding_debug") or {}
-    assert debug.get("currency") == "tax_id_context"
+    assert debug.get("currency") == "literal_ocr"
+
+
+def test_ground_keeps_sgd_from_prefixed_symbol() -> None:
+    ocr = "TOTAL AMOUNT PAYABLE : S$ 1,234.56\n"
+    parsed = InvoiceData(currency="SGD", total=Decimal("1234.56"), document_text=ocr)
+    grounded = ground_invoice_scalars(parsed, ocr)
+    assert grounded.currency == "SGD"
+
+
+def test_ground_keeps_usd_from_us_prefix() -> None:
+    ocr = "MongoDB Limited\nTotal US$37.08\n"
+    parsed = InvoiceData(currency="USD", total=Decimal("37.08"), document_text=ocr)
+    grounded = ground_invoice_scalars(parsed, ocr)
+    assert grounded.currency == "USD"
+
+
+def test_ground_keeps_eur_from_glyph() -> None:
+    ocr = "Total €45.00 due\n"
+    parsed = InvoiceData(currency="EUR", total=Decimal("45.00"), document_text=ocr)
+    grounded = ground_invoice_scalars(parsed, ocr)
+    assert grounded.currency == "EUR"
 
 
 def test_ground_clears_currency_without_tax_id_or_iso() -> None:
@@ -41,7 +75,7 @@ def test_ground_clears_currency_without_tax_id_or_iso() -> None:
     assert (grounded.currency or "") == ""
 
 
-def test_ground_rejects_usd_when_abn_implies_aud() -> None:
+def test_ground_rejects_usd_when_not_on_document() -> None:
     ocr = f"TAX INVOICE\nABN {_ABN}\nTotal: $100.00\n"
     parsed = InvoiceData(abn=_ABN, currency="USD", total=Decimal("100.00"), document_text=ocr)
     grounded = ground_invoice_scalars(parsed, ocr)
@@ -69,8 +103,22 @@ def test_gap_fill_still_rejects_currency_without_evidence() -> None:
     assert result.rejected == ("currency",)
 
 
-def test_gap_fill_accepts_aud_with_grounded_abn_on_parsed() -> None:
+def test_gap_fill_rejects_aud_inferred_from_abn_only() -> None:
     ocr_text = f"Vendor: Acme\nABN {_ABN}\nTotal: $50.00"
+    parsed = InvoiceData(document_text=ocr_text, currency="", abn=_ABN)
+    gap = InvoiceData(currency="AUD", document_text=ocr_text)
+    result = merge_gap_fill_into_parsed(
+        parsed,
+        gap,
+        missing_keys=["currency"],
+        ocr_text=ocr_text,
+    )
+    assert not (result.parsed.currency or "").strip()
+    assert result.rejected == ("currency",)
+
+
+def test_gap_fill_accepts_aud_when_iso_on_document() -> None:
+    ocr_text = f"Vendor: Acme\nABN {_ABN}\nTotal: AUD 50.00"
     parsed = InvoiceData(document_text=ocr_text, currency="", abn=_ABN)
     gap = InvoiceData(currency="AUD", document_text=ocr_text)
     result = merge_gap_fill_into_parsed(

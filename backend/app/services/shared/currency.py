@@ -97,8 +97,12 @@ _ENGLISH_FALSE_POSITIVE_ISO = frozenset(
 # Common currency glyphs near amounts.
 _CURRENCY_GLYPHS = r"[$€£¥₹₩₪₫₱₽₴₺₦₡₵₲]"
 
-# Uppercase-only tokens (avoids matching English words like "try"/"may").
-_UPPER_ISO_TOKEN = re.compile(r"(?<![A-Z0-9])([A-Z]{3})(?![A-Z0-9])")
+# Explicit currency label → ISO (never invent from free-floating prose tokens).
+_CURRENCY_LABEL_ISO = re.compile(
+    r"(?i)\b(?:currency|curr(?:ency)?\s*code|ccy|amount\s+in|invoiced?\s+in|"
+    r"payable\s+in|total\s+in)\b\s*[:#\-]?\s*"
+    r"(?<![A-Za-z0-9])(?P<code>[A-Za-z]{3})(?![A-Za-z0-9])"
+)
 
 _ISO_NEAR_MONEY = re.compile(
     rf"(?:"
@@ -130,14 +134,35 @@ def _amount_looks_like_money(amount: str | None) -> bool:
     return len(digits) >= 3
 
 
+def _prefix_hit_in_text(prefix: str, text: str) -> bool:
+    """True when ``prefix`` appears as a real currency marker (not inside words).
+
+    Letter-only prefixes like ``RM`` must not match inside ``TERMS``.
+    Symbol prefixes (``US$``, ``S$``) match case-insensitively as whole tokens.
+    """
+    if not prefix or not text:
+        return False
+    escaped = re.escape(prefix)
+    if any(ch in prefix for ch in "$€£¥₹"):
+        return re.search(rf"(?<![A-Za-z0-9]){escaped}", text, re.I) is not None
+    # Alphabetic prefixes (RM, …): token boundary + money/digit context.
+    return (
+        re.search(
+            rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])\s*(?:{_CURRENCY_GLYPHS})?\s*\d",
+            text,
+            re.I,
+        )
+        is not None
+    )
+
+
 def detect_prefixed_currency_in_text(text: str | None) -> str | None:
     """Return ISO from unambiguous prefixed symbols (S$, US$, A$, …)."""
     if not text:
         return None
-    upper = text.upper()
     # Longer prefixes first (USD$ before US$, AUD$ before A$).
     for prefix, iso in sorted(_PREFIXED_SYMBOL_TO_ISO, key=lambda row: -len(row[0])):
-        if prefix.upper() in upper or prefix in text:
+        if _prefix_hit_in_text(prefix, text):
             return iso
     return None
 
@@ -148,7 +173,7 @@ def detect_currency_code_in_text(text: str | None) -> str | None:
     Preference:
     1. Prefixed symbols (S$ → SGD, US$ → USD)
     2. ISO codes next to money amounts (pycountry-validated)
-    3. Uppercase ISO tokens that are not common English false positives
+    3. Explicit currency labels (Currency: USD) — never free-floating prose tokens
     """
     if not text:
         return None
@@ -171,16 +196,41 @@ def detect_currency_code_in_text(text: str | None) -> str | None:
     if near_money:
         return near_money.most_common(1)[0][0]
 
-    uppercase_hits = Counter(
-        match.group(1)
-        for match in _UPPER_ISO_TOKEN.finditer(text)
-        if is_iso4217_currency(match.group(1))
-        and match.group(1) not in _ENGLISH_FALSE_POSITIVE_ISO
-    )
-    if uppercase_hits:
-        return uppercase_hits.most_common(1)[0][0]
+    label_hits: Counter[str] = Counter()
+    for match in _CURRENCY_LABEL_ISO.finditer(text):
+        code = (match.group("code") or "").upper()
+        if not is_iso4217_currency(code):
+            continue
+        if code in _ENGLISH_FALSE_POSITIVE_ISO:
+            continue
+        label_hits[code] += 1
+    if label_hits:
+        return label_hits.most_common(1)[0][0]
 
     return None
+
+
+def currency_evidence_in_text(iso: str | None, text: str | None) -> bool:
+    """True when OCR/text literally supports this ISO (code, prefix, or glyph).
+
+    Never treats tax IDs, country names, or tenant defaults as evidence.
+    """
+    code = (iso or "").strip().upper()
+    if not code or not is_iso4217_currency(code) or not (text or "").strip():
+        return False
+    raw = text or ""
+    if detect_currency_code_in_text(raw) == code:
+        return True
+    if re.search(rf"(?<![A-Z0-9]){re.escape(code)}(?![A-Z0-9])", raw.upper()):
+        # Require the ISO token itself (word-bounded), not a substring of a longer word.
+        return True
+    for prefix, mapped in _PREFIXED_SYMBOL_TO_ISO:
+        if mapped == code and _prefix_hit_in_text(prefix, raw):
+            return True
+    symbol = detect_currency_symbol_in_text(raw)
+    if symbol and UNAMBIGUOUS_SYMBOL_TO_ISO.get(symbol) == code:
+        return True
+    return False
 
 
 def detect_currency_symbol_in_text(text: str | None) -> str | None:

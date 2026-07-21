@@ -60,19 +60,41 @@ def normalize_currency(value: Any) -> str | None:
     # Ambiguous symbols must not invent an ISO code (USD vs AUD, JPY vs CNY).
     if raw in {"$", "¥"}:
         return None
-    from app.services.shared.iso4217_catalog import is_iso4217_currency, iso4217_currency_codes
+    import re
+
+    from app.services.shared.currency import detect_prefixed_currency_in_text
+    from app.services.shared.iso4217_catalog import is_iso4217_currency
 
     # Unambiguous symbols → ISO
     symbol_map = {"£": "GBP", "€": "EUR", "₹": "INR"}
     if raw in symbol_map:
         return symbol_map[raw]
-    token = raw.upper()
-    if is_iso4217_currency(token):
+
+    # Prefixed forms on short tokens (US$, S$ 100) — never scan long prose.
+    if len(raw) <= 24:
+        prefixed = detect_prefixed_currency_in_text(raw)
+        if prefixed:
+            return prefixed
+
+    token = raw.upper().strip()
+    # Exact ISO code
+    if len(token) == 3 and is_iso4217_currency(token):
         return token
-    # "AUD 100" / "USD$" — prefer real ISO substrings from the catalog
-    for code in sorted(iso4217_currency_codes(), key=len, reverse=True):
-        if code in token:
+
+    # Leading ISO: "AUD 100.00" / "USD$" / "EUR€"
+    leading = re.match(r"^(?P<code>[A-Z]{3})(?:\s|[$€£¥₹]|$)", token)
+    if leading:
+        code = leading.group("code")
+        if is_iso4217_currency(code):
             return code
+
+    # Trailing ISO: "100.00 AUD" / "$100 AUD"
+    trailing = re.search(r"(?:^|[\s$])(?P<code>[A-Z]{3})$", token)
+    if trailing:
+        code = trailing.group("code")
+        if is_iso4217_currency(code):
+            return code
+
     return None
 
 

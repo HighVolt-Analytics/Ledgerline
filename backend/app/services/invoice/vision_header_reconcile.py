@@ -19,9 +19,6 @@ from app.services.extraction.field_validators import normalize_amount
 from app.services.shared.amount_sanity import plausible_money
 from app.services.shared.currency import (
     AMBIGUOUS_CURRENCY_SYMBOLS,
-    UNAMBIGUOUS_SYMBOL_TO_ISO,
-    detect_currency_code_in_text,
-    detect_currency_symbol_in_text,
     resolve_currency_from_ocr,
 )
 from app.services.shared.iso4217_catalog import is_iso4217_currency
@@ -89,22 +86,9 @@ def _amounts_from_pattern(pattern: re.Pattern[str], text: str) -> list[Decimal]:
 
 def _iso_corroborated_in_text(iso: str, text: str | None) -> bool:
     """True when OCR/text literally supports this ISO (code, prefix, or glyph)."""
-    if not iso or not (text or "").strip():
-        return False
-    code = iso.strip().upper()
-    raw = text or ""
-    if detect_currency_code_in_text(raw) == code:
-        return True
-    upper = raw.upper()
-    if re.search(rf"(?<![A-Z0-9]){re.escape(code)}(?![A-Z0-9])", upper):
-        return True
-    for prefix, mapped in _PREFIXED_SYMBOL_TO_ISO.items():
-        if mapped == code and prefix.lower() in raw.lower():
-            return True
-    symbol = detect_currency_symbol_in_text(raw)
-    if symbol and UNAMBIGUOUS_SYMBOL_TO_ISO.get(symbol) == code:
-        return True
-    return False
+    from app.services.shared.currency import currency_evidence_in_text
+
+    return currency_evidence_in_text(iso, text)
 
 
 def reconcile_currency_from_text(

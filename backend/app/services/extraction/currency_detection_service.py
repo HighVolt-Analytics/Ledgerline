@@ -48,10 +48,11 @@ def build_currency_detect_user_payload(
     org: OrgContext,
     dt_definition: DocumentTypeDefinition | None = None,
 ) -> str:
+    # Intentionally omit tenant country/locale — never bias toward a home currency.
+    del org
     payload: dict[str, Any] = {
         "document_text": build_smart_ocr_excerpt(ocr.text),
         "document_type_hint": _document_type_hint(dt_definition),
-        "tenant_country_hint": (org.country or "").strip().upper() or None,
         "ocr_text_length": ocr.text_length,
     }
     return json.dumps(payload, default=str)
@@ -139,8 +140,14 @@ def parse_currency_detection_result(raw: dict[str, Any] | None) -> dict[str, Any
 def apply_currency_detection_to_parsed(
     parsed: InvoiceData,
     detection: dict[str, Any],
+    *,
+    ocr_text: str | None = None,
 ) -> InvoiceData:
-    """Merge detection result into InvoiceData (currency + audit fields)."""
+    """Merge detection result into InvoiceData (currency + audit fields).
+
+    Applied ISO codes must be literally evidenced in OCR (code, prefixed
+    symbol, or unambiguous glyph). Jurisdiction guesses are never stored.
+    """
     extracted = dict(parsed.extracted_fields or {})
     raw_fields = dict(parsed.raw_fields or {})
     audit: dict[str, Any] = {
@@ -162,20 +169,41 @@ def apply_currency_detection_to_parsed(
         audit["decision_basis"] = doc.get("decision_basis")
         audit["evidence"] = doc.get("evidence")
         audit["conflicts"] = doc.get("conflicts")
-    raw_fields["currency_detection"] = audit
 
-    updates: dict[str, Any] = {"raw_fields": raw_fields}
-    if detection.get("applied") and detection.get("iso_code"):
-        updates["currency"] = str(detection["iso_code"]).strip().upper()
+    updates: dict[str, Any] = {}
+    applied = bool(detection.get("applied") and detection.get("iso_code"))
+    iso = str(detection.get("iso_code") or "").strip().upper() if applied else ""
+    if applied and iso:
+        from app.services.shared.currency import currency_evidence_in_text
+
+        text = ocr_text if ocr_text is not None else (parsed.document_text or "")
+        if not currency_evidence_in_text(iso, text):
+            applied = False
+            iso = ""
+            audit["applied"] = False
+            audit["human_review_required"] = True
+            audit["review_reason"] = (
+                detection.get("review_reason")
+                or "Currency ISO not literally evidenced on the document"
+            )
+            audit["grounding_rejected"] = True
+
+    audit["applied"] = applied
+    raw_fields["currency_detection"] = audit
+    updates["raw_fields"] = raw_fields
+
+    if applied and iso:
+        updates["currency"] = iso
         extracted.pop("currency_symbol", None)
         extracted.pop("currency_review_required", None)
         extracted.pop("currency_review_reason", None)
     elif detection.get("symbol_seen") and not (parsed.currency or "").strip():
         extracted["currency_symbol"] = str(detection["symbol_seen"]).strip()
-        if detection.get("human_review_required"):
+        if detection.get("human_review_required") or not applied:
             extracted["currency_review_required"] = True
-            if detection.get("review_reason"):
-                extracted["currency_review_reason"] = detection["review_reason"]
+            reason = audit.get("review_reason") or detection.get("review_reason")
+            if reason:
+                extracted["currency_review_reason"] = reason
 
     if extracted != (parsed.extracted_fields or {}):
         updates["extracted_fields"] = extracted
@@ -251,13 +279,26 @@ async def apply_currency_detection(
         return parsed, detail
 
     detail["currency_detect_attempted"] = True
-    detail["currency_detect_applied"] = bool(detection.get("applied"))
-    detail["currency_detect_iso"] = str(
-        detection.get("iso_code") or detection.get("candidate_iso") or ""
+    updated = apply_currency_detection_to_parsed(
+        parsed,
+        detection,
+        ocr_text=ocr.text,
     )
-    detail["human_review_required"] = bool(detection.get("human_review_required"))
-    detail["review_reason"] = detection.get("review_reason")
+    audit = (updated.raw_fields or {}).get("currency_detection") or {}
+    detail["currency_detect_applied"] = bool(audit.get("applied"))
+    detail["currency_detect_iso"] = str(
+        (updated.currency if audit.get("applied") else None)
+        or detection.get("candidate_iso")
+        or detection.get("iso_code")
+        or ""
+    )
+    detail["human_review_required"] = bool(
+        audit.get("human_review_required", detection.get("human_review_required"))
+    )
+    detail["review_reason"] = audit.get("review_reason") or detection.get("review_reason")
     detail["confidence"] = detection.get("confidence")
     detail["critical_flags"] = detection.get("critical_flags") or []
+    if audit.get("grounding_rejected"):
+        detail["grounding_rejected"] = True
 
-    return apply_currency_detection_to_parsed(parsed, detection), detail
+    return updated, detail

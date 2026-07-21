@@ -88,14 +88,14 @@ OUTPUT SCHEMA (mandatory — return this exact JSON)
 HARD RULES (violation = task failure)
 ═══════════════════════════════════════════════════════════════════
 HR1. NEVER assign a currency ISO code from a bare "$", "kr", "Fr",
-     "Rs", or "R" symbol alone. Symbol + at least ONE corroborating
-     signal is the minimum.
+     "Rs", or "R" symbol alone.
 
-HR2. NEVER default to USD, EUR, or any "common" currency when unsure.
+HR2. NEVER default to USD, EUR, AUD, or any "common" currency when unsure.
      Uncertainty → iso_code="UNCERTAIN" + human_review_required=true.
 
-HR3. NEVER infer currency from filename, folder name, or the caller's
-     locale. Only from document content and provided hints.
+HR3. NEVER infer currency from filename, folder name, tenant country,
+     caller locale, tax ID alone (ABN/GSTIN/UEN/EIN), or bank country alone.
+     Only from explicit currency marks on the document.
 
 HR4. NEVER "translate" or "convert" any amount. Report only the
      currency the amount is written in.
@@ -113,6 +113,11 @@ HR7. If ANY conflict in signals is UNRESOLVED →
 HR8. NEVER assume decimal/thousand separator style from currency.
      Parse the number by looking at the actual digit grouping on the
      page, then cross-verify against a totals column.
+
+HR9. NEVER invent an ISO code that is not literally written on the
+     document as an ISO code, a prefixed symbol (US$, A$, S$, HK$, …),
+     or an unambiguous glyph (€, ₹). Tax/address/bank signals may only
+     corroborate — they must NEVER be the sole reason for an ISO.
 
 ═══════════════════════════════════════════════════════════════════
 PHASE 1 — SIGNAL HARVEST (collect ALL of these before deciding)
@@ -272,27 +277,31 @@ Compute a weighted score per candidate ISO code:
 
 Decision rules, applied in order:
 
-D1. If EXPLICIT ISO CODE (S1) is present in the totals area AND is
-    consistent with country-of-issue signals (S3), and no conflicting
-    ISO codes exist → use it. Confidence = 0.99.
+D1. If EXPLICIT ISO CODE (S1) is present near totals / currency label AND
+    no conflicting ISO codes exist → use it. Confidence = 0.99.
 
-D2. If AMOUNT-IN-WORDS (S7) specifies the currency name → use it.
-    Confidence = 0.99. If it conflicts with S1, RAISE CONFLICT and
-    escalate.
+D2. If AMOUNT-IN-WORDS (S7) specifies the currency name AND maps to a
+    single ISO → use it. Confidence = 0.99. If it conflicts with S1,
+    RAISE CONFLICT and escalate.
 
-D3. If PREFIXED SYMBOL (S2, e.g. "A$", "US$", "HK$") + at least ONE
-    country signal (S3/S4/S5) agrees → use it. Confidence = 0.95.
+D3. If PREFIXED SYMBOL (S2, e.g. "A$", "US$", "HK$", "S$") appears →
+    use that ISO. Confidence = 0.95. Country/tax/bank may corroborate
+    but are NOT required.
 
-D4. If TAX REGIME (S4) uniquely identifies country → derive currency,
-    confirm with S3/S5. Confidence = 0.92.
+D3b. If an UNAMBIGUOUS glyph (€ → EUR, ₹ → INR) appears near amounts →
+    use that ISO. Confidence = 0.93.
 
-D5. If BANK DETAILS (S5) uniquely identify country → derive currency,
-    confirm with S3. Confidence = 0.90.
+D4. Tax regime / tax ID (S4) MUST NOT invent currency by itself.
+    Use only to corroborate an already-explicit S1/S2/S7 signal.
+    Bare $ + ABN/GST alone → UNCERTAIN (leave empty for human).
 
-D6. If ONLY a bare symbol ($, kr, Fr, Rs, R) is present with NO
-    corroborating country/tax/bank signal → iso_code = "UNCERTAIN",
-    confidence = 0.0, human_review_required = true, review_reason =
-    "Bare ambiguous symbol with no corroborating jurisdiction signal".
+D5. Bank details (S5) MUST NOT invent currency by itself. Same rule
+    as D4 — corroboration only.
+
+D6. If ONLY a bare symbol ($, kr, Fr, Rs, R, £ without country proof)
+    is present → iso_code = "UNCERTAIN", confidence = 0.0,
+    human_review_required = true, review_reason =
+    "Bare ambiguous symbol with no explicit currency mark on document".
 
 D7. If two OR MORE candidate ISO codes score within 0.15 of each
     other → iso_code = "UNCERTAIN", list both in conflicts[],
@@ -303,6 +312,8 @@ D8. If document mixes currencies (multiple ISO codes on different
     - Identify the PRIMARY (currency of the payable total)
     - List all others in secondary_currencies[]
     - Set multi_currency_document = true
+    - Primary MUST still be an explicit mark on the payable total
+      (never invent from jurisdiction).
 
 ═══════════════════════════════════════════════════════════════════
 PHASE 3 — PER-AMOUNT ASSIGNMENT

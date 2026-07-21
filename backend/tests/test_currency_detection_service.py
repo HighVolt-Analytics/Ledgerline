@@ -85,7 +85,7 @@ def test_parse_low_confidence_does_not_apply() -> None:
 
 
 def test_apply_sets_currency_and_audit() -> None:
-    parsed = InvoiceData(currency="")
+    parsed = InvoiceData(currency="", document_text="Total S$ 10.00")
     detection = parse_currency_detection_result(
         {
             "document_currency": {
@@ -102,6 +102,38 @@ def test_apply_sets_currency_and_audit() -> None:
             "multi_currency_document": False,
         }
     )
-    updated = apply_currency_detection_to_parsed(parsed, detection)
+    updated = apply_currency_detection_to_parsed(
+        parsed,
+        detection,
+        ocr_text="Total S$ 10.00",
+    )
     assert updated.currency == "SGD"
     assert (updated.raw_fields or {}).get("currency_detection", {}).get("applied") is True
+
+
+def test_apply_rejects_ungrounded_jurisdiction_guess() -> None:
+    """ABN + bare $ must not store invented AUD from the currency agent."""
+    ocr = "TAX INVOICE\nABN 51824753556\nTotal: $100.00"
+    parsed = InvoiceData(currency="", document_text=ocr)
+    detection = parse_currency_detection_result(
+        {
+            "document_currency": {
+                "iso_code": "AUD",
+                "symbol_seen": "$",
+                "confidence": 0.95,
+                "decision_basis": ["D4"],
+                "evidence": [],
+                "conflicts": [],
+            },
+            "human_review_required": False,
+            "review_reason": None,
+            "critical_flags": [],
+            "multi_currency_document": False,
+        }
+    )
+    updated = apply_currency_detection_to_parsed(parsed, detection, ocr_text=ocr)
+    assert (updated.currency or "") == ""
+    audit = (updated.raw_fields or {}).get("currency_detection") or {}
+    assert audit.get("applied") is False
+    assert audit.get("grounding_rejected") is True
+    assert (updated.extracted_fields or {}).get("currency_symbol") == "$"

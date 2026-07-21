@@ -390,46 +390,16 @@ def ground_extracted_fields_map(
     return grounded
 
 
-_UNIQUE_TAX_ID_KINDS: frozenset[str] = frozenset({"abn", "gstin", "uen", "ird"})
-
-
-def _country_for_unique_tax_id_kind(kind: str) -> str | None:
-    """Return country when exactly one jurisdiction pack owns ``kind``."""
-    from app.jurisdiction.loader import get_pack_registry
-
-    token = (kind or "").strip().lower()
-    if not token or token not in _UNIQUE_TAX_ID_KINDS:
-        return None
-    matches = [
-        country
-        for country, pack in get_pack_registry().packs.items()
-        if (pack.tax_id_kind or "").strip().lower() == token
-    ]
-    if len(matches) != 1:
-        return None
-    return matches[0]
-
-
 def currency_implied_by_grounded_tax_id(
     data: InvoiceData,
     ocr_text: str | None,
 ) -> str | None:
-    """ISO currency implied by a grounded unique tax-ID kind, else None."""
-    abn_raw = (data.abn or "").strip()
-    if not abn_raw or not ocr_text:
-        return None
-    if not value_grounded_in_ocr(abn_raw, ocr_text, field_key="abn"):
-        return None
+    """Deprecated: tax IDs must not invent currency. Always returns None.
 
-    for kind in sorted(_UNIQUE_TAX_ID_KINDS):
-        if not is_acceptable_tax_id(abn_raw, tax_id_kind=kind):
-            continue
-        country = _country_for_unique_tax_id_kind(kind)
-        if not country:
-            continue
-        from app.jurisdiction.packs import jurisdiction_pack_for_country
-
-        return jurisdiction_pack_for_country(country).currency.upper()
+    Kept as a no-op stub so older imports/call sites do not invent ISO codes
+    from ABN/GSTIN/etc. Currency must be literally evidenced on the document.
+    """
+    del data, ocr_text
     return None
 
 
@@ -443,30 +413,20 @@ def currency_passes_grounding(
     """
     True when currency may be kept.
 
-    Empty always passes. Otherwise require literal ISO in OCR, or a match to
-    the currency implied by a grounded unique tax ID (ABN→AUD, etc.).
-    Tenant org_country may only corroborate an already-matching tax-ID signal.
+    Empty always passes. Otherwise require literal document evidence for the
+    ISO code (explicit code, prefixed symbol like US$/S$, or unambiguous glyph
+    like €/₹). Never keep a currency inferred from tax IDs, country, or tenant.
     """
+    del org_country  # never used for currency invention
     currency = (data.currency or "").strip().upper()
     if not currency:
         return True
 
-    if value_grounded_in_ocr(currency, ocr_text, field_key="currency"):
+    from app.services.shared.currency import currency_evidence_in_text
+
+    if currency_evidence_in_text(currency, ocr_text):
         if grounding_debug is not None:
             grounding_debug["currency"] = "literal_ocr"
-        return True
-
-    implied = currency_implied_by_grounded_tax_id(data, ocr_text)
-    if implied and currency == implied:
-        if grounding_debug is not None:
-            note = "tax_id_context"
-            if org_country:
-                from app.jurisdiction.packs import jurisdiction_pack_for_country
-
-                tenant_ccy = jurisdiction_pack_for_country(org_country).currency.upper()
-                if tenant_ccy == implied:
-                    note = "tax_id_context+org_corroborated"
-            grounding_debug["currency"] = note
         return True
     return False
 
@@ -544,7 +504,7 @@ def ground_invoice_scalars(
     ):
         updates["due_date"] = None
 
-    # Ground ABN before currency so tax-ID context can keep a matching ISO code.
+    # Ground ABN before currency so cleared tax IDs do not linger on the working copy.
     abn_raw = (data.abn or "").strip()
     working = data
     if abn_raw and "abn" not in skip:
