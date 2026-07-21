@@ -80,11 +80,24 @@ async def reports_documents(
 
 @router.get("/subledger/ap-balances", response_model=ApiEnvelope[SubledgerBalancesResponse])
 async def reports_ap_balances(
-    params: Annotated[SubledgerBalancesRequest, Query()],
+    as_of: Annotated[
+        date | None, Query(description="Balances as of this date (inclusive)")
+    ] = None,
+    include_unregistered: Annotated[
+        bool, Query(description="Include vendors not in the registry")
+    ] = True,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[SubledgerBalancesResponse]:
     """Accounts payable balances grouped by vendor registry."""
+    params = SubledgerBalancesRequest(
+        as_of=as_of,
+        include_unregistered=include_unregistered,
+        limit=limit,
+        offset=offset,
+    )
     return ApiEnvelope(
         data=await fetch_ap_balances(
             db,
@@ -99,11 +112,24 @@ async def reports_ap_balances(
 
 @router.get("/subledger/ar-balances", response_model=ApiEnvelope[SubledgerBalancesResponse])
 async def reports_ar_balances(
-    params: Annotated[SubledgerBalancesRequest, Query()],
+    as_of: Annotated[
+        date | None, Query(description="Balances as of this date (inclusive)")
+    ] = None,
+    include_unregistered: Annotated[
+        bool, Query(description="Include customers not in the registry")
+    ] = True,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ApiEnvelope[SubledgerBalancesResponse]:
     """Accounts receivable balances grouped by customer registry."""
+    params = SubledgerBalancesRequest(
+        as_of=as_of,
+        include_unregistered=include_unregistered,
+        limit=limit,
+        offset=offset,
+    )
     return ApiEnvelope(
         data=await fetch_ar_balances(
             db,

@@ -40,6 +40,7 @@ class SettingsSyncResult:
     accounts: EntitySyncCounters = field(default_factory=EntitySyncCounters)
     tax_rates: EntitySyncCounters = field(default_factory=EntitySyncCounters)
     currencies: EntitySyncCounters = field(default_factory=EntitySyncCounters)
+    tracking_categories: EntitySyncCounters = field(default_factory=EntitySyncCounters)
     committed: bool = False
     job_id: int | None = None
 
@@ -48,15 +49,18 @@ class SettingsSyncResult:
         tax_rates = self.tax_rates.to_dict()
         currencies = self.currencies.to_dict()
         organisation = self.organisation.to_dict()
+        tracking = self.tracking_categories.to_dict()
         return {
             "organisation": organisation,
             "accounts": accounts,
             "tax_rates": tax_rates,
             "currencies": currencies,
+            "tracking_categories": tracking,
             "organisation_count": organisation["persisted_total"],
             "account": accounts["persisted_total"],
             "tax_rate": tax_rates["persisted_total"],
             "currency": currencies["persisted_total"],
+            "tracking_category": tracking["persisted_total"],
             "committed": self.committed,
             "job_id": self.job_id,
         }

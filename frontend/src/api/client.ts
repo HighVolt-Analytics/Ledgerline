@@ -30,6 +30,9 @@ import type {
   XeroExportHistoryRow,
   XeroMasterTotals,
   XeroMasterListMeta,
+  XeroMappingRow,
+  XeroExportLedgerRow,
+  XeroExportQueueItem,
   AuthUser,
   ConnectedMailbox,
   MailboxBackfillJob,
@@ -977,6 +980,72 @@ export const api = {
     return request<XeroPushResult>(`/api/integrations/xero/invoices/${invoiceId}/push`, {
       method: "POST",
     });
+  },
+  validateXeroInvoiceExport: (invoiceId: number) => {
+    return request<{
+      valid: boolean;
+      invoice_id: number;
+      blocking_errors: Array<{ field: string; code: string; message: string }>;
+      canonical?: Record<string, unknown> | null;
+    }>(`/api/integrations/xero/invoices/${invoiceId}/validate`, { method: "POST" });
+  },
+  exportXeroInvoice: (invoiceId: number) => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<{
+      skipped?: boolean;
+      reason?: string;
+      evidence: XeroExportLedgerRow;
+      attachment?: Record<string, unknown> | null;
+    }>(`/api/integrations/xero/invoices/${invoiceId}/export`, { method: "POST" });
+  },
+  getXeroMappings: () => {
+    return request<{ items: XeroMappingRow[] }>("/api/integrations/xero/mappings");
+  },
+  putXeroMappings: (mappings: Array<Partial<XeroMappingRow> & { mapping_type: string; source_key: string }>) => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<{ items: XeroMappingRow[] }>("/api/integrations/xero/mappings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mappings }),
+    });
+  },
+  getXeroExportLedger: (params?: { status?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<{ items: XeroExportLedgerRow[]; total: number }>(
+      `/api/integrations/xero/exports${q ? `?${q}` : ""}`
+    );
+  },
+  getXeroExportQueue: (params?: { limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<{ items: XeroExportQueueItem[] }>(
+      `/api/integrations/xero/export-queue${q ? `?${q}` : ""}`
+    );
+  },
+  refreshXeroExport: (syncId: number) => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<{ evidence: XeroExportLedgerRow; divergence_flags: string[] }>(
+      `/api/integrations/xero/exports/${syncId}/refresh`,
+      { method: "POST" }
+    );
+  },
+  retryXeroAttachment: (syncId: number) => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<{ evidence: XeroExportLedgerRow }>(
+      `/api/integrations/xero/exports/${syncId}/retry-attachment`,
+      { method: "POST" }
+    );
+  },
+  runXeroReconciliation: () => {
+    bustGetCacheByPrefix("/api/integrations/xero");
+    return request<{ checked: number; divergences: Array<Record<string, unknown>> }>(
+      "/api/integrations/xero/reconciliation/run",
+      { method: "POST" }
+    );
   },
   getXeroInvoiceStatus: (invoiceId: number, options?: FreshRequestOptions) => {
     const path = `/api/integrations/xero/invoices/${invoiceId}/status`;

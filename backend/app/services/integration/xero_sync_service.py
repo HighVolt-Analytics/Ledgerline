@@ -16,7 +16,9 @@ from app.models.accounting_sync_job import JOB_TYPE_CONTACTS, JOB_TYPE_SETTINGS
 from app.models.xero_account import SOURCE_SYSTEM_XERO, XeroAccount
 from app.models.xero_contact import MAPPING_UNMAPPED, XeroContact
 from app.models.xero_currency import XeroCurrency
+from app.models.xero_organisation_profile import XeroOrganisationProfile
 from app.models.xero_tax_rate import XeroTaxRate
+from app.models.xero_tracking_category import XeroTrackingCategory
 from app.services.integration.accounting_integration_service import require_xero_ready
 from app.services.integration.xero_client import XeroApiError, XeroClient
 from app.services.integration.xero_sync_counts import (
@@ -88,7 +90,54 @@ async def _run_settings_sync(db: AsyncSession, tenant_id: uuid.UUID) -> Settings
     organisations = org_payload.get("Organisations") or []
     for org in organisations:
         result.organisation.fetched += 1
-        result.organisation.unchanged += 1
+        try:
+            org_id = str(org.get("OrganisationID") or "").strip() or None
+            hash_value = payload_hash(org)
+            existing_org = (
+                await db.execute(
+                    select(XeroOrganisationProfile).where(
+                        XeroOrganisationProfile.tenant_id == tenant_id,
+                        XeroOrganisationProfile.xero_tenant_id == xero_tenant_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            fields = {
+                "organisation_id": org_id,
+                "name": str(org.get("Name") or "")[:255] or None,
+                "legal_name": str(org.get("LegalName") or "")[:255] or None,
+                "base_currency": str(org.get("BaseCurrency") or "")[:8] or None,
+                "country_code": str(org.get("CountryCode") or "")[:8] or None,
+                "organisation_status": str(org.get("OrganisationStatus") or "")[:64] or None,
+                "is_active": True,
+                "payload_hash": hash_value,
+                "raw_payload_json": json.dumps(org, default=str),
+                "source_updated_at": _parse_dt(org.get("UpdatedDateUTC")),
+                "last_synced_at": now,
+            }
+            if existing_org is None:
+                db.add(
+                    XeroOrganisationProfile(
+                        tenant_id=tenant_id,
+                        accounting_integration_id=integration.id,
+                        xero_tenant_id=xero_tenant_id,
+                        **fields,
+                    )
+                )
+                result.organisation.created += 1
+            elif existing_org.payload_hash == hash_value:
+                existing_org.last_synced_at = now
+                result.organisation.unchanged += 1
+            else:
+                for key, value in fields.items():
+                    setattr(existing_org, key, value)
+                result.organisation.updated += 1
+        except Exception as exc:
+            result.organisation.failed += 1
+            logger.warning(
+                "xero_organisation_upsert_failed",
+                tenant_id=str(tenant_id),
+                error=str(exc),
+            )
         for currency in org.get("Currencies") or []:
             code = str(currency.get("Code") or "").strip().upper()
             if not code:
@@ -295,6 +344,106 @@ async def _run_settings_sync(db: AsyncSession, tenant_id: uuid.UUID) -> Settings
                 tax_type=tax_type,
                 error=str(exc),
             )
+
+    # Tracking categories / options
+    seen_tracking_keys: set[str] = set()
+    try:
+        tracking_payload = await client.get_json("TrackingCategories")
+    except XeroApiError as exc:
+        logger.warning(
+            "xero_tracking_categories_fetch_failed",
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
+        tracking_payload = {"TrackingCategories": []}
+    for category in tracking_payload.get("TrackingCategories") or []:
+        category_id = str(category.get("TrackingCategoryID") or "").strip()
+        if not category_id:
+            continue
+        options = category.get("Options") or [None]
+        for option in options:
+            result.tracking_categories.fetched += 1
+            try:
+                option_id = ""
+                option_name = None
+                option_status = None
+                if isinstance(option, dict):
+                    option_id = str(option.get("TrackingOptionID") or "").strip()
+                    option_name = str(option.get("Name") or "")[:255] or None
+                    option_status = str(option.get("Status") or "")[:32] or None
+                key = f"{category_id}:{option_id}"
+                seen_tracking_keys.add(key)
+                row_payload = {
+                    "category": category,
+                    "option": option if isinstance(option, dict) else None,
+                }
+                hash_value = payload_hash(row_payload)
+                existing = (
+                    await db.execute(
+                        select(XeroTrackingCategory).where(
+                            XeroTrackingCategory.tenant_id == tenant_id,
+                            XeroTrackingCategory.xero_tenant_id == xero_tenant_id,
+                            XeroTrackingCategory.xero_tracking_category_id == category_id,
+                            XeroTrackingCategory.option_external_id == (option_id or ""),
+                        )
+                    )
+                ).scalar_one_or_none()
+                fields = {
+                    "name": str(category.get("Name") or "")[:255] or None,
+                    "status": str(category.get("Status") or "")[:32] or None,
+                    "option_external_id": option_id or "",
+                    "option_name": option_name,
+                    "option_status": option_status,
+                    "sync_status": _SYNC_ACTIVE,
+                    "is_active": True,
+                    "payload_hash": hash_value,
+                    "raw_payload_json": json.dumps(row_payload, default=str),
+                    "source_updated_at": _parse_dt(category.get("UpdatedDateUTC")),
+                    "last_synced_at": now,
+                }
+                if existing is None:
+                    db.add(
+                        XeroTrackingCategory(
+                            tenant_id=tenant_id,
+                            accounting_integration_id=integration.id,
+                            xero_tenant_id=xero_tenant_id,
+                            xero_tracking_category_id=category_id,
+                            source_system=SOURCE_SYSTEM_XERO,
+                            **fields,
+                        )
+                    )
+                    result.tracking_categories.created += 1
+                elif existing.payload_hash == hash_value and existing.sync_status == _SYNC_ACTIVE:
+                    existing.last_synced_at = now
+                    result.tracking_categories.unchanged += 1
+                else:
+                    for key_name, value in fields.items():
+                        setattr(existing, key_name, value)
+                    result.tracking_categories.updated += 1
+            except Exception as exc:
+                result.tracking_categories.failed += 1
+                logger.warning(
+                    "xero_tracking_upsert_failed",
+                    tenant_id=str(tenant_id),
+                    category_id=category_id,
+                    error=str(exc),
+                )
+
+    for row in (
+        await db.execute(
+            select(XeroTrackingCategory).where(
+                XeroTrackingCategory.tenant_id == tenant_id,
+                XeroTrackingCategory.xero_tenant_id == xero_tenant_id,
+                XeroTrackingCategory.sync_status == _SYNC_ACTIVE,
+            )
+        )
+    ).scalars():
+        key = f"{row.xero_tracking_category_id}:{row.option_external_id or ''}"
+        if key not in seen_tracking_keys:
+            row.sync_status = _SYNC_INACTIVE
+            row.is_active = False
+            row.last_synced_at = now
+            result.tracking_categories.deactivated += 1
 
     # Deactivate rows missing from this complete sync
     for row in (
@@ -509,26 +658,45 @@ async def _apply_settings_job_counts(job: Any, result: SettingsSyncResult) -> No
     accounts = result.accounts.to_dict()
     tax_rates = result.tax_rates.to_dict()
     currencies = result.currencies.to_dict()
+    tracking = result.tracking_categories.to_dict()
     job.direction = "inbound"
     job.entity_type = "settings"
     job.trigger_type = "manual"
     job.records_fetched = (
-        accounts["fetched"] + tax_rates["fetched"] + currencies["fetched"]
+        accounts["fetched"]
+        + tax_rates["fetched"]
+        + currencies["fetched"]
+        + tracking["fetched"]
     )
     job.records_created = (
-        accounts["created"] + tax_rates["created"] + currencies["created"]
+        accounts["created"]
+        + tax_rates["created"]
+        + currencies["created"]
+        + tracking["created"]
     )
     job.records_updated = (
-        accounts["updated"] + tax_rates["updated"] + currencies["updated"]
+        accounts["updated"]
+        + tax_rates["updated"]
+        + currencies["updated"]
+        + tracking["updated"]
     )
     job.records_unchanged = (
-        accounts["unchanged"] + tax_rates["unchanged"] + currencies["unchanged"]
+        accounts["unchanged"]
+        + tax_rates["unchanged"]
+        + currencies["unchanged"]
+        + tracking["unchanged"]
     )
-    job.records_failed = accounts["failed"] + tax_rates["failed"] + currencies["failed"]
+    job.records_failed = (
+        accounts["failed"]
+        + tax_rates["failed"]
+        + currencies["failed"]
+        + tracking["failed"]
+    )
     job.records_persisted = (
         accounts["persisted_total"]
         + tax_rates["persisted_total"]
         + currencies["persisted_total"]
+        + tracking["persisted_total"]
     )
 
 

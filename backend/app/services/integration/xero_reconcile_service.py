@@ -156,6 +156,8 @@ async def reconcile_pending(
                         client=client,
                     )
                 )
+                # Also refresh matching export ledger when present.
+                await _sync_ledger_from_ref(db, tenant_id=tenant_id, ref=ref, client=client)
             except (XeroApiError, ValueError, RuntimeError) as exc:
                 failed += 1
                 ref.sync_error_code = getattr(exc, "error_code", None) or "reconcile_failed"
@@ -188,3 +190,133 @@ async def reconcile_pending(
             error_message=str(exc),
         )
         raise
+
+
+async def _sync_ledger_from_ref(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    ref: ExternalAccountingRef,
+    client: XeroClient,
+) -> None:
+    from app.models.accounting_export_ledger import AccountingExportLedger, PROVIDER_XERO
+
+    ledger = (
+        await db.execute(
+            select(AccountingExportLedger).where(
+                AccountingExportLedger.tenant_id == tenant_id,
+                AccountingExportLedger.provider == PROVIDER_XERO,
+                AccountingExportLedger.external_id == ref.external_entity_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if ledger is None:
+        return
+    ledger.external_status = ref.external_status
+    ledger.external_number = ref.external_number
+    ledger.amount_due = ref.amount_due
+    ledger.amount_paid = ref.amount_paid
+    ledger.is_fully_paid = ref.is_fully_paid
+    ledger.last_refreshed_at = datetime.now(timezone.utc)
+    ledger.last_remote_modified_at = ref.last_remote_modified_at
+    await db.flush()
+    del client
+
+
+async def run_export_reconciliation(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    initiated_by: int | None = None,
+) -> dict[str, Any]:
+    """Compare recent Xero invoices with the export ledger; detect divergences."""
+    from app.models.accounting_export_ledger import (
+        STATUS_SUCCESS,
+        AccountingExportLedger,
+        PROVIDER_XERO,
+    )
+    import json
+
+    pending = await reconcile_pending(
+        db,
+        tenant_id=tenant_id,
+        trigger_type="manual",
+        initiated_by=initiated_by,
+    )
+    _, xero_tenant_id = await require_xero_ready(db, tenant_id)
+    client = XeroClient(db=db, tenant_id=tenant_id, xero_tenant_id=xero_tenant_id)
+
+    ledgers = list(
+        (
+            await db.execute(
+                select(AccountingExportLedger).where(
+                    AccountingExportLedger.tenant_id == tenant_id,
+                    AccountingExportLedger.provider == PROVIDER_XERO,
+                    AccountingExportLedger.status == STATUS_SUCCESS,
+                    AccountingExportLedger.external_id.is_not(None),
+                )
+            )
+        ).scalars().all()
+    )
+    divergences: list[dict[str, Any]] = []
+    for ledger in ledgers:
+        try:
+            payload = await client.get_json(
+                "Invoices", params={"IDs": ledger.external_id}
+            )
+            invoices = payload.get("Invoices") or []
+            if not invoices:
+                flags = ["missing_remote"]
+                ledger.divergence_flags_json = json.dumps(flags)
+                divergences.append(
+                    {
+                        "sync_id": ledger.id,
+                        "external_id": ledger.external_id,
+                        "flags": flags,
+                    }
+                )
+                continue
+            remote = invoices[0]
+            flags = []
+            remote_status = str(remote.get("Status") or "")
+            if ledger.external_status and remote_status != ledger.external_status:
+                flags.append("status_divergent")
+            remote_total = _decimal(remote.get("Total"))
+            if (
+                ledger.external_total is not None
+                and remote_total is not None
+                and abs(remote_total - ledger.external_total) > Decimal("0.02")
+            ):
+                flags.append("amount_mismatch")
+            if remote_status.upper() == "VOIDED":
+                flags.append("voided")
+            ledger.external_status = remote_status or ledger.external_status
+            ledger.amount_due = _decimal(remote.get("AmountDue"))
+            ledger.amount_paid = _decimal(remote.get("AmountPaid"))
+            ledger.last_refreshed_at = datetime.now(timezone.utc)
+            ledger.divergence_flags_json = json.dumps(flags)
+            if flags:
+                divergences.append(
+                    {
+                        "sync_id": ledger.id,
+                        "external_id": ledger.external_id,
+                        "flags": flags,
+                        "remote_status": remote_status,
+                    }
+                )
+        except XeroApiError as exc:
+            divergences.append(
+                {
+                    "sync_id": ledger.id,
+                    "external_id": ledger.external_id,
+                    "flags": ["fetch_failed"],
+                    "error": str(exc),
+                }
+            )
+    await db.flush()
+    return {
+        "checked": len(ledgers),
+        "divergences": divergences,
+        "reconcile": pending,
+        "committed": False,
+    }
